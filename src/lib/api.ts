@@ -1,0 +1,309 @@
+import { invoke } from "@tauri-apps/api/core";
+import type {
+  AppConfig,
+  NoteContent,
+  NoteEntry,
+  NoteMeta,
+  NotebookEntry,
+  NoteTitleEntry,
+  SearchResult,
+  VaultState,
+  VaultStats,
+  ImportResult,
+  BackupEntry,
+  VersionEntry,
+} from "./types";
+
+export async function openVault(path: string): Promise<void> {
+  return invoke("open_vault", { path });
+}
+
+export async function getAppConfig(): Promise<AppConfig> {
+  return invoke("get_app_config");
+}
+
+export async function setTheme(theme: string): Promise<void> {
+  return invoke("set_theme", { theme });
+}
+
+export async function setAccentColor(color: string): Promise<void> {
+  return invoke("set_accent_color", { color });
+}
+
+export async function setFontSize(size: number): Promise<void> {
+  return invoke("set_font_size", { size });
+}
+
+export async function setFontFamily(family: string): Promise<void> {
+  return invoke("set_font_family", { family });
+}
+
+export async function getNotebooks(): Promise<NotebookEntry[]> {
+  return invoke("get_notebooks");
+}
+
+export async function createNotebook(
+  parentRelative: string | null,
+  name: string,
+): Promise<NotebookEntry> {
+  return invoke("create_notebook", { parentRelative, name });
+}
+
+export async function renameNotebook(
+  path: string,
+  newName: string,
+): Promise<string> {
+  return invoke("rename_notebook", { path, newName });
+}
+
+export async function deleteNotebook(path: string): Promise<void> {
+  return invoke("delete_notebook", { path });
+}
+
+export async function getNotes(
+  notebookPath: string | null,
+): Promise<NoteEntry[]> {
+  return invoke("get_notes", { notebookPath });
+}
+
+export async function readNote(path: string): Promise<NoteContent> {
+  return invoke("read_note", { path });
+}
+
+export async function saveNote(
+  path: string,
+  meta: NoteMeta,
+  body: string,
+): Promise<void> {
+  return invoke("save_note", { path, meta, body });
+}
+
+export async function createNote(
+  notebookRelative: string | null,
+  title: string,
+): Promise<NoteEntry> {
+  return invoke("create_note", { notebookRelative, title });
+}
+
+export async function renameNote(
+  path: string,
+  newTitle: string,
+): Promise<string> {
+  return invoke("rename_note", { path, newTitle });
+}
+
+export async function deleteNote(path: string): Promise<void> {
+  return invoke("delete_note", { path });
+}
+
+export async function moveNote(
+  notePath: string,
+  destNotebook: string,
+): Promise<string> {
+  return invoke("move_note", { notePath, destNotebook });
+}
+
+export async function getAllTags(): Promise<[string, number][]> {
+  return invoke("get_all_tags");
+}
+
+export async function getAllNoteTitles(): Promise<NoteTitleEntry[]> {
+  return invoke("get_all_note_titles");
+}
+
+export async function searchNotes(
+  query: string,
+  limit?: number,
+): Promise<SearchResult[]> {
+  return invoke("search_notes", { query, limit });
+}
+
+export async function reindex(): Promise<void> {
+  return invoke("reindex");
+}
+
+export async function getTrash(): Promise<NoteEntry[]> {
+  return invoke("get_trash");
+}
+
+export async function restoreNote(
+  trashPath: string,
+  destNotebook: string | null,
+): Promise<string> {
+  return invoke("restore_note", { trashPath, destNotebook });
+}
+
+export async function permanentDelete(path: string): Promise<void> {
+  return invoke("permanent_delete", { path });
+}
+
+export async function emptyTrash(): Promise<void> {
+  return invoke("empty_trash");
+}
+
+export async function loadVaultState(): Promise<VaultState> {
+  return invoke("load_vault_state");
+}
+
+export async function saveVaultState(vaultState: VaultState): Promise<void> {
+  return invoke("save_vault_state", { vaultState });
+}
+
+export async function saveImage(name: string, data: number[]): Promise<string> {
+  return invoke("save_image", { name, data });
+}
+
+export async function saveAttachment(
+  name: string,
+  data: number[],
+): Promise<string> {
+  return invoke("save_attachment", { name, data });
+}
+
+export async function getNotebookIcons(): Promise<Record<string, string>> {
+  return invoke("get_notebook_icons");
+}
+
+export async function setNotebookIcon(
+  notebookRelative: string,
+  iconRelative: string | null,
+): Promise<void> {
+  return invoke("set_notebook_icon", { notebookRelative, iconRelative });
+}
+
+export async function setGeneralSettings(
+  compactNotes: boolean,
+  timeFormat: string,
+  gpuAcceleration: boolean,
+  autostart: boolean,
+  pdfPreview: boolean,
+  pdfHeight: number,
+  titleMode: string,
+  hideTitleInBody: boolean,
+  defaultViewMode: boolean,
+  showTrayIcon: boolean,
+  enableWikiLinks: boolean,
+): Promise<void> {
+  return invoke("set_general_settings", {
+    compactNotes,
+    timeFormat,
+    gpuAcceleration,
+    autostart,
+    pdfPreview,
+    pdfHeight,
+    titleMode,
+    hideTitleInBody,
+    defaultViewMode,
+    showTrayIcon,
+    enableWikiLinks,
+  });
+}
+
+export async function getQuickAccess(): Promise<NoteEntry[]> {
+  return invoke("get_quick_access");
+}
+
+export async function addQuickAccess(noteRelative: string): Promise<void> {
+  return invoke("add_quick_access", { noteRelative });
+}
+
+export async function removeQuickAccess(noteRelative: string): Promise<void> {
+  return invoke("remove_quick_access", { noteRelative });
+}
+
+export async function getVaultStats(): Promise<VaultStats> {
+  return invoke("get_vault_stats");
+}
+
+export async function importObsidian(): Promise<void> {
+  return invoke("import_obsidian");
+}
+
+export async function openFile(path: string): Promise<void> {
+  return invoke("open_file", { path });
+}
+
+export async function copyFileTo(
+  source: string,
+  destination: string,
+): Promise<void> {
+  return invoke("copy_file_to", { source, destination });
+}
+
+// ── Backup ──
+
+export async function createBackup(): Promise<void> {
+  return invoke("create_backup");
+}
+
+export async function listBackups(): Promise<BackupEntry[]> {
+  return invoke("list_backups");
+}
+
+export async function restoreBackup(backupPath: string): Promise<void> {
+  return invoke("restore_backup", { backupPath });
+}
+
+export async function deleteBackup(backupPath: string): Promise<void> {
+  return invoke("delete_backup", { backupPath });
+}
+
+export async function setBackupSettings(
+  enabled: boolean,
+  frequency: string,
+  maxCount: number,
+  location: string | null,
+  includeAttachments: boolean,
+): Promise<void> {
+  return invoke("set_backup_settings", {
+    enabled,
+    frequency,
+    maxCount,
+    location,
+    includeAttachments,
+  });
+}
+
+// ── Version History ──
+
+export async function getNoteVersions(noteId: string): Promise<VersionEntry[]> {
+  return invoke("get_note_versions", { noteId });
+}
+
+export async function getNoteVersionContent(
+  noteId: string,
+  timestamp: string,
+): Promise<string> {
+  return invoke("get_note_version_content", { noteId, timestamp });
+}
+
+export async function createVersion(
+  path: string,
+  noteId: string,
+): Promise<void> {
+  return invoke("create_version", { path, noteId });
+}
+
+// ── AI ──
+
+export async function setAiSettings(
+  provider: string | null,
+  apiKey: string | null,
+  model: string,
+  writingStyle: string | null,
+): Promise<void> {
+  return invoke("set_ai_settings", { provider, apiKey, model, writingStyle });
+}
+
+export async function testAiConnection(): Promise<void> {
+  return invoke("test_ai_connection");
+}
+
+export async function aiAsk(
+  action: string,
+  text: string,
+  customPrompt: string | null,
+  requestId: string,
+): Promise<void> {
+  return invoke("ai_ask", { action, text, customPrompt, requestId });
+}

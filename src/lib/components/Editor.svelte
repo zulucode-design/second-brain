@@ -1,0 +1,5092 @@
+<script lang="ts">
+	import { onDestroy, tick } from 'svelte';
+	import { Editor } from '@tiptap/core';
+	import StarterKit from '@tiptap/starter-kit';
+	import Placeholder from '@tiptap/extension-placeholder';
+	import TaskList from '@tiptap/extension-task-list';
+	import TaskItem from '@tiptap/extension-task-item';
+	import { Table } from '@tiptap/extension-table';
+	import { TableRow } from '@tiptap/extension-table-row';
+	import { TableCell } from '@tiptap/extension-table-cell';
+	import { TableHeader } from '@tiptap/extension-table-header';
+	import Link from '@tiptap/extension-link';
+	import Image from '@tiptap/extension-image';
+	import Highlight from '@tiptap/extension-highlight';
+	import Typography from '@tiptap/extension-typography';
+	import Underline from '@tiptap/extension-underline';
+	import Subscript from '@tiptap/extension-subscript';
+	import Superscript from '@tiptap/extension-superscript';
+	import { Color } from '@tiptap/extension-color';
+	import { TextStyle } from '@tiptap/extension-text-style';
+	import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight';
+	import { Details, DetailsSummary, DetailsContent } from '@tiptap/extension-details';
+	import TextAlign from '@tiptap/extension-text-align';
+	import { common, createLowlight } from 'lowlight';
+	import MarkdownIt from 'markdown-it';
+	import markdownItMark from 'markdown-it-mark';
+	import markdownItSup from 'markdown-it-sup';
+	import markdownItSub from 'markdown-it-sub';
+	import { Extension, Node as TiptapNode, Mark as TiptapMark, mergeAttributes } from '@tiptap/core';
+	import { Plugin, PluginKey, EditorState } from '@tiptap/pm/state';
+	import { Decoration, DecorationSet } from '@tiptap/pm/view';
+	import { DOMSerializer } from '@tiptap/pm/model';
+	import { convertFileSrc } from '@tauri-apps/api/core';
+	import { getCurrentWindow } from '@tauri-apps/api/window';
+	import { readFile } from '@tauri-apps/plugin-fs';
+	import { openUrl } from '@tauri-apps/plugin-opener';
+	import { openFile, copyFileTo } from '$lib/api';
+	import { save as saveDialog } from '@tauri-apps/plugin-dialog';
+	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, quickAccessPaths, notes } from '$lib/stores/app';
+	import { saveNote, saveImage, saveAttachment, addQuickAccess, removeQuickAccess, getQuickAccess, getNoteVersions, getNoteVersionContent, createVersion, aiAsk, getAllNoteTitles, readNote } from '$lib/api';
+	import type { VersionEntry, AiStreamEvent, NoteTitleEntry } from '$lib/types';
+	import { listen } from '@tauri-apps/api/event';
+	import { debounce } from '$lib/utils/debounce';
+	import GraphView from './GraphView.svelte';
+
+	let editorElement = $state<HTMLDivElement>(null!);
+	let sourceElement = $state<HTMLTextAreaElement>(null!);
+	let editor: Editor | null = null;
+	let editorReady = $state(false);
+	let sourceContent = $state('');
+	let loadedPath = '';
+	let pendingContent = $state<string | null>(null);
+	let ignoreNextUpdate = false;
+	let isLoadingNote = false;
+	let lastSourceMode = $sourceMode;
+	let linkContextMenu = $state<{ x: number; y: number; href: string; anchor: HTMLAnchorElement } | null>(null);
+	let titleWasStripped = false;
+	let strippedTitle = '';
+	let strippedHeadingPrefix = '';
+
+	let headingDropdown = $state(false);
+	let colorDropdown = $state(false);
+	let highlightDropdown = $state(false);
+	let alignDropdown = $state(false);
+	let insertDropdown = $state(false);
+	let editorState = $state(0);
+
+	// AI
+	let aiMenu = $state<{ x: number; y: number } | null>(null);
+	let aiLoading = $state(false);
+	let aiResult = $state<string | null>(null);
+	let aiError = $state<string | null>(null);
+	let aiSelectionFrom = $state(0);
+	let aiSelectionTo = $state(0);
+	let aiSelectedText = $state('');
+	let aiCustomPrompt = $state('');
+	let aiShowCustom = $state(false);
+	let aiTranslateMenu = $state(false);
+	let aiWholeNote = $state(false);
+	let aiEmptyNote = $state(false);
+	let aiOriginalMarkdown = $state('');
+	let aiMediaPlaceholders = $state<Map<string, string>>(new Map());
+
+	// View mode (read-only)
+	let readOnly = $state(false);
+	let readOnlyFlash = $state(false);
+
+	// Version history
+	let showHistory = $state(false);
+	let showGraph = $state(false);
+	let historyVersions = $state<VersionEntry[]>([]);
+	let historyPreview = $state<string | null>(null);
+	let historySelected = $state<VersionEntry | null>(null);
+	let historyLoading = $state(false);
+
+	// Slash commands
+	let slashMenu = $state<{ x: number; y: number; query: string; from: number; to: number } | null>(null);
+	let slashSelectedIndex = $state(0);
+	let slashTablePicker = $state(false);
+	let slashTableHover = $state({ rows: 0, cols: 0 });
+
+	interface SlashCommand {
+		label: string;
+		aliases: string[];
+		icon: string;
+		action: () => void;
+	}
+
+	function getSlashCommands(): SlashCommand[] {
+		return [
+			{ label: 'Heading 1', aliases: ['h1', 'heading1', 'title'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h8M4 4v16M12 4v16M17 12l3-2v8"/></svg>', action: () => editor?.chain().focus().toggleHeading({ level: 1 }).run() },
+			{ label: 'Heading 2', aliases: ['h2', 'heading2', 'subtitle'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h8M4 4v16M12 4v16"/><path d="M21 18h-4c0-4 4-3 4-6 0-1.5-2-2.5-4-1"/></svg>', action: () => editor?.chain().focus().toggleHeading({ level: 2 }).run() },
+			{ label: 'Heading 3', aliases: ['h3', 'heading3'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h8M4 4v16M12 4v16"/><path d="M17.5 10.5c1.7-1 3.5 0 3.5 1.5a2 2 0 01-2 2m2 0a2 2 0 01-2 2c-1.5 0-3.5 0-3.5-1.5"/></svg>', action: () => editor?.chain().focus().toggleHeading({ level: 3 }).run() },
+			{ label: 'Bullet List', aliases: ['ul', 'unordered', 'bullets', 'list'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="1" fill="currentColor"/><circle cx="3" cy="12" r="1" fill="currentColor"/><circle cx="3" cy="18" r="1" fill="currentColor"/></svg>', action: () => editor?.chain().focus().toggleBulletList().run() },
+			{ label: 'Numbered List', aliases: ['ol', 'ordered', 'number'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><text x="1" y="9" font-size="8" fill="currentColor" stroke="none">1</text><text x="1" y="15" font-size="8" fill="currentColor" stroke="none">2</text><text x="1" y="21" font-size="8" fill="currentColor" stroke="none">3</text></svg>', action: () => editor?.chain().focus().toggleOrderedList().run() },
+			{ label: 'Task List', aliases: ['checklist', 'checkbox', 'todo', 'check'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="6" height="6" rx="1"/><path d="M5 8l1.5 1.5L9 7"/><line x1="13" y1="8" x2="21" y2="8"/><rect x="3" y="14" width="6" height="6" rx="1"/><line x1="13" y1="17" x2="21" y2="17"/></svg>', action: () => editor?.chain().focus().toggleTaskList().run() },
+			{ label: 'Code Block', aliases: ['code', 'codeblock', 'pre', 'snippet'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>', action: () => editor?.chain().focus().toggleCodeBlock().run() },
+			{ label: 'Blockquote', aliases: ['quote', 'blockquote', 'citation'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z"/></svg>', action: () => editor?.chain().focus().toggleBlockquote().run() },
+			{ label: 'Collapsible Section', aliases: ['details', 'accordion', 'collapse', 'toggle', 'summary'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="10 8 14 12 10 16"/></svg>', action: () => editor?.chain().focus().setDetails().run() },
+			{ label: 'Table', aliases: ['table', 'grid'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>', action: () => { slashTablePicker = true; slashTableHover = { rows: 0, cols: 0 }; } },
+			{ label: 'Horizontal Rule', aliases: ['hr', 'divider', 'line', 'separator', 'rule'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="2" y1="12" x2="22" y2="12"/></svg>', action: () => editor?.chain().focus().setHorizontalRule().run() },
+		];
+	}
+
+	let slashFiltered = $derived.by(() => {
+		const commands = getSlashCommands();
+		if (!slashMenu) return commands;
+		const q = slashMenu.query.toLowerCase();
+		if (!q) return commands;
+		return commands.filter(cmd =>
+			cmd.label.toLowerCase().includes(q) ||
+			cmd.aliases.some(a => a.includes(q))
+		);
+	});
+	let titleInput = $state<HTMLInputElement>(null!);
+	let linkModal = $state(false);
+	let linkModalUrl = $state('');
+	let linkModalInput = $state<HTMLInputElement>(null!);
+	let textContextMenu = $state<{ x: number; y: number } | null>(null);
+	let tableContextMenu = $state<{ x: number; y: number } | null>(null);
+	let tablePickerOpen = $state(false);
+	let tablePickerHover = $state({ rows: 0, cols: 0 });
+	let imageToolbar = $state<{ pos: number; x: number; y: number; size: string } | null>(null);
+	let noteRelativePath = $derived($activeNotePath && $appConfig?.active_vault ? $activeNotePath.replace($appConfig.active_vault + '/', '') : '');
+	let isQuickAccess = $derived(noteRelativePath ? $quickAccessPaths.includes(noteRelativePath) : false);
+
+	const lowlight = createLowlight(common);
+	const codeLanguages = lowlight.listLanguages().sort();
+	const mdit = MarkdownIt({ html: true, linkify: false, breaks: false })
+		.use(markdownItMark)
+		.use(markdownItSup)
+		.use(markdownItSub);
+
+	function normalizePath(p: string): string {
+		const parts = p.split('/');
+		const resolved: string[] = [];
+		for (const seg of parts) {
+			if (seg === '..') {
+				resolved.pop();
+			} else if (seg !== '.') {
+				resolved.push(seg);
+			}
+		}
+		return resolved.join('/');
+	}
+
+	const CustomImage = Image.extend({
+		addAttributes() {
+			return {
+				...this.parent?.(),
+				size: {
+					default: 'full',
+					parseHTML: (element: HTMLElement) => element.getAttribute('data-size') || 'full',
+					renderHTML: (attributes: Record<string, any>) => {
+						return { 'data-size': attributes.size };
+					},
+				},
+			};
+		},
+	});
+
+	function cellColorAttributes() {
+		return {
+			backgroundColor: {
+				default: null,
+				parseHTML: (element: HTMLElement) => element.getAttribute('data-bg-color') || element.style.backgroundColor || null,
+				renderHTML: (attributes: Record<string, any>) => {
+					if (!attributes.backgroundColor) return {};
+					const bg = attributes.backgroundColor;
+					// Determine if we need light text for dark backgrounds
+					const darkBgs = ['#1e293b', '#374151', '#7f1d1d', '#713f12', '#14532d', '#1e3a5f', '#4c1d95', '#831843', '#0c4a6e', '#064e3b'];
+					const needsLight = darkBgs.includes(bg);
+					const style = needsLight
+						? `background-color: ${bg}; color: #f1f5f9`
+						: `background-color: ${bg}`;
+					return { style, 'data-bg-color': bg };
+				},
+			},
+		};
+	}
+
+	const CustomTableCell = TableCell.extend({
+		addAttributes() {
+			return { ...this.parent?.(), ...cellColorAttributes() };
+		},
+	});
+
+	const CustomTableHeader = TableHeader.extend({
+		addAttributes() {
+			return { ...this.parent?.(), ...cellColorAttributes() };
+		},
+	});
+
+	const PdfEmbed = TiptapNode.create({
+		name: 'pdfEmbed',
+		group: 'block',
+		atom: true,
+		addAttributes() {
+			return {
+				src: { default: null },
+				name: { default: 'file.pdf' },
+			};
+		},
+		parseHTML() {
+			return [{
+				tag: 'div[data-pdf-src]',
+				getAttrs: (el: HTMLElement) => ({
+					src: el.getAttribute('data-pdf-src'),
+					name: el.getAttribute('data-pdf-name') || 'file.pdf',
+				}),
+			}];
+		},
+		renderHTML({ HTMLAttributes }) {
+			const src = HTMLAttributes.src || '';
+			const name = HTMLAttributes.name || 'file.pdf';
+			const vaultRoot = $appConfig?.active_vault ?? '';
+			const pdfHeight = $appConfig?.pdf_height ?? 600;
+			const absPath = normalizePath(`${vaultRoot}/${decodeURIComponent(src)}`);
+			const displaySrc = convertFileSrc(absPath);
+			return ['div', mergeAttributes({ 'data-pdf-src': src, 'data-pdf-name': name, class: 'pdf-embed' }),
+				['iframe', { src: displaySrc, width: '100%', height: `${pdfHeight}px`, frameborder: '0' }],
+				['p', { class: 'pdf-label' }, name],
+			];
+		},
+	});
+
+	let codeLangDropdown = $state<{ pos: number; x: number; y: number; current: string } | null>(null);
+
+	function openCodeLangDropdown(pos: number, current: string, triggerEl: HTMLElement) {
+		const rect = triggerEl.getBoundingClientRect();
+		codeLangDropdown = { pos, x: rect.right, y: rect.bottom + 4, current };
+	}
+
+	function selectCodeLang(lang: string) {
+		if (!editor || !codeLangDropdown) return;
+		const { pos } = codeLangDropdown;
+		// Find the codeBlock node at this position
+		const resolved = editor.state.doc.resolve(pos);
+		const node = resolved.parent;
+		if (node.type.name === 'codeBlock') {
+			editor.chain().focus().updateAttributes('codeBlock', { language: lang || null }).run();
+		}
+		codeLangDropdown = null;
+	}
+
+	function closeCodeLangDropdown() {
+		codeLangDropdown = null;
+	}
+
+	const CodeBlockLanguageSelect = Extension.create({
+		name: 'codeBlockLanguageSelect',
+		addProseMirrorPlugins() {
+			return [
+				new Plugin({
+					key: new PluginKey('codeBlockLanguageSelect'),
+					props: {
+						decorations: (state) => {
+							const decorations: Decoration[] = [];
+							state.doc.descendants((node, pos) => {
+								if (node.type.name === 'codeBlock') {
+									const wrapper = document.createElement('div');
+									wrapper.className = 'code-lang-wrapper';
+
+									const btn = document.createElement('button');
+									btn.className = 'code-lang-btn';
+									if (node.attrs.language) {
+										btn.textContent = node.attrs.language;
+									} else {
+										btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
+									}
+									btn.addEventListener('click', (e) => {
+										e.preventDefault();
+										e.stopPropagation();
+										openCodeLangDropdown(pos + 1, node.attrs.language || '', btn);
+									});
+									btn.addEventListener('mousedown', (e) => e.stopPropagation());
+
+									wrapper.appendChild(btn);
+									decorations.push(Decoration.widget(pos + 1, wrapper, { side: -1, ignoreSelection: true }));
+								}
+							});
+							return DecorationSet.create(state.doc, decorations);
+						},
+					},
+				}),
+			];
+		},
+	});
+
+	function executeSlashCommand(index: number) {
+		const items = slashFiltered;
+		if (index < 0 || index >= items.length || !slashMenu || !editor) return;
+		const cmd = items[index];
+		// Table opens a sub-picker instead of closing
+		if (cmd.label === 'Table') {
+			slashTablePicker = true;
+			slashTableHover = { rows: 0, cols: 0 };
+			slashSelectedIndex = 0;
+			// Delete slash text after setting flag so onTransaction doesn't close menu
+			editor.chain().focus().deleteRange({ from: slashMenu.from, to: slashMenu.to }).run();
+			return;
+		}
+		// Delete the slash trigger text (/ + query)
+		editor.chain().focus().deleteRange({ from: slashMenu.from, to: slashMenu.to }).run();
+		slashMenu = null;
+		slashSelectedIndex = 0;
+		// Execute after the deletion is applied
+		tick().then(() => cmd.action());
+	}
+
+	function slashInsertTable(rows: number, cols: number) {
+		if (!editor) return;
+		editor.chain().focus().insertTable({ rows, cols, withHeaderRow: true }).run();
+		closeSlashMenu();
+	}
+
+	function closeSlashMenu() {
+		slashMenu = null;
+		slashSelectedIndex = 0;
+		slashTablePicker = false;
+		slashTableHover = { rows: 0, cols: 0 };
+	}
+
+	function updateSlashMenu() {
+		if (!editor) return;
+		if (slashTablePicker) return; // Table picker is open, don't interfere
+		const { state } = editor;
+		const { selection } = state;
+		const resolvedFrom = selection.$from;
+
+		// Only in empty-ish context (paragraph, heading)
+		const parentNode = resolvedFrom.parent;
+		if (parentNode.type.name !== 'paragraph' && parentNode.type.name !== 'heading') {
+			closeSlashMenu();
+			return;
+		}
+
+		const textBefore = parentNode.textContent.slice(0, resolvedFrom.parentOffset);
+		// Match "/" at start of line or after whitespace
+		const match = textBefore.match(/(^|\s)\/([^\s]*)$/);
+		if (!match) {
+			closeSlashMenu();
+			return;
+		}
+
+		const query = match[2];
+		const slashOffset = textBefore.length - match[0].length + (match[1].length); // position of "/"
+		const from = resolvedFrom.start() + slashOffset;
+		const to = resolvedFrom.pos;
+
+		// Get cursor coordinates for menu positioning
+		const coords = editor.view.coordsAtPos(from);
+
+		let x = coords.left;
+		let y = coords.bottom + 4;
+
+		// Keep menu within viewport
+		if (x + 240 > window.innerWidth) x = window.innerWidth - 250;
+		if (y + 300 > window.innerHeight) y = coords.top - 304;
+
+		slashMenu = { x, y, query, from, to };
+		slashSelectedIndex = 0;
+	}
+
+	const SlashCommands = Extension.create({
+		name: 'slashCommands',
+		addProseMirrorPlugins() {
+			return [
+				new Plugin({
+					key: new PluginKey('slashCommands'),
+					props: {
+						handleKeyDown: (_view, event) => {
+							if (!slashMenu) return false;
+							if (slashTablePicker) {
+								if (event.key === 'Escape') {
+									event.preventDefault();
+									closeSlashMenu();
+									return true;
+								}
+								if (event.key === 'ArrowRight' || event.key === 'Tab') {
+									event.preventDefault();
+									slashTableHover = { rows: Math.max(1, slashTableHover.rows), cols: Math.min(10, (slashTableHover.cols || 0) + 1) };
+									return true;
+								}
+								if (event.key === 'ArrowLeft') {
+									event.preventDefault();
+									slashTableHover = { rows: Math.max(1, slashTableHover.rows), cols: Math.max(1, slashTableHover.cols - 1) };
+									return true;
+								}
+								if (event.key === 'ArrowDown') {
+									event.preventDefault();
+									slashTableHover = { rows: Math.min(8, (slashTableHover.rows || 0) + 1), cols: Math.max(1, slashTableHover.cols) };
+									return true;
+								}
+								if (event.key === 'ArrowUp') {
+									event.preventDefault();
+									slashTableHover = { rows: Math.max(1, slashTableHover.rows - 1), cols: Math.max(1, slashTableHover.cols) };
+									return true;
+								}
+								if (event.key === 'Enter' || event.key === ' ') {
+									event.preventDefault();
+									if (slashTableHover.rows > 0 && slashTableHover.cols > 0) {
+										slashInsertTable(slashTableHover.rows, slashTableHover.cols);
+									}
+									return true;
+								}
+								return true;
+							}
+							if (event.key === 'ArrowDown') {
+								event.preventDefault();
+								slashSelectedIndex = (slashSelectedIndex + 1) % Math.max(1, slashFiltered.length);
+								return true;
+							}
+							if (event.key === 'ArrowUp') {
+								event.preventDefault();
+								slashSelectedIndex = (slashSelectedIndex - 1 + slashFiltered.length) % Math.max(1, slashFiltered.length);
+								return true;
+							}
+							if (event.key === 'Enter') {
+								if (slashFiltered.length > 0) {
+									event.preventDefault();
+									executeSlashCommand(slashSelectedIndex);
+									return true;
+								}
+								closeSlashMenu();
+								return false;
+							}
+							if (event.key === 'Escape') {
+								event.preventDefault();
+								closeSlashMenu();
+								return true;
+							}
+							return false;
+						},
+					},
+				}),
+			];
+		},
+	});
+
+	// ── Wiki-links ──
+
+	let wikiLinkMenu = $state<{ x: number; y: number; query: string; from: number } | null>(null);
+	let wikiLinkSelectedIndex = $state(0);
+	let wikiLinkTitlesCache = $state<NoteTitleEntry[]>([]);
+
+	let wikiLinkFiltered = $derived.by(() => {
+		if (!wikiLinkMenu) return wikiLinkTitlesCache;
+		const q = wikiLinkMenu.query.toLowerCase();
+		if (!q) return wikiLinkTitlesCache;
+		return wikiLinkTitlesCache.filter(entry =>
+			entry.title.toLowerCase().includes(q)
+		);
+	});
+
+	async function refreshWikiLinkTitles() {
+		try {
+			wikiLinkTitlesCache = await getAllNoteTitles();
+		} catch (e) {
+			console.error('Failed to load note titles:', e);
+		}
+	}
+
+	function closeWikiLinkMenu() {
+		wikiLinkMenu = null;
+		wikiLinkSelectedIndex = 0;
+	}
+
+	function insertWikiLink(entry: NoteTitleEntry) {
+		if (!editor || !wikiLinkMenu) return;
+		const { from } = wikiLinkMenu;
+		// Delete the [[ trigger and query text
+		const to = editor.state.selection.from;
+		editor.chain().focus().deleteRange({ from, to }).run();
+		// Insert the wiki-link mark
+		tick().then(() => {
+			if (!editor) return;
+			editor.chain().focus()
+				.insertContent({
+					type: 'text',
+					text: entry.title,
+					marks: [{ type: 'wikiLink', attrs: { title: entry.title, path: entry.path } }],
+				})
+				.run();
+		});
+		closeWikiLinkMenu();
+	}
+
+	function executeWikiLinkCommand(index: number) {
+		const items = wikiLinkFiltered;
+		if (index < 0 || index >= items.length) return;
+		insertWikiLink(items[index]);
+	}
+
+	const WikiLink = TiptapMark.create({
+		name: 'wikiLink',
+		inclusive: false,
+		excludes: 'link',
+		addAttributes() {
+			return {
+				title: { default: null },
+				path: { default: null },
+			};
+		},
+		parseHTML() {
+			return [
+				{ tag: 'span[data-wiki-link]' },
+				{ tag: 'a[data-wiki-link]' },
+			];
+		},
+		renderHTML({ HTMLAttributes }: { HTMLAttributes: Record<string, any> }) {
+			return ['span', {
+				'data-wiki-link': '',
+				'data-path': HTMLAttributes.path || '',
+				'data-title': HTMLAttributes.title || '',
+				class: 'wiki-link',
+			}, 0];
+		},
+		addProseMirrorPlugins() {
+			return [
+				new Plugin({
+					key: new PluginKey('wikiLinkClick'),
+					props: {
+						handleDOMEvents: {
+							click: (view, event) => {
+								const target = event.target as HTMLElement;
+								const wikiLinkEl = target.closest?.('span[data-wiki-link]') as HTMLElement | null;
+								if (wikiLinkEl) {
+									event.preventDefault();
+									event.stopPropagation();
+									const path = wikiLinkEl.getAttribute('data-path') || '';
+									const title = wikiLinkEl.getAttribute('data-title') || wikiLinkEl.textContent || '';
+									navigateToWikiLink(path, title);
+									return true;
+								}
+								return false;
+							},
+						},
+					},
+				}),
+			];
+		},
+	});
+
+	const WikiLinkAutocomplete = Extension.create({
+		name: 'wikiLinkAutocomplete',
+		addProseMirrorPlugins() {
+			return [
+				new Plugin({
+					key: new PluginKey('wikiLinkAutocomplete'),
+					props: {
+						handleKeyDown: (_view, event) => {
+							if (!wikiLinkMenu) return false;
+							if (event.key === 'ArrowDown') {
+								event.preventDefault();
+								wikiLinkSelectedIndex = (wikiLinkSelectedIndex + 1) % Math.max(1, wikiLinkFiltered.length);
+								return true;
+							}
+							if (event.key === 'ArrowUp') {
+								event.preventDefault();
+								wikiLinkSelectedIndex = (wikiLinkSelectedIndex - 1 + wikiLinkFiltered.length) % Math.max(1, wikiLinkFiltered.length);
+								return true;
+							}
+							if (event.key === 'Enter' || event.key === 'Tab') {
+								if (wikiLinkFiltered.length > 0) {
+									event.preventDefault();
+									executeWikiLinkCommand(wikiLinkSelectedIndex);
+									return true;
+								}
+								closeWikiLinkMenu();
+								return false;
+							}
+							if (event.key === 'Escape') {
+								event.preventDefault();
+								closeWikiLinkMenu();
+								return true;
+							}
+							return false;
+						},
+						handleTextInput: (view, from, to, text) => {
+							if (!$appConfig?.enable_wiki_links) return false;
+							// Detect ]] closing: auto-resolve the current text as a wiki-link
+							if (text === ']' && wikiLinkMenu) {
+								const state = view.state;
+								const textBefore = state.doc.textBetween(wikiLinkMenu.from, state.selection.from);
+								if (textBefore.endsWith(']')) {
+									// User typed ]] — resolve the query as a link title
+									const query = textBefore.slice(2, -1); // strip the [[ and trailing ]
+									if (query.trim()) {
+										const match = wikiLinkTitlesCache.find(e => e.title.toLowerCase() === query.toLowerCase());
+										if (match) {
+											insertWikiLink(match);
+										} else {
+											// Insert as unresolved wiki-link (no path)
+											const menuFrom = wikiLinkMenu.from;
+											const curTo = state.selection.from;
+											closeWikiLinkMenu();
+											// Delete [[ text + query + the trailing ]
+											editor?.chain().focus().deleteRange({ from: menuFrom, to: curTo }).run();
+											tick().then(() => {
+												editor?.chain().focus().insertContent({
+													type: 'text',
+													text: query,
+													marks: [{ type: 'wikiLink', attrs: { title: query, path: '' } }],
+												}).run();
+											});
+										}
+									} else {
+										closeWikiLinkMenu();
+									}
+									return true;
+								}
+							}
+							return false;
+						},
+					},
+				}),
+			];
+		},
+	});
+
+	function updateWikiLinkMenu() {
+		if (!editor || !$appConfig?.enable_wiki_links) return;
+		const { state } = editor;
+		const { selection } = state;
+		const resolvedFrom = selection.$from;
+		const parentNode = resolvedFrom.parent;
+		if (parentNode.type.name !== 'paragraph' && parentNode.type.name !== 'heading') {
+			closeWikiLinkMenu();
+			return;
+		}
+		const textBefore = parentNode.textContent.slice(0, resolvedFrom.parentOffset);
+		// Match [[ at start of line or after whitespace
+		const match = textBefore.match(/\[\[([^\]]*)$/);
+		if (!match) {
+			closeWikiLinkMenu();
+			return;
+		}
+		const query = match[1];
+		const bracketOffset = textBefore.length - match[0].length;
+		const from = resolvedFrom.start() + bracketOffset;
+		const coords = editor.view.coordsAtPos(from);
+		let x = coords.left;
+		let y = coords.bottom + 4;
+		if (x + 280 > window.innerWidth) x = window.innerWidth - 290;
+		if (y + 300 > window.innerHeight) y = coords.top - 304;
+		wikiLinkMenu = { x, y, query, from };
+		wikiLinkSelectedIndex = 0;
+	}
+
+	async function navigateToWikiLink(path: string, title: string) {
+		if (!path) {
+			// Unresolved link — try to find by title
+			const match = wikiLinkTitlesCache.find(e => e.title.toLowerCase() === title.toLowerCase());
+			if (match) {
+				path = match.path;
+			} else {
+				// Offer to create the note
+				const notebookRel = $activeNotePath
+					? $activeNotePath.substring(($appConfig?.active_vault?.length ?? 0) + 1).split('/').slice(0, -1).join('/')
+					: null;
+				try {
+					const { createNote } = await import('$lib/api');
+					const newNote = await createNote(notebookRel || null, title);
+					// Navigate to the new note
+					const content = await readNote(newNote.path);
+					$activeNote = { ...content, content: content.content };
+					$activeNotePath = newNote.path;
+				} catch (e) {
+					console.error('Failed to create note:', e);
+				}
+				return;
+			}
+		}
+		try {
+			const content = await readNote(path);
+			$activeNote = { ...content, content: content.content };
+			$activeNotePath = path;
+		} catch (e) {
+			console.error('Failed to navigate to wiki-link:', e);
+		}
+	}
+
+	const textColors = [
+		{ name: 'Default', value: '' },
+		{ name: 'Red', value: '#ef4444' },
+		{ name: 'Orange', value: '#f97316' },
+		{ name: 'Amber', value: '#f59e0b' },
+		{ name: 'Green', value: '#22c55e' },
+		{ name: 'Blue', value: '#3b82f6' },
+		{ name: 'Purple', value: '#a855f7' },
+		{ name: 'Pink', value: '#ec4899' },
+	];
+
+	const highlightColors = [
+		{ name: 'Yellow', value: 'rgba(250, 230, 100, 0.25)', swatch: '#f5e050' },
+		{ name: 'Green', value: 'rgba(100, 210, 130, 0.22)', swatch: '#5cc870' },
+		{ name: 'Blue', value: 'rgba(100, 170, 240, 0.22)', swatch: '#6aabf0' },
+		{ name: 'Purple', value: 'rgba(180, 130, 240, 0.22)', swatch: '#a878e8' },
+		{ name: 'Pink', value: 'rgba(240, 140, 180, 0.22)', swatch: '#e88aaa' },
+		{ name: 'Red', value: 'rgba(240, 120, 120, 0.22)', swatch: '#e07070' },
+		{ name: 'Orange', value: 'rgba(240, 170, 90, 0.25)', swatch: '#e8a050' },
+		{ name: 'Cyan', value: 'rgba(80, 210, 230, 0.22)', swatch: '#50cce0' },
+	];
+
+	const cellColors = [
+		{ name: 'None', value: '' },
+		{ name: 'Light Red', value: '#fde8e8' },
+		{ name: 'Light Orange', value: '#fef3e2' },
+		{ name: 'Light Yellow', value: '#fef9e7' },
+		{ name: 'Light Green', value: '#e6f8e0' },
+		{ name: 'Light Blue', value: '#e0f0fe' },
+		{ name: 'Light Purple', value: '#f0e6fe' },
+		{ name: 'Light Pink', value: '#fde8f0' },
+		{ name: 'Light Gray', value: '#f3f4f6' },
+		{ name: 'Dark Red', value: '#7f1d1d' },
+		{ name: 'Dark Amber', value: '#713f12' },
+		{ name: 'Dark Green', value: '#14532d' },
+		{ name: 'Dark Blue', value: '#1e3a5f' },
+		{ name: 'Dark Purple', value: '#4c1d95' },
+		{ name: 'Dark Pink', value: '#831843' },
+		{ name: 'Dark Teal', value: '#064e3b' },
+		{ name: 'Dark Cyan', value: '#0c4a6e' },
+		{ name: 'Slate', value: '#1e293b' },
+		{ name: 'Gray', value: '#374151' },
+	];
+
+	function resolveImageSrc(src: string): string {
+		// Already an absolute URL or data URI
+		if (src.startsWith('http') || src.startsWith('data:') || src.startsWith('asset:') || src.startsWith('blob:')) {
+			return src;
+		}
+		// Decode percent-encoding (%20 → space, etc.) for filesystem resolution
+		let decoded = decodeURIComponent(src);
+		// Fix multiple leading slashes (from broken saves)
+		if (decoded.match(/^\/{2,}/)) {
+			decoded = decoded.replace(/^\/{2,}/, '/');
+		}
+		if (decoded.startsWith('/')) {
+			return convertFileSrc(normalizePath(decoded));
+		}
+		// Paths containing .helixnotes/ are vault-root relative (our own attachments)
+		if (decoded.includes('.helixnotes/')) {
+			const vaultRoot = $appConfig?.active_vault;
+			if (vaultRoot) {
+				// Extract from .helixnotes/ onward in case of prefixed subdir paths
+				const idx = decoded.indexOf('.helixnotes/');
+				return convertFileSrc(`${vaultRoot}/${decoded.substring(idx)}`);
+			}
+		}
+		// Standard markdown: resolve relative paths against the note's directory
+		const notePath = $activeNotePath;
+		if (notePath) {
+			const noteDir = notePath.substring(0, notePath.lastIndexOf('/'));
+			return convertFileSrc(normalizePath(`${noteDir}/${decoded}`));
+		}
+		// Last fallback: vault root
+		const vaultRoot = $appConfig?.active_vault;
+		if (vaultRoot) {
+			return convertFileSrc(normalizePath(`${vaultRoot}/${decoded}`));
+		}
+		return src;
+	}
+
+	const autoSave = debounce(async () => {
+		if (!$activeNote || !$activeNotePath || !$editorDirty) return;
+		try {
+			const body = $sourceMode
+				? restoreTitleH1(sourceContent)
+				: editorToMarkdown();
+			// Safety: never save empty/near-empty body over a note that had real content
+			const trimmed = body.replace(/^#.*\n?/, '').trim();
+			if (!trimmed && $activeNote.content && $activeNote.content.trim().length > 10) {
+				console.warn('Auto-save blocked: refusing to overwrite note with empty content');
+				return;
+			}
+			await saveNote($activeNotePath, $activeNote.meta, body);
+			$editorDirty = false;
+		} catch (e) {
+			console.error('Auto-save failed:', e);
+		}
+	}, 500);
+
+	export async function forceSave() {
+		if (!$activeNote || !$activeNotePath) return;
+		try {
+			const body = $sourceMode ? restoreTitleH1(sourceContent) : editorToMarkdown();
+			const trimmed = body.replace(/^#.*\n?/, '').trim();
+			if (!trimmed && $activeNote.content && $activeNote.content.trim().length > 10) {
+				console.warn('Force-save blocked: refusing to overwrite note with empty content');
+				return;
+			}
+			await saveNote($activeNotePath, $activeNote.meta, body);
+			$editorDirty = false;
+		} catch (e) {
+			console.error('Save failed:', e);
+		}
+	}
+
+	function toggleReadOnly() {
+		readOnly = !readOnly;
+		if (editor) {
+			// Save before entering read-only so nothing is lost
+			if (readOnly && $editorDirty) forceSave();
+			editor.setEditable(!readOnly);
+		}
+	}
+
+	async function toggleHistory() {
+		showHistory = !showHistory;
+		historyPreview = null;
+		historySelected = null;
+		if (showHistory && $activeNote) {
+			historyLoading = true;
+			try {
+				historyVersions = await getNoteVersions($activeNote.meta.id);
+			} catch (e) {
+				console.error('Failed to load versions:', e);
+				historyVersions = [];
+			}
+			historyLoading = false;
+		}
+	}
+
+	async function previewVersion(v: VersionEntry) {
+		if (!$activeNote) return;
+		historySelected = v;
+		try {
+			historyPreview = await getNoteVersionContent($activeNote.meta.id, v.timestamp);
+		} catch (e) {
+			console.error('Failed to load version:', e);
+		}
+	}
+
+	async function restoreVersion() {
+		if (!$activeNote || !$activeNotePath || !historySelected) return;
+		try {
+			const raw = historyPreview ?? await getNoteVersionContent($activeNote.meta.id, historySelected.timestamp);
+			// The raw content includes frontmatter — parse out the body
+			const fmEnd = raw.indexOf('---', 4);
+			const body = fmEnd > 0 ? raw.substring(raw.indexOf('\n', fmEnd) + 1) : raw;
+			if (editor) {
+				editor.commands.setContent(markdownToHtml(body));
+			}
+			$editorDirty = true;
+			autoSave();
+			historyPreview = null;
+			historySelected = null;
+			showHistory = false;
+		} catch (e) {
+			console.error('Failed to restore version:', e);
+		}
+	}
+
+	async function handleCreateVersion() {
+		if (!$activeNote || !$activeNotePath) return;
+		// Save current content first so the snapshot is up to date
+		await forceSave();
+		try {
+			await createVersion($activeNotePath, $activeNote.meta.id);
+			// Refresh the version list
+			historyVersions = await getNoteVersions($activeNote.meta.id);
+		} catch (e) {
+			console.error('Failed to create version:', e);
+		}
+	}
+
+	function formatVersionDate(iso: string): string {
+		try {
+			const d = new Date(iso);
+			const now = new Date();
+			const diffMs = now.getTime() - d.getTime();
+			const diffMins = Math.floor(diffMs / 60000);
+			if (diffMins < 1) return 'Just now';
+			if (diffMins < 60) return `${diffMins}m ago`;
+			const diffHours = Math.floor(diffMins / 60);
+			if (diffHours < 24) return `${diffHours}h ago`;
+			const diffDays = Math.floor(diffHours / 24);
+			if (diffDays < 7) return `${diffDays}d ago`;
+			return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+		} catch {
+			return iso;
+		}
+	}
+
+	function formatVersionSize(bytes: number): string {
+		if (bytes < 1024) return `${bytes} B`;
+		return `${(bytes / 1024).toFixed(1)} KB`;
+	}
+
+	function clearEditorHistory() {
+		if (!editor) return;
+		// Recreate editor state with same doc/schema/plugins but fresh plugin state (clears undo/redo)
+		const { doc, schema, plugins } = editor.state;
+		const newState = EditorState.create({ doc, schema, plugins });
+		editor.view.updateState(newState);
+	}
+
+	export function focusTitle() {
+		tick().then(() => {
+			if (titleInput) {
+				titleInput.focus();
+				titleInput.select();
+			}
+		});
+	}
+
+	export function loadNote(path: string, content: string) {
+		loadedPath = path;
+		lastSourceMode = $sourceMode;
+		isLoadingNote = true;
+		// Apply default view mode when switching notes — but new notes always open in edit mode
+		const isNewNote = $activeNote?.meta.title === 'Untitled' && !content.replace(/^---[\s\S]*?---\s*/, '').trim();
+		const shouldBeReadOnly = isNewNote ? false : ($appConfig?.default_view_mode ?? false);
+		readOnly = shouldBeReadOnly;
+		if (editor) editor.setEditable(!shouldBeReadOnly);
+		if ($sourceMode) {
+			sourceContent = stripTitleH1(content);
+			isLoadingNote = false;
+		} else if (editorElement && editor) {
+			// Editor already exists, just swap content
+			const html = markdownToHtml(content);
+			ignoreNextUpdate = true;
+			editor.commands.setContent(html);
+			// Clear undo/redo history so it doesn't bleed across notes
+			clearEditorHistory();
+			// Clear loading flag after setContent updates have fired
+			tick().then(() => { isLoadingNote = false; });
+		} else {
+			// Editor element not in DOM yet (first note load).
+			// Store content and let the $effect on editorElement handle init.
+			pendingContent = content;
+			isLoadingNote = false;
+		}
+	}
+
+	function stripTitleH1(md: string): string {
+		const title = $activeNote?.meta.title;
+		if (!$appConfig?.hide_title_in_body || !title) {
+			titleWasStripped = false;
+			strippedTitle = '';
+			strippedHeadingPrefix = '';
+			return md;
+		}
+		// Find the first non-empty line
+		const lines = md.split('\n');
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i].trim();
+			if (line === '') continue;
+			// Check if it's a heading (any level) matching the note title
+			// Normalize: lowercase, collapse whitespace, strip common separators (- — _)
+			const normalize = (s: string) => s.trim().toLowerCase().replace(/[\s\-—_]+/g, ' ');
+			const match = line.match(/^(#{1,6})\s+(.+)$/);
+			if (match && normalize(match[2]) === normalize(title)) {
+				titleWasStripped = true;
+				strippedTitle = title.trim();
+				strippedHeadingPrefix = match[1]; // preserve original heading level (e.g. "##")
+				lines.splice(i, 1);
+				// Also remove a trailing blank line after the heading if present
+				if (i < lines.length && lines[i].trim() === '') {
+					lines.splice(i, 1);
+				}
+				return lines.join('\n');
+			}
+			break; // First non-empty line isn't a matching heading, stop
+		}
+		titleWasStripped = false;
+		strippedTitle = '';
+		strippedHeadingPrefix = '';
+		return md;
+	}
+
+	function restoreTitleH1(md: string): string {
+		if (!titleWasStripped || !strippedTitle) return md;
+		return `${strippedHeadingPrefix} ${strippedTitle}\n\n${md}`;
+	}
+
+	function editorToMarkdown(): string {
+		if (!editor) return '';
+		const md = prosemirrorToMarkdown(editor.state.doc);
+		return restoreTitleH1(md);
+	}
+
+	function prosemirrorToMarkdown(doc: any): string {
+		const parts: string[] = [];
+		let prevType = '';
+		doc.forEach((node: any) => {
+			// Skip empty paragraphs right after code blocks (TipTap cursor placeholder)
+			if (node.type.name === 'paragraph' && node.childCount === 0 && prevType === 'codeBlock') {
+				prevType = node.type.name;
+				return;
+			}
+			parts.push(serializeNode(node));
+			prevType = node.type.name;
+		});
+		return parts.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+	}
+
+	function serializeNode(node: any): string {
+		switch (node.type.name) {
+			case 'paragraph': {
+				const align = node.attrs.textAlign;
+				if (align && align !== 'left') {
+					return `<p style="text-align: ${align}">${serializeInline(node)}</p>\n`;
+				}
+				return serializeInline(node) + '\n';
+			}
+			case 'heading': {
+				const align = node.attrs.textAlign;
+				if (align && align !== 'left') {
+					return `<h${node.attrs.level} style="text-align: ${align}">${serializeInline(node)}</h${node.attrs.level}>\n`;
+				}
+				return '#'.repeat(node.attrs.level) + ' ' + serializeInline(node) + '\n';
+			}
+			case 'codeBlock': {
+				const lang = node.attrs.language || '';
+				const code = node.textContent.replace(/\n+$/, '');
+				return '```' + lang + '\n' + code + '\n```\n';
+			}
+			case 'blockquote': {
+				const inner: string[] = [];
+				node.forEach((child: any) => inner.push(serializeNode(child)));
+				return inner.join('').split('\n').filter((l: string) => l !== '').map((l: string) => '> ' + l).join('\n') + '\n';
+			}
+			case 'bulletList': {
+				const items: string[] = [];
+				node.forEach((child: any) => items.push('- ' + serializeListItem(child)));
+				return items.join('') + '\n';
+			}
+			case 'orderedList': {
+				const items: string[] = [];
+				let i = node.attrs.start || 1;
+				node.forEach((child: any) => { items.push(`${i++}. ` + serializeListItem(child)); });
+				return items.join('') + '\n';
+			}
+			case 'taskList': {
+				const items: string[] = [];
+				node.forEach((child: any) => {
+					const checked = child.attrs.checked ? 'x' : ' ';
+					items.push(`- [${checked}] ` + serializeListItem(child));
+				});
+				return items.join('') + '\n';
+			}
+			case 'listItem':
+			case 'taskItem':
+				return serializeListItem(node);
+			case 'horizontalRule':
+				return '---\n';
+			case 'table': {
+				// Preserve tables as raw HTML
+				const tempDiv = document.createElement('div');
+				const frag = DOMSerializer.fromSchema(editor!.schema).serializeNode(node);
+				tempDiv.appendChild(frag);
+				return tempDiv.innerHTML + '\n';
+			}
+			case 'pdfEmbed': {
+				const src = node.attrs.src || '';
+				const name = node.attrs.name || '';
+				return `<div data-pdf-src="${src}" data-pdf-name="${name}" class="pdf-embed"></div>\n`;
+			}
+			case 'details': {
+				// Preserve details as raw HTML
+				const detDiv = document.createElement('div');
+				const detFrag = DOMSerializer.fromSchema(editor!.schema).serializeNode(node);
+				detDiv.appendChild(detFrag);
+				return detDiv.innerHTML + '\n';
+			}
+			case 'image': {
+				const src = stripAssetSrc(node.attrs.src || '');
+				const alt = node.attrs.alt || '';
+				const size = node.attrs['data-size'] || node.attrs.size || 'full';
+				const sizeSuffix = size && size !== 'full' ? `|size=${size}` : '';
+				return `![${alt}${sizeSuffix}](${src})`;
+			}
+			default:
+				return node.textContent || '';
+		}
+	}
+
+	function serializeListItem(node: any): string {
+		const parts: string[] = [];
+		node.forEach((child: any) => {
+			if (child.type.name === 'paragraph') {
+				parts.push(serializeInline(child));
+			} else {
+				parts.push(serializeNode(child));
+			}
+		});
+		return parts.join('\n') + '\n';
+	}
+
+	function serializeInline(node: any): string {
+		if (node.childCount === 0) return '';
+		const parts: string[] = [];
+		node.forEach((child: any) => {
+			if (child.isText) {
+				let text = child.text || '';
+				// Apply marks
+				for (const mark of child.marks) {
+					switch (mark.type.name) {
+						case 'bold': text = `**${text}**`; break;
+						case 'italic': text = `*${text}*`; break;
+						case 'strike': text = `~~${text}~~`; break;
+						case 'code': text = `\`${text}\``; break;
+						case 'underline': text = `<u>${text}</u>`; break;
+						case 'subscript': text = `~${text}~`; break;
+						case 'superscript': text = `^${text}^`; break;
+						case 'highlight': text = `==${text}==`; break;
+						case 'link': text = `[${text}](${mark.attrs.href})`; break;
+						case 'wikiLink': text = `[[${mark.attrs.title || text}]]`; break;
+					}
+				}
+				parts.push(text);
+			} else if (child.type.name === 'image') {
+				const src = stripAssetSrc(child.attrs.src || '');
+				const alt = child.attrs.alt || '';
+				const size = child.attrs['data-size'] || child.attrs.size || 'full';
+				const sizeSuffix = size && size !== 'full' ? `|size=${size}` : '';
+				parts.push(`![${alt}${sizeSuffix}](${src})`);
+			} else if (child.type.name === 'hardBreak') {
+				parts.push('\n');
+			}
+		});
+		return parts.join('');
+	}
+
+	function stripAssetSrc(src: string): string {
+		// blob: URLs are not persistable — they were temporary browser references
+		if (src.startsWith('blob:')) return '';
+		// Convert asset:// URLs back to relative paths for saving
+		if (!src.startsWith('asset:') && !src.startsWith('http://asset.localhost')) return src;
+		let absPath = '';
+		try {
+			const url = new URL(src);
+			absPath = decodeURIComponent(url.pathname);
+		} catch {
+			return src;
+		}
+		// Clean up any leading double/triple slashes (URL parsing artifact)
+		absPath = absPath.replace(/^\/{2,}/, '/');
+		// Make relative to note directory (matches how resolveImageSrc works)
+		const notePath = $activeNotePath;
+		if (notePath) {
+			const noteDir = notePath.substring(0, notePath.lastIndexOf('/'));
+			if (absPath.startsWith(noteDir + '/')) {
+				return absPath.substring(noteDir.length + 1);
+			}
+		}
+		// Fallback: make relative to vault root
+		const vaultRoot = $appConfig?.active_vault;
+		if (vaultRoot && absPath.startsWith(vaultRoot + '/')) {
+			return absPath.substring(vaultRoot.length + 1);
+		}
+		return absPath;
+	}
+
+	function htmlToMarkdown(html: string): string {
+		let md = html;
+		// Code blocks MUST be converted before inline code to avoid corruption
+		md = md.replace(/<pre><code[^>]*class="language-(\w+)"[^>]*>([\s\S]*?)<\/code><\/pre>/gi, (_, lang, code) => {
+			const stripped = code.replace(/<[^>]+>/g, '');
+			const decoded = stripped.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+			return '```' + lang + '\n' + decoded + '\n```\n';
+		});
+		md = md.replace(/<pre><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, (_, code) => {
+			const stripped = code.replace(/<[^>]+>/g, '');
+			const decoded = stripped.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+			return '```\n' + decoded + '\n```\n';
+		});
+		md = md.replace(/<h1[^>]*>(.*?)<\/h1>/gi, '# $1\n');
+		md = md.replace(/<h2[^>]*>(.*?)<\/h2>/gi, '## $1\n');
+		md = md.replace(/<h3[^>]*>(.*?)<\/h3>/gi, '### $1\n');
+		md = md.replace(/<h4[^>]*>(.*?)<\/h4>/gi, '#### $1\n');
+		md = md.replace(/<h5[^>]*>(.*?)<\/h5>/gi, '##### $1\n');
+		md = md.replace(/<h6[^>]*>(.*?)<\/h6>/gi, '###### $1\n');
+		md = md.replace(/<strong>(.*?)<\/strong>/gi, '**$1**');
+		md = md.replace(/<b>(.*?)<\/b>/gi, '**$1**');
+		md = md.replace(/<em>(.*?)<\/em>/gi, '*$1*');
+		md = md.replace(/<i>(.*?)<\/i>/gi, '*$1*');
+		md = md.replace(/<s>(.*?)<\/s>/gi, '~~$1~~');
+		md = md.replace(/<del>(.*?)<\/del>/gi, '~~$1~~');
+		md = md.replace(/<u>(.*?)<\/u>/gi, '<u>$1</u>');
+		md = md.replace(/<sub>(.*?)<\/sub>/gi, '~$1~');
+		md = md.replace(/<sup>(.*?)<\/sup>/gi, '^$1^');
+		md = md.replace(/<code>(.*?)<\/code>/gi, '`$1`');
+		md = md.replace(/<mark>(.*?)<\/mark>/gi, '==$1==');
+		md = md.replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, (_, content) => {
+			return content
+				.replace(/<p[^>]*>(.*?)<\/p>/gi, '> $1\n')
+				.replace(/<br\s*\/?>/gi, '\n> ');
+		});
+		md = md.replace(/<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/gi, '[$2]($1)');
+		md = md.replace(/<img[^>]*>/gi, (match) => {
+			const srcMatch = match.match(/src="([^"]*)"/);
+			const altMatch = match.match(/alt="([^"]*)"/);
+			const sizeMatch = match.match(/data-size="([^"]*)"/);
+			const src = srcMatch ? stripAssetSrc(srcMatch[1]) : '';
+			const alt = altMatch ? altMatch[1] : '';
+			const size = sizeMatch ? sizeMatch[1] : 'full';
+			const sizeSuffix = size && size !== 'full' ? `|size=${size}` : '';
+			return `![${alt}${sizeSuffix}](${src})`;
+		});
+		// Preserve PDF embeds as raw HTML
+		const pdfs: string[] = [];
+		md = md.replace(/<div[^>]*data-pdf-src="([^"]*)"[^>]*>[\s\S]*?<\/div>/gi, (match, src) => {
+			// Store with the relative path — we strip convertFileSrc URLs on save
+			const nameMatch = match.match(/data-pdf-name="([^"]*)"/);
+			const name = nameMatch ? nameMatch[1] : src.split('/').pop() || 'file.pdf';
+			pdfs.push(`<div data-pdf-src="${src}" data-pdf-name="${name}" class="pdf-embed"></div>`);
+			return `\n%%PDF_${pdfs.length - 1}%%\n`;
+		});
+		// Preserve details/accordion blocks as raw HTML
+		const detailsBlocks: string[] = [];
+		md = md.replace(/<details[\s\S]*?<\/details>/gi, (match) => {
+			detailsBlocks.push(match);
+			return `\n%%DETAILS_${detailsBlocks.length - 1}%%\n`;
+		});
+		// Preserve tables as raw HTML (markdown tables are too limited)
+		const tables: string[] = [];
+		md = md.replace(/<table[\s\S]*?<\/table>/gi, (match) => {
+			tables.push(match);
+			return `\n%%TABLE_${tables.length - 1}%%\n`;
+		});
+
+		md = md.replace(/<hr\s*\/?>/gi, '---\n');
+		md = md.replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (_, content) => {
+			return content.replace(/<li[^>]*><p[^>]*>(.*?)<\/p><\/li>/gi, '- $1\n')
+				.replace(/<li[^>]*>(.*?)<\/li>/gi, '- $1\n');
+		});
+		md = md.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (_, content) => {
+			let i = 0;
+			return content.replace(/<li[^>]*><p[^>]*>(.*?)<\/p><\/li>/gi, () => `${++i}. $1\n`)
+				.replace(/<li[^>]*>(.*?)<\/li>/gi, () => `${++i}. $1\n`);
+		});
+		md = md.replace(/<li[^>]*data-checked="true"[^>]*>(.*?)<\/li>/gi, '- [x] $1\n');
+		md = md.replace(/<li[^>]*data-checked="false"[^>]*>(.*?)<\/li>/gi, '- [ ] $1\n');
+		md = md.replace(/<p[^>]*>(.*?)<\/p>/gi, '$1\n\n');
+		md = md.replace(/<br\s*\/?>/gi, '\n');
+		md = md.replace(/<[^>]+>/g, '');
+		md = md.replace(/&amp;/g, '&');
+		md = md.replace(/&lt;/g, '<');
+		md = md.replace(/&gt;/g, '>');
+		md = md.replace(/&quot;/g, '"');
+		md = md.replace(/&#39;/g, "'");
+		md = md.replace(/\n{3,}/g, '\n\n');
+		// Restore table HTML
+		tables.forEach((table, i) => {
+			md = md.replace(`%%TABLE_${i}%%`, '\n' + table + '\n');
+		});
+		// Restore PDF embeds
+		pdfs.forEach((pdf, i) => {
+			md = md.replace(`%%PDF_${i}%%`, '\n' + pdf + '\n');
+		});
+		// Restore details/accordion blocks
+		detailsBlocks.forEach((block, i) => {
+			md = md.replace(`%%DETAILS_${i}%%`, '\n' + block + '\n');
+		});
+		return md.trim() + '\n';
+	}
+
+	function markdownToHtml(md: string): string {
+		let src = stripTitleH1(md);
+
+		// Pre-process: convert [[Note Title]] wiki-links to HTML anchors
+		if ($appConfig?.enable_wiki_links) {
+			src = src.replace(/\[\[([^\]]+)\]\]/g, (_, title) => {
+				const trimmed = title.trim();
+				// Try to resolve the title to a path from cache
+				const match = wikiLinkTitlesCache.find(e => e.title.toLowerCase() === trimmed.toLowerCase());
+				const path = match ? match.path : '';
+				return `<span data-wiki-link data-path="${escapeHtml(path)}" data-title="${escapeHtml(trimmed)}" class="wiki-link">${escapeHtml(trimmed)}</span>`;
+			});
+		}
+
+		// Pre-process: fix image paths with multiple leading slashes (from broken saves)
+		src = src.replace(/!\[([^\]]*)\]\((\/{2,})(home\/)/g, '![$1](/home/');
+
+		// Pre-process: percent-encode spaces in image URLs so markdown-it parses them correctly
+		src = src.replace(/!\[([^\]]*)\]\(([^)]*\s[^)]*)\)/g, (match, alt, url) => {
+			return `![${alt}](${url.replace(/ /g, '%20')})`;
+		});
+
+		// Pre-process: transform PDF embed divs into iframes before markdown-it (it passes HTML through)
+		src = src.replace(/<div[^>]*data-pdf-src="([^"]*)"[^>]*data-pdf-name="([^"]*)"[^>]*>[^<]*<\/div>/gi, (_, pdfSrc, name) => {
+			const vaultRoot = $appConfig?.active_vault ?? '';
+			const pdfHeight = $appConfig?.pdf_height ?? 600;
+			const absPath = normalizePath(`${vaultRoot}/${decodeURIComponent(pdfSrc)}`);
+			const displaySrc = convertFileSrc(absPath);
+			return `<div data-pdf-src="${pdfSrc}" data-pdf-name="${name}" class="pdf-embed"><iframe src="${displaySrc}" width="100%" height="${pdfHeight}px"></iframe><p class="pdf-label">${name}</p></div>`;
+		});
+
+		// Pre-process: convert task list syntax before markdown-it (it doesn't know TipTap's format)
+		src = src.replace(/^- \[x\]\s+(.+)$/gm, '- <tiptask checked="true">$1</tiptask>');
+		src = src.replace(/^- \[ \]\s+(.+)$/gm, '- <tiptask checked="false">$1</tiptask>');
+
+		// Run markdown-it (single-pass parser — handles headings, bold, italic, strike, code, blockquote, lists, links, images, hr, tables, raw HTML)
+		let html = mdit.render(src);
+
+		// Post-process: strip trailing newlines inside code blocks (markdown-it adds them, TipTap shows them as blank lines)
+		html = html.replace(/<code([^>]*)>\n?/g, '<code$1>');
+		html = html.replace(/\n<\/code>/g, '</code>');
+
+		// Post-process: convert task list items to TipTap format
+		html = html.replace(/<li><tiptask checked="(true|false)">([\s\S]*?)<\/tiptask><\/li>/gi, (_, checked, content) => {
+			return `<li data-type="taskItem" data-checked="${checked}">${content}</li>`;
+		});
+		html = html.replace(/<ul>\s*(<li data-type="taskItem")/gi, '<ul data-type="taskList">$1');
+
+		// Post-process: resolve image src paths and parse size attribute
+		html = html.replace(/<img\s+src="([^"]*)"(?:\s+alt="([^"]*)")?[^>]*\/?>/gi, (_, imgSrc, altRaw) => {
+			let alt = altRaw || '';
+			let size = 'full';
+			const sizeMatch = alt.match(/^(.*?)\|size=(small|medium|full)$/);
+			if (sizeMatch) {
+				alt = sizeMatch[1];
+				size = sizeMatch[2];
+			}
+			return `<img src="${resolveImageSrc(imgSrc)}" alt="${alt}" data-size="${size}">`;
+		});
+
+		return html;
+	}
+
+	function escapeHtml(str: string): string {
+		return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+	}
+
+	// When editorElement appears in DOM (first note selected), initialize TipTap
+	$effect(() => {
+		if (editorElement && !editor && pendingContent !== null) {
+			createEditor(pendingContent);
+			pendingContent = null;
+		}
+	});
+
+	// React to activeNotePath changes from external sources (e.g. search panel)
+	$effect(() => {
+		const path = $activeNotePath;
+		const note = $activeNote;
+		if (!path) {
+			// Note was deselected (e.g. deleted) — destroy editor so it reinits on next note
+			destroyEditor();
+			loadedPath = '';
+			return;
+		}
+		if (note && path !== loadedPath) {
+			loadNote(path, note.content);
+		}
+	});
+
+	function destroyEditor() {
+		if (editor) {
+			editor.destroy();
+			editor = null;
+		}
+		editorReady = false;
+		closeSlashMenu();
+	}
+
+	function createEditor(content: string) {
+		if (!editorElement) return;
+		destroyEditor();
+
+		const html = markdownToHtml(content);
+
+		editor = new Editor({
+			element: editorElement,
+			extensions: [
+				StarterKit.configure({ codeBlock: false }),
+				Placeholder.configure({
+					includeChildren: true,
+					placeholder: ({ node }) => {
+						if (node.type.name === 'detailsSummary') return 'Section title...';
+						if (node.type.name === 'detailsContent') return 'Content...';
+						return 'Start writing...';
+					},
+				}),
+				TaskList,
+				TaskItem.configure({ nested: true }),
+				Table.configure({ resizable: true }),
+				TableRow,
+				CustomTableCell,
+				CustomTableHeader,
+				Link.configure({ openOnClick: false, HTMLAttributes: { class: 'editor-link' }, isAllowedUri: (url, ctx) => ctx.defaultValidate(url) || !url.startsWith('javascript:') }),
+				CustomImage.configure({ HTMLAttributes: { class: 'editor-image' } }),
+				Highlight.configure({ multicolor: true }),
+				Typography,
+				Underline,
+				Subscript,
+				Superscript,
+				TextStyle,
+				Color,
+				CodeBlockLowlight.configure({ lowlight, enableTabIndentation: true, defaultLanguage: 'text' }),
+				CodeBlockLanguageSelect,
+				PdfEmbed,
+				Details.configure({ persist: true, HTMLAttributes: { class: 'editor-details' } }),
+				DetailsSummary,
+				DetailsContent,
+				TextAlign.configure({ types: ['heading', 'paragraph'] }),
+				SlashCommands,
+				...($appConfig?.enable_wiki_links ? [WikiLink, WikiLinkAutocomplete] : []),
+			],
+			content: html,
+			editorProps: {
+				attributes: { class: 'editor-content' },
+				handleDrop: (_view, event) => handleFileDrop(event),
+				handlePaste: (_view, event) => handleFilePaste(event),
+			},
+			onTransaction: () => {
+				editorState++;
+				updateSlashMenu();
+				updateWikiLinkMenu();
+			},
+			onUpdate: () => {
+				if (ignoreNextUpdate || isLoadingNote) {
+					ignoreNextUpdate = false;
+					return;
+				}
+				$editorDirty = true;
+				autoSave();
+				// Fix any blob: URLs from pasted web images
+				fixBlobImages();
+			},
+		});
+		editorReady = true;
+		// Pre-load note titles for wiki-link autocomplete
+		if ($appConfig?.enable_wiki_links) {
+			refreshWikiLinkTitles();
+		}
+	}
+
+	function addLinkFromToolbar() {
+		if (!editor) return;
+		const previousUrl = editor.getAttributes('link').href || '';
+		linkModalUrl = previousUrl;
+		linkModal = true;
+		tick().then(() => linkModalInput?.focus());
+	}
+
+	function linkModalConfirm() {
+		if (!editor) return;
+		const url = linkModalUrl.trim();
+		if (url === '') {
+			editor.chain().focus().extendMarkRange('link').unsetLink().run();
+		} else {
+			editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+		}
+		linkModal = false;
+		linkModalUrl = '';
+	}
+
+	function linkModalCancel() {
+		linkModal = false;
+		linkModalUrl = '';
+		editor?.chain().focus().run();
+	}
+
+	function insertTable(rows: number, cols: number) {
+		if (!editor) return;
+		editor.chain().focus().insertTable({ rows, cols, withHeaderRow: true }).run();
+		tablePickerOpen = false;
+		tablePickerHover = { rows: 0, cols: 0 };
+	}
+
+	function setTextColor(color: string) {
+		if (!editor) return;
+		if (color === '') {
+			editor.chain().focus().unsetColor().run();
+		} else {
+			editor.chain().focus().setColor(color).run();
+		}
+		colorDropdown = false;
+	}
+
+	function setHighlightColor(color: string) {
+		if (!editor) return;
+		if (color === '') {
+			editor.chain().focus().unsetHighlight().run();
+		} else {
+			editor.chain().focus().setHighlight({ color }).run();
+		}
+		highlightDropdown = false;
+	}
+
+	function handleEditorClick(event: MouseEvent) {
+		imageToolbar = null;
+		const target = event.target as HTMLElement;
+
+		// Wiki-link click — navigate to linked note
+		const wikiLinkEl = target.closest('span[data-wiki-link]') as HTMLElement | null;
+		if (wikiLinkEl) {
+			event.preventDefault();
+			event.stopPropagation();
+			const path = wikiLinkEl.getAttribute('data-path') || '';
+			const title = wikiLinkEl.getAttribute('data-title') || wikiLinkEl.textContent || '';
+			navigateToWikiLink(path, title);
+			return;
+		}
+
+		// Image click — show size toolbar
+		if (target.tagName === 'IMG' && editor) {
+			event.preventDefault();
+			event.stopPropagation();
+			const pos = editor.view.posAtDOM(target, 0);
+			const rect = target.getBoundingClientRect();
+			const node = editor.state.doc.nodeAt(pos);
+			const currentSize = node?.attrs.size || 'full';
+			imageToolbar = { pos, x: rect.left + rect.width / 2, y: rect.top - 8, size: currentSize };
+			// Move cursor after the image to clear ProseMirror's node selection highlight
+			const afterPos = pos + (node?.nodeSize || 1);
+			editor.chain().setTextSelection(afterPos).run();
+			return;
+		}
+
+	}
+
+	function setImageSize(size: string) {
+		if (!editor || !imageToolbar) return;
+		const { pos } = imageToolbar;
+		const tr = editor.state.tr.setNodeAttribute(pos, 'size', size);
+		editor.view.dispatch(tr);
+		imageToolbar = { ...imageToolbar, size };
+		$editorDirty = true;
+		autoSave();
+	}
+
+	function handleEditorContextMenu(event: MouseEvent) {
+		const target = event.target as HTMLElement;
+		const anchor = target.closest('a');
+		if (anchor) {
+			const href = anchor.getAttribute('href');
+			if (href) {
+				event.preventDefault();
+				event.stopPropagation();
+				linkContextMenu = { x: event.clientX, y: event.clientY, href, anchor };
+				return;
+			}
+		}
+		// Check if inside a table cell
+		const cell = target.closest('td, th');
+		if (cell) {
+			event.preventDefault();
+			event.stopPropagation();
+			let x = event.clientX;
+			let y = event.clientY;
+			const menuWidth = 220;
+			const menuHeight = 520;
+			if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 8;
+			if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 8;
+			if (x < 4) x = 4;
+			if (y < 4) y = 4;
+			tableContextMenu = { x, y };
+			return;
+		}
+		// Show text context menu for any right-click in editor
+		event.preventDefault();
+		event.stopPropagation();
+		// Position menu, adjusting if it would overflow the viewport
+		let x = event.clientX;
+		let y = event.clientY;
+		const menuWidth = 220;
+		const menuHeight = 640;
+		if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 8;
+		if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 8;
+		if (x < 4) x = 4;
+		if (y < 4) y = 4;
+		textContextMenu = { x, y };
+	}
+
+	function closeTextContextMenu() {
+		textContextMenu = null;
+		ctxHeadingSubmenu = false;
+	}
+
+	function closeTableContextMenu() {
+		tableContextMenu = null;
+	}
+
+	function tblAddRowBefore() { editor?.chain().focus().addRowBefore().run(); closeTableContextMenu(); }
+	function tblAddRowAfter() { editor?.chain().focus().addRowAfter().run(); closeTableContextMenu(); }
+	function tblDeleteRow() { editor?.chain().focus().deleteRow().run(); closeTableContextMenu(); }
+	function tblAddColBefore() { editor?.chain().focus().addColumnBefore().run(); closeTableContextMenu(); }
+	function tblAddColAfter() { editor?.chain().focus().addColumnAfter().run(); closeTableContextMenu(); }
+	function tblDeleteCol() { editor?.chain().focus().deleteColumn().run(); closeTableContextMenu(); }
+	function tblMergeCells() { editor?.chain().focus().mergeCells().run(); closeTableContextMenu(); }
+	function tblSplitCell() { editor?.chain().focus().splitCell().run(); closeTableContextMenu(); }
+	function tblToggleHeaderRow() { editor?.chain().focus().toggleHeaderRow().run(); closeTableContextMenu(); }
+	function tblToggleHeaderCol() { editor?.chain().focus().toggleHeaderColumn().run(); closeTableContextMenu(); }
+	function tblDeleteTable() { editor?.chain().focus().deleteTable().run(); closeTableContextMenu(); }
+	function tblSetCellColor(color: string) {
+		if (!editor) return;
+		if (color === '') {
+			editor.chain().focus().setCellAttribute('backgroundColor', null).run();
+		} else {
+			editor.chain().focus().setCellAttribute('backgroundColor', color).run();
+		}
+		closeTableContextMenu();
+	}
+
+	async function ctxCut() {
+		if (!editor) return;
+		const { from, to } = editor.state.selection;
+		if (from === to) { closeTextContextMenu(); return; }
+		const text = editor.state.doc.textBetween(from, to, '\n');
+		await navigator.clipboard.writeText(text);
+		editor.chain().focus().deleteSelection().run();
+		closeTextContextMenu();
+	}
+
+	async function ctxCopy() {
+		if (!editor) return;
+		const { from, to } = editor.state.selection;
+		if (from === to) { closeTextContextMenu(); return; }
+		const text = editor.state.doc.textBetween(from, to, '\n');
+		await navigator.clipboard.writeText(text);
+		closeTextContextMenu();
+	}
+
+	async function ctxPaste() {
+		if (!editor) return;
+		try {
+			const text = await navigator.clipboard.readText();
+			if (text) editor.chain().focus().insertContent(text).run();
+		} catch (e) {
+			console.error('Paste failed:', e);
+		}
+		closeTextContextMenu();
+	}
+
+	function ctxSelectAll() {
+		if (!editor) return;
+		editor.chain().focus().selectAll().run();
+		closeTextContextMenu();
+	}
+
+	let ctxHeadingSubmenu = $state(false);
+
+	function ctxSetHeading(level: number) {
+		editor?.chain().focus().toggleHeading({ level: level as 1 | 2 | 3 | 4 }).run();
+		closeTextContextMenu();
+	}
+
+	function ctxSetParagraph() {
+		editor?.chain().focus().setParagraph().run();
+		closeTextContextMenu();
+	}
+
+	function ctxBold() {
+		editor?.chain().focus().toggleBold().run();
+		closeTextContextMenu();
+	}
+
+	function ctxItalic() {
+		editor?.chain().focus().toggleItalic().run();
+		closeTextContextMenu();
+	}
+
+	function ctxUnderline() {
+		editor?.chain().focus().toggleUnderline().run();
+		closeTextContextMenu();
+	}
+
+	function ctxStrike() {
+		editor?.chain().focus().toggleStrike().run();
+		closeTextContextMenu();
+	}
+
+	function ctxLink() {
+		closeTextContextMenu();
+		addLinkFromToolbar();
+	}
+
+	function ctxHighlight() {
+		editor?.chain().focus().toggleHighlight({ color: highlightColors[0].value }).run();
+		closeTextContextMenu();
+	}
+
+	function ctxCode() {
+		editor?.chain().focus().toggleCode().run();
+		closeTextContextMenu();
+	}
+
+	function ctxCodeBlock() {
+		editor?.chain().focus().toggleCodeBlock().run();
+		closeTextContextMenu();
+	}
+
+	function ctxBlockquote() {
+		editor?.chain().focus().toggleBlockquote().run();
+		closeTextContextMenu();
+	}
+
+	function ctxDetails() {
+		editor?.chain().focus().setDetails().run();
+		closeTextContextMenu();
+	}
+
+	function ctxBulletList() {
+		editor?.chain().focus().toggleBulletList().run();
+		closeTextContextMenu();
+	}
+
+	function ctxOrderedList() {
+		editor?.chain().focus().toggleOrderedList().run();
+		closeTextContextMenu();
+	}
+
+	function ctxTaskList() {
+		editor?.chain().focus().toggleTaskList().run();
+		closeTextContextMenu();
+	}
+
+	// ── AI Actions ──
+
+	function openAiMenu() {
+		if (!editor) return;
+		closeTextContextMenu();
+		editor.commands.focus();
+
+		const { from, to } = editor.state.selection;
+		const hasSelection = from !== to;
+
+		if (hasSelection) {
+			const selectedText = editor.state.doc.textBetween(from, to, '\n');
+			if (!selectedText.trim()) return;
+			aiSelectionFrom = from;
+			aiSelectionTo = to;
+			aiSelectedText = selectedText;
+			aiWholeNote = false;
+		} else {
+			// No selection — use the full note content
+			const fullMarkdown = editorToMarkdown();
+			if (!fullMarkdown.trim()) {
+				// Empty note — allow AI to generate content from a prompt
+				aiEmptyNote = true;
+				aiWholeNote = true;
+				aiSelectedText = '';
+				aiSelectionFrom = 0;
+				aiSelectionTo = 0;
+			} else {
+				aiEmptyNote = false;
+				aiSelectionFrom = 0;
+				aiSelectionTo = editor.state.doc.content.size;
+				aiOriginalMarkdown = fullMarkdown;
+
+				// Replace images, PDF embeds, and HTML tags with placeholders so AI doesn't mangle them
+				const placeholders = new Map<string, string>();
+				let idx = 0;
+				let textForAi = fullMarkdown;
+				// Images: ![alt](src)
+				textForAi = textForAi.replace(/!\[[^\]]*\]\([^)]*\)/g, (match) => {
+					const key = `__MEDIA_${idx++}__`;
+					placeholders.set(key, match);
+					return key;
+				});
+				// PDF embeds
+				textForAi = textForAi.replace(/<div[^>]*class="pdf-embed"[^>]*>[\s\S]*?<\/div>/gi, (match) => {
+					const key = `__MEDIA_${idx++}__`;
+					placeholders.set(key, match);
+					return key;
+				});
+				// Inline HTML img tags
+				textForAi = textForAi.replace(/<img[^>]*\/?>/gi, (match) => {
+					const key = `__MEDIA_${idx++}__`;
+					placeholders.set(key, match);
+					return key;
+				});
+				aiMediaPlaceholders = placeholders;
+				aiSelectedText = textForAi.trim();
+				if (!aiSelectedText) return;
+				aiWholeNote = true;
+			}
+		}
+
+		aiResult = null;
+		aiError = null;
+		aiLoading = false;
+		aiShowCustom = false;
+		aiTranslateMenu = false;
+		aiCustomPrompt = '';
+
+		if (hasSelection) {
+			const coords = editor.view.coordsAtPos(from);
+			let x = coords.left;
+			let y = coords.top - 8;
+			const menuWidth = 220;
+			const menuHeight = 400;
+			if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 8;
+			if (y - menuHeight < 0) y = coords.bottom + 8;
+			else y = y - menuHeight;
+			if (y < 4) y = 4;
+			aiMenu = { x, y };
+		} else {
+			// Center the menu in the editor area
+			const editorRect = editorElement?.getBoundingClientRect();
+			const menuWidth = 220;
+			const menuHeight = 400;
+			let x = editorRect ? editorRect.left + (editorRect.width - menuWidth) / 2 : window.innerWidth / 2 - menuWidth / 2;
+			let y = editorRect ? editorRect.top + 60 : 100;
+			if (x < 4) x = 4;
+			if (y < 4) y = 4;
+			aiMenu = { x, y };
+		}
+	}
+
+	function closeAiMenu() {
+		aiMenu = null;
+		aiLoading = false;
+		aiResult = null;
+		aiError = null;
+		aiShowCustom = false;
+		aiTranslateMenu = false;
+		aiWholeNote = false;
+		aiEmptyNote = false;
+		aiOriginalMarkdown = '';
+		aiMediaPlaceholders = new Map();
+	}
+
+	async function runAiAction(action: string, customPrompt?: string) {
+		if (!editor) return;
+		if (!aiEmptyNote && !aiSelectedText.trim()) return;
+		// For empty notes, force action to 'custom' with a generate instruction
+		if (aiEmptyNote) {
+			action = 'custom';
+			customPrompt = `Generate a note based on this prompt. Start your response with a title on the first line (no # prefix), then a blank line, then the content in markdown. Prompt: ${customPrompt || aiCustomPrompt}`;
+			aiSelectedText = '(empty note)';
+		}
+		aiLoading = true;
+		aiResult = '';
+		aiError = null;
+		aiShowCustom = false;
+		aiTranslateMenu = false;
+
+		const requestId = crypto.randomUUID();
+		const unlisten = await listen<AiStreamEvent>('ai-stream', (event) => {
+			const data = event.payload;
+			if (data.event_type === 'text' && data.text) {
+				aiResult = (aiResult ?? '') + data.text;
+			} else if (data.event_type === 'done') {
+				aiLoading = false;
+				unlisten();
+			} else if (data.event_type === 'error') {
+				aiError = data.error ?? 'Unknown error';
+				aiLoading = false;
+				unlisten();
+			}
+		});
+
+		try {
+			await aiAsk(action, aiSelectedText, customPrompt ?? null, requestId);
+		} catch (e) {
+			aiError = String(e);
+			aiLoading = false;
+			unlisten();
+		}
+	}
+
+	function aiApplyResult() {
+		if (!editor || !aiResult) return;
+		if (aiEmptyNote) {
+			// Parse title from first line, rest is content
+			const lines = aiResult.split('\n');
+			let title = lines[0]?.replace(/^#+\s*/, '').trim() || 'Untitled';
+			const body = lines.slice(1).join('\n').replace(/^\n+/, '');
+			if ($activeNote) {
+				$activeNote.meta.title = title;
+			}
+			editor.commands.setContent(markdownToHtml(body));
+		} else if (aiWholeNote) {
+			// Restore media placeholders back to original markdown
+			let finalMarkdown = aiResult;
+			for (const [key, original] of aiMediaPlaceholders) {
+				finalMarkdown = finalMarkdown.replace(key, original);
+			}
+			// Replace entire document — convert markdown back to HTML for TipTap
+			editor.commands.setContent(markdownToHtml(finalMarkdown));
+		} else {
+			// Replace the selected range with the AI result (convert markdown → HTML so TipTap renders it properly)
+			const html = markdownToHtml(aiResult);
+			editor.chain().focus()
+				.setTextSelection({ from: aiSelectionFrom, to: aiSelectionTo })
+				.deleteSelection()
+				.insertContent(html)
+				.run();
+		}
+		$editorDirty = true;
+		autoSave();
+		closeAiMenu();
+	}
+
+	function aiDiscard() {
+		closeAiMenu();
+		editor?.commands.focus();
+	}
+
+	function closeLinkContextMenu() {
+		linkContextMenu = null;
+	}
+
+	function linkMenuOpen() {
+		if (!linkContextMenu) return;
+		const href = linkContextMenu.href;
+		closeLinkContextMenu();
+		if (href.startsWith('http://') || href.startsWith('https://') || href.startsWith('mailto:')) {
+			openUrl(href).catch(console.error);
+		} else {
+			const decoded = decodeURIComponent(href);
+			let absPath = decoded;
+			if (!decoded.startsWith('/')) {
+				const notePath = $activeNotePath;
+				if (notePath) {
+					const noteDir = notePath.substring(0, notePath.lastIndexOf('/'));
+					absPath = normalizePath(`${noteDir}/${decoded}`);
+				} else {
+					const vaultRoot = $appConfig?.active_vault;
+					if (vaultRoot) absPath = normalizePath(`${vaultRoot}/${decoded}`);
+				}
+			}
+			openFile(absPath).catch(console.error);
+		}
+	}
+
+	function linkMenuCopy() {
+		if (!linkContextMenu) return;
+		navigator.clipboard.writeText(linkContextMenu.href).catch(console.error);
+		closeLinkContextMenu();
+	}
+
+	function linkMenuEdit() {
+		if (!linkContextMenu || !editor) return;
+		const anchor = linkContextMenu.anchor;
+		const href = linkContextMenu.href;
+		closeLinkContextMenu();
+		// Select the link text so the modal edits the right link
+		const pos = editor.view.posAtDOM(anchor, 0);
+		if (pos >= 0) {
+			editor.chain().focus().setTextSelection(pos).extendMarkRange('link').run();
+		}
+		linkModalUrl = href;
+		linkModal = true;
+		tick().then(() => linkModalInput?.focus());
+	}
+
+	function linkMenuRemove() {
+		if (!linkContextMenu || !editor) return;
+		const anchor = linkContextMenu.anchor;
+		const pos = editor.view.posAtDOM(anchor, 0);
+		if (pos >= 0) {
+			editor.chain()
+				.focus()
+				.setTextSelection(pos)
+				.extendMarkRange('link')
+				.unsetLink()
+				.run();
+			$editorDirty = true;
+			autoSave();
+		}
+		closeLinkContextMenu();
+	}
+
+	function resolveHrefToAbsPath(href: string): string {
+		const decoded = decodeURIComponent(href);
+		if (decoded.startsWith('/')) return decoded;
+		const notePath = $activeNotePath;
+		if (notePath) {
+			const noteDir = notePath.substring(0, notePath.lastIndexOf('/'));
+			return normalizePath(`${noteDir}/${decoded}`);
+		}
+		const vaultRoot = $appConfig?.active_vault;
+		if (vaultRoot) return normalizePath(`${vaultRoot}/${decoded}`);
+		return decoded;
+	}
+
+	function isFileLink(href: string): boolean {
+		if (href.startsWith('http://') || href.startsWith('https://') || href.startsWith('mailto:')) return false;
+		const ext = href.split('.').pop()?.toLowerCase() ?? '';
+		return ['pdf', 'zip', 'rar', '7z', 'tar', 'gz', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'csv', 'txt', 'rtf', 'odt', 'ods', 'mp3', 'mp4', 'wav', 'avi', 'mov', 'mkv', 'exe', 'dmg', 'apk', 'iso', 'epub'].includes(ext);
+	}
+
+	async function linkMenuSaveAs() {
+		if (!linkContextMenu) return;
+		const href = linkContextMenu.href;
+		closeLinkContextMenu();
+		const absPath = resolveHrefToAbsPath(href);
+		const filename = absPath.split('/').pop() || 'file';
+		const dest = await saveDialog({ defaultPath: filename });
+		if (dest) {
+			try {
+				await copyFileTo(absPath, dest);
+			} catch (e) {
+				console.error('Failed to save file:', e);
+			}
+		}
+	}
+
+	function handleFileDrop(event: DragEvent): boolean {
+		const files = event.dataTransfer?.files;
+		if (!files || files.length === 0) return false;
+		event.preventDefault();
+		for (const file of Array.from(files)) {
+			if (file.type.startsWith('image/')) {
+				insertImage(file);
+			} else if (file.type === 'application/pdf') {
+				insertPdf(file);
+			} else {
+				insertFileAttachment(file);
+			}
+		}
+		return true;
+	}
+
+	function handleFilePaste(event: ClipboardEvent): boolean {
+		const items = event.clipboardData?.items;
+		if (!items) return false;
+		for (const item of Array.from(items)) {
+			const file = item.getAsFile();
+			if (!file) continue;
+			event.preventDefault();
+			if (item.type.startsWith('image/')) {
+				insertImage(file);
+			} else if (file.type === 'application/pdf') {
+				insertPdf(file);
+			} else {
+				insertFileAttachment(file);
+			}
+			return true;
+		}
+		return false;
+	}
+
+	async function insertImage(file: File) {
+		try {
+			const buffer = await file.arrayBuffer();
+			const data = Array.from(new Uint8Array(buffer));
+			const relativePath = await saveImage(file.name, data);
+			if (editor) {
+				const displaySrc = resolveImageSrc(relativePath);
+				editor.chain().focus().setImage({ src: displaySrc }).run();
+			}
+		} catch (e) {
+			console.error('Failed to insert image:', e);
+		}
+	}
+
+	async function insertPdf(file: File) {
+		try {
+			const buffer = await file.arrayBuffer();
+			const data = Array.from(new Uint8Array(buffer));
+			const relativePath = await saveAttachment(file.name, data);
+			if (!editor) return;
+			const usePdfPreview = $appConfig?.pdf_preview ?? false;
+			if (usePdfPreview) {
+				editor.chain().focus().insertContent({
+					type: 'pdfEmbed',
+					attrs: { src: relativePath, name: file.name },
+				}).run();
+			} else {
+				const sizeKB = Math.round(file.size / 1024);
+				const label = `${file.name} (${sizeKB} kB)`;
+				editor.chain().focus()
+					.insertContent(`<a href="${relativePath}">${label}</a> `)
+					.run();
+			}
+		} catch (e) {
+			console.error('Failed to insert PDF:', e);
+		}
+	}
+
+	async function saveBlobImage(blobUrl: string): Promise<string | null> {
+		try {
+			const resp = await fetch(blobUrl);
+			const blob = await resp.blob();
+			const ext = blob.type.split('/')[1] || 'png';
+			const name = `pasted-image.${ext}`;
+			const buffer = await blob.arrayBuffer();
+			const data = Array.from(new Uint8Array(buffer));
+			const relativePath = await saveImage(name, data);
+			return resolveImageSrc(relativePath);
+		} catch (e) {
+			console.error('Failed to save blob image:', e);
+			return null;
+		}
+	}
+
+	async function fixBlobImages() {
+		if (!editor) return;
+		const { doc, tr } = editor.state;
+		let changed = false;
+		const promises: Array<{ pos: number; blobUrl: string }> = [];
+		doc.descendants((node, pos) => {
+			if (node.type.name === 'image' && node.attrs.src?.startsWith('blob:')) {
+				promises.push({ pos, blobUrl: node.attrs.src });
+			}
+		});
+		for (const { pos, blobUrl } of promises) {
+			const savedSrc = await saveBlobImage(blobUrl);
+			if (savedSrc && editor) {
+				const currentTr = editor.state.tr;
+				// Re-find the node since positions may have shifted
+				let found = false;
+				editor.state.doc.descendants((node, nodePos) => {
+					if (!found && node.type.name === 'image' && node.attrs.src === blobUrl) {
+						currentTr.setNodeAttribute(nodePos, 'src', savedSrc);
+						found = true;
+						changed = true;
+					}
+				});
+				if (found) editor.view.dispatch(currentTr);
+			}
+		}
+		if (changed) {
+			$editorDirty = true;
+			autoSave();
+		}
+	}
+
+	async function insertFileAttachment(file: File) {
+		try {
+			const buffer = await file.arrayBuffer();
+			const data = Array.from(new Uint8Array(buffer));
+			const relativePath = await saveAttachment(file.name, data);
+			if (editor) {
+				const sizeKB = Math.round(file.size / 1024);
+				const label = `${file.name} (${sizeKB} kB)`;
+				editor.chain().focus()
+					.insertContent(`<a href="${relativePath}">${label}</a> `)
+					.run();
+			}
+		} catch (e) {
+			console.error('Failed to insert attachment:', e);
+		}
+	}
+
+	// Source mode toggle — only react to explicit user toggle, not note switches
+	$effect(() => {
+		const isSource = $sourceMode;
+		// Only act if we have a loaded note
+		if (!loadedPath) return;
+
+		if (isSource && !lastSourceMode) {
+			// Switching TO source: extract markdown from editor
+			sourceContent = editor ? editorToMarkdown() : ($activeNote?.content ?? '');
+			lastSourceMode = true;
+		} else if (!isSource && lastSourceMode) {
+			// Switching BACK to WYSIWYG: destroy old editor (its DOM element is gone),
+			// wait for DOM to swap textarea→div, then create editor on new element.
+			destroyEditor();
+			const content = sourceContent || ($activeNote?.content ?? '');
+			lastSourceMode = false;
+			tick().then(() => {
+				if (editorElement && !editor) {
+					createEditor(content);
+				}
+			});
+		}
+	});
+
+	// Tauri drag-drop listener for OS file drops (browser DragEvent doesn't have files in Tauri)
+	let unlistenDragDrop: (() => void) | null = null;
+	$effect(() => {
+		const appWindow = getCurrentWindow();
+		appWindow.onDragDropEvent((event) => {
+			if (event.payload.type !== 'drop' || !editor || !$activeNote) return;
+			const paths = event.payload.paths;
+			for (const filePath of paths) {
+				const name = filePath.split('/').pop() || 'file';
+				const ext = name.split('.').pop()?.toLowerCase() || '';
+				if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) {
+					readFile(filePath).then((data) => {
+						saveImage(name, Array.from(data)).then((relativePath) => {
+							if (editor) {
+								editor.chain().focus().setImage({ src: resolveImageSrc(relativePath) }).run();
+							}
+						});
+					}).catch((e) => console.error('Failed to drop image:', e));
+				} else if (ext === 'pdf') {
+					readFile(filePath).then((data) => {
+						saveAttachment(name, Array.from(data)).then((relativePath) => {
+							if (!editor) return;
+							const usePdfPreview = $appConfig?.pdf_preview ?? false;
+							if (usePdfPreview) {
+								editor.chain().focus().insertContent({
+									type: 'pdfEmbed',
+									attrs: { src: relativePath, name },
+								}).run();
+							} else {
+								editor.chain().focus().insertContent(`<a href="${relativePath}">${name}</a> `).run();
+							}
+						});
+					}).catch((e) => console.error('Failed to drop PDF:', e));
+				} else {
+					readFile(filePath).then((data) => {
+						saveAttachment(name, Array.from(data)).then((relativePath) => {
+							if (editor) {
+								editor.chain().focus().insertContent(`<a href="${relativePath}">${name}</a> `).run();
+							}
+						});
+					}).catch((e) => console.error('Failed to drop file:', e));
+				}
+			}
+		}).then((unlisten) => {
+			unlistenDragDrop = unlisten;
+		});
+		return () => {
+			unlistenDragDrop?.();
+		};
+	});
+
+	onDestroy(() => {
+		destroyEditor();
+	});
+</script>
+
+<div class="editor-container">
+	{#if !$activeNote}
+		<div class="empty-editor">
+			<div class="empty-icon">
+				<svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+					<rect x="8" y="6" width="32" height="36" rx="4" stroke="var(--text-tertiary)" stroke-width="2" fill="none" />
+					<path d="M16 16h16M16 22h12M16 28h16M16 34h8" stroke="var(--text-tertiary)" stroke-width="1.5" stroke-linecap="round" />
+				</svg>
+			</div>
+			<p>Select a note or create a new one</p>
+			<div class="shortcuts-hint">
+				<span><kbd>Ctrl</kbd>+<kbd>N</kbd> New note</span>
+				<span><kbd>Ctrl</kbd>+<kbd>P</kbd> Quick open</span>
+			</div>
+		</div>
+	{:else}
+		<div class="editor-toolbar">
+			<div class="editor-title">
+				<input
+					bind:this={titleInput}
+					type="text"
+					readonly={readOnly}
+					value={$activeNote.meta.title}
+					onkeydown={(e) => {
+						if (e.key === 'Tab') {
+							e.preventDefault();
+							editor?.commands.focus('start');
+						}
+						if (e.key === 'Enter') {
+							e.preventDefault();
+							editor?.commands.focus('start');
+						}
+					}}
+					onchange={(e) => {
+						if ($activeNote) {
+							const newTitle = (e.target as HTMLInputElement).value;
+							$activeNote.meta.title = newTitle;
+							// Update the note list entry so the 2nd panel reflects the change
+							notes.update(list => list.map(n =>
+								n.path === $activeNotePath ? { ...n, meta: { ...n.meta, title: newTitle } } : n
+							));
+							$editorDirty = true;
+							autoSave();
+						}
+					}}
+				/>
+			</div>
+			<div class="toolbar-actions">
+				{#if $editorDirty}
+					<span class="save-indicator">Unsaved</span>
+				{/if}
+				{#if readOnly}
+					<span class="readonly-indicator">View Mode</span>
+				{/if}
+				<button
+					class="icon-btn"
+					class:active={readOnly}
+					class:flash={readOnlyFlash}
+					onclick={toggleReadOnly}
+					title={readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}
+				>
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						{#if readOnly}
+							<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+							<circle cx="12" cy="12" r="3" />
+						{:else}
+							<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94" />
+							<path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19" />
+							<line x1="1" y1="1" x2="23" y2="23" />
+						{/if}
+					</svg>
+				</button>
+				<button
+					class="icon-btn"
+					class:active={$activeNote?.meta.pinned}
+					onclick={() => {
+						if ($activeNote) {
+							$activeNote.meta.pinned = !$activeNote.meta.pinned;
+							$editorDirty = true;
+							autoSave();
+						}
+					}}
+					title={$activeNote?.meta.pinned ? 'Unpin note' : 'Pin note'}
+				>
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M12 17v5"/>
+						<path d="M9 2h6l-1 7h4l-2 4H8l-2-4h4L9 2z"/>
+					</svg>
+				</button>
+				<button
+					class="icon-btn"
+					class:active={isQuickAccess}
+					onclick={async () => {
+						if (!noteRelativePath) return;
+						try {
+							if (isQuickAccess) {
+								await removeQuickAccess(noteRelativePath);
+							} else {
+								await addQuickAccess(noteRelativePath);
+							}
+							const qa = await getQuickAccess();
+							$quickAccessPaths = qa.map(n => n.relative_path);
+						} catch (e) {
+							console.error('Quick access toggle failed:', e);
+						}
+					}}
+					title={isQuickAccess ? 'Remove from Quick Access' : 'Add to Quick Access'}
+				>
+					<svg width="16" height="16" viewBox="0 0 24 24" fill={isQuickAccess ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+					</svg>
+				</button>
+				<button
+					class="icon-btn"
+					class:active={showHistory}
+					onclick={toggleHistory}
+					title="Version history"
+				>
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<circle cx="12" cy="12" r="10"/>
+						<polyline points="12 6 12 12 16 14"/>
+					</svg>
+				</button>
+				{#if $appConfig?.enable_wiki_links}
+				<button
+					class="icon-btn"
+					class:active={showGraph}
+					onclick={() => showGraph = !showGraph}
+					title="Graph View"
+				>
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/>
+						<line x1="8.5" y1="7.5" x2="15.5" y2="16.5"/><line x1="15.5" y1="7.5" x2="8.5" y2="16.5"/>
+					</svg>
+				</button>
+				{/if}
+				{#if $appConfig?.ai_provider && ($appConfig?.ai_api_key || $appConfig?.openai_api_key)}
+				<button
+					class="icon-btn"
+					onclick={openAiMenu}
+					title="AI Actions"
+				>
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M12 8V4l-2-2"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M9 13v2"/><path d="M15 13v2"/>
+					</svg>
+				</button>
+				{/if}
+				<button
+					class="icon-btn"
+					class:active={$sourceMode}
+					onclick={() => ($sourceMode = !$sourceMode)}
+					title="Toggle Markdown Editor"
+				>
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+						<path d="M5.854 4.854a.5.5 0 10-.708-.708l-3.5 3.5a.5.5 0 000 .708l3.5 3.5a.5.5 0 00.708-.708L2.707 8l3.147-3.146zm4.292 0a.5.5 0 01.708-.708l3.5 3.5a.5.5 0 010 .708l-3.5 3.5a.5.5 0 01-.708-.708L13.293 8l-3.147-3.146z" />
+					</svg>
+				</button>
+			</div>
+		</div>
+
+		<div class="editor-body-wrapper">
+			<div class="editor-body">
+				{#if $sourceMode}
+					<textarea
+						class="source-editor"
+						bind:this={sourceElement}
+						bind:value={sourceContent}
+						oninput={() => {
+							$editorDirty = true;
+							autoSave();
+						}}
+						spellcheck="false"
+					></textarea>
+				{:else}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div class="tiptap-wrapper" bind:this={editorElement} onclick={(e) => { closeLinkContextMenu(); handleEditorClick(e); }} oncontextmenu={handleEditorContextMenu} onkeydown={(e) => {
+					if (readOnly && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {
+						readOnlyFlash = true;
+						setTimeout(() => { readOnlyFlash = false; }, 600);
+					}
+				}}></div>
+				{/if}
+			</div>
+
+			{#if showHistory}
+				<div class="history-panel">
+					<div class="history-header">
+						<h3>Version History</h3>
+						<div class="history-header-actions">
+							<button class="history-create-btn" onclick={handleCreateVersion} title="Save current state as a version">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<line x1="12" y1="5" x2="12" y2="19" />
+									<line x1="5" y1="12" x2="19" y2="12" />
+								</svg>
+							</button>
+							<button class="history-close" onclick={() => { showHistory = false; historyPreview = null; historySelected = null; }}>
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<line x1="18" y1="6" x2="6" y2="18" />
+									<line x1="6" y1="6" x2="18" y2="18" />
+								</svg>
+							</button>
+						</div>
+					</div>
+					{#if historyLoading}
+						<div class="history-empty">Loading...</div>
+					{:else if historyVersions.length === 0}
+						<div class="history-empty">No versions yet. Versions are created automatically as you edit (at least 5 minutes apart).</div>
+					{:else}
+						<div class="history-list">
+							{#each historyVersions as v}
+								<button
+									class="history-item"
+									class:active={historySelected?.timestamp === v.timestamp}
+									onclick={() => previewVersion(v)}
+								>
+									<span class="history-date">{formatVersionDate(v.timestamp)}</span>
+									<span class="history-size">{formatVersionSize(v.size)}</span>
+								</button>
+							{/each}
+						</div>
+					{/if}
+					{#if historySelected && historyPreview !== null}
+						<div class="history-actions">
+							<button class="history-restore-btn" onclick={restoreVersion}>
+								Restore this version
+							</button>
+						</div>
+					{/if}
+				</div>
+			{/if}
+		</div>
+
+		{#if editorReady && !$sourceMode}
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div class="editor-formatting-bar" onclick={() => { headingDropdown = false; colorDropdown = false; highlightDropdown = false; tablePickerOpen = false; alignDropdown = false; insertDropdown = false; }}>
+				<!-- Insert (+) dropdown -->
+				<div class="fmt-dropdown-wrap">
+					<button class="fmt-btn insert-btn" onclick={(e) => { e.stopPropagation(); insertDropdown = !insertDropdown; headingDropdown = false; colorDropdown = false; highlightDropdown = false; tablePickerOpen = false; alignDropdown = false; }} title="Insert">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+					</button>
+					{#if insertDropdown}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div class="fmt-dropdown insert-dropdown" onclick={(e) => e.stopPropagation()}>
+							<button onclick={() => { insertDropdown = false; document.querySelector<HTMLInputElement>('#insert-image-input')?.click(); }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+								Image
+							</button>
+							<button onclick={() => { insertDropdown = false; document.querySelector<HTMLInputElement>('#insert-file-input')?.click(); }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
+								File
+							</button>
+							<button onclick={() => { insertDropdown = false; tablePickerOpen = true; }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+								Table
+							</button>
+							<button onclick={() => { insertDropdown = false; editor?.chain().focus().setHorizontalRule().run(); }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="12" x2="21" y2="12"/></svg>
+								Horizontal Rule
+							</button>
+							<button onclick={() => { insertDropdown = false; editor?.chain().focus().toggleCodeBlock().run(); }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+								Code Block
+							</button>
+							<button onclick={() => { insertDropdown = false; editor?.chain().focus().toggleBlockquote().run(); }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6h4v4l-2 6H3l2-6H3V6zm10 0h4v4l-2 6h-2l2-6h-2V6z"/></svg>
+								Quote
+							</button>
+							<button onclick={() => { insertDropdown = false; editor?.chain().focus().setDetails().run(); }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="10 8 14 12 10 16"/></svg>
+								Collapsible Section
+							</button>
+						</div>
+					{/if}
+				</div>
+
+				<div class="fmt-sep"></div>
+
+				<!-- Heading dropdown -->
+				<div class="fmt-dropdown-wrap">
+					<button class="fmt-btn" class:active={(editorState, editor.isActive('heading'))} onclick={(e) => { e.stopPropagation(); headingDropdown = !headingDropdown; colorDropdown = false; highlightDropdown = false; tablePickerOpen = false; alignDropdown = false; insertDropdown = false; }} title="Heading">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16M4 6v12M20 6v12"/></svg>
+					</button>
+					{#if headingDropdown}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div class="fmt-dropdown" onclick={(e) => e.stopPropagation()}>
+							<button class:active={(editorState, editor.isActive('heading', { level: 1 }))} onclick={() => { editor?.chain().focus().toggleHeading({ level: 1 }).run(); headingDropdown = false; }}>Heading 1</button>
+							<button class:active={(editorState, editor.isActive('heading', { level: 2 }))} onclick={() => { editor?.chain().focus().toggleHeading({ level: 2 }).run(); headingDropdown = false; }}>Heading 2</button>
+							<button class:active={(editorState, editor.isActive('heading', { level: 3 }))} onclick={() => { editor?.chain().focus().toggleHeading({ level: 3 }).run(); headingDropdown = false; }}>Heading 3</button>
+							<button class:active={(editorState, editor.isActive('heading', { level: 4 }))} onclick={() => { editor?.chain().focus().toggleHeading({ level: 4 }).run(); headingDropdown = false; }}>Heading 4</button>
+							<button class:active={(editorState, editor.isActive('paragraph'))} onclick={() => { editor?.chain().focus().setParagraph().run(); headingDropdown = false; }}>Paragraph</button>
+						</div>
+					{/if}
+				</div>
+
+				<div class="fmt-sep"></div>
+
+				<!-- Text formatting -->
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('bold'))} onclick={() => editor?.chain().focus().toggleBold().run()} title="Bold (Ctrl+B)">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h8a4 4 0 014 4 4 4 0 01-4 4H6zm0 8h9a4 4 0 014 4 4 4 0 01-4 4H6z" stroke="currentColor" stroke-width="1" fill="none"/></svg>
+				</button>
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('italic'))} onclick={() => editor?.chain().focus().toggleItalic().run()} title="Italic (Ctrl+I)">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/></svg>
+				</button>
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('underline'))} onclick={() => editor?.chain().focus().toggleUnderline().run()} title="Underline (Ctrl+U)">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v7a6 6 0 006 6 6 6 0 006-6V3"/><line x1="4" y1="21" x2="20" y2="21"/></svg>
+				</button>
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('strike'))} onclick={() => editor?.chain().focus().toggleStrike().run()} title="Strikethrough">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4H9a3 3 0 00-3 3 3 3 0 003 3h6"/><line x1="4" y1="12" x2="20" y2="12"/><path d="M8 20h7a3 3 0 003-3 3 3 0 00-3-3H8"/></svg>
+				</button>
+
+				<!-- Text color -->
+				<div class="fmt-dropdown-wrap">
+					<button class="fmt-btn" onclick={(e) => { e.stopPropagation(); colorDropdown = !colorDropdown; headingDropdown = false; highlightDropdown = false; tablePickerOpen = false; alignDropdown = false; insertDropdown = false; }} title="Text Color">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2l5 0M12 2l-5 17M17 19H5M15 7l4 12"/></svg>
+						<span class="color-indicator" style="background: {editor.getAttributes('textStyle').color || 'var(--accent)'}"></span>
+					</button>
+					{#if colorDropdown}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div class="fmt-dropdown color-grid-dropdown" onclick={(e) => e.stopPropagation()}>
+							{#each textColors as color}
+								<button class="color-swatch" title={color.name} onclick={() => setTextColor(color.value)} style="background: {color.value || 'var(--text-primary)'}">
+									{#if (color.value === '' && !editor.getAttributes('textStyle').color) || editor.getAttributes('textStyle').color === color.value}
+										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+									{/if}
+								</button>
+							{/each}
+						</div>
+					{/if}
+				</div>
+
+				<div class="fmt-sep"></div>
+
+				<!-- Link -->
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('link'))} onclick={addLinkFromToolbar} title="Link">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+				</button>
+
+				<div class="fmt-sep"></div>
+
+				<!-- Lists -->
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('bulletList'))} onclick={() => editor?.chain().focus().toggleBulletList().run()} title="Bullet List">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.5" fill="currentColor"/><circle cx="3.5" cy="12" r="1.5" fill="currentColor"/><circle cx="3.5" cy="18" r="1.5" fill="currentColor"/></svg>
+				</button>
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('orderedList'))} onclick={() => editor?.chain().focus().toggleOrderedList().run()} title="Ordered List">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><text x="1" y="8" font-size="8" fill="currentColor" stroke="none" font-weight="600">1</text><text x="1" y="14" font-size="8" fill="currentColor" stroke="none" font-weight="600">2</text><text x="1" y="20" font-size="8" fill="currentColor" stroke="none" font-weight="600">3</text></svg>
+				</button>
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('taskList'))} onclick={() => editor?.chain().focus().toggleTaskList().run()} title="Task List">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><polyline points="4.5 6.5 6 8 8.5 4.5"/><line x1="13" y1="6.5" x2="21" y2="6.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><line x1="13" y1="17.5" x2="21" y2="17.5"/></svg>
+				</button>
+
+				<div class="fmt-sep"></div>
+
+				<!-- Undo / Redo -->
+				<button class="fmt-btn" onclick={() => editor?.chain().focus().undo().run()} title="Undo (Ctrl+Z)">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+				</button>
+				<button class="fmt-btn" onclick={() => editor?.chain().focus().redo().run()} title="Redo (Ctrl+Shift+Z)">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.13-9.36L23 10"/></svg>
+				</button>
+
+				<div class="fmt-sep"></div>
+
+				<!-- Code & Code Block -->
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('code'))} onclick={() => editor?.chain().focus().toggleCode().run()} title="Inline Code">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+				</button>
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('codeBlock'))} onclick={() => editor?.chain().focus().toggleCodeBlock().run()} title="Code Block">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="9 8 5 12 9 16"/><polyline points="15 8 19 12 15 16"/></svg>
+				</button>
+
+				<!-- Blockquote -->
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('blockquote'))} onclick={() => editor?.chain().focus().toggleBlockquote().run()} title="Quote">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6h4v4l-2 6H3l2-6H3V6zm10 0h4v4l-2 6h-2l2-6h-2V6z"/></svg>
+				</button>
+
+				<!-- Collapsible Section -->
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('details'))} onclick={() => editor?.chain().focus().setDetails().run()} title="Collapsible Section">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="10 8 14 12 10 16"/></svg>
+				</button>
+
+				<!-- Table -->
+				<div class="fmt-dropdown-wrap">
+					<button class="fmt-btn" onclick={(e) => { e.stopPropagation(); tablePickerOpen = !tablePickerOpen; headingDropdown = false; colorDropdown = false; highlightDropdown = false; alignDropdown = false; insertDropdown = false; }} title="Insert Table">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+					</button>
+					{#if tablePickerOpen}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div class="fmt-dropdown table-picker-dropdown" onclick={(e) => e.stopPropagation()}>
+							<div class="table-picker-grid">
+								{#each Array(8) as _, r}
+									{#each Array(10) as _, c}
+										<!-- svelte-ignore a11y_no_static_element_interactions -->
+										<div
+											class="table-picker-cell"
+											class:active={r < tablePickerHover.rows && c < tablePickerHover.cols}
+											onmouseenter={() => tablePickerHover = { rows: r + 1, cols: c + 1 }}
+											onclick={() => insertTable(r + 1, c + 1)}
+										></div>
+									{/each}
+								{/each}
+							</div>
+							<div class="table-picker-label">
+								{tablePickerHover.rows > 0 ? `${tablePickerHover.rows} x ${tablePickerHover.cols}` : 'Select size'}
+							</div>
+						</div>
+					{/if}
+				</div>
+
+				<!-- Horizontal Rule -->
+				<button class="fmt-btn" onclick={() => editor?.chain().focus().setHorizontalRule().run()} title="Horizontal Rule">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="12" x2="21" y2="12"/></svg>
+				</button>
+
+				<div class="fmt-sep"></div>
+
+				<!-- Highlight -->
+				<div class="fmt-dropdown-wrap">
+					<button class="fmt-btn" class:active={(editorState, editor.isActive('highlight'))} onclick={(e) => { e.stopPropagation(); highlightDropdown = !highlightDropdown; headingDropdown = false; colorDropdown = false; tablePickerOpen = false; alignDropdown = false; insertDropdown = false; }} title="Highlight">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/><path d="M15 5l3 3"/></svg>
+						<span class="color-indicator" style="background: {editor.getAttributes('highlight').color || 'var(--accent)'}"></span>
+					</button>
+					{#if highlightDropdown}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div class="fmt-dropdown color-grid-dropdown" onclick={(e) => e.stopPropagation()}>
+							{#each highlightColors as color}
+								<button class="color-swatch" title={color.name} onclick={() => setHighlightColor(color.value)} style="background: {color.swatch}">
+									{#if editor.isActive('highlight', { color: color.value })}
+										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+									{/if}
+								</button>
+							{/each}
+							<button class="color-swatch" title="Remove highlight" onclick={() => setHighlightColor('')} style="background: var(--bg-tertiary);">
+								{#if !editor.isActive('highlight')}
+									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+								{:else}
+									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+								{/if}
+							</button>
+						</div>
+					{/if}
+				</div>
+
+				<!-- Subscript & Superscript -->
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('subscript'))} onclick={() => editor?.chain().focus().toggleSubscript().run()} title="Subscript">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><text x="2" y="14" font-size="14" fill="currentColor" stroke="none" font-weight="600">x</text><text x="14" y="20" font-size="10" fill="currentColor" stroke="none">2</text></svg>
+				</button>
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('superscript'))} onclick={() => editor?.chain().focus().toggleSuperscript().run()} title="Superscript">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><text x="2" y="16" font-size="14" fill="currentColor" stroke="none" font-weight="600">x</text><text x="14" y="10" font-size="10" fill="currentColor" stroke="none">2</text></svg>
+				</button>
+
+				<div class="fmt-sep"></div>
+
+				<!-- Text Alignment -->
+				<div class="fmt-dropdown-wrap">
+					<button class="fmt-btn" onclick={(e) => { e.stopPropagation(); alignDropdown = !alignDropdown; headingDropdown = false; colorDropdown = false; highlightDropdown = false; tablePickerOpen = false; insertDropdown = false; }} title="Text Alignment">
+						{#if (editorState, editor.isActive({ textAlign: 'center' }))}
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="6" y1="10" x2="18" y2="10"/><line x1="3" y1="14" x2="21" y2="14"/><line x1="6" y1="18" x2="18" y2="18"/></svg>
+						{:else if (editorState, editor.isActive({ textAlign: 'right' }))}
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="9" y1="10" x2="21" y2="10"/><line x1="3" y1="14" x2="21" y2="14"/><line x1="9" y1="18" x2="21" y2="18"/></svg>
+						{:else if (editorState, editor.isActive({ textAlign: 'justify' }))}
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="3" y1="14" x2="21" y2="14"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+						{:else}
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="10" x2="15" y2="10"/><line x1="3" y1="14" x2="21" y2="14"/><line x1="3" y1="18" x2="15" y2="18"/></svg>
+						{/if}
+					</button>
+					{#if alignDropdown}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div class="fmt-dropdown align-dropdown" onclick={(e) => e.stopPropagation()}>
+							<button class:active={(editorState, editor.isActive({ textAlign: 'left' }))} onclick={() => { editor?.chain().focus().setTextAlign('left').run(); alignDropdown = false; }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="10" x2="15" y2="10"/><line x1="3" y1="14" x2="21" y2="14"/><line x1="3" y1="18" x2="15" y2="18"/></svg>
+								Left
+							</button>
+							<button class:active={(editorState, editor.isActive({ textAlign: 'center' }))} onclick={() => { editor?.chain().focus().setTextAlign('center').run(); alignDropdown = false; }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="6" y1="10" x2="18" y2="10"/><line x1="3" y1="14" x2="21" y2="14"/><line x1="6" y1="18" x2="18" y2="18"/></svg>
+								Center
+							</button>
+							<button class:active={(editorState, editor.isActive({ textAlign: 'right' }))} onclick={() => { editor?.chain().focus().setTextAlign('right').run(); alignDropdown = false; }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="9" y1="10" x2="21" y2="10"/><line x1="3" y1="14" x2="21" y2="14"/><line x1="9" y1="18" x2="21" y2="18"/></svg>
+								Right
+							</button>
+							<button class:active={(editorState, editor.isActive({ textAlign: 'justify' }))} onclick={() => { editor?.chain().focus().setTextAlign('justify').run(); alignDropdown = false; }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="3" y1="14" x2="21" y2="14"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+								Justify
+							</button>
+						</div>
+					{/if}
+				</div>
+
+				<div class="fmt-sep"></div>
+
+				<!-- Indent / Outdent -->
+				<button class="fmt-btn" onclick={() => {
+					if (!editor) return;
+					// Try list indent first — run() returns true if it succeeded
+					const sank = editor.chain().focus().sinkListItem('listItem').run();
+					if (!sank) {
+						const sankTask = editor.chain().focus().sinkListItem('taskItem').run();
+						if (!sankTask && editor.state.selection.empty) {
+							editor.chain().focus().insertContent('\t').run();
+						}
+					}
+				}} title="Indent (Tab)">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="4" x2="21" y2="4"/><line x1="11" y1="9" x2="21" y2="9"/><line x1="11" y1="14" x2="21" y2="14"/><line x1="3" y1="19" x2="21" y2="19"/><polyline points="3 9 7 11.5 3 14"/></svg>
+				</button>
+				<button class="fmt-btn" onclick={() => {
+					if (!editor) return;
+					const lifted = editor.chain().focus().liftListItem('listItem').run();
+					if (!lifted) {
+						const liftedTask = editor.chain().focus().liftListItem('taskItem').run();
+						if (!liftedTask && editor.state.selection.empty) {
+							// Remove leading tab/spaces from current line
+							const { from } = editor.state.selection;
+							const pos = editor.state.doc.resolve(from);
+							const lineStart = pos.start(pos.depth);
+							const lineText = editor.state.doc.textBetween(lineStart, pos.end(pos.depth));
+							if (lineText.startsWith('\t')) {
+								editor.chain().focus().command(({ tr }) => {
+									tr.delete(lineStart, lineStart + 1);
+									return true;
+								}).run();
+							} else if (lineText.startsWith('    ')) {
+								editor.chain().focus().command(({ tr }) => {
+									tr.delete(lineStart, lineStart + 4);
+									return true;
+								}).run();
+							} else if (lineText.startsWith('  ')) {
+								editor.chain().focus().command(({ tr }) => {
+									tr.delete(lineStart, lineStart + 2);
+									return true;
+								}).run();
+							}
+						}
+					}
+				}} title="Outdent (Shift+Tab)">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="4" x2="21" y2="4"/><line x1="11" y1="9" x2="21" y2="9"/><line x1="11" y1="14" x2="21" y2="14"/><line x1="3" y1="19" x2="21" y2="19"/><polyline points="7 9 3 11.5 7 14"/></svg>
+				</button>
+			</div>
+		{/if}
+	{/if}
+
+	<!-- Hidden file inputs for Insert dropdown -->
+	<input type="file" id="insert-image-input" accept="image/*" style="display:none" onchange={(e) => {
+		const file = (e.target as HTMLInputElement).files?.[0];
+		if (file) insertImage(file);
+		(e.target as HTMLInputElement).value = '';
+	}} />
+	<input type="file" id="insert-file-input" style="display:none" onchange={(e) => {
+		const file = (e.target as HTMLInputElement).files?.[0];
+		if (file) {
+			if (file.type.startsWith('image/')) insertImage(file);
+			else if (file.type === 'application/pdf') insertPdf(file);
+			else insertFileAttachment(file);
+		}
+		(e.target as HTMLInputElement).value = '';
+	}} />
+</div>
+
+{#if linkContextMenu}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="link-context-overlay" onclick={closeLinkContextMenu}>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="link-context-menu" style="left: {linkContextMenu.x}px; top: {linkContextMenu.y}px" onclick={(e) => e.stopPropagation()}>
+			<div class="link-context-url">{linkContextMenu.href}</div>
+			<button onclick={linkMenuOpen}>
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+					<polyline points="15 3 21 3 21 9" />
+					<line x1="10" y1="14" x2="21" y2="3" />
+				</svg>
+				Open Link
+			</button>
+			{#if isFileLink(linkContextMenu.href)}
+			<button onclick={linkMenuSaveAs}>
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+				</svg>
+				Save As...
+			</button>
+			{/if}
+			<button onclick={linkMenuCopy}>
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+					<path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+				</svg>
+				Copy Link
+			</button>
+			<button onclick={linkMenuEdit}>
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+					<path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+				</svg>
+				Edit Link
+			</button>
+			<div class="link-context-sep"></div>
+			<button class="danger" onclick={linkMenuRemove}>
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M18 6L6 18M6 6l12 12" />
+				</svg>
+				Remove Link
+			</button>
+		</div>
+	</div>
+{/if}
+
+{#if textContextMenu}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="text-ctx-overlay" onclick={closeTextContextMenu}>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="text-ctx-menu" style="left: {textContextMenu.x}px; top: {textContextMenu.y}px" onclick={(e) => e.stopPropagation()}>
+			<button onclick={ctxCut}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
+				Cut
+				<span class="text-ctx-shortcut">Ctrl+X</span>
+			</button>
+			<button onclick={ctxCopy}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+				Copy
+				<span class="text-ctx-shortcut">Ctrl+C</span>
+			</button>
+			<button onclick={ctxPaste}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+				Paste
+				<span class="text-ctx-shortcut">Ctrl+V</span>
+			</button>
+			<div class="text-ctx-sep"></div>
+			<button onclick={ctxSelectAll}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 7h8M8 12h8M8 17h8"/></svg>
+				Select All
+				<span class="text-ctx-shortcut">Ctrl+A</span>
+			</button>
+			<div class="text-ctx-sep"></div>
+			<!-- Heading submenu -->
+			<div class="text-ctx-submenu-wrap" onmouseenter={() => ctxHeadingSubmenu = true} onmouseleave={() => ctxHeadingSubmenu = false}>
+				<button class="has-submenu">
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16M4 6v12M20 6v12"/></svg>
+					Heading
+					<svg class="submenu-arrow" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 6 15 12 9 18"/></svg>
+				</button>
+				{#if ctxHeadingSubmenu}
+					<div class="text-ctx-submenu">
+						<button class:active={(editorState, editor?.isActive('heading', { level: 1 }))} onclick={() => ctxSetHeading(1)}>Heading 1</button>
+						<button class:active={(editorState, editor?.isActive('heading', { level: 2 }))} onclick={() => ctxSetHeading(2)}>Heading 2</button>
+						<button class:active={(editorState, editor?.isActive('heading', { level: 3 }))} onclick={() => ctxSetHeading(3)}>Heading 3</button>
+						<button class:active={(editorState, editor?.isActive('heading', { level: 4 }))} onclick={() => ctxSetHeading(4)}>Heading 4</button>
+						<div class="text-ctx-sep"></div>
+						<button class:active={(editorState, editor?.isActive('paragraph'))} onclick={ctxSetParagraph}>Paragraph</button>
+					</div>
+				{/if}
+			</div>
+			<div class="text-ctx-sep"></div>
+			<button onclick={ctxBold}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M6 4h8a4 4 0 014 4 4 4 0 01-4 4H6zm0 8h9a4 4 0 014 4 4 4 0 01-4 4H6z"/></svg>
+				Bold
+				<span class="text-ctx-shortcut">Ctrl+B</span>
+			</button>
+			<button onclick={ctxItalic}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/></svg>
+				Italic
+				<span class="text-ctx-shortcut">Ctrl+I</span>
+			</button>
+			<button onclick={ctxUnderline}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v7a6 6 0 006 6 6 6 0 006-6V3"/><line x1="4" y1="21" x2="20" y2="21"/></svg>
+				Underline
+				<span class="text-ctx-shortcut">Ctrl+U</span>
+			</button>
+			<button onclick={ctxStrike}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4H9a3 3 0 00-3 3 3 3 0 003 3h6"/><line x1="4" y1="12" x2="20" y2="12"/><path d="M8 20h7a3 3 0 003-3 3 3 0 00-3-3H8"/></svg>
+				Strikethrough
+			</button>
+			<button onclick={ctxHighlight}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+				Highlight
+			</button>
+			<div class="text-ctx-sep"></div>
+			<button onclick={ctxLink}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+				Add Link
+				<span class="text-ctx-shortcut">Ctrl+K</span>
+			</button>
+			<button onclick={ctxCode}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+				Inline Code
+			</button>
+			<button onclick={ctxCodeBlock}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="9 8 5 12 9 16"/><polyline points="15 8 19 12 15 16"/></svg>
+				Code Block
+			</button>
+			<button onclick={ctxBlockquote}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6h4v4l-2 6H3l2-6H3V6zm10 0h4v4l-2 6h-2l2-6h-2V6z"/></svg>
+				Quote
+			</button>
+			<button onclick={ctxDetails}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="10 8 14 12 10 16"/></svg>
+				Collapsible Section
+			</button>
+			<div class="text-ctx-sep"></div>
+			<button onclick={ctxBulletList}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.5" fill="currentColor"/><circle cx="3.5" cy="12" r="1.5" fill="currentColor"/><circle cx="3.5" cy="18" r="1.5" fill="currentColor"/></svg>
+				Bullet List
+			</button>
+			<button onclick={ctxOrderedList}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><text x="1" y="8" font-size="8" fill="currentColor" stroke="none" font-weight="600">1</text><text x="1" y="14" font-size="8" fill="currentColor" stroke="none" font-weight="600">2</text><text x="1" y="20" font-size="8" fill="currentColor" stroke="none" font-weight="600">3</text></svg>
+				Numbered List
+			</button>
+			<button onclick={ctxTaskList}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><polyline points="4.5 6.5 6 8 8.5 4.5"/><line x1="13" y1="6.5" x2="21" y2="6.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><line x1="13" y1="17.5" x2="21" y2="17.5"/></svg>
+				Task List
+			</button>
+			{#if $appConfig?.ai_provider && ($appConfig?.ai_api_key || $appConfig?.openai_api_key)}
+				<div class="text-ctx-sep"></div>
+				<button onclick={openAiMenu}>
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M12 2a4 4 0 014 4v1a1 1 0 001 1h1a4 4 0 010 8h-1a1 1 0 00-1 1v1a4 4 0 01-8 0v-1a1 1 0 00-1-1H6a4 4 0 010-8h1a1 1 0 001-1V6a4 4 0 014-4z" />
+						<circle cx="12" cy="12" r="2" />
+					</svg>
+					AI Actions
+				</button>
+			{/if}
+		</div>
+	</div>
+{/if}
+
+{#if tableContextMenu}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="table-ctx-overlay" onclick={closeTableContextMenu}>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="table-ctx-menu" style="left: {tableContextMenu.x}px; top: {tableContextMenu.y}px" onclick={(e) => e.stopPropagation()}>
+			<button onclick={tblAddRowBefore}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h18"/><path d="M12 3v3"/><polyline points="9 4.5 12 2 15 4.5"/></svg>
+				Add Row Above
+			</button>
+			<button onclick={tblAddRowAfter}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h18"/><path d="M12 21v-3"/><polyline points="9 19.5 12 22 15 19.5"/></svg>
+				Add Row Below
+			</button>
+			<button class="danger" onclick={tblDeleteRow}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+				Delete Row
+			</button>
+			<div class="table-ctx-sep"></div>
+			<button onclick={tblAddColBefore}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v18M12 3v18M18 3v18"/><path d="M3 12h3"/><polyline points="4.5 9 2 12 4.5 15"/></svg>
+				Add Column Left
+			</button>
+			<button onclick={tblAddColAfter}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v18M12 3v18M18 3v18"/><path d="M21 12h-3"/><polyline points="19.5 9 22 12 19.5 15"/></svg>
+				Add Column Right
+			</button>
+			<button class="danger" onclick={tblDeleteCol}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+				Delete Column
+			</button>
+			<div class="table-ctx-sep"></div>
+			<button onclick={tblMergeCells}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M14 9l-4 3 4 3"/></svg>
+				Merge Cells
+			</button>
+			<button onclick={tblSplitCell}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18"/><path d="M8 9l4 3-4 3"/><path d="M16 9l-4 3 4 3"/></svg>
+				Split Cell
+			</button>
+			<div class="table-ctx-sep"></div>
+			<button onclick={tblToggleHeaderRow}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><rect x="4" y="4" width="16" height="4" rx="1" fill="currentColor" opacity="0.2"/></svg>
+				Toggle Header Row
+			</button>
+			<button onclick={tblToggleHeaderCol}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><rect x="4" y="4" width="4" height="16" rx="1" fill="currentColor" opacity="0.2"/></svg>
+				Toggle Header Column
+			</button>
+			<div class="table-ctx-sep"></div>
+			<div class="table-ctx-color-label">Cell Color</div>
+			<div class="table-ctx-colors">
+				{#each cellColors as color}
+					<button
+						class="table-ctx-color-swatch"
+						title={color.name}
+						style="background: {color.value || 'var(--bg-primary)'}; {color.value === '' ? 'border: 1px dashed var(--border-color);' : ''}"
+						onclick={() => tblSetCellColor(color.value)}
+					></button>
+				{/each}
+			</div>
+			<div class="table-ctx-sep"></div>
+			<button class="danger" onclick={tblDeleteTable}>
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+				Delete Table
+			</button>
+		</div>
+	</div>
+{/if}
+
+{#if imageToolbar}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="img-toolbar-overlay" onclick={() => (imageToolbar = null)}>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="img-toolbar" style="left: {imageToolbar.x}px; top: {imageToolbar.y}px" onclick={(e) => e.stopPropagation()}>
+			<button class:active={imageToolbar.size === 'small'} onclick={() => setImageSize('small')} title="Small (33%)">S</button>
+			<button class:active={imageToolbar.size === 'medium'} onclick={() => setImageSize('medium')} title="Medium (50%)">M</button>
+			<button class:active={imageToolbar.size === 'full'} onclick={() => setImageSize('full')} title="Full width">L</button>
+		</div>
+	</div>
+{/if}
+
+{#if codeLangDropdown}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="code-lang-overlay" onclick={closeCodeLangDropdown}>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="code-lang-dropdown" style="left: {codeLangDropdown.x}px; top: {codeLangDropdown.y}px" onclick={(e) => e.stopPropagation()}>
+			<button
+				class="code-lang-option"
+				class:active={codeLangDropdown.current === ''}
+				onclick={() => selectCodeLang('')}
+			>auto</button>
+			{#each codeLanguages as lang}
+				<button
+					class="code-lang-option"
+					class:active={codeLangDropdown.current === lang}
+					onclick={() => selectCodeLang(lang)}
+				>{lang}</button>
+			{/each}
+		</div>
+	</div>
+{/if}
+
+{#if slashMenu}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="slash-menu-overlay" onclick={closeSlashMenu}>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="slash-menu" style="left: {slashMenu.x}px; top: {slashMenu.y}px" onclick={(e) => e.stopPropagation()}>
+			{#if slashTablePicker}
+				<div class="slash-table-picker">
+					<div class="slash-table-picker-grid">
+						{#each Array(8) as _, r}
+							{#each Array(10) as _, c}
+								<!-- svelte-ignore a11y_no_static_element_interactions -->
+								<div
+									class="table-picker-cell"
+									class:active={r < slashTableHover.rows && c < slashTableHover.cols}
+									onmouseenter={() => slashTableHover = { rows: r + 1, cols: c + 1 }}
+									onmousedown={(e) => { e.preventDefault(); slashInsertTable(r + 1, c + 1); }}
+								></div>
+							{/each}
+						{/each}
+					</div>
+					<div class="slash-table-picker-label">
+						{slashTableHover.rows > 0 ? `${slashTableHover.rows} x ${slashTableHover.cols}` : 'Select table size'}
+					</div>
+				</div>
+			{:else if slashFiltered.length === 0}
+				<div class="slash-menu-empty">No matching commands</div>
+			{:else}
+				{#each slashFiltered as cmd, i}
+					<button
+						class="slash-menu-item"
+						class:selected={i === slashSelectedIndex}
+						onmouseenter={() => slashSelectedIndex = i}
+						onmousedown={(e) => { e.preventDefault(); executeSlashCommand(i); }}
+					>
+						<span class="slash-menu-icon">{@html cmd.icon}</span>
+						<span class="slash-menu-label">{cmd.label}</span>
+					</button>
+				{/each}
+			{/if}
+		</div>
+	</div>
+{/if}
+
+{#if wikiLinkMenu}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="wiki-link-overlay" onclick={closeWikiLinkMenu}>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="wiki-link-menu" style="left: {wikiLinkMenu.x}px; top: {wikiLinkMenu.y}px" onclick={(e) => e.stopPropagation()}>
+			{#if wikiLinkFiltered.length === 0}
+				<div class="wiki-link-empty">
+					{wikiLinkMenu.query ? 'No matching notes' : 'Type to search notes...'}
+				</div>
+			{:else}
+				{#each wikiLinkFiltered.slice(0, 12) as entry, i}
+					<button
+						class="wiki-link-item"
+						class:selected={i === wikiLinkSelectedIndex}
+						onmouseenter={() => wikiLinkSelectedIndex = i}
+						onmousedown={(e) => { e.preventDefault(); insertWikiLink(entry); }}
+					>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
+						<span class="wiki-link-title">{entry.title}</span>
+					</button>
+				{/each}
+			{/if}
+		</div>
+	</div>
+{/if}
+
+{#if aiMenu}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="ai-menu-overlay" onclick={closeAiMenu}>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="ai-menu" style="left: {aiMenu.x}px; top: {aiMenu.y}px" onclick={(e) => e.stopPropagation()}>
+			{#if aiResult !== null || aiLoading}
+				<!-- Result view -->
+				<div class="ai-result-header">
+					<span class="ai-result-title">
+						{#if aiLoading}
+							<svg class="ai-spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
+							Generating...
+						{:else}
+							AI Result
+						{/if}
+					</span>
+					<button class="ai-result-close" onclick={closeAiMenu}>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+					</button>
+				</div>
+				{#if aiError}
+					<div class="ai-error">{aiError}</div>
+				{:else}
+					<div class="ai-result-body">{aiResult}</div>
+				{/if}
+				{#if !aiLoading && aiResult && !aiError}
+					<div class="ai-result-actions">
+						<button class="ai-action-btn apply" onclick={aiApplyResult}>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+							{aiEmptyNote ? 'Insert Note' : aiWholeNote ? 'Apply to Note' : 'Replace'}
+						</button>
+						<button class="ai-action-btn discard" onclick={aiDiscard}>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+							Discard
+						</button>
+					</div>
+				{/if}
+			{:else if aiShowCustom}
+				<!-- Custom prompt input -->
+				<div class="ai-custom-header">
+					<button class="ai-back-btn" onclick={() => aiShowCustom = false}>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+					</button>
+					<span>Custom Prompt</span>
+				</div>
+				<div class="ai-custom-body">
+					<textarea
+						class="ai-custom-input"
+						placeholder="Tell AI what to do with the selected text..."
+						bind:value={aiCustomPrompt}
+						onkeydown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runAiAction('custom', aiCustomPrompt); } }}
+					></textarea>
+					<button class="ai-custom-submit" onclick={() => runAiAction('custom', aiCustomPrompt)} disabled={!aiCustomPrompt.trim()}>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
+						Send
+					</button>
+				</div>
+			{:else if aiTranslateMenu}
+				<!-- Translate submenu -->
+				<div class="ai-custom-header">
+					<button class="ai-back-btn" onclick={() => aiTranslateMenu = false}>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+					</button>
+					<span>Translate to</span>
+				</div>
+				<button class="ai-menu-item" onclick={() => runAiAction('translate_en')}>English</button>
+				<button class="ai-menu-item" onclick={() => runAiAction('translate_nl')}>Dutch</button>
+				<button class="ai-menu-item" onclick={() => runAiAction('translate_de')}>German</button>
+				<button class="ai-menu-item" onclick={() => runAiAction('translate_fr')}>French</button>
+				<button class="ai-menu-item" onclick={() => runAiAction('translate_es')}>Spanish</button>
+			{:else if aiEmptyNote}
+				<!-- Empty note — generate from prompt -->
+				<div class="ai-menu-label">Generate Note</div>
+				<div class="ai-custom-body">
+					<textarea
+						class="ai-custom-input"
+						placeholder="Describe the note you want to create..."
+						bind:value={aiCustomPrompt}
+						onkeydown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runAiAction('custom', aiCustomPrompt); } }}
+					></textarea>
+					<button class="ai-custom-submit" onclick={() => runAiAction('custom', aiCustomPrompt)} disabled={!aiCustomPrompt.trim()}>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4l-2-2"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M9 13v2"/><path d="M15 13v2"/></svg>
+						Generate
+					</button>
+				</div>
+			{:else}
+				<!-- Action list -->
+				<div class="ai-menu-label">{aiWholeNote ? 'AI Actions (Entire Note)' : 'AI Actions'}</div>
+				<button class="ai-menu-item" onclick={() => runAiAction('improve')}>
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+					Improve Writing
+				</button>
+				<button class="ai-menu-item" onclick={() => runAiAction('fix_grammar')}>
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+					Fix Grammar
+				</button>
+				<button class="ai-menu-item" onclick={() => runAiAction('shorter')}>
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16"/><path d="M4 6h10"/></svg>
+					Make Shorter
+				</button>
+				<button class="ai-menu-item" onclick={() => runAiAction('longer')}>
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/></svg>
+					Make Longer
+				</button>
+				<div class="ai-menu-sep"></div>
+				<button class="ai-menu-item" onclick={() => runAiAction('professional')}>
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/></svg>
+					Professional Tone
+				</button>
+				<button class="ai-menu-item" onclick={() => runAiAction('friendly')}>
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+					Friendly Tone
+				</button>
+				<div class="ai-menu-sep"></div>
+				<button class="ai-menu-item" onclick={() => runAiAction('summarize')}>
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="10" x2="16" y2="10"/><line x1="4" y1="14" x2="12" y2="14"/></svg>
+					Summarize
+				</button>
+				<button class="ai-menu-item" onclick={() => runAiAction('explain')}>
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+					Explain
+				</button>
+				<button class="ai-menu-item" onclick={() => aiTranslateMenu = true}>
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/></svg>
+					Translate
+					<span class="ai-menu-arrow">
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+					</span>
+				</button>
+				<div class="ai-menu-sep"></div>
+				<button class="ai-menu-item" onclick={() => aiShowCustom = true}>
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
+					Custom Prompt...
+				</button>
+			{/if}
+		</div>
+	</div>
+{/if}
+
+{#if linkModal}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="link-modal-overlay" onclick={linkModalCancel}>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="link-modal" onclick={(e) => e.stopPropagation()}>
+			<div class="link-modal-header">
+				<svg width="28" height="28" viewBox="0 0 48 48" fill="none">
+					<rect width="48" height="48" rx="12" fill="var(--accent)" />
+					<circle cx="16" cy="16" r="3.5" fill="white" opacity="0.9" />
+					<circle cx="32" cy="16" r="3.5" fill="white" opacity="0.9" />
+					<circle cx="16" cy="32" r="3.5" fill="white" opacity="0.9" />
+					<circle cx="32" cy="32" r="3.5" fill="white" opacity="0.9" />
+					<line x1="19" y1="18" x2="29" y2="30" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.7" />
+					<line x1="29" y1="18" x2="19" y2="30" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.7" />
+				</svg>
+				<span>Insert Link</span>
+			</div>
+			<input
+				type="text"
+				class="link-modal-input"
+				bind:this={linkModalInput}
+				bind:value={linkModalUrl}
+				onkeydown={(e) => {
+					if (e.key === 'Enter') linkModalConfirm();
+					if (e.key === 'Escape') linkModalCancel();
+				}}
+				placeholder="https://example.com"
+			/>
+			<div class="link-modal-actions">
+				<button class="link-modal-btn cancel" onclick={linkModalCancel}>Cancel</button>
+				<button class="link-modal-btn confirm" onclick={linkModalConfirm}>
+					{linkModalUrl ? 'Apply' : 'Remove Link'}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if showGraph}
+	<GraphView onclose={() => showGraph = false} onnavigate={(path, title) => { showGraph = false; navigateToWikiLink(path, title); }} />
+{/if}
+
+<style>
+	.editor-container {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background: var(--bg-editor);
+	}
+
+	.empty-editor {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		height: 100%;
+		color: var(--text-tertiary);
+		gap: 12px;
+	}
+
+	.empty-icon {
+		opacity: 0.5;
+	}
+
+	.empty-editor p {
+		font-size: 14px;
+	}
+
+	.shortcuts-hint {
+		display: flex;
+		gap: 16px;
+		font-size: 12px;
+		margin-top: 8px;
+	}
+
+	.shortcuts-hint kbd {
+		background: var(--bg-tertiary);
+		border: 1px solid var(--border-color);
+		border-radius: 3px;
+		padding: 1px 5px;
+		font-size: 11px;
+		font-family: inherit;
+	}
+
+	.editor-toolbar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 12px 20px 4px;
+		flex-shrink: 0;
+	}
+
+	.editor-title {
+		flex: 1;
+	}
+
+	.editor-title input {
+		width: 100%;
+		border: none;
+		background: none;
+		color: var(--text-primary);
+		font-size: 22px;
+		font-weight: 700;
+		outline: none;
+		padding: 0;
+		-webkit-user-select: text !important;
+		user-select: text !important;
+	}
+
+	.editor-title input::placeholder {
+		color: var(--text-tertiary);
+	}
+
+	.toolbar-actions {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.save-indicator {
+		font-size: 11px;
+		color: var(--text-tertiary);
+		background: var(--bg-tertiary);
+		padding: 2px 8px;
+		border-radius: 4px;
+	}
+
+	.readonly-indicator {
+		font-size: 11px;
+		color: var(--accent);
+		background: var(--accent-light);
+		padding: 2px 8px;
+		border-radius: 4px;
+		font-weight: 500;
+	}
+
+	.icon-btn.flash {
+		animation: flash-icon 0.6s ease;
+	}
+
+	@keyframes flash-icon {
+		0%, 100% { color: var(--text-tertiary); }
+		25%, 75% { color: var(--accent); transform: scale(1.2); }
+	}
+
+	.icon-btn {
+		background: none;
+		border: none;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		padding: 4px;
+		border-radius: 4px;
+		display: flex;
+		align-items: center;
+	}
+
+	.icon-btn:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.icon-btn.active {
+		color: var(--text-accent);
+		background: var(--accent-light);
+	}
+
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		border: 0;
+	}
+
+	.editor-formatting-bar {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		padding: 6px 20px;
+		border-top: 1px solid var(--border-light);
+		flex-shrink: 0;
+		flex-wrap: wrap;
+	}
+
+	.fmt-btn {
+		background: none;
+		border: none;
+		color: var(--text-secondary);
+		cursor: pointer;
+		padding: 5px 7px;
+		border-radius: 4px;
+		font-size: 13px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 30px;
+		height: 30px;
+		position: relative;
+	}
+
+	.fmt-btn :global(svg) {
+		width: 18px;
+		height: 18px;
+	}
+
+	.fmt-btn:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.fmt-btn.active {
+		background: var(--accent-light);
+		color: var(--text-accent);
+	}
+
+	.fmt-sep {
+		width: 1px;
+		height: 16px;
+		background: var(--border-color);
+		margin: 0 3px;
+		flex-shrink: 0;
+	}
+
+	.fmt-dropdown-wrap {
+		position: relative;
+	}
+
+	.fmt-dropdown {
+		position: absolute;
+		bottom: calc(100% + 4px);
+		left: 0;
+		background: var(--bg-primary);
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		box-shadow: var(--shadow-lg);
+		padding: 4px;
+		z-index: 100;
+		min-width: 140px;
+	}
+
+	.fmt-dropdown button {
+		display: block;
+		width: 100%;
+		padding: 6px 12px;
+		border: none;
+		background: none;
+		color: var(--text-primary);
+		font-size: 13px;
+		cursor: pointer;
+		border-radius: 4px;
+		text-align: left;
+	}
+
+	.fmt-dropdown button:hover {
+		background: var(--bg-hover);
+	}
+
+	.fmt-dropdown button.active {
+		color: var(--text-accent);
+		background: var(--accent-light);
+	}
+
+	.color-indicator {
+		position: absolute;
+		bottom: 2px;
+		left: 50%;
+		transform: translateX(-50%);
+		width: 12px;
+		height: 2px;
+		border-radius: 1px;
+	}
+
+	.color-grid-dropdown {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 4px;
+		padding: 8px;
+		min-width: auto;
+		width: 140px;
+	}
+
+	.color-grid-dropdown .color-swatch {
+		width: 28px;
+		height: 28px;
+		border-radius: 6px;
+		border: none;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		min-width: 0;
+	}
+
+	.color-grid-dropdown .color-swatch:hover {
+		transform: scale(1.15);
+	}
+
+	.insert-dropdown {
+		min-width: 180px;
+	}
+
+	.insert-dropdown button {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.insert-btn {
+		color: var(--accent);
+	}
+
+	.align-dropdown {
+		min-width: 120px;
+	}
+
+	.align-dropdown button {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.editor-body-wrapper {
+		flex: 1;
+		display: flex;
+		overflow: hidden;
+	}
+
+	.editor-body {
+		flex: 1;
+		overflow-y: auto;
+		padding: 8px 20px;
+		min-width: 0;
+	}
+
+	.editor-body:has(.source-editor) {
+		overflow: hidden;
+	}
+
+	.history-panel {
+		width: 240px;
+		border-left: 1px solid var(--border-light);
+		background: var(--bg-secondary);
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+		flex-shrink: 0;
+	}
+
+	.history-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 12px 14px;
+		border-bottom: 1px solid var(--border-light);
+	}
+
+	.history-header h3 {
+		font-size: 12px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--text-tertiary);
+		margin: 0;
+	}
+
+	.history-header-actions {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.history-create-btn,
+	.history-close {
+		background: none;
+		border: none;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		padding: 2px;
+		border-radius: 4px;
+		display: flex;
+		align-items: center;
+	}
+
+	.history-create-btn:hover,
+	.history-close:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.history-empty {
+		padding: 16px 14px;
+		font-size: 12px;
+		color: var(--text-tertiary);
+		line-height: 1.5;
+	}
+
+	.history-list {
+		flex: 1;
+		overflow-y: auto;
+		padding: 4px 6px;
+	}
+
+	.history-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		width: 100%;
+		padding: 8px 10px;
+		border: none;
+		border-radius: 6px;
+		background: none;
+		cursor: pointer;
+		text-align: left;
+		transition: background 0.1s;
+	}
+
+	.history-item:hover {
+		background: var(--bg-hover);
+	}
+
+	.history-item.active {
+		background: var(--accent-light);
+	}
+
+	.history-date {
+		font-size: 12px;
+		color: var(--text-primary);
+	}
+
+	.history-item.active .history-date {
+		color: var(--accent);
+		font-weight: 500;
+	}
+
+	.history-size {
+		font-size: 11px;
+		color: var(--text-tertiary);
+	}
+
+	.history-actions {
+		padding: 8px 10px;
+		border-top: 1px solid var(--border-light);
+	}
+
+	.history-restore-btn {
+		width: 100%;
+		padding: 7px 12px;
+		border: 1px solid var(--accent);
+		border-radius: 6px;
+		background: var(--accent-light);
+		color: var(--accent);
+		font-size: 12px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.history-restore-btn:hover {
+		background: var(--accent);
+		color: white;
+	}
+
+	.source-editor {
+		width: 100%;
+		height: 100%;
+		border: none;
+		background: none;
+		color: var(--text-primary);
+		font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+		font-size: var(--editor-font-size, 14px);
+		line-height: 1.6;
+		resize: none;
+		outline: none;
+		padding: 0;
+		user-select: text;
+	}
+
+	.tiptap-wrapper {
+		height: 100%;
+		user-select: text;
+	}
+
+	:global(.tiptap-wrapper .tiptap) {
+		outline: none;
+		min-height: 100%;
+		user-select: text;
+		font-size: var(--editor-font-size, 14px);
+		font-family: var(--editor-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+		overflow: hidden;
+	}
+
+	:global(.tiptap-wrapper .tiptap p) {
+		margin: 0 0 0.75em;
+		line-height: 1.65;
+	}
+
+	:global(.tiptap-wrapper .tiptap h1) {
+		font-size: 1.75em;
+		font-weight: 700;
+		margin: 1.5em 0 0.5em;
+		line-height: 1.2;
+	}
+
+	:global(.tiptap-wrapper .tiptap h2) {
+		font-size: 1.4em;
+		font-weight: 600;
+		margin: 1.25em 0 0.5em;
+		line-height: 1.3;
+	}
+
+	:global(.tiptap-wrapper .tiptap h3) {
+		font-size: 1.2em;
+		font-weight: 600;
+		margin: 1em 0 0.5em;
+		line-height: 1.3;
+	}
+
+	:global(.tiptap-wrapper .tiptap h4) {
+		font-size: 1.05em;
+		font-weight: 600;
+		margin: 0.9em 0 0.4em;
+		line-height: 1.35;
+	}
+
+	:global(.tiptap-wrapper .tiptap h1:first-child),
+	:global(.tiptap-wrapper .tiptap h2:first-child),
+	:global(.tiptap-wrapper .tiptap h3:first-child),
+	:global(.tiptap-wrapper .tiptap h4:first-child) {
+		margin-top: 0;
+	}
+
+	:global(.tiptap-wrapper .tiptap strong) {
+		font-weight: 600;
+	}
+
+	:global(.tiptap-wrapper .tiptap code) {
+		background: color-mix(in srgb, var(--accent) 8%, var(--bg-tertiary));
+		padding: 2px 6px;
+		border-radius: 4px;
+		font-family: 'JetBrains Mono', 'Fira Code', monospace;
+		font-size: 0.9em;
+	}
+
+	:global(.tiptap-wrapper .tiptap pre) {
+		background: color-mix(in srgb, var(--accent) 8%, var(--bg-tertiary));
+		border-radius: 8px;
+		padding: 16px;
+		margin: 1em 0;
+		overflow-x: auto;
+		position: relative;
+	}
+
+	:global(.tiptap-wrapper .tiptap pre code) {
+		background: none;
+		padding: 0;
+		font-size: 13px;
+		line-height: 1.5;
+	}
+
+	:global(.tiptap-wrapper .tiptap pre .code-lang-wrapper) {
+		position: absolute;
+		top: 6px;
+		right: 6px;
+		z-index: 1;
+	}
+
+	:global(.tiptap-wrapper .tiptap pre .code-lang-btn) {
+		padding: 2px 6px;
+		border: none;
+		border-radius: 4px;
+		background: transparent;
+		color: var(--text-tertiary);
+		font-size: 11px;
+		font-family: 'JetBrains Mono', 'Fira Code', monospace;
+		cursor: pointer;
+		outline: none;
+		opacity: 0.4;
+		transition: opacity 0.15s, background 0.15s, color 0.15s;
+	}
+
+	:global(.tiptap-wrapper .tiptap pre:hover .code-lang-btn) {
+		opacity: 0.7;
+	}
+
+	:global(.tiptap-wrapper .tiptap pre .code-lang-btn:hover) {
+		opacity: 1;
+		background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+		color: var(--text-secondary);
+	}
+
+	.code-lang-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 2000;
+	}
+
+	.code-lang-dropdown {
+		position: fixed;
+		transform: translateX(-100%);
+		background: var(--bg-primary);
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		box-shadow: var(--shadow-lg);
+		padding: 4px;
+		max-height: 280px;
+		overflow-y: auto;
+		min-width: 130px;
+		z-index: 2001;
+	}
+
+	.code-lang-dropdown::-webkit-scrollbar {
+		width: 5px;
+	}
+
+	.code-lang-dropdown::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	.code-lang-dropdown::-webkit-scrollbar-thumb {
+		background: var(--border-color);
+		border-radius: 3px;
+	}
+
+	.code-lang-option {
+		display: block;
+		width: 100%;
+		padding: 5px 10px;
+		border: none;
+		background: none;
+		color: var(--text-primary);
+		font-size: 12px;
+		font-family: 'JetBrains Mono', 'Fira Code', monospace;
+		cursor: pointer;
+		border-radius: 4px;
+		text-align: left;
+	}
+
+	.code-lang-option:hover {
+		background: var(--bg-hover);
+	}
+
+	.code-lang-option.active {
+		color: var(--text-accent);
+		background: var(--accent-light);
+	}
+
+	:global(.tiptap-wrapper .tiptap blockquote) {
+		border-left: 3px solid var(--accent);
+		padding-left: 16px;
+		margin: 1em 0;
+		color: var(--text-secondary);
+	}
+
+	:global(.tiptap-wrapper .tiptap [data-type="details"]) {
+		margin: 1em 0;
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		position: relative;
+	}
+
+	:global(.tiptap-wrapper .tiptap [data-type="details"] > button) {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		position: absolute;
+		top: 8px;
+		left: 6px;
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: var(--text-secondary);
+		padding: 0;
+		border-radius: 4px;
+		transition: background 0.15s;
+	}
+
+	:global(.tiptap-wrapper .tiptap [data-type="details"] > button:hover) {
+		background: var(--bg-tertiary);
+	}
+
+	:global(.tiptap-wrapper .tiptap [data-type="details"] > button::after) {
+		content: '▶';
+		font-size: 10px;
+		transition: transform 0.2s;
+	}
+
+	:global(.tiptap-wrapper .tiptap [data-type="details"].is-open > button::after) {
+		transform: rotate(90deg);
+	}
+
+	:global(.tiptap-wrapper .tiptap [data-type="details"] summary) {
+		padding: 10px 14px 10px 32px;
+		font-weight: 600;
+		background: var(--bg-secondary);
+		transition: background 0.15s;
+		list-style: none;
+	}
+
+	:global(.tiptap-wrapper .tiptap [data-type="details"] summary::-webkit-details-marker) {
+		display: none;
+	}
+
+	:global(.tiptap-wrapper .tiptap [data-type="details"] summary:hover) {
+		background: var(--bg-tertiary);
+	}
+
+	:global(.tiptap-wrapper .tiptap [data-type="details"] [data-type="detailsContent"]) {
+		padding: 10px 14px;
+	}
+
+	:global(.tiptap-wrapper .tiptap [data-type="details"] [data-type="detailsContent"] > p:first-child) {
+		margin-top: 0;
+	}
+
+	:global(.tiptap-wrapper .tiptap [data-type="details"] [data-type="detailsContent"] > p:last-child) {
+		margin-bottom: 0;
+	}
+
+	:global(.tiptap-wrapper .tiptap ul),
+	:global(.tiptap-wrapper .tiptap ol) {
+		padding-left: 24px;
+		margin: 0.5em 0;
+	}
+
+	:global(.tiptap-wrapper .tiptap ul:not([data-type="taskList"])) {
+		list-style-type: disc;
+	}
+
+	:global(.tiptap-wrapper .tiptap ul:not([data-type="taskList"]) ul) {
+		list-style-type: circle;
+	}
+
+	:global(.tiptap-wrapper .tiptap ul:not([data-type="taskList"]) ul ul) {
+		list-style-type: square;
+	}
+
+	:global(.tiptap-wrapper .tiptap ol) {
+		list-style-type: decimal;
+	}
+
+	:global(.tiptap-wrapper .tiptap ol ol) {
+		list-style-type: lower-alpha;
+	}
+
+	:global(.tiptap-wrapper .tiptap ol ol ol) {
+		list-style-type: lower-roman;
+	}
+
+	:global(.tiptap-wrapper .tiptap li) {
+		margin: 0.25em 0;
+		line-height: 1.65;
+	}
+
+	:global(.tiptap-wrapper .tiptap li p) {
+		margin: 0;
+	}
+
+	:global(.tiptap-wrapper .tiptap ul[data-type="taskList"]) {
+		list-style: none;
+		padding-left: 0;
+	}
+
+	:global(.tiptap-wrapper .tiptap ul[data-type="taskList"] li) {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		margin: 4px 0;
+	}
+
+	:global(.tiptap-wrapper .tiptap ul[data-type="taskList"] li label) {
+		display: flex;
+		align-items: center;
+		margin-top: 4px;
+		flex-shrink: 0;
+	}
+
+	:global(.tiptap-wrapper .tiptap ul[data-type="taskList"] li label input[type="checkbox"]) {
+		appearance: none;
+		-webkit-appearance: none;
+		width: 16px;
+		height: 16px;
+		border: 2px solid var(--border-color);
+		border-radius: 4px;
+		cursor: pointer;
+		position: relative;
+		flex-shrink: 0;
+		background: var(--bg-primary);
+		transition: background 0.15s, border-color 0.15s;
+	}
+
+	:global(.tiptap-wrapper .tiptap ul[data-type="taskList"] li label input[type="checkbox"]:checked) {
+		background: var(--accent);
+		border-color: var(--accent);
+	}
+
+	:global(.tiptap-wrapper .tiptap ul[data-type="taskList"] li label input[type="checkbox"]:checked::after) {
+		content: '';
+		position: absolute;
+		left: 3px;
+		top: 0px;
+		width: 6px;
+		height: 10px;
+		border: solid white;
+		border-width: 0 2px 2px 0;
+		transform: rotate(45deg);
+	}
+
+	:global(.tiptap-wrapper .tiptap ul[data-type="taskList"] li label input[type="checkbox"]:hover) {
+		border-color: var(--accent);
+	}
+
+	:global(.tiptap-wrapper .tiptap ul[data-type="taskList"] li > div) {
+		flex: 1;
+		min-width: 0;
+	}
+
+	:global(.tiptap-wrapper .tiptap ul[data-type="taskList"] li[data-checked="true"] > div) {
+		text-decoration: line-through;
+		color: var(--text-tertiary);
+	}
+
+	:global(.tiptap-wrapper .tiptap hr) {
+		border: none;
+		border-top: 1px solid var(--border-color);
+		margin: 1.5em 0;
+	}
+
+	:global(.tiptap-wrapper .tiptap a) {
+		color: var(--text-accent);
+		text-decoration: underline;
+		text-decoration-color: color-mix(in srgb, var(--text-accent) 40%, transparent);
+	}
+
+	:global(.tiptap-wrapper .tiptap a:hover) {
+		text-decoration-color: var(--text-accent);
+	}
+
+	:global(.tiptap-wrapper .tiptap img) {
+		display: block;
+		max-width: 100%;
+		height: auto;
+		border-radius: 8px;
+		margin: 1em 0;
+		cursor: pointer;
+	}
+
+	:global(.tiptap-wrapper .tiptap img:hover) {
+		outline: none;
+	}
+
+	:global(.tiptap-wrapper .tiptap img.ProseMirror-selectednode) {
+		outline: none !important;
+		box-shadow: none !important;
+		background: none !important;
+	}
+
+	:global(.tiptap-wrapper .tiptap .ProseMirror-selectednode) {
+		outline: none !important;
+	}
+
+	:global(.tiptap-wrapper .tiptap img::selection) {
+		background: transparent;
+	}
+
+	:global(.tiptap-wrapper .tiptap img::-moz-selection) {
+		background: transparent;
+	}
+
+	:global(.tiptap-wrapper .tiptap img[data-size="small"]) {
+		max-width: 33%;
+	}
+
+	:global(.tiptap-wrapper .tiptap img[data-size="medium"]) {
+		max-width: 65%;
+	}
+
+	:global(.tiptap-wrapper .tiptap img[data-size="full"]) {
+		max-width: 100%;
+	}
+
+	.img-toolbar-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 1500;
+	}
+
+	.img-toolbar {
+		position: fixed;
+		transform: translateX(-50%) translateY(-100%);
+		display: flex;
+		gap: 2px;
+		background: var(--bg-primary);
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		box-shadow: var(--shadow-lg);
+		padding: 3px;
+		z-index: 1501;
+	}
+
+	.img-toolbar button {
+		padding: 5px 14px;
+		border: none;
+		background: none;
+		color: var(--text-secondary);
+		font-size: 12px;
+		font-weight: 600;
+		cursor: pointer;
+		border-radius: 5px;
+	}
+
+	.img-toolbar button:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.img-toolbar button.active {
+		background: var(--accent);
+		color: white;
+	}
+
+	:global(.tiptap-wrapper .tiptap mark) {
+		padding: 1px 3px;
+		border-radius: 3px;
+		color: #333 !important;
+	}
+
+	:global(.dark .tiptap-wrapper .tiptap mark) {
+		color: #eee !important;
+	}
+
+	:global(.tiptap-wrapper .tiptap .tableWrapper) {
+		overflow-x: auto;
+		margin: 1em 0;
+	}
+
+	:global(.tiptap-wrapper .tiptap table) {
+		border-collapse: collapse;
+		width: 100%;
+		table-layout: fixed;
+		overflow: hidden;
+	}
+
+	:global(.tiptap-wrapper .tiptap th),
+	:global(.tiptap-wrapper .tiptap td) {
+		border: 1px solid var(--border-color);
+		padding: 8px 12px;
+		text-align: left;
+		vertical-align: top;
+		position: relative;
+		min-width: 80px;
+		box-sizing: border-box;
+	}
+
+	:global(.tiptap-wrapper .tiptap th) {
+		background: var(--bg-tertiary);
+		font-weight: 600;
+	}
+
+	:global(.tiptap-wrapper .tiptap td > p),
+	:global(.tiptap-wrapper .tiptap th > p) {
+		margin: 0;
+	}
+
+	:global(.tiptap-wrapper .tiptap .selectedCell::after) {
+		content: "";
+		position: absolute;
+		inset: 0;
+		background: var(--accent-light);
+		pointer-events: none;
+		z-index: 1;
+	}
+
+	:global(.tiptap-wrapper .tiptap .column-resize-handle) {
+		position: absolute;
+		right: -2px;
+		top: 0;
+		bottom: -2px;
+		width: 4px;
+		background: var(--accent);
+		pointer-events: none;
+		z-index: 2;
+	}
+
+	:global(.tiptap-wrapper .tiptap.resize-cursor) {
+		cursor: col-resize;
+	}
+
+	:global(.tiptap-wrapper .tiptap > .is-empty::before) {
+		content: attr(data-placeholder);
+		color: var(--text-tertiary);
+		pointer-events: none;
+		float: left;
+		height: 0;
+		padding-left: 2px;
+	}
+
+	:global(.tiptap-wrapper .tiptap ul[data-type="taskList"] .is-empty::before) {
+		content: none;
+	}
+
+	.link-context-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 1500;
+	}
+
+	.link-context-menu {
+		position: fixed;
+		background: var(--bg-primary);
+		border: 1px solid var(--border-color);
+		border-radius: 10px;
+		box-shadow: var(--shadow-lg);
+		padding: 4px;
+		min-width: 180px;
+		z-index: 1501;
+	}
+
+	.link-context-url {
+		padding: 6px 12px;
+		font-size: 11px;
+		color: var(--text-tertiary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 240px;
+		border-bottom: 1px solid var(--border-light);
+		margin-bottom: 4px;
+	}
+
+	.link-context-menu button {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 7px 12px;
+		border: none;
+		background: none;
+		color: var(--text-primary);
+		font-size: 13px;
+		cursor: pointer;
+		border-radius: 6px;
+		text-align: left;
+	}
+
+	.link-context-menu button:hover {
+		background: var(--bg-hover);
+	}
+
+	.link-context-menu button.danger {
+		color: var(--danger);
+	}
+
+	.link-context-menu button.danger:hover {
+		background: color-mix(in srgb, var(--danger) 10%, transparent);
+	}
+
+	.link-context-sep {
+		height: 1px;
+		background: var(--border-light);
+		margin: 4px 0;
+	}
+
+	.link-modal-overlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.4);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 2000;
+	}
+
+	.link-modal {
+		background: var(--bg-primary);
+		border: 1px solid var(--border-color);
+		border-radius: 12px;
+		box-shadow: var(--shadow-lg);
+		padding: 20px;
+		width: 400px;
+		max-width: 90vw;
+	}
+
+	.link-modal-header {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-bottom: 16px;
+		font-size: 15px;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.link-modal-input {
+		width: 100%;
+		padding: 10px 12px;
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		font-size: 14px;
+		outline: none;
+		box-sizing: border-box;
+	}
+
+	.link-modal-input:focus {
+		border-color: var(--accent);
+		box-shadow: 0 0 0 2px var(--accent-light);
+	}
+
+	.link-modal-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 8px;
+		margin-top: 16px;
+	}
+
+	.link-modal-btn {
+		padding: 7px 16px;
+		border-radius: 8px;
+		font-size: 13px;
+		font-weight: 500;
+		cursor: pointer;
+		border: none;
+	}
+
+	.link-modal-btn.cancel {
+		background: var(--bg-tertiary);
+		color: var(--text-secondary);
+	}
+
+	.link-modal-btn.cancel:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.link-modal-btn.confirm {
+		background: var(--accent);
+		color: white;
+	}
+
+	.link-modal-btn.confirm:hover {
+		opacity: 0.9;
+	}
+
+	/* Text context menu */
+	.text-ctx-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 1500;
+	}
+
+	.text-ctx-menu {
+		position: fixed;
+		background: var(--bg-primary);
+		border: 1px solid var(--border-color);
+		border-radius: 10px;
+		box-shadow: var(--shadow-lg);
+		padding: 4px;
+		min-width: 200px;
+		max-height: calc(100vh - 16px);
+		overflow-y: auto;
+		z-index: 1501;
+	}
+
+	.text-ctx-menu button {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 7px 12px;
+		border: none;
+		background: none;
+		color: var(--text-primary);
+		font-size: 13px;
+		cursor: pointer;
+		border-radius: 6px;
+		text-align: left;
+	}
+
+	.text-ctx-menu button:hover {
+		background: var(--bg-hover);
+	}
+
+	.text-ctx-shortcut {
+		margin-left: auto;
+		font-size: 11px;
+		color: var(--text-tertiary);
+		font-family: inherit;
+	}
+
+	.text-ctx-sep {
+		height: 1px;
+		background: var(--border-light);
+		margin: 4px 0;
+	}
+
+	.text-ctx-submenu-wrap {
+		position: relative;
+	}
+
+	.text-ctx-submenu-wrap > button.has-submenu {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 7px 12px;
+		border: none;
+		background: none;
+		color: var(--text-primary);
+		font-size: 13px;
+		cursor: pointer;
+		border-radius: 6px;
+		text-align: left;
+	}
+
+	.text-ctx-submenu-wrap > button.has-submenu:hover {
+		background: var(--bg-hover);
+	}
+
+	.text-ctx-submenu-wrap .submenu-arrow {
+		margin-left: auto;
+		color: var(--text-tertiary);
+	}
+
+	.text-ctx-submenu {
+		position: absolute;
+		left: 100%;
+		top: -4px;
+		margin-left: 2px;
+		background: var(--bg-primary);
+		border: 1px solid var(--border-color);
+		border-radius: 10px;
+		box-shadow: var(--shadow-lg);
+		padding: 4px;
+		min-width: 140px;
+		z-index: 1502;
+	}
+
+	.text-ctx-submenu button {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 7px 12px;
+		border: none;
+		background: none;
+		color: var(--text-primary);
+		font-size: 13px;
+		cursor: pointer;
+		border-radius: 6px;
+		text-align: left;
+	}
+
+	.text-ctx-submenu button:hover {
+		background: var(--bg-hover);
+	}
+
+	.text-ctx-submenu button.active {
+		color: var(--accent);
+		font-weight: 600;
+	}
+
+	/* Table grid size picker */
+	.table-picker-dropdown {
+		padding: 8px;
+		min-width: auto;
+		width: auto;
+	}
+
+	.table-picker-grid {
+		display: grid;
+		grid-template-columns: repeat(10, 18px);
+		grid-template-rows: repeat(8, 18px);
+		gap: 2px;
+	}
+
+	.table-picker-cell {
+		width: 18px;
+		height: 18px;
+		border: 1px solid var(--border-color);
+		border-radius: 2px;
+		cursor: pointer;
+		transition: background 0.05s;
+		background: var(--bg-secondary);
+	}
+
+	.table-picker-cell:hover,
+	.table-picker-cell.active {
+		background: var(--accent-light);
+		border-color: var(--accent);
+	}
+
+	.table-picker-label {
+		text-align: center;
+		font-size: 11px;
+		color: var(--text-secondary);
+		margin-top: 6px;
+		font-weight: 500;
+	}
+
+	/* Table context menu */
+	.table-ctx-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 1500;
+	}
+
+	.table-ctx-menu {
+		position: fixed;
+		background: var(--bg-primary);
+		border: 1px solid var(--border-color);
+		border-radius: 10px;
+		box-shadow: var(--shadow-lg);
+		padding: 4px;
+		min-width: 200px;
+		max-height: calc(100vh - 16px);
+		overflow-y: auto;
+		z-index: 1501;
+	}
+
+	.table-ctx-menu button {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 7px 12px;
+		border: none;
+		background: none;
+		color: var(--text-primary);
+		font-size: 13px;
+		cursor: pointer;
+		border-radius: 6px;
+		text-align: left;
+	}
+
+	.table-ctx-menu button:hover {
+		background: var(--bg-hover);
+	}
+
+	.table-ctx-menu button.danger {
+		color: var(--danger);
+	}
+
+	.table-ctx-menu button.danger:hover {
+		background: color-mix(in srgb, var(--danger) 10%, transparent);
+	}
+
+	.table-ctx-sep {
+		height: 1px;
+		background: var(--border-light);
+		margin: 4px 0;
+	}
+
+	.table-ctx-color-label {
+		padding: 4px 12px 2px;
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--text-tertiary);
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+	}
+
+	.table-ctx-colors {
+		display: grid;
+		grid-template-columns: repeat(5, 1fr);
+		gap: 4px;
+		padding: 4px 10px 6px;
+	}
+
+	.table-ctx-color-swatch {
+		width: 26px;
+		height: 26px;
+		border-radius: 5px;
+		border: 1px solid var(--border-color);
+		cursor: pointer;
+		transition: transform 0.1s;
+		padding: 0;
+	}
+
+	.table-ctx-color-swatch:hover {
+		transform: scale(1.15);
+		border-color: var(--accent);
+	}
+
+	/* PDF embeds */
+	:global(.tiptap .pdf-embed) {
+		margin: 12px 0;
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		overflow: hidden;
+		background: var(--bg-secondary);
+	}
+	:global(.tiptap .pdf-embed iframe) {
+		display: block;
+		border: none;
+		width: 100%;
+	}
+	:global(.tiptap .pdf-embed .pdf-label) {
+		padding: 6px 12px;
+		font-size: 12px;
+		color: var(--text-secondary);
+		border-top: 1px solid var(--border);
+		margin: 0;
+	}
+
+	/* Slash commands menu */
+	.slash-menu-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 1500;
+	}
+
+	.slash-menu {
+		position: fixed;
+		background: var(--bg-primary);
+		border: 1px solid var(--border-color);
+		border-radius: 10px;
+		box-shadow: var(--shadow-lg);
+		padding: 4px;
+		min-width: 220px;
+		max-height: 300px;
+		overflow-y: auto;
+		z-index: 1501;
+	}
+
+	.slash-menu::-webkit-scrollbar {
+		width: 4px;
+	}
+
+	.slash-menu::-webkit-scrollbar-thumb {
+		background: var(--text-tertiary);
+		border-radius: 2px;
+	}
+
+	.slash-menu-item {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		width: 100%;
+		padding: 8px 12px;
+		border: none;
+		background: none;
+		color: var(--text-primary);
+		font-size: 13px;
+		cursor: pointer;
+		border-radius: 6px;
+		text-align: left;
+	}
+
+	.slash-menu-item:hover,
+	.slash-menu-item.selected {
+		background: var(--bg-hover);
+	}
+
+	.slash-menu-icon {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		border-radius: 6px;
+		background: color-mix(in srgb, var(--accent) 12%, transparent);
+		color: var(--accent);
+		flex-shrink: 0;
+	}
+
+	.slash-menu-label {
+		flex: 1;
+	}
+
+	.slash-menu-empty {
+		padding: 12px 16px;
+		color: var(--text-tertiary);
+		font-size: 13px;
+		text-align: center;
+	}
+
+	.slash-table-picker {
+		padding: 8px;
+	}
+
+	.slash-table-picker-grid {
+		display: grid;
+		grid-template-columns: repeat(10, 18px);
+		grid-template-rows: repeat(8, 18px);
+		gap: 2px;
+	}
+
+	.slash-table-picker-label {
+		text-align: center;
+		font-size: 11px;
+		color: var(--text-secondary);
+		margin-top: 6px;
+		font-weight: 500;
+	}
+
+	/* AI Menu */
+	.ai-menu-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 1600;
+	}
+
+	.ai-menu {
+		position: fixed;
+		background: var(--bg-primary);
+		border: 1px solid var(--border-color);
+		border-radius: 10px;
+		box-shadow: var(--shadow-lg);
+		padding: 4px;
+		min-width: 320px;
+		max-width: 480px;
+		z-index: 1601;
+		max-height: 80vh;
+		overflow-y: auto;
+	}
+
+	.ai-menu-label {
+		padding: 6px 12px 4px;
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--text-tertiary);
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+	}
+
+	.ai-menu-item {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 7px 12px;
+		border: none;
+		background: none;
+		color: var(--text-primary);
+		font-size: 13px;
+		cursor: pointer;
+		border-radius: 6px;
+		text-align: left;
+	}
+
+	.ai-menu-item:hover {
+		background: var(--bg-hover);
+	}
+
+	.ai-menu-sep {
+		height: 1px;
+		background: var(--border-light);
+		margin: 4px 0;
+	}
+
+	.ai-menu-arrow {
+		margin-left: auto;
+		color: var(--text-tertiary);
+		display: flex;
+		align-items: center;
+	}
+
+	.ai-result-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 8px 12px 4px;
+	}
+
+	.ai-result-title {
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--text-secondary);
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.ai-spinner {
+		animation: spin 0.8s linear infinite;
+	}
+
+	@keyframes spin {
+		from { transform: rotate(0deg); }
+		to { transform: rotate(360deg); }
+	}
+
+	.ai-result-close {
+		background: none;
+		border: none;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		padding: 2px;
+		border-radius: 4px;
+		display: flex;
+		align-items: center;
+	}
+
+	.ai-result-close:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.ai-result-body {
+		padding: 8px 12px;
+		font-size: 13px;
+		color: var(--text-primary);
+		line-height: 1.6;
+		max-height: 50vh;
+		overflow-y: auto;
+		white-space: pre-wrap;
+		word-break: break-word;
+	}
+
+	.ai-error {
+		padding: 8px 12px;
+		font-size: 12px;
+		color: var(--danger);
+		line-height: 1.5;
+	}
+
+	.ai-result-actions {
+		display: flex;
+		gap: 6px;
+		padding: 6px 10px 8px;
+		border-top: 1px solid var(--border-light);
+	}
+
+	.ai-action-btn {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 4px;
+		padding: 6px 10px;
+		border: none;
+		border-radius: 6px;
+		font-size: 12px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.ai-action-btn.apply {
+		background: var(--accent);
+		color: white;
+	}
+
+	.ai-action-btn.apply:hover {
+		opacity: 0.9;
+	}
+
+	.ai-action-btn.discard {
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-color);
+		color: var(--text-secondary);
+	}
+
+	.ai-action-btn.discard:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.ai-custom-header {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 8px 12px 4px;
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--text-secondary);
+	}
+
+	.ai-back-btn {
+		background: none;
+		border: none;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		padding: 2px;
+		border-radius: 4px;
+		display: flex;
+		align-items: center;
+	}
+
+	.ai-back-btn:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.ai-custom-body {
+		padding: 6px 10px 8px;
+	}
+
+	.ai-custom-input {
+		width: 100%;
+		min-height: 60px;
+		padding: 8px 10px;
+		border: 1px solid var(--border-color);
+		border-radius: 6px;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		font-size: 13px;
+		font-family: inherit;
+		resize: vertical;
+		outline: none;
+		box-sizing: border-box;
+	}
+
+	.ai-custom-input:focus {
+		border-color: var(--accent);
+	}
+
+	.ai-custom-input::placeholder {
+		color: var(--text-tertiary);
+	}
+
+	.ai-custom-submit {
+		margin-top: 6px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 4px;
+		width: 100%;
+		padding: 7px 12px;
+		border: none;
+		border-radius: 6px;
+		background: var(--accent);
+		color: white;
+		font-size: 12px;
+		font-weight: 500;
+		cursor: pointer;
+	}
+
+	.ai-custom-submit:hover:not(:disabled) {
+		opacity: 0.9;
+	}
+
+	.ai-custom-submit:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	/* Wiki-link styles */
+	:global(.tiptap-wrapper .tiptap .wiki-link) {
+		color: var(--accent);
+		text-decoration: underline dotted;
+		text-underline-offset: 3px;
+		cursor: pointer;
+		border-radius: 2px;
+		padding: 0 1px;
+	}
+
+	:global(.tiptap-wrapper .tiptap .wiki-link:hover) {
+		background: var(--accent-light);
+		text-decoration: underline solid;
+	}
+
+	:global(.tiptap-wrapper .tiptap .wiki-link[data-path=""]) {
+		color: var(--text-tertiary);
+		text-decoration: underline dashed;
+	}
+
+	.wiki-link-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 1600;
+	}
+
+	.wiki-link-menu {
+		position: fixed;
+		background: var(--bg-primary);
+		border: 1px solid var(--border-color);
+		border-radius: 10px;
+		box-shadow: var(--shadow-lg);
+		width: 280px;
+		max-height: 360px;
+		overflow-y: auto;
+		padding: 4px;
+		z-index: 1601;
+	}
+
+	.wiki-link-empty {
+		padding: 12px 14px;
+		font-size: 12px;
+		color: var(--text-tertiary);
+		text-align: center;
+	}
+
+	.wiki-link-item {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 7px 10px;
+		border: none;
+		border-radius: 6px;
+		background: none;
+		color: var(--text-primary);
+		font-size: 13px;
+		cursor: pointer;
+		text-align: left;
+	}
+
+	.wiki-link-item:hover,
+	.wiki-link-item.selected {
+		background: var(--accent-light);
+		color: var(--accent);
+	}
+
+	.wiki-link-item svg {
+		flex-shrink: 0;
+		color: var(--text-tertiary);
+	}
+
+	.wiki-link-item:hover svg,
+	.wiki-link-item.selected svg {
+		color: var(--accent);
+	}
+
+	.wiki-link-title {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+</style>

@@ -1,0 +1,1928 @@
+<script lang="ts">
+	import { showSettings, theme, appConfig } from '$lib/stores/app';
+	import { setTheme, setAccentColor, setFontSize, setFontFamily, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection } from '$lib/api';
+	import { open as openDialog } from '@tauri-apps/plugin-dialog';
+	import { listen } from '@tauri-apps/api/event';
+	import { check as checkUpdate } from '@tauri-apps/plugin-updater';
+	import { getVersion } from '@tauri-apps/api/app';
+	import type { ImportResult, BackupEntry } from '$lib/types';
+
+	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'ai' | 'updates';
+	let activeTab = $state<Tab>('styling');
+
+	// Updates state
+	let updateChecking = $state(false);
+	let updateAvailable = $state<{ version: string; body?: string; date?: string } | null>(null);
+	let updateDownloading = $state(false);
+	let updateProgress = $state(0);
+	let updateMessage = $state<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+	let updateObj = $state<any>(null);
+	let appVersion = $state('...');
+
+	async function loadAppVersion() {
+		try { appVersion = await getVersion(); } catch { appVersion = '0.0.0'; }
+	}
+	loadAppVersion();
+
+	async function handleCheckUpdate() {
+		updateChecking = true;
+		updateMessage = null;
+		updateAvailable = null;
+		try {
+			const update = await checkUpdate();
+			if (update) {
+				updateObj = update;
+				updateAvailable = { version: update.version, body: update.body, date: update.date };
+				updateMessage = { type: 'info', text: `Version ${update.version} is available!` };
+			} else {
+				updateMessage = { type: 'success', text: 'You are on the latest version.' };
+			}
+		} catch (e) {
+			updateMessage = { type: 'error', text: `Failed to check: ${e}` };
+		} finally {
+			updateChecking = false;
+		}
+	}
+
+	async function handleDownloadAndInstall() {
+		if (!updateObj) return;
+		updateDownloading = true;
+		updateProgress = 0;
+		updateMessage = { type: 'info', text: 'Downloading update...' };
+		try {
+			let totalBytes = 0;
+			let downloadedBytes = 0;
+			await updateObj.downloadAndInstall((event: any) => {
+				if (event.event === 'Started' && event.data.contentLength) {
+					totalBytes = event.data.contentLength;
+				} else if (event.event === 'Progress') {
+					downloadedBytes += event.data.chunkLength;
+					if (totalBytes > 0) {
+						updateProgress = Math.round((downloadedBytes / totalBytes) * 100);
+					}
+				} else if (event.event === 'Finished') {
+					updateProgress = 100;
+				}
+			});
+			updateMessage = { type: 'success', text: 'Update installed! Restart the app to apply.' };
+		} catch (e) {
+			updateMessage = { type: 'error', text: `Update failed: ${e}` };
+		} finally {
+			updateDownloading = false;
+		}
+	}
+
+	// Backup state
+	let backups = $state<BackupEntry[]>([]);
+	let backupLoading = $state(false);
+	let backupMessage = $state<{ type: 'success' | 'error'; text: string } | null>(null);
+	let restoreConfirm = $state<BackupEntry | null>(null);
+
+	async function loadBackups() {
+		try {
+			backups = await listBackups();
+		} catch (e) {
+			console.error('Failed to load backups:', e);
+		}
+	}
+
+	async function handleBackupNow() {
+		backupLoading = true;
+		backupMessage = null;
+		const unlisten = await listen<{ success: boolean; entry?: BackupEntry; error?: string }>('backup-done', async (event) => {
+			const data = event.payload;
+			if (data.success) {
+				backupMessage = { type: 'success', text: 'Backup created successfully' };
+				await loadBackups();
+				if ($appConfig) {
+					$appConfig = { ...$appConfig, last_backup_time: new Date().toISOString() };
+				}
+			} else {
+				backupMessage = { type: 'error', text: `Backup failed: ${data.error}` };
+			}
+			backupLoading = false;
+			unlisten();
+		});
+		try {
+			await createBackup();
+		} catch (e) {
+			backupMessage = { type: 'error', text: `Backup failed: ${e}` };
+			backupLoading = false;
+			unlisten();
+		}
+	}
+
+	async function handleRestore(entry: BackupEntry) {
+		restoreConfirm = null;
+		backupLoading = true;
+		backupMessage = null;
+		const unlisten = await listen<{ success: boolean; error?: string }>('restore-done', (event) => {
+			const data = event.payload;
+			if (data.success) {
+				backupMessage = { type: 'success', text: 'Backup restored. Restart the app to see changes.' };
+			} else {
+				backupMessage = { type: 'error', text: `Restore failed: ${data.error}` };
+			}
+			backupLoading = false;
+			unlisten();
+		});
+		try {
+			await restoreBackup(entry.path);
+		} catch (e) {
+			backupMessage = { type: 'error', text: `Restore failed: ${e}` };
+			backupLoading = false;
+			unlisten();
+		}
+	}
+
+	async function handleDeleteBackup(entry: BackupEntry) {
+		try {
+			await deleteBackup(entry.path);
+			backups = backups.filter(b => b.path !== entry.path);
+		} catch (e) {
+			console.error('Failed to delete backup:', e);
+		}
+	}
+
+	async function handleSelectBackupFolder() {
+		const selected = await openDialog({ directory: true, multiple: false, title: 'Select backup folder' });
+		if (selected && $appConfig) {
+			await setBackupSettings($appConfig.backup_enabled, $appConfig.backup_frequency, $appConfig.backup_max_count, selected as string, $appConfig.backup_include_attachments);
+			$appConfig = { ...$appConfig, backup_location: selected as string };
+			await loadBackups();
+		}
+	}
+
+	async function saveBackupSettings() {
+		if (!$appConfig) return;
+		await setBackupSettings($appConfig.backup_enabled, $appConfig.backup_frequency, $appConfig.backup_max_count, $appConfig.backup_location, $appConfig.backup_include_attachments);
+	}
+
+	function formatBackupSize(bytes: number): string {
+		if (bytes < 1024) return `${bytes} B`;
+		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	}
+
+	function formatBackupDate(iso: string): string {
+		try {
+			const d = new Date(iso);
+			return d.toLocaleString();
+		} catch {
+			return iso;
+		}
+	}
+
+	// AI state
+	let aiProvider = $state<string | null>($appConfig?.ai_provider ?? null);
+	let aiApiKey = $derived.by(() => {
+		if (aiProvider === 'openai') return _openaiKey;
+		return _anthropicKey;
+	});
+	let _anthropicKey = $state($appConfig?.ai_api_key ?? '');
+	let _openaiKey = $state($appConfig?.openai_api_key ?? '');
+	let aiModel = $state($appConfig?.ai_model ?? 'claude-sonnet-4-5-20250929');
+	let aiWritingStyle = $state($appConfig?.ai_writing_style ?? '');
+	let aiShowKey = $state(false);
+	let aiTestLoading = $state(false);
+	let aiTestMessage = $state<{ type: 'success' | 'error'; text: string } | null>(null);
+
+	const anthropicModels = [
+		{ value: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5', desc: 'Balanced' },
+		{ value: 'claude-opus-4-6', label: 'Claude Opus 4.6', desc: 'Most capable' },
+		{ value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', desc: 'Fast' },
+	];
+	const openaiModels = [
+		{ value: 'gpt-5.2', label: 'GPT-5.2', desc: 'Most capable' },
+		{ value: 'gpt-5.1', label: 'GPT-5.1', desc: 'Balanced' },
+		{ value: 'gpt-5-mini', label: 'GPT-5 Mini', desc: 'Fast' },
+		{ value: 'gpt-4.1', label: 'GPT-4.1', desc: 'Previous gen' },
+	];
+	let aiModels = $derived(aiProvider === 'openai' ? openaiModels : anthropicModels);
+
+	async function saveAiSettings() {
+		await setAiSettings(aiProvider, aiApiKey || null, aiModel, aiWritingStyle || null);
+		if ($appConfig) {
+			$appConfig = {
+				...$appConfig,
+				ai_provider: aiProvider,
+				ai_api_key: _anthropicKey || null,
+				openai_api_key: _openaiKey || null,
+				ai_model: aiModel,
+				ai_writing_style: aiWritingStyle || null,
+			};
+		}
+	}
+
+	async function handleTestAi() {
+		aiTestLoading = true;
+		aiTestMessage = null;
+		const unlisten = await listen<{ success: boolean; message?: string; error?: string }>('ai-test-result', (event) => {
+			const data = event.payload;
+			if (data.success) {
+				aiTestMessage = { type: 'success', text: 'Connection successful!' };
+			} else {
+				aiTestMessage = { type: 'error', text: data.error ?? 'Connection failed' };
+			}
+			aiTestLoading = false;
+			unlisten();
+		});
+		try {
+			await testAiConnection();
+		} catch (e) {
+			aiTestMessage = { type: 'error', text: String(e) };
+			aiTestLoading = false;
+			unlisten();
+		}
+	}
+
+	const accentPresets = [
+		{ name: 'Indigo', light: '#5b6abf', dark: '#7b9bd4' },
+		{ name: 'Rose', light: '#e11d48', dark: '#d4768a' },
+		{ name: 'Emerald', light: '#059669', dark: '#5bab8a' },
+		{ name: 'Amber', light: '#d97706', dark: '#c9a04e' },
+		{ name: 'Purple', light: '#7c3aed', dark: '#9a82c4' },
+		{ name: 'Cyan', light: '#0891b2', dark: '#5ba8b5' },
+		{ name: 'Orange', light: '#ea580c', dark: '#c98560' },
+		{ name: 'Teal', light: '#0d9488', dark: '#5fada5' },
+	];
+
+	const fontSizePresets = [
+		{ label: 'Small', size: 13 },
+		{ label: 'Default', size: 14 },
+		{ label: 'Medium', size: 15 },
+		{ label: 'Large', size: 16 },
+		{ label: 'Extra Large', size: 18 },
+	];
+
+	const fontFamilyPresets = [
+		{ name: 'System', value: 'system', stack: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' },
+		{ name: 'Inter', value: 'inter', stack: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif' },
+		{ name: 'Georgia', value: 'georgia', stack: 'Georgia, "Times New Roman", serif' },
+		{ name: 'Merriweather', value: 'merriweather', stack: '"Merriweather", Georgia, serif' },
+		{ name: 'Lora', value: 'lora', stack: '"Lora", Georgia, serif' },
+		{ name: 'Open Sans', value: 'opensans', stack: '"Open Sans", -apple-system, sans-serif' },
+		{ name: 'Literata', value: 'literata', stack: '"Literata", Georgia, serif' },
+		{ name: 'Mono', value: 'mono', stack: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace' },
+	];
+
+	let activeAccent = $state($appConfig?.accent_color ?? 'Indigo');
+	let activeFontSize = $state($appConfig?.font_size ?? 14);
+	let activeFontFamily = $state($appConfig?.font_family ?? 'system');
+
+	// General settings
+	let compactNotes = $state($appConfig?.compact_notes ?? false);
+	let timeFormat = $state($appConfig?.time_format ?? 'relative');
+	let gpuAcceleration = $state($appConfig?.gpu_acceleration ?? true);
+	let autostart = $state($appConfig?.autostart ?? false);
+
+	// Editor settings
+	let pdfPreview = $state($appConfig?.pdf_preview ?? false);
+	let pdfHeight = $state($appConfig?.pdf_height ?? 600);
+	let titleMode = $state($appConfig?.title_mode ?? 'input');
+	let hideTitleInBody = $state($appConfig?.hide_title_in_body ?? false);
+	let defaultViewMode = $state($appConfig?.default_view_mode ?? false);
+	let showTrayIcon = $state($appConfig?.show_tray_icon ?? false);
+	let enableWikiLinks = $state($appConfig?.enable_wiki_links ?? true);
+
+	const pdfHeightPresets = [
+		{ label: 'Small', value: 300 },
+		{ label: 'Medium', value: 450 },
+		{ label: 'Default', value: 600 },
+		{ label: 'Large', value: 800 },
+		{ label: 'Full', value: 1000 },
+	];
+
+	// Import state
+	let importLoading = $state(false);
+	let importResult = $state<ImportResult | null>(null);
+	let importError = $state<string | null>(null);
+	async function runObsidianImport() {
+		importLoading = true;
+		importResult = null;
+		importError = null;
+
+		const unlistenDone = await listen<{ success: boolean; files_converted?: number; links_converted?: number; error?: string }>('import-done', (event) => {
+			const data = event.payload;
+			if (data.success) {
+				importResult = { files_converted: data.files_converted ?? 0, links_converted: data.links_converted ?? 0 };
+			} else {
+				importError = data.error ?? 'Import failed';
+			}
+			importLoading = false;
+			unlistenDone();
+		});
+
+		try {
+			await importObsidian();
+		} catch (e) {
+			importError = String(e);
+			importLoading = false;
+			unlistenDone();
+		}
+	}
+
+	function saveGeneralSettings() {
+		if ($appConfig) {
+			$appConfig.compact_notes = compactNotes;
+			$appConfig.time_format = timeFormat;
+			$appConfig.gpu_acceleration = gpuAcceleration;
+			$appConfig.autostart = autostart;
+			$appConfig.pdf_preview = pdfPreview;
+			$appConfig.pdf_height = pdfHeight;
+			$appConfig.title_mode = titleMode;
+			$appConfig.hide_title_in_body = hideTitleInBody;
+			$appConfig.default_view_mode = defaultViewMode;
+			$appConfig.show_tray_icon = showTrayIcon;
+			$appConfig.enable_wiki_links = enableWikiLinks;
+		}
+		setGeneralSettings(compactNotes, timeFormat, gpuAcceleration, autostart, pdfPreview, pdfHeight, titleMode, hideTitleInBody, defaultViewMode, showTrayIcon, enableWikiLinks)
+			.catch((e) => console.error('Failed to save general settings:', e));
+	}
+
+	function selectAccent(preset: typeof accentPresets[0]) {
+		activeAccent = preset.name;
+		applyAccent(preset);
+		saveConfig(preset.name);
+	}
+
+	function applyAccent(preset: typeof accentPresets[0]) {
+		const root = document.documentElement;
+		const isDark = $theme === 'dark' || ($theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+		const color = isDark ? preset.dark : preset.light;
+
+		root.style.setProperty('--accent', color);
+		root.style.setProperty('--text-accent', color);
+
+		root.style.setProperty('--accent-hover', color);
+		if (isDark) {
+			root.style.setProperty('--accent-light', `color-mix(in srgb, ${color} 10%, transparent)`);
+		} else {
+			root.style.setProperty('--accent-light', `color-mix(in srgb, ${color} 8%, transparent)`);
+		}
+	}
+
+	function saveConfig(accentName: string) {
+		if ($appConfig) {
+			$appConfig.accent_color = accentName;
+		}
+		setAccentColor(accentName).catch((e) => console.error('Failed to save accent:', e));
+	}
+
+	function selectFontSize(size: number) {
+		activeFontSize = size;
+		applyFontSize(size);
+		if ($appConfig) $appConfig.font_size = size;
+		setFontSize(size).catch((e) => console.error('Failed to save font size:', e));
+	}
+
+	function applyFontSize(size: number) {
+		document.documentElement.style.setProperty('--editor-font-size', `${size}px`);
+	}
+
+	function selectFontFamily(preset: typeof fontFamilyPresets[0]) {
+		activeFontFamily = preset.value;
+		applyFontFamily(preset.stack);
+		if ($appConfig) $appConfig.font_family = preset.value;
+		setFontFamily(preset.value).catch((e) => console.error('Failed to save font family:', e));
+	}
+
+	function applyFontFamily(stack: string) {
+		document.documentElement.style.setProperty('--editor-font-family', stack);
+	}
+
+	function close() {
+		// Ensure AI settings are saved when closing (in case input wasn't blurred)
+		// Only save if the key differs from what's already stored
+		if (aiProvider && aiApiKey && aiApiKey !== ($appConfig?.ai_api_key ?? '')) {
+			saveAiSettings();
+		}
+		$showSettings = false;
+	}
+
+	// Apply saved settings on mount
+	$effect(() => {
+		const savedAccent = $appConfig?.accent_color;
+		if (savedAccent) {
+			const preset = accentPresets.find(p => p.name === savedAccent);
+			if (preset) {
+				activeAccent = savedAccent;
+				applyAccent(preset);
+			}
+		}
+		const savedSize = $appConfig?.font_size;
+		if (savedSize) {
+			activeFontSize = savedSize;
+			applyFontSize(savedSize);
+		}
+		const savedFamily = $appConfig?.font_family;
+		if (savedFamily) {
+			const preset = fontFamilyPresets.find(p => p.value === savedFamily);
+			if (preset) {
+				activeFontFamily = savedFamily;
+				applyFontFamily(preset.stack);
+			}
+		}
+		// Sync general settings
+		if ($appConfig) {
+			compactNotes = $appConfig.compact_notes ?? false;
+			timeFormat = $appConfig.time_format ?? 'relative';
+			gpuAcceleration = $appConfig.gpu_acceleration ?? true;
+			autostart = $appConfig.autostart ?? false;
+			pdfPreview = $appConfig.pdf_preview ?? false;
+			pdfHeight = $appConfig.pdf_height ?? 600;
+			titleMode = $appConfig.title_mode ?? 'input';
+		}
+	});
+
+	// Re-apply when theme changes
+	$effect(() => {
+		const _ = $theme;
+		const preset = accentPresets.find(p => p.name === activeAccent);
+		if (preset) {
+			applyAccent(preset);
+		}
+	});
+</script>
+
+{#if $showSettings}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="settings-overlay" onclick={close} onkeydown={(e) => { if (e.key === 'Escape') close(); }}>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="settings-panel" onclick={(e) => e.stopPropagation()}>
+			<div class="settings-header">
+				<h2>Settings</h2>
+				<button class="close-btn" onclick={close}>
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<line x1="18" y1="6" x2="6" y2="18" />
+						<line x1="6" y1="6" x2="18" y2="18" />
+					</svg>
+				</button>
+			</div>
+
+			<div class="settings-content">
+				<nav class="settings-tabs">
+					<button class="tab-btn" class:active={activeTab === 'general'} onclick={() => activeTab = 'general'}>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/><circle cx="12" cy="12" r="3"/>
+						</svg>
+						General
+					</button>
+					<button class="tab-btn" class:active={activeTab === 'editor'} onclick={() => activeTab = 'editor'}>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M21.174 6.812a1 1 0 00-3.986-3.987L3.842 16.174a2 2 0 00-.5.83l-1.321 4.352a.5.5 0 00.623.622l4.353-1.32a2 2 0 00.83-.497z"/><path d="M15 5l4 4"/>
+						</svg>
+						Editor
+					</button>
+					<button class="tab-btn" class:active={activeTab === 'styling'} onclick={() => activeTab = 'styling'}>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M12 2v4"/><path d="m6.8 14-3.5 2"/><path d="m20.7 16-3.5-2"/><path d="M6.8 10 3.3 8"/><path d="m20.7 8-3.5 2"/><path d="m9 22 3-8 3 8"/><path d="M8 22h8"/><circle cx="12" cy="12" r="2"/>
+						</svg>
+						Styling
+					</button>
+					<button class="tab-btn" class:active={activeTab === 'import'} onclick={() => activeTab = 'import'}>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M8 5H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V7a2 2 0 00-2-2h-4"/>
+						</svg>
+						Import
+					</button>
+					<button class="tab-btn" class:active={activeTab === 'backup'} onclick={() => { activeTab = 'backup'; loadBackups(); }}>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M21 12a9 9 0 00-9-9 9.75 9.75 0 00-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 009 9 9.75 9.75 0 006.74-2.74L21 16"/><path d="M16 16h5v5"/>
+						</svg>
+						Backup
+					</button>
+					<button class="tab-btn" class:active={activeTab === 'ai'} onclick={() => activeTab = 'ai'}>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M12 8V4l-2-2"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M9 13v2"/><path d="M15 13v2"/>
+						</svg>
+						AI
+					</button>
+					<button class="tab-btn" class:active={activeTab === 'updates'} onclick={() => activeTab = 'updates'}>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M21 12a9 9 0 00-9-9 9.75 9.75 0 00-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 3"/>
+						</svg>
+						Updates
+					</button>
+				</nav>
+
+				<div class="settings-body">
+					{#if activeTab === 'general'}
+						<div class="tab-content">
+							<div class="settings-section">
+								<h3>Notes List</h3>
+								<label class="setting-toggle">
+									<span class="setting-label">
+										<span class="setting-name">Compact mode</span>
+										<span class="setting-desc">Show notes in a denser layout without preview</span>
+									</span>
+									<button class="toggle-switch" class:on={compactNotes} onclick={() => { compactNotes = !compactNotes; saveGeneralSettings(); }}>
+										<span class="toggle-knob"></span>
+									</button>
+								</label>
+							</div>
+
+							<div class="settings-section">
+								<h3>Time Format</h3>
+								<div class="setting-options">
+									<button class="option-btn" class:active={timeFormat === 'relative'} onclick={() => { timeFormat = 'relative'; saveGeneralSettings(); }}>Relative</button>
+									<button class="option-btn" class:active={timeFormat === '12h'} onclick={() => { timeFormat = '12h'; saveGeneralSettings(); }}>12-hour</button>
+									<button class="option-btn" class:active={timeFormat === '24h'} onclick={() => { timeFormat = '24h'; saveGeneralSettings(); }}>24-hour</button>
+								</div>
+							</div>
+
+							<div class="settings-section">
+								<h3>Performance</h3>
+								<label class="setting-toggle">
+									<span class="setting-label">
+										<span class="setting-name">GPU Acceleration</span>
+										<span class="setting-desc">Use hardware acceleration for rendering (requires restart)</span>
+									</span>
+									<button class="toggle-switch" class:on={gpuAcceleration} onclick={() => { gpuAcceleration = !gpuAcceleration; saveGeneralSettings(); }}>
+										<span class="toggle-knob"></span>
+									</button>
+								</label>
+							</div>
+
+							<div class="settings-section">
+								<h3>System</h3>
+								<label class="setting-toggle">
+									<span class="setting-label">
+										<span class="setting-name">Start at system startup</span>
+										<span class="setting-desc">Launch HelixNotes when your computer starts</span>
+									</span>
+									<button class="toggle-switch" class:on={autostart} onclick={() => { autostart = !autostart; saveGeneralSettings(); }}>
+										<span class="toggle-knob"></span>
+									</button>
+								</label>
+								<label class="setting-toggle">
+									<span class="setting-label">
+										<span class="setting-name">Show in system tray</span>
+										<span class="setting-desc">Show an icon in the notification area (requires restart)</span>
+									</span>
+									<button class="toggle-switch" class:on={showTrayIcon} onclick={() => { showTrayIcon = !showTrayIcon; saveGeneralSettings(); }}>
+										<span class="toggle-knob"></span>
+									</button>
+								</label>
+							</div>
+						</div>
+					{:else if activeTab === 'editor'}
+						<div class="tab-content">
+							<div class="settings-section">
+								<h3>Title</h3>
+								<div class="setting-options">
+									<button class="option-btn" class:active={titleMode === 'input'} onclick={() => { titleMode = 'input'; saveGeneralSettings(); }}>Input</button>
+									<button class="option-btn" class:active={titleMode === 'heading'} onclick={() => { titleMode = 'heading'; saveGeneralSettings(); }}>Heading</button>
+									<button class="option-btn" class:active={titleMode === 'hidden'} onclick={() => { titleMode = 'hidden'; saveGeneralSettings(); }}>Hidden</button>
+								</div>
+								<span class="setting-hint">How the note title is displayed in the editor</span>
+								<label class="setting-toggle" style="margin-top: 12px;">
+									<span class="setting-label">
+										<span class="setting-name">Hide title in note body</span>
+										<span class="setting-desc">Hide the first heading when it matches the note title</span>
+									</span>
+									<button class="toggle-switch" class:on={hideTitleInBody} onclick={() => { hideTitleInBody = !hideTitleInBody; saveGeneralSettings(); }}>
+										<span class="toggle-knob"></span>
+									</button>
+								</label>
+								<label class="setting-toggle" style="margin-top: 12px;">
+									<span class="setting-label">
+										<span class="setting-name">Open notes in View Mode</span>
+										<span class="setting-desc">Notes open as read-only by default. Click the eye icon to switch to editing.</span>
+									</span>
+									<button class="toggle-switch" class:on={defaultViewMode} onclick={() => { defaultViewMode = !defaultViewMode; saveGeneralSettings(); }}>
+										<span class="toggle-knob"></span>
+									</button>
+								</label>
+							</div>
+
+							<div class="settings-section">
+								<h3>Wiki Links & Graph</h3>
+								<label class="setting-toggle">
+									<span class="setting-label">
+										<span class="setting-name">Enable wiki links</span>
+										<span class="setting-desc">Link notes with [[Note Title]] syntax and visualize connections in a graph view</span>
+									</span>
+									<button class="toggle-switch" class:on={enableWikiLinks} onclick={() => { enableWikiLinks = !enableWikiLinks; saveGeneralSettings(); }}>
+										<span class="toggle-knob"></span>
+									</button>
+								</label>
+							</div>
+
+							<div class="settings-section">
+								<h3>PDF Preview</h3>
+								<label class="setting-toggle">
+									<span class="setting-label">
+										<span class="setting-name">Inline PDF preview</span>
+										<span class="setting-desc">Render embedded PDF files as inline previews inside notes</span>
+									</span>
+									<button class="toggle-switch" class:on={pdfPreview} onclick={() => { pdfPreview = !pdfPreview; saveGeneralSettings(); }}>
+										<span class="toggle-knob"></span>
+									</button>
+								</label>
+							</div>
+
+							{#if pdfPreview}
+								<div class="settings-section">
+									<h3>PDF Height</h3>
+									<div class="font-size-options">
+										{#each pdfHeightPresets as preset}
+											<button
+												class="font-size-btn"
+												class:active={pdfHeight === preset.value}
+												onclick={() => { pdfHeight = preset.value; saveGeneralSettings(); }}
+											>
+												<span class="font-size-label">{preset.label}</span>
+												<span class="font-size-value">{preset.value}px</span>
+											</button>
+										{/each}
+									</div>
+									<span class="setting-hint">Default height for PDF previews in notes</span>
+								</div>
+							{/if}
+						</div>
+					{:else if activeTab === 'styling'}
+						<div class="tab-content">
+							<div class="settings-section">
+								<h3>Theme</h3>
+								<div class="theme-toggle">
+									<button class="theme-btn" class:active={$theme === 'light'} onclick={() => { $theme = 'light'; setTheme('light'); }}>
+										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+											<circle cx="12" cy="12" r="5" />
+											<line x1="12" y1="1" x2="12" y2="3" />
+											<line x1="12" y1="21" x2="12" y2="23" />
+											<line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+											<line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+											<line x1="1" y1="12" x2="3" y2="12" />
+											<line x1="21" y1="12" x2="23" y2="12" />
+											<line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+											<line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+										</svg>
+										Light
+									</button>
+									<button class="theme-btn" class:active={$theme === 'dark'} onclick={() => { $theme = 'dark'; setTheme('dark'); }}>
+										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+											<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
+										</svg>
+										Dark
+									</button>
+								</div>
+							</div>
+
+							<div class="settings-section">
+								<h3>Accent Color</h3>
+								<div class="accent-grid">
+									{#each accentPresets as preset}
+										<button
+											class="accent-swatch"
+											class:active={activeAccent === preset.name}
+											style="--swatch-color: {$theme === 'dark' ? preset.dark : preset.light}"
+											onclick={() => selectAccent(preset)}
+											title={preset.name}
+										>
+											<span class="swatch-circle"></span>
+											<span class="swatch-label">{preset.name}</span>
+										</button>
+									{/each}
+								</div>
+							</div>
+
+							<div class="settings-section">
+								<h3>Font Size</h3>
+								<div class="font-size-options">
+									{#each fontSizePresets as preset}
+										<button
+											class="font-size-btn"
+											class:active={activeFontSize === preset.size}
+											onclick={() => selectFontSize(preset.size)}
+										>
+											<span class="font-size-label">{preset.label}</span>
+											<span class="font-size-value">{preset.size}px</span>
+										</button>
+									{/each}
+								</div>
+							</div>
+
+							<div class="settings-section">
+								<h3>Font</h3>
+								<div class="font-family-options">
+									{#each fontFamilyPresets as preset}
+										<button
+											class="font-family-btn"
+											class:active={activeFontFamily === preset.value}
+											onclick={() => selectFontFamily(preset)}
+										>
+											<span class="font-family-preview" style="font-family: {preset.stack}">Aa</span>
+											<span class="font-family-name">{preset.name}</span>
+										</button>
+									{/each}
+								</div>
+							</div>
+						</div>
+					{:else if activeTab === 'backup'}
+						<div class="tab-content">
+							<div class="settings-section">
+								<h3>Automatic Backup</h3>
+
+								<label class="setting-toggle">
+									<span>Enable automatic backup</span>
+									<button class="toggle-switch" class:on={$appConfig?.backup_enabled} onclick={() => { if ($appConfig) { $appConfig = { ...$appConfig, backup_enabled: !$appConfig.backup_enabled }; saveBackupSettings(); } }}>
+										<span class="toggle-knob"></span>
+									</button>
+								</label>
+
+								<div class="backup-setting-group">
+									<span class="backup-setting-label">Backup frequency</span>
+									<div class="setting-options">
+										{#each [{ value: '1h', label: '1 hour' }, { value: '6h', label: '6 hours' }, { value: '12h', label: '12 hours' }, { value: '24h', label: '24 hours' }] as opt}
+											<button class="option-btn" class:active={($appConfig?.backup_frequency ?? '24h') === opt.value} onclick={() => { if ($appConfig) { $appConfig = { ...$appConfig, backup_frequency: opt.value }; saveBackupSettings(); } }}>{opt.label}</button>
+										{/each}
+									</div>
+								</div>
+
+								<div class="backup-setting-group">
+									<span class="backup-setting-label">Maximum backups</span>
+									<div class="setting-options">
+										{#each [5, 10, 20, 50] as count}
+											<button class="option-btn" class:active={($appConfig?.backup_max_count ?? 10) === count} onclick={() => { if ($appConfig) { $appConfig = { ...$appConfig, backup_max_count: count }; saveBackupSettings(); } }}>{count}</button>
+										{/each}
+									</div>
+								</div>
+
+								<label class="setting-toggle">
+									<span class="setting-label">
+										<span class="setting-name">Include attachments</span>
+										<span class="setting-desc">Include images and files in backups (increases size significantly)</span>
+									</span>
+									<button class="toggle-switch" class:on={$appConfig?.backup_include_attachments} onclick={() => { if ($appConfig) { $appConfig = { ...$appConfig, backup_include_attachments: !$appConfig.backup_include_attachments }; saveBackupSettings(); } }}>
+										<span class="toggle-knob"></span>
+									</button>
+								</label>
+
+								<div class="backup-actions">
+									<button class="backup-link-btn" onclick={handleSelectBackupFolder}>
+										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+											<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+										</svg>
+										{$appConfig?.backup_location ? 'Change backup folder' : 'Select backup folder'}
+									</button>
+									{#if $appConfig?.backup_location}
+										<p class="backup-path">{$appConfig.backup_location}</p>
+									{/if}
+									<button class="backup-link-btn" onclick={handleBackupNow} disabled={backupLoading}>
+										{#if backupLoading}
+											<svg class="spinner-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
+											Backing up...
+										{:else}
+											<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+												<path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
+												<polyline points="17 21 17 13 7 13 7 21" />
+												<polyline points="7 3 7 8 15 8" />
+											</svg>
+											Backup now
+										{/if}
+									</button>
+								</div>
+
+								<p class="backup-last-time">
+									{#if $appConfig?.last_backup_time}
+										Last backup: {formatBackupDate($appConfig.last_backup_time)}
+									{:else}
+										No backups yet
+									{/if}
+								</p>
+
+								{#if backupMessage}
+									<div class="import-result {backupMessage.type}">
+										{#if backupMessage.type === 'success'}
+											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
+										{:else}
+											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
+										{/if}
+										<span>{backupMessage.text}</span>
+									</div>
+								{/if}
+							</div>
+
+							<div class="settings-section">
+								<h3>Restore Backup</h3>
+								{#if backups.length === 0}
+									<p class="backup-empty">No backups found</p>
+								{:else}
+									<div class="backup-list">
+										{#each backups as entry}
+											<div class="backup-item">
+												<div class="backup-info">
+													<span class="backup-date">{formatBackupDate(entry.created)}</span>
+													<span class="backup-size">{formatBackupSize(entry.size)}</span>
+												</div>
+												<div class="backup-item-actions">
+													<button class="backup-action-btn" title="Restore" onclick={() => restoreConfirm = entry}>
+														<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+															<polyline points="1 4 1 10 7 10" />
+															<path d="M3.51 15a9 9 0 102.13-9.36L1 10" />
+														</svg>
+													</button>
+													<button class="backup-action-btn danger" title="Delete" onclick={() => handleDeleteBackup(entry)}>
+														<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+															<polyline points="3 6 5 6 21 6" />
+															<path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+														</svg>
+													</button>
+												</div>
+											</div>
+										{/each}
+									</div>
+								{/if}
+							</div>
+
+							{#if restoreConfirm}
+								<!-- svelte-ignore a11y_no_static_element_interactions -->
+								<div class="restore-confirm-overlay" onclick={() => restoreConfirm = null}>
+									<!-- svelte-ignore a11y_no_static_element_interactions -->
+									<div class="restore-confirm" onclick={(e) => e.stopPropagation()}>
+										<h4>Restore Backup?</h4>
+										<p>This will replace all notes in your vault with the backup from <strong>{formatBackupDate(restoreConfirm.created)}</strong>. This action cannot be undone.</p>
+										<div class="restore-confirm-actions">
+											<button class="restore-cancel" onclick={() => restoreConfirm = null}>Cancel</button>
+											<button class="restore-confirm-btn" onclick={() => handleRestore(restoreConfirm!)}>Restore</button>
+										</div>
+									</div>
+								</div>
+							{/if}
+						</div>
+
+					{:else if activeTab === 'import'}
+						<div class="tab-content">
+							<div class="settings-section">
+								<h3>Import from Obsidian</h3>
+								<p class="import-desc">Convert Obsidian wiki-links (<code>![[image.png]]</code>, <code>[[note]]</code>) to standard markdown links across all notes in the current vault. This expects that you have opened an Obsidian vault directory directly as your HelixNotes vault.</p>
+								<div class="import-warn">
+									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
+									<span>This modifies files in place. Make a backup before running!</span>
+								</div>
+								<button class="import-btn" onclick={runObsidianImport} disabled={importLoading}>
+									{#if importLoading}
+										<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
+										Importing...
+									{:else}
+										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+											<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+											<polyline points="7 10 12 15 17 10" />
+											<line x1="12" y1="15" x2="12" y2="3" />
+										</svg>
+										Import Obsidian Vault
+									{/if}
+								</button>
+
+								{#if importResult}
+									<div class="import-result success">
+										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
+										<span>Converted {importResult.links_converted} links across {importResult.files_converted} files</span>
+									</div>
+								{/if}
+								{#if importError}
+									<div class="import-result error">
+										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
+										<span>{importError}</span>
+									</div>
+								{/if}
+							</div>
+						</div>
+
+					{:else if activeTab === 'ai'}
+						<div class="tab-content">
+							<div class="settings-section">
+								<h3>Provider</h3>
+								<div class="setting-options">
+									<button class="option-btn" class:active={!aiProvider} onclick={() => { if (!aiProvider) return; aiProvider = null; aiTestMessage = null; saveAiSettings(); }}>Disabled</button>
+									<button class="option-btn" class:active={aiProvider === 'anthropic'} onclick={() => { if (aiProvider === 'anthropic') return; aiProvider = 'anthropic'; aiModel = 'claude-sonnet-4-5-20250929'; aiTestMessage = null; saveAiSettings(); }}>Anthropic</button>
+									<button class="option-btn" class:active={aiProvider === 'openai'} onclick={() => { if (aiProvider === 'openai') return; aiProvider = 'openai'; aiModel = 'gpt-5.2'; aiTestMessage = null; saveAiSettings(); }}>OpenAI</button>
+								</div>
+							</div>
+
+							{#if aiProvider}
+								<div class="settings-section">
+									<h3>API Key</h3>
+									<div class="ai-key-row">
+										<input
+											type={aiShowKey ? 'text' : 'password'}
+											class="ai-key-input"
+											placeholder={aiProvider === 'openai' ? 'sk-...' : 'sk-ant-...'}
+											value={aiApiKey}
+											oninput={(e) => { const v = (e.target as HTMLInputElement).value; if (aiProvider === 'openai') _openaiKey = v; else _anthropicKey = v; }}
+											onblur={saveAiSettings}
+										/>
+										<button class="ai-key-toggle" onclick={() => aiShowKey = !aiShowKey} title={aiShowKey ? 'Hide' : 'Show'}>
+											{#if aiShowKey}
+												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+											{:else}
+												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+											{/if}
+										</button>
+									</div>
+									{#if aiProvider === 'openai'}
+										<p class="setting-hint">Get your API key from <a href="https://platform.openai.com/api-keys" target="_blank" class="ai-link">platform.openai.com</a></p>
+									{:else}
+										<p class="setting-hint">Get your API key from <a href="https://console.anthropic.com/settings/keys" target="_blank" class="ai-link">console.anthropic.com</a></p>
+									{/if}
+								</div>
+
+								<div class="settings-section">
+									<h3>Model</h3>
+									<div class="ai-model-options">
+										{#each aiModels as m}
+											<button
+												class="ai-model-btn"
+												class:active={aiModel === m.value}
+												onclick={() => { aiModel = m.value; saveAiSettings(); }}
+											>
+												<span class="ai-model-name">{m.label}</span>
+												<span class="ai-model-desc">{m.desc}</span>
+											</button>
+										{/each}
+									</div>
+								</div>
+
+								<div class="settings-section">
+									<h3>Writing Style</h3>
+									<textarea
+										class="ai-style-input"
+										placeholder="e.g. Professional and concise. Use active voice. Avoid jargon."
+										value={aiWritingStyle}
+										oninput={(e) => { aiWritingStyle = (e.target as HTMLTextAreaElement).value; }}
+										onblur={saveAiSettings}
+										rows="3"
+									></textarea>
+									<p class="setting-hint">Describe your preferred tone, style, or personality. This will be applied to all AI actions.</p>
+								</div>
+
+								<div class="settings-section">
+									<h3>Connection</h3>
+									<button class="import-btn" onclick={handleTestAi} disabled={aiTestLoading || !aiApiKey}>
+										{#if aiTestLoading}
+											<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
+											Testing...
+										{:else}
+											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
+											Test Connection
+										{/if}
+									</button>
+									{#if aiTestMessage}
+										<div class="import-result {aiTestMessage.type}">
+											{#if aiTestMessage.type === 'success'}
+												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
+											{:else}
+												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
+											{/if}
+											<span>{aiTestMessage.text}</span>
+										</div>
+									{/if}
+								</div>
+
+								<div class="settings-section">
+									<h3>Usage</h3>
+									<p class="import-desc">Select text in the editor and right-click to access AI writing tools: improve, fix grammar, rewrite, summarize, translate, and more.</p>
+								</div>
+							{/if}
+						</div>
+
+					{:else if activeTab === 'updates'}
+						<div class="tab-content">
+							<div class="settings-section">
+								<h3>Current Version</h3>
+								<p class="update-version">HelixNotes <strong>v{appVersion}</strong></p>
+							</div>
+
+							<div class="settings-section">
+								<h3>Check for Updates</h3>
+								<button class="import-btn" onclick={handleCheckUpdate} disabled={updateChecking || updateDownloading}>
+									{#if updateChecking}
+										<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
+										Checking...
+									{:else}
+										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+											<path d="M21 12a9 9 0 00-9-9 9.75 9.75 0 00-6.74 2.74L3 8"/><path d="M3 3v5h5"/>
+										</svg>
+										Check for Updates
+									{/if}
+								</button>
+							</div>
+
+							{#if updateAvailable}
+								<div class="settings-section">
+									<h3>Update Available</h3>
+									<div class="update-info">
+										<p class="update-new-version">Version <strong>{updateAvailable.version}</strong></p>
+										{#if updateAvailable.date}
+											<p class="update-date">{new Date(updateAvailable.date).toLocaleDateString()}</p>
+										{/if}
+										{#if updateAvailable.body}
+											<div class="update-notes">{updateAvailable.body}</div>
+										{/if}
+									</div>
+									<button class="update-install-btn" onclick={handleDownloadAndInstall} disabled={updateDownloading}>
+										{#if updateDownloading}
+											<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
+											{updateProgress > 0 ? `Downloading ${updateProgress}%` : 'Downloading...'}
+										{:else}
+											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+												<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+											</svg>
+											Download & Install
+										{/if}
+									</button>
+									{#if updateDownloading && updateProgress > 0}
+										<div class="update-progress-bar">
+											<div class="update-progress-fill" style="width: {updateProgress}%"></div>
+										</div>
+									{/if}
+								</div>
+							{/if}
+
+							{#if updateMessage}
+								<div class="import-result {updateMessage.type}">
+									{#if updateMessage.type === 'success'}
+										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
+									{:else if updateMessage.type === 'error'}
+										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
+									{:else}
+										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
+									{/if}
+									<span>{updateMessage.text}</span>
+								</div>
+							{/if}
+						</div>
+					{/if}
+				</div>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<style>
+	.settings-overlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.35);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 2000;
+	}
+
+	.settings-panel {
+		background: var(--bg-primary);
+		border: 1px solid var(--border-color);
+		border-radius: 16px;
+		box-shadow: var(--shadow-lg);
+		width: 620px;
+		max-height: 80vh;
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.settings-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 20px 24px 16px;
+		border-bottom: 1px solid var(--border-light);
+	}
+
+	.settings-header h2 {
+		font-size: 18px;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.close-btn {
+		background: none;
+		border: none;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		padding: 4px;
+		border-radius: 6px;
+		display: flex;
+		align-items: center;
+	}
+
+	.close-btn:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.settings-content {
+		display: flex;
+		flex: 1;
+		overflow: hidden;
+	}
+
+	.settings-tabs {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: 16px 8px;
+		border-right: 1px solid var(--border-light);
+		min-width: 150px;
+		background: var(--bg-secondary);
+	}
+
+	.tab-btn {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 10px 14px;
+		border: none;
+		border-radius: 8px;
+		background: none;
+		color: var(--text-secondary);
+		font-size: 13px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: all 0.15s;
+		text-align: left;
+	}
+
+	.tab-btn:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.tab-btn.active {
+		background: var(--accent-light);
+		color: var(--accent);
+	}
+
+	.settings-body {
+		flex: 1;
+		padding: 20px 24px 24px;
+		overflow-y: auto;
+	}
+
+	.tab-content {
+		animation: fadeIn 0.15s ease;
+	}
+
+	@keyframes fadeIn {
+		from { opacity: 0; transform: translateY(4px); }
+		to { opacity: 1; transform: translateY(0); }
+	}
+
+	.settings-section {
+		margin-bottom: 24px;
+	}
+
+	.settings-section:last-child {
+		margin-bottom: 0;
+	}
+
+	.settings-section h3 {
+		font-size: 12px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--text-tertiary);
+		margin-bottom: 12px;
+	}
+
+	.setting-hint {
+		font-size: 13px;
+		color: var(--text-tertiary);
+	}
+
+	.setting-toggle {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+		padding: 10px 0;
+		cursor: pointer;
+	}
+
+	.setting-toggle + .setting-toggle {
+		border-top: 1px solid var(--border-light);
+	}
+
+	.setting-label {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		flex: 1;
+		min-width: 0;
+	}
+
+	.setting-name {
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--text-primary);
+	}
+
+	.setting-desc {
+		font-size: 11px;
+		color: var(--text-tertiary);
+		line-height: 1.4;
+	}
+
+	.toggle-switch {
+		position: relative;
+		width: 38px;
+		height: 22px;
+		border-radius: 11px;
+		border: none;
+		background: var(--border-color);
+		cursor: pointer;
+		flex-shrink: 0;
+		transition: background 0.2s;
+		padding: 0;
+	}
+
+	.toggle-switch.on {
+		background: var(--accent);
+	}
+
+	.toggle-knob {
+		position: absolute;
+		top: 2px;
+		left: 2px;
+		width: 18px;
+		height: 18px;
+		border-radius: 50%;
+		background: white;
+		transition: transform 0.2s;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+	}
+
+	.toggle-switch.on .toggle-knob {
+		transform: translateX(16px);
+	}
+
+	.setting-options {
+		display: flex;
+		gap: 8px;
+	}
+
+	.option-btn {
+		flex: 1;
+		padding: 10px 12px;
+		border: 1px solid var(--border-color);
+		border-radius: 10px;
+		background: var(--bg-secondary);
+		color: var(--text-secondary);
+		font-size: 13px;
+		cursor: pointer;
+		transition: all 0.15s;
+		text-align: center;
+	}
+
+	.option-btn:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.option-btn.active {
+		border-color: var(--accent);
+		background: var(--accent-light);
+		color: var(--accent);
+		font-weight: 500;
+	}
+
+	.theme-toggle {
+		display: flex;
+		gap: 8px;
+	}
+
+	.theme-btn {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		padding: 10px 16px;
+		border: 1px solid var(--border-color);
+		border-radius: 10px;
+		background: var(--bg-secondary);
+		color: var(--text-secondary);
+		font-size: 13px;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.theme-btn:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.theme-btn.active {
+		border-color: var(--accent);
+		background: var(--accent-light);
+		color: var(--accent);
+	}
+
+	.accent-grid {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 8px;
+	}
+
+	.accent-swatch {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 6px;
+		padding: 12px 8px;
+		border: 1px solid var(--border-color);
+		border-radius: 10px;
+		background: var(--bg-secondary);
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.accent-swatch:hover {
+		background: var(--bg-hover);
+		border-color: var(--swatch-color);
+	}
+
+	.accent-swatch.active {
+		border-color: var(--swatch-color);
+		background: var(--accent-light);
+	}
+
+	.swatch-circle {
+		width: 24px;
+		height: 24px;
+		border-radius: 50%;
+		background: var(--swatch-color);
+	}
+
+	.swatch-label {
+		font-size: 11px;
+		color: var(--text-secondary);
+	}
+
+	.accent-swatch.active .swatch-label {
+		color: var(--text-primary);
+		font-weight: 500;
+	}
+
+	.font-size-options {
+		display: flex;
+		gap: 6px;
+	}
+
+	.font-size-btn {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 2px;
+		padding: 10px 4px;
+		border: 1px solid var(--border-color);
+		border-radius: 10px;
+		background: var(--bg-secondary);
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.font-size-btn:hover {
+		background: var(--bg-hover);
+		border-color: var(--text-tertiary);
+	}
+
+	.font-size-btn.active {
+		border-color: var(--accent);
+		background: var(--accent-light);
+	}
+
+	.font-size-label {
+		font-size: 11px;
+		color: var(--text-secondary);
+		font-weight: 500;
+	}
+
+	.font-size-btn.active .font-size-label {
+		color: var(--accent);
+	}
+
+	.font-size-value {
+		font-size: 10px;
+		color: var(--text-tertiary);
+	}
+
+	.font-family-options {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 8px;
+	}
+
+	.font-family-btn {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 6px;
+		padding: 12px 8px;
+		border: 1px solid var(--border-color);
+		border-radius: 10px;
+		background: var(--bg-secondary);
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.font-family-btn:hover {
+		background: var(--bg-hover);
+		border-color: var(--text-tertiary);
+	}
+
+	.font-family-btn.active {
+		border-color: var(--accent);
+		background: var(--accent-light);
+	}
+
+	.font-family-preview {
+		font-size: 20px;
+		color: var(--text-primary);
+		line-height: 1;
+	}
+
+	.font-family-btn.active .font-family-preview {
+		color: var(--accent);
+	}
+
+	.font-family-name {
+		font-size: 11px;
+		color: var(--text-secondary);
+	}
+
+	.font-family-btn.active .font-family-name {
+		color: var(--accent);
+		font-weight: 500;
+	}
+
+	/* Import tab */
+	.import-desc {
+		font-size: 13px;
+		color: var(--text-secondary);
+		line-height: 1.5;
+		margin-bottom: 8px;
+	}
+
+	.import-desc code {
+		background: var(--bg-secondary);
+		padding: 1px 5px;
+		border-radius: 4px;
+		font-size: 12px;
+	}
+
+	.import-warn {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--danger);
+		background: color-mix(in srgb, var(--danger) 10%, transparent);
+		border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent);
+		border-radius: 8px;
+		padding: 10px 12px;
+		margin-bottom: 16px;
+	}
+
+	.import-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		padding: 10px 18px;
+		border: 1px solid var(--border-color);
+		border-radius: 10px;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		font-size: 13px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.import-btn:hover:not(:disabled) {
+		border-color: var(--accent);
+		background: var(--accent-light);
+		color: var(--accent);
+	}
+
+	.import-btn:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.spinner-icon {
+		animation: spin 0.8s linear infinite;
+	}
+
+	@keyframes spin {
+		from { transform: rotate(0deg); }
+		to { transform: rotate(360deg); }
+	}
+
+	.import-result {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-top: 14px;
+		padding: 10px 14px;
+		border-radius: 8px;
+		font-size: 13px;
+	}
+
+	.import-result.success {
+		background: color-mix(in srgb, #059669 10%, transparent);
+		color: #059669;
+	}
+
+	.import-result.error {
+		background: color-mix(in srgb, #e11d48 10%, transparent);
+		color: #e11d48;
+	}
+
+	/* Backup tab */
+	.backup-setting-group {
+		margin: 12px 0;
+	}
+
+	.backup-setting-label {
+		display: block;
+		font-size: 13px;
+		color: var(--text-primary);
+		margin-bottom: 8px;
+	}
+
+	.backup-actions {
+		margin-top: 12px;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.backup-link-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		background: none;
+		border: none;
+		color: var(--accent);
+		font-size: 13px;
+		cursor: pointer;
+		padding: 4px 0;
+	}
+
+	.backup-link-btn:hover:not(:disabled) {
+		text-decoration: underline;
+	}
+
+	.backup-link-btn:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.backup-path {
+		font-size: 11px;
+		color: var(--text-tertiary);
+		padding-left: 20px;
+		word-break: break-all;
+	}
+
+	.backup-last-time {
+		margin-top: 12px;
+		font-size: 12px;
+		font-style: italic;
+		color: var(--text-secondary);
+	}
+
+	.backup-empty {
+		font-size: 13px;
+		color: var(--text-tertiary);
+		padding: 12px 0;
+	}
+
+	.backup-list {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		max-height: 200px;
+		overflow-y: auto;
+	}
+
+	.backup-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 8px 10px;
+		border-radius: 6px;
+		background: var(--bg-secondary);
+	}
+
+	.backup-info {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.backup-date {
+		font-size: 13px;
+		color: var(--text-primary);
+	}
+
+	.backup-size {
+		font-size: 11px;
+		color: var(--text-tertiary);
+	}
+
+	.backup-item-actions {
+		display: flex;
+		gap: 4px;
+	}
+
+	.backup-action-btn {
+		background: none;
+		border: none;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		padding: 4px;
+		border-radius: 4px;
+		display: flex;
+		align-items: center;
+	}
+
+	.backup-action-btn:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.backup-action-btn.danger:hover {
+		color: var(--danger);
+		background: color-mix(in srgb, var(--danger) 10%, transparent);
+	}
+
+	.restore-confirm-overlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.4);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 3000;
+	}
+
+	.restore-confirm {
+		background: var(--bg-primary);
+		border: 1px solid var(--border-color);
+		border-radius: 12px;
+		box-shadow: var(--shadow-lg);
+		padding: 24px;
+		max-width: 380px;
+	}
+
+	.restore-confirm h4 {
+		font-size: 16px;
+		font-weight: 600;
+		color: var(--text-primary);
+		margin-bottom: 8px;
+	}
+
+	.restore-confirm p {
+		font-size: 13px;
+		color: var(--text-secondary);
+		line-height: 1.5;
+		margin-bottom: 16px;
+	}
+
+	.restore-confirm-actions {
+		display: flex;
+		gap: 8px;
+		justify-content: flex-end;
+	}
+
+	.restore-cancel {
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-color);
+		color: var(--text-primary);
+		padding: 6px 16px;
+		border-radius: 6px;
+		font-size: 13px;
+		cursor: pointer;
+	}
+
+	.restore-cancel:hover {
+		background: var(--bg-hover);
+	}
+
+	.restore-confirm-btn {
+		background: var(--danger);
+		border: none;
+		color: white;
+		padding: 6px 16px;
+		border-radius: 6px;
+		font-size: 13px;
+		cursor: pointer;
+	}
+
+	.restore-confirm-btn:hover {
+		opacity: 0.9;
+	}
+
+	/* AI tab */
+	.ai-key-row {
+		display: flex;
+		gap: 6px;
+	}
+
+	.ai-key-input {
+		flex: 1;
+		padding: 8px 12px;
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		font-size: 13px;
+		font-family: monospace;
+		outline: none;
+	}
+
+	.ai-key-input:focus {
+		border-color: var(--accent);
+	}
+
+	.ai-key-input::placeholder {
+		color: var(--text-tertiary);
+	}
+
+	.ai-style-input {
+		width: 100%;
+		padding: 8px 12px;
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		font-size: 13px;
+		font-family: inherit;
+		outline: none;
+		resize: vertical;
+		min-height: 60px;
+	}
+
+	.ai-style-input:focus {
+		border-color: var(--accent);
+	}
+
+	.ai-style-input::placeholder {
+		color: var(--text-tertiary);
+	}
+
+	.ai-key-toggle {
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		padding: 8px;
+		cursor: pointer;
+		color: var(--text-tertiary);
+		display: flex;
+		align-items: center;
+	}
+
+	.ai-key-toggle:hover {
+		color: var(--text-primary);
+		background: var(--bg-hover);
+	}
+
+	.ai-link {
+		color: var(--accent);
+		text-decoration: none;
+	}
+
+	.ai-link:hover {
+		text-decoration: underline;
+	}
+
+	.ai-model-options {
+		display: flex;
+		gap: 8px;
+	}
+
+	.ai-model-btn {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 4px;
+		padding: 12px 8px;
+		border: 1px solid var(--border-color);
+		border-radius: 10px;
+		background: var(--bg-secondary);
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.ai-model-btn:hover {
+		background: var(--bg-hover);
+		border-color: var(--text-tertiary);
+	}
+
+	.ai-model-btn.active {
+		border-color: var(--accent);
+		background: var(--accent-light);
+	}
+
+	.ai-model-name {
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--text-primary);
+	}
+
+	.ai-model-btn.active .ai-model-name {
+		color: var(--accent);
+	}
+
+	.ai-model-desc {
+		font-size: 11px;
+		color: var(--text-tertiary);
+	}
+
+	/* Updates tab */
+	.update-version {
+		font-size: 14px;
+		color: var(--text-primary);
+	}
+
+	.update-info {
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		padding: 12px 14px;
+		margin-bottom: 12px;
+	}
+
+	.update-new-version {
+		font-size: 14px;
+		color: var(--text-primary);
+		margin-bottom: 4px;
+	}
+
+	.update-date {
+		font-size: 12px;
+		color: var(--text-tertiary);
+		margin-bottom: 8px;
+	}
+
+	.update-notes {
+		font-size: 13px;
+		color: var(--text-secondary);
+		line-height: 1.5;
+		white-space: pre-wrap;
+		max-height: 150px;
+		overflow-y: auto;
+	}
+
+	.update-install-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		padding: 10px 18px;
+		border: none;
+		border-radius: 10px;
+		background: var(--accent);
+		color: white;
+		font-size: 13px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.update-install-btn:hover:not(:disabled) {
+		background: var(--accent-hover);
+	}
+
+	.update-install-btn:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.update-progress-bar {
+		margin-top: 10px;
+		height: 6px;
+		border-radius: 3px;
+		background: var(--bg-secondary);
+		overflow: hidden;
+	}
+
+	.update-progress-fill {
+		height: 100%;
+		border-radius: 3px;
+		background: var(--accent);
+		transition: width 0.3s ease;
+	}
+
+	.import-result.info {
+		background: color-mix(in srgb, var(--accent) 10%, transparent);
+		color: var(--accent);
+	}
+
+</style>

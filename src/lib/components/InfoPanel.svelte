@@ -1,0 +1,388 @@
+<script lang="ts">
+	import { showInfo, appConfig } from '$lib/stores/app';
+	import { getVaultStats } from '$lib/api';
+	import { openUrl } from '@tauri-apps/plugin-opener';
+	import type { VaultStats } from '$lib/types';
+
+	let stats = $state<VaultStats | null>(null);
+	let activeTab = $state<'about' | 'shortcuts'>('shortcuts');
+
+	function close() {
+		$showInfo = false;
+		activeTab = 'shortcuts';
+	}
+
+	function openLink(url: string) {
+		openUrl(url).catch(console.error);
+	}
+
+	function formatSize(bytes: number): string {
+		if (bytes < 1024) return `${bytes} B`;
+		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+		if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+		return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+	}
+
+	$effect(() => {
+		if ($showInfo) {
+			getVaultStats().then((s) => { stats = s; }).catch(console.error);
+		} else {
+			stats = null;
+		}
+	});
+</script>
+
+{#if $showInfo}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="info-overlay" onclick={close} onkeydown={(e) => { if (e.key === 'Escape') close(); }}>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="info-panel" onclick={(e) => e.stopPropagation()}>
+			<div class="info-header">
+				<h2>Info</h2>
+				<button class="close-btn" onclick={close}>
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<line x1="18" y1="6" x2="6" y2="18" />
+						<line x1="6" y1="6" x2="18" y2="18" />
+					</svg>
+				</button>
+			</div>
+
+			<div class="info-body">
+				<div class="info-tabs">
+					<button class="info-tab" class:active={activeTab === 'shortcuts'} onclick={() => activeTab = 'shortcuts'}>Shortcuts</button>
+					<button class="info-tab" class:active={activeTab === 'about'} onclick={() => activeTab = 'about'}>About</button>
+				</div>
+
+				{#if activeTab === 'about'}
+					<div class="info-logo">
+						<svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+							<rect width="48" height="48" rx="12" fill="var(--accent)" />
+							<circle cx="16" cy="16" r="3.5" fill="white" opacity="0.9" />
+							<circle cx="32" cy="16" r="3.5" fill="white" opacity="0.9" />
+							<circle cx="16" cy="32" r="3.5" fill="white" opacity="0.9" />
+							<circle cx="32" cy="32" r="3.5" fill="white" opacity="0.9" />
+							<line x1="19" y1="18" x2="29" y2="30" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.7" />
+							<line x1="29" y1="18" x2="19" y2="30" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.7" />
+						</svg>
+					</div>
+					<h3 class="app-name">HelixNotes</h3>
+					<p class="app-version">v1.0.0</p>
+					<p class="app-description">A local-first markdown note-taking app.</p>
+
+					{#if stats}
+						<div class="info-stats">
+							<div class="stat-row">
+								<span class="stat-label">Notes</span>
+								<span class="stat-value">{stats.total_notes}</span>
+							</div>
+							<div class="stat-row">
+								<span class="stat-label">Attachments</span>
+								<span class="stat-value">{stats.total_attachments}</span>
+							</div>
+							<div class="stat-row">
+								<span class="stat-label">Notes size</span>
+								<span class="stat-value">{formatSize(stats.notes_size)}</span>
+							</div>
+							<div class="stat-row">
+								<span class="stat-label">Attachments size</span>
+								<span class="stat-value">{formatSize(stats.attachments_size)}</span>
+							</div>
+							<div class="stat-row stat-total">
+								<span class="stat-label">Total vault size</span>
+								<span class="stat-value">{formatSize(stats.total_size)}</span>
+							</div>
+						</div>
+					{/if}
+
+					<div class="info-credits">
+						<p>Created by <strong>Yuri Karamian</strong></p>
+						<button class="info-link" onclick={() => openLink('https://helixnotes.com')}>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<circle cx="12" cy="12" r="10" />
+								<line x1="2" y1="12" x2="22" y2="12" />
+								<path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" />
+							</svg>
+							helixnotes.com
+						</button>
+					</div>
+				{:else}
+					<div class="shortcuts-section">
+						<h4 class="shortcuts-group-title">Keyboard Shortcuts</h4>
+						<div class="shortcut-row"><span class="shortcut-desc">New note</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>N</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Quick open</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>P</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Search</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>F</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Save</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>S</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Bold</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>B</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Italic</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>I</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Underline</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>U</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Undo</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>Z</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Redo</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Exit focus mode</span><span class="shortcut-keys"><kbd>Esc</kbd></span></div>
+
+						<h4 class="shortcuts-group-title">Editor Commands</h4>
+						<div class="shortcut-row"><span class="shortcut-desc">Slash commands</span><span class="shortcut-keys"><kbd>/</kbd></span></div>
+						<div class="shortcut-row command-detail"><span class="shortcut-desc">Headings, lists, code block, table, blockquote, collapsible section, horizontal rule</span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Wiki-link to note</span><span class="shortcut-keys"><kbd>[[</kbd></span></div>
+						<div class="shortcut-row command-detail"><span class="shortcut-desc">Type <kbd>[[</kbd> to search and link to another note. Close with <kbd>]]</kbd> or pick from the list.</span></div>
+
+						<h4 class="shortcuts-group-title">Editor Features</h4>
+						<div class="shortcut-row"><span class="shortcut-desc">Right-click in editor for formatting menu</span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Right-click a table cell for table options</span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Right-click a link to open, copy, edit, or remove</span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Click an image to resize (small / medium / full)</span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Drag & drop images, PDFs, or files into the editor</span></div>
+					</div>
+				{/if}
+			</div>
+		</div>
+	</div>
+{/if}
+
+<style>
+	.info-overlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.35);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 2000;
+	}
+
+	.info-panel {
+		background: var(--bg-primary);
+		border: 1px solid var(--border-color);
+		border-radius: 16px;
+		box-shadow: var(--shadow-lg);
+		width: 500px;
+		max-height: 80vh;
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.info-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 20px 24px 16px;
+		border-bottom: 1px solid var(--border-light);
+	}
+
+	.info-header h2 {
+		font-size: 18px;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.close-btn {
+		background: none;
+		border: none;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		padding: 4px;
+		border-radius: 6px;
+		display: flex;
+		align-items: center;
+	}
+
+	.close-btn:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.info-body {
+		padding: 0 24px 32px;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		text-align: center;
+		gap: 4px;
+		overflow-y: auto;
+	}
+
+	.info-tabs {
+		display: flex;
+		gap: 2px;
+		width: 100%;
+		padding: 16px 0 12px;
+		background: var(--bg-primary);
+		position: sticky;
+		top: 0;
+		z-index: 1;
+	}
+
+	.info-tab {
+		flex: 1;
+		background: none;
+		border: none;
+		border-bottom: 2px solid transparent;
+		color: var(--text-tertiary);
+		font-size: 13px;
+		font-weight: 500;
+		padding: 6px 8px;
+		cursor: pointer;
+		transition: color 0.15s, border-color 0.15s;
+	}
+
+	.info-tab:hover {
+		color: var(--text-secondary);
+	}
+
+	.info-tab.active {
+		color: var(--accent);
+		border-bottom-color: var(--accent);
+	}
+
+	.info-logo {
+		margin-bottom: 8px;
+	}
+
+	.app-name {
+		font-size: 20px;
+		font-weight: 700;
+		color: var(--text-primary);
+	}
+
+	.app-version {
+		font-size: 12px;
+		color: var(--text-tertiary);
+	}
+
+	.app-description {
+		font-size: 13px;
+		color: var(--text-secondary);
+		margin-top: 4px;
+	}
+
+	.info-stats {
+		width: 100%;
+		margin-top: 20px;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-light);
+		border-radius: 10px;
+		padding: 4px 0;
+	}
+
+	.stat-row {
+		display: flex;
+		justify-content: space-between;
+		padding: 7px 16px;
+	}
+
+	.stat-label {
+		font-size: 13px;
+		color: var(--text-secondary);
+	}
+
+	.stat-value {
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.stat-total {
+		border-top: 1px solid var(--border-light);
+	}
+
+	.stat-total .stat-value {
+		color: var(--accent);
+	}
+
+	.info-credits {
+		margin-top: 20px;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.info-credits p {
+		font-size: 13px;
+		color: var(--text-secondary);
+	}
+
+	.info-link {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		background: none;
+		border: none;
+		color: var(--accent);
+		font-size: 13px;
+		cursor: pointer;
+		padding: 4px 10px;
+		border-radius: 6px;
+		transition: background 0.15s;
+	}
+
+	.info-link:hover {
+		background: var(--accent-light);
+	}
+
+	.shortcuts-section {
+		width: 100%;
+		text-align: left;
+		padding-top: 4px;
+	}
+
+	.shortcuts-group-title {
+		font-size: 11px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+		color: var(--text-tertiary);
+		margin: 16px 0 8px;
+		padding-bottom: 4px;
+		border-bottom: 1px solid var(--border-light);
+	}
+
+	.shortcuts-group-title:first-child {
+		margin-top: 0;
+	}
+
+	.shortcut-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 5px 0;
+		gap: 12px;
+	}
+
+	.shortcut-desc {
+		font-size: 13px;
+		color: var(--text-secondary);
+	}
+
+	.shortcut-keys {
+		display: flex;
+		align-items: center;
+		gap: 3px;
+		flex-shrink: 0;
+		font-size: 12px;
+		color: var(--text-tertiary);
+	}
+
+	.shortcut-keys kbd,
+	.shortcut-desc kbd {
+		display: inline-block;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-color);
+		border-radius: 4px;
+		padding: 1px 5px;
+		font-size: 11px;
+		font-family: inherit;
+		color: var(--text-primary);
+		line-height: 1.4;
+	}
+
+	.command-detail {
+		padding: 0 0 4px 8px;
+	}
+
+	.command-detail .shortcut-desc {
+		font-size: 12px;
+		color: var(--text-tertiary);
+		line-height: 1.4;
+	}
+</style>

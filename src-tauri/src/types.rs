@@ -1,0 +1,244 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteMeta {
+    pub id: String,
+    pub title: String,
+    pub tags: Vec<String>,
+    pub pinned: bool,
+    pub created: DateTime<Utc>,
+    pub modified: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteEntry {
+    pub path: String,
+    pub relative_path: String,
+    pub meta: NoteMeta,
+    pub preview: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotebookEntry {
+    pub name: String,
+    pub path: String,
+    pub relative_path: String,
+    pub children: Vec<NotebookEntry>,
+    pub note_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteContent {
+    pub path: String,
+    pub meta: NoteMeta,
+    pub content: String,
+    pub raw: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultConfig {
+    pub path: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppConfig {
+    pub vaults: Vec<VaultConfig>,
+    pub active_vault: Option<String>,
+    pub theme: String,
+    #[serde(default)]
+    pub accent_color: Option<String>,
+    #[serde(default)]
+    pub font_size: Option<u32>,
+    #[serde(default)]
+    pub font_family: Option<String>,
+    #[serde(default)]
+    pub compact_notes: bool,
+    #[serde(default)]
+    pub time_format: String,
+    #[serde(default)]
+    pub gpu_acceleration: bool,
+    #[serde(default)]
+    pub autostart: bool,
+    #[serde(default)]
+    pub pdf_preview: bool,
+    #[serde(default = "default_pdf_height")]
+    pub pdf_height: u32,
+    #[serde(default = "default_title_mode")]
+    pub title_mode: String,
+    #[serde(default)]
+    pub hide_title_in_body: bool,
+    #[serde(default)]
+    pub backup_enabled: bool,
+    #[serde(default = "default_backup_frequency")]
+    pub backup_frequency: String,
+    #[serde(default = "default_backup_max")]
+    pub backup_max_count: u32,
+    #[serde(default)]
+    pub backup_location: Option<String>,
+    #[serde(default)]
+    pub last_backup_time: Option<String>,
+    #[serde(default)]
+    pub backup_include_attachments: bool,
+    #[serde(default = "default_max_versions")]
+    pub max_versions_per_note: u32,
+    #[serde(default)]
+    pub ai_provider: Option<String>,
+    #[serde(default)]
+    pub ai_api_key: Option<String>,
+    #[serde(default)]
+    pub openai_api_key: Option<String>,
+    #[serde(default = "default_ai_model")]
+    pub ai_model: String,
+    #[serde(default)]
+    pub ai_writing_style: Option<String>,
+    #[serde(default)]
+    pub default_view_mode: bool,
+    #[serde(default)]
+    pub show_tray_icon: bool,
+    #[serde(default = "default_true")]
+    pub enable_wiki_links: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_pdf_height() -> u32 {
+    600
+}
+
+fn default_backup_frequency() -> String {
+    "24h".to_string()
+}
+
+fn default_backup_max() -> u32 {
+    10
+}
+
+fn default_title_mode() -> String {
+    "input".to_string()
+}
+
+fn default_max_versions() -> u32 {
+    20
+}
+
+fn default_ai_model() -> String {
+    "claude-sonnet-4-5-20250929".to_string()
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            vaults: Vec::new(),
+            active_vault: None,
+            theme: "system".to_string(),
+            accent_color: None,
+            font_size: None,
+            font_family: None,
+            compact_notes: false,
+            time_format: "relative".to_string(),
+            gpu_acceleration: true,
+            autostart: false,
+            pdf_preview: false,
+            pdf_height: 600,
+            title_mode: "input".to_string(),
+            hide_title_in_body: false,
+            backup_enabled: false,
+            backup_frequency: "24h".to_string(),
+            backup_max_count: 10,
+            backup_location: None,
+            last_backup_time: None,
+            backup_include_attachments: false,
+            max_versions_per_note: 20,
+            ai_provider: None,
+            ai_api_key: None,
+            openai_api_key: None,
+            ai_model: "claude-sonnet-4-5-20250929".to_string(),
+            ai_writing_style: None,
+            default_view_mode: false,
+            show_tray_icon: false,
+            enable_wiki_links: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultState {
+    pub last_open_note: Option<String>,
+    pub sidebar_width: f64,
+    pub notelist_width: f64,
+    pub sidebar_collapsed: bool,
+    #[serde(default)]
+    pub collapsed_notebooks: Vec<String>,
+}
+
+impl Default for VaultState {
+    fn default() -> Self {
+        Self {
+            last_open_note: None,
+            sidebar_width: 220.0,
+            notelist_width: 280.0,
+            sidebar_collapsed: false,
+            collapsed_notebooks: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResult {
+    pub path: String,
+    pub title: String,
+    pub snippet: String,
+    pub score: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileEvent {
+    pub event_type: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportResult {
+    pub files_converted: u64,
+    pub links_converted: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultStats {
+    pub total_notes: u64,
+    pub total_attachments: u64,
+    pub notes_size: u64,
+    pub attachments_size: u64,
+    pub total_size: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupEntry {
+    pub filename: String,
+    pub path: String,
+    pub size: u64,
+    pub created: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionEntry {
+    pub timestamp: String,
+    pub size: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiStreamEvent {
+    pub event_type: String, // "text", "done", "error"
+    pub text: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteTitleEntry {
+    pub title: String,
+    pub path: String,
+}

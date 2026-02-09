@@ -1,0 +1,762 @@
+<script lang="ts">
+	import {
+		notebooks,
+		notes,
+		tags,
+		viewMode,
+		activeNotebook,
+		activeNotePath,
+		activeNote,
+		activeTag,
+		showSearch,
+		sidebarCollapsed,
+		showSettings,
+		showInfo,
+		notebookIcons,
+		appConfig,
+		quickAccessPaths,
+		collapsedNotebooks
+	} from '$lib/stores/app';
+	import { getNotebooks, getAllTags, createNotebook, deleteNotebook, renameNotebook, getNotebookIcons, setNotebookIcon, saveAttachment, getQuickAccess, addQuickAccess, removeQuickAccess, emptyTrash, moveNote, readNote, getNotes } from '$lib/api';
+	import { open as openDialog } from '@tauri-apps/plugin-dialog';
+	import { readFile } from '@tauri-apps/plugin-fs';
+	import { convertFileSrc } from '@tauri-apps/api/core';
+	import type { NotebookEntry } from '$lib/types';
+
+	let { onViewChanged = () => {} }: {
+		onViewChanged?: () => void;
+	} = $props();
+
+	let editingNotebook = $state<string | null>(null);
+	let editValue = $state('');
+	let newNotebookName = $state('');
+	let showNewNotebook = $state(false);
+	let dropTargetPath = $state<string | null>(null);
+	let contextMenu = $state<{ x: number; y: number; notebook: NotebookEntry } | null>(null);
+	let trashContextMenu = $state<{ x: number; y: number } | null>(null);
+	function toggleCollapse(path: string, e: MouseEvent) {
+		e.stopPropagation();
+		if ($collapsedNotebooks.includes(path)) {
+			$collapsedNotebooks = $collapsedNotebooks.filter(p => p !== path);
+		} else {
+			$collapsedNotebooks = [...$collapsedNotebooks, path];
+		}
+	}
+
+	export async function refresh() {
+		try {
+			$notebooks = await getNotebooks();
+			$tags = await getAllTags();
+			$notebookIcons = await getNotebookIcons();
+			const qaNotes = await getQuickAccess();
+			$quickAccessPaths = qaNotes.map(n => n.relative_path);
+		} catch (e) {
+			console.error('Failed to refresh sidebar:', e);
+		}
+	}
+
+	function selectAllNotes() {
+		$viewMode = 'all';
+		$activeNotebook = null;
+		$activeTag = null;
+		onViewChanged();
+	}
+
+	function selectNotebook(nb: NotebookEntry) {
+		$viewMode = 'notebook';
+		$activeNotebook = nb;
+		$activeTag = null;
+		onViewChanged();
+	}
+
+	function selectTag(tag: string) {
+		$viewMode = 'tag';
+		$activeTag = tag;
+		$activeNotebook = null;
+		onViewChanged();
+	}
+
+	function selectQuickAccess() {
+		$viewMode = 'quickaccess';
+		$activeNotebook = null;
+		$activeTag = null;
+		onViewChanged();
+	}
+
+	function selectTrash() {
+		$viewMode = 'trash';
+		$activeNotebook = null;
+		$activeTag = null;
+		onViewChanged();
+	}
+
+	async function handleCreateNotebook() {
+		if (!newNotebookName.trim()) return;
+		try {
+			await createNotebook(null, newNotebookName.trim());
+			newNotebookName = '';
+			showNewNotebook = false;
+			await refresh();
+		} catch (e) {
+			console.error('Failed to create notebook:', e);
+		}
+	}
+
+	async function handleRename(nb: NotebookEntry) {
+		if (!editValue.trim() || editValue.trim() === nb.name) {
+			editingNotebook = null;
+			return;
+		}
+		try {
+			await renameNotebook(nb.path, editValue.trim());
+			editingNotebook = null;
+			await refresh();
+		} catch (e) {
+			console.error('Failed to rename:', e);
+		}
+	}
+
+	async function handleDelete(nb: NotebookEntry) {
+		contextMenu = null;
+		try {
+			await deleteNotebook(nb.path);
+			if ($activeNotebook?.path === nb.path) {
+				selectAllNotes();
+			}
+			await refresh();
+		} catch (e) {
+			console.error('Failed to delete:', e);
+		}
+	}
+
+	async function handleNoteDrop(e: DragEvent, nb: NotebookEntry) {
+		e.preventDefault();
+		dropTargetPath = null;
+		const notePath = e.dataTransfer?.getData('text/plain');
+		if (!notePath) return;
+		// Don't move if already in this notebook
+		const noteDir = notePath.substring(0, notePath.lastIndexOf('/'));
+		if (noteDir === nb.path) return;
+		try {
+			const newPath = await moveNote(notePath, nb.path);
+			$notes = $notes.filter(n => n.path !== notePath);
+			if ($activeNotePath === notePath) {
+				$activeNotePath = newPath;
+				$activeNote = await readNote(newPath);
+			}
+			await refresh();
+		} catch (e) {
+			console.error('Failed to move note:', e);
+		}
+	}
+
+	function startRename(nb: NotebookEntry) {
+		contextMenu = null;
+		editingNotebook = nb.path;
+		editValue = nb.name;
+	}
+
+	async function handleSetIcon(nb: NotebookEntry) {
+		contextMenu = null;
+		try {
+			const selected = await openDialog({
+				multiple: false,
+				filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico'] }]
+			});
+			if (!selected) return;
+			const filePath = typeof selected === 'string' ? selected : selected;
+			// Read the file and save as attachment
+			const data = await readFile(filePath as string);
+			const fileName = (filePath as string).split('/').pop() || 'icon.png';
+			const iconRelative = await saveAttachment(`notebook-icon-${fileName}`, Array.from(data));
+			await setNotebookIcon(nb.relative_path, iconRelative);
+			$notebookIcons = await getNotebookIcons();
+		} catch (e) {
+			console.error('Failed to set notebook icon:', e);
+		}
+	}
+
+	async function handleRemoveIcon(nb: NotebookEntry) {
+		contextMenu = null;
+		try {
+			await setNotebookIcon(nb.relative_path, null);
+			$notebookIcons = await getNotebookIcons();
+		} catch (e) {
+			console.error('Failed to remove notebook icon:', e);
+		}
+	}
+
+	function getNotebookIconSrc(nb: NotebookEntry): string | null {
+		const iconPath = $notebookIcons[nb.relative_path];
+		if (!iconPath) return null;
+		const vaultRoot = $appConfig?.active_vault;
+		if (!vaultRoot) return null;
+		return convertFileSrc(`${vaultRoot}/${iconPath}`);
+	}
+
+	function onContextMenu(e: MouseEvent, nb: NotebookEntry) {
+		e.preventDefault();
+		contextMenu = { x: e.clientX, y: e.clientY, notebook: nb };
+	}
+
+	function closeContextMenu() {
+		contextMenu = null;
+	}
+
+	function onTrashContextMenu(e: MouseEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		trashContextMenu = { x: e.clientX, y: e.clientY };
+	}
+
+	async function handleEmptyTrash() {
+		trashContextMenu = null;
+		try {
+			await emptyTrash();
+			// Clear selection and refresh the list (with cache invalidation)
+			$activeNote = null;
+			$activeNotePath = '';
+			onViewChanged();
+		} catch (e) {
+			console.error('Failed to empty trash:', e);
+		}
+	}
+
+
+	// Close context menu on click outside
+	function handleWindowClick() {
+		if (contextMenu) contextMenu = null;
+		if (trashContextMenu) trashContextMenu = null;
+	}
+</script>
+
+<svelte:window onclick={handleWindowClick} />
+
+<aside class="sidebar" class:collapsed={$sidebarCollapsed}>
+	<div class="sidebar-header">
+		<button class="collapse-btn" onclick={() => ($sidebarCollapsed = !$sidebarCollapsed)} title="Toggle sidebar">
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				{#if $sidebarCollapsed}
+					<polyline points="9 6 15 12 9 18" />
+				{:else}
+					<polyline points="15 6 9 12 15 18" />
+				{/if}
+			</svg>
+		</button>
+		{#if !$sidebarCollapsed}
+			<button class="icon-btn" onclick={() => ($showSearch = true)} title="Search (Ctrl+F)">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<circle cx="11" cy="11" r="8" />
+					<line x1="21" y1="21" x2="16.65" y2="16.65" />
+				</svg>
+			</button>
+		{/if}
+	</div>
+
+	{#if !$sidebarCollapsed}
+		<nav class="sidebar-nav">
+			<button
+				class="nav-item"
+				class:active={$viewMode === 'all'}
+				onclick={selectAllNotes}
+			>
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M16 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V8z" />
+					<polyline points="14 3 14 8 21 8" />
+				</svg>
+				<span>All Notes</span>
+			</button>
+
+			<button
+				class="nav-item"
+				class:active={$viewMode === 'quickaccess'}
+				onclick={selectQuickAccess}
+			>
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+				</svg>
+				<span>Quick Access</span>
+			</button>
+
+			<button
+				class="nav-item"
+				class:active={$viewMode === 'trash'}
+				onclick={selectTrash}
+				oncontextmenu={onTrashContextMenu}
+			>
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" />
+				</svg>
+				<span>Trash</span>
+			</button>
+		</nav>
+
+		<div class="section">
+			<div class="section-header">
+				<span class="section-title">Notebooks</span>
+				<button class="icon-btn-sm" onclick={() => (showNewNotebook = !showNewNotebook)} title="New notebook">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+					</svg>
+				</button>
+			</div>
+
+			{#if showNewNotebook}
+				<div class="new-notebook-input">
+					<input
+						type="text"
+						bind:value={newNotebookName}
+						placeholder="Notebook name..."
+						onkeydown={(e) => {
+							if (e.key === 'Enter') handleCreateNotebook();
+							if (e.key === 'Escape') { showNewNotebook = false; newNotebookName = ''; }
+						}}
+					/>
+				</div>
+			{/if}
+
+			<div class="notebook-list">
+				{#each $notebooks as nb (nb.path)}
+					{@render notebookItem(nb, 0)}
+				{/each}
+			</div>
+		</div>
+
+		{#if $tags.length > 0}
+			<div class="section">
+				<div class="section-header">
+					<span class="section-title">Tags</span>
+				</div>
+				<div class="tag-list">
+					{#each $tags as [tag, count]}
+						<button
+							class="tag-item"
+							class:active={$viewMode === 'tag' && $activeTag === tag}
+							onclick={() => selectTag(tag)}
+						>
+							<span class="tag-hash">#</span>
+							<span class="tag-name">{tag}</span>
+							<span class="tag-count">{count}</span>
+						</button>
+					{/each}
+				</div>
+			</div>
+		{/if}
+
+		<div class="sidebar-footer">
+			<button class="icon-btn" onclick={() => ($showInfo = true)} title="Info">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<circle cx="12" cy="12" r="10" />
+					<line x1="12" y1="16" x2="12" y2="12" />
+					<line x1="12" y1="8" x2="12.01" y2="8" />
+				</svg>
+			</button>
+			<div class="sidebar-footer-right">
+			<button class="icon-btn" onclick={() => ($showSettings = true)} title="Settings">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<circle cx="12" cy="12" r="3" />
+					<path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+				</svg>
+			</button>
+
+			</div>
+		</div>
+	{/if}
+</aside>
+
+{#if contextMenu}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="context-menu" style="left: {contextMenu.x}px; top: {contextMenu.y}px" onmousedown={(e) => e.stopPropagation()}>
+		<button onclick={() => startRename(contextMenu!.notebook)}>
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+			Rename
+		</button>
+		<button onclick={() => handleSetIcon(contextMenu!.notebook)}>
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><path d="M8 14s1.5 2 4 2 4-2 4-2" /><line x1="9" y1="9" x2="9.01" y2="9" /><line x1="15" y1="9" x2="15.01" y2="9" /></svg>
+			Set Icon
+		</button>
+		{#if $notebookIcons[contextMenu.notebook.relative_path]}
+			<button onclick={() => handleRemoveIcon(contextMenu!.notebook)}>
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
+				Remove Icon
+			</button>
+		{/if}
+		<button class="danger" onclick={() => handleDelete(contextMenu!.notebook)}>
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" /></svg>
+			Delete
+		</button>
+	</div>
+{/if}
+
+{#if trashContextMenu}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="context-menu" style="left: {trashContextMenu.x}px; top: {trashContextMenu.y}px" onmousedown={(e) => e.stopPropagation()}>
+		<button class="danger" onclick={handleEmptyTrash}>
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" />
+			</svg>
+			Empty Trash
+		</button>
+	</div>
+{/if}
+
+{#snippet notebookItem(nb: NotebookEntry, depth: number)}
+	{@const hasChildren = nb.children.length > 0}
+	{@const isCollapsed = $collapsedNotebooks.includes(nb.path)}
+	{@const iconSrc = getNotebookIconSrc(nb)}
+	{#if editingNotebook === nb.path}
+		<div class="notebook-item" style="padding-left: {8 + depth * 16}px">
+			<input
+				type="text"
+				class="rename-input"
+				bind:value={editValue}
+				onkeydown={(e) => {
+					if (e.key === 'Enter') handleRename(nb);
+					if (e.key === 'Escape') editingNotebook = null;
+				}}
+				onblur={() => handleRename(nb)}
+			/>
+		</div>
+	{:else}
+		<button
+			class="notebook-item"
+			class:active={$viewMode === 'notebook' && $activeNotebook?.path === nb.path}
+			class:drop-target={dropTargetPath === nb.path}
+			style="padding-left: {8 + depth * 16}px"
+			onclick={() => selectNotebook(nb)}
+			oncontextmenu={(e) => onContextMenu(e, nb)}
+			ondragover={(e) => { e.preventDefault(); e.dataTransfer!.dropEffect = 'move'; dropTargetPath = nb.path; }}
+			ondragleave={() => { if (dropTargetPath === nb.path) dropTargetPath = null; }}
+			ondrop={(e) => handleNoteDrop(e, nb)}
+		>
+			{#if hasChildren}
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<span class="chevron" class:collapsed={isCollapsed} onclick={(e) => toggleCollapse(nb.path, e)} onkeydown={(e) => { if (e.key === 'Enter') toggleCollapse(nb.path, e); }}>
+					<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<polyline points="6 9 12 15 18 9" />
+					</svg>
+				</span>
+			{:else}
+				<span class="chevron-spacer"></span>
+			{/if}
+			{#if iconSrc}
+				<img class="notebook-icon" src={iconSrc} alt="" />
+			{:else}
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.6">
+					<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+				</svg>
+			{/if}
+			<span class="notebook-name">{nb.name} <span class="notebook-count">{nb.note_count}</span></span>
+		</button>
+	{/if}
+	{#if hasChildren && !isCollapsed}
+		{#each nb.children as child (child.path)}
+			{@render notebookItem(child, depth + 1)}
+		{/each}
+	{/if}
+{/snippet}
+
+<style>
+	.sidebar {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background: var(--bg-secondary);
+		border-right: 1px solid var(--border-color);
+		overflow: hidden;
+		min-width: 44px;
+		user-select: none;
+	}
+
+	.sidebar.collapsed {
+		width: 44px !important;
+		min-width: 44px;
+		max-width: 44px;
+	}
+
+	.sidebar-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 10px 8px;
+		border-bottom: 1px solid var(--border-light);
+		flex-shrink: 0;
+	}
+
+	.sidebar-nav {
+		padding: 8px 6px;
+		flex-shrink: 0;
+	}
+
+	.nav-item {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 6px 10px;
+		border: none;
+		background: none;
+		border-radius: 6px;
+		color: var(--text-secondary);
+		font-size: inherit;
+		cursor: pointer;
+		transition: all 0.1s;
+	}
+
+	.nav-item:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.nav-item.active {
+		background: var(--accent-light);
+		color: var(--text-accent);
+	}
+
+	.section {
+		flex: 1;
+		overflow-y: auto;
+		padding: 4px 0;
+	}
+
+	.section-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 8px 12px 4px;
+	}
+
+	.section-title {
+		font-size: 11px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--text-tertiary);
+	}
+
+	.icon-btn, .icon-btn-sm {
+		background: none;
+		border: none;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		padding: 4px;
+		border-radius: 4px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.icon-btn:hover, .icon-btn-sm:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.collapse-btn {
+		background: none;
+		border: none;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		padding: 4px;
+		border-radius: 4px;
+		display: flex;
+		align-items: center;
+	}
+
+	.collapse-btn:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.new-notebook-input {
+		padding: 2px 8px;
+	}
+
+	.new-notebook-input input, .rename-input {
+		width: 100%;
+		padding: 4px 8px;
+		border: 1px solid var(--accent);
+		border-radius: 4px;
+		background: var(--bg-primary);
+		color: var(--text-primary);
+		font-size: inherit;
+		outline: none;
+	}
+
+	.notebook-list {
+		padding: 0 2px;
+	}
+
+	.notebook-item {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		width: 100%;
+		padding: 5px 8px;
+		border: none;
+		background: none;
+		border-radius: 6px;
+		color: var(--text-secondary);
+		font-size: inherit;
+		cursor: pointer;
+		transition: all 0.1s;
+	}
+
+	.notebook-item:hover {
+		background: var(--bg-hover);
+	}
+
+	.notebook-item.active {
+		background: var(--accent-light);
+		color: var(--text-accent);
+	}
+
+	.notebook-item.drop-target {
+		background: color-mix(in srgb, var(--accent) 20%, transparent);
+		outline: 2px dashed var(--accent);
+		outline-offset: -2px;
+		border-radius: 6px;
+	}
+
+	.chevron {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 14px;
+		height: 14px;
+		flex-shrink: 0;
+		color: var(--text-tertiary);
+		transition: transform 0.15s ease;
+		cursor: pointer;
+		border-radius: 3px;
+	}
+
+	.chevron:hover {
+		color: var(--text-primary);
+	}
+
+	.chevron.collapsed {
+		transform: rotate(-90deg);
+	}
+
+	.chevron-spacer {
+		width: 14px;
+		flex-shrink: 0;
+	}
+
+	.notebook-icon {
+		width: 20px;
+		height: 20px;
+		border-radius: 3px;
+		object-fit: cover;
+		flex-shrink: 0;
+	}
+
+	.notebook-name {
+		flex: 1;
+		text-align: left;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.notebook-count {
+		font-size: 11px;
+		color: var(--text-tertiary);
+		margin-left: 2px;
+	}
+
+	.tag-list {
+		padding: 0 4px;
+	}
+
+	.tag-item {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		width: 100%;
+		padding: 4px 12px;
+		border: none;
+		background: none;
+		border-radius: 6px;
+		color: var(--text-secondary);
+		font-size: inherit;
+		cursor: pointer;
+		transition: all 0.1s;
+	}
+
+	.tag-item:hover {
+		background: var(--bg-hover);
+	}
+
+	.tag-item.active {
+		background: var(--accent-light);
+		color: var(--text-accent);
+	}
+
+	.tag-hash {
+		color: var(--text-tertiary);
+		font-weight: 600;
+	}
+
+	.tag-name {
+		flex: 1;
+		text-align: left;
+	}
+
+	.tag-count {
+		font-size: 11px;
+		color: var(--text-tertiary);
+	}
+
+	.sidebar-footer {
+		padding: 8px;
+		border-top: 1px solid var(--border-light);
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		flex-shrink: 0;
+	}
+
+	.sidebar-footer-right {
+		display: flex;
+		gap: 4px;
+	}
+
+	.context-menu {
+		position: fixed;
+		background: var(--bg-primary);
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		box-shadow: var(--shadow-md);
+		padding: 4px;
+		z-index: 1000;
+		min-width: 140px;
+	}
+
+	.context-menu button {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 6px 12px;
+		border: none;
+		background: none;
+		color: var(--text-primary);
+		font-size: 13px;
+		cursor: pointer;
+		border-radius: 4px;
+		text-align: left;
+	}
+
+	.context-menu button:hover {
+		background: var(--bg-hover);
+	}
+
+	.context-menu button.danger {
+		color: var(--danger);
+	}
+
+	.context-menu button.danger:hover {
+		background: color-mix(in srgb, var(--danger) 10%, transparent);
+	}
+</style>

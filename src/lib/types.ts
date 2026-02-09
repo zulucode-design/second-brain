@@ -1,0 +1,132 @@
+export interface NoteMeta {
+  id: string;
+  title: string;
+  tags: string[];
+  pinned: boolean;
+  created: string;
+  modified: string;
+}
+
+export interface NoteEntry {
+  path: string;
+  relative_path: string;
+  meta: NoteMeta;
+  preview: string;
+}
+
+export interface NotebookEntry {
+  name: string;
+  path: string;
+  relative_path: string;
+  children: NotebookEntry[];
+  note_count: number;
+}
+
+export interface NoteContent {
+  path: string;
+  meta: NoteMeta;
+  content: string;
+  raw: string;
+}
+
+export interface VaultConfig {
+  path: string;
+  name: string;
+}
+
+export interface AppConfig {
+  vaults: VaultConfig[];
+  active_vault: string | null;
+  theme: string;
+  accent_color: string | null;
+  font_size: number | null;
+  font_family: string | null;
+  compact_notes: boolean;
+  time_format: string;
+  gpu_acceleration: boolean;
+  autostart: boolean;
+  pdf_preview: boolean;
+  pdf_height: number;
+  title_mode: string;
+  hide_title_in_body: boolean;
+  backup_enabled: boolean;
+  backup_frequency: string;
+  backup_max_count: number;
+  backup_location: string | null;
+  last_backup_time: string | null;
+  backup_include_attachments: boolean;
+  max_versions_per_note: number;
+  ai_provider: string | null;
+  ai_api_key: string | null;
+  openai_api_key: string | null;
+  ai_model: string;
+  ai_writing_style: string | null;
+  default_view_mode: boolean;
+  show_tray_icon: boolean;
+  enable_wiki_links: boolean;
+}
+
+export interface VaultState {
+  last_open_note: string | null;
+  sidebar_width: number;
+  notelist_width: number;
+  sidebar_collapsed: boolean;
+  collapsed_notebooks: string[];
+}
+
+export interface SearchResult {
+  path: string;
+  title: string;
+  snippet: string;
+  score: number;
+}
+
+export interface FileEvent {
+  event_type: string;
+  path: string;
+}
+
+export interface ImportResult {
+  files_converted: number;
+  links_converted: number;
+}
+
+export interface VaultStats {
+  total_notes: number;
+  total_attachments: number;
+  notes_size: number;
+  attachments_size: number;
+  total_size: number;
+}
+
+export interface BackupEntry {
+  filename: string;
+  path: string;
+  size: number;
+  created: string;
+}
+
+export interface VersionEntry {
+  timestamp: string;
+  size: number;
+}
+
+export interface AiStreamEvent {
+  event_type: string;
+  text: string | null;
+  error: string | null;
+}
+
+export interface NoteTitleEntry {
+  title: string;
+  path: string;
+}
+
+export type SortMode = "modified" | "title" | "created";
+export type ViewMode =
+  | "all"
+  | "notebook"
+  | "tag"
+  | "trash"
+  | "search"
+  | "quickaccess";
