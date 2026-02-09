@@ -20,16 +20,17 @@
 		y: number;
 		vx: number;
 		vy: number;
-		links: string[]; // titles this note links to
 	}
 
 	interface GraphEdge {
-		source: string;
-		target: string;
+		sourceIdx: number;
+		targetIdx: number;
 	}
 
 	let nodes: GraphNode[] = [];
 	let edges: GraphEdge[] = [];
+	let nodeIndexMap: Map<string, number> = new Map();
+	let connectedSet: Set<number> = new Set();
 	let animFrame = 0;
 	let pan = { x: 0, y: 0 };
 	let zoom = 1;
@@ -39,6 +40,7 @@
 	let panning = false;
 	let panStart = { x: 0, y: 0 };
 	let hoveredNode: GraphNode | null = null;
+	let glowPhase = 0;
 
 	const wikiLinkRegex = /\[\[([^\]]+)\]\]/g;
 
@@ -54,7 +56,7 @@
 			// Create nodes
 			const w = canvas?.width ?? 800;
 			const h = canvas?.height ?? 600;
-			nodes = titles.map((t, i) => ({
+			nodes = titles.map((t) => ({
 				id: t.title.toLowerCase(),
 				title: t.title,
 				path: t.path,
@@ -62,33 +64,45 @@
 				y: h / 2 + (Math.random() - 0.5) * Math.min(w, h) * 0.6,
 				vx: 0,
 				vy: 0,
-				links: [],
 			}));
 
-			const nodeMap = new Map<string, GraphNode>();
-			for (const n of nodes) nodeMap.set(n.id, n);
+			// Build index map for O(1) lookups
+			nodeIndexMap = new Map();
+			for (let i = 0; i < nodes.length; i++) {
+				nodeIndexMap.set(nodes[i].id, i);
+			}
 
-			// Read each note to extract [[wiki-links]]
+			// Read all notes in parallel (batched) to extract [[wiki-links]]
 			const edgeSet = new Set<string>();
-			for (const node of nodes) {
-				try {
-					const content = await readNote(node.path);
-					const body = content.content || '';
+			edges = [];
+			const BATCH_SIZE = 20;
+			for (let b = 0; b < nodes.length; b += BATCH_SIZE) {
+				const batch = nodes.slice(b, b + BATCH_SIZE);
+				const results = await Promise.allSettled(
+					batch.map(async (node) => {
+						const content = await readNote(node.path);
+						return { node, body: content.content || '' };
+					})
+				);
+				for (const result of results) {
+					if (result.status !== 'fulfilled') continue;
+					const { node, body } = result.value;
+					const nodeIdx = nodeIndexMap.get(node.id)!;
 					let match;
 					wikiLinkRegex.lastIndex = 0;
 					while ((match = wikiLinkRegex.exec(body)) !== null) {
 						const linkTitle = match[1].trim().toLowerCase();
-						if (linkTitle !== node.id && nodeMap.has(linkTitle)) {
-							node.links.push(linkTitle);
-							const edgeKey = [node.id, linkTitle].sort().join('|');
+						const targetIdx = nodeIndexMap.get(linkTitle);
+						if (linkTitle !== node.id && targetIdx !== undefined) {
+							const edgeKey = nodeIdx < targetIdx ? `${nodeIdx}|${targetIdx}` : `${targetIdx}|${nodeIdx}`;
 							if (!edgeSet.has(edgeKey)) {
 								edgeSet.add(edgeKey);
-								edges.push({ source: node.id, target: linkTitle });
+								edges.push({ sourceIdx: nodeIdx, targetIdx });
+								connectedSet.add(nodeIdx);
+								connectedSet.add(targetIdx);
 							}
 						}
 					}
-				} catch {
-					// Skip notes that can't be read
 				}
 			}
 		} catch (e) {
@@ -98,13 +112,57 @@
 		startSimulation();
 	}
 
+	function centerOnActiveNote() {
+		if (!canvas || nodes.length === 0) return;
+		const activePath = $activeNotePath || '';
+		const activeNode = nodes.find(n => n.path === activePath);
+
+		// Only center on active note if it has connections
+		if (!activeNode) return;
+		const activeIdx = nodeIndexMap.get(activeNode.id);
+		if (activeIdx === undefined || !connectedSet.has(activeIdx)) return;
+
+		// Gather the active node and its direct neighbors
+		const neighborhood: GraphNode[] = [activeNode];
+		for (const edge of edges) {
+			if (edge.sourceIdx === activeIdx) neighborhood.push(nodes[edge.targetIdx]);
+			else if (edge.targetIdx === activeIdx) neighborhood.push(nodes[edge.sourceIdx]);
+		}
+
+		const w = canvas.width;
+		const h = canvas.height;
+		const padding = 80;
+
+		let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+		for (const n of neighborhood) {
+			if (n.x < minX) minX = n.x;
+			if (n.y < minY) minY = n.y;
+			if (n.x > maxX) maxX = n.x;
+			if (n.y > maxY) maxY = n.y;
+		}
+
+		const graphW = maxX - minX || 1;
+		const graphH = maxY - minY || 1;
+		const centerX = (minX + maxX) / 2;
+		const centerY = (minY + maxY) / 2;
+
+		zoom = Math.min(
+			(w - padding * 2) / graphW,
+			(h - padding * 2) / graphH,
+			1.8
+		);
+		zoom = Math.max(zoom, 0.5);
+
+		pan.x = w / 2 - centerX * zoom;
+		pan.y = h / 2 - centerY * zoom;
+	}
+
 	function fitToView() {
 		if (!canvas || nodes.length === 0) return;
 		const w = canvas.width;
 		const h = canvas.height;
 		const padding = 60;
 
-		// Compute bounding box of all nodes
 		let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 		for (const node of nodes) {
 			if (node.x < minX) minX = node.x;
@@ -118,36 +176,49 @@
 		const centerGraphX = (minX + maxX) / 2;
 		const centerGraphY = (minY + maxY) / 2;
 
-		// Compute zoom to fit
 		zoom = Math.min(
 			(w - padding * 2) / graphW,
 			(h - padding * 2) / graphH,
-			2 // max zoom
+			2
 		);
 		zoom = Math.max(zoom, 0.2);
 
-		// Center the graph
 		pan.x = w / 2 - centerGraphX * zoom;
 		pan.y = h / 2 - centerGraphY * zoom;
 	}
 
 	function startSimulation() {
 		if (animFrame) cancelAnimationFrame(animFrame);
-		let iterations = 0;
-		const maxIterations = 300;
 
-		function tick() {
-			if (iterations >= maxIterations) {
-				fitToView();
-				draw();
-				return;
-			}
+		// Run physics synchronously — no need to animate the settling
+		for (let i = 0; i < 300; i++) {
 			simulate();
-			draw();
-			iterations++;
-			animFrame = requestAnimationFrame(tick);
 		}
-		animFrame = requestAnimationFrame(tick);
+
+		// Center on active note if it has links, otherwise fit all
+		const activePath = $activeNotePath || '';
+		const activeNode = nodes.find(n => n.path === activePath);
+		const activeIdx = activeNode ? nodeIndexMap.get(activeNode.id) : undefined;
+		if (activeIdx !== undefined && connectedSet.has(activeIdx)) {
+			centerOnActiveNote();
+		} else {
+			fitToView();
+		}
+
+		draw();
+		startGlowLoop();
+	}
+
+	let glowFrame = 0;
+
+	function startGlowLoop() {
+		if (glowFrame) cancelAnimationFrame(glowFrame);
+		function loop() {
+			glowPhase += 0.04;
+			draw();
+			glowFrame = requestAnimationFrame(loop);
+		}
+		glowFrame = requestAnimationFrame(loop);
 	}
 
 	function simulate() {
@@ -161,13 +232,14 @@
 
 		// Repulsion between all nodes
 		for (let i = 0; i < nodeCount; i++) {
+			const a = nodes[i];
 			for (let j = i + 1; j < nodeCount; j++) {
-				const a = nodes[i];
 				const b = nodes[j];
-				let dx = b.x - a.x;
-				let dy = b.y - a.y;
-				let dist = Math.sqrt(dx * dx + dy * dy) || 1;
-				const force = 800 / (dist * dist);
+				const dx = b.x - a.x;
+				const dy = b.y - a.y;
+				const distSq = dx * dx + dy * dy || 1;
+				const force = 800 / distSq;
+				const dist = Math.sqrt(distSq);
 				const fx = (dx / dist) * force;
 				const fy = (dy / dist) * force;
 				a.vx -= fx;
@@ -177,14 +249,13 @@
 			}
 		}
 
-		// Attraction along edges
+		// Attraction along edges (indexed lookups)
 		for (const edge of edges) {
-			const a = nodes.find(n => n.id === edge.source);
-			const b = nodes.find(n => n.id === edge.target);
-			if (!a || !b) continue;
-			let dx = b.x - a.x;
-			let dy = b.y - a.y;
-			let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+			const a = nodes[edge.sourceIdx];
+			const b = nodes[edge.targetIdx];
+			const dx = b.x - a.x;
+			const dy = b.y - a.y;
+			const dist = Math.sqrt(dx * dx + dy * dy) || 1;
 			const force = (dist - 100) * 0.01;
 			const fx = (dx / dist) * force;
 			const fy = (dy / dist) * force;
@@ -227,16 +298,14 @@
 		const textColor = style.getPropertyValue('--text-primary').trim() || '#eee';
 		const textSecondary = style.getPropertyValue('--text-tertiary').trim() || '#888';
 		const accent = style.getPropertyValue('--accent').trim() || '#7b9bd4';
-		const accentLight = style.getPropertyValue('--accent-light').trim() || 'rgba(123,155,212,0.15)';
 
 		// Draw edges
 		ctx.strokeStyle = borderColor;
 		ctx.lineWidth = 1;
 		ctx.globalAlpha = 0.4;
 		for (const edge of edges) {
-			const a = nodes.find(n => n.id === edge.source);
-			const b = nodes.find(n => n.id === edge.target);
-			if (!a || !b) continue;
+			const a = nodes[edge.sourceIdx];
+			const b = nodes[edge.targetIdx];
 			ctx.beginPath();
 			ctx.moveTo(a.x, a.y);
 			ctx.lineTo(b.x, b.y);
@@ -248,11 +317,27 @@
 		const activePath = $activeNotePath || '';
 
 		// Draw nodes
-		for (const node of nodes) {
+		const pulse = 0.5 + 0.5 * Math.sin(glowPhase);
+
+		for (let i = 0; i < nodes.length; i++) {
+			const node = nodes[i];
 			const isActive = node.path === activePath;
 			const isHovered = node === hoveredNode;
-			const hasLinks = node.links.length > 0 || edges.some(e => e.source === node.id || e.target === node.id);
-			const radius = isActive ? 7 : hasLinks ? 5 : 3.5;
+			const hasLinks = connectedSet.has(i);
+			const baseRadius = isActive ? 9 : hasLinks ? 5 : 3.5;
+			const radius = isActive ? baseRadius + pulse * 2 : baseRadius;
+
+			// Active node glow
+			if (isActive) {
+				const glowRadius = radius + 10 + pulse * 6;
+				const glow = ctx.createRadialGradient(node.x, node.y, radius, node.x, node.y, glowRadius);
+				glow.addColorStop(0, accent + '60');
+				glow.addColorStop(1, accent + '00');
+				ctx.beginPath();
+				ctx.arc(node.x, node.y, glowRadius, 0, Math.PI * 2);
+				ctx.fillStyle = glow;
+				ctx.fill();
+			}
 
 			// Node circle
 			ctx.beginPath();
@@ -268,12 +353,23 @@
 			}
 			ctx.fill();
 
+			// Active node ring
+			if (isActive) {
+				ctx.beginPath();
+				ctx.arc(node.x, node.y, radius + 3, 0, Math.PI * 2);
+				ctx.strokeStyle = accent;
+				ctx.lineWidth = 1.5;
+				ctx.globalAlpha = 0.4 + pulse * 0.3;
+				ctx.stroke();
+				ctx.globalAlpha = 1;
+			}
+
 			// Label
 			if (isActive || isHovered || hasLinks) {
-				ctx.font = `${isActive || isHovered ? '12' : '10'}px -apple-system, BlinkMacSystemFont, sans-serif`;
+				ctx.font = `${isActive ? 'bold 13' : isHovered ? '12' : '10'}px -apple-system, BlinkMacSystemFont, sans-serif`;
 				ctx.fillStyle = isActive || isHovered ? textColor : textSecondary;
 				ctx.textAlign = 'center';
-				ctx.fillText(node.title, node.x, node.y - radius - 5);
+				ctx.fillText(node.title, node.x, node.y - radius - 6);
 			}
 		}
 
@@ -377,6 +473,7 @@
 
 	onDestroy(() => {
 		if (animFrame) cancelAnimationFrame(animFrame);
+		if (glowFrame) cancelAnimationFrame(glowFrame);
 	});
 </script>
 

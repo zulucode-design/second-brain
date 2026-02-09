@@ -97,6 +97,8 @@ pub struct AppConfig {
     pub default_view_mode: bool,
     #[serde(default)]
     pub show_tray_icon: bool,
+    #[serde(default)]
+    pub close_to_tray: bool,
     #[serde(default = "default_true")]
     pub enable_wiki_links: bool,
 }
@@ -160,6 +162,7 @@ impl Default for AppConfig {
             ai_writing_style: None,
             default_view_mode: false,
             show_tray_icon: false,
+            close_to_tray: false,
             enable_wiki_links: true,
         }
     }

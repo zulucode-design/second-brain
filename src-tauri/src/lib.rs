@@ -19,9 +19,10 @@ use tauri::{
 pub fn run() {
     let config = commands::load_app_config();
     let show_tray = config.show_tray_icon;
+    let close_to_tray = config.close_to_tray && show_tray;
     let app_state = AppState::new(config);
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
@@ -93,7 +94,18 @@ pub fn run() {
             commands::set_ai_settings,
             commands::test_ai_connection,
             commands::ai_ask,
-        ])
+        ]);
+
+    if close_to_tray {
+        builder = builder.on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        });
+    }
+
+    builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

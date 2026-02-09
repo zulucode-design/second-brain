@@ -1875,8 +1875,17 @@
 		}
 	}
 
-	function aiApplyResult() {
+	async function aiApplyResult() {
 		if (!editor || !aiResult) return;
+		// Save a version snapshot before applying AI changes
+		if ($activeNotePath && $activeNote && !aiEmptyNote) {
+			try {
+				await forceSave();
+				await createVersion($activeNotePath, $activeNote.meta.id);
+			} catch (e) {
+				console.error('Failed to create version before AI apply:', e);
+			}
+		}
 		if (aiEmptyNote) {
 			// Parse title from first line, rest is content
 			const lines = aiResult.split('\n');
@@ -2537,7 +2546,7 @@
 				<button class="fmt-btn" class:active={(editorState, editor.isActive('underline'))} onclick={() => editor?.chain().focus().toggleUnderline().run()} title="Underline (Ctrl+U)">
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v7a6 6 0 006 6 6 6 0 006-6V3"/><line x1="4" y1="21" x2="20" y2="21"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('strike'))} onclick={() => editor?.chain().focus().toggleStrike().run()} title="Strikethrough">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('strike'))} onclick={() => editor?.chain().focus().toggleStrike().run()} title="Strikethrough (Ctrl+Shift+X)">
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4H9a3 3 0 00-3 3 3 3 0 003 3h6"/><line x1="4" y1="12" x2="20" y2="12"/><path d="M8 20h7a3 3 0 003-3 3 3 0 00-3-3H8"/></svg>
 				</button>
 
@@ -2564,20 +2573,20 @@
 				<div class="fmt-sep"></div>
 
 				<!-- Link -->
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('link'))} onclick={addLinkFromToolbar} title="Link">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('link'))} onclick={addLinkFromToolbar} title="Link (Ctrl+K)">
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
 				</button>
 
 				<div class="fmt-sep"></div>
 
 				<!-- Lists -->
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('bulletList'))} onclick={() => editor?.chain().focus().toggleBulletList().run()} title="Bullet List">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('bulletList'))} onclick={() => editor?.chain().focus().toggleBulletList().run()} title="Bullet List (Ctrl+Shift+8)">
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.5" fill="currentColor"/><circle cx="3.5" cy="12" r="1.5" fill="currentColor"/><circle cx="3.5" cy="18" r="1.5" fill="currentColor"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('orderedList'))} onclick={() => editor?.chain().focus().toggleOrderedList().run()} title="Ordered List">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('orderedList'))} onclick={() => editor?.chain().focus().toggleOrderedList().run()} title="Ordered List (Ctrl+Shift+7)">
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><text x="1" y="8" font-size="8" fill="currentColor" stroke="none" font-weight="600">1</text><text x="1" y="14" font-size="8" fill="currentColor" stroke="none" font-weight="600">2</text><text x="1" y="20" font-size="8" fill="currentColor" stroke="none" font-weight="600">3</text></svg>
 				</button>
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('taskList'))} onclick={() => editor?.chain().focus().toggleTaskList().run()} title="Task List">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('taskList'))} onclick={() => editor?.chain().focus().toggleTaskList().run()} title="Task List (Ctrl+Shift+9)">
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><polyline points="4.5 6.5 6 8 8.5 4.5"/><line x1="13" y1="6.5" x2="21" y2="6.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><line x1="13" y1="17.5" x2="21" y2="17.5"/></svg>
 				</button>
 
@@ -2594,15 +2603,15 @@
 				<div class="fmt-sep"></div>
 
 				<!-- Code & Code Block -->
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('code'))} onclick={() => editor?.chain().focus().toggleCode().run()} title="Inline Code">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('code'))} onclick={() => editor?.chain().focus().toggleCode().run()} title="Inline Code (Ctrl+E)">
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('codeBlock'))} onclick={() => editor?.chain().focus().toggleCodeBlock().run()} title="Code Block">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('codeBlock'))} onclick={() => editor?.chain().focus().toggleCodeBlock().run()} title="Code Block (Ctrl+Alt+C)">
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="9 8 5 12 9 16"/><polyline points="15 8 19 12 15 16"/></svg>
 				</button>
 
 				<!-- Blockquote -->
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('blockquote'))} onclick={() => editor?.chain().focus().toggleBlockquote().run()} title="Quote">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('blockquote'))} onclick={() => editor?.chain().focus().toggleBlockquote().run()} title="Quote (Ctrl+Shift+B)">
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6h4v4l-2 6H3l2-6H3V6zm10 0h4v4l-2 6h-2l2-6h-2V6z"/></svg>
 				</button>
 
@@ -2648,7 +2657,7 @@
 
 				<!-- Highlight -->
 				<div class="fmt-dropdown-wrap">
-					<button class="fmt-btn" class:active={(editorState, editor.isActive('highlight'))} onclick={(e) => { e.stopPropagation(); highlightDropdown = !highlightDropdown; headingDropdown = false; colorDropdown = false; tablePickerOpen = false; alignDropdown = false; insertDropdown = false; }} title="Highlight">
+					<button class="fmt-btn" class:active={(editorState, editor.isActive('highlight'))} onclick={(e) => { e.stopPropagation(); highlightDropdown = !highlightDropdown; headingDropdown = false; colorDropdown = false; tablePickerOpen = false; alignDropdown = false; insertDropdown = false; }} title="Highlight (Ctrl+Shift+H)">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/><path d="M15 5l3 3"/></svg>
 						<span class="color-indicator" style="background: {editor.getAttributes('highlight').color || 'var(--accent)'}"></span>
 					</button>

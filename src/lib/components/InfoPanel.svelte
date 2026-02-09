@@ -2,10 +2,14 @@
 	import { showInfo, appConfig } from '$lib/stores/app';
 	import { getVaultStats } from '$lib/api';
 	import { openUrl } from '@tauri-apps/plugin-opener';
+	import { getVersion } from '@tauri-apps/api/app';
 	import type { VaultStats } from '$lib/types';
 
 	let stats = $state<VaultStats | null>(null);
 	let activeTab = $state<'about' | 'shortcuts'>('shortcuts');
+	let appVersion = $state('...');
+
+	getVersion().then(v => appVersion = v).catch(() => appVersion = '0.0.0');
 
 	function close() {
 		$showInfo = false;
@@ -66,7 +70,7 @@
 						</svg>
 					</div>
 					<h3 class="app-name">HelixNotes</h3>
-					<p class="app-version">v1.0.0</p>
+					<p class="app-version">v{appVersion}</p>
 					<p class="app-description">A local-first markdown note-taking app.</p>
 
 					{#if stats}

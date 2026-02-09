@@ -182,6 +182,7 @@ export async function setGeneralSettings(
   hideTitleInBody: boolean,
   defaultViewMode: boolean,
   showTrayIcon: boolean,
+  closeToTray: boolean,
   enableWikiLinks: boolean,
 ): Promise<void> {
   return invoke("set_general_settings", {
@@ -195,6 +196,7 @@ export async function setGeneralSettings(
     hideTitleInBody,
     defaultViewMode,
     showTrayIcon,
+    closeToTray,
     enableWikiLinks,
   });
 }

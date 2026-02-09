@@ -8,8 +8,8 @@ Your notes are stored as standard Markdown files on your local filesystem. No cl
 
 | Platform | Download |
 |----------|----------|
-| Linux | [HelixNotes_1.0.0_amd64.AppImage](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.0.0/HelixNotes_1.0.0_amd64.AppImage) |
-| Windows | Coming soon |
+| Linux | [HelixNotes_1.0.1_amd64.AppImage](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.0.1/HelixNotes_1.0.1_amd64.AppImage) |
+| Windows | [HelixNotes_1.0.1_x64-setup.exe](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.0.1/HelixNotes_1.0.1_x64-setup.exe) |
 | macOS | Coming soon |
 
 See all releases: [codeberg.org/ArkHost/HelixNotes/releases](https://codeberg.org/ArkHost/HelixNotes/releases)

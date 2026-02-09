@@ -283,6 +283,7 @@
 	let hideTitleInBody = $state($appConfig?.hide_title_in_body ?? false);
 	let defaultViewMode = $state($appConfig?.default_view_mode ?? false);
 	let showTrayIcon = $state($appConfig?.show_tray_icon ?? false);
+	let closeToTray = $state($appConfig?.close_to_tray ?? false);
 	let enableWikiLinks = $state($appConfig?.enable_wiki_links ?? true);
 
 	const pdfHeightPresets = [
@@ -334,9 +335,10 @@
 			$appConfig.hide_title_in_body = hideTitleInBody;
 			$appConfig.default_view_mode = defaultViewMode;
 			$appConfig.show_tray_icon = showTrayIcon;
+			$appConfig.close_to_tray = closeToTray;
 			$appConfig.enable_wiki_links = enableWikiLinks;
 		}
-		setGeneralSettings(compactNotes, timeFormat, gpuAcceleration, autostart, pdfPreview, pdfHeight, titleMode, hideTitleInBody, defaultViewMode, showTrayIcon, enableWikiLinks)
+		setGeneralSettings(compactNotes, timeFormat, gpuAcceleration, autostart, pdfPreview, pdfHeight, titleMode, hideTitleInBody, defaultViewMode, showTrayIcon, closeToTray, enableWikiLinks)
 			.catch((e) => console.error('Failed to save general settings:', e));
 	}
 
@@ -560,10 +562,21 @@
 										<span class="setting-name">Show in system tray</span>
 										<span class="setting-desc">Show an icon in the notification area (requires restart)</span>
 									</span>
-									<button class="toggle-switch" class:on={showTrayIcon} onclick={() => { showTrayIcon = !showTrayIcon; saveGeneralSettings(); }}>
+									<button class="toggle-switch" class:on={showTrayIcon} onclick={() => { showTrayIcon = !showTrayIcon; if (!showTrayIcon) closeToTray = false; saveGeneralSettings(); }}>
 										<span class="toggle-knob"></span>
 									</button>
 								</label>
+								{#if showTrayIcon}
+								<label class="setting-toggle">
+									<span class="setting-label">
+										<span class="setting-name">Close to tray</span>
+										<span class="setting-desc">Minimize to tray instead of quitting when closing the window (requires restart)</span>
+									</span>
+									<button class="toggle-switch" class:on={closeToTray} onclick={() => { closeToTray = !closeToTray; saveGeneralSettings(); }}>
+										<span class="toggle-knob"></span>
+									</button>
+								</label>
+								{/if}
 							</div>
 						</div>
 					{:else if activeTab === 'editor'}

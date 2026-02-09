@@ -391,6 +391,7 @@ pub fn set_general_settings(
     hide_title_in_body: bool,
     default_view_mode: bool,
     show_tray_icon: bool,
+    close_to_tray: bool,
     enable_wiki_links: bool,
 ) -> Result<(), String> {
     let mut config = state.config.lock().map_err(|e| e.to_string())?;
@@ -404,6 +405,7 @@ pub fn set_general_settings(
     config.hide_title_in_body = hide_title_in_body;
     config.default_view_mode = default_view_mode;
     config.show_tray_icon = show_tray_icon;
+    config.close_to_tray = close_to_tray;
     config.enable_wiki_links = enable_wiki_links;
     save_app_config(&config)?;
     Ok(())
