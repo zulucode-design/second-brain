@@ -23,6 +23,7 @@ export const searchQuery = writable("");
 export const showCommandPalette = writable(false);
 export const showSearch = writable(false);
 export const showSettings = writable(false);
+export const settingsTab = writable<string | null>(null);
 export const showInfo = writable(false);
 export const notebookIcons = writable<Record<string, string>>({});
 export const quickAccessPaths = writable<string[]>([]);
@@ -44,6 +45,25 @@ export const focusMode = writable(false);
 
 // Theme
 export const theme = writable<string>("system");
+
+// Update state
+export const updateAvailable = writable<{
+  version: string;
+  body?: string;
+} | null>(null);
+export const installType = writable<string>("native");
+
+export async function checkForUpdate() {
+  try {
+    const { check } = await import("@tauri-apps/plugin-updater");
+    const update = await check();
+    if (update) {
+      updateAvailable.set({ version: update.version, body: update.body });
+    }
+  } catch {
+    // Silent fail — don't disrupt app startup
+  }
+}
 
 // Derived
 export const sortedNotes = derived([notes, sortMode], ([$notes, $sortMode]) => {

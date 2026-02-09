@@ -94,6 +94,7 @@ pub fn run() {
             commands::set_ai_settings,
             commands::test_ai_connection,
             commands::ai_ask,
+            commands::get_install_type,
         ]);
 
     if close_to_tray {

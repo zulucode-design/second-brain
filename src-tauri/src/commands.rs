@@ -1341,3 +1341,16 @@ fn save_app_config(config: &AppConfig) -> Result<(), String> {
     std::fs::write(path, data).map_err(|e| e.to_string())?;
     Ok(())
 }
+
+// ── Install Type Detection ──
+
+#[tauri::command]
+pub fn get_install_type() -> String {
+    if cfg!(target_os = "windows") {
+        "windows".to_string()
+    } else if std::env::var("APPIMAGE").is_ok() {
+        "appimage".to_string()
+    } else {
+        "native".to_string()
+    }
+}

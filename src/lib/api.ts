@@ -309,3 +309,7 @@ export async function aiAsk(
 ): Promise<void> {
   return invoke("ai_ask", { action, text, customPrompt, requestId });
 }
+
+export async function getInstallType(): Promise<string> {
+  return invoke("get_install_type");
+}

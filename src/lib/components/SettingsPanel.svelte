@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { showSettings, theme, appConfig } from '$lib/stores/app';
+	import { showSettings, theme, appConfig, updateAvailable as globalUpdateAvailable, installType, settingsTab } from '$lib/stores/app';
 	import { setTheme, setAccentColor, setFontSize, setFontFamily, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection } from '$lib/api';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
@@ -24,6 +24,23 @@
 	}
 	loadAppVersion();
 
+	// Switch to requested tab if set externally (e.g. from update badge)
+	$effect(() => {
+		const tab = $settingsTab;
+		if (tab) {
+			activeTab = tab as Tab;
+			$settingsTab = null;
+		}
+	});
+
+	// Pre-populate from global store if update was already detected at startup
+	$effect(() => {
+		const global = $globalUpdateAvailable;
+		if (global && !updateAvailable) {
+			updateAvailable = { version: global.version, body: global.body };
+		}
+	});
+
 	async function handleCheckUpdate() {
 		updateChecking = true;
 		updateMessage = null;
@@ -33,6 +50,7 @@
 			if (update) {
 				updateObj = update;
 				updateAvailable = { version: update.version, body: update.body, date: update.date };
+				globalUpdateAvailable.set({ version: update.version, body: update.body });
 				updateMessage = { type: 'info', text: `Version ${update.version} is available!` };
 			} else {
 				updateMessage = { type: 'success', text: 'You are on the latest version.' };
@@ -1034,6 +1052,7 @@
 											<div class="update-notes">{updateAvailable.body}</div>
 										{/if}
 									</div>
+									{#if $installType === 'appimage' || $installType === 'windows'}
 									<button class="update-install-btn" onclick={handleDownloadAndInstall} disabled={updateDownloading}>
 										{#if updateDownloading}
 											<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
@@ -1050,6 +1069,14 @@
 											<div class="update-progress-fill" style="width: {updateProgress}%"></div>
 										</div>
 									{/if}
+								{:else}
+									<a class="update-install-btn" href="https://codeberg.org/ArkHost/HelixNotes/releases" target="_blank" rel="noopener">
+										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+											<path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+										</svg>
+										Download from Codeberg
+									</a>
+								{/if}
 								</div>
 							{/if}
 

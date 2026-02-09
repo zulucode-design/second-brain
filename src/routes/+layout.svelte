@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import '../app.css';
-	import { theme, appConfig, activeNotePath } from '$lib/stores/app';
+	import { theme, appConfig, activeNotePath, installType, checkForUpdate } from '$lib/stores/app';
 	import { openUrl } from '@tauri-apps/plugin-opener';
-	import { openFile } from '$lib/api';
+	import { openFile, getInstallType } from '$lib/api';
 	import { get } from 'svelte/store';
 
 	let { children } = $props();
@@ -30,6 +30,12 @@
 		}
 		return resolved.join('/');
 	}
+
+	// Detect install type and check for updates on startup
+	onMount(() => {
+		getInstallType().then(t => installType.set(t)).catch(() => {});
+		checkForUpdate();
+	});
 
 	// Intercept all link clicks in capture phase to prevent webview navigation
 	onMount(() => {
