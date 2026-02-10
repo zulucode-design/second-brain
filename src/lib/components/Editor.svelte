@@ -2574,6 +2574,7 @@
 					</button>
 				</div>
 			{/if}
+			<div class="editor-body-row">
 			<div class="editor-body">
 				{#if $sourceMode}
 					<textarea
@@ -2643,6 +2644,7 @@
 					{/if}
 				</div>
 			{/if}
+			</div>
 		</div>
 
 		{#if editorReady && !$sourceMode}
@@ -3825,6 +3827,14 @@
 	}
 	:global(.note-search-active) {
 		background: rgba(255, 150, 0, 0.6);
+	}
+
+	.editor-body-row {
+		flex: 1;
+		display: flex;
+		flex-direction: row;
+		overflow: hidden;
+		min-height: 0;
 	}
 
 	.editor-body {
