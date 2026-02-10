@@ -79,6 +79,7 @@ pub fn run() {
             commands::get_quick_access,
             commands::add_quick_access,
             commands::remove_quick_access,
+            commands::reorder_quick_access,
             commands::get_vault_stats,
             commands::import_obsidian,
             commands::open_file,

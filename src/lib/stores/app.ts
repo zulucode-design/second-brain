@@ -66,30 +66,36 @@ export async function checkForUpdate() {
 }
 
 // Derived
-export const sortedNotes = derived([notes, sortMode], ([$notes, $sortMode]) => {
-  const pinned = $notes.filter((n) => n.meta.pinned);
-  const unpinned = $notes.filter((n) => !n.meta.pinned);
+export const sortedNotes = derived(
+  [notes, sortMode, viewMode],
+  ([$notes, $sortMode, $viewMode]) => {
+    // Quick Access preserves stored order
+    if ($viewMode === "quickaccess") return $notes;
 
-  const sortFn = (a: NoteEntry, b: NoteEntry) => {
-    switch ($sortMode) {
-      case "title":
-        return a.meta.title.localeCompare(b.meta.title);
-      case "created":
-        return (
-          new Date(b.meta.created).getTime() -
-          new Date(a.meta.created).getTime()
-        );
-      case "modified":
-      default:
-        return (
-          new Date(b.meta.modified).getTime() -
-          new Date(a.meta.modified).getTime()
-        );
-    }
-  };
+    const pinned = $notes.filter((n) => n.meta.pinned);
+    const unpinned = $notes.filter((n) => !n.meta.pinned);
 
-  return [...pinned.sort(sortFn), ...unpinned.sort(sortFn)];
-});
+    const sortFn = (a: NoteEntry, b: NoteEntry) => {
+      switch ($sortMode) {
+        case "title":
+          return a.meta.title.localeCompare(b.meta.title);
+        case "created":
+          return (
+            new Date(b.meta.created).getTime() -
+            new Date(a.meta.created).getTime()
+          );
+        case "modified":
+        default:
+          return (
+            new Date(b.meta.modified).getTime() -
+            new Date(a.meta.modified).getTime()
+          );
+      }
+    };
+
+    return [...pinned.sort(sortFn), ...unpinned.sort(sortFn)];
+  },
+);
 
 export const vaultState = derived(
   [

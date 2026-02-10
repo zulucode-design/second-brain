@@ -31,7 +31,7 @@
     --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
     --sidebar-width: 220px;
     --notelist-width: 280px;
-    --panel-resize-handle: 4px;
+    --panel-resize-handle: 3px;
 }
 
 :root.dark {
@@ -148,4 +148,13 @@ body {
 .resize-handle:hover,
 .resize-handle.active {
     background: var(--accent);
+}
+
+body.resizing .ProseMirror {
+    pointer-events: none;
+    contain: strict;
+}
+
+body.resizing {
+    user-select: none;
 }

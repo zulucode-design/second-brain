@@ -213,6 +213,10 @@ export async function removeQuickAccess(noteRelative: string): Promise<void> {
   return invoke("remove_quick_access", { noteRelative });
 }
 
+export async function reorderQuickAccess(paths: string[]): Promise<void> {
+  return invoke("reorder_quick_access", { paths });
+}
+
 export async function getVaultStats(): Promise<VaultStats> {
   return invoke("get_vault_stats");
 }

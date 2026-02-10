@@ -26,6 +26,7 @@
 		getQuickAccess,
 		addQuickAccess,
 		removeQuickAccess,
+		reorderQuickAccess,
 		moveNote
 	} from '$lib/api';
 	import { formatRelativeTime } from '$lib/utils/time';
@@ -47,6 +48,11 @@
 	let selectedPaths = $state<Set<string>>(new Set());
 	let lastClickedPath = $state<string | null>(null);
 	let batchMovePicker = $state(false);
+
+	// Quick Access drag-to-reorder
+	let qaDragFrom = $state<number | null>(null);
+	let qaDragOver = $state<number | null>(null);
+	let qaDragHalf = $state<'top' | 'bottom'>('bottom');
 
 	function clearSelection() {
 		selectedPaths = new Set();
@@ -260,9 +266,30 @@
 			await removeQuickAccess(note.relative_path);
 			const qaNotes = await getQuickAccess();
 			$quickAccessPaths = qaNotes.map(n => n.relative_path);
-			if ($viewMode === 'quickaccess') await refresh();
+			if ($viewMode === 'quickaccess') await refresh(true);
 		} catch (e) {
 			console.error('Failed to remove from quick access:', e);
+		}
+	}
+
+	async function handleQaDrop(targetIndex: number) {
+		if (qaDragFrom === null) { qaDragFrom = null; qaDragOver = null; return; }
+		// Compute the actual insert position based on which half we're hovering
+		let insertAt = qaDragHalf === 'bottom' ? targetIndex + 1 : targetIndex;
+		if (qaDragFrom === insertAt || qaDragFrom + 1 === insertAt) {
+			qaDragFrom = null; qaDragOver = null; return;
+		}
+		const arr = [...$sortedNotes];
+		const [moved] = arr.splice(qaDragFrom, 1);
+		if (insertAt > qaDragFrom) insertAt--;
+		arr.splice(insertAt, 0, moved);
+		$notes = arr;
+		qaDragFrom = null;
+		qaDragOver = null;
+		try {
+			await reorderQuickAccess(arr.map(n => n.relative_path));
+		} catch (e) {
+			console.error('Failed to reorder quick access:', e);
 		}
 	}
 
@@ -491,7 +518,7 @@
 			</div>
 		{/if}
 
-		{#each $sortedNotes as note (note.path)}
+		{#each $sortedNotes as note, noteIndex (note.path)}
 			{#if editingNote === note.path}
 				<div class="note-item active">
 					<input
@@ -512,6 +539,8 @@
 					class:selected={selectedPaths.has(note.path)}
 					class:pinned={note.meta.pinned}
 					class:compact={compact}
+					class:qa-drag-above={$viewMode === 'quickaccess' && qaDragOver === noteIndex && qaDragFrom !== null && qaDragHalf === 'top'}
+					class:qa-drag-below={$viewMode === 'quickaccess' && qaDragOver === noteIndex && qaDragFrom !== null && qaDragHalf === 'bottom'}
 					onclick={(e) => handleNoteClick(e, note)}
 					oncontextmenu={(e) => {
 						e.preventDefault();
@@ -528,6 +557,12 @@
 					}}
 					draggable="true"
 					ondragstart={(e) => {
+						if ($viewMode === 'quickaccess') {
+							qaDragFrom = noteIndex;
+							e.dataTransfer!.setData('text/plain', note.path);
+							e.dataTransfer!.effectAllowed = 'move';
+							return;
+						}
 						if (selectedPaths.size > 1 && selectedPaths.has(note.path)) {
 							e.dataTransfer!.setData('text/plain', [...selectedPaths].join('\n'));
 						} else {
@@ -535,6 +570,25 @@
 						}
 						e.dataTransfer!.effectAllowed = 'move';
 					}}
+					ondragover={(e) => {
+						if ($viewMode === 'quickaccess' && qaDragFrom !== null) {
+							e.preventDefault();
+							e.dataTransfer!.dropEffect = 'move';
+							const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+							qaDragHalf = e.clientY < rect.top + rect.height / 2 ? 'top' : 'bottom';
+							qaDragOver = noteIndex;
+						}
+					}}
+					ondragleave={() => {
+						if (qaDragOver === noteIndex) qaDragOver = null;
+					}}
+					ondrop={(e) => {
+						if ($viewMode === 'quickaccess' && qaDragFrom !== null) {
+							e.preventDefault();
+							handleQaDrop(noteIndex);
+						}
+					}}
+					ondragend={() => { qaDragFrom = null; qaDragOver = null; }}
 				>
 					{#if compact}
 						<div class="note-compact-row">
@@ -761,8 +815,8 @@
 		border-radius: 6px;
 		cursor: pointer;
 		text-align: left;
-		transition: background 0.1s;
 		margin-bottom: 1px;
+		contain: content;
 	}
 
 	.note-item:hover {
@@ -1132,5 +1186,13 @@
 		margin-left: auto;
 		color: var(--accent);
 		font-size: 14px;
+	}
+
+	.note-item.qa-drag-above {
+		border-top: 2px solid var(--accent);
+	}
+
+	.note-item.qa-drag-below {
+		border-bottom: 2px solid var(--accent);
 	}
 </style>

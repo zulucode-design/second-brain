@@ -1192,7 +1192,10 @@
 	}
 
 	// ── In-note search functions ──
+	let noteSearchTimer: ReturnType<typeof setTimeout> | null = null;
+
 	function updateNoteSearch(query: string) {
+		if (noteSearchTimer) clearTimeout(noteSearchTimer);
 		if (!editor) return;
 		if (!query) {
 			noteSearchResults = [];
@@ -1201,20 +1204,23 @@
 			editor.view.dispatch(tr);
 			return;
 		}
-		const results: {from: number, to: number}[] = [];
-		const lowerQuery = query.toLowerCase();
-		editor.state.doc.descendants((node, pos) => {
-			if (!node.isText || !node.text) return;
-			const text = node.text.toLowerCase();
-			let idx = text.indexOf(lowerQuery);
-			while (idx !== -1) {
-				results.push({ from: pos + idx, to: pos + idx + query.length });
-				idx = text.indexOf(lowerQuery, idx + 1);
-			}
-		});
-		noteSearchResults = results;
-		if (noteSearchIndex >= results.length) noteSearchIndex = 0;
-		applySearchDecorations();
+		noteSearchTimer = setTimeout(() => {
+			if (!editor) return;
+			const results: {from: number, to: number}[] = [];
+			const lowerQuery = query.toLowerCase();
+			editor.state.doc.descendants((node, pos) => {
+				if (!node.isText || !node.text) return;
+				const text = node.text.toLowerCase();
+				let idx = text.indexOf(lowerQuery);
+				while (idx !== -1) {
+					results.push({ from: pos + idx, to: pos + idx + query.length });
+					idx = text.indexOf(lowerQuery, idx + 1);
+				}
+			});
+			noteSearchResults = results;
+			if (noteSearchIndex >= results.length) noteSearchIndex = 0;
+			applySearchDecorations();
+		}, 100);
 	}
 
 	function applySearchDecorations() {
@@ -1230,9 +1236,12 @@
 
 	function scrollToCurrentMatch() {
 		if (!editor || noteSearchResults.length === 0) return;
-		const match = noteSearchResults[noteSearchIndex];
-		editor.commands.setTextSelection(match.from);
-		editor.commands.scrollIntoView();
+		requestAnimationFrame(() => {
+			const el = editor?.view.dom.querySelector('.note-search-active');
+			if (el) {
+				el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+			}
+		});
 	}
 
 	function noteSearchNext() {

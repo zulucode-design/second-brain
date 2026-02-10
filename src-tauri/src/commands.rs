@@ -2,6 +2,7 @@ use crate::search::SearchIndex;
 use crate::state::AppState;
 use crate::types::*;
 use crate::vault::{operations, watcher};
+use std::path::Path;
 use tauri::{AppHandle, Manager, State};
 
 // ── Vault Management ──
@@ -195,8 +196,39 @@ pub fn delete_note(state: State<'_, AppState>, path: String) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub fn move_note(note_path: String, dest_notebook: String) -> Result<String, String> {
-    operations::move_note(&note_path, &dest_notebook)
+pub fn move_note(
+    state: State<'_, AppState>,
+    note_path: String,
+    dest_notebook: String,
+) -> Result<String, String> {
+    let config = state.config.lock().map_err(|e| e.to_string())?;
+    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+
+    // Compute old relative path before move
+    let old_relative = Path::new(&note_path)
+        .strip_prefix(vault_path)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let new_full_path = operations::move_note(&note_path, &dest_notebook)?;
+
+    // Update quick access if the moved note was in it
+    if !old_relative.is_empty() {
+        if let Ok(mut qa) = operations::load_quick_access(vault_path) {
+            if let Some(pos) = qa.iter().position(|p| *p == old_relative) {
+                let new_relative = Path::new(&new_full_path)
+                    .strip_prefix(vault_path)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                if !new_relative.is_empty() {
+                    qa[pos] = new_relative;
+                    let _ = operations::save_quick_access(vault_path, &qa);
+                }
+            }
+        }
+    }
+
+    Ok(new_full_path)
 }
 
 // ── Tags ──
@@ -435,6 +467,13 @@ pub fn remove_quick_access(
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
     operations::remove_quick_access(vault_path, &note_relative)
+}
+
+#[tauri::command]
+pub fn reorder_quick_access(state: State<'_, AppState>, paths: Vec<String>) -> Result<(), String> {
+    let config = state.config.lock().map_err(|e| e.to_string())?;
+    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    operations::save_quick_access(vault_path, &paths)
 }
 
 #[tauri::command]
