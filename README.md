@@ -8,9 +8,9 @@ Your notes are stored as standard Markdown files on your local filesystem. No cl
 
 | Platform | Download | Notes |
 |----------|----------|-------|
-| Linux (Arch/rolling) | [HelixNotes_1.0.3_amd64.AppImage](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.0.3/HelixNotes_1.0.3_amd64.AppImage) | Best for Arch, Fedora, openSUSE |
-| Linux (Debian/Ubuntu/Mint) | [HelixNotes_1.0.3_amd64.deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.0.3/HelixNotes_1.0.3_amd64.deb) | Ubuntu 22.04+ |
-| Windows | [HelixNotes_1.0.3_x64-setup.exe](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.0.3/HelixNotes_1.0.3_x64-setup.exe) | Windows 10/11 |
+| Linux (Arch/rolling) | [HelixNotes_1.0.4_amd64.AppImage](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.0.4/HelixNotes_1.0.4_amd64.AppImage) | Best for Arch, Fedora, openSUSE |
+| Linux (Debian/Ubuntu/Mint) | [HelixNotes_1.0.4_amd64.deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.0.4/HelixNotes_1.0.4_amd64.deb) | Ubuntu 22.04+ |
+| Windows | [HelixNotes_1.0.4_x64-setup.exe](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.0.4/HelixNotes_1.0.4_x64-setup.exe) | Windows 10/11 |
 | macOS | Coming soon | |
 
 See all releases: [codeberg.org/ArkHost/HelixNotes/releases](https://codeberg.org/ArkHost/HelixNotes/releases)
