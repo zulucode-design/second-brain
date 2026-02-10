@@ -20,11 +20,15 @@
 		showCommandPalette,
 		theme,
 		focusMode,
-		activeNote
+		activeNote,
+		activeNotePath,
+		editorDirty,
+		showInfo,
+		showSettings
 	} from '$lib/stores/app';
 
 	const appWindow = getCurrentWindow();
-	import { loadVaultState, saveVaultState } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
 	import type { VaultState, FileEvent } from '$lib/types';
 
@@ -32,6 +36,39 @@
 	let noteList: NoteList;
 	let editor: Editor;
 	let unlistenFileChange: (() => void) | null = null;
+	let navigatingFromHistory = false;
+	let noteHistory: string[] = [];
+	let noteHistoryIndex = -1;
+
+	// Track note navigation in history stack
+	$effect(() => {
+		const path = $activeNotePath;
+		if (navigatingFromHistory) {
+			navigatingFromHistory = false;
+			return;
+		}
+		if (path) {
+			// Trim forward history and push
+			noteHistory = [...noteHistory.slice(0, noteHistoryIndex + 1), path];
+			noteHistoryIndex = noteHistory.length - 1;
+		}
+	});
+
+	function navigateHistory(direction: -1 | 1) {
+		const newIndex = noteHistoryIndex + direction;
+		if (newIndex < 0 || newIndex >= noteHistory.length) return;
+		const path = noteHistory[newIndex];
+		noteHistoryIndex = newIndex;
+		navigatingFromHistory = true;
+		readNote(path).then((content) => {
+			$activeNote = content;
+			$activeNotePath = path;
+			$editorDirty = false;
+			editor?.loadNote(path, content.content);
+		}).catch(() => {
+			// Note may have been deleted, ignore
+		});
+	}
 
 	const persistState = debounce(async () => {
 		const state: VaultState = {
@@ -69,7 +106,22 @@
 		editor?.focusTitle();
 	}
 
+	function handleMouseDown(e: MouseEvent) {
+		if (e.button === 3) { e.preventDefault(); navigateHistory(-1); }
+		if (e.button === 4) { e.preventDefault(); navigateHistory(1); }
+	}
+
 	function handleKeydown(e: KeyboardEvent) {
+		if (e.altKey && e.key === 'ArrowLeft') {
+			e.preventDefault();
+			navigateHistory(-1);
+			return;
+		}
+		if (e.altKey && e.key === 'ArrowRight') {
+			e.preventDefault();
+			navigateHistory(1);
+			return;
+		}
 		if (e.ctrlKey && !e.shiftKey && e.key === 'n') {
 			e.preventDefault();
 			createAndFocusNote();
@@ -77,9 +129,19 @@
 		if (e.ctrlKey && e.shiftKey && e.key === 'N') {
 			e.preventDefault();
 		}
-		if (e.ctrlKey && e.key === 'f') {
+		if (e.ctrlKey && e.shiftKey && e.key === 'F') {
 			e.preventDefault();
 			$showSearch = true;
+			return;
+		}
+		if (e.ctrlKey && !e.shiftKey && e.key === 'f') {
+			e.preventDefault();
+			if ($activeNotePath) {
+				editor?.openNoteSearch();
+			} else {
+				$showSearch = true;
+			}
+			return;
 		}
 		if (e.ctrlKey && e.key === 'p') {
 			e.preventDefault();
@@ -90,7 +152,9 @@
 			editor?.forceSave();
 		}
 		if (e.key === 'Escape') {
-			if ($focusMode) $focusMode = false;
+			if ($showSettings) $showSettings = false;
+			else if ($showInfo) $showInfo = false;
+			else if ($focusMode) $focusMode = false;
 			else if ($showSearch) $showSearch = false;
 			else if ($showCommandPalette) $showCommandPalette = false;
 		}
@@ -142,7 +206,7 @@
 	});
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} onmousedown={handleMouseDown} />
 
 <div class="app-shell">
 	{#if $focusMode}

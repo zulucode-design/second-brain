@@ -1350,6 +1350,8 @@ pub fn get_install_type() -> String {
         "windows".to_string()
     } else if std::env::var("APPIMAGE").is_ok() {
         "appimage".to_string()
+    } else if std::path::Path::new("/var/lib/dpkg/info/helix-notes.list").exists() {
+        "deb".to_string()
     } else {
         "native".to_string()
     }

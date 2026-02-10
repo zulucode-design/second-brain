@@ -93,6 +93,14 @@
 	let historySelected = $state<VersionEntry | null>(null);
 	let historyLoading = $state(false);
 
+	// In-note search
+	let noteSearchOpen = $state(false);
+	let noteSearchQuery = $state('');
+	let noteSearchIndex = $state(0);
+	let noteSearchResults = $state<{from: number, to: number}[]>([]);
+	let noteSearchInput = $state<HTMLInputElement>(null!);
+	const noteSearchPluginKey = new PluginKey('noteSearch');
+
 	// Slash commands
 	let slashMenu = $state<{ x: number; y: number; query: string; from: number; to: number } | null>(null);
 	let slashSelectedIndex = $state(0);
@@ -267,6 +275,31 @@
 		codeLangDropdown = null;
 	}
 
+	// ── In-note search extension ──
+	const NoteSearchExtension = Extension.create({
+		name: 'noteSearch',
+		addProseMirrorPlugins() {
+			return [
+				new Plugin({
+					key: noteSearchPluginKey,
+					state: {
+						init() { return DecorationSet.empty; },
+						apply(tr, old) {
+							const meta = tr.getMeta(noteSearchPluginKey);
+							if (meta !== undefined) return meta;
+							return old.map(tr.mapping, tr.doc);
+						},
+					},
+					props: {
+						decorations(state) {
+							return this.getState(state);
+						},
+					},
+				}),
+			];
+		},
+	});
+
 	const CodeBlockLanguageSelect = Extension.create({
 		name: 'codeBlockLanguageSelect',
 		addProseMirrorPlugins() {
@@ -397,7 +430,14 @@
 									closeSlashMenu();
 									return true;
 								}
-								if (event.key === 'ArrowRight' || event.key === 'Tab') {
+								if (event.key === 'Tab') {
+									event.preventDefault();
+									if (slashTableHover.rows > 0 && slashTableHover.cols > 0) {
+										slashInsertTable(slashTableHover.rows, slashTableHover.cols);
+									}
+									return true;
+								}
+								if (event.key === 'ArrowRight') {
 									event.preventDefault();
 									slashTableHover = { rows: Math.max(1, slashTableHover.rows), cols: Math.min(10, (slashTableHover.cols || 0) + 1) };
 									return true;
@@ -436,7 +476,7 @@
 								slashSelectedIndex = (slashSelectedIndex - 1 + slashFiltered.length) % Math.max(1, slashFiltered.length);
 								return true;
 							}
-							if (event.key === 'Enter') {
+							if (event.key === 'Enter' || event.key === 'Tab') {
 								if (slashFiltered.length > 0) {
 									event.preventDefault();
 									executeSlashCommand(slashSelectedIndex);
@@ -1038,9 +1078,12 @@
 				return '```' + lang + '\n' + code + '\n```\n';
 			}
 			case 'blockquote': {
-				const inner: string[] = [];
-				node.forEach((child: any) => inner.push(serializeNode(child)));
-				return inner.join('').split('\n').filter((l: string) => l !== '').map((l: string) => '> ' + l).join('\n') + '\n';
+				const blocks: string[] = [];
+				node.forEach((child: any) => {
+					const lines = serializeNode(child).replace(/\n$/, '').split('\n');
+					blocks.push(lines.map((l: string) => '> ' + l).join('\n'));
+				});
+				return blocks.join('\n>\n') + '\n';
 			}
 			case 'bulletList': {
 				const items: string[] = [];
@@ -1142,6 +1185,82 @@
 			}
 		});
 		return parts.join('');
+	}
+
+	function autofocus(el: HTMLElement) {
+		requestAnimationFrame(() => el.focus());
+	}
+
+	// ── In-note search functions ──
+	function updateNoteSearch(query: string) {
+		if (!editor) return;
+		if (!query) {
+			noteSearchResults = [];
+			noteSearchIndex = 0;
+			const tr = editor.state.tr.setMeta(noteSearchPluginKey, DecorationSet.empty);
+			editor.view.dispatch(tr);
+			return;
+		}
+		const results: {from: number, to: number}[] = [];
+		const lowerQuery = query.toLowerCase();
+		editor.state.doc.descendants((node, pos) => {
+			if (!node.isText || !node.text) return;
+			const text = node.text.toLowerCase();
+			let idx = text.indexOf(lowerQuery);
+			while (idx !== -1) {
+				results.push({ from: pos + idx, to: pos + idx + query.length });
+				idx = text.indexOf(lowerQuery, idx + 1);
+			}
+		});
+		noteSearchResults = results;
+		if (noteSearchIndex >= results.length) noteSearchIndex = 0;
+		applySearchDecorations();
+	}
+
+	function applySearchDecorations() {
+		if (!editor) return;
+		const decorations = noteSearchResults.map((m, i) =>
+			Decoration.inline(m.from, m.to, { class: i === noteSearchIndex ? 'note-search-match note-search-active' : 'note-search-match' })
+		);
+		const decoSet = DecorationSet.create(editor.state.doc, decorations);
+		const tr = editor.state.tr.setMeta(noteSearchPluginKey, decoSet);
+		editor.view.dispatch(tr);
+		scrollToCurrentMatch();
+	}
+
+	function scrollToCurrentMatch() {
+		if (!editor || noteSearchResults.length === 0) return;
+		const match = noteSearchResults[noteSearchIndex];
+		editor.commands.setTextSelection(match.from);
+		editor.commands.scrollIntoView();
+	}
+
+	function noteSearchNext() {
+		if (noteSearchResults.length === 0) return;
+		noteSearchIndex = (noteSearchIndex + 1) % noteSearchResults.length;
+		applySearchDecorations();
+	}
+
+	function noteSearchPrev() {
+		if (noteSearchResults.length === 0) return;
+		noteSearchIndex = (noteSearchIndex - 1 + noteSearchResults.length) % noteSearchResults.length;
+		applySearchDecorations();
+	}
+
+	export function openNoteSearch() {
+		noteSearchOpen = true;
+	}
+
+	function closeNoteSearch() {
+		noteSearchOpen = false;
+		noteSearchQuery = '';
+		noteSearchResults = [];
+		noteSearchIndex = 0;
+		if (editor) {
+			const tr = editor.state.tr.setMeta(noteSearchPluginKey, DecorationSet.empty);
+			editor.view.dispatch(tr);
+			editor.commands.focus();
+		}
 	}
 
 	function stripAssetSrc(src: string): string {
@@ -1418,6 +1537,7 @@
 				DetailsContent,
 				TextAlign.configure({ types: ['heading', 'paragraph'] }),
 				SlashCommands,
+				NoteSearchExtension,
 				...($appConfig?.enable_wiki_links ? [WikiLink, WikiLinkAutocomplete] : []),
 			],
 			content: html,
@@ -2296,6 +2416,16 @@
 				{/if}
 				<button
 					class="icon-btn"
+					class:active={noteSearchOpen}
+					onclick={() => noteSearchOpen ? closeNoteSearch() : openNoteSearch()}
+					title="Find in note (Ctrl+F)"
+				>
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+					</svg>
+				</button>
+				<button
+					class="icon-btn"
 					class:active={readOnly}
 					class:flash={readOnlyFlash}
 					onclick={toggleReadOnly}
@@ -2401,6 +2531,40 @@
 		</div>
 
 		<div class="editor-body-wrapper">
+			{#if noteSearchOpen}
+				<div class="note-search-bar">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.5;flex-shrink:0"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+					<input
+						bind:this={noteSearchInput}
+						type="text"
+						class="note-search-input"
+						placeholder="Find in note..."
+						bind:value={noteSearchQuery}
+						oninput={() => updateNoteSearch(noteSearchQuery)}
+						onkeydown={(e) => {
+							if (e.key === 'Enter') { e.preventDefault(); e.shiftKey ? noteSearchPrev() : noteSearchNext(); }
+							if (e.key === 'Escape') { e.preventDefault(); closeNoteSearch(); }
+						}}
+						use:autofocus
+					/>
+					<span class="note-search-count">
+						{#if noteSearchQuery && noteSearchResults.length > 0}
+							{noteSearchIndex + 1} / {noteSearchResults.length}
+						{:else if noteSearchQuery}
+							No results
+						{/if}
+					</span>
+					<button class="note-search-btn" onclick={noteSearchPrev} title="Previous (Shift+Enter)">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+					</button>
+					<button class="note-search-btn" onclick={noteSearchNext} title="Next (Enter)">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+					</button>
+					<button class="note-search-btn" onclick={closeNoteSearch} title="Close (Esc)">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+					</button>
+				</div>
+			{/if}
 			<div class="editor-body">
 				{#if $sourceMode}
 					<textarea
@@ -3184,6 +3348,7 @@
 						placeholder="Tell AI what to do with the selected text..."
 						bind:value={aiCustomPrompt}
 						onkeydown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runAiAction('custom', aiCustomPrompt); } }}
+						use:autofocus
 					></textarea>
 					<button class="ai-custom-submit" onclick={() => runAiAction('custom', aiCustomPrompt)} disabled={!aiCustomPrompt.trim()}>
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
@@ -3212,6 +3377,7 @@
 						placeholder="Describe the note you want to create..."
 						bind:value={aiCustomPrompt}
 						onkeydown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runAiAction('custom', aiCustomPrompt); } }}
+						use:autofocus
 					></textarea>
 					<button class="ai-custom-submit" onclick={() => runAiAction('custom', aiCustomPrompt)} disabled={!aiCustomPrompt.trim()}>
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4l-2-2"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M9 13v2"/><path d="M15 13v2"/></svg>
@@ -3600,7 +3766,56 @@
 	.editor-body-wrapper {
 		flex: 1;
 		display: flex;
+		flex-direction: column;
 		overflow: hidden;
+	}
+
+	.note-search-bar {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 12px;
+		background: var(--bg-secondary);
+		border-bottom: 1px solid var(--border);
+		flex-shrink: 0;
+	}
+	.note-search-input {
+		flex: 1;
+		background: transparent;
+		border: none;
+		color: var(--text-primary);
+		font-size: 13px;
+		outline: none;
+		min-width: 0;
+	}
+	.note-search-input::placeholder {
+		color: var(--text-secondary);
+	}
+	.note-search-count {
+		font-size: 12px;
+		color: var(--text-secondary);
+		white-space: nowrap;
+	}
+	.note-search-btn {
+		background: none;
+		border: none;
+		color: var(--text-secondary);
+		cursor: pointer;
+		padding: 2px;
+		border-radius: 4px;
+		display: flex;
+		align-items: center;
+	}
+	.note-search-btn:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+	:global(.note-search-match) {
+		background: rgba(255, 200, 0, 0.3);
+		border-radius: 2px;
+	}
+	:global(.note-search-active) {
+		background: rgba(255, 150, 0, 0.6);
 	}
 
 	.editor-body {

@@ -1069,6 +1069,11 @@
 											<div class="update-progress-fill" style="width: {updateProgress}%"></div>
 										</div>
 									{/if}
+								{:else if $installType === 'deb'}
+									<div class="update-apt-info">
+										<p>Update via your package manager:</p>
+										<code>sudo apt update && sudo apt upgrade helix-notes</code>
+									</div>
 								{:else}
 									<a class="update-install-btn" href="https://codeberg.org/ArkHost/HelixNotes/releases" target="_blank" rel="noopener">
 										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1943,6 +1948,23 @@
 	.update-install-btn:disabled {
 		opacity: 0.6;
 		cursor: not-allowed;
+	}
+
+	.update-apt-info {
+		margin-top: 8px;
+	}
+	.update-apt-info p {
+		margin: 0 0 6px 0;
+		font-size: 13px;
+		color: var(--text-secondary);
+	}
+	.update-apt-info code {
+		display: block;
+		padding: 8px 12px;
+		background: var(--bg-secondary);
+		border-radius: 6px;
+		font-size: 12px;
+		user-select: all;
 	}
 
 	.update-progress-bar {
