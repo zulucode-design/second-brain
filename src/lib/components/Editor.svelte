@@ -723,6 +723,8 @@
 			closeWikiLinkMenu();
 			return;
 		}
+		// Refresh titles when the menu first opens so newly created notes are found
+		if (!wikiLinkMenu) refreshWikiLinkTitles();
 		const query = match[1];
 		const bracketOffset = textBefore.length - match[0].length;
 		const from = resolvedFrom.start() + bracketOffset;
@@ -1759,7 +1761,7 @@
 		let x = event.clientX;
 		let y = event.clientY;
 		const menuWidth = 220;
-		const menuHeight = 640;
+		const menuHeight = 740;
 		if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 8;
 		if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 8;
 		if (x < 4) x = 4;

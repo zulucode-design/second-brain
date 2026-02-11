@@ -54,16 +54,47 @@
 	let qaDragOver = $state<number | null>(null);
 	let qaDragHalf = $state<'top' | 'bottom'>('bottom');
 
+	// Virtual scroll
+	let listContainer = $state<HTMLDivElement>(null!);
+	let scrollTop = $state(0);
+	let containerHeight = $state(600);
+	let itemHeight = $derived(compact ? 33 : 62);
+	const BUFFER = 10;
+
+	let totalHeight = $derived($sortedNotes.length * itemHeight);
+	let startIndex = $derived(Math.max(0, Math.floor(scrollTop / itemHeight) - BUFFER));
+	let endIndex = $derived(Math.min($sortedNotes.length, Math.ceil((scrollTop + containerHeight) / itemHeight) + BUFFER));
+	let visibleNotes = $derived($sortedNotes.slice(startIndex, endIndex));
+	let topPad = $derived(startIndex * itemHeight);
+	let bottomPad = $derived(Math.max(0, ($sortedNotes.length - endIndex) * itemHeight));
+
+	function onListScroll(e: Event) {
+		const el = e.currentTarget as HTMLDivElement;
+		scrollTop = el.scrollTop;
+	}
+
 	function clearSelection() {
 		selectedPaths = new Set();
 		lastClickedPath = null;
 		batchMovePicker = false;
 	}
 
-	// Clear selection when view/notebook changes
+	// Clear selection and reset scroll when view/notebook changes
 	$effect(() => {
 		const _ = [$viewMode, $activeNotebook, $activeTag];
 		clearSelection();
+		scrollTop = 0;
+		if (listContainer) listContainer.scrollTop = 0;
+	});
+
+	// Track container height via ResizeObserver
+	$effect(() => {
+		if (!listContainer) return;
+		const ro = new ResizeObserver((entries) => {
+			containerHeight = entries[0].contentRect.height;
+		});
+		ro.observe(listContainer);
+		return () => ro.disconnect();
 	});
 
 	interface FlatNotebook { name: string; path: string; depth: number; }
@@ -506,7 +537,7 @@
 		</div>
 	{/if}
 
-	<div class="list-content">
+	<div class="list-content" bind:this={listContainer} onscroll={onListScroll}>
 		{#if $sortedNotes.length === 0}
 			<div class="empty-state">
 				{#if $viewMode === 'trash'}
@@ -518,7 +549,9 @@
 			</div>
 		{/if}
 
-		{#each $sortedNotes as note, noteIndex (note.path)}
+		<div style="height: {topPad}px"></div>
+		{#each visibleNotes as note, i (note.path)}
+			{@const noteIndex = startIndex + i}
 			{#if editingNote === note.path}
 				<div class="note-item active">
 					<input
@@ -626,6 +659,7 @@
 				</button>
 			{/if}
 		{/each}
+		<div style="height: {bottomPad}px"></div>
 	</div>
 </div>
 
