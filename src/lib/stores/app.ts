@@ -51,6 +51,7 @@ export const updateAvailable = writable<{
   version: string;
   body?: string;
 } | null>(null);
+export const updateObj = writable<any>(null);
 export const installType = writable<string>("native");
 
 export async function checkForUpdate() {
@@ -59,6 +60,7 @@ export async function checkForUpdate() {
     const update = await check();
     if (update) {
       updateAvailable.set({ version: update.version, body: update.body });
+      updateObj.set(update);
     }
   } catch {
     // Silent fail — don't disrupt app startup

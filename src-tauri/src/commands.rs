@@ -103,6 +103,77 @@ pub fn rename_notebook(path: String, new_name: String) -> Result<String, String>
 }
 
 #[tauri::command]
+pub fn move_notebook(
+    state: State<'_, AppState>,
+    notebook_path: String,
+    dest_parent: String,
+) -> Result<String, String> {
+    let config = state.config.lock().map_err(|e| e.to_string())?;
+    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+
+    let old_relative = Path::new(&notebook_path)
+        .strip_prefix(vault_path.as_str())
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let new_full_path = operations::move_notebook(&notebook_path, &dest_parent)?;
+
+    let new_relative = Path::new(&new_full_path)
+        .strip_prefix(vault_path.as_str())
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    // Update Quick Access paths for all notes inside the moved notebook
+    if let Ok(mut qa) = operations::load_quick_access(vault_path) {
+        let old_prefix = format!("{}/", old_relative);
+        let mut changed = false;
+        for path in qa.iter_mut() {
+            if path.starts_with(&old_prefix) {
+                *path = format!("{}/{}", new_relative, &path[old_prefix.len()..]);
+                changed = true;
+            }
+        }
+        if changed {
+            let _ = operations::save_quick_access(vault_path, &qa);
+        }
+    }
+
+    // Update notebook icon mappings
+    if let Ok(icons) = operations::load_notebook_icons(vault_path) {
+        let old_prefix = format!("{}/", old_relative);
+        let mut new_icons = std::collections::HashMap::new();
+        let mut changed = false;
+        for (key, value) in &icons {
+            if *key == old_relative {
+                new_icons.insert(new_relative.clone(), value.clone());
+                changed = true;
+            } else if key.starts_with(&old_prefix) {
+                let new_key = format!("{}/{}", new_relative, &key[old_prefix.len()..]);
+                new_icons.insert(new_key, value.clone());
+                changed = true;
+            } else {
+                new_icons.insert(key.clone(), value.clone());
+            }
+        }
+        if changed {
+            let icons_path = operations::helixnotes_dir(vault_path).join("notebook_icons.json");
+            if let Ok(data) = serde_json::to_string_pretty(&new_icons) {
+                let _ = std::fs::write(&icons_path, data);
+            }
+        }
+    }
+
+    // Rebuild search index (paths changed for all contained notes)
+    if let Ok(search_guard) = state.search_index.lock() {
+        if let Some(ref search) = *search_guard {
+            let _ = search.rebuild(vault_path);
+        }
+    }
+
+    Ok(new_full_path)
+}
+
+#[tauri::command]
 pub fn delete_notebook(state: State<'_, AppState>, path: String) -> Result<(), String> {
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
@@ -1385,12 +1456,22 @@ fn save_app_config(config: &AppConfig) -> Result<(), String> {
 
 #[tauri::command]
 pub fn get_install_type() -> String {
-    if cfg!(target_os = "windows") {
+    if cfg!(target_os = "macos") {
+        "macos".to_string()
+    } else if cfg!(target_os = "windows") {
         "windows".to_string()
     } else if std::env::var("APPIMAGE").is_ok() {
         "appimage".to_string()
     } else if std::path::Path::new("/var/lib/dpkg/info/helix-notes.list").exists() {
         "deb".to_string()
+    } else if std::path::Path::new("/var/lib/pacman/local").exists()
+        && std::process::Command::new("pacman")
+            .args(["-Q", "helixnotes"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    {
+        "aur".to_string()
     } else {
         "native".to_string()
     }

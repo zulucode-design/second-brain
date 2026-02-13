@@ -75,6 +75,7 @@
 
 	let anyDropdownOpen = $derived(headingDropdown || colorDropdown || highlightDropdown || alignDropdown || insertDropdown || tablePickerOpen);
 	let editorState = $state(0);
+	let editorStateRaf = 0; // RAF handle for batching toolbar updates
 
 	// AI
 	let aiMenu = $state<{ x: number; y: number } | null>(null);
@@ -169,6 +170,8 @@
 		.use(markdownItMark)
 		.use(markdownItSup)
 		.use(markdownItSub);
+	// Disable indented code blocks — tab-indented text should stay as text, not become code
+	mdit.disable('code');
 
 	function normalizePath(p: string): string {
 		const parts = p.split('/');
@@ -313,37 +316,60 @@
 
 	const CodeBlockLanguageSelect = Extension.create({
 		name: 'codeBlockLanguageSelect',
+		addGlobalAttributes() {
+			return [{
+				types: ['codeBlock'],
+				attributes: {
+					language: {
+						renderHTML: (attributes) => {
+							return { 'data-language': attributes.language || '' };
+						},
+					},
+				},
+			}];
+		},
 		addProseMirrorPlugins() {
 			return [
 				new Plugin({
 					key: new PluginKey('codeBlockLanguageSelect'),
 					props: {
-						decorations: (state) => {
-							const decorations: Decoration[] = [];
-							state.doc.descendants((node, pos) => {
-								if (node.type.name === 'codeBlock') {
-									const wrapper = document.createElement('div');
-									wrapper.className = 'code-lang-wrapper';
-
-									const btn = document.createElement('button');
-									btn.className = 'code-lang-btn';
-									if (node.attrs.language) {
-										btn.textContent = node.attrs.language;
-									} else {
-										btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
+						handleDOMEvents: {
+							click: (view, event) => {
+								const target = event.target as HTMLElement;
+								const pre = target.closest('pre');
+								if (!pre) return false;
+								// Check if click is in the top-right corner (language button area)
+								const rect = pre.getBoundingClientRect();
+								if (event.clientX < rect.right - 70 || event.clientY > rect.top + 30) return false;
+								// Find the code block position
+								const pos = view.posAtDOM(pre, 0);
+								const resolved = view.state.doc.resolve(pos);
+								let cbNode = resolved.parent;
+								let cbPos = resolved.before(resolved.depth);
+								if (cbNode.type.name !== 'codeBlock') {
+									for (let d = resolved.depth; d >= 0; d--) {
+										if (resolved.node(d).type.name === 'codeBlock') {
+											cbNode = resolved.node(d);
+											cbPos = resolved.before(d);
+											break;
+										}
 									}
-									btn.addEventListener('click', (e) => {
-										e.preventDefault();
-										e.stopPropagation();
-										openCodeLangDropdown(pos + 1, node.attrs.language || '', btn);
-									});
-									btn.addEventListener('mousedown', (e) => e.stopPropagation());
-
-									wrapper.appendChild(btn);
-									decorations.push(Decoration.widget(pos + 1, wrapper, { side: -1, ignoreSelection: true }));
 								}
-							});
-							return DecorationSet.create(state.doc, decorations);
+								if (cbNode.type.name !== 'codeBlock') return false;
+								event.preventDefault();
+								event.stopPropagation();
+								// Virtual trigger for dropdown positioning
+								const triggerEl = document.createElement('div');
+								triggerEl.getBoundingClientRect = () => ({
+									top: rect.top + 6, bottom: rect.top + 26,
+									left: rect.right - 60, right: rect.right - 6,
+									width: 54, height: 20,
+									x: rect.right - 60, y: rect.top + 6,
+									toJSON() { return this; },
+								});
+								openCodeLangDropdown(cbPos + 1, cbNode.attrs.language || '', triggerEl as any);
+								return true;
+							},
 						},
 					},
 				}),
@@ -1077,9 +1103,9 @@
 		let preserveEmptyParas = false;
 		doc.forEach((node: any) => {
 			const isEmpty = node.type.name === 'paragraph' && node.childCount === 0;
-			// After a list or code block, preserve empty paragraphs as HTML comments
-			// so markdown-it doesn't merge adjacent lists or collapse spacing
-			if (listTypes.has(prevType) || prevType === 'codeBlock') {
+			// After a list, code block, or blockquote, preserve empty paragraphs as HTML comments
+			// so markdown-it doesn't merge adjacent blocks or collapse spacing
+			if (listTypes.has(prevType) || prevType === 'codeBlock' || prevType === 'blockquote') {
 				preserveEmptyParas = true;
 			}
 			if (isEmpty && preserveEmptyParas) {
@@ -1183,6 +1209,12 @@
 		node.forEach((child: any) => {
 			if (child.type.name === 'paragraph') {
 				parts.push(serializeInline(child));
+			} else if (child.type.name === 'bulletList' || child.type.name === 'orderedList' || child.type.name === 'taskList') {
+				// Indent nested lists so markdown parsers recognize nesting
+				// Use 4 spaces — works for both bullet (- ) and ordered (1. ) parent markers
+				const nested = serializeNode(child).replace(/\n$/, '');
+				const indented = nested.split('\n').map((line: string) => '    ' + line).join('\n');
+				parts.push(indented);
 			} else {
 				parts.push(serializeNode(child));
 			}
@@ -1193,9 +1225,15 @@
 	function serializeInline(node: any): string {
 		if (node.childCount === 0) return '';
 		const parts: string[] = [];
-		node.forEach((child: any) => {
+		node.forEach((child: any, _offset: number, index: number) => {
 			if (child.isText) {
 				let text = child.text || '';
+				// Preserve leading tabs/em-spaces as HTML entities so they survive markdown roundtrip
+				// (markdown parsers strip tab whitespace, but &emsp; passes through as HTML)
+				// Tabs come from initial indent; em-spaces (U+2003) come from prior &emsp; roundtrips
+				if (index === 0) {
+					text = text.replace(/^[\t\u2003]+/, (ws) => '&emsp;'.repeat(ws.length));
+				}
 				// Apply marks
 				for (const mark of child.marks) {
 					switch (mark.type.name) {
@@ -1213,6 +1251,11 @@
 							} else {
 								text = `==${text}==`;
 							}
+							break;
+						}
+						case 'textStyle': {
+							const c = mark.attrs?.color;
+							if (c) text = `<span style="color: ${c}">${text}</span>`;
 							break;
 						}
 						case 'link': text = `[${text}](${mark.attrs.href})`; break;
@@ -1485,10 +1528,11 @@
 		});
 
 		// Pre-process: convert task list syntax before markdown-it (it doesn't know TipTap's format)
-		src = src.replace(/^- \[x\][^\S\n]+(.+)$/gm, '- <tiptask checked="true">$1</tiptask>');
-		src = src.replace(/^- \[x\][^\S\n]*$/gm, '- <tiptask checked="true">&nbsp;</tiptask>');
-		src = src.replace(/^- \[ \][^\S\n]+(.+)$/gm, '- <tiptask checked="false">$1</tiptask>');
-		src = src.replace(/^- \[ \][^\S\n]*$/gm, '- <tiptask checked="false">&nbsp;</tiptask>');
+		// Support indented (nested) and blockquoted task lists too
+		src = src.replace(/^([\s>]*)-\s\[x\][^\S\n]+(.+)$/gm, '$1- <tiptask checked="true">$2</tiptask>');
+		src = src.replace(/^([\s>]*)-\s\[x\][^\S\n]*$/gm, '$1- <tiptask checked="true">&nbsp;</tiptask>');
+		src = src.replace(/^([\s>]*)-\s\[ \][^\S\n]+(.+)$/gm, '$1- <tiptask checked="false">$2</tiptask>');
+		src = src.replace(/^([\s>]*)-\s\[ \][^\S\n]*$/gm, '$1- <tiptask checked="false">&nbsp;</tiptask>');
 
 		// Run markdown-it (single-pass parser — handles headings, bold, italic, strike, code, blockquote, lists, links, images, hr, tables, raw HTML)
 		let html = mdit.render(src);
@@ -1500,11 +1544,12 @@
 		// Post-process: convert list-separator comments back to empty paragraphs for TipTap
 		html = html.replace(/<!-- -->/g, '<p></p>');
 
-		// Post-process: convert task list items to TipTap format (handle both tight and loose lists — loose lists wrap content in <p> tags)
-		html = html.replace(/<li>\s*(?:<p>)?\s*<tiptask checked="(true|false)">([\s\S]*?)<\/tiptask>\s*(?:<\/p>)?\s*<\/li>/gi, (_, checked, content) => {
-			return `<li data-type="taskItem" data-checked="${checked}">${content}</li>`;
+		// Post-process: convert task list items to TipTap format
+		// Convert opening <li> + <tiptask> into data-attributed <li>, handles both tight and loose (with <p>) lists
+		html = html.replace(/<li>(\s*(?:<p>)?)\s*<tiptask checked="(true|false)">([\s\S]*?)<\/tiptask>\s*(?:<\/p>)?/gi, (_, _pre, checked, text) => {
+			return `<li data-type="taskItem" data-checked="${checked}">${text}`;
 		});
-		html = html.replace(/<ul>\s*(<li data-type="taskItem")/gi, '<ul data-type="taskList">$1');
+		html = html.replace(/<ul>(\s*<li data-type="taskItem")/gi, '<ul data-type="taskList">$1');
 
 		// Post-process: resolve image src paths and parse size attribute
 		html = html.replace(/<img\s+src="([^"]*)"(?:\s+alt="([^"]*)")?[^>]*\/?>/gi, (_, imgSrc, altRaw) => {
@@ -1544,6 +1589,19 @@
 		}
 		document.addEventListener('mousedown', onClickAway);
 		return () => document.removeEventListener('mousedown', onClickAway);
+	});
+
+	// Close in-note search when switching notes
+	let prevSearchPath = '';
+	$effect(() => {
+		const path = $activeNotePath ?? '';
+		if (prevSearchPath && path !== prevSearchPath) {
+			noteSearchOpen = false;
+			noteSearchQuery = '';
+			noteSearchResults = [];
+			noteSearchIndex = 0;
+		}
+		prevSearchPath = path;
 	});
 
 	// React to activeNotePath changes from external sources (e.g. search panel)
@@ -1617,11 +1675,31 @@
 			content: html,
 			editorProps: {
 				attributes: { class: 'editor-content' },
+				handleDOMEvents: {
+					// Prevent details toggle button from stealing focus, which causes scroll-to-top.
+					// Also pre-focus the editor with preventScroll so TipTap's focus command
+					// sees hasFocus()=true and skips its scrolling view.focus() call.
+					mousedown: (view, event) => {
+						const target = event.target as HTMLElement;
+						if (target.closest('[data-type="details"] > button')) {
+							event.preventDefault();
+							if (!view.hasFocus()) {
+								(view.dom as HTMLElement).focus({ preventScroll: true });
+							}
+						}
+					},
+				},
 				handleDrop: (_view, event) => handleFileDrop(event),
 				handlePaste: (_view, event) => handleFilePaste(event),
 			},
 			onTransaction: () => {
-				editorState++;
+				// Batch toolbar state updates to once per frame — avoids ~35 isActive() calls per transaction during selection drag
+				if (!editorStateRaf) {
+					editorStateRaf = requestAnimationFrame(() => {
+						editorStateRaf = 0;
+						editorState++;
+					});
+				}
 				updateSlashMenu();
 				updateWikiLinkMenu();
 			},
@@ -4123,46 +4201,41 @@
 		border-radius: 8px;
 		padding: 16px;
 		margin: 1em 0;
-		overflow-x: auto;
 		position: relative;
 	}
 
 	:global(.tiptap-wrapper .tiptap pre code) {
+		display: block;
+		overflow-x: auto;
 		background: none;
 		padding: 0;
 		font-size: 13px;
 		line-height: 1.5;
 	}
 
-	:global(.tiptap-wrapper .tiptap pre .code-lang-wrapper) {
+	:global(.tiptap-wrapper .tiptap pre)::after {
+		content: attr(data-language);
 		position: absolute;
 		top: 6px;
 		right: 6px;
-		z-index: 1;
-	}
-
-	:global(.tiptap-wrapper .tiptap pre .code-lang-btn) {
 		padding: 2px 6px;
-		border: none;
 		border-radius: 4px;
 		background: transparent;
 		color: var(--text-tertiary);
 		font-size: 11px;
 		font-family: 'JetBrains Mono', 'Fira Code', monospace;
 		cursor: pointer;
-		outline: none;
-		opacity: 0.4;
-		transition: opacity 0.15s, background 0.15s, color 0.15s;
+		opacity: 0;
+		pointer-events: none;
+		z-index: 1;
 	}
 
-	:global(.tiptap-wrapper .tiptap pre:hover .code-lang-btn) {
+	:global(.tiptap-wrapper .tiptap pre[data-language=""])::after {
+		content: '•••';
+	}
+
+	:global(.tiptap-wrapper .tiptap pre:hover)::after {
 		opacity: 0.7;
-	}
-
-	:global(.tiptap-wrapper .tiptap pre .code-lang-btn:hover) {
-		opacity: 1;
-		background: color-mix(in srgb, var(--text-primary) 10%, transparent);
-		color: var(--text-secondary);
 	}
 
 	.code-lang-overlay {

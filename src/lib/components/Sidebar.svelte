@@ -17,7 +17,7 @@
 		quickAccessPaths,
 		collapsedNotebooks
 	} from '$lib/stores/app';
-	import { getNotebooks, getAllTags, createNotebook, deleteNotebook, renameNotebook, getNotebookIcons, setNotebookIcon, saveAttachment, getQuickAccess, addQuickAccess, removeQuickAccess, emptyTrash, moveNote, readNote, getNotes } from '$lib/api';
+	import { getNotebooks, getAllTags, createNotebook, deleteNotebook, renameNotebook, moveNotebook, getNotebookIcons, setNotebookIcon, saveAttachment, getQuickAccess, addQuickAccess, removeQuickAccess, emptyTrash, moveNote, readNote, getNotes } from '$lib/api';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { readFile } from '@tauri-apps/plugin-fs';
 	import { convertFileSrc } from '@tauri-apps/api/core';
@@ -32,6 +32,7 @@
 	let newNotebookName = $state('');
 	let showNewNotebook = $state(false);
 	let dropTargetPath = $state<string | null>(null);
+	let draggedNotebookPath = $state<string | null>(null);
 	let contextMenu = $state<{ x: number; y: number; notebook: NotebookEntry } | null>(null);
 	let trashContextMenu = $state<{ x: number; y: number } | null>(null);
 	function toggleCollapse(path: string, e: MouseEvent) {
@@ -147,6 +148,43 @@
 			await refresh();
 		} catch (e) {
 			console.error('Failed to move note:', e);
+		}
+	}
+
+	async function handleNotebookDrop(e: DragEvent, destPath: string) {
+		e.preventDefault();
+		dropTargetPath = null;
+		const srcPath = e.dataTransfer?.getData('text/plain');
+		if (!srcPath) return;
+		draggedNotebookPath = null;
+		// Don't move onto self or descendant
+		if (destPath === srcPath || destPath.startsWith(srcPath + '/')) return;
+		// Don't move if already in that parent
+		const parentDir = srcPath.substring(0, srcPath.lastIndexOf('/'));
+		if (parentDir === destPath) return;
+		try {
+			const oldName = srcPath.split('/').pop() || '';
+			const newBasePath = destPath + '/' + oldName;
+			await moveNotebook(srcPath, destPath);
+			// Update collapsedNotebooks paths
+			$collapsedNotebooks = $collapsedNotebooks.map(p => {
+				if (p === srcPath) return newBasePath;
+				if (p.startsWith(srcPath + '/')) return newBasePath + p.slice(srcPath.length);
+				return p;
+			});
+			// Update active notebook/note if inside the moved notebook
+			if ($activeNotebook?.path === srcPath || $activeNotebook?.path.startsWith(srcPath + '/')) {
+				selectAllNotes();
+			}
+			if ($activeNotePath && $activeNotePath.startsWith(srcPath + '/')) {
+				const newNotePath = newBasePath + $activeNotePath.slice(srcPath.length);
+				$activeNotePath = newNotePath;
+				$activeNote = await readNote(newNotePath);
+			}
+			$notebookIcons = await getNotebookIcons();
+			await refresh();
+		} catch (e) {
+			console.error('Failed to move notebook:', e);
 		}
 	}
 
@@ -292,7 +330,25 @@
 		</nav>
 
 		<div class="section">
-			<div class="section-header">
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div
+				class="section-header"
+				class:drop-target={dropTargetPath === '__root__'}
+				ondragover={(e) => {
+					if (draggedNotebookPath) {
+						e.preventDefault();
+						e.dataTransfer!.dropEffect = 'move';
+						dropTargetPath = '__root__';
+					}
+				}}
+				ondragleave={() => { if (dropTargetPath === '__root__') dropTargetPath = null; }}
+				ondrop={(e) => {
+					if (draggedNotebookPath) {
+						const vaultRoot = $appConfig?.active_vault;
+						if (vaultRoot) handleNotebookDrop(e, vaultRoot);
+					}
+				}}
+			>
 				<span class="section-title">Notebooks</span>
 				<button class="icon-btn-sm" onclick={() => (showNewNotebook = !showNewNotebook)} title="New notebook">
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -423,11 +479,34 @@
 			class:active={$viewMode === 'notebook' && $activeNotebook?.path === nb.path}
 			class:drop-target={dropTargetPath === nb.path}
 			style="padding-left: {8 + depth * 16}px"
+			draggable="true"
 			onclick={() => selectNotebook(nb)}
 			oncontextmenu={(e) => onContextMenu(e, nb)}
-			ondragover={(e) => { e.preventDefault(); e.dataTransfer!.dropEffect = 'move'; dropTargetPath = nb.path; }}
+			ondragstart={(e) => { draggedNotebookPath = nb.path; e.dataTransfer!.setData('text/plain', nb.path); e.dataTransfer!.effectAllowed = 'move'; }}
+			ondragend={() => { draggedNotebookPath = null; }}
+			ondragover={(e) => {
+				e.preventDefault();
+				if (draggedNotebookPath) {
+					// Prevent drop on self or descendant
+					if (nb.path === draggedNotebookPath || nb.path.startsWith(draggedNotebookPath + '/')) {
+						e.dataTransfer!.dropEffect = 'none';
+						return;
+					}
+					// Prevent no-op (already in this parent)
+					const parentDir = draggedNotebookPath.substring(0, draggedNotebookPath.lastIndexOf('/'));
+					if (parentDir === nb.path) { e.dataTransfer!.dropEffect = 'none'; return; }
+				}
+				e.dataTransfer!.dropEffect = 'move';
+				dropTargetPath = nb.path;
+			}}
 			ondragleave={() => { if (dropTargetPath === nb.path) dropTargetPath = null; }}
-			ondrop={(e) => handleNoteDrop(e, nb)}
+			ondrop={(e) => {
+				if (draggedNotebookPath) {
+					handleNotebookDrop(e, nb.path);
+				} else {
+					handleNoteDrop(e, nb);
+				}
+			}}
 		>
 			{#if hasChildren}
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -610,7 +689,8 @@
 		color: var(--text-accent);
 	}
 
-	.notebook-item.drop-target {
+	.notebook-item.drop-target,
+	.section-header.drop-target {
 		background: color-mix(in srgb, var(--accent) 20%, transparent);
 		outline: 2px dashed var(--accent);
 		outline-offset: -2px;

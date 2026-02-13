@@ -206,7 +206,7 @@
 		padding: 4px 12px 4px 10px;
 		border: none;
 		border-radius: 7px;
-		background: var(--accent);
+		background: color-mix(in srgb, var(--accent) 85%, black);
 		color: white;
 		font-size: 11.5px;
 		font-weight: 600;

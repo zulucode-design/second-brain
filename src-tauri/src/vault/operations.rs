@@ -432,6 +432,38 @@ pub fn move_note(note_path: &str, dest_notebook: &str) -> Result<String, String>
     Ok(dest.to_string_lossy().to_string())
 }
 
+pub fn move_notebook(notebook_path: &str, dest_parent: &str) -> Result<String, String> {
+    let src = Path::new(notebook_path);
+    if !src.exists() || !src.is_dir() {
+        return Err("Notebook does not exist".to_string());
+    }
+
+    let dest_parent_path = Path::new(dest_parent);
+    if !dest_parent_path.is_dir() {
+        return Err("Destination does not exist".to_string());
+    }
+
+    // No-op if already in that parent
+    if src.parent() == Some(dest_parent_path) {
+        return Err("Notebook is already in that location".to_string());
+    }
+
+    let dir_name = src.file_name().unwrap_or_default();
+    let dest = dest_parent_path.join(dir_name);
+
+    // Prevent moving into itself or a descendant
+    if dest.starts_with(src) {
+        return Err("Cannot move a notebook into itself or its descendants".to_string());
+    }
+
+    if dest.exists() {
+        return Err("A notebook with that name already exists in the destination".to_string());
+    }
+
+    fs::rename(src, &dest).map_err(|e| e.to_string())?;
+    Ok(dest.to_string_lossy().to_string())
+}
+
 pub fn get_trash_notes(vault_path: &str) -> Result<Vec<NoteEntry>, String> {
     let trash_dir = helixnotes_dir(vault_path).join("trash");
     if !trash_dir.exists() {

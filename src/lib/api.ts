@@ -60,6 +60,13 @@ export async function deleteNotebook(path: string): Promise<void> {
   return invoke("delete_notebook", { path });
 }
 
+export async function moveNotebook(
+  notebookPath: string,
+  destParent: string,
+): Promise<string> {
+  return invoke("move_notebook", { notebookPath, destParent });
+}
+
 export async function getNotes(
   notebookPath: string | null,
 ): Promise<NoteEntry[]> {

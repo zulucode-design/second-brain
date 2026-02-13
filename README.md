@@ -8,9 +8,9 @@ Your notes are stored as standard Markdown files on your local filesystem. No cl
 
 | Platform | Download | Notes |
 |----------|----------|-------|
-| Linux (Arch/rolling) | [HelixNotes_1.0.6_amd64.AppImage](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.0.6/HelixNotes_1.0.6_amd64.AppImage) | Best for Arch, Fedora, openSUSE |
-| Linux (Debian/Ubuntu/Mint) | [HelixNotes_1.0.6_amd64.deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.0.6/HelixNotes_1.0.6_amd64.deb) | Ubuntu 22.04+ |
-| Windows | [HelixNotes_1.0.6_x64-setup.exe](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.0.6/HelixNotes_1.0.6_x64-setup.exe) | Windows 10/11 |
+| Linux (Arch/rolling) | [HelixNotes_1.0.9_amd64.AppImage](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.0.9/HelixNotes_1.0.9_amd64.AppImage) | Best for Arch, Fedora, openSUSE |
+| Linux (Debian/Ubuntu/Mint) | [HelixNotes_1.0.9_amd64.deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.0.9/HelixNotes_1.0.9_amd64.deb) | Ubuntu 22.04+ |
+| Windows | [HelixNotes_1.0.9_x64-setup.exe](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.0.9/HelixNotes_1.0.9_x64-setup.exe) | Windows 10/11 |
 | macOS | Coming soon | |
 
 See all releases: [codeberg.org/ArkHost/HelixNotes/releases](https://codeberg.org/ArkHost/HelixNotes/releases)
@@ -25,6 +25,7 @@ See all releases: [codeberg.org/ArkHost/HelixNotes/releases](https://codeberg.or
 - **Version history** — per-note snapshots with diff view
 - **Backups** — automatic zip-based vault backups
 - **PDF preview** — inline rendering of embedded PDFs
+- **Drag-and-drop** — move notes between notebooks, reorganize notebooks by dragging
 - **Obsidian import** — convert Obsidian wiki-links to standard markdown
 - **Themes** — light/dark mode with customizable accent colors and fonts
 - **Focus mode** — distraction-free writing

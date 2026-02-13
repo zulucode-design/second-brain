@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { showSettings, theme, appConfig, updateAvailable as globalUpdateAvailable, installType, settingsTab } from '$lib/stores/app';
+	import { showSettings, theme, appConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab } from '$lib/stores/app';
 	import { setTheme, setAccentColor, setFontSize, setFontFamily, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection } from '$lib/api';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
@@ -41,6 +41,14 @@
 		}
 	});
 
+	// Pre-populate updater object from global store so Download & Install works without manual check
+	$effect(() => {
+		const obj = $globalUpdateObj;
+		if (obj && !updateObj) {
+			updateObj = obj;
+		}
+	});
+
 	async function handleCheckUpdate() {
 		updateChecking = true;
 		updateMessage = null;
@@ -49,6 +57,7 @@
 			const update = await checkUpdate();
 			if (update) {
 				updateObj = update;
+				$globalUpdateObj = update;
 				updateAvailable = { version: update.version, body: update.body, date: update.date };
 				globalUpdateAvailable.set({ version: update.version, body: update.body });
 				updateMessage = { type: 'info', text: `Version ${update.version} is available!` };
@@ -1052,7 +1061,7 @@
 											<div class="update-notes">{updateAvailable.body}</div>
 										{/if}
 									</div>
-									{#if $installType === 'appimage' || $installType === 'windows'}
+									{#if $installType === 'appimage' || $installType === 'windows' || $installType === 'macos'}
 									<button class="update-install-btn" onclick={handleDownloadAndInstall} disabled={updateDownloading}>
 										{#if updateDownloading}
 											<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
@@ -1073,6 +1082,11 @@
 									<div class="update-apt-info">
 										<p>Update via your package manager:</p>
 										<code>sudo apt update && sudo apt upgrade helix-notes</code>
+									</div>
+								{:else if $installType === 'aur'}
+									<div class="update-apt-info">
+										<p>Update via your AUR helper:</p>
+										<code>yay -Syu helixnotes</code>
 									</div>
 								{:else}
 									<a class="update-install-btn" href="https://codeberg.org/ArkHost/HelixNotes/releases" target="_blank" rel="noopener">

@@ -1,6 +1,6 @@
 [package]
 name = "helixnotes"
-version = "1.0.8"
+version = "1.0.9"
 description = "Local-first markdown note-taking app"
 authors = ["HelixNotes"]
 license = "AGPL-3.0-or-later"
@@ -38,3 +38,4 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 futures = "0.3"
 rayon = "1"
+tauri-plugin-single-instance = "2"

@@ -23,6 +23,13 @@ pub fn run() {
     let app_state = AppState::new(config);
 
     let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
@@ -54,6 +61,7 @@ pub fn run() {
             commands::create_notebook,
             commands::rename_notebook,
             commands::delete_notebook,
+            commands::move_notebook,
             commands::get_notes,
             commands::read_note,
             commands::save_note,
