@@ -28,6 +28,7 @@
 	} from '$lib/stores/app';
 
 	const appWindow = getCurrentWindow();
+	const isMac = navigator.platform.startsWith('Mac');
 	import { loadVaultState, saveVaultState, readNote } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
 	import type { VaultState, FileEvent } from '$lib/types';
@@ -211,7 +212,7 @@
 <div class="app-shell">
 	{#if $focusMode}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="focus-topbar" onmousedown={(e) => { if (!(e.target as HTMLElement).closest('button')) appWindow.startDragging(); }}>
+		<div class="focus-topbar" class:macos={isMac} onmousedown={(e) => { if (!(e.target as HTMLElement).closest('button')) appWindow.startDragging(); }}>
 			<span class="focus-title">{$activeNote?.meta.title || 'Untitled'}</span>
 			<div class="focus-controls">
 				<button class="focus-btn focus-active" onclick={() => ($focusMode = false)} title="Exit focus mode (Escape)">
@@ -219,6 +220,7 @@
 						<path d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/>
 					</svg>
 				</button>
+				{#if !isMac}
 				<button class="focus-btn" onmousedown={(e) => e.stopPropagation()} onclick={() => appWindow.minimize()} title="Minimize">
 					<svg width="10" height="10" viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
 				</button>
@@ -228,6 +230,7 @@
 				<button class="focus-btn focus-close" onmousedown={(e) => e.stopPropagation()} onclick={() => appWindow.close()} title="Close">
 					<svg width="10" height="10" viewBox="0 0 10 10"><line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
 				</button>
+				{/if}
 			</div>
 		</div>
 	{:else}
@@ -348,5 +351,9 @@
 	.focus-close:hover {
 		background: #e81123;
 		color: white;
+	}
+
+	.focus-topbar.macos {
+		padding-left: 78px;
 	}
 </style>
