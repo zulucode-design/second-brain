@@ -1071,14 +1071,23 @@
 	}
 
 	function prosemirrorToMarkdown(doc: any): string {
+		const listTypes = new Set(['bulletList', 'orderedList', 'taskList']);
 		const parts: string[] = [];
 		let prevType = '';
+		let preserveEmptyParas = false;
 		doc.forEach((node: any) => {
-			// Skip empty paragraphs right after code blocks (TipTap cursor placeholder)
-			if (node.type.name === 'paragraph' && node.childCount === 0 && prevType === 'codeBlock') {
+			const isEmpty = node.type.name === 'paragraph' && node.childCount === 0;
+			// After a list or code block, preserve empty paragraphs as HTML comments
+			// so markdown-it doesn't merge adjacent lists or collapse spacing
+			if (listTypes.has(prevType) || prevType === 'codeBlock') {
+				preserveEmptyParas = true;
+			}
+			if (isEmpty && preserveEmptyParas) {
+				parts.push('<!-- -->');
 				prevType = node.type.name;
 				return;
 			}
+			preserveEmptyParas = false;
 			parts.push(serializeNode(node));
 			prevType = node.type.name;
 		});
@@ -1488,8 +1497,11 @@
 		html = html.replace(/<code([^>]*)>\n?/g, '<code$1>');
 		html = html.replace(/\n<\/code>/g, '</code>');
 
-		// Post-process: convert task list items to TipTap format
-		html = html.replace(/<li><tiptask checked="(true|false)">([\s\S]*?)<\/tiptask><\/li>/gi, (_, checked, content) => {
+		// Post-process: convert list-separator comments back to empty paragraphs for TipTap
+		html = html.replace(/<!-- -->/g, '<p></p>');
+
+		// Post-process: convert task list items to TipTap format (handle both tight and loose lists — loose lists wrap content in <p> tags)
+		html = html.replace(/<li>\s*(?:<p>)?\s*<tiptask checked="(true|false)">([\s\S]*?)<\/tiptask>\s*(?:<\/p>)?\s*<\/li>/gi, (_, checked, content) => {
 			return `<li data-type="taskItem" data-checked="${checked}">${content}</li>`;
 		});
 		html = html.replace(/<ul>\s*(<li data-type="taskItem")/gi, '<ul data-type="taskList">$1');
