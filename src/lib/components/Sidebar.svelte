@@ -397,7 +397,7 @@
 		</div>
 
 		{#if $tags.length > 0}
-			<div class="section">
+			<div class="tags-section">
 				<button class="section-header" onclick={() => tagsCollapsed = !tagsCollapsed}>
 					<span class="section-title">Tags</span>
 					<span class="tag-count" style="margin-left: auto">{$tags.length}</span>
@@ -632,6 +632,14 @@
 		flex: 1;
 		overflow-y: auto;
 		padding: 4px 0;
+	}
+
+	.tags-section {
+		flex-shrink: 0;
+		border-top: 1px solid var(--border-light);
+		padding: 4px 0;
+		max-height: 30%;
+		overflow-y: auto;
 	}
 
 	.section-header {
