@@ -1,6 +1,6 @@
 use crate::types::{NoteContent, NoteEntry, NoteMeta, NotebookEntry, VaultState};
 use crate::vault::frontmatter;
-use chrono::Utc;
+use chrono::{Local, Utc};
 use rayon::prelude::*;
 use std::fs;
 use std::io::Read;
@@ -184,13 +184,19 @@ fn read_note_entry_from_str(
 
     let (mut meta, content) = frontmatter::parse_note(raw, &filename);
 
-    // Use filesystem times if frontmatter didn't have them
+    // Use filesystem times only if frontmatter didn't have created/modified fields
+    let has_created = raw.contains("\ncreated:") || raw.starts_with("created:");
+    let has_modified = raw.contains("\nmodified:") || raw.starts_with("modified:");
     if let Ok(fs_meta) = fs::metadata(path) {
-        if let Ok(modified) = fs_meta.modified() {
-            meta.modified = modified.into();
+        if !has_modified {
+            if let Ok(modified) = fs_meta.modified() {
+                meta.modified = modified.into();
+            }
         }
-        if let Ok(created) = fs_meta.created() {
-            meta.created = created.into();
+        if !has_created {
+            if let Ok(created) = fs_meta.created() {
+                meta.created = created.into();
+            }
         }
     }
 
@@ -233,7 +239,19 @@ pub fn save_note(path: &str, meta: &NoteMeta, body: &str) -> Result<(), String> 
     let mut updated_meta = meta.clone();
     updated_meta.modified = Utc::now();
 
-    let raw = frontmatter::update_note_raw(&updated_meta, body);
+    // Generate UUID on first save if note didn't have one
+    if updated_meta.id.is_empty() {
+        updated_meta.id = Uuid::new_v4().to_string();
+    }
+
+    // Read existing file to preserve unknown frontmatter fields
+    let existing = fs::read_to_string(path).unwrap_or_default();
+    let raw = if existing.is_empty() {
+        frontmatter::update_note_raw(&updated_meta, body)
+    } else {
+        frontmatter::merge_frontmatter(&existing, &updated_meta, body)
+    };
+
     fs::write(path, raw).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -276,6 +294,49 @@ pub fn create_note(
     fs::write(&file_path, raw).map_err(|e| e.to_string())?;
 
     let vault_root = Path::new(vault_path);
+    let relative = file_path
+        .strip_prefix(vault_root)
+        .unwrap_or(&file_path)
+        .to_string_lossy()
+        .to_string();
+
+    Ok(NoteEntry {
+        path: file_path.to_string_lossy().to_string(),
+        relative_path: relative,
+        meta,
+        preview: String::new(),
+    })
+}
+
+pub fn create_daily_note(vault_path: &str) -> Result<NoteEntry, String> {
+    let today = Local::now();
+    let date_str = today.format("%Y-%m-%d").to_string();
+    let title = today.format("%B %d, %Y").to_string();
+
+    let dir = Path::new(vault_path).join("Daily");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    let file_path = dir.join(format!("{}.md", date_str));
+    let vault_root = Path::new(vault_path);
+
+    // If today's note already exists, return it
+    if file_path.exists() {
+        return read_note_entry(&file_path, vault_root);
+    }
+
+    let now = Utc::now();
+    let meta = NoteMeta {
+        id: Uuid::new_v4().to_string(),
+        title,
+        tags: vec!["daily".to_string()],
+        pinned: false,
+        created: now,
+        modified: now,
+    };
+
+    let raw = frontmatter::update_note_raw(&meta, "\n");
+    fs::write(&file_path, raw).map_err(|e| e.to_string())?;
+
     let relative = file_path
         .strip_prefix(vault_root)
         .unwrap_or(&file_path)
@@ -385,7 +446,10 @@ pub fn rename_note(path: &str, new_title: &str) -> Result<String, String> {
     let (mut meta, content) = frontmatter::parse_note(&raw, &filename);
     meta.title = new_title.to_string();
     meta.modified = Utc::now();
-    let updated = frontmatter::update_note_raw(&meta, &content);
+    if meta.id.is_empty() {
+        meta.id = Uuid::new_v4().to_string();
+    }
+    let updated = frontmatter::merge_frontmatter(&raw, &meta, &content);
 
     // Rename file
     let new_filename = sanitize_filename(new_title);

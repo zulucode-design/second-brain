@@ -91,7 +91,12 @@
 					let match;
 					wikiLinkRegex.lastIndex = 0;
 					while ((match = wikiLinkRegex.exec(body)) !== null) {
-						const linkTitle = match[1].trim().toLowerCase();
+						// Handle Obsidian syntax: strip |alias, #heading, ^block
+						let rawLink = match[1].trim();
+						const pipeIdx = rawLink.indexOf('|');
+						if (pipeIdx >= 0) rawLink = rawLink.slice(0, pipeIdx).trim();
+						rawLink = rawLink.replace(/#.*$/, '').replace(/\^.*$/, '').trim();
+						const linkTitle = rawLink.toLowerCase();
 						const targetIdx = nodeIndexMap.get(linkTitle);
 						if (linkTitle !== node.id && targetIdx !== undefined) {
 							const edgeKey = nodeIdx < targetIdx ? `${nodeIdx}|${targetIdx}` : `${targetIdx}|${nodeIdx}`;

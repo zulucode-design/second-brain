@@ -27,6 +27,8 @@
 		onViewChanged?: () => void;
 	} = $props();
 
+	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
+
 	let editingNotebook = $state<string | null>(null);
 	let editValue = $state('');
 	let newNotebookName = $state('');
@@ -35,6 +37,8 @@
 	let draggedNotebookPath = $state<string | null>(null);
 	let contextMenu = $state<{ x: number; y: number; notebook: NotebookEntry } | null>(null);
 	let trashContextMenu = $state<{ x: number; y: number } | null>(null);
+	let tagsCollapsed = $state(true);
+	let deleteConfirm = $state<NotebookEntry | null>(null);
 	function toggleCollapse(path: string, e: MouseEvent) {
 		e.stopPropagation();
 		if ($collapsedNotebooks.includes(path)) {
@@ -117,8 +121,22 @@
 		}
 	}
 
-	async function handleDelete(nb: NotebookEntry) {
+	function countNotesRecursive(nb: NotebookEntry): number {
+		return nb.note_count + nb.children.reduce((sum, c) => sum + countNotesRecursive(c), 0);
+	}
+
+	function handleDelete(nb: NotebookEntry) {
 		contextMenu = null;
+		const total = countNotesRecursive(nb);
+		if (total > 0) {
+			deleteConfirm = nb;
+		} else {
+			confirmDelete(nb);
+		}
+	}
+
+	async function confirmDelete(nb: NotebookEntry) {
+		deleteConfirm = null;
 		try {
 			await deleteNotebook(nb.path);
 			if ($activeNotebook?.path === nb.path) {
@@ -282,7 +300,7 @@
 			</svg>
 		</button>
 		{#if !$sidebarCollapsed}
-			<button class="icon-btn" onclick={() => ($showSearch = true)} title="Search (Ctrl+F)">
+			<button class="icon-btn" onclick={() => ($showSearch = true)} title={`Search (${modKey}+F)`}>
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<circle cx="11" cy="11" r="8" />
 					<line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -380,22 +398,25 @@
 
 		{#if $tags.length > 0}
 			<div class="section">
-				<div class="section-header">
+				<button class="section-header" onclick={() => tagsCollapsed = !tagsCollapsed}>
 					<span class="section-title">Tags</span>
-				</div>
-				<div class="tag-list">
-					{#each $tags as [tag, count]}
-						<button
-							class="tag-item"
-							class:active={$viewMode === 'tag' && $activeTag === tag}
-							onclick={() => selectTag(tag)}
-						>
-							<span class="tag-hash">#</span>
-							<span class="tag-name">{tag}</span>
-							<span class="tag-count">{count}</span>
-						</button>
-					{/each}
-				</div>
+					<span class="tag-count" style="margin-left: auto">{$tags.length}</span>
+				</button>
+				{#if !tagsCollapsed}
+					<div class="tag-list">
+						{#each $tags as [tag, count]}
+							<button
+								class="tag-item"
+								class:active={$viewMode === 'tag' && $activeTag === tag}
+								onclick={() => selectTag(tag)}
+							>
+								<span class="tag-hash">#</span>
+								<span class="tag-name">{tag}</span>
+								<span class="tag-count">{count}</span>
+							</button>
+						{/each}
+					</div>
+				{/if}
 			</div>
 		{/if}
 
@@ -453,6 +474,21 @@
 			</svg>
 			Empty Trash
 		</button>
+	</div>
+{/if}
+
+{#if deleteConfirm}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="delete-confirm-overlay" onclick={() => deleteConfirm = null}>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="delete-confirm" onclick={(e) => e.stopPropagation()}>
+			<h4>Delete "{deleteConfirm.name}"?</h4>
+			<p>This notebook contains {countNotesRecursive(deleteConfirm)} note{countNotesRecursive(deleteConfirm) === 1 ? '' : 's'} that will be permanently deleted.</p>
+			<div class="delete-confirm-actions">
+				<button class="delete-confirm-cancel" onclick={() => deleteConfirm = null}>Cancel</button>
+				<button class="delete-confirm-btn" onclick={() => confirmDelete(deleteConfirm!)}>Delete</button>
+			</div>
+		</div>
 	</div>
 {/if}
 
@@ -603,6 +639,13 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 8px 12px 4px;
+		width: 100%;
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: inherit;
+		font: inherit;
+		text-align: left;
 	}
 
 	.section-title {
@@ -838,5 +881,72 @@
 
 	.context-menu button.danger:hover {
 		background: color-mix(in srgb, var(--danger) 10%, transparent);
+	}
+
+	.delete-confirm-overlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.4);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 1000;
+	}
+
+	.delete-confirm {
+		background: var(--bg-primary);
+		border: 1px solid var(--border-color);
+		border-radius: 10px;
+		padding: 20px 24px;
+		max-width: 340px;
+		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+	}
+
+	.delete-confirm h4 {
+		margin: 0 0 8px;
+		font-size: 14px;
+		color: var(--text-primary);
+	}
+
+	.delete-confirm p {
+		margin: 0 0 16px;
+		font-size: 12.5px;
+		color: var(--text-secondary);
+		line-height: 1.4;
+	}
+
+	.delete-confirm-actions {
+		display: flex;
+		gap: 8px;
+		justify-content: flex-end;
+	}
+
+	.delete-confirm-cancel {
+		padding: 6px 14px;
+		border: 1px solid var(--border-color);
+		border-radius: 6px;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		font-size: 12px;
+		cursor: pointer;
+	}
+
+	.delete-confirm-cancel:hover {
+		background: var(--bg-hover);
+	}
+
+	.delete-confirm-btn {
+		padding: 6px 14px;
+		border: none;
+		border-radius: 6px;
+		background: var(--danger, #e53e3e);
+		color: white;
+		font-size: 12px;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.delete-confirm-btn:hover {
+		opacity: 0.9;
 	}
 </style>

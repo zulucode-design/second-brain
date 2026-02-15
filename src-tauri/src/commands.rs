@@ -246,6 +246,21 @@ pub fn create_note(
 }
 
 #[tauri::command]
+pub fn create_daily_note(state: State<'_, AppState>) -> Result<NoteEntry, String> {
+    let config = state.config.lock().map_err(|e| e.to_string())?;
+    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let entry = operations::create_daily_note(vault_path)?;
+
+    if let Ok(search_guard) = state.search_index.lock() {
+        if let Some(ref search) = *search_guard {
+            let _ = search.index_note(&entry.path);
+        }
+    }
+
+    Ok(entry)
+}
+
+#[tauri::command]
 pub fn rename_note(path: String, new_title: String) -> Result<String, String> {
     operations::rename_note(&path, &new_title)
 }
@@ -1082,6 +1097,9 @@ fn resolve_wiki_ref(
     reference: &str,
 ) -> String {
     let reference = reference.trim();
+    // Strip Obsidian heading anchors (#) and block references (^) before lookup
+    let reference = reference.split('#').next().unwrap_or(reference).trim();
+    let reference = reference.split('^').next().unwrap_or(reference).trim();
     // Direct match by filename
     if let Some(rel) = file_index.get(reference) {
         return rel.clone();

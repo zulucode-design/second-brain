@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, tick } from 'svelte';
+	import { onDestroy, tick, untrack } from 'svelte';
 	import { Editor } from '@tiptap/core';
 	import StarterKit from '@tiptap/starter-kit';
 	import Placeholder from '@tiptap/extension-placeholder';
@@ -26,6 +26,8 @@
 	import markdownItMark from 'markdown-it-mark';
 	import markdownItSup from 'markdown-it-sup';
 	import markdownItSub from 'markdown-it-sub';
+	import katex from 'katex';
+	import 'katex/dist/katex.min.css';
 	import { Extension, Node as TiptapNode, Mark as TiptapMark, mergeAttributes } from '@tiptap/core';
 	import { Plugin, PluginKey, EditorState } from '@tiptap/pm/state';
 	import { Decoration, DecorationSet } from '@tiptap/pm/view';
@@ -36,12 +38,14 @@
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { openFile, copyFileTo } from '$lib/api';
 	import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, quickAccessPaths, notes } from '$lib/stores/app';
+	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, readOnly, quickAccessPaths, notes } from '$lib/stores/app';
 	import { saveNote, saveImage, saveAttachment, addQuickAccess, removeQuickAccess, getQuickAccess, getNoteVersions, getNoteVersionContent, createVersion, aiAsk, getAllNoteTitles, readNote } from '$lib/api';
 	import type { VersionEntry, AiStreamEvent, NoteTitleEntry } from '$lib/types';
 	import { listen } from '@tauri-apps/api/event';
 	import { debounce } from '$lib/utils/debounce';
 	import GraphView from './GraphView.svelte';
+
+	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
 
 	let editorElement = $state<HTMLDivElement>(null!);
 	let sourceElement = $state<HTMLTextAreaElement>(null!);
@@ -93,9 +97,7 @@
 	let aiOriginalMarkdown = $state('');
 	let aiMediaPlaceholders = $state<Map<string, string>>(new Map());
 
-	// View mode (read-only)
-	let readOnly = $state(false);
-	let readOnlyFlash = $state(false);
+	// View mode (read-only) — state managed by $readOnly store
 
 	// Version history
 	let showHistory = $state(false);
@@ -263,6 +265,67 @@
 				['iframe', { src: displaySrc, width: '100%', height: `${pdfHeight}px`, frameborder: '0' }],
 				['p', { class: 'pdf-label' }, name],
 			];
+		},
+	});
+
+	const MathBlock = TiptapNode.create({
+		name: 'mathBlock',
+		group: 'block',
+		atom: true,
+		addAttributes() {
+			return { tex: { default: '' } };
+		},
+		parseHTML() {
+			return [{
+				tag: 'div[data-math-block]',
+				getAttrs: (el: HTMLElement) => ({ tex: decodeURIComponent(el.getAttribute('data-math-block') || '') }),
+			}];
+		},
+		renderHTML({ HTMLAttributes }) {
+			const tex = HTMLAttributes.tex || '';
+			const rendered = katex.renderToString(tex, { displayMode: true, throwOnError: false });
+			return ['div', { 'data-math-block': encodeURIComponent(tex), class: 'math-block', contenteditable: 'false' }, ['div', { innerHTML: rendered }]];
+		},
+		addNodeView() {
+			return ({ node }) => {
+				const dom = document.createElement('div');
+				dom.classList.add('math-block');
+				dom.contentEditable = 'false';
+				dom.setAttribute('data-math-block', encodeURIComponent(node.attrs.tex));
+				dom.innerHTML = katex.renderToString(node.attrs.tex, { displayMode: true, throwOnError: false });
+				return { dom };
+			};
+		},
+	});
+
+	const MathInline = TiptapNode.create({
+		name: 'mathInline',
+		group: 'inline',
+		inline: true,
+		atom: true,
+		addAttributes() {
+			return { tex: { default: '' } };
+		},
+		parseHTML() {
+			return [{
+				tag: 'span[data-math-inline]',
+				getAttrs: (el: HTMLElement) => ({ tex: decodeURIComponent(el.getAttribute('data-math-inline') || '') }),
+			}];
+		},
+		renderHTML({ HTMLAttributes }) {
+			const tex = HTMLAttributes.tex || '';
+			const rendered = katex.renderToString(tex, { displayMode: false, throwOnError: false });
+			return ['span', { 'data-math-inline': encodeURIComponent(tex), class: 'math-inline', contenteditable: 'false' }, ['span', { innerHTML: rendered }]];
+		},
+		addNodeView() {
+			return ({ node }) => {
+				const dom = document.createElement('span');
+				dom.classList.add('math-inline');
+				dom.contentEditable = 'false';
+				dom.setAttribute('data-math-inline', encodeURIComponent(node.attrs.tex));
+				dom.innerHTML = katex.renderToString(node.attrs.tex, { displayMode: false, throwOnError: false });
+				return { dom };
+			};
 		},
 	});
 
@@ -559,7 +622,12 @@
 
 	let wikiLinkFiltered = $derived.by(() => {
 		if (!wikiLinkMenu) return wikiLinkTitlesCache;
-		const q = wikiLinkMenu.query.toLowerCase();
+		let q = wikiLinkMenu.query.toLowerCase();
+		if (!q) return wikiLinkTitlesCache;
+		// Strip |alias, #heading, ^block — only use the note name part for filtering
+		const pipeIdx = q.indexOf('|');
+		if (pipeIdx >= 0) q = q.slice(0, pipeIdx);
+		q = q.replace(/#.*$/, '').replace(/\^.*$/, '').trim();
 		if (!q) return wikiLinkTitlesCache;
 		return wikiLinkTitlesCache.filter(entry =>
 			entry.title.toLowerCase().includes(q)
@@ -579,20 +647,23 @@
 		wikiLinkSelectedIndex = 0;
 	}
 
-	function insertWikiLink(entry: NoteTitleEntry) {
+	function insertWikiLink(entry: NoteTitleEntry, originalRef?: string) {
 		if (!editor || !wikiLinkMenu) return;
 		const { from } = wikiLinkMenu;
 		// Delete the [[ trigger and query text
 		const to = editor.state.selection.from;
 		editor.chain().focus().deleteRange({ from, to }).run();
 		// Insert the wiki-link mark
+		// entry.title is the display text, originalRef (if provided) is the full reference (e.g. "note#heading")
+		const displayText = entry.title;
+		const titleAttr = originalRef || entry.title;
 		tick().then(() => {
 			if (!editor) return;
 			editor.chain().focus()
 				.insertContent({
 					type: 'text',
-					text: entry.title,
-					marks: [{ type: 'wikiLink', attrs: { title: entry.title, path: entry.path } }],
+					text: displayText,
+					marks: [{ type: 'wikiLink', attrs: { title: titleAttr, path: entry.path } }],
 				})
 				.run();
 		});
@@ -698,11 +769,17 @@
 								const textBefore = state.doc.textBetween(wikiLinkMenu.from, state.selection.from);
 								if (textBefore.endsWith(']')) {
 									// User typed ]] — resolve the query as a link title
-									const query = textBefore.slice(2, -1); // strip the [[ and trailing ]
-									if (query.trim()) {
-										const match = wikiLinkTitlesCache.find(e => e.title.toLowerCase() === query.toLowerCase());
+									// Supports Obsidian syntax: [[note|alias]], [[note#heading]], [[note^block]]
+									const rawQuery = textBefore.slice(2, -1); // strip the [[ and trailing ]
+									if (rawQuery.trim()) {
+										const pipeIdx = rawQuery.indexOf('|');
+										const noteRef = (pipeIdx >= 0 ? rawQuery.slice(0, pipeIdx) : rawQuery).trim();
+										const display = (pipeIdx >= 0 ? rawQuery.slice(pipeIdx + 1) : noteRef).trim();
+										// Strip #heading and ^block for title matching
+										const titleForLookup = noteRef.replace(/#.*$/, '').replace(/\^.*$/, '').trim();
+										const match = wikiLinkTitlesCache.find(e => e.title.toLowerCase() === titleForLookup.toLowerCase());
 										if (match) {
-											insertWikiLink(match);
+											insertWikiLink({ ...match, title: display }, noteRef);
 										} else {
 											// Insert as unresolved wiki-link (no path)
 											const menuFrom = wikiLinkMenu.from;
@@ -713,8 +790,8 @@
 											tick().then(() => {
 												editor?.chain().focus().insertContent({
 													type: 'text',
-													text: query,
-													marks: [{ type: 'wikiLink', attrs: { title: query, path: '' } }],
+													text: display,
+													marks: [{ type: 'wikiLink', attrs: { title: noteRef, path: '' } }],
 												}).run();
 											});
 										}
@@ -764,19 +841,21 @@
 	}
 
 	async function navigateToWikiLink(path: string, title: string) {
+		// title may contain #heading or ^block anchors — strip for note lookup
+		const noteTitle = title.replace(/#.*$/, '').replace(/\^.*$/, '').trim();
 		if (!path) {
 			// Unresolved link — try to find by title
-			const match = wikiLinkTitlesCache.find(e => e.title.toLowerCase() === title.toLowerCase());
+			const match = wikiLinkTitlesCache.find(e => e.title.toLowerCase() === noteTitle.toLowerCase());
 			if (match) {
 				path = match.path;
 			} else {
-				// Offer to create the note
+				// Offer to create the note (use clean title, not the anchor ref)
 				const notebookRel = $activeNotePath
 					? $activeNotePath.substring(($appConfig?.active_vault?.length ?? 0) + 1).split('/').slice(0, -1).join('/')
 					: null;
 				try {
 					const { createNote } = await import('$lib/api');
-					const newNote = await createNote(notebookRel || null, title);
+					const newNote = await createNote(notebookRel || null, noteTitle);
 					// Navigate to the new note
 					const content = await readNote(newNote.path);
 					$activeNote = { ...content, content: content.content };
@@ -912,14 +991,16 @@
 		}
 	}
 
-	function toggleReadOnly() {
-		readOnly = !readOnly;
-		if (editor) {
-			// Save before entering read-only so nothing is lost
-			if (readOnly && $editorDirty) forceSave();
-			editor.setEditable(!readOnly);
-		}
-	}
+	// Sync editor editable state when readOnly store changes (from titlebar or editor)
+	$effect(() => {
+		const ro = $readOnly;
+		untrack(() => {
+			if (editor) {
+				if (ro && $editorDirty) forceSave();
+				editor.setEditable(!ro);
+			}
+		});
+	});
 
 	async function toggleHistory() {
 		showHistory = !showHistory;
@@ -1027,7 +1108,7 @@
 		// Apply default view mode when switching notes — but new notes always open in edit mode
 		const isNewNote = $activeNote?.meta.title === 'Untitled' && !content.replace(/^---[\s\S]*?---\s*/, '').trim();
 		const shouldBeReadOnly = isNewNote ? false : ($appConfig?.default_view_mode ?? false);
-		readOnly = shouldBeReadOnly;
+		$readOnly = shouldBeReadOnly;
 		if (editor) editor.setEditable(!shouldBeReadOnly);
 		if ($sourceMode) {
 			sourceContent = stripTitleH1(content);
@@ -1185,6 +1266,10 @@
 				const name = node.attrs.name || '';
 				return `<div data-pdf-src="${src}" data-pdf-name="${name}" class="pdf-embed"></div>\n`;
 			}
+			case 'mathBlock': {
+				const tex = node.attrs.tex || '';
+				return `$$\n${tex}\n$$\n`;
+			}
 			case 'details': {
 				// Preserve details as raw HTML
 				const detDiv = document.createElement('div');
@@ -1259,7 +1344,12 @@
 							break;
 						}
 						case 'link': text = `[${text}](${mark.attrs.href})`; break;
-						case 'wikiLink': text = `[[${mark.attrs.title || text}]]`; break;
+						case 'wikiLink': {
+							const wlTitle = mark.attrs.title || text;
+							// If display text differs from the reference, emit [[ref|display]] (Obsidian alias syntax)
+							text = wlTitle !== text ? `[[${wlTitle}|${text}]]` : `[[${wlTitle}]]`;
+							break;
+						}
 					}
 				}
 				parts.push(text);
@@ -1269,6 +1359,8 @@
 				const size = child.attrs['data-size'] || child.attrs.size || 'full';
 				const sizeSuffix = size && size !== 'full' ? `|size=${size}` : '';
 				parts.push(`![${alt}${sizeSuffix}](${src})`);
+			} else if (child.type.name === 'mathInline') {
+				parts.push(`$${child.attrs.tex || ''}$`);
 			} else if (child.type.name === 'hardBreak') {
 				parts.push('\n');
 			}
@@ -1285,31 +1377,67 @@
 
 	function updateNoteSearch(query: string) {
 		if (noteSearchTimer) clearTimeout(noteSearchTimer);
-		if (!editor) return;
 		if (!query) {
 			noteSearchResults = [];
 			noteSearchIndex = 0;
-			const tr = editor.state.tr.setMeta(noteSearchPluginKey, DecorationSet.empty);
-			editor.view.dispatch(tr);
+			if (!$sourceMode && editor) {
+				const tr = editor.state.tr.setMeta(noteSearchPluginKey, DecorationSet.empty);
+				editor.view.dispatch(tr);
+			}
 			return;
 		}
 		noteSearchTimer = setTimeout(() => {
-			if (!editor) return;
-			const results: {from: number, to: number}[] = [];
-			const lowerQuery = query.toLowerCase();
-			editor.state.doc.descendants((node, pos) => {
-				if (!node.isText || !node.text) return;
-				const text = node.text.toLowerCase();
-				let idx = text.indexOf(lowerQuery);
-				while (idx !== -1) {
-					results.push({ from: pos + idx, to: pos + idx + query.length });
-					idx = text.indexOf(lowerQuery, idx + 1);
-				}
-			});
-			noteSearchResults = results;
-			if (noteSearchIndex >= results.length) noteSearchIndex = 0;
-			applySearchDecorations();
+			if ($sourceMode) {
+				updateNoteSearchSource(query);
+			} else {
+				updateNoteSearchWysiwyg(query);
+			}
 		}, 100);
+	}
+
+	function updateNoteSearchWysiwyg(query: string) {
+		if (!editor) return;
+		const results: {from: number, to: number}[] = [];
+		const lowerQuery = query.toLowerCase();
+		editor.state.doc.descendants((node, pos) => {
+			if (!node.isText || !node.text) return;
+			const text = node.text.toLowerCase();
+			let idx = text.indexOf(lowerQuery);
+			while (idx !== -1) {
+				results.push({ from: pos + idx, to: pos + idx + query.length });
+				idx = text.indexOf(lowerQuery, idx + 1);
+			}
+		});
+		noteSearchResults = results;
+		if (noteSearchIndex >= results.length) noteSearchIndex = 0;
+		applySearchDecorations();
+	}
+
+	function updateNoteSearchSource(query: string) {
+		const results: {from: number, to: number}[] = [];
+		const lowerQuery = query.toLowerCase();
+		const text = sourceContent.toLowerCase();
+		let idx = text.indexOf(lowerQuery);
+		while (idx !== -1) {
+			results.push({ from: idx, to: idx + query.length });
+			idx = text.indexOf(lowerQuery, idx + 1);
+		}
+		noteSearchResults = results;
+		if (noteSearchIndex >= results.length) noteSearchIndex = 0;
+		scrollToSourceMatch();
+	}
+
+	function scrollToSourceMatch(focusTextarea = false) {
+		if (!sourceElement || noteSearchResults.length === 0) return;
+		const match = noteSearchResults[noteSearchIndex];
+		// Only steal focus when navigating (Enter/Shift+Enter), not while typing
+		if (focusTextarea) sourceElement.focus();
+		sourceElement.setSelectionRange(match.from, match.to);
+		// Scroll the match into view
+		const linesBefore = sourceContent.substring(0, match.from).split('\n').length;
+		const lineHeight = parseFloat(getComputedStyle(sourceElement).lineHeight) || 20;
+		const targetScroll = (linesBefore - 1) * lineHeight - sourceElement.clientHeight / 2;
+		sourceElement.scrollTop = Math.max(0, targetScroll);
 	}
 
 	function applySearchDecorations() {
@@ -1336,13 +1464,21 @@
 	function noteSearchNext() {
 		if (noteSearchResults.length === 0) return;
 		noteSearchIndex = (noteSearchIndex + 1) % noteSearchResults.length;
-		applySearchDecorations();
+		if ($sourceMode) {
+			scrollToSourceMatch(true);
+		} else {
+			applySearchDecorations();
+		}
 	}
 
 	function noteSearchPrev() {
 		if (noteSearchResults.length === 0) return;
 		noteSearchIndex = (noteSearchIndex - 1 + noteSearchResults.length) % noteSearchResults.length;
-		applySearchDecorations();
+		if ($sourceMode) {
+			scrollToSourceMatch(true);
+		} else {
+			applySearchDecorations();
+		}
 	}
 
 	export function openNoteSearch() {
@@ -1354,7 +1490,7 @@
 		noteSearchQuery = '';
 		noteSearchResults = [];
 		noteSearchIndex = 0;
-		if (editor) {
+		if (!$sourceMode && editor) {
 			const tr = editor.state.tr.setMeta(noteSearchPluginKey, DecorationSet.empty);
 			editor.view.dispatch(tr);
 			editor.commands.focus();
@@ -1500,13 +1636,19 @@
 		let src = stripTitleH1(md);
 
 		// Pre-process: convert [[Note Title]] wiki-links to HTML anchors
+		// Supports Obsidian syntax: [[note|alias]], [[note#heading]], [[note^block]]
 		if ($appConfig?.enable_wiki_links) {
-			src = src.replace(/\[\[([^\]]+)\]\]/g, (_, title) => {
-				const trimmed = title.trim();
+			src = src.replace(/\[\[([^\]]+)\]\]/g, (_, raw) => {
+				// Split on pipe: [[note|display text]] → noteRef="note", display="display text"
+				const pipeIdx = raw.indexOf('|');
+				const noteRef = (pipeIdx >= 0 ? raw.slice(0, pipeIdx) : raw).trim();
+				const display = (pipeIdx >= 0 ? raw.slice(pipeIdx + 1) : noteRef).trim();
+				// Strip #heading and ^block anchors for title matching
+				const titleForLookup = noteRef.replace(/#.*$/, '').replace(/\^.*$/, '').trim();
 				// Try to resolve the title to a path from cache
-				const match = wikiLinkTitlesCache.find(e => e.title.toLowerCase() === trimmed.toLowerCase());
+				const match = wikiLinkTitlesCache.find(e => e.title.toLowerCase() === titleForLookup.toLowerCase());
 				const path = match ? match.path : '';
-				return `<span data-wiki-link data-path="${escapeHtml(path)}" data-title="${escapeHtml(trimmed)}" class="wiki-link">${escapeHtml(trimmed)}</span>`;
+				return `<span data-wiki-link data-path="${escapeHtml(path)}" data-title="${escapeHtml(noteRef)}" class="wiki-link">${escapeHtml(display)}</span>`;
 			});
 		}
 
@@ -1526,6 +1668,46 @@
 			const displaySrc = convertFileSrc(absPath);
 			return `<div data-pdf-src="${pdfSrc}" data-pdf-name="${name}" class="pdf-embed"><iframe src="${displaySrc}" width="100%" height="${pdfHeight}px"></iframe><p class="pdf-label">${name}</p></div>`;
 		});
+
+		// Pre-process: render KaTeX math — only outside fenced code blocks
+		{
+			const lines = src.split('\n');
+			const outLines: string[] = [];
+			let inFence = false;
+			let mathBlock: string[] | null = null;
+			for (let i = 0; i < lines.length; i++) {
+				const line = lines[i];
+				if (/^```/.test(line)) { inFence = !inFence; outLines.push(line); continue; }
+				if (inFence) { outLines.push(line); continue; }
+				// Accumulate block math: $$ on its own line starts/ends a block
+				if (line.trim() === '$$') {
+					if (!mathBlock) { mathBlock = []; continue; }
+					const tex = mathBlock.join('\n').trim();
+					mathBlock = null;
+					try {
+						outLines.push(`<div data-math-block="${encodeURIComponent(tex)}" class="math-block">${katex.renderToString(tex, { displayMode: true, throwOnError: false })}</div>`);
+					} catch { outLines.push('$$', tex, '$$'); }
+					continue;
+				}
+				if (mathBlock) { mathBlock.push(line); continue; }
+				// Inline math: $...$ (skip content inside backticks)
+				const processed = line.replace(/`[^`]*`/g, m => '\x00'.repeat(m.length));
+				let result = line;
+				let offset = 0;
+				for (const m of processed.matchAll(/(?<!\$)\$(?!\$)([^\n$]+?)(?<!\$)\$(?!\$)/g)) {
+					const tex = m[1].trim();
+					try {
+						const html = `<span data-math-inline="${encodeURIComponent(tex)}" class="math-inline">${katex.renderToString(tex, { displayMode: false, throwOnError: false })}</span>`;
+						result = result.slice(0, m.index! + offset) + html + result.slice(m.index! + m[0].length + offset);
+						offset += html.length - m[0].length;
+					} catch { /* leave as-is */ }
+				}
+				outLines.push(result);
+			}
+			// If unclosed math block, just output the lines as-is
+			if (mathBlock) { outLines.push('$$', ...mathBlock); }
+			src = outLines.join('\n');
+		}
 
 		// Pre-process: convert task list syntax before markdown-it (it doesn't know TipTap's format)
 		// Support indented (nested) and blockquoted task lists too
@@ -1664,6 +1846,8 @@
 				CodeBlockLowlight.configure({ lowlight, enableTabIndentation: true, defaultLanguage: 'text' }),
 				CodeBlockLanguageSelect,
 				PdfEmbed,
+				MathBlock,
+				MathInline,
 				Details.configure({ persist: true, HTMLAttributes: { class: 'editor-details' } }),
 				DetailsSummary,
 				DetailsContent,
@@ -2523,8 +2707,8 @@
 			</div>
 			<p>Select a note or create a new one</p>
 			<div class="shortcuts-hint">
-				<span><kbd>Ctrl</kbd>+<kbd>N</kbd> New note</span>
-				<span><kbd>Ctrl</kbd>+<kbd>P</kbd> Quick open</span>
+				<span><kbd>{modKey}</kbd>+<kbd>N</kbd> New note</span>
+				<span><kbd>{modKey}</kbd>+<kbd>P</kbd> Quick open</span>
 			</div>
 		</div>
 	{:else}
@@ -2533,7 +2717,7 @@
 				<input
 					bind:this={titleInput}
 					type="text"
-					readonly={readOnly}
+					readonly={$readOnly}
 					value={$activeNote.meta.title}
 					onkeydown={(e) => {
 						if (e.key === 'Tab') {
@@ -2563,37 +2747,20 @@
 				{#if $editorDirty}
 					<span class="save-indicator">Unsaved</span>
 				{/if}
-				{#if readOnly}
+				{#if $readOnly}
 					<span class="readonly-indicator">View Mode</span>
 				{/if}
 				<button
 					class="icon-btn"
 					class:active={noteSearchOpen}
 					onclick={() => noteSearchOpen ? closeNoteSearch() : openNoteSearch()}
-					title="Find in note (Ctrl+F)"
+					title={`Find in note (${modKey}+F)`}
 				>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
 					</svg>
 				</button>
-				<button
-					class="icon-btn"
-					class:active={readOnly}
-					class:flash={readOnlyFlash}
-					onclick={toggleReadOnly}
-					title={readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}
-				>
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-						{#if readOnly}
-							<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-							<circle cx="12" cy="12" r="3" />
-						{:else}
-							<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94" />
-							<path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19" />
-							<line x1="1" y1="1" x2="23" y2="23" />
-						{/if}
-					</svg>
-				</button>
+
 				<button
 					class="icon-btn"
 					class:active={$activeNote?.meta.pinned}
@@ -2724,6 +2891,7 @@
 						class="source-editor"
 						bind:this={sourceElement}
 						bind:value={sourceContent}
+						readonly={$readOnly}
 						oninput={() => {
 							$editorDirty = true;
 							autoSave();
@@ -2732,12 +2900,7 @@
 					></textarea>
 				{:else}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
-					<div class="tiptap-wrapper" bind:this={editorElement} onclick={(e) => { closeLinkContextMenu(); handleEditorClick(e); }} oncontextmenu={handleEditorContextMenu} onkeydown={(e) => {
-					if (readOnly && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {
-						readOnlyFlash = true;
-						setTimeout(() => { readOnlyFlash = false; }, 600);
-					}
-				}}></div>
+					<div class="tiptap-wrapper" bind:this={editorElement} onclick={(e) => { closeLinkContextMenu(); handleEditorClick(e); }} oncontextmenu={handleEditorContextMenu}></div>
 				{/if}
 			</div>
 
@@ -2855,16 +3018,16 @@
 				<div class="fmt-sep"></div>
 
 				<!-- Text formatting -->
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('bold'))} onclick={() => editor?.chain().focus().toggleBold().run()} title="Bold (Ctrl+B)">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('bold'))} onclick={() => editor?.chain().focus().toggleBold().run()} title={`Bold (${modKey}+B)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h9a4 4 0 010 8H7a1 1 0 01-1-1V5a1 1 0 011-1h7a4 4 0 010 8"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('italic'))} onclick={() => editor?.chain().focus().toggleItalic().run()} title="Italic (Ctrl+I)">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('italic'))} onclick={() => editor?.chain().focus().toggleItalic().run()} title={`Italic (${modKey}+I)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('underline'))} onclick={() => editor?.chain().focus().toggleUnderline().run()} title="Underline (Ctrl+U)">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('underline'))} onclick={() => editor?.chain().focus().toggleUnderline().run()} title={`Underline (${modKey}+U)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4v6a6 6 0 0012 0V4"/><line x1="4" x2="20" y1="20" y2="20"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('strike'))} onclick={() => editor?.chain().focus().toggleStrike().run()} title="Strikethrough (Ctrl+Shift+X)">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('strike'))} onclick={() => editor?.chain().focus().toggleStrike().run()} title={`Strikethrough (${modKey}+Shift+X)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4H9a3 3 0 00-2.83 4"/><path d="M14 12a4 4 0 010 8H6"/><line x1="4" x2="20" y1="12" y2="12"/></svg>
 				</button>
 
@@ -2891,45 +3054,45 @@
 				<div class="fmt-sep"></div>
 
 				<!-- Link -->
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('link'))} onclick={addLinkFromToolbar} title="Link (Ctrl+K)">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('link'))} onclick={addLinkFromToolbar} title={`Link (${modKey}+K)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
 				</button>
 
 				<div class="fmt-sep"></div>
 
 				<!-- Lists -->
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('bulletList'))} onclick={() => editor?.chain().focus().toggleBulletList().run()} title="Bullet List (Ctrl+Shift+8)">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('bulletList'))} onclick={() => editor?.chain().focus().toggleBulletList().run()} title={`Bullet List (${modKey}+Shift+8)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('orderedList'))} onclick={() => editor?.chain().focus().toggleOrderedList().run()} title="Ordered List (Ctrl+Shift+7)">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('orderedList'))} onclick={() => editor?.chain().focus().toggleOrderedList().run()} title={`Ordered List (${modKey}+Shift+7)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5h10"/><path d="M11 12h10"/><path d="M11 19h10"/><path d="M4 4h1v5"/><path d="M4 9h2"/><path d="M6.5 20H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 00-2.6-1.02"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('taskList'))} onclick={() => editor?.chain().focus().toggleTaskList().run()} title="Task List (Ctrl+Shift+9)">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('taskList'))} onclick={() => editor?.chain().focus().toggleTaskList().run()} title={`Task List (${modKey}+Shift+9)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 5h8"/><path d="M13 12h8"/><path d="M13 19h8"/><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/></svg>
 				</button>
 
 				<div class="fmt-sep"></div>
 
 				<!-- Undo / Redo -->
-				<button class="fmt-btn" onclick={() => editor?.chain().focus().undo().run()} title="Undo (Ctrl+Z)">
+				<button class="fmt-btn" onclick={() => editor?.chain().focus().undo().run()} title={`Undo (${modKey}+Z)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 015.5 5.5 5.5 5.5 0 01-5.5 5.5H11"/></svg>
 				</button>
-				<button class="fmt-btn" onclick={() => editor?.chain().focus().redo().run()} title="Redo (Ctrl+Shift+Z)">
+				<button class="fmt-btn" onclick={() => editor?.chain().focus().redo().run()} title={`Redo (${modKey}+Shift+Z)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 004 14.5 5.5 5.5 0 009.5 20H13"/></svg>
 				</button>
 
 				<div class="fmt-sep"></div>
 
 				<!-- Code & Code Block -->
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('code'))} onclick={() => editor?.chain().focus().toggleCode().run()} title="Inline Code (Ctrl+E)">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('code'))} onclick={() => editor?.chain().focus().toggleCode().run()} title={`Inline Code (${modKey}+E)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('codeBlock'))} onclick={() => editor?.chain().focus().toggleCodeBlock().run()} title="Code Block (Ctrl+Alt+C)">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('codeBlock'))} onclick={() => editor?.chain().focus().toggleCodeBlock().run()} title={`Code Block (${modKey}+Alt+C)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m10 9-3 3 3 3"/><path d="m14 15 3-3-3-3"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
 				</button>
 
 				<!-- Blockquote -->
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('blockquote'))} onclick={() => editor?.chain().focus().toggleBlockquote().run()} title="Quote (Ctrl+Shift+B)">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('blockquote'))} onclick={() => editor?.chain().focus().toggleBlockquote().run()} title={`Quote (${modKey}+Shift+B)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 5H3"/><path d="M21 12H8"/><path d="M21 19H8"/><path d="M3 12v7"/></svg>
 				</button>
 
@@ -2975,7 +3138,7 @@
 
 				<!-- Highlight -->
 				<div class="fmt-dropdown-wrap">
-					<button class="fmt-btn" class:active={(editorState, editor.isActive('highlight'))} onclick={(e) => { e.stopPropagation(); highlightDropdown = !highlightDropdown; headingDropdown = false; colorDropdown = false; tablePickerOpen = false; alignDropdown = false; insertDropdown = false; }} title="Highlight (Ctrl+Shift+H)">
+					<button class="fmt-btn" class:active={(editorState, editor.isActive('highlight'))} onclick={(e) => { e.stopPropagation(); highlightDropdown = !highlightDropdown; headingDropdown = false; colorDropdown = false; tablePickerOpen = false; alignDropdown = false; insertDropdown = false; }} title={`Highlight (${modKey}+Shift+H)`}>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 01-2.8 0l-5.2-5.2a2 2 0 010-2.8L14 4"/></svg>
 						<span class="color-indicator" style="background: {editor.getAttributes('highlight').color || 'var(--accent)'}"></span>
 					</button>
@@ -3170,23 +3333,23 @@
 			<button onclick={ctxCut}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
 				Cut
-				<span class="text-ctx-shortcut">Ctrl+X</span>
+				<span class="text-ctx-shortcut">{modKey}+X</span>
 			</button>
 			<button onclick={ctxCopy}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
 				Copy
-				<span class="text-ctx-shortcut">Ctrl+C</span>
+				<span class="text-ctx-shortcut">{modKey}+C</span>
 			</button>
 			<button onclick={ctxPaste}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
 				Paste
-				<span class="text-ctx-shortcut">Ctrl+V</span>
+				<span class="text-ctx-shortcut">{modKey}+V</span>
 			</button>
 			<div class="text-ctx-sep"></div>
 			<button onclick={ctxSelectAll}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 7h8M8 12h8M8 17h8"/></svg>
 				Select All
-				<span class="text-ctx-shortcut">Ctrl+A</span>
+				<span class="text-ctx-shortcut">{modKey}+A</span>
 			</button>
 			<div class="text-ctx-sep"></div>
 			<!-- Heading submenu -->
@@ -3211,17 +3374,17 @@
 			<button onclick={ctxBold}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M6 4h8a4 4 0 014 4 4 4 0 01-4 4H6zm0 8h9a4 4 0 014 4 4 4 0 01-4 4H6z"/></svg>
 				Bold
-				<span class="text-ctx-shortcut">Ctrl+B</span>
+				<span class="text-ctx-shortcut">{modKey}+B</span>
 			</button>
 			<button onclick={ctxItalic}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/></svg>
 				Italic
-				<span class="text-ctx-shortcut">Ctrl+I</span>
+				<span class="text-ctx-shortcut">{modKey}+I</span>
 			</button>
 			<button onclick={ctxUnderline}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v7a6 6 0 006 6 6 6 0 006-6V3"/><line x1="4" y1="21" x2="20" y2="21"/></svg>
 				Underline
-				<span class="text-ctx-shortcut">Ctrl+U</span>
+				<span class="text-ctx-shortcut">{modKey}+U</span>
 			</button>
 			<button onclick={ctxStrike}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4H9a3 3 0 00-3 3 3 3 0 003 3h6"/><line x1="4" y1="12" x2="20" y2="12"/><path d="M8 20h7a3 3 0 003-3 3 3 0 00-3-3H8"/></svg>
@@ -3235,7 +3398,7 @@
 			<button onclick={ctxLink}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
 				Add Link
-				<span class="text-ctx-shortcut">Ctrl+K</span>
+				<span class="text-ctx-shortcut">{modKey}+K</span>
 			</button>
 			<button onclick={ctxCode}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
@@ -3726,15 +3889,6 @@
 		padding: 2px 8px;
 		border-radius: 4px;
 		font-weight: 500;
-	}
-
-	.icon-btn.flash {
-		animation: flash-icon 0.6s ease;
-	}
-
-	@keyframes flash-icon {
-		0%, 100% { color: var(--text-tertiary); }
-		25%, 75% { color: var(--accent); transform: scale(1.2); }
 	}
 
 	.icon-btn {
@@ -5037,6 +5191,16 @@
 	}
 
 	/* PDF embeds */
+	:global(.tiptap .math-block) {
+		margin: 16px 0;
+		padding: 12px;
+		text-align: center;
+		overflow-x: auto;
+		cursor: default;
+	}
+	:global(.tiptap .math-inline) {
+		cursor: default;
+	}
 	:global(.tiptap .pdf-embed) {
 		margin: 12px 0;
 		border: 1px solid var(--border);

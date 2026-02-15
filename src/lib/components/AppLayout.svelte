@@ -20,6 +20,7 @@
 		showCommandPalette,
 		theme,
 		focusMode,
+		readOnly,
 		activeNote,
 		activeNotePath,
 		editorDirty,
@@ -29,7 +30,7 @@
 
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
-	import { loadVaultState, saveVaultState, readNote } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote, createDailyNote } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
 	import type { VaultState, FileEvent } from '$lib/types';
 
@@ -107,12 +108,28 @@
 		editor?.focusTitle();
 	}
 
+	async function handleDailyNote() {
+		try {
+			const entry = await createDailyNote();
+			const content = await readNote(entry.path);
+			$activeNote = content;
+			$activeNotePath = entry.path;
+			$editorDirty = false;
+			editor?.loadNote(entry.path, content.content);
+			noteList?.refresh();
+			sidebar?.refresh();
+		} catch (e) {
+			console.error('Failed to create/open daily note:', e);
+		}
+	}
+
 	function handleMouseDown(e: MouseEvent) {
 		if (e.button === 3) { e.preventDefault(); navigateHistory(-1); }
 		if (e.button === 4) { e.preventDefault(); navigateHistory(1); }
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
+		const mod = e.ctrlKey || e.metaKey;
 		if (e.altKey && e.key === 'ArrowLeft') {
 			e.preventDefault();
 			navigateHistory(-1);
@@ -123,19 +140,19 @@
 			navigateHistory(1);
 			return;
 		}
-		if (e.ctrlKey && !e.shiftKey && e.key === 'n') {
+		if (mod && !e.shiftKey && e.key === 'n') {
 			e.preventDefault();
 			createAndFocusNote();
 		}
-		if (e.ctrlKey && e.shiftKey && e.key === 'N') {
+		if (mod && e.shiftKey && e.key === 'N') {
 			e.preventDefault();
 		}
-		if (e.ctrlKey && e.shiftKey && e.key === 'F') {
+		if (mod && e.shiftKey && e.key === 'F') {
 			e.preventDefault();
 			$showSearch = true;
 			return;
 		}
-		if (e.ctrlKey && !e.shiftKey && e.key === 'f') {
+		if (mod && !e.shiftKey && e.key === 'f') {
 			e.preventDefault();
 			if ($activeNotePath) {
 				editor?.openNoteSearch();
@@ -144,11 +161,11 @@
 			}
 			return;
 		}
-		if (e.ctrlKey && e.key === 'p') {
+		if (mod && e.key === 'p') {
 			e.preventDefault();
 			$showCommandPalette = true;
 		}
-		if (e.ctrlKey && e.key === 's') {
+		if (mod && e.key === 's') {
 			e.preventDefault();
 			editor?.forceSave();
 		}
@@ -220,6 +237,18 @@
 						<path d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/>
 					</svg>
 				</button>
+				<button class="focus-btn" class:focus-active={$readOnly} onclick={() => ($readOnly = !$readOnly)} title={$readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}>
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						{#if $readOnly}
+							<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+							<circle cx="12" cy="12" r="3" />
+						{:else}
+							<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94" />
+							<path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19" />
+							<line x1="1" y1="1" x2="23" y2="23" />
+						{/if}
+					</svg>
+				</button>
 				{#if !isMac}
 				<button class="focus-btn" onmousedown={(e) => e.stopPropagation()} onclick={() => appWindow.minimize()} title="Minimize">
 					<svg width="10" height="10" viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
@@ -234,7 +263,7 @@
 			</div>
 		</div>
 	{:else}
-		<TitleBar onNewNote={createAndFocusNote} />
+		<TitleBar onNewNote={createAndFocusNote} onDailyNote={handleDailyNote} />
 	{/if}
 	<div class="app-layout">
 		{#if !$focusMode}

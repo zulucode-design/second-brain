@@ -92,6 +92,10 @@ export async function createNote(
   return invoke("create_note", { notebookRelative, title });
 }
 
+export async function createDailyNote(): Promise<NoteEntry> {
+  return invoke("create_daily_note");
+}
+
 export async function renameNote(
   path: string,
   newTitle: string,

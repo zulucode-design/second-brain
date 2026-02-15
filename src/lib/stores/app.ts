@@ -42,6 +42,7 @@ export const activeTag = writable<string | null>(null);
 export const editorDirty = writable(false);
 export const sourceMode = writable(false);
 export const focusMode = writable(false);
+export const readOnly = writable(false);
 
 // Theme
 export const theme = writable<string>("system");

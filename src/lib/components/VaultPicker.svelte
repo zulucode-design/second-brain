@@ -57,7 +57,7 @@
 			</svg>
 		</div>
 		<h1>HelixNotes</h1>
-		<p class="subtitle">Local-first markdown notes</p>
+		<p class="subtitle">Local markdown notes</p>
 		<p class="description">Your notes are stored as standard Markdown (.md) files. Pick any folder — existing .md files will be recognized automatically.</p>
 
 		{#if error}

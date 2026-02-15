@@ -1,9 +1,8 @@
 use crate::types::NoteMeta;
-use chrono::Utc;
+use chrono::{NaiveDate, NaiveDateTime, Utc};
 use gray_matter::engine::YAML;
 use gray_matter::Matter;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct RawFrontmatter {
@@ -13,6 +12,32 @@ struct RawFrontmatter {
     pinned: Option<bool>,
     created: Option<String>,
     modified: Option<String>,
+}
+
+/// Try to parse a date string in multiple common formats.
+fn parse_date_flexible(s: &str) -> Option<chrono::DateTime<Utc>> {
+    let s = s.trim();
+    // RFC 3339 / ISO 8601 with timezone (e.g. 2024-01-15T10:30:00+00:00)
+    if let Ok(dt) = s.parse::<chrono::DateTime<Utc>>() {
+        return Some(dt);
+    }
+    // Try parsing as DateTime with fixed offset then convert
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(dt.with_timezone(&Utc));
+    }
+    // YYYY-MM-DD HH:MM:SS (no timezone)
+    if let Ok(ndt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        return Some(ndt.and_utc());
+    }
+    // YYYY-MM-DDTHH:MM:SS (no timezone, with T separator)
+    if let Ok(ndt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+        return Some(ndt.and_utc());
+    }
+    // YYYY-MM-DD (date only)
+    if let Ok(nd) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return nd.and_hms_opt(0, 0, 0).map(|ndt| ndt.and_utc());
+    }
+    None
 }
 
 pub fn parse_note(raw: &str, filename: &str) -> (NoteMeta, String) {
@@ -28,15 +53,16 @@ pub fn parse_note(raw: &str, filename: &str) -> (NoteMeta, String) {
 
     let created = fm
         .created
-        .and_then(|s| s.parse().ok())
+        .and_then(|s| parse_date_flexible(&s))
         .unwrap_or_else(Utc::now);
 
     let modified = fm
         .modified
-        .and_then(|s| s.parse().ok())
+        .and_then(|s| parse_date_flexible(&s))
         .unwrap_or_else(Utc::now);
 
-    let id = fm.id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    // Don't generate UUID on read — empty string signals "no ID yet"
+    let id = fm.id.unwrap_or_default();
 
     let meta = NoteMeta {
         id,
@@ -79,6 +105,65 @@ pub fn serialize_frontmatter(meta: &NoteMeta) -> String {
 pub fn update_note_raw(meta: &NoteMeta, body: &str) -> String {
     let fm = serialize_frontmatter(meta);
     format!("{}{}", fm, body)
+}
+
+/// Merge NoteMeta fields into existing frontmatter, preserving unknown YAML keys.
+/// Falls back to serialize_frontmatter() if the original has no frontmatter.
+pub fn merge_frontmatter(original_raw: &str, meta: &NoteMeta, body: &str) -> String {
+    let matter = Matter::<YAML>::new();
+    let parsed = matter.parse(original_raw);
+
+    // If original had no frontmatter, use the simple serializer
+    if parsed.matter.trim().is_empty() {
+        return update_note_raw(meta, body);
+    }
+
+    // Parse existing YAML into a Mapping to preserve all keys
+    let mut mapping: serde_yaml::Mapping = match serde_yaml::from_str(&parsed.matter) {
+        Ok(m) => m,
+        Err(_) => return update_note_raw(meta, body), // unparseable YAML, fall back
+    };
+
+    // Update only our known fields
+    if !meta.id.is_empty() {
+        mapping.insert(
+            serde_yaml::Value::String("id".into()),
+            serde_yaml::Value::String(meta.id.clone()),
+        );
+    }
+    mapping.insert(
+        serde_yaml::Value::String("title".into()),
+        serde_yaml::Value::String(meta.title.clone()),
+    );
+    mapping.insert(
+        serde_yaml::Value::String("tags".into()),
+        serde_yaml::Value::Sequence(
+            meta.tags
+                .iter()
+                .map(|t| serde_yaml::Value::String(t.clone()))
+                .collect(),
+        ),
+    );
+    mapping.insert(
+        serde_yaml::Value::String("pinned".into()),
+        serde_yaml::Value::Bool(meta.pinned),
+    );
+    mapping.insert(
+        serde_yaml::Value::String("created".into()),
+        serde_yaml::Value::String(meta.created.to_rfc3339()),
+    );
+    mapping.insert(
+        serde_yaml::Value::String("modified".into()),
+        serde_yaml::Value::String(meta.modified.to_rfc3339()),
+    );
+
+    // Serialize the mapping back to YAML
+    let yaml_str = match serde_yaml::to_string(&serde_yaml::Value::Mapping(mapping)) {
+        Ok(s) => s,
+        Err(_) => return update_note_raw(meta, body),
+    };
+
+    format!("---\n{}---\n{}", yaml_str, body)
 }
 
 fn filename_to_title(filename: &str) -> String {

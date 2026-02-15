@@ -1,6 +1,6 @@
 # HelixNotes
 
-A local-first markdown note-taking app built with Tauri, SvelteKit, and Rust.
+A local markdown note-taking app built with Tauri, SvelteKit, and Rust.
 
 Your notes are stored as standard Markdown files on your local filesystem. No cloud, no lock-in.
 
@@ -29,7 +29,7 @@ See all releases: [codeberg.org/ArkHost/HelixNotes/releases](https://codeberg.or
 - **Obsidian import** — convert Obsidian wiki-links to standard markdown
 - **Themes** — light/dark mode with customizable accent colors and fonts
 - **Focus mode** — distraction-free writing
-- **Local-first** — everything stays on your machine
+- **Local** — everything stays on your machine
 
 ## Tech Stack
 

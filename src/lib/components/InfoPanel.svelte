@@ -5,6 +5,8 @@
 	import { getVersion } from '@tauri-apps/api/app';
 	import type { VaultStats } from '$lib/types';
 
+	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
+
 	let stats = $state<VaultStats | null>(null);
 	let activeTab = $state<'about' | 'shortcuts'>('shortcuts');
 	let appVersion = $state('...');
@@ -71,7 +73,7 @@
 					</div>
 					<h3 class="app-name">HelixNotes</h3>
 					<p class="app-version">v{appVersion}</p>
-					<p class="app-description">A local-first markdown note-taking app.</p>
+					<p class="app-description">A local markdown note-taking app.</p>
 
 					{#if stats}
 						<div class="info-stats">
@@ -112,16 +114,16 @@
 				{:else}
 					<div class="shortcuts-section">
 						<h4 class="shortcuts-group-title">Keyboard Shortcuts</h4>
-						<div class="shortcut-row"><span class="shortcut-desc">New note</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>N</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Quick open</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>P</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Find in note</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>F</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Search vault</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Save</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>S</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Bold</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>B</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Italic</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>I</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Underline</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>U</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Undo</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>Z</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Redo</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">New note</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>N</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Quick open</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>P</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Find in note</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>F</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Search vault</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Save</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>S</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Bold</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>B</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Italic</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>I</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Underline</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>U</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Undo</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Z</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Redo</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Go back</span><span class="shortcut-keys"><kbd>Alt</kbd>+<kbd>←</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Go forward</span><span class="shortcut-keys"><kbd>Alt</kbd>+<kbd>→</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Exit focus mode</span><span class="shortcut-keys"><kbd>Esc</kbd></span></div>

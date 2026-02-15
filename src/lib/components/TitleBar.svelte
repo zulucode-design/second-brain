@@ -1,13 +1,15 @@
 <script lang="ts">
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { vaultReady, focusMode, updateAvailable, showSettings, settingsTab } from '$lib/stores/app';
+	import { vaultReady, focusMode, readOnly, updateAvailable, showSettings, settingsTab } from '$lib/stores/app';
 
-	let { onNewNote = () => {} }: {
+	let { onNewNote = () => {}, onDailyNote = () => {} }: {
 		onNewNote?: () => void;
+		onDailyNote?: () => void;
 	} = $props();
 
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
+	const modKey = isMac ? '⌘' : 'Ctrl';
 	let maximized = $state(false);
 
 	async function checkMaximized() {
@@ -90,7 +92,27 @@
 				<path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/>
 			</svg>
 		</button>
-		<button class="new-note-btn" onclick={onNewNote} title="New Note (Ctrl+N)">
+		<button class="switch-vault-btn" class:active={$readOnly} onclick={() => ($readOnly = !$readOnly)} title={$readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}>
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				{#if $readOnly}
+					<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+					<circle cx="12" cy="12" r="3" />
+				{:else}
+					<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94" />
+					<path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19" />
+					<line x1="1" y1="1" x2="23" y2="23" />
+				{/if}
+			</svg>
+		</button>
+		<button class="switch-vault-btn" onclick={onDailyNote} title="Daily Note">
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+				<line x1="16" y1="2" x2="16" y2="6" />
+				<line x1="8" y1="2" x2="8" y2="6" />
+				<line x1="3" y1="10" x2="21" y2="10" />
+			</svg>
+		</button>
+		<button class="new-note-btn" onclick={onNewNote} title={`New Note (${modKey}+N)`}>
 			<svg width="14" height="14" viewBox="0 0 14 14" fill="none">
 				<path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
 			</svg>
@@ -197,6 +219,11 @@
 	.switch-vault-btn:hover {
 		background: var(--bg-tertiary, var(--bg-hover));
 		color: var(--text-primary);
+	}
+
+	.switch-vault-btn.active {
+		background: color-mix(in srgb, var(--accent) 18%, transparent);
+		color: var(--accent);
 	}
 
 	.new-note-btn {

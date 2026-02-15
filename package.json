@@ -2,7 +2,7 @@
   "name": "helixnotes",
   "private": true,
   "license": "AGPL-3.0-or-later",
-  "version": "1.0.9",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
@@ -57,7 +57,9 @@
     "@tiptap/extension-underline": "^3.19.0",
     "@tiptap/pm": "^3.19.0",
     "@tiptap/starter-kit": "^3.19.0",
+    "@types/katex": "^0.16.8",
     "@types/markdown-it": "^14.1.2",
+    "katex": "^0.16.28",
     "lowlight": "^3.3.0",
     "markdown-it": "^14.1.0",
     "markdown-it-mark": "^4.0.0",

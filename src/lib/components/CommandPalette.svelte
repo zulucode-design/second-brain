@@ -9,6 +9,8 @@
 		action: () => void;
 	}
 
+	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
+
 	let query = $state('');
 	let selectedIndex = $state(0);
 	let inputEl = $state<HTMLInputElement>(null!);
@@ -17,7 +19,7 @@
 		{
 			id: 'search',
 			label: 'Search Notes',
-			shortcut: 'Ctrl+F',
+			shortcut: `${modKey}+F`,
 			action: () => {
 				$showCommandPalette = false;
 				$showSearch = true;

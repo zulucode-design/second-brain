@@ -11,7 +11,8 @@
 		editorDirty,
 		quickAccessPaths,
 		appConfig,
-		notebooks
+		notebooks,
+		tags
 	} from '$lib/stores/app';
 	import {
 		getNotes,
@@ -27,7 +28,8 @@
 		addQuickAccess,
 		removeQuickAccess,
 		reorderQuickAccess,
-		moveNote
+		moveNote,
+		getAllTags
 	} from '$lib/api';
 	import { formatRelativeTime } from '$lib/utils/time';
 	import type { NoteEntry, SortMode } from '$lib/types';
@@ -37,17 +39,23 @@
 		onNoteMoved?: () => void;
 	} = $props();
 
+	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
+
 	let compact = $derived($appConfig?.compact_notes ?? false);
 	let contextMenu = $state<{ x: number; y: number; note: NoteEntry } | null>(null);
 	let sortMenu = $state<{ x: number; y: number } | null>(null);
 	let editingNote = $state<string | null>(null);
 	let editValue = $state('');
 	let movePickerNote = $state<NoteEntry | null>(null);
+	let tagEditNote = $state<NoteEntry | null>(null);
+	let tagEditValue = $state('');
+	let tagEditTags = $state<string[]>([]);
 
 	// Multi-select
 	let selectedPaths = $state<Set<string>>(new Set());
 	let lastClickedPath = $state<string | null>(null);
 	let batchMovePicker = $state(false);
+	let batchTagEdit = $state(false);
 
 	// Quick Access drag-to-reorder
 	let qaDragFrom = $state<number | null>(null);
@@ -280,6 +288,102 @@
 		}
 	}
 
+	function openTagEdit(note: NoteEntry) {
+		tagEditNote = note;
+		tagEditTags = [...note.meta.tags];
+		tagEditValue = '';
+	}
+
+	async function addTagToNote(tag: string) {
+		if (!tagEditNote || !tag.trim()) return;
+		const cleaned = tag.trim().toLowerCase();
+		if (tagEditTags.includes(cleaned)) return;
+		tagEditTags = [...tagEditTags, cleaned];
+		tagEditValue = '';
+		await saveTagsForNote(tagEditNote, tagEditTags);
+	}
+
+	async function removeTagFromNote(tag: string) {
+		if (!tagEditNote) return;
+		tagEditTags = tagEditTags.filter(t => t !== tag);
+		await saveTagsForNote(tagEditNote, tagEditTags);
+	}
+
+	async function saveTagsForNote(note: NoteEntry, newTags: string[]) {
+		try {
+			const content = await readNote(note.path);
+			content.meta.tags = newTags;
+			await saveNote(note.path, content.meta, content.content);
+			$notes = $notes.map(n =>
+				n.path === note.path ? { ...n, meta: { ...n.meta, tags: newTags } } : n
+			);
+			if ($activeNotePath === note.path && $activeNote) {
+				$activeNote = { ...$activeNote, meta: { ...$activeNote.meta, tags: newTags } };
+			}
+			$tags = await getAllTags();
+		} catch (e) {
+			console.error('Failed to save tags:', e);
+		}
+	}
+
+	function openBatchTagEdit() {
+		batchTagEdit = true;
+		tagEditValue = '';
+		// Show tags common to ALL selected notes
+		const selectedNotes = $notes.filter(n => selectedPaths.has(n.path));
+		if (selectedNotes.length === 0) { tagEditTags = []; return; }
+		tagEditTags = selectedNotes[0].meta.tags.filter(t =>
+			selectedNotes.every(n => n.meta.tags.includes(t))
+		);
+	}
+
+	async function addTagToBatch(tag: string) {
+		if (!tag.trim()) return;
+		const cleaned = tag.trim().toLowerCase();
+		tagEditValue = '';
+		if (!tagEditTags.includes(cleaned)) tagEditTags = [...tagEditTags, cleaned];
+		try {
+			for (const path of selectedPaths) {
+				const content = await readNote(path);
+				if (!content.meta.tags.includes(cleaned)) {
+					content.meta.tags = [...content.meta.tags, cleaned];
+					await saveNote(path, content.meta, content.content);
+					$notes = $notes.map(n =>
+						n.path === path ? { ...n, meta: { ...n.meta, tags: content.meta.tags } } : n
+					);
+					if ($activeNotePath === path) {
+						$activeNote = content;
+					}
+				}
+			}
+			$tags = await getAllTags();
+		} catch (e) {
+			console.error('Failed to add tag to batch:', e);
+		}
+	}
+
+	async function removeTagFromBatch(tag: string) {
+		tagEditTags = tagEditTags.filter(t => t !== tag);
+		try {
+			for (const path of selectedPaths) {
+				const content = await readNote(path);
+				if (content.meta.tags.includes(tag)) {
+					content.meta.tags = content.meta.tags.filter((t: string) => t !== tag);
+					await saveNote(path, content.meta, content.content);
+					$notes = $notes.map(n =>
+						n.path === path ? { ...n, meta: { ...n.meta, tags: content.meta.tags } } : n
+					);
+					if ($activeNotePath === path) {
+						$activeNote = content;
+					}
+				}
+			}
+			$tags = await getAllTags();
+		} catch (e) {
+			console.error('Failed to remove tag from batch:', e);
+		}
+	}
+
 	async function handleAddQuickAccess(note: NoteEntry) {
 		contextMenu = null;
 		try {
@@ -441,7 +545,7 @@
 	}
 
 	function handleWindowClick() {
-		if (contextMenu) { contextMenu = null; movePickerNote = null; }
+		if (contextMenu) { contextMenu = null; movePickerNote = null; tagEditNote = null; batchTagEdit = false; }
 		if (sortMenu) sortMenu = null;
 	}
 
@@ -481,7 +585,7 @@
 				</svg>
 			</button>
 			{#if $viewMode !== 'trash'}
-				<button class="icon-btn" onclick={handleCreateNote} title="New note (Ctrl+N)">
+				<button class="icon-btn" onclick={handleCreateNote} title={`New note (${modKey}+N)`}>
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
 					</svg>
@@ -674,7 +778,50 @@
 				<button class="danger" onclick={() => { contextMenu = null; handleBatchPermanentDelete(); }}>
 					Delete {selectedPaths.size} permanently
 				</button>
+			{:else if batchTagEdit}
+				<button class="move-back" onclick={() => batchTagEdit = false}>
+					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<polyline points="15 18 9 12 15 6"/>
+					</svg>
+					Tags for {selectedPaths.size} notes
+				</button>
+				<div class="context-sep"></div>
+				<div class="tag-edit-section">
+					<div class="tag-edit-input-row">
+						<input
+							type="text"
+							class="tag-edit-input"
+							placeholder="Add tag to all..."
+							bind:value={tagEditValue}
+							onkeydown={(e) => {
+								if (e.key === 'Enter') { e.preventDefault(); addTagToBatch(tagEditValue); }
+								if (e.key === 'Escape') { e.preventDefault(); batchTagEdit = false; }
+							}}
+							autofocus
+						/>
+					</div>
+					{#if tagEditTags.length > 0}
+						<div class="tag-edit-list">
+							{#each tagEditTags as tag}
+								<div class="tag-edit-item">
+									<span class="tag-edit-name">#{tag}</span>
+									<button class="tag-edit-remove" onclick={() => removeTagFromBatch(tag)} title="Remove from all">
+										<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+									</button>
+								</div>
+							{/each}
+						</div>
+					{:else}
+						<div class="context-empty">No common tags</div>
+					{/if}
+				</div>
 			{:else}
+				<button onclick={() => openBatchTagEdit()}>
+					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>
+					</svg>
+					Tags...
+				</button>
 				<button onclick={() => { contextMenu = null; batchMovePicker = true; }}>
 					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
@@ -688,6 +835,43 @@
 		{:else if $viewMode === 'trash'}
 			<button onclick={() => handleRestore(contextMenu!.note)}>Restore</button>
 			<button class="danger" onclick={() => handlePermanentDelete(contextMenu!.note)}>Delete Permanently</button>
+		{:else if tagEditNote}
+			<button class="move-back" onclick={() => tagEditNote = null}>
+				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<polyline points="15 18 9 12 15 6"/>
+				</svg>
+				Tags
+			</button>
+			<div class="context-sep"></div>
+			<div class="tag-edit-section">
+				<div class="tag-edit-input-row">
+					<input
+						type="text"
+						class="tag-edit-input"
+						placeholder="Add tag..."
+						bind:value={tagEditValue}
+						onkeydown={(e) => {
+							if (e.key === 'Enter') { e.preventDefault(); addTagToNote(tagEditValue); }
+							if (e.key === 'Escape') { e.preventDefault(); tagEditNote = null; }
+						}}
+						autofocus
+					/>
+				</div>
+				{#if tagEditTags.length > 0}
+					<div class="tag-edit-list">
+						{#each tagEditTags as tag}
+							<div class="tag-edit-item">
+								<span class="tag-edit-name">#{tag}</span>
+								<button class="tag-edit-remove" onclick={() => removeTagFromNote(tag)} title="Remove tag">
+									<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+								</button>
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<div class="context-empty">No tags</div>
+				{/if}
+			</div>
 		{:else if movePickerNote}
 			<button class="move-back" onclick={() => movePickerNote = null}>
 				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -716,6 +900,12 @@
 					<path d="M12 17v5"/><path d="M9 2h6l-1 7h4l-2 4H8l-2-4h4L9 2z"/>
 				</svg>
 				{contextMenu.note.meta.pinned ? 'Unpin Note' : 'Pin Note'}
+			</button>
+			<button onclick={() => openTagEdit(contextMenu!.note)}>
+				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>
+				</svg>
+				Tags...
 			</button>
 			{#if $quickAccessPaths.includes(contextMenu.note.relative_path)}
 				<button onclick={() => handleRemoveQuickAccess(contextMenu!.note)}>
@@ -1171,6 +1361,62 @@
 	.move-picker-list::-webkit-scrollbar-thumb {
 		background: var(--text-tertiary);
 		border-radius: 2px;
+	}
+
+	.tag-edit-section {
+		padding: 4px 0;
+	}
+
+	.tag-edit-input-row {
+		padding: 2px 8px 4px;
+	}
+
+	.tag-edit-input {
+		width: 100%;
+		padding: 4px 8px;
+		border: 1px solid var(--border-color);
+		border-radius: 4px;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		font-size: 12px;
+		outline: none;
+	}
+
+	.tag-edit-input:focus {
+		border-color: var(--accent);
+	}
+
+	.tag-edit-list {
+		max-height: 160px;
+		overflow-y: auto;
+	}
+
+	.tag-edit-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 3px 12px;
+		font-size: 12px;
+	}
+
+	.tag-edit-name {
+		color: var(--text-secondary);
+	}
+
+	.tag-edit-remove {
+		background: none;
+		border: none;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		padding: 2px;
+		border-radius: 3px;
+		display: flex;
+		align-items: center;
+	}
+
+	.tag-edit-remove:hover {
+		color: var(--danger, #e53e3e);
+		background: color-mix(in srgb, var(--danger, #e53e3e) 10%, transparent);
 	}
 
 	.sort-menu {
