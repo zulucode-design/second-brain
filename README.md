@@ -9,21 +9,33 @@ No cloud, no lock-in.
 
 ### Linux
 
-#### Arch / Manjaro / Fedora / openSUSE
+#### Arch / Manjaro (AUR)
 
-[Download AppImage](https://download.helixnotes.com/releases/v1.1.1/HelixNotes_1.1.1_amd64.AppImage)
+```bash
+yay -S helixnotes-appimage-bin
+```
 
-#### Debian / Ubuntu / Mint
+#### Debian / Ubuntu / Mint (APT)
 
-[Download .deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.1/HelixNotes_1.1.1_amd64.deb) — Ubuntu 22.04+
+```bash
+curl -fsSL https://repo.arkhost.com/gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/arkhost.gpg && echo "deb [signed-by=/usr/share/keyrings/arkhost.gpg arch=amd64] https://repo.arkhost.com stable main" | sudo tee /etc/apt/sources.list.d/helixnotes.list && sudo apt update && sudo apt install helix-notes
+```
+
+#### AppImage (any distro)
+
+[Download AppImage](https://download.helixnotes.com/releases/v1.1.2/HelixNotes_1.1.2_amd64.AppImage)
+
+#### .deb (manual)
+
+[Download .deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.2/HelixNotes_1.1.2_amd64.deb) — Ubuntu 22.04+
 
 ### Windows
 
-[Download Installer](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.1/HelixNotes_1.1.1_x64-setup.exe) — Windows 10/11
+[Download Installer](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.2/HelixNotes_1.1.2_x64-setup.exe) — Windows 10/11
 
 ### macOS
 
-[Download .dmg](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.1/HelixNotes_1.1.1_x64.dmg) — macOS 12+ (Intel, runs on Apple Silicon via Rosetta)
+[Download .dmg](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.2/HelixNotes_1.1.2_x64.dmg) — macOS 12+ (Intel, runs on Apple Silicon via Rosetta)
 
 ---
 
@@ -31,9 +43,10 @@ All releases: [codeberg.org/ArkHost/HelixNotes/releases](https://codeberg.org/Ar
 
 ## Features
 
-- **Markdown editor** with rich formatting toolbar, slash commands, and source mode
+- **Markdown editor** with rich formatting toolbar, slash commands, source mode toggle, and code syntax highlighting
 - **Wiki-links** — link notes with `[[Note Title]]` syntax
 - **Graph view** — visualize connections between your notes
+- **Outline panel** — heading navigation for long notes
 - **Full-text search** powered by Tantivy
 - **Math support** — KaTeX rendering for inline and block equations
 - **Daily notes** — one-click button to create or open today's note
