@@ -308,6 +308,7 @@
 	let pdfHeight = $state($appConfig?.pdf_height ?? 600);
 	let titleMode = $state($appConfig?.title_mode ?? 'input');
 	let hideTitleInBody = $state($appConfig?.hide_title_in_body ?? false);
+	let showLineNumbers = $state($appConfig?.show_line_numbers ?? false);
 	let defaultViewMode = $state($appConfig?.default_view_mode ?? false);
 	let showTrayIcon = $state($appConfig?.show_tray_icon ?? false);
 	let closeToTray = $state($appConfig?.close_to_tray ?? false);
@@ -360,12 +361,13 @@
 			$appConfig.pdf_height = pdfHeight;
 			$appConfig.title_mode = titleMode;
 			$appConfig.hide_title_in_body = hideTitleInBody;
+			$appConfig.show_line_numbers = showLineNumbers;
 			$appConfig.default_view_mode = defaultViewMode;
 			$appConfig.show_tray_icon = showTrayIcon;
 			$appConfig.close_to_tray = closeToTray;
 			$appConfig.enable_wiki_links = enableWikiLinks;
 		}
-		setGeneralSettings(compactNotes, timeFormat, gpuAcceleration, autostart, pdfPreview, pdfHeight, titleMode, hideTitleInBody, defaultViewMode, showTrayIcon, closeToTray, enableWikiLinks)
+		setGeneralSettings(compactNotes, timeFormat, gpuAcceleration, autostart, pdfPreview, pdfHeight, titleMode, hideTitleInBody, showLineNumbers, defaultViewMode, showTrayIcon, closeToTray, enableWikiLinks)
 			.catch((e) => console.error('Failed to save general settings:', e));
 	}
 
@@ -622,6 +624,15 @@
 										<span class="setting-desc">Hide the first heading when it matches the note title</span>
 									</span>
 									<button class="toggle-switch" class:on={hideTitleInBody} onclick={() => { hideTitleInBody = !hideTitleInBody; saveGeneralSettings(); }}>
+										<span class="toggle-knob"></span>
+									</button>
+								</label>
+								<label class="setting-toggle" style="margin-top: 12px;">
+									<span class="setting-label">
+										<span class="setting-name">Show line numbers</span>
+										<span class="setting-desc">Display line numbers in the markdown source editor</span>
+									</span>
+									<button class="toggle-switch" class:on={showLineNumbers} onclick={() => { showLineNumbers = !showLineNumbers; saveGeneralSettings(); }}>
 										<span class="toggle-knob"></span>
 									</button>
 								</label>

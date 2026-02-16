@@ -25,7 +25,8 @@
 		activeNotePath,
 		editorDirty,
 		showInfo,
-		showSettings
+		showSettings,
+		sourceMode
 	} from '$lib/stores/app';
 
 	const appWindow = getCurrentWindow();
@@ -168,6 +169,10 @@
 		if (mod && e.key === 's') {
 			e.preventDefault();
 			editor?.forceSave();
+		}
+		if (mod && e.shiftKey && e.key === 'M') {
+			e.preventDefault();
+			$sourceMode = !$sourceMode;
 		}
 		if (e.key === 'Escape') {
 			if ($showSettings) $showSettings = false;

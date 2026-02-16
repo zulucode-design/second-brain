@@ -70,6 +70,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub hide_title_in_body: bool,
     #[serde(default)]
+    pub show_line_numbers: bool,
+    #[serde(default)]
     pub backup_enabled: bool,
     #[serde(default = "default_backup_frequency")]
     pub backup_frequency: String,
@@ -148,6 +150,7 @@ impl Default for AppConfig {
             pdf_height: 600,
             title_mode: "input".to_string(),
             hide_title_in_body: false,
+            show_line_numbers: false,
             backup_enabled: false,
             backup_frequency: "24h".to_string(),
             backup_max_count: 10,

@@ -507,6 +507,7 @@ pub fn set_general_settings(
     pdf_height: u32,
     title_mode: String,
     hide_title_in_body: bool,
+    show_line_numbers: bool,
     default_view_mode: bool,
     show_tray_icon: bool,
     close_to_tray: bool,
@@ -521,6 +522,7 @@ pub fn set_general_settings(
     config.pdf_height = pdf_height;
     config.title_mode = title_mode;
     config.hide_title_in_body = hide_title_in_body;
+    config.show_line_numbers = show_line_numbers;
     config.default_view_mode = default_view_mode;
     config.show_tray_icon = show_tray_icon;
     config.close_to_tray = close_to_tray;
@@ -1478,8 +1480,6 @@ pub fn get_install_type() -> String {
         "macos".to_string()
     } else if cfg!(target_os = "windows") {
         "windows".to_string()
-    } else if std::env::var("APPIMAGE").is_ok() {
-        "appimage".to_string()
     } else if std::path::Path::new("/var/lib/dpkg/info/helix-notes.list").exists() {
         "deb".to_string()
     } else if std::path::Path::new("/var/lib/pacman/local").exists()
@@ -1490,6 +1490,8 @@ pub fn get_install_type() -> String {
             .unwrap_or(false)
     {
         "aur".to_string()
+    } else if std::env::var("APPIMAGE").is_ok() {
+        "appimage".to_string()
     } else {
         "native".to_string()
     }

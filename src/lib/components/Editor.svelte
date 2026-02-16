@@ -99,6 +99,29 @@
 
 	// View mode (read-only) — state managed by $readOnly store
 
+	// Outline
+	let showOutline = $state(false);
+	interface OutlineHeading { level: number; text: string; pos: number; }
+	let outlineHeadings = $state<OutlineHeading[]>([]);
+
+	function updateOutline() {
+		if (!editor) { outlineHeadings = []; return; }
+		const headings: OutlineHeading[] = [];
+		editor.state.doc.descendants((node, pos) => {
+			if (node.type.name === 'heading') {
+				headings.push({ level: node.attrs.level, text: node.textContent, pos });
+			}
+		});
+		outlineHeadings = headings;
+	}
+
+	function scrollToHeading(pos: number) {
+		if (!editor) return;
+		editor.commands.setTextSelection(pos + 1);
+		editor.commands.scrollIntoView();
+		editor.view.focus();
+	}
+
 	// Version history
 	let showHistory = $state(false);
 	let showGraph = $state(false);
@@ -370,6 +393,66 @@
 					props: {
 						decorations(state) {
 							return this.getState(state);
+						},
+					},
+				}),
+			];
+		},
+	});
+
+	const MoveLineShortcuts = Extension.create({
+		name: 'moveLineShortcuts',
+		addProseMirrorPlugins() {
+			return [
+				new Plugin({
+					key: new PluginKey('moveLineShortcuts'),
+					props: {
+						handleDOMEvents: {
+							keydown(view, event) {
+								if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return false;
+								event.preventDefault();
+								const { state, dispatch } = view;
+								const resolvedPos = state.selection.$from;
+								// Find the top-level block index
+								const depth = 1; // top-level blocks in doc
+								if (resolvedPos.depth < depth) return true;
+								const parentPos = resolvedPos.before(depth);
+								const parentNode = state.doc.nodeAt(parentPos);
+								if (!parentNode) return true;
+								const parentIndex = resolvedPos.index(0);
+								if (event.key === 'ArrowUp') {
+									if (parentIndex <= 0) return true;
+									const prevPos = resolvedPos.posAtIndex(parentIndex - 1, 0);
+									const prevNode = state.doc.nodeAt(prevPos);
+									if (!prevNode) return true;
+									const tr = state.tr;
+									const cursorOffset = resolvedPos.pos - parentPos;
+									// Delete current block, insert it before previous block
+									const curSlice = state.doc.slice(parentPos, parentPos + parentNode.nodeSize);
+									tr.delete(parentPos, parentPos + parentNode.nodeSize);
+									const insertAt = tr.mapping.map(prevPos);
+									tr.insert(insertAt, curSlice.content);
+									const newCursorPos = Math.min(insertAt + cursorOffset, tr.doc.content.size);
+									tr.setSelection(state.selection.constructor.near(tr.doc.resolve(newCursorPos)));
+									dispatch(tr.scrollIntoView());
+								} else {
+									if (parentIndex >= state.doc.childCount - 1) return true;
+									const nextPos = resolvedPos.posAtIndex(parentIndex + 1, 0);
+									const nextNode = state.doc.nodeAt(nextPos);
+									if (!nextNode) return true;
+									const tr = state.tr;
+									const cursorOffset = resolvedPos.pos - parentPos;
+									// Delete next block, insert it before current block
+									const nextSlice = state.doc.slice(nextPos, nextPos + nextNode.nodeSize);
+									tr.delete(nextPos, nextPos + nextNode.nodeSize);
+									const insertAt = tr.mapping.map(parentPos);
+									tr.insert(insertAt, nextSlice.content);
+									const newCursorPos = Math.min(tr.mapping.map(parentPos) + cursorOffset, tr.doc.content.size);
+									tr.setSelection(state.selection.constructor.near(tr.doc.resolve(newCursorPos)));
+									dispatch(tr.scrollIntoView());
+								}
+								return true;
+							},
 						},
 					},
 				}),
@@ -1177,9 +1260,21 @@
 		return restoreTitleH1(md);
 	}
 
+	function isImageNode(node: any): boolean {
+		if (node.type.name === 'image') return true;
+		if (node.type.name !== 'paragraph') return false;
+		let hasImage = false;
+		let hasOther = false;
+		node.forEach((child: any) => {
+			if (child.type.name === 'image') hasImage = true;
+			else hasOther = true;
+		});
+		return hasImage && !hasOther;
+	}
+
 	function prosemirrorToMarkdown(doc: any): string {
 		const listTypes = new Set(['bulletList', 'orderedList', 'taskList']);
-		const parts: string[] = [];
+		const entries: { text: string; isImage: boolean }[] = [];
 		let prevType = '';
 		let preserveEmptyParas = false;
 		doc.forEach((node: any) => {
@@ -1190,15 +1285,25 @@
 				preserveEmptyParas = true;
 			}
 			if (isEmpty && preserveEmptyParas) {
-				parts.push('<!-- -->');
+				entries.push({ text: '<!-- -->', isImage: false });
 				prevType = node.type.name;
 				return;
 			}
 			preserveEmptyParas = false;
-			parts.push(serializeNode(node));
+			entries.push({ text: serializeNode(node), isImage: isImageNode(node) });
 			prevType = node.type.name;
 		});
-		return parts.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+		// Join: skip extra \n separator before image nodes so they don't get unwanted blank lines
+		let result = '';
+		for (let i = 0; i < entries.length; i++) {
+			if (i === 0) {
+				result = entries[i].text;
+			} else {
+				const separator = entries[i].isImage ? '' : '\n';
+				result += separator + entries[i].text;
+			}
+		}
+		return result.replace(/\n{3,}/g, '\n\n').trim() + '\n';
 	}
 
 	function serializeNode(node: any): string {
@@ -1282,7 +1387,7 @@
 				const alt = node.attrs.alt || '';
 				const size = node.attrs['data-size'] || node.attrs.size || 'full';
 				const sizeSuffix = size && size !== 'full' ? `|size=${size}` : '';
-				return `![${alt}${sizeSuffix}](${src})`;
+				return `![${alt}${sizeSuffix}](${src})\n`;
 			}
 			default:
 				return node.textContent || '';
@@ -1358,6 +1463,9 @@
 				const alt = child.attrs.alt || '';
 				const size = child.attrs['data-size'] || child.attrs.size || 'full';
 				const sizeSuffix = size && size !== 'full' ? `|size=${size}` : '';
+				if (parts.length > 0 && parts[parts.length - 1] !== '\n') {
+					parts.push('\n');
+				}
 				parts.push(`![${alt}${sizeSuffix}](${src})`);
 			} else if (child.type.name === 'mathInline') {
 				parts.push(`$${child.attrs.tex || ''}$`);
@@ -1716,8 +1824,16 @@
 		src = src.replace(/^([\s>]*)-\s\[ \][^\S\n]+(.+)$/gm, '$1- <tiptask checked="false">$2</tiptask>');
 		src = src.replace(/^([\s>]*)-\s\[ \][^\S\n]*$/gm, '$1- <tiptask checked="false">&nbsp;</tiptask>');
 
+		// Pre-process: preserve blank lines before image-only lines
+		// markdown-it collapses blank lines into paragraph breaks, losing the empty paragraph.
+		// Insert a <div> marker that markdown-it passes through (html: true), then convert to <p></p>
+		src = src.replace(/\n\n(!\[[^\]]*\]\([^)]*\)\s*$)/gm, '\n\n<div data-img-gap></div>\n\n$1');
+
 		// Run markdown-it (single-pass parser — handles headings, bold, italic, strike, code, blockquote, lists, links, images, hr, tables, raw HTML)
 		let html = mdit.render(src);
+
+		// Post-process: convert image gap markers into empty paragraphs for ProseMirror
+		html = html.replace(/<div data-img-gap><\/div>\n?/g, '<p></p>\n');
 
 		// Post-process: strip trailing newlines inside code blocks (markdown-it adds them, TipTap shows them as blank lines)
 		html = html.replace(/<code([^>]*)>\n?/g, '<code$1>');
@@ -1835,7 +1951,7 @@
 				CustomTableCell,
 				CustomTableHeader,
 				Link.configure({ openOnClick: false, HTMLAttributes: { class: 'editor-link' }, isAllowedUri: (url, ctx) => ctx.defaultValidate(url) || !url.startsWith('javascript:') }),
-				CustomImage.configure({ HTMLAttributes: { class: 'editor-image' } }),
+				CustomImage.configure({ inline: true, HTMLAttributes: { class: 'editor-image' } }),
 				Highlight.configure({ multicolor: true }),
 				Typography,
 				Underline,
@@ -1853,6 +1969,7 @@
 				DetailsContent,
 				TextAlign.configure({ types: ['heading', 'paragraph'] }),
 				SlashCommands,
+				MoveLineShortcuts,
 				NoteSearchExtension,
 				...($appConfig?.enable_wiki_links ? [WikiLink, WikiLinkAutocomplete] : []),
 			],
@@ -1896,6 +2013,7 @@
 				autoSave();
 				// Fix any blob: URLs from pasted web images
 				fixBlobImages();
+				if (showOutline) updateOutline();
 			},
 		});
 		editorReady = true;
@@ -2803,6 +2921,16 @@
 				</button>
 				<button
 					class="icon-btn"
+					class:active={showOutline}
+					onclick={() => { showOutline = !showOutline; if (showOutline) updateOutline(); }}
+					title="Outline"
+				>
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><circle cx="4" cy="12" r="1" fill="currentColor"/><circle cx="4" cy="18" r="1" fill="currentColor"/>
+					</svg>
+				</button>
+				<button
+					class="icon-btn"
 					class:active={showHistory}
 					onclick={toggleHistory}
 					title="Version history"
@@ -2887,20 +3015,72 @@
 			<div class="editor-body-row">
 			<div class="editor-body">
 				{#if $sourceMode}
+					{#if $appConfig?.show_line_numbers}
+						<div class="line-numbers" aria-hidden="true">
+							{#each sourceContent.split('\n') as _, i}
+								<span>{i + 1}</span>
+							{/each}
+						</div>
+					{/if}
 					<textarea
 						class="source-editor"
+						class:with-line-numbers={$appConfig?.show_line_numbers}
 						bind:this={sourceElement}
 						bind:value={sourceContent}
 						readonly={$readOnly}
+						onclick={() => { showOutline = false; }}
 						oninput={() => {
 							$editorDirty = true;
 							autoSave();
+						}}
+						onkeydown={(e) => {
+							if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+								e.preventDefault();
+								const ta = sourceElement;
+								const val = ta.value;
+								const start = ta.selectionStart;
+								const lines = val.split('\n');
+								// Find current line index
+								let pos = 0;
+								let curLine = 0;
+								for (let i = 0; i < lines.length; i++) {
+									if (pos + lines[i].length >= start) { curLine = i; break; }
+									pos += lines[i].length + 1;
+								}
+								if (e.key === 'ArrowUp' && curLine > 0) {
+									const tmp = lines[curLine];
+									lines[curLine] = lines[curLine - 1];
+									lines[curLine - 1] = tmp;
+									sourceContent = lines.join('\n');
+									tick().then(() => {
+										const newPos = lines.slice(0, curLine - 1).join('\n').length + 1 + (start - pos);
+										ta.setSelectionRange(newPos, newPos);
+									});
+								} else if (e.key === 'ArrowDown' && curLine < lines.length - 1) {
+									const tmp = lines[curLine];
+									lines[curLine] = lines[curLine + 1];
+									lines[curLine + 1] = tmp;
+									sourceContent = lines.join('\n');
+									tick().then(() => {
+										const newPos = lines.slice(0, curLine + 1).join('\n').length + 1 + (start - pos);
+										ta.setSelectionRange(newPos, newPos);
+									});
+								}
+								$editorDirty = true;
+								autoSave();
+							}
+						}}
+						onscroll={() => {
+							if ($appConfig?.show_line_numbers) {
+								const gutter = sourceElement?.previousElementSibling as HTMLElement;
+								if (gutter) gutter.scrollTop = sourceElement.scrollTop;
+							}
 						}}
 						spellcheck="false"
 					></textarea>
 				{:else}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
-					<div class="tiptap-wrapper" bind:this={editorElement} onclick={(e) => { closeLinkContextMenu(); handleEditorClick(e); }} oncontextmenu={handleEditorContextMenu}></div>
+					<div class="tiptap-wrapper" bind:this={editorElement} onclick={(e) => { closeLinkContextMenu(); handleEditorClick(e); showOutline = false; }} oncontextmenu={handleEditorContextMenu}></div>
 				{/if}
 			</div>
 
@@ -2946,6 +3126,33 @@
 							<button class="history-restore-btn" onclick={restoreVersion}>
 								Restore this version
 							</button>
+						</div>
+					{/if}
+				</div>
+			{/if}
+			{#if showOutline}
+				<div class="outline-panel">
+					<div class="outline-header">
+						<h3>Outline</h3>
+						<button class="outline-close" onclick={() => { showOutline = false; }}>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<line x1="18" y1="6" x2="6" y2="18" />
+								<line x1="6" y1="6" x2="18" y2="18" />
+							</svg>
+						</button>
+					</div>
+					{#if outlineHeadings.length === 0}
+						<div class="outline-empty">No headings in this note.</div>
+					{:else}
+						<div class="outline-list">
+							{#each outlineHeadings as h}
+								<button
+									class="outline-item outline-level-{h.level}"
+									onclick={() => scrollToHeading(h.pos)}
+								>
+									{h.text}
+								</button>
+							{/each}
 						</div>
 					{/if}
 				</div>
@@ -4139,6 +4346,7 @@
 		overflow-y: auto;
 		padding: 8px 20px;
 		min-width: 0;
+		position: relative;
 	}
 
 	.editor-body:has(.source-editor) {
@@ -4269,6 +4477,90 @@
 		color: white;
 	}
 
+	.outline-panel {
+		width: 220px;
+		border-left: 1px solid var(--border-light);
+		background: var(--bg-secondary);
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+		flex-shrink: 0;
+	}
+
+	.outline-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 12px 14px;
+		border-bottom: 1px solid var(--border-light);
+	}
+
+	.outline-header h3 {
+		font-size: 12px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--text-tertiary);
+		margin: 0;
+	}
+
+	.outline-close {
+		background: none;
+		border: none;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		padding: 2px;
+		border-radius: 4px;
+		display: flex;
+		align-items: center;
+	}
+
+	.outline-close:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.outline-empty {
+		padding: 16px 14px;
+		font-size: 12px;
+		color: var(--text-tertiary);
+		line-height: 1.5;
+	}
+
+	.outline-list {
+		flex: 1;
+		overflow-y: auto;
+		padding: 4px 0;
+	}
+
+	.outline-item {
+		display: block;
+		width: 100%;
+		text-align: left;
+		background: none;
+		border: none;
+		padding: 4px 14px;
+		font-size: 12px;
+		color: var(--text-secondary);
+		cursor: pointer;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		line-height: 1.5;
+	}
+
+	.outline-item:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.outline-level-1 { padding-left: 14px; font-weight: 600; }
+	.outline-level-2 { padding-left: 26px; font-weight: 500; }
+	.outline-level-3 { padding-left: 38px; }
+	.outline-level-4 { padding-left: 50px; }
+	.outline-level-5 { padding-left: 62px; }
+	.outline-level-6 { padding-left: 74px; }
+
 	.source-editor {
 		width: 100%;
 		height: 100%;
@@ -4282,6 +4574,34 @@
 		outline: none;
 		padding: 0;
 		user-select: text;
+	}
+
+	.source-editor.with-line-numbers {
+		padding-left: 48px;
+	}
+
+	.line-numbers {
+		position: absolute;
+		left: 0;
+		top: 0;
+		bottom: 0;
+		width: 44px;
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+		padding-top: 0;
+		font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+		font-size: var(--editor-font-size, 14px);
+		line-height: 1.6;
+		color: var(--text-secondary);
+		opacity: 0.5;
+		text-align: right;
+		user-select: none;
+		pointer-events: none;
+	}
+
+	.line-numbers span {
+		padding-right: 12px;
 	}
 
 	.tiptap-wrapper {
@@ -4391,6 +4711,70 @@
 	:global(.tiptap-wrapper .tiptap pre:hover)::after {
 		opacity: 0.7;
 	}
+
+	/* Syntax highlighting — light mode */
+	:global(.tiptap pre code .hljs-keyword),
+	:global(.tiptap pre code .hljs-selector-tag),
+	:global(.tiptap pre code .hljs-built_in) { color: #d73a49; }
+	:global(.tiptap pre code .hljs-string),
+	:global(.tiptap pre code .hljs-addition) { color: #032f62; }
+	:global(.tiptap pre code .hljs-number),
+	:global(.tiptap pre code .hljs-literal) { color: #005cc5; }
+	:global(.tiptap pre code .hljs-comment),
+	:global(.tiptap pre code .hljs-quote) { color: #6a737d; font-style: italic; }
+	:global(.tiptap pre code .hljs-function),
+	:global(.tiptap pre code .hljs-title) { color: #6f42c1; }
+	:global(.tiptap pre code .hljs-type),
+	:global(.tiptap pre code .hljs-title.class_) { color: #e36209; }
+	:global(.tiptap pre code .hljs-variable),
+	:global(.tiptap pre code .hljs-template-variable) { color: #e36209; }
+	:global(.tiptap pre code .hljs-attr),
+	:global(.tiptap pre code .hljs-attribute) { color: #005cc5; }
+	:global(.tiptap pre code .hljs-tag) { color: #22863a; }
+	:global(.tiptap pre code .hljs-name) { color: #22863a; }
+	:global(.tiptap pre code .hljs-meta) { color: #005cc5; }
+	:global(.tiptap pre code .hljs-deletion) { color: #b31d28; background: #ffeef0; }
+	:global(.tiptap pre code .hljs-symbol),
+	:global(.tiptap pre code .hljs-bullet) { color: #005cc5; }
+	:global(.tiptap pre code .hljs-regexp) { color: #032f62; }
+	:global(.tiptap pre code .hljs-params) { color: #24292e; }
+	:global(.tiptap pre code .hljs-punctuation) { color: #24292e; }
+	:global(.tiptap pre code .hljs-property) { color: #005cc5; }
+	:global(.tiptap pre code .hljs-selector-class) { color: #6f42c1; }
+	:global(.tiptap pre code .hljs-selector-id) { color: #005cc5; }
+	:global(.tiptap pre code .hljs-operator) { color: #d73a49; }
+
+	/* Syntax highlighting — dark mode */
+	:global(.dark .tiptap pre code .hljs-keyword),
+	:global(.dark .tiptap pre code .hljs-selector-tag),
+	:global(.dark .tiptap pre code .hljs-built_in) { color: #ff7b72; }
+	:global(.dark .tiptap pre code .hljs-string),
+	:global(.dark .tiptap pre code .hljs-addition) { color: #a5d6ff; }
+	:global(.dark .tiptap pre code .hljs-number),
+	:global(.dark .tiptap pre code .hljs-literal) { color: #79c0ff; }
+	:global(.dark .tiptap pre code .hljs-comment),
+	:global(.dark .tiptap pre code .hljs-quote) { color: #8b949e; font-style: italic; }
+	:global(.dark .tiptap pre code .hljs-function),
+	:global(.dark .tiptap pre code .hljs-title) { color: #d2a8ff; }
+	:global(.dark .tiptap pre code .hljs-type),
+	:global(.dark .tiptap pre code .hljs-title.class_) { color: #ffa657; }
+	:global(.dark .tiptap pre code .hljs-variable),
+	:global(.dark .tiptap pre code .hljs-template-variable) { color: #ffa657; }
+	:global(.dark .tiptap pre code .hljs-attr),
+	:global(.dark .tiptap pre code .hljs-attribute) { color: #79c0ff; }
+	:global(.dark .tiptap pre code .hljs-tag) { color: #7ee787; }
+	:global(.dark .tiptap pre code .hljs-name) { color: #7ee787; }
+	:global(.dark .tiptap pre code .hljs-meta) { color: #79c0ff; }
+	:global(.dark .tiptap pre code .hljs-deletion) { color: #ffdcd7; background: #67060c; }
+	:global(.dark .tiptap pre code .hljs-symbol),
+	:global(.dark .tiptap pre code .hljs-bullet) { color: #79c0ff; }
+	:global(.dark .tiptap pre code .hljs-regexp) { color: #a5d6ff; }
+	:global(.dark .tiptap pre code .hljs-params) { color: #c9d1d9; }
+	:global(.dark .tiptap pre code .hljs-punctuation) { color: #c9d1d9; }
+	:global(.dark .tiptap pre code .hljs-property) { color: #79c0ff; }
+	:global(.dark .tiptap pre code .hljs-selector-class) { color: #d2a8ff; }
+	:global(.dark .tiptap pre code .hljs-selector-id) { color: #79c0ff; }
+	:global(.dark .tiptap pre code .hljs-operator) { color: #ff7b72; }
 
 	.code-lang-overlay {
 		position: fixed;
