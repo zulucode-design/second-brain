@@ -2,18 +2,32 @@
 
 A local markdown note-taking app built with Tauri, SvelteKit, and Rust.
 
-Your notes are stored as standard Markdown files on your local filesystem. No cloud, no lock-in.
+Your notes are stored as standard Markdown files on your local filesystem.
+No cloud, no lock-in.
 
 ## Download
 
-| Platform | Download | Notes |
-|----------|----------|-------|
-| Linux (Arch/rolling) | [HelixNotes_1.1.1_amd64.AppImage](https://download.helixnotes.com/releases/v1.1.1/HelixNotes_1.1.1_amd64.AppImage) | Best for Arch, Fedora, openSUSE |
-| Linux (Debian/Ubuntu/Mint) | [HelixNotes_1.1.1_amd64.deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.1/HelixNotes_1.1.1_amd64.deb) | Ubuntu 22.04+ |
-| Windows | [HelixNotes_1.1.1_x64-setup.exe](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.1/HelixNotes_1.1.1_x64-setup.exe) | Windows 10/11 |
-| macOS | [HelixNotes_1.1.1_x64.dmg](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.1/HelixNotes_1.1.1_x64.dmg) | macOS 12+ (Intel, runs on Apple Silicon via Rosetta) |
+### Linux
 
-See all releases: [codeberg.org/ArkHost/HelixNotes/releases](https://codeberg.org/ArkHost/HelixNotes/releases)
+#### Arch / Manjaro / Fedora / openSUSE
+
+[Download AppImage](https://download.helixnotes.com/releases/v1.1.1/HelixNotes_1.1.1_amd64.AppImage)
+
+#### Debian / Ubuntu / Mint
+
+[Download .deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.1/HelixNotes_1.1.1_amd64.deb) — Ubuntu 22.04+
+
+### Windows
+
+[Download Installer](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.1/HelixNotes_1.1.1_x64-setup.exe) — Windows 10/11
+
+### macOS
+
+[Download .dmg](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.1/HelixNotes_1.1.1_x64.dmg) — macOS 12+ (Intel, runs on Apple Silicon via Rosetta)
+
+---
+
+All releases: [codeberg.org/ArkHost/HelixNotes/releases](https://codeberg.org/ArkHost/HelixNotes/releases)
 
 ## Features
 
@@ -65,4 +79,4 @@ pnpm tauri build
 
 ## License
 
-[AGPL-3.0](LICENSE)
+[AGPL-3.0](https://codeberg.org/ArkHost/HelixNotes/src/branch/main/LICENSE)
