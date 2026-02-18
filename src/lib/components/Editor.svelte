@@ -52,6 +52,9 @@
 	let editor: Editor | null = null;
 	let editorReady = $state(false);
 	let sourceContent = $state('');
+	let sourceHistory: Array<{ content: string; cursor: number }> = [];
+	let sourceHistoryIndex = -1;
+	let sourceHistoryTimer: ReturnType<typeof setTimeout> | null = null;
 	let loadedPath = '';
 	let pendingContent = $state<string | null>(null);
 	let ignoreNextUpdate = false;
@@ -181,6 +184,8 @@
 	let linkModal = $state(false);
 	let linkModalUrl = $state('');
 	let linkModalInput = $state<HTMLInputElement>(null!);
+	let linkSelectionFrom = 0;
+	let linkSelectionTo = 0;
 	let textContextMenu = $state<{ x: number; y: number } | null>(null);
 	let tableContextMenu = $state<{ x: number; y: number } | null>(null);
 	let tablePickerOpen = $state(false);
@@ -1195,6 +1200,7 @@
 		if (editor) editor.setEditable(!shouldBeReadOnly);
 		if ($sourceMode) {
 			sourceContent = stripTitleH1(content);
+			resetSourceHistory(sourceContent);
 			isLoadingNote = false;
 		} else if (editorElement && editor) {
 			// Editor already exists, just swap content
@@ -1470,7 +1476,7 @@
 			} else if (child.type.name === 'mathInline') {
 				parts.push(`$${child.attrs.tex || ''}$`);
 			} else if (child.type.name === 'hardBreak') {
-				parts.push('\n');
+				parts.push('  \n');
 			}
 		});
 		return parts.join('');
@@ -1546,6 +1552,69 @@
 		const lineHeight = parseFloat(getComputedStyle(sourceElement).lineHeight) || 20;
 		const targetScroll = (linesBefore - 1) * lineHeight - sourceElement.clientHeight / 2;
 		sourceElement.scrollTop = Math.max(0, targetScroll);
+	}
+
+	function resetSourceHistory(content: string) {
+		sourceHistory = [{ content, cursor: content.length }];
+		sourceHistoryIndex = 0;
+		if (sourceHistoryTimer) {
+			clearTimeout(sourceHistoryTimer);
+			sourceHistoryTimer = null;
+		}
+	}
+
+	function pushSourceHistoryImmediate() {
+		if (!sourceElement) return;
+		if (sourceHistoryTimer) {
+			clearTimeout(sourceHistoryTimer);
+			sourceHistoryTimer = null;
+		}
+		const entry = { content: sourceContent, cursor: sourceElement.selectionStart };
+		// Don't push duplicate
+		if (sourceHistoryIndex >= 0 && sourceHistory[sourceHistoryIndex]?.content === entry.content) return;
+		// Truncate any redo history
+		sourceHistory = sourceHistory.slice(0, sourceHistoryIndex + 1);
+		sourceHistory.push(entry);
+		sourceHistoryIndex++;
+		// Limit stack size
+		if (sourceHistory.length > 200) {
+			sourceHistory.shift();
+			sourceHistoryIndex--;
+		}
+	}
+
+	function pushSourceHistoryDebounced() {
+		if (sourceHistoryTimer) clearTimeout(sourceHistoryTimer);
+		sourceHistoryTimer = setTimeout(() => {
+			sourceHistoryTimer = null;
+			pushSourceHistoryImmediate();
+		}, 300);
+	}
+
+	function sourceUndo() {
+		// Flush any pending debounced snapshot first
+		if (sourceHistoryTimer) {
+			clearTimeout(sourceHistoryTimer);
+			sourceHistoryTimer = null;
+			pushSourceHistoryImmediate();
+		}
+		if (sourceHistoryIndex <= 0) return;
+		sourceHistoryIndex--;
+		const entry = sourceHistory[sourceHistoryIndex];
+		sourceContent = entry.content;
+		tick().then(() => {
+			sourceElement?.setSelectionRange(entry.cursor, entry.cursor);
+		});
+	}
+
+	function sourceRedo() {
+		if (sourceHistoryIndex >= sourceHistory.length - 1) return;
+		sourceHistoryIndex++;
+		const entry = sourceHistory[sourceHistoryIndex];
+		sourceContent = entry.content;
+		tick().then(() => {
+			sourceElement?.setSelectionRange(entry.cursor, entry.cursor);
+		});
 	}
 
 	function applySearchDecorations() {
@@ -1989,6 +2058,14 @@
 							}
 						}
 					},
+					// Prevent native text drag — it causes copy-instead-of-move in Tauri's webview.
+					// File drops from OS are handled by Tauri's onDragDropEvent listener instead.
+					dragstart: (_view, event) => {
+						const dt = event.dataTransfer;
+						if (!dt || dt.files.length === 0) {
+							event.preventDefault();
+						}
+					},
 				},
 				handleDrop: (_view, event) => handleFileDrop(event),
 				handlePaste: (_view, event) => handleFilePaste(event),
@@ -2023,8 +2100,11 @@
 		}
 	}
 
-	function addLinkFromToolbar() {
+	export function addLinkFromToolbar() {
 		if (!editor) return;
+		const { from, to } = editor.state.selection;
+		linkSelectionFrom = from;
+		linkSelectionTo = to;
 		const previousUrl = editor.getAttributes('link').href || '';
 		linkModalUrl = previousUrl;
 		linkModal = true;
@@ -2033,11 +2113,14 @@
 
 	function linkModalConfirm() {
 		if (!editor) return;
-		const url = linkModalUrl.trim();
+		let url = linkModalUrl.trim();
 		if (url === '') {
-			editor.chain().focus().extendMarkRange('link').unsetLink().run();
+			editor.chain().focus().setTextSelection({ from: linkSelectionFrom, to: linkSelectionTo }).extendMarkRange('link').unsetLink().run();
 		} else {
-			editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+			if (url && !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url) && !url.startsWith('/') && !url.startsWith('#')) {
+				url = 'https://' + url;
+			}
+			editor.chain().focus().setTextSelection({ from: linkSelectionFrom, to: linkSelectionTo }).setMark('link', { href: url }).run();
 		}
 		linkModal = false;
 		linkModalUrl = '';
@@ -2743,6 +2826,7 @@
 		if (isSource && !lastSourceMode) {
 			// Switching TO source: extract markdown from editor
 			sourceContent = editor ? editorToMarkdown() : ($activeNote?.content ?? '');
+			resetSourceHistory(sourceContent);
 			lastSourceMode = true;
 		} else if (!isSource && lastSourceMode) {
 			// Switching BACK to WYSIWYG: destroy old editor (its DOM element is gone),
@@ -3016,10 +3100,12 @@
 			<div class="editor-body">
 				{#if $sourceMode}
 					{#if $appConfig?.show_line_numbers}
-						<div class="line-numbers" aria-hidden="true">
-							{#each sourceContent.split('\n') as _, i}
-								<span>{i + 1}</span>
-							{/each}
+						<div class="line-numbers-clip" aria-hidden="true">
+							<div class="line-numbers">
+								{#each sourceContent.split('\n') as _, i}
+									<span>{i + 1}</span>
+								{/each}
+							</div>
 						</div>
 					{/if}
 					<textarea
@@ -3032,10 +3118,42 @@
 						oninput={() => {
 							$editorDirty = true;
 							autoSave();
+							pushSourceHistoryDebounced();
 						}}
 						onkeydown={(e) => {
+							const mod = e.ctrlKey || e.metaKey;
+							// Shift+Enter: insert two trailing spaces + newline for markdown hard break
+							if (e.key === 'Enter' && e.shiftKey && !mod) {
+								e.preventDefault();
+								const ta = sourceElement;
+								const start = ta.selectionStart;
+								const end = ta.selectionEnd;
+								const val = ta.value;
+								sourceContent = val.slice(0, start) + '  \n' + val.slice(end);
+								tick().then(() => {
+									const newPos = start + 3;
+									ta.setSelectionRange(newPos, newPos);
+								});
+								$editorDirty = true;
+								autoSave();
+								pushSourceHistoryDebounced();
+								return;
+							}
+							// Undo
+							if (mod && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+								e.preventDefault();
+								sourceUndo();
+								return;
+							}
+							// Redo
+							if ((mod && (e.key === 'z' || e.key === 'Z') && e.shiftKey) || (mod && (e.key === 'y' || e.key === 'Y'))) {
+								e.preventDefault();
+								sourceRedo();
+								return;
+							}
 							if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
 								e.preventDefault();
+								pushSourceHistoryImmediate();
 								const ta = sourceElement;
 								const val = ta.value;
 								const start = ta.selectionStart;
@@ -3055,6 +3173,7 @@
 									tick().then(() => {
 										const newPos = lines.slice(0, curLine - 1).join('\n').length + 1 + (start - pos);
 										ta.setSelectionRange(newPos, newPos);
+										pushSourceHistoryImmediate();
 									});
 								} else if (e.key === 'ArrowDown' && curLine < lines.length - 1) {
 									const tmp = lines[curLine];
@@ -3064,6 +3183,7 @@
 									tick().then(() => {
 										const newPos = lines.slice(0, curLine + 1).join('\n').length + 1 + (start - pos);
 										ta.setSelectionRange(newPos, newPos);
+										pushSourceHistoryImmediate();
 									});
 								}
 								$editorDirty = true;
@@ -3072,8 +3192,11 @@
 						}}
 						onscroll={() => {
 							if ($appConfig?.show_line_numbers) {
-								const gutter = sourceElement?.previousElementSibling as HTMLElement;
-								if (gutter) gutter.scrollTop = sourceElement.scrollTop;
+								const clip = sourceElement?.previousElementSibling as HTMLElement;
+								const gutter = clip?.firstElementChild as HTMLElement;
+								if (gutter) {
+									gutter.style.transform = `translateY(-${sourceElement.scrollTop}px)`;
+								}
 							}
 						}}
 						spellcheck="false"
@@ -3985,8 +4108,8 @@
 				bind:this={linkModalInput}
 				bind:value={linkModalUrl}
 				onkeydown={(e) => {
-					if (e.key === 'Enter') linkModalConfirm();
-					if (e.key === 'Escape') linkModalCancel();
+					if (e.key === 'Enter') { e.preventDefault(); linkModalConfirm(); }
+					if (e.key === 'Escape') { e.preventDefault(); linkModalCancel(); }
 				}}
 				placeholder="https://example.com"
 			/>
@@ -4573,23 +4696,28 @@
 		resize: none;
 		outline: none;
 		padding: 0;
+		margin: 0;
 		user-select: text;
+		white-space: pre;
+		overflow-x: auto;
 	}
 
 	.source-editor.with-line-numbers {
 		padding-left: 48px;
 	}
 
-	.line-numbers {
+	.line-numbers-clip {
 		position: absolute;
 		left: 0;
 		top: 0;
 		bottom: 0;
 		width: 44px;
 		overflow: hidden;
-		display: flex;
-		flex-direction: column;
-		padding-top: 0;
+		pointer-events: none;
+	}
+
+	.line-numbers {
+		padding-top: 8px;
 		font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
 		font-size: var(--editor-font-size, 14px);
 		line-height: 1.6;
@@ -4597,10 +4725,11 @@
 		opacity: 0.5;
 		text-align: right;
 		user-select: none;
-		pointer-events: none;
+		will-change: transform;
 	}
 
 	.line-numbers span {
+		display: block;
 		padding-right: 12px;
 	}
 

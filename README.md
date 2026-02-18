@@ -62,6 +62,8 @@ All releases: [codeberg.org/ArkHost/HelixNotes/releases](https://codeberg.org/Ar
 - **View mode** — read-only toggle for distraction-free reading
 - **Local** — everything stays on your machine
 
+Full documentation: [helixnotes.com/docs](https://helixnotes.com/docs.html)
+
 ## Tech Stack
 
 - **Frontend**: SvelteKit (Svelte 5) + TailwindCSS v4 + TipTap v3

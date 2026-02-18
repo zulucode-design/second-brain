@@ -170,6 +170,10 @@
 			e.preventDefault();
 			editor?.forceSave();
 		}
+		if (mod && e.key === 'k' && !e.shiftKey && $activeNotePath && !$sourceMode) {
+			e.preventDefault();
+			editor?.addLinkFromToolbar();
+		}
 		if (mod && e.shiftKey && e.key === 'M') {
 			e.preventDefault();
 			$sourceMode = !$sourceMode;
