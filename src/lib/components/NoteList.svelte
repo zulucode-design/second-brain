@@ -40,6 +40,7 @@
 	} = $props();
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
+	const isMobile = /android|ios/i.test(navigator.userAgent);
 
 	let compact = $derived($appConfig?.compact_notes ?? false);
 	let contextMenu = $state<{ x: number; y: number; note: NoteEntry } | null>(null);
@@ -456,6 +457,12 @@
 		editValue = note.meta.title;
 	}
 
+	function getNotebookPath(note: NoteEntry): string {
+		if ($viewMode === 'notebook') return '';
+		const parts = note.relative_path.replace(/\.md$/, '').split('/');
+		return parts.length > 1 ? parts.slice(0, -1).join('/') : '';
+	}
+
 	function handleNoteClick(e: MouseEvent, note: NoteEntry) {
 		if (e.ctrlKey || e.metaKey) {
 			// Toggle individual selection
@@ -575,7 +582,7 @@
 	}
 }} />
 
-<div class="note-list">
+<div class="note-list" class:mobile={isMobile}>
 	<div class="list-header">
 		<span class="list-title">{viewTitle}</span>
 		<div class="list-actions">
@@ -728,7 +735,7 @@
 					ondragend={() => { qaDragFrom = null; qaDragOver = null; }}
 				>
 					{#if compact}
-						<div class="note-compact-row">
+						<div class="note-compact-row" title={getNotebookPath(note) ? `${getNotebookPath(note)}/${note.meta.title}` : note.meta.title}>
 							<span class="note-title">
 								{#if note.meta.pinned}
 									<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pin-icon">
@@ -737,10 +744,13 @@
 								{/if}
 								{note.meta.title}
 							</span>
+							{#if getNotebookPath(note)}
+								<span class="note-notebook">{getNotebookPath(note)}</span>
+							{/if}
 							<span class="note-date-compact">{formatRelativeTime(note.meta.modified)}</span>
 						</div>
 					{:else}
-						<div class="note-title">
+						<div class="note-title" title={getNotebookPath(note) ? `${getNotebookPath(note)}/${note.meta.title}` : note.meta.title}>
 							{#if note.meta.pinned}
 								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pin-icon">
 									<path d="M12 17v5"/><path d="M9 2h6l-1 7h4l-2 4H8l-2-4h4L9 2z"/>
@@ -750,6 +760,10 @@
 						</div>
 						<div class="note-preview">{note.preview}</div>
 						<div class="note-meta">
+							{#if getNotebookPath(note)}
+								<span class="note-notebook">{getNotebookPath(note)}</span>
+								<span class="note-meta-sep">&middot;</span>
+							{/if}
 							<span class="note-date">{formatRelativeTime(note.meta.modified)}</span>
 							{#if note.meta.tags.length > 0}
 								<span class="note-tags">
@@ -1242,6 +1256,26 @@
 		margin-top: 4px;
 	}
 
+	.note-notebook {
+		font-size: 0.78em;
+		color: var(--text-tertiary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 140px;
+	}
+
+	.note-meta-sep {
+		color: var(--text-tertiary);
+		font-size: 0.78em;
+	}
+
+	.note-compact-row .note-notebook {
+		font-size: 10px;
+		max-width: 80px;
+		flex-shrink: 0;
+	}
+
 	.note-date {
 		font-size: 0.78em;
 		color: var(--text-tertiary);
@@ -1474,5 +1508,133 @@
 
 	.note-item.qa-drag-below {
 		border-bottom: 2px solid var(--accent);
+	}
+
+	/* ═══ MOBILE (class-based for Android high-DPI) ═══ */
+	.note-list.mobile {
+		border-right: none;
+	}
+
+	.note-list.mobile .list-header {
+		padding: 12px 16px;
+	}
+
+	.note-list.mobile .list-title {
+		font-size: 16px;
+	}
+
+	.note-list.mobile .icon-btn {
+		min-width: 44px;
+		min-height: 44px;
+		padding: 10px;
+	}
+
+	.note-list.mobile .list-content {
+		padding: 4px 8px;
+	}
+
+	.note-list.mobile .note-item {
+		padding: 14px 16px;
+		min-height: 56px;
+		border-radius: 10px;
+		margin-bottom: 2px;
+	}
+
+	.note-list.mobile .note-item.compact {
+		padding: 10px 16px;
+		min-height: 48px;
+	}
+
+	.note-list.mobile .note-title {
+		font-size: 15px;
+	}
+
+	.note-list.mobile .note-preview {
+		font-size: 13px;
+		margin-top: 4px;
+	}
+
+	.note-list.mobile .note-meta {
+		margin-top: 6px;
+	}
+
+	.note-list.mobile .note-date {
+		font-size: 12px;
+	}
+
+	.note-list.mobile .mini-tag {
+		font-size: 11px;
+		padding: 2px 6px;
+	}
+
+	.note-list.mobile .rename-input {
+		padding: 10px 12px;
+		font-size: 15px;
+	}
+
+	.note-list.mobile .empty-state {
+		padding: 64px 24px;
+		font-size: 15px;
+	}
+
+	.note-list.mobile .btn-link {
+		font-size: 15px;
+	}
+
+	.note-list.mobile .selection-bar {
+		padding: 8px 16px;
+	}
+
+	.note-list.mobile .selection-count {
+		font-size: 13px;
+	}
+
+	.note-list.mobile .selection-action {
+		padding: 6px 14px;
+		font-size: 13px;
+		min-height: 36px;
+	}
+
+	.note-list.mobile .context-menu {
+		min-width: 220px;
+		border-radius: 12px;
+		padding: 6px;
+	}
+
+	.note-list.mobile .context-menu button {
+		padding: 12px 16px;
+		font-size: 15px;
+		min-height: 44px;
+		border-radius: 8px;
+	}
+
+	.note-list.mobile .sort-menu {
+		min-width: 220px;
+		border-radius: 12px;
+		padding: 6px;
+	}
+
+	.note-list.mobile .sort-menu button {
+		padding: 12px 16px;
+		font-size: 15px;
+		min-height: 44px;
+		border-radius: 8px;
+	}
+
+	.note-list.mobile .batch-move-picker {
+		min-width: 80vw;
+		max-width: 90vw;
+		max-height: 60vh;
+	}
+
+	.note-list.mobile .batch-move-header {
+		padding: 14px 16px;
+		font-size: 15px;
+	}
+
+	.note-list.mobile .batch-move-picker .move-picker-list button {
+		padding: 12px 16px;
+		font-size: 15px;
+		min-height: 44px;
 	}
 </style>

@@ -5,7 +5,10 @@ use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
 use tantivy::collector::TopDocs;
+#[cfg(not(target_os = "android"))]
 use tantivy::directory::MmapDirectory;
+#[cfg(target_os = "android")]
+use tantivy::directory::RamDirectory;
 use tantivy::query::QueryParser;
 use tantivy::schema::*;
 use tantivy::{Index, IndexWriter, TantivyDocument};
@@ -24,9 +27,6 @@ pub struct SearchIndex {
 
 impl SearchIndex {
     pub fn new(vault_path: &str) -> Result<Self, String> {
-        let index_dir = helixnotes_dir(vault_path).join("search_index");
-        fs::create_dir_all(&index_dir).map_err(|e| e.to_string())?;
-
         let mut schema_builder = Schema::builder();
         let path_field = schema_builder.add_text_field("path", STRING | STORED);
         let title_field = schema_builder.add_text_field("title", TEXT | STORED);
@@ -34,12 +34,27 @@ impl SearchIndex {
         let tags_field = schema_builder.add_text_field("tags", TEXT | STORED);
         let schema = schema_builder.build();
 
-        let dir = MmapDirectory::open(&index_dir).map_err(|e| e.to_string())?;
-        let index = Index::open_or_create(dir, schema.clone()).map_err(|e| e.to_string())?;
+        // Android: use in-memory index (flock doesn't work on /storage/emulated FUSE filesystem)
+        // Desktop: use mmap directory for persistent index on disk
+        #[cfg(target_os = "android")]
+        let index = {
+            let dir = RamDirectory::create();
+            Index::open_or_create(dir, schema.clone()).map_err(|e| e.to_string())?
+        };
+        #[cfg(not(target_os = "android"))]
+        let index = {
+            let index_dir = helixnotes_dir(vault_path).join("search_index");
+            fs::create_dir_all(&index_dir).map_err(|e| e.to_string())?;
+            let dir = MmapDirectory::open(&index_dir).map_err(|e| e.to_string())?;
+            Index::open_or_create(dir, schema.clone()).map_err(|e| e.to_string())?
+        };
 
-        let writer = index
-            .writer(50_000_000)
-            .map_err(|e| e.to_string())?;
+        #[cfg(target_os = "android")]
+        let heap_size = 15_000_000;
+        #[cfg(not(target_os = "android"))]
+        let heap_size = 50_000_000;
+
+        let writer = index.writer(heap_size).map_err(|e| e.to_string())?;
 
         Ok(Self {
             index,
@@ -135,8 +150,10 @@ impl SearchIndex {
         let reader = self.index.reader().map_err(|e| e.to_string())?;
         let searcher = reader.searcher();
 
-        let query_parser =
-            QueryParser::for_index(&self.index, vec![self.title_field, self.body_field, self.tags_field]);
+        let query_parser = QueryParser::for_index(
+            &self.index,
+            vec![self.title_field, self.body_field, self.tags_field],
+        );
 
         let query = query_parser
             .parse_query(query_str)

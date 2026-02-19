@@ -44,7 +44,6 @@
         { "url": "mailto:*" }
       ]
     },
-    "opener:allow-reveal-item-in-dir",
-    "updater:default"
+    "opener:allow-reveal-item-in-dir"
   ]
 }

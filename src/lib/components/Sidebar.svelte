@@ -28,6 +28,7 @@
 	} = $props();
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
+	const isMobile = /android|ios/i.test(navigator.userAgent);
 
 	let editingNotebook = $state<string | null>(null);
 	let editValue = $state('');
@@ -68,6 +69,11 @@
 	}
 
 	function selectNotebook(nb: NotebookEntry) {
+		// Deselect if clicking the already-active notebook
+		if ($viewMode === 'notebook' && $activeNotebook?.path === nb.path) {
+			selectAllNotes();
+			return;
+		}
 		$viewMode = 'notebook';
 		$activeNotebook = nb;
 		$activeTag = null;
@@ -95,15 +101,30 @@
 		onViewChanged();
 	}
 
+	let newNotebookParent = $state<NotebookEntry | null>(null);
+
 	async function handleCreateNotebook() {
 		if (!newNotebookName.trim()) return;
 		try {
-			await createNotebook(null, newNotebookName.trim());
+			const parentRel = newNotebookParent?.relative_path ?? null;
+			await createNotebook(parentRel, newNotebookName.trim());
 			newNotebookName = '';
 			showNewNotebook = false;
+			newNotebookParent = null;
 			await refresh();
 		} catch (e) {
 			console.error('Failed to create notebook:', e);
+		}
+	}
+
+	function startNewSubNotebook(nb: NotebookEntry) {
+		contextMenu = null;
+		newNotebookParent = nb;
+		newNotebookName = '';
+		showNewNotebook = true;
+		// Expand parent so the new child is visible
+		if ($collapsedNotebooks.includes(nb.path)) {
+			$collapsedNotebooks = $collapsedNotebooks.filter(p => p !== nb.path);
 		}
 	}
 
@@ -288,7 +309,7 @@
 
 <svelte:window onclick={handleWindowClick} />
 
-<aside class="sidebar" class:collapsed={$sidebarCollapsed}>
+<aside class="sidebar" class:collapsed={$sidebarCollapsed} class:mobile={isMobile}>
 	<div class="sidebar-header">
 		<button class="collapse-btn" onclick={() => ($sidebarCollapsed = !$sidebarCollapsed)} title="Toggle sidebar">
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -368,7 +389,14 @@
 				}}
 			>
 				<span class="section-title">Notebooks</span>
-				<button class="icon-btn-sm" onclick={() => (showNewNotebook = !showNewNotebook)} title="New notebook">
+				<button class="icon-btn-sm" onclick={() => {
+					if (showNewNotebook) {
+						showNewNotebook = false; newNotebookName = ''; newNotebookParent = null;
+					} else {
+						newNotebookParent = ($viewMode === 'notebook' && $activeNotebook) ? $activeNotebook : null;
+						showNewNotebook = true;
+					}
+				}} title={$viewMode === 'notebook' && $activeNotebook ? `New notebook inside ${$activeNotebook.name}` : 'New notebook'}>
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
 					</svg>
@@ -377,13 +405,16 @@
 
 			{#if showNewNotebook}
 				<div class="new-notebook-input">
+					{#if newNotebookParent}
+						<span class="new-notebook-parent">{newNotebookParent.name}/</span>
+					{/if}
 					<input
 						type="text"
 						bind:value={newNotebookName}
-						placeholder="Notebook name..."
+						placeholder={newNotebookParent ? 'Sub-notebook name...' : 'Notebook name...'}
 						onkeydown={(e) => {
 							if (e.key === 'Enter') handleCreateNotebook();
-							if (e.key === 'Escape') { showNewNotebook = false; newNotebookName = ''; }
+							if (e.key === 'Escape') { showNewNotebook = false; newNotebookName = ''; newNotebookParent = null; }
 						}}
 					/>
 				</div>
@@ -444,6 +475,10 @@
 {#if contextMenu}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="context-menu" style="left: {contextMenu.x}px; top: {contextMenu.y}px" onmousedown={(e) => e.stopPropagation()}>
+		<button onclick={() => startNewSubNotebook(contextMenu!.notebook)}>
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" /><line x1="12" y1="11" x2="12" y2="17" /><line x1="9" y1="14" x2="15" y2="14" /></svg>
+			New Sub-notebook
+		</button>
 		<button onclick={() => startRename(contextMenu!.notebook)}>
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
 			Rename
@@ -699,9 +734,35 @@
 
 	.new-notebook-input {
 		padding: 2px 8px;
+		display: flex;
+		align-items: center;
+		gap: 0;
+		border: 1px solid var(--accent);
+		border-radius: 4px;
+		background: var(--bg-primary);
+		overflow: hidden;
 	}
 
-	.new-notebook-input input, .rename-input {
+	.new-notebook-parent {
+		padding: 4px 0 4px 8px;
+		color: var(--text-tertiary);
+		font-size: inherit;
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+
+	.new-notebook-input input {
+		flex: 1;
+		min-width: 0;
+		padding: 4px 8px;
+		border: none;
+		background: transparent;
+		color: var(--text-primary);
+		font-size: inherit;
+		outline: none;
+	}
+
+	.rename-input {
 		width: 100%;
 		padding: 4px 8px;
 		border: 1px solid var(--accent);
@@ -956,5 +1017,129 @@
 
 	.delete-confirm-btn:hover {
 		opacity: 0.9;
+	}
+
+	/* ═══ MOBILE (class-based for Android high-DPI) ═══ */
+	.sidebar.mobile {
+		width: 100% !important;
+		min-width: 100%;
+		border-right: none;
+	}
+
+	.sidebar.mobile.collapsed {
+		width: 100% !important;
+		min-width: 100%;
+		max-width: 100%;
+	}
+
+	.sidebar.mobile .sidebar-header {
+		padding: 10px 12px;
+	}
+
+	.sidebar.mobile .collapse-btn {
+		display: none;
+	}
+
+	.sidebar.mobile .nav-item {
+		padding: 12px 14px;
+		font-size: 15px;
+		min-height: 48px;
+		gap: 12px;
+	}
+
+	.sidebar.mobile .nav-item svg {
+		width: 20px;
+		height: 20px;
+	}
+
+	.sidebar.mobile .section-header {
+		padding: 12px 16px 6px;
+		min-height: 44px;
+	}
+
+	.sidebar.mobile .section-title {
+		font-size: 12px;
+	}
+
+	.sidebar.mobile .icon-btn,
+	.sidebar.mobile .icon-btn-sm {
+		min-width: 44px;
+		min-height: 44px;
+		padding: 10px;
+	}
+
+	.sidebar.mobile .notebook-item {
+		padding: 12px 12px;
+		min-height: 48px;
+		gap: 10px;
+		font-size: 15px;
+	}
+
+	.sidebar.mobile .notebook-icon {
+		width: 24px;
+		height: 24px;
+	}
+
+	.sidebar.mobile .new-notebook-input {
+		padding: 4px 12px;
+	}
+
+	.sidebar.mobile .new-notebook-parent {
+		padding: 10px 0 10px 12px;
+		font-size: 15px;
+	}
+
+	.sidebar.mobile .new-notebook-input input {
+		padding: 10px 12px;
+		font-size: 15px;
+	}
+
+	.sidebar.mobile .rename-input {
+		padding: 10px 12px;
+		font-size: 15px;
+	}
+
+	.sidebar.mobile .tag-item {
+		padding: 10px 16px;
+		min-height: 44px;
+		font-size: 14px;
+	}
+
+	.sidebar.mobile .sidebar-footer {
+		padding: 8px 12px;
+		display: none;
+	}
+
+	.sidebar.mobile .context-menu {
+		min-width: 200px;
+		border-radius: 12px;
+		padding: 6px;
+	}
+
+	.sidebar.mobile .context-menu button {
+		padding: 12px 16px;
+		font-size: 15px;
+		min-height: 44px;
+		border-radius: 8px;
+	}
+
+	.sidebar.mobile .delete-confirm {
+		max-width: calc(100vw - 40px);
+		padding: 24px;
+	}
+
+	.sidebar.mobile .delete-confirm h4 {
+		font-size: 16px;
+	}
+
+	.sidebar.mobile .delete-confirm p {
+		font-size: 14px;
+	}
+
+	.sidebar.mobile .delete-confirm-cancel,
+	.sidebar.mobile .delete-confirm-btn {
+		padding: 10px 20px;
+		font-size: 14px;
+		min-height: 44px;
 	}
 </style>

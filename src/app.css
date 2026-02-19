@@ -158,3 +158,24 @@ body.resizing .ProseMirror {
 body.resizing {
     user-select: none;
 }
+
+/* ── Mobile (Android/iOS) ── */
+@media (max-width: 768px) {
+    html,
+    body {
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
+        padding-left: env(safe-area-inset-left);
+        padding-right: env(safe-area-inset-right);
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+    }
+
+    ::-webkit-scrollbar {
+        display: none;
+    }
+
+    .resize-handle {
+        display: none !important;
+    }
+}

@@ -38,6 +38,11 @@ export const activeNotePath = writable<string | null>(null);
 export const activeNotebook = writable<NotebookEntry | null>(null);
 export const activeTag = writable<string | null>(null);
 
+// Mobile state
+export const mobileView = writable<"sidebar" | "notelist" | "editor">(
+  "sidebar",
+);
+
 // Editor state
 export const editorDirty = writable(false);
 export const sourceMode = writable(false);

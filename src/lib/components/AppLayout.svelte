@@ -23,14 +23,17 @@
 		readOnly,
 		activeNote,
 		activeNotePath,
+		activeNotebook,
 		editorDirty,
 		showInfo,
 		showSettings,
-		sourceMode
+		sourceMode,
+		mobileView
 	} from '$lib/stores/app';
 
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
+	const isMobile = /android|ios/i.test(navigator.userAgent);
 	import { loadVaultState, saveVaultState, readNote, createDailyNote } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
 	import type { VaultState, FileEvent } from '$lib/types';
@@ -98,15 +101,19 @@
 
 	function handleNoteSelected(path: string, content: string) {
 		editor?.loadNote(path, content);
+		if (isMobile) $mobileView = 'editor';
 	}
 
 	function handleViewChanged() {
 		noteList?.refresh(true);
+		if (isMobile) $mobileView = 'notelist';
 	}
 
 	async function createAndFocusNote() {
+		if (isMobile && $mobileView !== 'notelist') $mobileView = 'notelist';
 		await noteList?.handleCreateNote();
 		editor?.focusTitle();
+		if (isMobile) $mobileView = 'editor';
 	}
 
 	async function handleDailyNote() {
@@ -119,9 +126,15 @@
 			editor?.loadNote(entry.path, content.content);
 			noteList?.refresh();
 			sidebar?.refresh();
+			if (isMobile) $mobileView = 'editor';
 		} catch (e) {
 			console.error('Failed to create/open daily note:', e);
 		}
+	}
+
+	function mobileBack() {
+		if ($mobileView === 'editor') $mobileView = 'notelist';
+		else if ($mobileView === 'notelist') $mobileView = 'sidebar';
 	}
 
 	function handleMouseDown(e: MouseEvent) {
@@ -233,69 +246,187 @@
 	});
 </script>
 
-<svelte:window onkeydown={handleKeydown} onmousedown={handleMouseDown} />
+<svelte:window onkeydown={handleKeydown} onmousedown={isMobile ? undefined : handleMouseDown} />
 
-<div class="app-shell">
-	{#if $focusMode}
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="focus-topbar" class:macos={isMac} onmousedown={(e) => { if (!(e.target as HTMLElement).closest('button')) appWindow.startDragging(); }}>
-			<span class="focus-title">{$activeNote?.meta.title || 'Untitled'}</span>
-			<div class="focus-controls">
-				<button class="focus-btn focus-active" onclick={() => ($focusMode = false)} title="Exit focus mode (Escape)">
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-						<path d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/>
+{#if isMobile}
+	<!-- ═══ MOBILE LAYOUT ═══ -->
+	<div class="mobile-shell">
+		<!-- Mobile Header -->
+		<div class="mobile-header">
+			{#if $mobileView !== 'sidebar'}
+				<button class="mobile-header-btn" onclick={mobileBack}>
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M15 18l-6-6 6-6"/>
 					</svg>
 				</button>
-				<button class="focus-btn" class:focus-active={$readOnly} onclick={() => ($readOnly = !$readOnly)} title={$readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}>
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-						{#if $readOnly}
-							<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-							<circle cx="12" cy="12" r="3" />
-						{:else}
-							<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94" />
-							<path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19" />
-							<line x1="1" y1="1" x2="23" y2="23" />
-						{/if}
+			{:else}
+				<div class="mobile-header-brand">
+					<svg width="22" height="22" viewBox="0 0 48 48" fill="none">
+						<rect width="48" height="48" rx="12" fill="var(--accent)" />
+						<circle cx="16" cy="16" r="3.5" fill="white" opacity="0.9" />
+						<circle cx="32" cy="16" r="3.5" fill="white" opacity="0.9" />
+						<circle cx="16" cy="32" r="3.5" fill="white" opacity="0.9" />
+						<circle cx="32" cy="32" r="3.5" fill="white" opacity="0.9" />
 					</svg>
-				</button>
-				{#if !isMac}
-				<button class="focus-btn" onmousedown={(e) => e.stopPropagation()} onclick={() => appWindow.minimize()} title="Minimize">
-					<svg width="10" height="10" viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-				</button>
-				<button class="focus-btn" onmousedown={(e) => e.stopPropagation()} onclick={() => appWindow.toggleMaximize()} title="Maximize">
-					<svg width="10" height="10" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
-				</button>
-				<button class="focus-btn focus-close" onmousedown={(e) => e.stopPropagation()} onclick={() => appWindow.close()} title="Close">
-					<svg width="10" height="10" viewBox="0 0 10 10"><line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-				</button>
+				</div>
+			{/if}
+			<span class="mobile-header-title">
+				{#if $mobileView === 'sidebar'}
+					HelixNotes
+				{:else if $mobileView === 'notelist'}
+					{$activeNotebook?.name || 'All Notes'}
+				{:else}
+					{$activeNote?.meta.title || 'Untitled'}
 				{/if}
+			</span>
+			<div class="mobile-header-actions">
+				{#if $mobileView === 'editor'}
+					<button class="mobile-header-btn" class:active={$readOnly} onclick={() => ($readOnly = !$readOnly)}>
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							{#if $readOnly}
+								<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+								<circle cx="12" cy="12" r="3" />
+							{:else}
+								<path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+								<path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+							{/if}
+						</svg>
+					</button>
+				{:else}
+					<button class="mobile-header-btn" onclick={createAndFocusNote}>
+						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+							<path d="M12 5v14M5 12h14" />
+						</svg>
+					</button>
+				{/if}
+				<button class="mobile-header-btn" onclick={() => ($showInfo = true)} title="Info">
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<circle cx="12" cy="12" r="10" />
+						<line x1="12" y1="16" x2="12" y2="12" />
+						<line x1="12" y1="8" x2="12.01" y2="8" />
+					</svg>
+				</button>
+				<button class="mobile-header-btn" onclick={() => ($showSettings = true)} title="Settings">
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<circle cx="12" cy="12" r="3" />
+						<path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+					</svg>
+				</button>
 			</div>
 		</div>
-	{:else}
-		<TitleBar onNewNote={createAndFocusNote} onDailyNote={handleDailyNote} />
-	{/if}
-	<div class="app-layout">
-		{#if !$focusMode}
-			<div class="sidebar-panel" style="width: {$sidebarCollapsed ? 44 : $sidebarWidth}px">
+
+		<!-- Mobile Content -->
+		<div class="mobile-content">
+			<div class="mobile-panel" class:active={$mobileView === 'sidebar'}>
 				<Sidebar bind:this={sidebar} onViewChanged={handleViewChanged} />
 			</div>
-
-			{#if !$sidebarCollapsed}
-				<ResizeHandle onResize={handleSidebarResize} />
-			{/if}
-
-			<div class="notelist-panel" style="width: {$notelistWidth}px">
+			<div class="mobile-panel" class:active={$mobileView === 'notelist'}>
 				<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onNoteMoved={() => sidebar?.refresh()} />
 			</div>
+			<div class="mobile-panel" class:active={$mobileView === 'editor'}>
+				<Editor bind:this={editor} />
+			</div>
+		</div>
 
-			<ResizeHandle onResize={handleNotelistResize} />
+		<!-- Mobile Bottom Nav -->
+		{#if $mobileView !== 'editor'}
+		<div class="mobile-bottom-nav">
+			<button class="mobile-nav-item" class:active={$mobileView === 'sidebar'} onclick={() => ($mobileView = 'sidebar')}>
+				<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+				</svg>
+				<span>Notebooks</span>
+			</button>
+			<button class="mobile-nav-item" onclick={() => $showSearch = true}>
+				<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+					<circle cx="11" cy="11" r="8" />
+					<line x1="21" y1="21" x2="16.65" y2="16.65" />
+				</svg>
+				<span>Search</span>
+			</button>
+			<button class="mobile-nav-item" onclick={handleDailyNote}>
+				<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+					<rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+					<line x1="16" y1="2" x2="16" y2="6" />
+					<line x1="8" y1="2" x2="8" y2="6" />
+					<line x1="3" y1="10" x2="21" y2="10" />
+				</svg>
+				<span>Daily</span>
+			</button>
+			<button class="mobile-nav-item" onclick={() => ($showSettings = true)}>
+				<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+					<circle cx="12" cy="12" r="3" />
+					<path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+				</svg>
+				<span>Settings</span>
+			</button>
+		</div>
 		{/if}
+	</div>
+{:else}
+	<!-- ═══ DESKTOP LAYOUT ═══ -->
+	<div class="app-shell">
+		{#if $focusMode}
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div class="focus-topbar" class:macos={isMac} onmousedown={(e) => { if (!(e.target as HTMLElement).closest('button')) appWindow.startDragging(); }}>
+				<span class="focus-title">{$activeNote?.meta.title || 'Untitled'}</span>
+				<div class="focus-controls">
+					<button class="focus-btn focus-active" onclick={() => ($focusMode = false)} title="Exit focus mode (Escape)">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/>
+						</svg>
+					</button>
+					<button class="focus-btn" class:focus-active={$readOnly} onclick={() => ($readOnly = !$readOnly)} title={$readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							{#if $readOnly}
+								<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+								<circle cx="12" cy="12" r="3" />
+							{:else}
+								<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94" />
+								<path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19" />
+								<line x1="1" y1="1" x2="23" y2="23" />
+							{/if}
+						</svg>
+					</button>
+					{#if !isMac}
+					<button class="focus-btn" onmousedown={(e) => e.stopPropagation()} onclick={() => appWindow.minimize()} title="Minimize">
+						<svg width="10" height="10" viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+					</button>
+					<button class="focus-btn" onmousedown={(e) => e.stopPropagation()} onclick={() => appWindow.toggleMaximize()} title="Maximize">
+						<svg width="10" height="10" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+					</button>
+					<button class="focus-btn focus-close" onmousedown={(e) => e.stopPropagation()} onclick={() => appWindow.close()} title="Close">
+						<svg width="10" height="10" viewBox="0 0 10 10"><line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+					</button>
+					{/if}
+				</div>
+			</div>
+		{:else}
+			<TitleBar onNewNote={createAndFocusNote} onDailyNote={handleDailyNote} />
+		{/if}
+		<div class="app-layout">
+			{#if !$focusMode}
+				<div class="sidebar-panel" style="width: {$sidebarCollapsed ? 44 : $sidebarWidth}px">
+					<Sidebar bind:this={sidebar} onViewChanged={handleViewChanged} />
+				</div>
 
-		<div class="editor-panel">
-			<Editor bind:this={editor} />
+				{#if !$sidebarCollapsed}
+					<ResizeHandle onResize={handleSidebarResize} />
+				{/if}
+
+				<div class="notelist-panel" style="width: {$notelistWidth}px">
+					<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onNoteMoved={() => sidebar?.refresh()} />
+				</div>
+
+				<ResizeHandle onResize={handleNotelistResize} />
+			{/if}
+
+			<div class="editor-panel">
+				<Editor bind:this={editor} />
+			</div>
 		</div>
 	</div>
-</div>
+{/if}
 
 <SearchPanel />
 <CommandPalette />
@@ -303,6 +434,7 @@
 <InfoPanel />
 
 <style>
+	/* ═══ DESKTOP STYLES ═══ */
 	.app-shell {
 		display: flex;
 		flex-direction: column;
@@ -393,5 +525,125 @@
 
 	.focus-topbar.macos {
 		padding-left: 78px;
+	}
+
+	/* ═══ MOBILE STYLES ═══ */
+	.mobile-shell {
+		display: flex;
+		flex-direction: column;
+		height: 100vh;
+		overflow: hidden;
+		background: var(--bg-primary);
+	}
+
+	.mobile-header {
+		display: flex;
+		align-items: center;
+		height: 52px;
+		padding: 0 8px;
+		background: var(--bg-secondary);
+		border-bottom: 1px solid var(--border-color);
+		flex-shrink: 0;
+		gap: 4px;
+	}
+
+	.mobile-header-brand {
+		display: flex;
+		align-items: center;
+		padding: 0 8px;
+	}
+
+	.mobile-header-title {
+		flex: 1;
+		font-size: 17px;
+		font-weight: 600;
+		color: var(--text-primary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		padding: 0 4px;
+	}
+
+	.mobile-header-actions {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+	}
+
+	.mobile-header-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 44px;
+		height: 44px;
+		border: none;
+		background: none;
+		color: var(--text-secondary);
+		border-radius: 10px;
+		cursor: pointer;
+	}
+
+	.mobile-header-btn:active {
+		background: var(--bg-hover);
+	}
+
+	.mobile-header-btn.active {
+		color: var(--accent);
+	}
+
+	.mobile-content {
+		flex: 1;
+		overflow: hidden;
+		position: relative;
+	}
+
+	.mobile-panel {
+		position: absolute;
+		inset: 0;
+		overflow: hidden;
+		visibility: hidden;
+		pointer-events: none;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.mobile-panel.active {
+		visibility: visible;
+		pointer-events: auto;
+	}
+
+	.mobile-bottom-nav {
+		display: flex;
+		align-items: center;
+		justify-content: space-around;
+		height: 56px;
+		background: var(--bg-secondary);
+		border-top: 1px solid var(--border-color);
+		flex-shrink: 0;
+		padding-bottom: env(safe-area-inset-bottom);
+	}
+
+	.mobile-nav-item {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 2px;
+		padding: 6px 16px;
+		border: none;
+		background: none;
+		color: var(--text-tertiary);
+		font-size: 10px;
+		font-weight: 500;
+		cursor: pointer;
+		border-radius: 8px;
+		transition: color 0.15s;
+	}
+
+	.mobile-nav-item:active {
+		background: var(--bg-hover);
+	}
+
+	.mobile-nav-item.active {
+		color: var(--accent);
 	}
 </style>

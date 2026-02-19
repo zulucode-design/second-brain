@@ -8,6 +8,8 @@
 
 	let { children } = $props();
 
+	const isMobile = /android|ios/i.test(navigator.userAgent);
+
 	// Reactively apply theme class to <html> whenever $theme changes
 	$effect(() => {
 		const t = $theme;
@@ -31,10 +33,12 @@
 		return resolved.join('/');
 	}
 
-	// Detect install type and check for updates on startup
+	// Detect install type and check for updates on startup (skip on mobile — updates via app store)
 	onMount(() => {
-		getInstallType().then(t => installType.set(t)).catch(() => {});
-		checkForUpdate();
+		if (!isMobile) {
+			getInstallType().then(t => installType.set(t)).catch(() => {});
+			checkForUpdate();
+		}
 	});
 
 	// Intercept all link clicks in capture phase to prevent webview navigation
@@ -74,7 +78,7 @@
 	});
 </script>
 
-<svelte:document oncontextmenu={(e) => e.preventDefault()} />
+<svelte:document oncontextmenu={(e) => { if (!isMobile) e.preventDefault(); }} />
 
 <svelte:head>
 	<title>HelixNotes</title>

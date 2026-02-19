@@ -1450,9 +1450,20 @@ pub fn ai_ask(
 
 // ── Helpers ──
 
+static ANDROID_CONFIG_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+pub fn set_android_config_dir(path: std::path::PathBuf) {
+    let _ = ANDROID_CONFIG_DIR.set(path);
+}
+
 fn app_config_path() -> Result<std::path::PathBuf, String> {
-    let config_dir = dirs::config_dir().ok_or("Cannot find config directory")?;
-    let app_dir = config_dir.join("helixnotes");
+    let app_dir = if let Some(config_dir) = dirs::config_dir() {
+        config_dir.join("helixnotes")
+    } else if let Some(android_dir) = ANDROID_CONFIG_DIR.get() {
+        android_dir.join("helixnotes")
+    } else {
+        return Err("Config directory not available yet".to_string());
+    };
     std::fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
     Ok(app_dir.join("config.json"))
 }

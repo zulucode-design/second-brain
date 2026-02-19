@@ -6,15 +6,22 @@
 	import type { VaultConfig } from '$lib/types';
 
 	const appWindow = getCurrentWindow();
+	const isMobile = /android|ios/i.test(navigator.userAgent);
 
 	let recentVaults: VaultConfig[] = $derived($appConfig?.vaults ?? []);
 	let loading = $state(false);
 	let error = $state('');
 
 	async function pickFolder() {
-		const selected = await open({ directory: true, multiple: false, title: 'Choose Notes Folder' });
-		if (selected) {
-			await openSelectedVault(selected as string);
+		if (isMobile) {
+			// Use shared Documents folder for Syncthing/Nextcloud compatibility
+			const vaultPath = '/storage/emulated/0/Documents/HelixNotes';
+			await openSelectedVault(vaultPath);
+		} else {
+			const selected = await open({ directory: true, multiple: false, title: 'Choose Notes Folder' });
+			if (selected) {
+				await openSelectedVault(selected as string);
+			}
 		}
 	}
 
@@ -35,7 +42,8 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="vault-picker" onmousedown={(e) => { if (!(e.target as HTMLElement).closest('button, .picker-card')) appWindow.startDragging(); }}>
+<div class="vault-picker" class:mobile={isMobile} onmousedown={(e) => { if (!isMobile && !(e.target as HTMLElement).closest('button, .picker-card')) appWindow.startDragging(); }}>
+	{#if !isMobile}
 	<div class="window-controls">
 		<button class="window-close" onclick={() => appWindow.close()} title="Close">
 			<svg width="10" height="10" viewBox="0 0 10 10">
@@ -44,6 +52,7 @@
 			</svg>
 		</button>
 	</div>
+	{/if}
 	<div class="picker-card">
 		<div class="logo">
 			<svg width="72" height="72" viewBox="0 0 48 48" fill="none">
@@ -58,7 +67,11 @@
 		</div>
 		<h1>HelixNotes</h1>
 		<p class="subtitle">Local markdown notes</p>
-		<p class="description">Your notes are stored as standard Markdown (.md) files. Pick any folder — existing .md files will be recognized automatically.</p>
+		{#if isMobile}
+			<p class="description">Notes are stored in Documents/HelixNotes as Markdown files. Sync with Nextcloud, Syncthing, or any file sync app.</p>
+		{:else}
+			<p class="description">Your notes are stored as standard Markdown (.md) files. Pick any folder — existing .md files will be recognized automatically.</p>
+		{/if}
 
 		{#if error}
 			<div class="error">{error}</div>
@@ -67,18 +80,20 @@
 		<button class="btn-primary" onclick={pickFolder} disabled={loading}>
 			{#if loading}
 				Opening...
+			{:else if isMobile}
+				Get Started
 			{:else}
 				Open Notes Folder
 			{/if}
 		</button>
 
-		{#if $appConfig?.active_vault}
+		{#if !isMobile && $appConfig?.active_vault}
 			<button class="btn-back" onclick={() => ($vaultReady = true)}>
 				Back
 			</button>
 		{/if}
 
-		{#if recentVaults.length > 0}
+		{#if !isMobile && recentVaults.length > 0}
 			<div class="recent">
 				<span class="recent-label">Recent</span>
 				{#each recentVaults as vault}
@@ -259,5 +274,25 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	/* Mobile */
+	.mobile .btn-primary {
+		padding: 14px 20px;
+		font-size: 16px;
+		border-radius: 12px;
+	}
+
+	.mobile .description {
+		font-size: 14px;
+	}
+
+	.mobile h1 {
+		font-size: 28px;
+	}
+
+	.mobile .logo :global(svg) {
+		width: 88px;
+		height: 88px;
 	}
 </style>

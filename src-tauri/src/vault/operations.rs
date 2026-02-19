@@ -114,7 +114,13 @@ fn count_notes_in_dir(dir: &Path) -> usize {
 fn is_hidden(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
-        .map(|n| n.starts_with('.'))
+        .map(|n| {
+            n.starts_with('.')
+                || matches!(
+                    n,
+                    "_res" | "_resources" | "_attachments" | "_assets" | "assets" | "node_modules"
+                )
+        })
         .unwrap_or(false)
 }
 

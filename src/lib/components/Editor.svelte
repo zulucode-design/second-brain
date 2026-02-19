@@ -46,6 +46,16 @@
 	import GraphView from './GraphView.svelte';
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
+	const isMobile = /android|ios/i.test(navigator.userAgent);
+
+	// Track virtual keyboard height on mobile via visualViewport
+	let keyboardHeight = $state(0);
+	if (isMobile && typeof window !== 'undefined' && window.visualViewport) {
+		const vv = window.visualViewport;
+		const update = () => { keyboardHeight = Math.max(0, Math.round(window.innerHeight - vv.height)); };
+		vv.addEventListener('resize', update);
+		vv.addEventListener('scroll', update);
+	}
 
 	let editorElement = $state<HTMLDivElement>(null!);
 	let sourceElement = $state<HTMLTextAreaElement>(null!);
@@ -2898,7 +2908,7 @@
 	});
 </script>
 
-<div class="editor-container">
+<div class="editor-container" class:mobile={isMobile}>
 	{#if !$activeNote}
 		<div class="empty-editor">
 			<div class="empty-icon">
@@ -2914,7 +2924,7 @@
 			</div>
 		</div>
 	{:else}
-		<div class="editor-toolbar">
+		<div class="editor-toolbar" class:mobile={isMobile}>
 			<div class="editor-title">
 				<input
 					bind:this={titleInput}
@@ -2945,13 +2955,14 @@
 					}}
 				/>
 			</div>
-			<div class="toolbar-actions">
+			<div class="toolbar-actions" class:mobile={isMobile}>
 				{#if $editorDirty}
 					<span class="save-indicator">Unsaved</span>
 				{/if}
 				{#if $readOnly}
 					<span class="readonly-indicator">View Mode</span>
 				{/if}
+				{#if !isMobile}
 				<button
 					class="icon-btn"
 					class:active={noteSearchOpen}
@@ -2962,6 +2973,7 @@
 						<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
 					</svg>
 				</button>
+				{/if}
 
 				<button
 					class="icon-btn"
@@ -2975,7 +2987,7 @@
 					}}
 					title={$activeNote?.meta.pinned ? 'Unpin note' : 'Pin note'}
 				>
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<svg width={isMobile ? "20" : "16"} height={isMobile ? "20" : "16"} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<path d="M12 17v5"/>
 						<path d="M9 2h6l-1 7h4l-2 4H8l-2-4h4L9 2z"/>
 					</svg>
@@ -2999,7 +3011,7 @@
 					}}
 					title={isQuickAccess ? 'Remove from Quick Access' : 'Add to Quick Access'}
 				>
-					<svg width="16" height="16" viewBox="0 0 24 24" fill={isQuickAccess ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<svg width={isMobile ? "20" : "16"} height={isMobile ? "20" : "16"} viewBox="0 0 24 24" fill={isQuickAccess ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
 					</svg>
 				</button>
@@ -3009,7 +3021,7 @@
 					onclick={() => { showOutline = !showOutline; if (showOutline) updateOutline(); }}
 					title="Outline"
 				>
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<svg width={isMobile ? "20" : "16"} height={isMobile ? "20" : "16"} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><circle cx="4" cy="12" r="1" fill="currentColor"/><circle cx="4" cy="18" r="1" fill="currentColor"/>
 					</svg>
 				</button>
@@ -3019,11 +3031,12 @@
 					onclick={toggleHistory}
 					title="Version history"
 				>
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<svg width={isMobile ? "20" : "16"} height={isMobile ? "20" : "16"} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<circle cx="12" cy="12" r="10"/>
 						<polyline points="12 6 12 12 16 14"/>
 					</svg>
 				</button>
+				{#if !isMobile}
 				{#if $appConfig?.enable_wiki_links}
 				<button
 					class="icon-btn"
@@ -3058,6 +3071,7 @@
 						<path d="M5.854 4.854a.5.5 0 10-.708-.708l-3.5 3.5a.5.5 0 000 .708l3.5 3.5a.5.5 0 00.708-.708L2.707 8l3.147-3.146zm4.292 0a.5.5 0 01.708-.708l3.5 3.5a.5.5 0 010 .708l-3.5 3.5a.5.5 0 01-.708-.708L13.293 8l-3.147-3.146z" />
 					</svg>
 				</button>
+				{/if}
 			</div>
 		</div>
 
@@ -3285,7 +3299,116 @@
 
 		{#if editorReady && !$sourceMode}
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
-			<div class="editor-formatting-bar" onclick={() => { headingDropdown = false; colorDropdown = false; highlightDropdown = false; tablePickerOpen = false; alignDropdown = false; insertDropdown = false; }}>
+			<div class="editor-formatting-bar" style={isMobile && keyboardHeight > 0 ? `bottom: ${keyboardHeight}px` : ''} onclick={() => { headingDropdown = false; colorDropdown = false; highlightDropdown = false; tablePickerOpen = false; alignDropdown = false; insertDropdown = false; }}>
+				{#if isMobile}
+				<!-- ═══ MOBILE formatting bar: compact, relevant buttons only ═══ -->
+
+				<!-- Heading dropdown -->
+				<div class="fmt-dropdown-wrap">
+					<button class="fmt-btn" class:active={(editorState, editor.isActive('heading'))} onclick={(e) => { e.stopPropagation(); headingDropdown = !headingDropdown; insertDropdown = false; }} title="Heading">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h12"/><path d="M6 20V4"/><path d="M18 20V4"/></svg>
+					</button>
+					{#if headingDropdown}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div class="fmt-dropdown" onclick={(e) => e.stopPropagation()}>
+							<button class:active={(editorState, editor.isActive('heading', { level: 1 }))} onclick={() => { editor?.chain().focus().toggleHeading({ level: 1 }).run(); headingDropdown = false; }}>Heading 1</button>
+							<button class:active={(editorState, editor.isActive('heading', { level: 2 }))} onclick={() => { editor?.chain().focus().toggleHeading({ level: 2 }).run(); headingDropdown = false; }}>Heading 2</button>
+							<button class:active={(editorState, editor.isActive('heading', { level: 3 }))} onclick={() => { editor?.chain().focus().toggleHeading({ level: 3 }).run(); headingDropdown = false; }}>Heading 3</button>
+							<button class:active={(editorState, editor.isActive('paragraph'))} onclick={() => { editor?.chain().focus().setParagraph().run(); headingDropdown = false; }}>Paragraph</button>
+						</div>
+					{/if}
+				</div>
+
+				<div class="fmt-sep"></div>
+
+				<!-- Bold / Italic / Underline / Strike -->
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('bold'))} onclick={() => editor?.chain().focus().toggleBold().run()} title="Bold">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h9a4 4 0 010 8H7a1 1 0 01-1-1V5a1 1 0 011-1h7a4 4 0 010 8"/></svg>
+				</button>
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('italic'))} onclick={() => editor?.chain().focus().toggleItalic().run()} title="Italic">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/></svg>
+				</button>
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('underline'))} onclick={() => editor?.chain().focus().toggleUnderline().run()} title="Underline">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4v6a6 6 0 0012 0V4"/><line x1="4" x2="20" y1="20" y2="20"/></svg>
+				</button>
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('strike'))} onclick={() => editor?.chain().focus().toggleStrike().run()} title="Strikethrough">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4H9a3 3 0 00-2.83 4"/><path d="M14 12a4 4 0 010 8H6"/><line x1="4" x2="20" y1="12" y2="12"/></svg>
+				</button>
+
+				<div class="fmt-sep"></div>
+
+				<!-- Link -->
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('link'))} onclick={addLinkFromToolbar} title="Link">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+				</button>
+
+				<div class="fmt-sep"></div>
+
+				<!-- Lists -->
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('bulletList'))} onclick={() => editor?.chain().focus().toggleBulletList().run()} title="Bullet List">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/></svg>
+				</button>
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('orderedList'))} onclick={() => editor?.chain().focus().toggleOrderedList().run()} title="Numbered List">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5h10"/><path d="M11 12h10"/><path d="M11 19h10"/><path d="M4 4h1v5"/><path d="M4 9h2"/><path d="M6.5 20H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 00-2.6-1.02"/></svg>
+				</button>
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('taskList'))} onclick={() => editor?.chain().focus().toggleTaskList().run()} title="Task List">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 5h8"/><path d="M13 12h8"/><path d="M13 19h8"/><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/></svg>
+				</button>
+
+				<div class="fmt-sep"></div>
+
+				<!-- Highlight -->
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('highlight'))} onclick={() => editor?.chain().focus().toggleHighlight({ color: highlightColors[0].value }).run()} title="Highlight">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 01-2.8 0l-5.2-5.2a2 2 0 010-2.8L14 4"/></svg>
+				</button>
+
+				<div class="fmt-sep"></div>
+
+				<!-- Undo / Redo -->
+				<button class="fmt-btn" onclick={() => editor?.chain().focus().undo().run()} title="Undo">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 015.5 5.5 5.5 5.5 0 01-5.5 5.5H11"/></svg>
+				</button>
+				<button class="fmt-btn" onclick={() => editor?.chain().focus().redo().run()} title="Redo">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 004 14.5 5.5 5.5 0 009.5 20H13"/></svg>
+				</button>
+
+				<div class="fmt-sep"></div>
+
+				<!-- Insert (+) dropdown — mobile version with common inserts -->
+				<div class="fmt-dropdown-wrap">
+					<button class="fmt-btn insert-btn" onclick={(e) => { e.stopPropagation(); insertDropdown = !insertDropdown; headingDropdown = false; }} title="Insert">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+					</button>
+					{#if insertDropdown}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div class="fmt-dropdown insert-dropdown" onclick={(e) => e.stopPropagation()}>
+							<button onclick={() => { insertDropdown = false; document.querySelector<HTMLInputElement>('#insert-image-input')?.click(); }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 00-2.828 0L6 21"/></svg>
+								Image
+							</button>
+							<button onclick={() => { insertDropdown = false; document.querySelector<HTMLInputElement>('#insert-file-input')?.click(); }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22a2 2 0 01-2-2V4a2 2 0 012-2h8a2.4 2.4 0 011.704.706l3.588 3.588A2.4 2.4 0 0120 8v12a2 2 0 01-2 2z"/><path d="M14 2v5a1 1 0 001 1h5"/></svg>
+								File
+							</button>
+							<button onclick={() => { insertDropdown = false; editor?.chain().focus().setHorizontalRule().run(); }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg>
+								Horizontal Rule
+							</button>
+							<button onclick={() => { insertDropdown = false; editor?.chain().focus().toggleCodeBlock().run(); }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m10 9-3 3 3 3"/><path d="m14 15 3-3-3-3"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+								Code Block
+							</button>
+							<button onclick={() => { insertDropdown = false; editor?.chain().focus().toggleBlockquote().run(); }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 5H3"/><path d="M21 12H8"/><path d="M21 19H8"/><path d="M3 12v7"/></svg>
+								Quote
+							</button>
+						</div>
+					{/if}
+				</div>
+
+				{:else}
+				<!-- ═══ DESKTOP formatting bar: full feature set ═══ -->
+
 				<!-- Insert (+) dropdown -->
 				<div class="fmt-dropdown-wrap">
 					<button class="fmt-btn insert-btn" onclick={(e) => { e.stopPropagation(); insertDropdown = !insertDropdown; headingDropdown = false; colorDropdown = false; highlightDropdown = false; tablePickerOpen = false; alignDropdown = false; }} title="Insert">
@@ -3587,6 +3710,8 @@
 				}} title="Outdent (Shift+Tab)">
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="4" x2="21" y2="4"/><line x1="11" y1="9" x2="21" y2="9"/><line x1="11" y1="14" x2="21" y2="14"/><line x1="3" y1="19" x2="21" y2="19"/><polyline points="7 9 3 11.5 7 14"/></svg>
 				</button>
+
+				{/if}
 			</div>
 		{/if}
 	{/if}
@@ -6148,5 +6273,156 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	/* ═══ MOBILE (class-based, not media-query, for Android high-DPI) ═══ */
+	.editor-container.mobile {
+		height: 100%;
+		min-height: 0;
+		overflow: hidden;
+	}
+
+	.editor-container.mobile .editor-toolbar {
+		padding: 8px 8px 6px 12px;
+		flex-shrink: 0;
+		flex-direction: column;
+		align-items: stretch;
+		gap: 2px;
+	}
+
+	.toolbar-actions.mobile {
+		gap: 4px;
+	}
+
+	.toolbar-actions.mobile .icon-btn {
+		min-width: 32px;
+		min-height: 32px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.toolbar-actions.mobile .save-indicator,
+	.toolbar-actions.mobile .readonly-indicator {
+		font-size: 12px;
+	}
+
+	.editor-container.mobile .editor-title input {
+		font-size: 20px;
+		padding: 4px 0;
+	}
+
+	.editor-container.mobile .editor-body-wrapper {
+		flex: 1;
+		min-height: 0;
+		overflow: hidden;
+	}
+
+	.editor-container.mobile .editor-body-row {
+		min-height: 0;
+	}
+
+	.editor-container.mobile .editor-body {
+		min-height: 0;
+		overflow-y: auto;
+		-webkit-overflow-scrolling: touch;
+		padding-bottom: 50px;
+	}
+
+	.editor-container.mobile .tiptap-wrapper {
+		min-height: 100%;
+	}
+
+	.editor-container.mobile .editor-formatting-bar {
+		position: fixed;
+		bottom: 0;
+		left: 0;
+		right: 0;
+		z-index: 50;
+		padding: 4px 8px;
+		padding-bottom: calc(4px + env(safe-area-inset-bottom));
+		overflow-x: auto;
+		flex-wrap: nowrap;
+		-webkit-overflow-scrolling: touch;
+		scrollbar-width: none;
+		gap: 1px;
+		background: var(--bg-secondary);
+		border-top: 1px solid var(--border-color);
+	}
+
+	.editor-container.mobile .editor-formatting-bar::-webkit-scrollbar {
+		display: none;
+	}
+
+	.editor-container.mobile .fmt-btn {
+		min-width: 38px;
+		height: 38px;
+		flex-shrink: 0;
+		padding: 6px;
+	}
+
+	.editor-container.mobile .fmt-sep {
+		height: 20px;
+		margin: 0 2px;
+	}
+
+	.editor-container.mobile .fmt-dropdown {
+		position: fixed;
+		bottom: auto;
+		left: 8px;
+		right: 8px;
+		top: auto;
+		max-width: calc(100vw - 16px);
+		max-height: 60vh;
+		overflow-y: auto;
+	}
+
+	.editor-container.mobile .fmt-dropdown button {
+		padding: 12px 16px;
+		font-size: 15px;
+		min-height: 44px;
+	}
+
+	.editor-container.mobile .insert-dropdown {
+		position: fixed;
+		bottom: 60px;
+		left: 8px;
+		right: 8px;
+		max-width: calc(100vw - 16px);
+	}
+
+	.editor-container.mobile .shortcuts-hint {
+		display: none;
+	}
+
+	.editor-container.mobile .empty-editor p {
+		font-size: 16px;
+	}
+
+	.editor-container.mobile :global(.editor-content) {
+		padding: 8px 16px !important;
+		font-size: 16px !important;
+	}
+
+	.editor-container.mobile .source-editor {
+		padding: 8px 16px;
+		font-size: 15px;
+	}
+
+	.editor-container.mobile .history-panel,
+	.editor-container.mobile .outline-panel {
+		width: 100% !important;
+		max-width: 100%;
+		border-left: none;
+		border-top: 1px solid var(--border-color);
+	}
+
+	.editor-container.mobile .note-search-bar {
+		padding: 8px 12px;
+	}
+
+	.editor-container.mobile .note-search-bar input {
+		padding: 8px 10px;
+		font-size: 15px;
 	}
 </style>

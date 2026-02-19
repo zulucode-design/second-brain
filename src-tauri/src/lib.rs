@@ -8,32 +8,33 @@ mod types;
 mod vault;
 
 use state::AppState;
+#[allow(unused_imports)]
+use tauri::Manager;
+
+#[cfg(not(target_os = "android"))]
 use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    Manager,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     let config = commands::load_app_config();
+    #[cfg(not(target_os = "android"))]
     let show_tray = config.show_tray_icon;
+    #[cfg(not(target_os = "android"))]
     let close_to_tray = config.close_to_tray && show_tray;
     let app_state = AppState::new(config);
 
     let mut builder = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
-        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -43,6 +44,17 @@ pub fn run() {
                 )?;
             }
 
+            // On Android, set config dir from Tauri's path resolver
+            #[cfg(target_os = "android")]
+            {
+                if let Ok(config_dir) = app.path().config_dir() {
+                    commands::set_android_config_dir(config_dir);
+                } else if let Ok(data_dir) = app.path().data_dir() {
+                    commands::set_android_config_dir(data_dir);
+                }
+            }
+
+            #[cfg(not(target_os = "android"))]
             if show_tray {
                 setup_tray(app)?;
             }
@@ -107,13 +119,26 @@ pub fn run() {
             commands::get_install_type,
         ]);
 
-    if close_to_tray {
-        builder = builder.on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+    #[cfg(not(target_os = "android"))]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
             }
-        });
+        }));
+
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+        if close_to_tray {
+            builder = builder.on_window_event(|window, event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            });
+        }
     }
 
     builder
@@ -121,6 +146,7 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+#[cfg(not(target_os = "android"))]
 fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let show = MenuItemBuilder::with_id("show", "Show HelixNotes").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
