@@ -23,19 +23,19 @@ curl -fsSL https://repo.arkhost.com/gpg.key | sudo gpg --dearmor -o /usr/share/k
 
 #### AppImage (Arch, Fedora, openSUSE)
 
-[Download AppImage](https://download.helixnotes.com/releases/v1.1.3/HelixNotes_1.1.3_amd64.AppImage)
+[Download AppImage](https://download.helixnotes.com/releases/v1.1.4/HelixNotes_1.1.4_amd64.AppImage)
 
 #### .deb (manual)
 
-[Download .deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.3/HelixNotes_1.1.3_amd64.deb) — Ubuntu 22.04+
+[Download .deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.4/HelixNotes_1.1.4_amd64.deb) — Ubuntu 22.04+
 
 ### Windows
 
-[Download Installer](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.3/HelixNotes_1.1.3_x64-setup.exe) — Windows 10/11
+[Download Installer](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.4/HelixNotes_1.1.4_x64-setup.exe) — Windows 10/11
 
 ### macOS
 
-[Download .dmg](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.3/HelixNotes_1.1.3_x64.dmg) — macOS 12+ (Intel, runs on Apple Silicon via Rosetta)
+[Download .dmg](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.4/HelixNotes_1.1.4_x64.dmg) — macOS 12+ (Intel, runs on Apple Silicon via Rosetta)
 
 ---
 
