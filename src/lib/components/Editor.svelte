@@ -37,7 +37,7 @@
 	import { readFile } from '@tauri-apps/plugin-fs';
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { openFile, copyFileTo } from '$lib/api';
-	import { save as saveDialog } from '@tauri-apps/plugin-dialog';
+	import { save as saveDialog, open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, readOnly, quickAccessPaths, notes } from '$lib/stores/app';
 	import { saveNote, saveImage, saveAttachment, addQuickAccess, removeQuickAccess, getQuickAccess, getNoteVersions, getNoteVersionContent, createVersion, aiAsk, getAllNoteTitles, readNote } from '$lib/api';
 	import type { VersionEntry, AiStreamEvent, NoteTitleEntry } from '$lib/types';
@@ -2827,6 +2827,77 @@
 		}
 	}
 
+	async function pickAndInsertImage() {
+		try {
+			const selected = await openDialog({
+				multiple: false,
+				filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico', 'tiff', 'tif', 'avif'] }]
+			});
+			if (!selected) return;
+			const filePath = typeof selected === 'string' ? selected : selected;
+			const fileName = (filePath as string).split('/').pop() || 'image.png';
+			const fileData = await readFile(filePath as string);
+			const data = Array.from(fileData);
+			const relativePath = await saveImage(fileName, data);
+			if (editor) {
+				const displaySrc = resolveImageSrc(relativePath);
+				editor.chain().focus().setImage({ src: displaySrc }).run();
+			}
+		} catch (e) {
+			console.error('Failed to pick and insert image:', e);
+		}
+	}
+
+	async function pickAndInsertFile() {
+		try {
+			const selected = await openDialog({
+				multiple: false,
+			});
+			if (!selected) return;
+			const filePath = typeof selected === 'string' ? selected : selected;
+			const fileName = (filePath as string).split('/').pop() || 'file';
+			const ext = fileName.split('.').pop()?.toLowerCase() || '';
+			const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico', 'tiff', 'tif', 'avif'];
+			const fileData = await readFile(filePath as string);
+			const data = Array.from(fileData);
+
+			if (imageExts.includes(ext)) {
+				const relativePath = await saveImage(fileName, data);
+				if (editor) {
+					const displaySrc = resolveImageSrc(relativePath);
+					editor.chain().focus().setImage({ src: displaySrc }).run();
+				}
+			} else if (ext === 'pdf') {
+				const relativePath = await saveAttachment(fileName, data);
+				if (!editor) return;
+				const usePdfPreview = $appConfig?.pdf_preview ?? false;
+				if (usePdfPreview) {
+					editor.chain().focus().insertContent({
+						type: 'pdfEmbed',
+						attrs: { src: relativePath, name: fileName },
+					}).run();
+				} else {
+					const sizeKB = Math.round(fileData.length / 1024);
+					const label = `${fileName} (${sizeKB} kB)`;
+					editor.chain().focus()
+						.insertContent(`<a href="${relativePath}">${label}</a> `)
+						.run();
+				}
+			} else {
+				const relativePath = await saveAttachment(fileName, data);
+				if (editor) {
+					const sizeKB = Math.round(fileData.length / 1024);
+					const label = `${fileName} (${sizeKB} kB)`;
+					editor.chain().focus()
+						.insertContent(`<a href="${relativePath}">${label}</a> `)
+						.run();
+				}
+			}
+		} catch (e) {
+			console.error('Failed to pick and insert file:', e);
+		}
+	}
+
 	// Source mode toggle — only react to explicit user toggle, not note switches
 	$effect(() => {
 		const isSource = $sourceMode;
@@ -3382,11 +3453,11 @@
 					{#if insertDropdown}
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
 						<div class="fmt-dropdown insert-dropdown" onclick={(e) => e.stopPropagation()}>
-							<button onclick={() => { insertDropdown = false; document.querySelector<HTMLInputElement>('#insert-image-input')?.click(); }}>
+							<button onclick={() => { insertDropdown = false; pickAndInsertImage(); }}>
 								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 00-2.828 0L6 21"/></svg>
 								Image
 							</button>
-							<button onclick={() => { insertDropdown = false; document.querySelector<HTMLInputElement>('#insert-file-input')?.click(); }}>
+							<button onclick={() => { insertDropdown = false; pickAndInsertFile(); }}>
 								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22a2 2 0 01-2-2V4a2 2 0 012-2h8a2.4 2.4 0 011.704.706l3.588 3.588A2.4 2.4 0 0120 8v12a2 2 0 01-2 2z"/><path d="M14 2v5a1 1 0 001 1h5"/></svg>
 								File
 							</button>
@@ -3417,11 +3488,11 @@
 					{#if insertDropdown}
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
 						<div class="fmt-dropdown insert-dropdown" onclick={(e) => e.stopPropagation()}>
-							<button onclick={() => { insertDropdown = false; document.querySelector<HTMLInputElement>('#insert-image-input')?.click(); }}>
+							<button onclick={() => { insertDropdown = false; pickAndInsertImage(); }}>
 								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 00-2.828 0L6 21"/></svg>
 								Image
 							</button>
-							<button onclick={() => { insertDropdown = false; document.querySelector<HTMLInputElement>('#insert-file-input')?.click(); }}>
+							<button onclick={() => { insertDropdown = false; pickAndInsertFile(); }}>
 								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22a2 2 0 01-2-2V4a2 2 0 012-2h8a2.4 2.4 0 011.704.706l3.588 3.588A2.4 2.4 0 0120 8v12a2 2 0 01-2 2z"/><path d="M14 2v5a1 1 0 001 1h5"/></svg>
 								File
 							</button>
@@ -3716,21 +3787,6 @@
 		{/if}
 	{/if}
 
-	<!-- Hidden file inputs for Insert dropdown -->
-	<input type="file" id="insert-image-input" accept="image/*" style="display:none" onchange={(e) => {
-		const file = (e.target as HTMLInputElement).files?.[0];
-		if (file) insertImage(file);
-		(e.target as HTMLInputElement).value = '';
-	}} />
-	<input type="file" id="insert-file-input" style="display:none" onchange={(e) => {
-		const file = (e.target as HTMLInputElement).files?.[0];
-		if (file) {
-			if (file.type.startsWith('image/')) insertImage(file);
-			else if (file.type === 'application/pdf') insertPdf(file);
-			else insertFileAttachment(file);
-		}
-		(e.target as HTMLInputElement).value = '';
-	}} />
 </div>
 
 {#if linkContextMenu}
