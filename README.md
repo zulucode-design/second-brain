@@ -5,11 +5,6 @@ A local markdown note-taking app built with Tauri, SvelteKit, and Rust.
 Your notes are stored as standard Markdown files on your local filesystem.
 No cloud, no lock-in.
 
-![Editor](https://cdn.helixnotes.com/assets/screenshots/screenshot-1.png)
-![Settings](https://cdn.helixnotes.com/assets/screenshots/screenshot-2.png)
-![Graph View](https://cdn.helixnotes.com/assets/screenshots/screenshot-3.png)
-![AI Actions](https://cdn.helixnotes.com/assets/screenshots/screenshot-4.png)
-
 ## Download (v1.1.5)
 
 ### Linux
@@ -96,6 +91,13 @@ pnpm tauri dev
 ```bash
 pnpm tauri build
 ```
+
+## Screenshots
+
+![Editor](https://cdn.helixnotes.com/assets/screenshots/screenshot-1.png)
+![Settings](https://cdn.helixnotes.com/assets/screenshots/screenshot-2.png)
+![Graph View](https://cdn.helixnotes.com/assets/screenshots/screenshot-3.png)
+![AI Actions](https://cdn.helixnotes.com/assets/screenshots/screenshot-4.png)
 
 ## License
 
