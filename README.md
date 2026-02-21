@@ -5,7 +5,12 @@ A local markdown note-taking app built with Tauri, SvelteKit, and Rust.
 Your notes are stored as standard Markdown files on your local filesystem.
 No cloud, no lock-in.
 
-## Download
+![Editor](https://cdn.helixnotes.com/assets/screenshots/screenshot-1.png)
+![Settings](https://cdn.helixnotes.com/assets/screenshots/screenshot-2.png)
+![Graph View](https://cdn.helixnotes.com/assets/screenshots/screenshot-3.png)
+![AI Actions](https://cdn.helixnotes.com/assets/screenshots/screenshot-4.png)
+
+## Download (v1.1.5)
 
 ### Linux
 
@@ -21,21 +26,21 @@ yay -S helixnotes-appimage-bin
 curl -fsSL https://repo.arkhost.com/gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/arkhost.gpg && echo "deb [signed-by=/usr/share/keyrings/arkhost.gpg arch=amd64] https://repo.arkhost.com stable main" | sudo tee /etc/apt/sources.list.d/helixnotes.list && sudo apt update && sudo apt install helix-notes
 ```
 
-#### AppImage (Arch, Fedora, openSUSE)
+#### AppImage (Arch, Fedora 43+, openSUSE Tumbleweed)
 
-[Download AppImage](https://download.helixnotes.com/releases/v1.1.4/HelixNotes_1.1.4_amd64.AppImage)
+[Download AppImage](https://download.helixnotes.com/releases/v1.1.5/HelixNotes_1.1.5_amd64.AppImage)
 
 #### .deb (manual)
 
-[Download .deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.4/HelixNotes_1.1.4_amd64.deb) — Ubuntu 22.04+
+[Download .deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.5/HelixNotes_1.1.5_amd64.deb) — Ubuntu 22.04+
 
 ### Windows
 
-[Download Installer](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.4/HelixNotes_1.1.4_x64-setup.exe) — Windows 10/11
+[Download Installer](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.5/HelixNotes_1.1.5_x64-setup.exe) — Windows 10/11
 
 ### macOS
 
-[Download .dmg](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.4/HelixNotes_1.1.4_x64.dmg) — macOS 12+ (Intel, runs on Apple Silicon via Rosetta)
+[Download .dmg](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.5/HelixNotes_1.1.5_x64.dmg) — macOS 12+ (Intel, runs on Apple Silicon via Rosetta)
 
 ---
 
