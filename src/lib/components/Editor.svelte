@@ -2043,7 +2043,7 @@
 				PdfEmbed,
 				MathBlock,
 				MathInline,
-				Details.configure({ persist: true, HTMLAttributes: { class: 'editor-details' } }),
+				Details.configure({ persist: false, HTMLAttributes: { class: 'editor-details' } }),
 				DetailsSummary,
 				DetailsContent,
 				TextAlign.configure({ types: ['heading', 'paragraph'] }),
