@@ -35,7 +35,7 @@ curl -fsSL https://repo.arkhost.com/gpg.key | sudo gpg --dearmor -o /usr/share/k
 
 ### macOS
 
-[Download .dmg](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.5/HelixNotes_1.1.5_x64.dmg) — macOS 12+ (Intel, runs on Apple Silicon via Rosetta)
+[Download .dmg](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.5/HelixNotes_1.1.5_x64.dmg) — macOS (Intel, runs on Apple Silicon via Rosetta)
 
 ---
 
