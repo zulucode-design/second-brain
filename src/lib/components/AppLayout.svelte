@@ -34,17 +34,45 @@
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
 	const isMobile = /android|ios/i.test(navigator.userAgent);
-	import { loadVaultState, saveVaultState, readNote, createDailyNote } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote, createDailyNote, createBackup } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
+	import { get } from 'svelte/store';
 	import type { VaultState, FileEvent } from '$lib/types';
 
 	let sidebar: Sidebar;
 	let noteList: NoteList;
 	let editor: Editor;
 	let unlistenFileChange: (() => void) | null = null;
+	let backupInterval: ReturnType<typeof setInterval> | null = null;
 	let navigatingFromHistory = false;
 	let noteHistory: string[] = [];
 	let noteHistoryIndex = -1;
+
+	function parseFrequencyMs(freq: string): number {
+		switch (freq) {
+			case '6h': return 6 * 60 * 60 * 1000;
+			case '12h': return 12 * 60 * 60 * 1000;
+			case '7d': return 7 * 24 * 60 * 60 * 1000;
+			case '24h': default: return 24 * 60 * 60 * 1000;
+		}
+	}
+
+	async function checkScheduledBackup() {
+		const config = get(appConfig);
+		if (!config?.backup_enabled) return;
+		const interval = parseFrequencyMs(config.backup_frequency);
+		const last = config.last_backup_time ? new Date(config.last_backup_time).getTime() : 0;
+		if (Date.now() - last >= interval) {
+			const unlisten = await listen('backup-done', (event: any) => {
+				if (event.payload?.success) {
+					const cur = get(appConfig);
+					if (cur) appConfig.set({ ...cur, last_backup_time: new Date().toISOString() });
+				}
+				unlisten();
+			});
+			try { await createBackup(); } catch (_) { unlisten(); }
+		}
+	}
 
 	// Track note navigation in history stack
 	$effect(() => {
@@ -239,10 +267,15 @@
 			await sidebar?.refresh();
 			await noteList?.refresh(true);
 		});
+
+		// Scheduled backup: check on startup and every 5 minutes
+		checkScheduledBackup();
+		backupInterval = setInterval(checkScheduledBackup, 5 * 60 * 1000);
 	});
 
 	onDestroy(() => {
 		unlistenFileChange?.();
+		if (backupInterval) clearInterval(backupInterval);
 	});
 </script>
 

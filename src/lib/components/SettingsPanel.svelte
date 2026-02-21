@@ -612,13 +612,7 @@
 						<div class="tab-content">
 							<div class="settings-section">
 								<h3>Title</h3>
-								<div class="setting-options">
-									<button class="option-btn" class:active={titleMode === 'input'} onclick={() => { titleMode = 'input'; saveGeneralSettings(); }}>Input</button>
-									<button class="option-btn" class:active={titleMode === 'heading'} onclick={() => { titleMode = 'heading'; saveGeneralSettings(); }}>Heading</button>
-									<button class="option-btn" class:active={titleMode === 'hidden'} onclick={() => { titleMode = 'hidden'; saveGeneralSettings(); }}>Hidden</button>
-								</div>
-								<span class="setting-hint">How the note title is displayed in the editor</span>
-								<label class="setting-toggle" style="margin-top: 12px;">
+								<label class="setting-toggle">
 									<span class="setting-label">
 										<span class="setting-name">Hide title in note body</span>
 										<span class="setting-desc">Hide the first heading when it matches the note title</span>
@@ -1147,7 +1141,8 @@
 		border-radius: 16px;
 		box-shadow: var(--shadow-lg);
 		width: 620px;
-		max-height: 80vh;
+		height: 80vh;
+		max-height: 700px;
 		overflow: hidden;
 		display: flex;
 		flex-direction: column;

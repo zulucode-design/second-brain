@@ -126,6 +126,7 @@
 						<div class="shortcut-row"><span class="shortcut-desc">Redo</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Go back</span><span class="shortcut-keys"><kbd>Alt</kbd>+<kbd>←</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Go forward</span><span class="shortcut-keys"><kbd>Alt</kbd>+<kbd>→</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Toggle source mode</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Exit focus mode</span><span class="shortcut-keys"><kbd>Esc</kbd></span></div>
 
 						<h4 class="shortcuts-group-title">Editor Commands</h4>
@@ -164,7 +165,8 @@
 		border-radius: 16px;
 		box-shadow: var(--shadow-lg);
 		width: 500px;
-		max-height: 80vh;
+		height: 80vh;
+		max-height: 600px;
 		overflow: hidden;
 		display: flex;
 		flex-direction: column;
@@ -201,7 +203,7 @@
 	}
 
 	.info-body {
-		padding: 0 24px 32px;
+		padding: 0 24px 16px;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -244,6 +246,7 @@
 	}
 
 	.info-logo {
+		margin-top: 12px;
 		margin-bottom: 8px;
 	}
 
