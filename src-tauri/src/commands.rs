@@ -46,6 +46,12 @@ pub fn get_app_config(state: State<'_, AppState>) -> Result<AppConfig, String> {
 }
 
 #[tauri::command]
+pub fn get_pending_open_file(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let mut pending = state.pending_open_file.lock().map_err(|e| e.to_string())?;
+    Ok(pending.take())
+}
+
+#[tauri::command]
 pub fn set_theme(state: State<'_, AppState>, theme: String) -> Result<(), String> {
     let mut config = state.config.lock().map_err(|e| e.to_string())?;
     config.theme = theme;
@@ -73,6 +79,14 @@ pub fn set_font_size(state: State<'_, AppState>, size: u32) -> Result<(), String
 pub fn set_font_family(state: State<'_, AppState>, family: String) -> Result<(), String> {
     let mut config = state.config.lock().map_err(|e| e.to_string())?;
     config.font_family = Some(family);
+    save_app_config(&config)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_line_height(state: State<'_, AppState>, height: f64) -> Result<(), String> {
+    let mut config = state.config.lock().map_err(|e| e.to_string())?;
+    config.line_height = Some(height);
     save_app_config(&config)?;
     Ok(())
 }

@@ -32,6 +32,7 @@
 		getAllTags
 	} from '$lib/api';
 	import { formatRelativeTime } from '$lib/utils/time';
+	import { openNoteWindow } from '$lib/utils/window';
 	import type { NoteEntry, SortMode } from '$lib/types';
 
 	let { onNoteSelected = (_path: string, _content: string) => {}, onNoteMoved = () => {} }: {
@@ -936,6 +937,12 @@
 					Add to Quick Access
 				</button>
 			{/if}
+			<button onclick={() => { const n = contextMenu!.note; contextMenu = null; openNoteWindow(n.path, n.meta.title); }}>
+				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+				</svg>
+				Open in New Window
+			</button>
 			<button onclick={() => startRename(contextMenu!.note)}>
 				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<path d="M17 3a2.85 2.85 0 114 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/>

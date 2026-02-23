@@ -41,6 +41,7 @@ export interface AppConfig {
   accent_color: string | null;
   font_size: number | null;
   font_family: string | null;
+  line_height: number | null;
   compact_notes: boolean;
   time_format: string;
   gpu_acceleration: boolean;

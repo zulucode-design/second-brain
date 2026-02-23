@@ -28,14 +28,16 @@
 		showInfo,
 		showSettings,
 		sourceMode,
-		mobileView
+		mobileView,
+		appConfig
 	} from '$lib/stores/app';
 
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
 	const isMobile = /android|ios/i.test(navigator.userAgent);
-	import { loadVaultState, saveVaultState, readNote, createDailyNote, createBackup } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote, createDailyNote, createBackup, getPendingOpenFile } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
+	import { openNoteWindow } from '$lib/utils/window';
 	import { get } from 'svelte/store';
 	import type { VaultState, FileEvent } from '$lib/types';
 
@@ -43,6 +45,7 @@
 	let noteList: NoteList;
 	let editor: Editor;
 	let unlistenFileChange: (() => void) | null = null;
+	let unlistenOpenFile: (() => void) | null = null;
 	let backupInterval: ReturnType<typeof setInterval> | null = null;
 	let navigatingFromHistory = false;
 	let noteHistory: string[] = [];
@@ -102,6 +105,22 @@
 		}).catch(() => {
 			// Note may have been deleted, ignore
 		});
+	}
+
+	async function handleOpenFile(filePath: string) {
+		if (!filePath || !filePath.endsWith('.md')) return;
+		const config = get(appConfig);
+		const vaultRoot = config?.active_vault;
+		if (!vaultRoot || !filePath.startsWith(vaultRoot)) return;
+		try {
+			const content = await readNote(filePath);
+			$activeNote = content;
+			$activeNotePath = filePath;
+			$editorDirty = false;
+			editor?.loadNote(filePath, content.content);
+		} catch (e) {
+			console.error('Failed to open file:', e);
+		}
 	}
 
 	const persistState = debounce(async () => {
@@ -219,6 +238,12 @@
 			e.preventDefault();
 			$sourceMode = !$sourceMode;
 		}
+		if (mod && e.shiftKey && e.key === 'W') {
+			e.preventDefault();
+			if ($activeNotePath && $activeNote) {
+				openNoteWindow($activeNotePath, $activeNote.meta.title);
+			}
+		}
 		if (e.key === 'Escape') {
 			if ($showSettings) $showSettings = false;
 			else if ($showInfo) $showInfo = false;
@@ -268,6 +293,17 @@
 			await noteList?.refresh(true);
 		});
 
+		// Listen for file open events (from single-instance or OS file associations)
+		unlistenOpenFile = await listen<string>('open-file', async (event) => {
+			await handleOpenFile(event.payload);
+		});
+
+		// Check for pending file from first-launch CLI args
+		try {
+			const pending = await getPendingOpenFile();
+			if (pending) await handleOpenFile(pending);
+		} catch (_) {}
+
 		// Scheduled backup: check on startup and every 5 minutes
 		checkScheduledBackup();
 		backupInterval = setInterval(checkScheduledBackup, 5 * 60 * 1000);
@@ -275,6 +311,7 @@
 
 	onDestroy(() => {
 		unlistenFileChange?.();
+		unlistenOpenFile?.();
 		if (backupInterval) clearInterval(backupInterval);
 	});
 </script>

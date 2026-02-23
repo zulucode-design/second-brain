@@ -38,6 +38,10 @@ export async function setFontFamily(family: string): Promise<void> {
   return invoke("set_font_family", { family });
 }
 
+export async function setLineHeight(height: number): Promise<void> {
+  return invoke("set_line_height", { height });
+}
+
 export async function getNotebooks(): Promise<NotebookEntry[]> {
   return invoke("get_notebooks");
 }
@@ -329,4 +333,8 @@ export async function aiAsk(
 
 export async function getInstallType(): Promise<string> {
   return invoke("get_install_type");
+}
+
+export async function getPendingOpenFile(): Promise<string | null> {
+  return invoke("get_pending_open_file");
 }

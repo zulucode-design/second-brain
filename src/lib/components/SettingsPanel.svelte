@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { showSettings, theme, appConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab } from '$lib/stores/app';
-	import { setTheme, setAccentColor, setFontSize, setFontFamily, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection } from '$lib/api';
+	import { setTheme, setAccentColor, setFontSize, setFontFamily, setLineHeight, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection } from '$lib/api';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
 	import { check as checkUpdate } from '@tauri-apps/plugin-updater';
@@ -293,9 +293,17 @@
 		{ name: 'Mono', value: 'mono', stack: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace' },
 	];
 
+	const lineHeightPresets = [
+		{ label: 'Tight', value: 1.4 },
+		{ label: 'Default', value: 1.6 },
+		{ label: 'Relaxed', value: 1.8 },
+		{ label: 'Loose', value: 2.0 },
+	];
+
 	let activeAccent = $state($appConfig?.accent_color ?? 'Indigo');
 	let activeFontSize = $state($appConfig?.font_size ?? 14);
 	let activeFontFamily = $state($appConfig?.font_family ?? 'system');
+	let activeLineHeight = $state($appConfig?.line_height ?? 1.6);
 
 	// General settings
 	let compactNotes = $state($appConfig?.compact_notes ?? false);
@@ -422,6 +430,17 @@
 		document.documentElement.style.setProperty('--editor-font-family', stack);
 	}
 
+	function selectLineHeight(value: number) {
+		activeLineHeight = value;
+		applyLineHeight(value);
+		if ($appConfig) $appConfig.line_height = value;
+		setLineHeight(value).catch((e) => console.error('Failed to save line height:', e));
+	}
+
+	function applyLineHeight(value: number) {
+		document.documentElement.style.setProperty('--editor-line-height', String(value));
+	}
+
 	function close() {
 		// Ensure AI settings are saved when closing (in case input wasn't blurred)
 		// Only save if the key differs from what's already stored
@@ -453,6 +472,11 @@
 				activeFontFamily = savedFamily;
 				applyFontFamily(preset.stack);
 			}
+		}
+		const savedLineHeight = $appConfig?.line_height;
+		if (savedLineHeight) {
+			activeLineHeight = savedLineHeight;
+			applyLineHeight(savedLineHeight);
 		}
 		// Sync general settings
 		if ($appConfig) {
@@ -743,6 +767,22 @@
 										>
 											<span class="font-size-label">{preset.label}</span>
 											<span class="font-size-value">{preset.size}px</span>
+										</button>
+									{/each}
+								</div>
+							</div>
+
+							<div class="settings-section">
+								<h3>Line Height</h3>
+								<div class="font-size-options">
+									{#each lineHeightPresets as preset}
+										<button
+											class="font-size-btn"
+											class:active={activeLineHeight === preset.value}
+											onclick={() => selectLineHeight(preset.value)}
+										>
+											<span class="font-size-label">{preset.label}</span>
+											<span class="font-size-value">{preset.value}</span>
 										</button>
 									{/each}
 								</div>

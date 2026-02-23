@@ -4,10 +4,19 @@
 	import { getAppConfig, openVault } from '$lib/api';
 	import VaultPicker from '$lib/components/VaultPicker.svelte';
 	import AppLayout from '$lib/components/AppLayout.svelte';
+	import NoteWindow from '$lib/components/NoteWindow.svelte';
 
 	let loading = $state(true);
+	let noteWindowPath = $state<string | null>(null);
 
 	onMount(async () => {
+		// Check for note window mode
+		const params = new URLSearchParams(window.location.search);
+		const notePath = params.get('note');
+		if (notePath) {
+			noteWindowPath = notePath;
+		}
+
 		try {
 			const config = await getAppConfig();
 			$appConfig = config;
@@ -24,6 +33,9 @@
 			// Apply saved font settings
 			if (config.font_size) {
 				document.documentElement.style.setProperty('--editor-font-size', `${config.font_size}px`);
+			}
+			if (config.line_height) {
+				document.documentElement.style.setProperty('--editor-line-height', String(config.line_height));
 			}
 			if (config.font_family) {
 				const fontStacks: Record<string, string> = {
@@ -69,7 +81,10 @@
 			// Auto-open last vault if available
 			if (config.active_vault) {
 				try {
-					await openVault(config.active_vault);
+					// Note windows don't re-open the vault (already open in main process)
+					if (!noteWindowPath) {
+						await openVault(config.active_vault);
+					}
 					$vaultReady = true;
 				} catch {
 					// Vault path might not exist anymore
@@ -86,6 +101,8 @@
 	<div class="loading">
 		<div class="spinner"></div>
 	</div>
+{:else if noteWindowPath}
+	<NoteWindow notePath={noteWindowPath} />
 {:else if $vaultReady}
 	<AppLayout />
 {:else}

@@ -54,6 +54,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub font_family: Option<String>,
     #[serde(default)]
+    pub line_height: Option<f64>,
+    #[serde(default)]
     pub compact_notes: bool,
     #[serde(default)]
     pub time_format: String,
@@ -142,6 +144,7 @@ impl Default for AppConfig {
             accent_color: None,
             font_size: None,
             font_family: None,
+            line_height: None,
             compact_notes: false,
             time_format: "relative".to_string(),
             gpu_acceleration: true,

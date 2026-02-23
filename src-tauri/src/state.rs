@@ -9,6 +9,7 @@ pub struct AppState {
     pub search_index: Mutex<Option<SearchIndex>>,
     pub watcher: Mutex<Option<RecommendedWatcher>>,
     pub importing: AtomicBool,
+    pub pending_open_file: Mutex<Option<String>>,
 }
 
 impl AppState {
@@ -18,6 +19,7 @@ impl AppState {
             search_index: Mutex::new(None),
             watcher: Mutex::new(None),
             importing: AtomicBool::new(false),
+            pending_open_file: Mutex::new(None),
         }
     }
 }

@@ -39,7 +39,7 @@
 	import { openFile, copyFileTo } from '$lib/api';
 	import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, readOnly, quickAccessPaths, notes } from '$lib/stores/app';
-	import { saveNote, saveImage, saveAttachment, addQuickAccess, removeQuickAccess, getQuickAccess, getNoteVersions, getNoteVersionContent, createVersion, aiAsk, getAllNoteTitles, readNote } from '$lib/api';
+	import { saveNote, saveImage, saveAttachment, addQuickAccess, removeQuickAccess, getQuickAccess, getNoteVersions, getNoteVersionContent, createVersion, aiAsk, getAllNoteTitles, readNote, renameNote } from '$lib/api';
 	import type { VersionEntry, AiStreamEvent, NoteTitleEntry } from '$lib/types';
 	import { listen } from '@tauri-apps/api/event';
 	import { debounce } from '$lib/utils/debounce';
@@ -2941,16 +2941,37 @@
 							editor?.commands.focus('start');
 						}
 					}}
-					onchange={(e) => {
-						if ($activeNote) {
-							const newTitle = (e.target as HTMLInputElement).value;
+					onchange={async (e) => {
+						if ($activeNote && $activeNotePath) {
+							const newTitle = (e.target as HTMLInputElement).value.trim();
+							if (!newTitle) return;
+							const oldPath = $activeNotePath;
 							$activeNote.meta.title = newTitle;
-							// Update the note list entry so the 2nd panel reflects the change
-							notes.update(list => list.map(n =>
-								n.path === $activeNotePath ? { ...n, meta: { ...n.meta, title: newTitle } } : n
-							));
 							$editorDirty = true;
 							autoSave();
+							// Rename file on disk if filename doesn't match the new title
+							const filename = oldPath.split('/').pop() ?? '';
+							const stem = filename.replace(/\.md$/, '');
+							if (stem !== newTitle) {
+								try {
+									const newPath = await renameNote(oldPath, newTitle);
+									$activeNotePath = newPath;
+									notes.update(list => list.map(n =>
+										n.path === oldPath
+											? { ...n, path: newPath, relative_path: n.relative_path.replace(/[^/]+$/, newTitle + '.md'), meta: { ...n.meta, title: newTitle } }
+											: n
+									));
+								} catch (err) {
+									console.error('Failed to rename note file:', err);
+									notes.update(list => list.map(n =>
+										n.path === oldPath ? { ...n, meta: { ...n.meta, title: newTitle } } : n
+									));
+								}
+							} else {
+								notes.update(list => list.map(n =>
+									n.path === oldPath ? { ...n, meta: { ...n.meta, title: newTitle } } : n
+								));
+							}
 						}
 					}}
 				/>
@@ -4817,7 +4838,7 @@
 		color: var(--text-primary);
 		font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
 		font-size: var(--editor-font-size, 14px);
-		line-height: 1.6;
+		line-height: var(--editor-line-height, 1.6);
 		resize: none;
 		outline: none;
 		padding: 0;
@@ -4845,7 +4866,7 @@
 		padding-top: 8px;
 		font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
 		font-size: var(--editor-font-size, 14px);
-		line-height: 1.6;
+		line-height: var(--editor-line-height, 1.6);
 		color: var(--text-secondary);
 		opacity: 0.5;
 		text-align: right;
@@ -4874,7 +4895,7 @@
 
 	:global(.tiptap-wrapper .tiptap p) {
 		margin: 0 0 0.75em;
-		line-height: 1.65;
+		line-height: var(--editor-line-height, 1.65);
 	}
 
 	:global(.tiptap-wrapper .tiptap h1) {
@@ -5192,7 +5213,7 @@
 
 	:global(.tiptap-wrapper .tiptap li) {
 		margin: 0.25em 0;
-		line-height: 1.65;
+		line-height: var(--editor-line-height, 1.65);
 	}
 
 	:global(.tiptap-wrapper .tiptap li p) {

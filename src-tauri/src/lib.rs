@@ -9,7 +9,7 @@ mod vault;
 
 use state::AppState;
 #[allow(unused_imports)]
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg(not(target_os = "android"))]
 use tauri::{
@@ -59,6 +59,28 @@ pub fn run() {
                 setup_tray(app)?;
             }
 
+            // Check CLI args for a .md file path on initial launch
+            #[cfg(not(target_os = "android"))]
+            {
+                let file_arg = std::env::args().skip(1).find(|a| {
+                    let a = a.trim();
+                    !a.starts_with('-') && a.ends_with(".md")
+                });
+                if let Some(path) = file_arg {
+                    let resolved = if std::path::Path::new(&path).is_absolute() {
+                        std::path::PathBuf::from(&path)
+                    } else {
+                        std::env::current_dir().unwrap_or_default().join(&path)
+                    };
+                    if let Some(resolved_str) = resolved.to_str() {
+                        let app_state = app.state::<AppState>();
+                        let _ = app_state.pending_open_file.lock().map(|mut p| {
+                            *p = Some(resolved_str.to_string());
+                        });
+                    }
+                }
+            }
+
             Ok(())
         })
         .manage(app_state)
@@ -69,6 +91,7 @@ pub fn run() {
             commands::set_accent_color,
             commands::set_font_size,
             commands::set_font_family,
+            commands::set_line_height,
             commands::get_notebooks,
             commands::create_notebook,
             commands::rename_notebook,
@@ -117,28 +140,62 @@ pub fn run() {
             commands::test_ai_connection,
             commands::ai_ask,
             commands::get_install_type,
+            commands::get_pending_open_file,
         ]);
 
     #[cfg(not(target_os = "android"))]
     {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            // Always show/focus the main window
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.unminimize();
                 let _ = window.set_focus();
             }
+
+            // Extract .md file path from args (args[0] is the binary)
+            let file_path = args.iter().skip(1).find(|arg| {
+                let a = arg.trim();
+                !a.starts_with('-') && a.ends_with(".md")
+            });
+
+            if let Some(path) = file_path {
+                let resolved = if std::path::Path::new(path.as_str()).is_absolute() {
+                    std::path::PathBuf::from(path)
+                } else {
+                    std::path::Path::new(&cwd).join(path)
+                };
+                if let Some(resolved_str) = resolved.to_str() {
+                    let _ = app.emit("open-file", resolved_str.to_string());
+                }
+            }
         }));
 
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
-        if close_to_tray {
-            builder = builder.on_window_event(|window, event| {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = window.hide();
+        builder = builder.on_window_event(move |window, event| {
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    // Only hide to tray for the main window
+                    if close_to_tray && window.label() == "main" {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
                 }
-            });
-        }
+                tauri::WindowEvent::Destroyed => {
+                    // When main window is destroyed, close all note windows
+                    if window.label() == "main" {
+                        let app = window.app_handle();
+                        for (label, win) in app.webview_windows() {
+                            if label.starts_with("note-") {
+                                let _ = win.close();
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        });
     }
 
     builder
