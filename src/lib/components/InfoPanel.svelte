@@ -127,6 +127,7 @@
 						<div class="shortcut-row"><span class="shortcut-desc">Go back</span><span class="shortcut-keys"><kbd>Alt</kbd>+<kbd>←</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Go forward</span><span class="shortcut-keys"><kbd>Alt</kbd>+<kbd>→</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Toggle source mode</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Open note in new window</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Exit focus mode</span><span class="shortcut-keys"><kbd>Esc</kbd></span></div>
 
 						<h4 class="shortcuts-group-title">Editor Commands</h4>

@@ -1200,6 +1200,21 @@
 	}
 
 	export function loadNote(path: string, content: string) {
+		// Flush any unsaved changes for the CURRENT note before loading the new one
+		if ($editorDirty && $activeNote && $activeNotePath && $activeNotePath !== path) {
+			try {
+				const body = $sourceMode
+					? restoreTitleH1(sourceContent)
+					: editorToMarkdown();
+				const trimmed = body.replace(/^#.*\n?/, '').trim();
+				if (trimmed || !$activeNote.content || $activeNote.content.trim().length <= 10) {
+					saveNote($activeNotePath, $activeNote.meta, body);
+				}
+			} catch (e) {
+				console.error('Pre-switch save failed:', e);
+			}
+			$editorDirty = false;
+		}
 		loadedPath = path;
 		lastSourceMode = $sourceMode;
 		isLoadingNote = true;
@@ -1997,6 +2012,21 @@
 	});
 
 	function destroyEditor() {
+		// Flush unsaved changes before destroying
+		if ($editorDirty && $activeNote && $activeNotePath && editor) {
+			try {
+				const body = $sourceMode
+					? restoreTitleH1(sourceContent)
+					: editorToMarkdown();
+				const trimmed = body.replace(/^#.*\n?/, '').trim();
+				if (trimmed || !$activeNote.content || $activeNote.content.trim().length <= 10) {
+					saveNote($activeNotePath, $activeNote.meta, body);
+				}
+			} catch (e) {
+				console.error('Destroy-save failed:', e);
+			}
+			$editorDirty = false;
+		}
 		if (editor) {
 			editor.destroy();
 			editor = null;
