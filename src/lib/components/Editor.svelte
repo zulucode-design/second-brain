@@ -69,6 +69,7 @@
 	let pendingContent = $state<string | null>(null);
 	let ignoreNextUpdate = false;
 	let isLoadingNote = false;
+	let fixingBlobsPromise: Promise<void> = Promise.resolve();
 	let lastSourceMode = $sourceMode;
 	let linkContextMenu = $state<{ x: number; y: number; href: string; anchor: HTMLAnchorElement } | null>(null);
 	let titleWasStripped = false;
@@ -1056,6 +1057,8 @@
 
 	const autoSave = debounce(async () => {
 		if (!$activeNote || !$activeNotePath || !$editorDirty) return;
+		// Wait for any pending blob→asset conversions to finish before serializing
+		await fixingBlobsPromise;
 		try {
 			const body = $sourceMode
 				? restoreTitleH1(sourceContent)
@@ -1075,6 +1078,7 @@
 
 	export async function forceSave() {
 		if (!$activeNote || !$activeNotePath) return;
+		await fixingBlobsPromise;
 		try {
 			const body = $sourceMode ? restoreTitleH1(sourceContent) : editorToMarkdown();
 			const trimmed = body.replace(/^#.*\n?/, '').trim();
@@ -1415,6 +1419,7 @@
 			}
 			case 'image': {
 				const src = stripAssetSrc(node.attrs.src || '');
+				if (!src) return ''; // Skip images with unresolved blob: URLs
 				const alt = node.attrs.alt || '';
 				const size = node.attrs['data-size'] || node.attrs.size || 'full';
 				const sizeSuffix = size && size !== 'full' ? `|size=${size}` : '';
@@ -1491,6 +1496,7 @@
 				parts.push(text);
 			} else if (child.type.name === 'image') {
 				const src = stripAssetSrc(child.attrs.src || '');
+				if (!src) return; // Skip images with unresolved blob: URLs
 				const alt = child.attrs.alt || '';
 				const size = child.attrs['data-size'] || child.attrs.size || 'full';
 				const sizeSuffix = size && size !== 'full' ? `|size=${size}` : '';
@@ -2127,9 +2133,9 @@
 					return;
 				}
 				$editorDirty = true;
+				// Fix any blob: URLs from pasted web images BEFORE saving
+				fixingBlobsPromise = fixBlobImages();
 				autoSave();
-				// Fix any blob: URLs from pasted web images
-				fixBlobImages();
 				if (showOutline) updateOutline();
 			},
 		});
