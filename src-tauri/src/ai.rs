@@ -6,6 +6,7 @@ use crate::types::AiStreamEvent;
 
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 const OPENAI_API_URL: &str = "https://api.openai.com/v1/chat/completions";
+const OLLAMA_DEFAULT_URL: &str = "http://localhost:11434";
 
 pub fn ai_request(
     app: AppHandle,
@@ -15,6 +16,7 @@ pub fn ai_request(
     system_prompt: String,
     user_message: String,
     request_id: String,
+    base_url: Option<String>,
 ) {
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -23,7 +25,22 @@ pub fn ai_request(
                 "openai" => {
                     stream_openai(
                         &app,
-                        &api_key,
+                        OPENAI_API_URL,
+                        Some(&api_key),
+                        &model,
+                        &system_prompt,
+                        &user_message,
+                        &request_id,
+                    )
+                    .await
+                }
+                "ollama" => {
+                    let url = base_url.as_deref().unwrap_or(OLLAMA_DEFAULT_URL);
+                    let url = format!("{}/v1/chat/completions", url.trim_end_matches('/'));
+                    stream_openai(
+                        &app,
+                        &url,
+                        None,
                         &model,
                         &system_prompt,
                         &user_message,
@@ -188,7 +205,8 @@ async fn stream_anthropic(
 
 async fn stream_openai(
     app: &AppHandle,
-    api_key: &str,
+    url: &str,
+    api_key: Option<&str>,
     model: &str,
     system_prompt: &str,
     user_message: &str,
@@ -224,10 +242,15 @@ async fn stream_openai(
         body["temperature"] = json!(0.7);
     }
 
-    let response = client
-        .post(OPENAI_API_URL)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("content-type", "application/json")
+    let mut req = client
+        .post(url)
+        .header("content-type", "application/json");
+
+    if let Some(key) = api_key {
+        req = req.header("Authorization", format!("Bearer {}", key));
+    }
+
+    let response = req
         .json(&body)
         .send()
         .await
@@ -325,9 +348,19 @@ async fn stream_openai(
     Ok(())
 }
 
-pub async fn test_connection(provider: &str, api_key: &str, model: &str) -> Result<String, String> {
+pub async fn test_connection(
+    provider: &str,
+    api_key: &str,
+    model: &str,
+    base_url: Option<&str>,
+) -> Result<String, String> {
     match provider {
-        "openai" => test_openai(api_key, model).await,
+        "openai" => test_openai(OPENAI_API_URL, Some(api_key), model).await,
+        "ollama" => {
+            let url = base_url.unwrap_or(OLLAMA_DEFAULT_URL);
+            let url = format!("{}/v1/chat/completions", url.trim_end_matches('/'));
+            test_openai(&url, None, model).await
+        }
         _ => test_anthropic(api_key, model).await,
     }
 }
@@ -365,19 +398,12 @@ async fn test_anthropic(api_key: &str, model: &str) -> Result<String, String> {
     }
 }
 
-async fn test_openai(api_key: &str, model: &str) -> Result<String, String> {
+async fn test_openai(url: &str, api_key: Option<&str>, model: &str) -> Result<String, String> {
     let client = Client::new();
-
-    let is_gpt5 = model.starts_with("gpt-5");
-    let token_key = if is_gpt5 {
-        "max_completion_tokens"
-    } else {
-        "max_tokens"
-    };
 
     let body = json!({
         "model": model,
-        token_key: 10,
+        "max_tokens": 10,
         "messages": [
             {
                 "role": "user",
@@ -386,10 +412,15 @@ async fn test_openai(api_key: &str, model: &str) -> Result<String, String> {
         ]
     });
 
-    let response = client
-        .post(OPENAI_API_URL)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("content-type", "application/json")
+    let mut req = client
+        .post(url)
+        .header("content-type", "application/json");
+
+    if let Some(key) = api_key {
+        req = req.header("Authorization", format!("Bearer {}", key));
+    }
+
+    let response = req
         .json(&body)
         .send()
         .await

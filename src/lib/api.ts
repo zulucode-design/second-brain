@@ -314,8 +314,9 @@ export async function setAiSettings(
   apiKey: string | null,
   model: string,
   writingStyle: string | null,
+  baseUrl: string | null = null,
 ): Promise<void> {
-  return invoke("set_ai_settings", { provider, apiKey, model, writingStyle });
+  return invoke("set_ai_settings", { provider, apiKey, model, writingStyle, baseUrl });
 }
 
 export async function testAiConnection(): Promise<void> {

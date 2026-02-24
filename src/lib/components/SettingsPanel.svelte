@@ -204,18 +204,20 @@
 	let aiProvider = $state<string | null>($appConfig?.ai_provider ?? null);
 	let aiApiKey = $derived.by(() => {
 		if (aiProvider === 'openai') return _openaiKey;
+		if (aiProvider === 'ollama') return '';
 		return _anthropicKey;
 	});
 	let _anthropicKey = $state($appConfig?.ai_api_key ?? '');
 	let _openaiKey = $state($appConfig?.openai_api_key ?? '');
-	let aiModel = $state($appConfig?.ai_model ?? 'claude-sonnet-4-5-20250929');
+	let _ollamaBaseUrl = $state($appConfig?.ollama_base_url ?? 'http://localhost:11434');
+	let aiModel = $state($appConfig?.ai_model ?? 'claude-sonnet-4-6');
 	let aiWritingStyle = $state($appConfig?.ai_writing_style ?? '');
 	let aiShowKey = $state(false);
 	let aiTestLoading = $state(false);
 	let aiTestMessage = $state<{ type: 'success' | 'error'; text: string } | null>(null);
 
 	const anthropicModels = [
-		{ value: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5', desc: 'Balanced' },
+		{ value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', desc: 'Balanced' },
 		{ value: 'claude-opus-4-6', label: 'Claude Opus 4.6', desc: 'Most capable' },
 		{ value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', desc: 'Fast' },
 	];
@@ -228,13 +230,15 @@
 	let aiModels = $derived(aiProvider === 'openai' ? openaiModels : anthropicModels);
 
 	async function saveAiSettings() {
-		await setAiSettings(aiProvider, aiApiKey || null, aiModel, aiWritingStyle || null);
+		const baseUrl = aiProvider === 'ollama' ? (_ollamaBaseUrl || null) : null;
+		await setAiSettings(aiProvider, aiApiKey || null, aiModel, aiWritingStyle || null, baseUrl);
 		if ($appConfig) {
 			$appConfig = {
 				...$appConfig,
 				ai_provider: aiProvider,
 				ai_api_key: _anthropicKey || null,
 				openai_api_key: _openaiKey || null,
+				ollama_base_url: _ollamaBaseUrl || null,
 				ai_model: aiModel,
 				ai_writing_style: aiWritingStyle || null,
 			};
@@ -981,52 +985,86 @@
 								<h3>Provider</h3>
 								<div class="setting-options">
 									<button class="option-btn" class:active={!aiProvider} onclick={() => { if (!aiProvider) return; aiProvider = null; aiTestMessage = null; saveAiSettings(); }}>Disabled</button>
-									<button class="option-btn" class:active={aiProvider === 'anthropic'} onclick={() => { if (aiProvider === 'anthropic') return; aiProvider = 'anthropic'; aiModel = 'claude-sonnet-4-5-20250929'; aiTestMessage = null; saveAiSettings(); }}>Anthropic</button>
+									<button class="option-btn" class:active={aiProvider === 'ollama'} onclick={() => { if (aiProvider === 'ollama') return; aiProvider = 'ollama'; aiModel = 'gemma3:4b'; aiTestMessage = null; saveAiSettings(); }}>Ollama</button>
+									<button class="option-btn" class:active={aiProvider === 'anthropic'} onclick={() => { if (aiProvider === 'anthropic') return; aiProvider = 'anthropic'; aiModel = 'claude-sonnet-4-6'; aiTestMessage = null; saveAiSettings(); }}>Anthropic</button>
 									<button class="option-btn" class:active={aiProvider === 'openai'} onclick={() => { if (aiProvider === 'openai') return; aiProvider = 'openai'; aiModel = 'gpt-5.2'; aiTestMessage = null; saveAiSettings(); }}>OpenAI</button>
 								</div>
 							</div>
 
 							{#if aiProvider}
-								<div class="settings-section">
-									<h3>API Key</h3>
-									<div class="ai-key-row">
+								{#if aiProvider === 'ollama'}
+									<p class="setting-hint" style="color: var(--text-success, #4ade80); margin-top: -4px; margin-bottom: 12px;">Your data stays on your device. No text is sent to any external server.</p>
+								{:else}
+									<p class="setting-hint" style="color: var(--text-warning, #f59e0b); margin-top: -4px; margin-bottom: 12px;">Your selected text and note content will be sent to {aiProvider === 'openai' ? 'OpenAI' : 'Anthropic'} servers for processing.</p>
+								{/if}
+
+								{#if aiProvider === 'ollama'}
+									<div class="settings-section">
+										<h3>Server URL</h3>
 										<input
-											type={aiShowKey ? 'text' : 'password'}
+											type="text"
 											class="ai-key-input"
-											placeholder={aiProvider === 'openai' ? 'sk-...' : 'sk-ant-...'}
-											value={aiApiKey}
-											oninput={(e) => { const v = (e.target as HTMLInputElement).value; if (aiProvider === 'openai') _openaiKey = v; else _anthropicKey = v; }}
+											placeholder="http://localhost:11434"
+											value={_ollamaBaseUrl}
+											oninput={(e) => { _ollamaBaseUrl = (e.target as HTMLInputElement).value; }}
 											onblur={saveAiSettings}
 										/>
-										<button class="ai-key-toggle" onclick={() => aiShowKey = !aiShowKey} title={aiShowKey ? 'Hide' : 'Show'}>
-											{#if aiShowKey}
-												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-											{:else}
-												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-											{/if}
-										</button>
+										<p class="setting-hint">Ollama server address. Install from <a href="https://ollama.com" target="_blank" class="ai-link">ollama.com</a></p>
 									</div>
-									{#if aiProvider === 'openai'}
-										<p class="setting-hint">Get your API key from <a href="https://platform.openai.com/api-keys" target="_blank" class="ai-link">platform.openai.com</a></p>
-									{:else}
-										<p class="setting-hint">Get your API key from <a href="https://console.anthropic.com/settings/keys" target="_blank" class="ai-link">console.anthropic.com</a></p>
-									{/if}
-								</div>
+								{:else}
+									<div class="settings-section">
+										<h3>API Key</h3>
+										<div class="ai-key-row">
+											<input
+												type={aiShowKey ? 'text' : 'password'}
+												class="ai-key-input"
+												placeholder={aiProvider === 'openai' ? 'sk-...' : 'sk-ant-...'}
+												value={aiApiKey}
+												oninput={(e) => { const v = (e.target as HTMLInputElement).value; if (aiProvider === 'openai') _openaiKey = v; else _anthropicKey = v; }}
+												onblur={saveAiSettings}
+											/>
+											<button class="ai-key-toggle" onclick={() => aiShowKey = !aiShowKey} title={aiShowKey ? 'Hide' : 'Show'}>
+												{#if aiShowKey}
+													<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+												{:else}
+													<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+												{/if}
+											</button>
+										</div>
+										{#if aiProvider === 'openai'}
+											<p class="setting-hint">Get your API key from <a href="https://platform.openai.com/api-keys" target="_blank" class="ai-link">platform.openai.com</a></p>
+										{:else}
+											<p class="setting-hint">Get your API key from <a href="https://console.anthropic.com/settings/keys" target="_blank" class="ai-link">console.anthropic.com</a></p>
+										{/if}
+									</div>
+								{/if}
 
 								<div class="settings-section">
 									<h3>Model</h3>
-									<div class="ai-model-options">
-										{#each aiModels as m}
-											<button
-												class="ai-model-btn"
-												class:active={aiModel === m.value}
-												onclick={() => { aiModel = m.value; saveAiSettings(); }}
-											>
-												<span class="ai-model-name">{m.label}</span>
-												<span class="ai-model-desc">{m.desc}</span>
-											</button>
-										{/each}
-									</div>
+									{#if aiProvider === 'ollama'}
+										<input
+											type="text"
+											class="ai-key-input"
+											placeholder="gemma3:4b"
+											value={aiModel}
+											oninput={(e) => { aiModel = (e.target as HTMLInputElement).value; }}
+											onblur={saveAiSettings}
+										/>
+										<p class="setting-hint">Enter the model name as shown by <code>ollama list</code></p>
+									{:else}
+										<div class="ai-model-options">
+											{#each aiModels as m}
+												<button
+													class="ai-model-btn"
+													class:active={aiModel === m.value}
+													onclick={() => { aiModel = m.value; saveAiSettings(); }}
+												>
+													<span class="ai-model-name">{m.label}</span>
+													<span class="ai-model-desc">{m.desc}</span>
+												</button>
+											{/each}
+										</div>
+									{/if}
 								</div>
 
 								<div class="settings-section">
@@ -1044,7 +1082,7 @@
 
 								<div class="settings-section">
 									<h3>Connection</h3>
-									<button class="import-btn" onclick={handleTestAi} disabled={aiTestLoading || !aiApiKey}>
+									<button class="import-btn" onclick={handleTestAi} disabled={aiTestLoading || (aiProvider !== 'ollama' && !aiApiKey)}>
 										{#if aiTestLoading}
 											<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
 											Testing...

@@ -1334,11 +1334,13 @@ pub fn set_ai_settings(
     api_key: Option<String>,
     model: String,
     writing_style: Option<String>,
+    base_url: Option<String>,
 ) -> Result<(), String> {
     let mut config = state.config.lock().map_err(|e| e.to_string())?;
     let key = api_key.filter(|k| !k.is_empty());
     match provider.as_deref() {
         Some("openai") => config.openai_api_key = key,
+        Some("ollama") => config.ollama_base_url = base_url.filter(|u| !u.trim().is_empty()),
         _ => config.ai_api_key = key,
     }
     config.ai_provider = provider;
@@ -1350,27 +1352,36 @@ pub fn set_ai_settings(
 
 #[tauri::command]
 pub fn test_ai_connection(app: AppHandle) -> Result<(), String> {
-    let (provider, api_key, model) = {
+    let (provider, api_key, model, base_url) = {
         let state = app.state::<AppState>();
         let config = state.config.lock().map_err(|e| e.to_string())?;
         let provider = config
             .ai_provider
             .clone()
             .unwrap_or_else(|| "anthropic".to_string());
-        let key = if provider == "openai" {
+        let key = if provider == "ollama" {
+            // Ollama doesn't require an API key
+            Some(String::new())
+        } else if provider == "openai" {
             config.openai_api_key.clone()
         } else {
             config.ai_api_key.clone()
         }
         .ok_or("No API key configured")?;
         let model = config.ai_model.clone();
-        (provider, key, model)
+        let base_url = config.ollama_base_url.clone();
+        (provider, key, model, base_url)
     };
 
     std::thread::spawn(move || {
         use tauri::Emitter;
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(crate::ai::test_connection(&provider, &api_key, &model));
+        let result = rt.block_on(crate::ai::test_connection(
+            &provider,
+            &api_key,
+            &model,
+            base_url.as_deref(),
+        ));
         match result {
             Ok(msg) => {
                 let _ = app.emit(
@@ -1397,14 +1408,16 @@ pub fn ai_ask(
     custom_prompt: Option<String>,
     request_id: String,
 ) -> Result<(), String> {
-    let (provider, api_key, model, writing_style) = {
+    let (provider, api_key, model, writing_style, base_url) = {
         let state = app.state::<AppState>();
         let config = state.config.lock().map_err(|e| e.to_string())?;
         let provider = config
             .ai_provider
             .clone()
             .unwrap_or_else(|| "anthropic".to_string());
-        let key = if provider == "openai" {
+        let key = if provider == "ollama" {
+            Some(String::new())
+        } else if provider == "openai" {
             config.openai_api_key.clone()
         } else {
             config.ai_api_key.clone()
@@ -1412,7 +1425,8 @@ pub fn ai_ask(
         .ok_or("No API key configured. Go to Settings > AI to set up your API key.")?;
         let model = config.ai_model.clone();
         let style = config.ai_writing_style.clone();
-        (provider, key, model, style)
+        let base_url = config.ollama_base_url.clone();
+        (provider, key, model, style, base_url)
     };
 
     let mut system_prompt = "You are a helpful writing assistant inside a note-taking app called HelixNotes. \
@@ -1458,6 +1472,7 @@ pub fn ai_ask(
         system_prompt,
         user_message,
         request_id,
+        base_url,
     );
     Ok(())
 }

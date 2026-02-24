@@ -93,6 +93,8 @@ pub struct AppConfig {
     pub ai_api_key: Option<String>,
     #[serde(default)]
     pub openai_api_key: Option<String>,
+    #[serde(default)]
+    pub ollama_base_url: Option<String>,
     #[serde(default = "default_ai_model")]
     pub ai_model: String,
     #[serde(default)]
@@ -132,7 +134,7 @@ fn default_max_versions() -> u32 {
 }
 
 fn default_ai_model() -> String {
-    "claude-sonnet-4-5-20250929".to_string()
+    "claude-sonnet-4-6".to_string()
 }
 
 impl Default for AppConfig {
@@ -164,7 +166,8 @@ impl Default for AppConfig {
             ai_provider: None,
             ai_api_key: None,
             openai_api_key: None,
-            ai_model: "claude-sonnet-4-5-20250929".to_string(),
+            ollama_base_url: None,
+            ai_model: "claude-sonnet-4-6".to_string(),
             ai_writing_style: None,
             default_view_mode: false,
             show_tray_icon: false,

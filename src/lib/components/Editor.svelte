@@ -2947,14 +2947,18 @@
 							if (!newTitle) return;
 							const oldPath = $activeNotePath;
 							$activeNote.meta.title = newTitle;
+							// Update stripped title so restoreTitleH1 uses the new title
+							if (titleWasStripped) strippedTitle = newTitle;
 							$editorDirty = true;
-							autoSave();
+							// Force save current editor content before renaming so disk is up-to-date
+							await forceSave();
 							// Rename file on disk if filename doesn't match the new title
 							const filename = oldPath.split('/').pop() ?? '';
 							const stem = filename.replace(/\.md$/, '');
 							if (stem !== newTitle) {
 								try {
 									const newPath = await renameNote(oldPath, newTitle);
+									loadedPath = newPath;
 									$activeNotePath = newPath;
 									notes.update(list => list.map(n =>
 										n.path === oldPath
