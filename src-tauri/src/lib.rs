@@ -115,6 +115,7 @@ pub fn run() {
             commands::empty_trash,
             commands::load_vault_state,
             commands::save_vault_state,
+            commands::read_clipboard_image,
             commands::save_image,
             commands::save_attachment,
             commands::get_notebook_icons,

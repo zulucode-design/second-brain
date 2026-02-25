@@ -462,6 +462,34 @@ pub fn save_vault_state(state: State<'_, AppState>, vault_state: VaultState) -> 
     operations::save_vault_state(vault_path, &vault_state)
 }
 
+// ── Clipboard ──
+
+/// Read image from system clipboard (bypasses WebKitGTK clipboard bug).
+/// Returns PNG bytes as Vec<u8>, or error if no image on clipboard.
+#[tauri::command]
+pub fn read_clipboard_image() -> Result<Vec<u8>, String> {
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|e| format!("Clipboard init failed: {}", e))?;
+    let img = clipboard
+        .get_image()
+        .map_err(|_| "No image on clipboard".to_string())?;
+    // Encode RGBA data to PNG
+    let mut buf: Vec<u8> = Vec::new();
+    {
+        let mut encoder =
+            png::Encoder::new(std::io::Cursor::new(&mut buf), img.width as u32, img.height as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder
+            .write_header()
+            .map_err(|e| format!("PNG header failed: {}", e))?;
+        writer
+            .write_image_data(&img.bytes)
+            .map_err(|e| format!("PNG encode failed: {}", e))?;
+    }
+    Ok(buf)
+}
+
 // ── Attachments ──
 
 #[tauri::command]

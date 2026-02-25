@@ -98,6 +98,7 @@
 		noteHistoryIndex = newIndex;
 		navigatingFromHistory = true;
 		readNote(path).then((content) => {
+			editor?.flushSave();
 			$activeNote = content;
 			$activeNotePath = path;
 			$editorDirty = false;
@@ -114,6 +115,7 @@
 		if (!vaultRoot || !filePath.startsWith(vaultRoot)) return;
 		try {
 			const content = await readNote(filePath);
+			editor?.flushSave();
 			$activeNote = content;
 			$activeNotePath = filePath;
 			$editorDirty = false;
@@ -167,6 +169,7 @@
 		try {
 			const entry = await createDailyNote();
 			const content = await readNote(entry.path);
+			editor?.flushSave();
 			$activeNote = content;
 			$activeNotePath = entry.path;
 			$editorDirty = false;
@@ -391,7 +394,7 @@
 				<Sidebar bind:this={sidebar} onViewChanged={handleViewChanged} />
 			</div>
 			<div class="mobile-panel" class:active={$mobileView === 'notelist'}>
-				<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onNoteMoved={() => sidebar?.refresh()} />
+				<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onNoteMoved={() => sidebar?.refresh()} />
 			</div>
 			<div class="mobile-panel" class:active={$mobileView === 'editor'}>
 				<Editor bind:this={editor} />
@@ -485,7 +488,7 @@
 				{/if}
 
 				<div class="notelist-panel" style="width: {$notelistWidth}px">
-					<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onNoteMoved={() => sidebar?.refresh()} />
+					<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onNoteMoved={() => sidebar?.refresh()} />
 				</div>
 
 				<ResizeHandle onResize={handleNotelistResize} />

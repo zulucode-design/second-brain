@@ -39,7 +39,7 @@
 	import { openFile, copyFileTo } from '$lib/api';
 	import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, readOnly, quickAccessPaths, notes } from '$lib/stores/app';
-	import { saveNote, saveImage, saveAttachment, addQuickAccess, removeQuickAccess, getQuickAccess, getNoteVersions, getNoteVersionContent, createVersion, aiAsk, getAllNoteTitles, readNote, renameNote } from '$lib/api';
+	import { saveNote, saveImage, saveAttachment, readClipboardImage, addQuickAccess, removeQuickAccess, getQuickAccess, getNoteVersions, getNoteVersionContent, createVersion, aiAsk, getAllNoteTitles, readNote, renameNote } from '$lib/api';
 	import type { VersionEntry, AiStreamEvent, NoteTitleEntry } from '$lib/types';
 	import { listen } from '@tauri-apps/api/event';
 	import { debounce } from '$lib/utils/debounce';
@@ -1203,22 +1203,25 @@
 		});
 	}
 
-	export function loadNote(path: string, content: string) {
-		// Flush any unsaved changes for the CURRENT note before loading the new one
-		if ($editorDirty && $activeNote && $activeNotePath && $activeNotePath !== path) {
-			try {
-				const body = $sourceMode
-					? restoreTitleH1(sourceContent)
-					: editorToMarkdown();
-				const trimmed = body.replace(/^#.*\n?/, '').trim();
-				if (trimmed || !$activeNote.content || $activeNote.content.trim().length <= 10) {
-					saveNote($activeNotePath, $activeNote.meta, body);
-				}
-			} catch (e) {
-				console.error('Pre-switch save failed:', e);
+	/** Flush unsaved editor content to disk (synchronous serialize + fire-and-forget save).
+	 *  Call BEFORE updating $activeNote/$activeNotePath stores when switching notes. */
+	export function flushSave() {
+		if (!$editorDirty || !$activeNote || !$activeNotePath) return;
+		try {
+			const body = $sourceMode
+				? restoreTitleH1(sourceContent)
+				: editorToMarkdown();
+			const trimmed = body.replace(/^#.*\n?/, '').trim();
+			if (trimmed || !$activeNote.content || $activeNote.content.trim().length <= 10) {
+				saveNote($activeNotePath, $activeNote.meta, body);
 			}
-			$editorDirty = false;
+		} catch (e) {
+			console.error('Pre-switch save failed:', e);
 		}
+		$editorDirty = false;
+	}
+
+	export function loadNote(path: string, content: string) {
 		loadedPath = path;
 		lastSourceMode = $sourceMode;
 		isLoadingNote = true;
@@ -2018,21 +2021,7 @@
 	});
 
 	function destroyEditor() {
-		// Flush unsaved changes before destroying
-		if ($editorDirty && $activeNote && $activeNotePath && editor) {
-			try {
-				const body = $sourceMode
-					? restoreTitleH1(sourceContent)
-					: editorToMarkdown();
-				const trimmed = body.replace(/^#.*\n?/, '').trim();
-				if (trimmed || !$activeNote.content || $activeNote.content.trim().length <= 10) {
-					saveNote($activeNotePath, $activeNote.meta, body);
-				}
-			} catch (e) {
-				console.error('Destroy-save failed:', e);
-			}
-			$editorDirty = false;
-		}
+		flushSave();
 		if (editor) {
 			editor.destroy();
 			editor = null;
@@ -2757,7 +2746,32 @@
 			}
 			return true;
 		}
+		// WebKitGTK fallback (bug #218519): older WebKitGTK versions return
+		// empty DataTransferItemList for image pastes. Detect this and read
+		// the image directly from the system clipboard via Rust/arboard.
+		if (items.length === 0) {
+			const hasText = event.clipboardData!.getData('text/plain');
+			const hasHtml = event.clipboardData!.getData('text/html');
+			if (!hasText && !hasHtml) {
+				event.preventDefault();
+				insertClipboardImage();
+				return true;
+			}
+		}
 		return false;
+	}
+
+	async function insertClipboardImage() {
+		try {
+			const data = await readClipboardImage();
+			const relativePath = await saveImage('pasted-image.png', data);
+			if (editor) {
+				const displaySrc = resolveImageSrc(relativePath);
+				editor.chain().focus().setImage({ src: displaySrc }).run();
+			}
+		} catch (e) {
+			console.error('Clipboard image fallback failed:', e);
+		}
 	}
 
 	async function insertImage(file: File) {

@@ -35,9 +35,10 @@
 	import { openNoteWindow } from '$lib/utils/window';
 	import type { NoteEntry, SortMode } from '$lib/types';
 
-	let { onNoteSelected = (_path: string, _content: string) => {}, onNoteMoved = () => {} }: {
+	let { onNoteSelected = (_path: string, _content: string) => {}, onNoteMoved = () => {}, onBeforeNoteSwitch = () => {} }: {
 		onNoteSelected?: (path: string, content: string) => void;
 		onNoteMoved?: () => void;
+		onBeforeNoteSwitch?: () => void;
 	} = $props();
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
@@ -184,6 +185,7 @@
 		if ($activeNotePath === note.path) return;
 		try {
 			const content = await readNote(note.path);
+			onBeforeNoteSwitch();
 			$activeNote = content;
 			$activeNotePath = note.path;
 			$editorDirty = false;

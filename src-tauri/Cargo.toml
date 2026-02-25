@@ -38,6 +38,8 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "str
 futures = "0.3"
 rayon = "1"
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+arboard = { version = "3", features = ["image-data", "wayland-data-control"] }
+png = "0.17"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 tauri-plugin-updater = "2"
