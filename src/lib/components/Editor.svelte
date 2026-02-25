@@ -110,6 +110,7 @@
 	let aiEmptyNote = $state(false);
 	let aiOriginalMarkdown = $state('');
 	let aiMediaPlaceholders = $state<Map<string, string>>(new Map());
+	let aiStreamUnlisten: (() => void) | null = null;
 
 	// View mode (read-only) — state managed by $readOnly store
 
@@ -2516,6 +2517,7 @@
 	}
 
 	function closeAiMenu() {
+		if (aiStreamUnlisten) { aiStreamUnlisten(); aiStreamUnlisten = null; }
 		aiMenu = null;
 		aiLoading = false;
 		aiResult = null;
@@ -2543,6 +2545,9 @@
 		aiShowCustom = false;
 		aiTranslateMenu = false;
 
+		// Cancel any previous stream listener
+		if (aiStreamUnlisten) { aiStreamUnlisten(); aiStreamUnlisten = null; }
+
 		const requestId = crypto.randomUUID();
 		const unlisten = await listen<AiStreamEvent>('ai-stream', (event) => {
 			const data = event.payload;
@@ -2550,13 +2555,16 @@
 				aiResult = (aiResult ?? '') + data.text;
 			} else if (data.event_type === 'done') {
 				aiLoading = false;
+				aiStreamUnlisten = null;
 				unlisten();
 			} else if (data.event_type === 'error') {
 				aiError = data.error ?? 'Unknown error';
 				aiLoading = false;
+				aiStreamUnlisten = null;
 				unlisten();
 			}
 		});
+		aiStreamUnlisten = unlisten;
 
 		try {
 			await aiAsk(action, aiSelectedText, customPrompt ?? null, requestId);
@@ -2564,6 +2572,7 @@
 			aiError = String(e);
 			aiLoading = false;
 			unlisten();
+			aiStreamUnlisten = null;
 		}
 	}
 
@@ -3125,7 +3134,7 @@
 					</svg>
 				</button>
 				{/if}
-				{#if $appConfig?.ai_provider && ($appConfig?.ai_api_key || $appConfig?.openai_api_key)}
+				{#if $appConfig?.ai_provider && ($appConfig?.ai_provider === 'ollama' || $appConfig?.ai_api_key || $appConfig?.openai_api_key)}
 				<button
 					class="icon-btn"
 					onclick={openAiMenu}
@@ -3959,7 +3968,7 @@
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><polyline points="4.5 6.5 6 8 8.5 4.5"/><line x1="13" y1="6.5" x2="21" y2="6.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><line x1="13" y1="17.5" x2="21" y2="17.5"/></svg>
 				Task List
 			</button>
-			{#if $appConfig?.ai_provider && ($appConfig?.ai_api_key || $appConfig?.openai_api_key)}
+			{#if $appConfig?.ai_provider && ($appConfig?.ai_provider === 'ollama' || $appConfig?.ai_api_key || $appConfig?.openai_api_key)}
 				<div class="text-ctx-sep"></div>
 				<button onclick={openAiMenu}>
 					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
