@@ -5,7 +5,7 @@ A local markdown note-taking app built with Tauri, SvelteKit, and Rust.
 Your notes are stored as standard Markdown files on your local filesystem.
 No cloud, no lock-in.
 
-## Download (v1.1.6)
+## Download (v1.1.8)
 
 ### Linux
 
@@ -23,19 +23,19 @@ curl -fsSL https://repo.arkhost.com/gpg.key | sudo gpg --dearmor -o /usr/share/k
 
 #### AppImage (Arch, Fedora 43+, openSUSE Tumbleweed)
 
-[Download AppImage](https://download.helixnotes.com/releases/v1.1.6/HelixNotes_1.1.6_amd64.AppImage)
+[Download AppImage](https://download.helixnotes.com/releases/v1.1.8/HelixNotes_1.1.8_amd64.AppImage)
 
 #### .deb (manual)
 
-[Download .deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.6/HelixNotes_1.1.6_amd64.deb) — Ubuntu 22.04+
+[Download .deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.8/HelixNotes_1.1.8_amd64.deb) — Ubuntu 22.04+
 
 ### Windows
 
-[Download Installer](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.6/HelixNotes_1.1.6_x64-setup.exe) — Windows 10/11
+[Download Installer](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.8/HelixNotes_1.1.8_x64-setup.exe) — Windows 10/11
 
 ### macOS
 
-[Download .dmg](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.6/HelixNotes_1.1.6_x64.dmg) — macOS (Intel, runs on Apple Silicon via Rosetta)
+[Download .dmg](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.8/HelixNotes_1.1.8_x64.dmg) — macOS (Intel, runs on Apple Silicon via Rosetta)
 
 ---
 
@@ -50,7 +50,7 @@ All releases: [codeberg.org/ArkHost/HelixNotes/releases](https://codeberg.org/Ar
 - **Full-text search** powered by Tantivy
 - **Math support** — KaTeX rendering for inline and block equations
 - **Daily notes** — one-click button to create or open today's note
-- **AI writing tools** — improve, summarize, translate, and more (Anthropic / OpenAI)
+- **AI writing tools** — improve, summarize, translate, and more (Ollama / Anthropic / OpenAI)
 - **Version history** — per-note snapshots with diff view
 - **Backups** — automatic zip-based vault backups
 - **PDF preview** — inline rendering of embedded PDFs
