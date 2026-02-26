@@ -121,7 +121,7 @@
 					oninput={handleInput}
 					onkeydown={handleKeydown}
 				/>
-				<kbd class="search-esc">Esc</kbd>
+				{#if !isMobile}<kbd class="search-esc">Esc</kbd>{/if}
 			</div>
 
 			{#if results.length > 0}
