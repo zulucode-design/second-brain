@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { showSearch, activeNote, activeNotePath, editorDirty, appConfig } from '$lib/stores/app';
+	import { showSearch, activeNote, activeNotePath, editorDirty, appConfig, mobileView } from '$lib/stores/app';
 	import { searchNotes, readNote } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
 	import type { SearchResult } from '$lib/types';
@@ -83,6 +83,8 @@
 		return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 	}
 
+	const isMobile = /android|ios/i.test(navigator.userAgent);
+
 	async function openResult(result: SearchResult) {
 		try {
 			const content = await readNote(result.path);
@@ -90,6 +92,7 @@
 			$activeNotePath = result.path;
 			$editorDirty = false;
 			$showSearch = false;
+			if (isMobile) $mobileView = 'editor';
 		} catch (e) {
 			console.error('Failed to open search result:', e);
 		}

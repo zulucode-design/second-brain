@@ -44,7 +44,7 @@ pub fn run() {
                 )?;
             }
 
-            // On Android, set config dir from Tauri's path resolver
+            // On Android, set config dir from Tauri's path resolver, then reload config
             #[cfg(target_os = "android")]
             {
                 if let Ok(config_dir) = app.path().config_dir() {
@@ -52,6 +52,11 @@ pub fn run() {
                 } else if let Ok(data_dir) = app.path().data_dir() {
                     commands::set_android_config_dir(data_dir);
                 }
+                // Reload config now that the Android config dir is available
+                let reloaded = commands::load_app_config();
+                let _ = app.state::<AppState>().config.lock().map(|mut cfg| {
+                    *cfg = reloaded;
+                });
             }
 
             #[cfg(not(target_os = "android"))]

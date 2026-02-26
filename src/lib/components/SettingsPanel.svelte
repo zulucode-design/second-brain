@@ -1,11 +1,13 @@
 <script lang="ts">
-	import { showSettings, theme, appConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab } from '$lib/stores/app';
+	import { showSettings, theme, appConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady } from '$lib/stores/app';
 	import { setTheme, setAccentColor, setFontSize, setFontFamily, setLineHeight, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection } from '$lib/api';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
 	import { check as checkUpdate } from '@tauri-apps/plugin-updater';
 	import { getVersion } from '@tauri-apps/api/app';
 	import type { ImportResult, BackupEntry } from '$lib/types';
+
+	const isMobile = /android|ios/i.test(navigator.userAgent);
 
 	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'ai' | 'updates';
 	let activeTab = $state<Tab>('styling');
@@ -506,9 +508,9 @@
 
 {#if $showSettings}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="settings-overlay" onclick={close} onkeydown={(e) => { if (e.key === 'Escape') close(); }}>
+	<div class="settings-overlay" class:mobile={isMobile} onclick={close} onkeydown={(e) => { if (e.key === 'Escape') close(); }}>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="settings-panel" onclick={(e) => e.stopPropagation()}>
+		<div class="settings-panel" class:mobile={isMobile} onclick={(e) => e.stopPropagation()}>
 			<div class="settings-header">
 				<h2>Settings</h2>
 				<button class="close-btn" onclick={close}>
@@ -539,30 +541,36 @@
 						</svg>
 						Styling
 					</button>
+					{#if !isMobile}
 					<button class="tab-btn" class:active={activeTab === 'import'} onclick={() => activeTab = 'import'}>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M8 5H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V7a2 2 0 00-2-2h-4"/>
 						</svg>
 						Import
 					</button>
+				{/if}
+					{#if !isMobile}
 					<button class="tab-btn" class:active={activeTab === 'backup'} onclick={() => { activeTab = 'backup'; loadBackups(); }}>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M21 12a9 9 0 00-9-9 9.75 9.75 0 00-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 009 9 9.75 9.75 0 006.74-2.74L21 16"/><path d="M16 16h5v5"/>
 						</svg>
 						Backup
 					</button>
+					{/if}
 					<button class="tab-btn" class:active={activeTab === 'ai'} onclick={() => activeTab = 'ai'}>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M12 8V4l-2-2"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M9 13v2"/><path d="M15 13v2"/>
 						</svg>
 						AI
 					</button>
+					{#if !isMobile}
 					<button class="tab-btn" class:active={activeTab === 'updates'} onclick={() => activeTab = 'updates'}>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M21 12a9 9 0 00-9-9 9.75 9.75 0 00-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 3"/>
 						</svg>
 						Updates
 					</button>
+				{/if}
 				</nav>
 
 				<div class="settings-body">
@@ -590,6 +598,20 @@
 								</div>
 							</div>
 
+							{#if isMobile}
+							<div class="settings-section">
+								<h3>Vault</h3>
+								<p class="setting-desc" style="margin-bottom: 12px; color: var(--text-tertiary); font-size: 13px;">Current: <strong style="color: var(--text-primary);">{$appConfig?.active_vault?.split('/').pop() ?? 'Unknown'}</strong></p>
+								<button class="import-btn" onclick={() => { $showSettings = false; $vaultReady = false; }}>
+									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+										<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+									</svg>
+									Switch Vault
+								</button>
+							</div>
+							{/if}
+
+							{#if !isMobile}
 							<div class="settings-section">
 								<h3>Performance</h3>
 								<label class="setting-toggle">
@@ -635,6 +657,7 @@
 								</label>
 								{/if}
 							</div>
+						{/if}
 						</div>
 					{:else if activeTab === 'editor'}
 						<div class="tab-content">
@@ -649,6 +672,7 @@
 										<span class="toggle-knob"></span>
 									</button>
 								</label>
+								{#if !isMobile}
 								<label class="setting-toggle" style="margin-top: 12px;">
 									<span class="setting-label">
 										<span class="setting-name">Show line numbers</span>
@@ -658,6 +682,7 @@
 										<span class="toggle-knob"></span>
 									</button>
 								</label>
+								{/if}
 								<label class="setting-toggle" style="margin-top: 12px;">
 									<span class="setting-label">
 										<span class="setting-name">Open notes in View Mode</span>
@@ -682,6 +707,7 @@
 								</label>
 							</div>
 
+							{#if !isMobile}
 							<div class="settings-section">
 								<h3>PDF Preview</h3>
 								<label class="setting-toggle">
@@ -713,6 +739,7 @@
 									<span class="setting-hint">Default height for PDF previews in notes</span>
 								</div>
 							{/if}
+						{/if}
 						</div>
 					{:else if activeTab === 'styling'}
 						<div class="tab-content">
@@ -849,6 +876,7 @@
 								</label>
 
 								<div class="backup-actions">
+									{#if !isMobile}
 									<button class="backup-link-btn" onclick={handleSelectBackupFolder}>
 										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 											<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
@@ -857,6 +885,7 @@
 									</button>
 									{#if $appConfig?.backup_location}
 										<p class="backup-path">{$appConfig.backup_location}</p>
+									{/if}
 									{/if}
 									<button class="backup-link-btn" onclick={handleBackupNow} disabled={backupLoading}>
 										{#if backupLoading}
@@ -1105,7 +1134,11 @@
 
 								<div class="settings-section">
 									<h3>Usage</h3>
+									{#if isMobile}
+									<p class="import-desc">Use the AI button in the toolbar or header to access AI writing tools: improve, fix grammar, rewrite, summarize, translate, and more.</p>
+								{:else}
 									<p class="import-desc">Select text in the editor and right-click to access AI writing tools: improve, fix grammar, rewrite, summarize, translate, and more.</p>
+								{/if}
 								</div>
 							{/if}
 						</div>
@@ -2083,6 +2116,113 @@
 	.import-result.info {
 		background: color-mix(in srgb, var(--accent) 10%, transparent);
 		color: var(--accent);
+	}
+
+	/* ═══ Mobile ═══ */
+
+	.settings-overlay.mobile {
+		align-items: stretch;
+		justify-content: stretch;
+	}
+
+	.settings-panel.mobile {
+		width: 100%;
+		height: 100%;
+		max-height: 100%;
+		border-radius: 0;
+		border: none;
+	}
+
+	.settings-panel.mobile .settings-content {
+		flex-direction: column;
+	}
+
+	.settings-panel.mobile .settings-tabs {
+		flex-direction: row;
+		min-width: 0;
+		border-right: none;
+		border-bottom: 1px solid var(--border-light);
+		padding: 8px 8px 0;
+		overflow-x: auto;
+		overflow-y: hidden;
+		-webkit-overflow-scrolling: touch;
+		scrollbar-width: none;
+		gap: 0;
+	}
+
+	.settings-panel.mobile .settings-tabs::-webkit-scrollbar {
+		display: none;
+	}
+
+	.settings-panel.mobile .tab-btn {
+		flex-shrink: 0;
+		flex-direction: column;
+		gap: 4px;
+		padding: 8px 14px 10px;
+		font-size: 11px;
+		border-radius: 8px 8px 0 0;
+	}
+
+	.settings-panel.mobile .tab-btn.active {
+		border-bottom: 2px solid var(--accent);
+		border-radius: 8px 8px 0 0;
+	}
+
+	.settings-panel.mobile .settings-header {
+		padding-top: calc(env(safe-area-inset-top, 12px) + 12px);
+	}
+
+	.settings-panel.mobile .settings-body {
+		padding: 16px;
+	}
+
+	.settings-panel.mobile .setting-name {
+		font-size: 14px;
+	}
+
+	.settings-panel.mobile .setting-desc {
+		font-size: 12px;
+	}
+
+	.settings-panel.mobile .toggle-switch {
+		width: 44px;
+		height: 26px;
+	}
+
+	.settings-panel.mobile .toggle-knob {
+		width: 22px;
+		height: 22px;
+	}
+
+	.settings-panel.mobile .toggle-switch.on .toggle-knob {
+		transform: translateX(18px);
+	}
+
+	.settings-panel.mobile .option-btn {
+		padding: 12px 10px;
+		font-size: 14px;
+	}
+
+	.settings-panel.mobile .theme-btn {
+		padding: 12px 10px;
+		font-size: 14px;
+	}
+
+	.settings-panel.mobile .accent-grid {
+		grid-template-columns: repeat(4, 1fr);
+		gap: 10px;
+	}
+
+	.settings-panel.mobile .accent-swatch {
+		padding: 14px 8px;
+	}
+
+	.settings-panel.mobile .font-size-options {
+		gap: 8px;
+	}
+
+	.settings-panel.mobile .font-size-btn {
+		padding: 12px 6px;
 	}
 
 </style>

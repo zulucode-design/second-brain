@@ -6,9 +6,10 @@
 	import type { VaultStats } from '$lib/types';
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
+	const isMobile = /android|ios/i.test(navigator.userAgent);
 
 	let stats = $state<VaultStats | null>(null);
-	let activeTab = $state<'about' | 'shortcuts'>('shortcuts');
+	let activeTab = $state<'about' | 'shortcuts'>(isMobile ? 'about' : 'shortcuts');
 	let appVersion = $state('...');
 
 	getVersion().then(v => appVersion = v).catch(() => appVersion = '0.0.0');
@@ -54,10 +55,12 @@
 			</div>
 
 			<div class="info-body">
+				{#if !isMobile}
 				<div class="info-tabs">
 					<button class="info-tab" class:active={activeTab === 'shortcuts'} onclick={() => activeTab = 'shortcuts'}>Shortcuts</button>
 					<button class="info-tab" class:active={activeTab === 'about'} onclick={() => activeTab = 'about'}>About</button>
 				</div>
+				{/if}
 
 				{#if activeTab === 'about'}
 					<div class="info-logo">
@@ -397,5 +400,20 @@
 		font-size: 12px;
 		color: var(--text-tertiary);
 		line-height: 1.4;
+	}
+
+	/* Mobile */
+	@media (max-width: 600px) {
+		.info-panel {
+			width: 100%;
+			height: 100%;
+			max-height: 100%;
+			border-radius: 0;
+			border: none;
+		}
+
+		.info-header {
+			padding-top: calc(env(safe-area-inset-top, 12px) + 12px);
+		}
 	}
 </style>

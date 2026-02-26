@@ -51,11 +51,23 @@
 
 	export async function refresh() {
 		try {
-			$notebooks = await getNotebooks();
-			$tags = await getAllTags();
-			$notebookIcons = await getNotebookIcons();
-			const qaNotes = await getQuickAccess();
-			$quickAccessPaths = qaNotes.map(n => n.relative_path);
+			if (isMobile) {
+				// On mobile, parallelize and skip getAllTags (derive from $notes instead)
+				const [nbs, icons, qaNotes] = await Promise.all([
+					getNotebooks(),
+					getNotebookIcons(),
+					getQuickAccess(),
+				]);
+				$notebooks = nbs;
+				$notebookIcons = icons;
+				$quickAccessPaths = qaNotes.map(n => n.relative_path);
+			} else {
+				$notebooks = await getNotebooks();
+				$tags = await getAllTags();
+				$notebookIcons = await getNotebookIcons();
+				const qaNotes = await getQuickAccess();
+				$quickAccessPaths = qaNotes.map(n => n.relative_path);
+			}
 		} catch (e) {
 			console.error('Failed to refresh sidebar:', e);
 		}
@@ -271,9 +283,18 @@
 		return convertFileSrc(`${vaultRoot}/${iconPath}`);
 	}
 
+	function clampMenu(x: number, y: number, menuWidth = 220, menuHeight = 300): { x: number; y: number } {
+		if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 8;
+		if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 8;
+		if (x < 4) x = 4;
+		if (y < 4) y = 4;
+		return { x, y };
+	}
+
 	function onContextMenu(e: MouseEvent, nb: NotebookEntry) {
 		e.preventDefault();
-		contextMenu = { x: e.clientX, y: e.clientY, notebook: nb };
+		const { x, y } = clampMenu(e.clientX, e.clientY);
+		contextMenu = { x, y, notebook: nb };
 	}
 
 	function closeContextMenu() {
@@ -283,7 +304,8 @@
 	function onTrashContextMenu(e: MouseEvent) {
 		e.preventDefault();
 		e.stopPropagation();
-		trashContextMenu = { x: e.clientX, y: e.clientY };
+		const { x, y } = clampMenu(e.clientX, e.clientY, 180, 60);
+		trashContextMenu = { x, y };
 	}
 
 	async function handleEmptyTrash() {
@@ -310,6 +332,7 @@
 <svelte:window onclick={handleWindowClick} />
 
 <aside class="sidebar" class:collapsed={$sidebarCollapsed} class:mobile={isMobile}>
+	{#if !isMobile}
 	<div class="sidebar-header">
 		<button class="collapse-btn" onclick={() => ($sidebarCollapsed = !$sidebarCollapsed)} title="Toggle sidebar">
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -329,6 +352,7 @@
 			</button>
 		{/if}
 	</div>
+	{/if}
 
 	{#if !$sidebarCollapsed}
 		<nav class="sidebar-nav">
@@ -425,9 +449,32 @@
 					{@render notebookItem(nb, 0)}
 				{/each}
 			</div>
+		{#if isMobile && $tags.length > 0}
+				<div class="tags-section-inline">
+					<button class="section-header" onclick={() => tagsCollapsed = !tagsCollapsed}>
+						<span class="section-title">Tags</span>
+						<span class="tag-count" style="margin-left: auto">{$tags.length}</span>
+					</button>
+					{#if !tagsCollapsed}
+						<div class="tag-list">
+							{#each $tags as [tag, count]}
+								<button
+									class="tag-item"
+									class:active={$viewMode === 'tag' && $activeTag === tag}
+									onclick={() => selectTag(tag)}
+								>
+									<span class="tag-hash">#</span>
+									<span class="tag-name">{tag}</span>
+									<span class="tag-count">{count}</span>
+								</button>
+							{/each}
+						</div>
+					{/if}
+				</div>
+			{/if}
 		</div>
 
-		{#if $tags.length > 0}
+		{#if !isMobile && $tags.length > 0}
 			<div class="tags-section">
 				<button class="section-header" onclick={() => tagsCollapsed = !tagsCollapsed}>
 					<span class="section-title">Tags</span>
@@ -1050,6 +1097,16 @@
 	.sidebar.mobile .nav-item svg {
 		width: 20px;
 		height: 20px;
+	}
+
+	.sidebar.mobile .section {
+		padding-bottom: 180px;
+	}
+
+	.sidebar.mobile .tags-section-inline {
+		border-top: 1px solid var(--border-light);
+		padding: 4px 0;
+		margin-top: 8px;
 	}
 
 	.sidebar.mobile .section-header {

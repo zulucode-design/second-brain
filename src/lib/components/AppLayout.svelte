@@ -29,13 +29,16 @@
 		showSettings,
 		sourceMode,
 		mobileView,
-		appConfig
+		appConfig,
+		quickAccessPaths,
+		tags,
+		notes
 	} from '$lib/stores/app';
 
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
 	const isMobile = /android|ios/i.test(navigator.userAgent);
-	import { loadVaultState, saveVaultState, readNote, createDailyNote, createBackup, getPendingOpenFile } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote, createDailyNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow } from '$lib/utils/window';
 	import { get } from 'svelte/store';
@@ -46,7 +49,12 @@
 	let editor: Editor;
 	let unlistenFileChange: (() => void) | null = null;
 	let unlistenOpenFile: (() => void) | null = null;
+
+	// Mobile editor header helpers
+	let noteRelativePath = $derived($activeNotePath && $appConfig?.active_vault ? $activeNotePath.replace($appConfig.active_vault + '/', '') : '');
+	let isQuickAccess = $derived(noteRelativePath ? $quickAccessPaths.includes(noteRelativePath) : false);
 	let backupInterval: ReturnType<typeof setInterval> | null = null;
+
 	let navigatingFromHistory = false;
 	let noteHistory: string[] = [];
 	let noteHistoryIndex = -1;
@@ -127,7 +135,7 @@
 
 	const persistState = debounce(async () => {
 		const state: VaultState = {
-			last_open_note: null,
+			last_open_note: $activeNotePath,
 			sidebar_width: $sidebarWidth,
 			notelist_width: $notelistWidth,
 			sidebar_collapsed: $sidebarCollapsed,
@@ -154,12 +162,11 @@
 	}
 
 	function handleViewChanged() {
-		noteList?.refresh(true);
+		noteList?.refresh();
 		if (isMobile) $mobileView = 'notelist';
 	}
 
 	async function createAndFocusNote() {
-		if (isMobile && $mobileView !== 'notelist') $mobileView = 'notelist';
 		await noteList?.handleCreateNote();
 		editor?.focusTitle();
 		if (isMobile) $mobileView = 'editor';
@@ -180,6 +187,38 @@
 		} catch (e) {
 			console.error('Failed to create/open daily note:', e);
 		}
+	}
+
+	// Android back gesture / hardware back button support
+	let mobileNavFromPopstate = false;
+
+	if (isMobile) {
+		// Seed initial history state
+		history.replaceState({ mobileView: 'sidebar' }, '');
+
+		// When mobileView changes forward, push browser history so Android back gesture works
+		$effect(() => {
+			const view = $mobileView;
+			if (mobileNavFromPopstate) {
+				mobileNavFromPopstate = false;
+				return;
+			}
+			// Replace state to track current view
+			history.pushState({ mobileView: view }, '');
+		});
+
+		window.addEventListener('popstate', (e) => {
+			const currentView = $mobileView;
+			if (currentView === 'sidebar') {
+				// Already at root — let Android handle it (exit app)
+				return;
+			}
+			mobileNavFromPopstate = true;
+			if (currentView === 'editor') $mobileView = 'notelist';
+			else if (currentView === 'notelist') $mobileView = 'sidebar';
+			// Push state again so next back gesture also works
+			history.pushState({ mobileView: $mobileView }, '');
+		});
 	}
 
 	function mobileBack() {
@@ -273,14 +312,27 @@
 		persistState();
 	});
 
+	$effect(() => {
+		$activeNotePath;
+		persistState();
+	});
+
 	onMount(async () => {
+		let lastNotePath: string | null = null;
 		try {
 			const state = await loadVaultState();
 			$sidebarWidth = state.sidebar_width;
 			$notelistWidth = state.notelist_width;
 			$sidebarCollapsed = state.sidebar_collapsed;
 			$collapsedNotebooks = state.collapsed_notebooks ?? [];
+			lastNotePath = state.last_open_note ?? null;
 		} catch (_) {}
+
+		// On mobile, prefetch last-opened note so first tap is instant
+		let prefetchPromise: Promise<any> | null = null;
+		if (isMobile && lastNotePath) {
+			prefetchPromise = readNote(lastNotePath).catch(() => null);
+		}
 
 		applyTheme($theme);
 
@@ -288,13 +340,56 @@
 			if ($theme === 'system') applyTheme('system');
 		});
 
-		await sidebar?.refresh();
-		await noteList?.refresh();
+		// Run sidebar and note list refresh in parallel
+		await Promise.all([sidebar?.refresh(), noteList?.refresh()]);
 
-		unlistenFileChange = await listen<FileEvent>('file-changed', async () => {
-			await sidebar?.refresh();
-			await noteList?.refresh(true);
-		});
+		// On mobile, derive tags from the scanned notes (avoids a separate full-scan Rust call)
+		if (isMobile) {
+			const tagMap = new Map<string, number>();
+			for (const note of $notes) {
+				for (const tag of note.meta.tags) {
+					tagMap.set(tag, (tagMap.get(tag) ?? 0) + 1);
+				}
+			}
+			$tags = Array.from(tagMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+		}
+
+		// On mobile, auto-load the last-opened note so it's ready when the user taps it
+		if (isMobile && prefetchPromise) {
+			prefetchPromise.then((noteContent) => {
+				if (noteContent && lastNotePath && !$activeNotePath) {
+					$activeNote = noteContent;
+					$activeNotePath = lastNotePath;
+					$editorDirty = false;
+					editor?.loadNote(lastNotePath, noteContent.content);
+				}
+			});
+		}
+
+		if (isMobile) {
+			// Mobile: debounce file-changed heavily and skip when actively editing
+			// (our own saves trigger the watcher, causing expensive refreshes on FUSE)
+			const debouncedRefresh = debounce(async () => {
+				if (get(editorDirty)) return; // user is still typing, skip
+				await Promise.all([sidebar?.refresh(), noteList?.refresh(true)]);
+				// Re-derive tags from refreshed notes
+				const tagMap = new Map<string, number>();
+				for (const note of get(notes)) {
+					for (const tag of note.meta.tags) {
+						tagMap.set(tag, (tagMap.get(tag) ?? 0) + 1);
+					}
+				}
+				tags.set(Array.from(tagMap.entries()).sort((a, b) => a[0].localeCompare(b[0])));
+			}, 3000);
+			unlistenFileChange = await listen<FileEvent>('file-changed', () => {
+				debouncedRefresh();
+			});
+		} else {
+			unlistenFileChange = await listen<FileEvent>('file-changed', async () => {
+				await sidebar?.refresh();
+				await noteList?.refresh(true);
+			});
+		}
 
 		// Listen for file open events (from single-instance or OS file associations)
 		unlistenOpenFile = await listen<string>('open-file', async (event) => {
@@ -343,18 +438,18 @@
 					</svg>
 				</div>
 			{/if}
-			<span class="mobile-header-title">
-				{#if $mobileView === 'sidebar'}
-					HelixNotes
-				{:else if $mobileView === 'notelist'}
-					{$activeNotebook?.name || 'All Notes'}
-				{:else}
-					{$activeNote?.meta.title || 'Untitled'}
-				{/if}
-			</span>
+			{#if $mobileView !== 'editor'}
+				<span class="mobile-header-title">
+					{#if $mobileView === 'sidebar'}
+						HelixNotes
+					{:else}
+						{$activeNotebook?.name || 'All Notes'}
+					{/if}
+				</span>
+			{/if}
 			<div class="mobile-header-actions">
 				{#if $mobileView === 'editor'}
-					<button class="mobile-header-btn" class:active={$readOnly} onclick={() => ($readOnly = !$readOnly)}>
+					<button class="mobile-header-btn" class:active={$readOnly} onclick={() => ($readOnly = !$readOnly)} title={$readOnly ? 'Edit' : 'View'}>
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							{#if $readOnly}
 								<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
@@ -365,26 +460,76 @@
 							{/if}
 						</svg>
 					</button>
+					<button class="mobile-header-btn" class:active={$sourceMode} onclick={() => ($sourceMode = !$sourceMode)} title={$sourceMode ? 'Rich Editor' : 'Source Mode'}>
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
+						</svg>
+					</button>
+					<button class="mobile-header-btn" onclick={() => editor?.openNoteSearch()} title="Find in note">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+						</svg>
+					</button>
+					<button class="mobile-header-btn" class:active={$activeNote?.meta.pinned} onclick={() => { if ($activeNote) { $activeNote.meta.pinned = !$activeNote.meta.pinned; $editorDirty = true; } }} title="Pin">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M12 17v5"/><path d="M9 2h6l-1 7h4l-2 4H8l-2-4h4L9 2z"/>
+						</svg>
+					</button>
+					<button class="mobile-header-btn" class:active={isQuickAccess} onclick={async () => {
+						if (!noteRelativePath) return;
+						try {
+							if (isQuickAccess) { await removeQuickAccess(noteRelativePath); } else { await addQuickAccess(noteRelativePath); }
+							$quickAccessPaths = (await getQuickAccess()).map(n => n.relative_path);
+						} catch (e) { console.error('Quick access toggle failed:', e); }
+					}} title="Quick Access">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill={isQuickAccess ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+						</svg>
+					</button>
+					<button class="mobile-header-btn" onclick={() => editor?.toggleOutlinePanel()} title="Outline">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><circle cx="4" cy="12" r="1" fill="currentColor"/><circle cx="4" cy="18" r="1" fill="currentColor"/>
+						</svg>
+					</button>
+					<button class="mobile-header-btn" onclick={() => editor?.toggleHistoryPanel()} title="History">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+						</svg>
+					</button>
+					{#if $appConfig?.ai_provider && ($appConfig?.ai_provider === 'ollama' || $appConfig?.ai_api_key || $appConfig?.openai_api_key)}
+					<button class="mobile-header-btn" onclick={() => editor?.triggerAiMenu()} title="AI Actions">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M12 8V4l-2-2"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M9 13v2"/><path d="M15 13v2"/>
+						</svg>
+					</button>
+					{/if}
 				{:else}
-					<button class="mobile-header-btn" onclick={createAndFocusNote}>
-						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+					<button class="mobile-header-btn" onclick={() => ($showSearch = true)} title="Search">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<circle cx="11" cy="11" r="8" />
+							<line x1="21" y1="21" x2="16.65" y2="16.65" />
+						</svg>
+					</button>
+					<button class="mobile-header-btn" onclick={createAndFocusNote} title="New Note">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
 							<path d="M12 5v14M5 12h14" />
 						</svg>
 					</button>
+					<button class="mobile-header-btn" onclick={handleDailyNote} title="Daily Note">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+							<line x1="16" y1="2" x2="16" y2="6" />
+							<line x1="8" y1="2" x2="8" y2="6" />
+							<line x1="3" y1="10" x2="21" y2="10" />
+						</svg>
+					</button>
+					<button class="mobile-header-btn" onclick={() => ($showSettings = true)} title="Settings">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<circle cx="12" cy="12" r="3" />
+							<path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+						</svg>
+					</button>
 				{/if}
-				<button class="mobile-header-btn" onclick={() => ($showInfo = true)} title="Info">
-					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-						<circle cx="12" cy="12" r="10" />
-						<line x1="12" y1="16" x2="12" y2="12" />
-						<line x1="12" y1="8" x2="12.01" y2="8" />
-					</svg>
-				</button>
-				<button class="mobile-header-btn" onclick={() => ($showSettings = true)} title="Settings">
-					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-						<circle cx="12" cy="12" r="3" />
-						<path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
-					</svg>
-				</button>
 			</div>
 		</div>
 
@@ -401,40 +546,6 @@
 			</div>
 		</div>
 
-		<!-- Mobile Bottom Nav -->
-		{#if $mobileView !== 'editor'}
-		<div class="mobile-bottom-nav">
-			<button class="mobile-nav-item" class:active={$mobileView === 'sidebar'} onclick={() => ($mobileView = 'sidebar')}>
-				<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
-				</svg>
-				<span>Notebooks</span>
-			</button>
-			<button class="mobile-nav-item" onclick={() => $showSearch = true}>
-				<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-					<circle cx="11" cy="11" r="8" />
-					<line x1="21" y1="21" x2="16.65" y2="16.65" />
-				</svg>
-				<span>Search</span>
-			</button>
-			<button class="mobile-nav-item" onclick={handleDailyNote}>
-				<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-					<rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-					<line x1="16" y1="2" x2="16" y2="6" />
-					<line x1="8" y1="2" x2="8" y2="6" />
-					<line x1="3" y1="10" x2="21" y2="10" />
-				</svg>
-				<span>Daily</span>
-			</button>
-			<button class="mobile-nav-item" onclick={() => ($showSettings = true)}>
-				<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-					<circle cx="12" cy="12" r="3" />
-					<path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
-				</svg>
-				<span>Settings</span>
-			</button>
-		</div>
-		{/if}
 	</div>
 {:else}
 	<!-- ═══ DESKTOP LAYOUT ═══ -->
@@ -641,6 +752,7 @@
 		display: flex;
 		align-items: center;
 		gap: 2px;
+		margin-left: auto;
 	}
 
 	.mobile-header-btn {
@@ -685,38 +797,4 @@
 		pointer-events: auto;
 	}
 
-	.mobile-bottom-nav {
-		display: flex;
-		align-items: center;
-		justify-content: space-around;
-		height: 56px;
-		background: var(--bg-secondary);
-		border-top: 1px solid var(--border-color);
-		flex-shrink: 0;
-		padding-bottom: env(safe-area-inset-bottom);
-	}
-
-	.mobile-nav-item {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 2px;
-		padding: 6px 16px;
-		border: none;
-		background: none;
-		color: var(--text-tertiary);
-		font-size: 10px;
-		font-weight: 500;
-		cursor: pointer;
-		border-radius: 8px;
-		transition: color 0.15s;
-	}
-
-	.mobile-nav-item:active {
-		background: var(--bg-hover);
-	}
-
-	.mobile-nav-item.active {
-		color: var(--accent);
-	}
 </style>

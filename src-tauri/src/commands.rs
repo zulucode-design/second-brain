@@ -11,9 +11,21 @@ use tauri::{AppHandle, Manager, State};
 pub fn open_vault(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<(), String> {
     operations::ensure_vault_structure(&path)?;
 
-    // Initialize search index
-    let search = SearchIndex::new(&path)?;
-    search.rebuild(&path)?;
+    // Initialize search index — rebuild in background on Android (FUSE is slow)
+    let search = std::sync::Arc::new(SearchIndex::new(&path)?);
+    #[cfg(target_os = "android")]
+    {
+        let search_bg = search.clone();
+        let vault = path.clone();
+        std::thread::spawn(move || {
+            let _ = search_bg.rebuild(&vault);
+            log::info!("Android: search index rebuild complete");
+        });
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        search.rebuild(&path)?;
+    }
     *state.search_index.lock().map_err(|e| e.to_string())? = Some(search);
 
     // Start file watcher
@@ -466,6 +478,7 @@ pub fn save_vault_state(state: State<'_, AppState>, vault_state: VaultState) -> 
 
 /// Read image from system clipboard (bypasses WebKitGTK clipboard bug).
 /// Returns PNG bytes as Vec<u8>, or error if no image on clipboard.
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 pub fn read_clipboard_image() -> Result<Vec<u8>, String> {
     let mut clipboard =
@@ -488,6 +501,12 @@ pub fn read_clipboard_image() -> Result<Vec<u8>, String> {
             .map_err(|e| format!("PNG encode failed: {}", e))?;
     }
     Ok(buf)
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub fn read_clipboard_image() -> Result<Vec<u8>, String> {
+    Err("Clipboard image reading not supported on Android".to_string())
 }
 
 // ── Attachments ──

@@ -12,7 +12,8 @@
 		quickAccessPaths,
 		appConfig,
 		notebooks,
-		tags
+		tags,
+		mobileView
 	} from '$lib/stores/app';
 	import {
 		getNotes,
@@ -43,6 +44,25 @@
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
 	const isMobile = /android|ios/i.test(navigator.userAgent);
+
+	/** Derive tags from current $notes store (avoids re-scanning files on mobile) */
+	function deriveTagsFromNotes() {
+		const tagMap = new Map<string, number>();
+		for (const note of $notes) {
+			for (const tag of note.meta.tags) {
+				tagMap.set(tag, (tagMap.get(tag) ?? 0) + 1);
+			}
+		}
+		$tags = Array.from(tagMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+	}
+
+	async function refreshTags() {
+		if (isMobile) {
+			deriveTagsFromNotes();
+		} else {
+			await refreshTags();
+		}
+	}
 
 	let compact = $derived($appConfig?.compact_notes ?? false);
 	let contextMenu = $state<{ x: number; y: number; note: NoteEntry } | null>(null);
@@ -169,7 +189,12 @@
 			} else if ($viewMode === 'quickaccess') {
 				$notes = await getQuickAccess();
 			} else if ($viewMode === 'tag' && $activeTag) {
-				const all = await getNotes(null);
+				// Reuse cached "all" notes if available, otherwise fetch and cache them
+				let all = noteCache.get('all');
+				if (!all) {
+					all = await getNotes(null);
+					noteCache.set('all', all);
+				}
 				$notes = all.filter((n) => n.meta.tags.includes($activeTag!));
 			} else {
 				const nbPath = $viewMode === 'notebook' ? $activeNotebook?.path ?? null : null;
@@ -182,7 +207,10 @@
 	}
 
 	async function selectNote(note: NoteEntry) {
-		if ($activeNotePath === note.path) return;
+		if ($activeNotePath === note.path) {
+			if (isMobile) $mobileView = 'editor';
+			return;
+		}
 		try {
 			const content = await readNote(note.path);
 			onBeforeNoteSwitch();
@@ -324,7 +352,7 @@
 			if ($activeNotePath === note.path && $activeNote) {
 				$activeNote = { ...$activeNote, meta: { ...$activeNote.meta, tags: newTags } };
 			}
-			$tags = await getAllTags();
+			await refreshTags();
 		} catch (e) {
 			console.error('Failed to save tags:', e);
 		}
@@ -360,7 +388,7 @@
 					}
 				}
 			}
-			$tags = await getAllTags();
+			await refreshTags();
 		} catch (e) {
 			console.error('Failed to add tag to batch:', e);
 		}
@@ -382,7 +410,7 @@
 					}
 				}
 			}
-			$tags = await getAllTags();
+			await refreshTags();
 		} catch (e) {
 			console.error('Failed to remove tag from batch:', e);
 		}
@@ -449,9 +477,18 @@
 		}
 	}
 
+	function clampMenu(x: number, y: number, menuWidth = 220, menuHeight = 400): { x: number; y: number } {
+		if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 8;
+		if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 8;
+		if (x < 4) x = 4;
+		if (y < 4) y = 4;
+		return { x, y };
+	}
+
 	function onContextMenu(e: MouseEvent, note: NoteEntry) {
 		e.preventDefault();
-		contextMenu = { x: e.clientX, y: e.clientY, note };
+		const { x, y } = clampMenu(e.clientX, e.clientY);
+		contextMenu = { x, y, note };
 	}
 
 	function startRename(note: NoteEntry) {
@@ -691,16 +728,17 @@
 					onclick={(e) => handleNoteClick(e, note)}
 					oncontextmenu={(e) => {
 						e.preventDefault();
+						const pos = clampMenu(e.clientX, e.clientY);
 						// If multi-selected and right-clicking a selected note, show batch menu
 						if (selectedPaths.size > 1 && selectedPaths.has(note.path)) {
-							contextMenu = { x: e.clientX, y: e.clientY, note };
+							contextMenu = { x: pos.x, y: pos.y, note };
 							return;
 						}
 						// Otherwise clear selection and show single menu
 						if (selectedPaths.size > 0 && !selectedPaths.has(note.path)) {
 							clearSelection();
 						}
-						contextMenu = { x: e.clientX, y: e.clientY, note };
+						contextMenu = { x: pos.x, y: pos.y, note };
 					}}
 					draggable="true"
 					ondragstart={(e) => {
@@ -1539,7 +1577,7 @@
 	}
 
 	.note-list.mobile .list-content {
-		padding: 4px 8px;
+		padding: 4px 8px 180px;
 	}
 
 	.note-list.mobile .note-item {

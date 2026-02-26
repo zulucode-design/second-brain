@@ -52,7 +52,7 @@
 	let keyboardHeight = $state(0);
 	if (isMobile && typeof window !== 'undefined' && window.visualViewport) {
 		const vv = window.visualViewport;
-		const update = () => { keyboardHeight = Math.max(0, Math.round(window.innerHeight - vv.height)); };
+		const update = () => { keyboardHeight = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)); };
 		vv.addEventListener('resize', update);
 		vv.addEventListener('scroll', update);
 	}
@@ -70,6 +70,7 @@
 	let ignoreNextUpdate = false;
 	let isLoadingNote = false;
 	let fixingBlobsPromise: Promise<void> = Promise.resolve();
+	let hasPendingBlobs = false;
 	let lastSourceMode = $sourceMode;
 	let linkContextMenu = $state<{ x: number; y: number; href: string; anchor: HTMLAnchorElement } | null>(null);
 	let titleWasStripped = false;
@@ -297,6 +298,17 @@
 		renderHTML({ HTMLAttributes }) {
 			const src = HTMLAttributes.src || '';
 			const name = HTMLAttributes.name || 'file.pdf';
+			if (isMobile) {
+				// On mobile, render as a clickable link instead of iframe
+				const vaultRoot = $appConfig?.active_vault ?? '';
+				const absPath = normalizePath(`${vaultRoot}/${decodeURIComponent(src)}`);
+				return ['div', mergeAttributes({ 'data-pdf-src': src, 'data-pdf-name': name, class: 'pdf-embed-mobile' }),
+					['a', { href: '#', 'data-open-file': absPath, class: 'pdf-link-mobile', onclick: 'return false;' },
+						['span', { class: 'pdf-icon-mobile' }, '\uD83D\uDCC4'],
+						['span', {}, name],
+					],
+				];
+			}
 			const vaultRoot = $appConfig?.active_vault ?? '';
 			const pdfHeight = $appConfig?.pdf_height ?? 600;
 			const absPath = normalizePath(`${vaultRoot}/${decodeURIComponent(src)}`);
@@ -1058,7 +1070,11 @@
 
 	const autoSave = debounce(async () => {
 		if (!$activeNote || !$activeNotePath || !$editorDirty) return;
-		// Wait for any pending blob→asset conversions to finish before serializing
+		// Only fix blob images if a paste occurred (avoids full doc scan on every save)
+		if (hasPendingBlobs) {
+			hasPendingBlobs = false;
+			fixingBlobsPromise = fixBlobImages();
+		}
 		await fixingBlobsPromise;
 		try {
 			const body = $sourceMode
@@ -1075,7 +1091,7 @@
 		} catch (e) {
 			console.error('Auto-save failed:', e);
 		}
-	}, 500);
+	}, isMobile ? 1500 : 500);
 
 	export async function forceSave() {
 		if (!$activeNote || !$activeNotePath) return;
@@ -1872,11 +1888,14 @@
 			return `![${alt}](${url.replace(/ /g, '%20')})`;
 		});
 
-		// Pre-process: transform PDF embed divs into iframes before markdown-it (it passes HTML through)
+		// Pre-process: transform PDF embed divs — iframes on desktop, clickable links on mobile
 		src = src.replace(/<div[^>]*data-pdf-src="([^"]*)"[^>]*data-pdf-name="([^"]*)"[^>]*>[^<]*<\/div>/gi, (_, pdfSrc, name) => {
 			const vaultRoot = $appConfig?.active_vault ?? '';
-			const pdfHeight = $appConfig?.pdf_height ?? 600;
 			const absPath = normalizePath(`${vaultRoot}/${decodeURIComponent(pdfSrc)}`);
+			if (isMobile) {
+				return `<div class="pdf-embed-mobile"><a href="#" data-open-file="${absPath}" class="pdf-link-mobile" onclick="return false;">\uD83D\uDCC4 ${name}</a></div>`;
+			}
+			const pdfHeight = $appConfig?.pdf_height ?? 600;
 			const displaySrc = convertFileSrc(absPath);
 			return `<div data-pdf-src="${pdfSrc}" data-pdf-name="${name}" class="pdf-embed"><iframe src="${displaySrc}" width="100%" height="${pdfHeight}px"></iframe><p class="pdf-label">${name}</p></div>`;
 		});
@@ -1972,11 +1991,16 @@
 		return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 	}
 
-	// When editorElement appears in DOM (first note selected), initialize TipTap
+	// When editorElement appears in DOM, initialize TipTap.
+	// On mobile, pre-create editor with empty content so first note load is fast.
 	$effect(() => {
-		if (editorElement && !editor && pendingContent !== null) {
-			createEditor(pendingContent);
-			pendingContent = null;
+		if (editorElement && !editor) {
+			if (pendingContent !== null) {
+				createEditor(pendingContent);
+				pendingContent = null;
+			} else if (isMobile) {
+				createEditor('');
+			}
 		}
 	});
 
@@ -2094,6 +2118,20 @@
 							}
 						}
 					},
+					// On mobile, handle clicks on PDF file links to open in external app
+					...(isMobile ? { click: (_view: any, event: MouseEvent) => {
+						const target = (event.target as HTMLElement).closest('[data-open-file]') as HTMLElement | null;
+						if (target) {
+							event.preventDefault();
+							const filePath = target.getAttribute('data-open-file');
+							if (filePath) {
+								const bridge = (window as any).Android;
+								if (bridge && typeof bridge.openFile === 'function') {
+									bridge.openFile(filePath);
+								}
+							}
+						}
+					}} : {}),
 					// Prevent native text drag — it causes copy-instead-of-move in Tauri's webview.
 					// File drops from OS are handled by Tauri's onDragDropEvent listener instead.
 					dragstart: (_view, event) => {
@@ -2104,7 +2142,11 @@
 					},
 				},
 				handleDrop: (_view, event) => handleFileDrop(event),
-				handlePaste: (_view, event) => handleFilePaste(event),
+				handlePaste: (_view, event) => {
+					const handled = handleFilePaste(event);
+					if (!handled) hasPendingBlobs = true; // ProseMirror may insert blob: images from web paste
+					return handled;
+				},
 			},
 			onTransaction: () => {
 				// Batch toolbar state updates to once per frame — avoids ~35 isActive() calls per transaction during selection drag
@@ -2114,8 +2156,9 @@
 						editorState++;
 					});
 				}
-				updateSlashMenu();
-				updateWikiLinkMenu();
+				// On mobile, only check menus when they're already open (avoid work on every keystroke)
+				if (!isMobile || slashMenu) updateSlashMenu();
+				if (!isMobile || wikiLinkMenu) updateWikiLinkMenu();
 			},
 			onUpdate: () => {
 				if (ignoreNextUpdate || isLoadingNote) {
@@ -2123,10 +2166,8 @@
 					return;
 				}
 				$editorDirty = true;
-				// Fix any blob: URLs from pasted web images BEFORE saving
-				fixingBlobsPromise = fixBlobImages();
 				autoSave();
-				if (showOutline) updateOutline();
+				if (!isMobile && showOutline) updateOutline();
 			},
 		});
 		editorReady = true;
@@ -2134,6 +2175,19 @@
 		if ($appConfig?.enable_wiki_links) {
 			refreshWikiLinkTitles();
 		}
+	}
+
+	export function toggleOutlinePanel() {
+		showOutline = !showOutline;
+		if (showOutline) updateOutline();
+	}
+
+	export function toggleHistoryPanel() {
+		toggleHistory();
+	}
+
+	export function triggerAiMenu() {
+		openAiMenu();
 	}
 
 	export function addLinkFromToolbar() {
@@ -2245,7 +2299,14 @@
 			if (href) {
 				event.preventDefault();
 				event.stopPropagation();
-				linkContextMenu = { x: event.clientX, y: event.clientY, href, anchor };
+				let lx = event.clientX;
+				let ly = event.clientY;
+				const lw = 200, lh = 200;
+				if (lx + lw > window.innerWidth) lx = window.innerWidth - lw - 8;
+				if (ly + lh > window.innerHeight) ly = window.innerHeight - lh - 8;
+				if (lx < 4) lx = 4;
+				if (ly < 4) ly = 4;
+				linkContextMenu = { x: lx, y: ly, href, anchor };
 				return;
 			}
 		}
@@ -2492,7 +2553,10 @@
 		aiTranslateMenu = false;
 		aiCustomPrompt = '';
 
-		if (hasSelection) {
+		if (isMobile) {
+			// Mobile: bottom sheet, no positioning needed
+			aiMenu = { x: 0, y: 0 };
+		} else if (hasSelection) {
 			const coords = editor.view.coordsAtPos(from);
 			let x = coords.left;
 			let y = coords.top - 8;
@@ -2803,7 +2867,7 @@
 			const data = Array.from(new Uint8Array(buffer));
 			const relativePath = await saveAttachment(file.name, data);
 			if (!editor) return;
-			const usePdfPreview = $appConfig?.pdf_preview ?? false;
+			const usePdfPreview = !isMobile && ($appConfig?.pdf_preview ?? false);
 			if (usePdfPreview) {
 				editor.chain().focus().insertContent({
 					type: 'pdfEmbed',
@@ -2898,16 +2962,25 @@
 			resetSourceHistory(sourceContent);
 			lastSourceMode = true;
 		} else if (!isSource && lastSourceMode) {
-			// Switching BACK to WYSIWYG: destroy old editor (its DOM element is gone),
-			// wait for DOM to swap textarea→div, then create editor on new element.
-			destroyEditor();
-			const content = sourceContent || ($activeNote?.content ?? '');
 			lastSourceMode = false;
-			tick().then(() => {
-				if (editorElement && !editor) {
-					createEditor(content);
+			if (isMobile) {
+				// Mobile: editor stays in DOM, just update its content
+				const content = sourceContent || ($activeNote?.content ?? '');
+				if (editor) {
+					ignoreNextUpdate = true;
+					editor.commands.setContent(markdownToHtml(content));
 				}
-			});
+			} else {
+				// Desktop: destroy old editor (its DOM element is gone),
+				// wait for DOM to swap textarea→div, then create editor on new element.
+				destroyEditor();
+				const content = sourceContent || ($activeNote?.content ?? '');
+				tick().then(() => {
+					if (editorElement && !editor) {
+						createEditor(content);
+					}
+				});
+			}
 		}
 	});
 
@@ -2933,7 +3006,7 @@
 					readFile(filePath).then((data) => {
 						saveAttachment(name, Array.from(data)).then((relativePath) => {
 							if (!editor) return;
-							const usePdfPreview = $appConfig?.pdf_preview ?? false;
+							const usePdfPreview = !isMobile && ($appConfig?.pdf_preview ?? false);
 							if (usePdfPreview) {
 								editor.chain().focus().insertContent({
 									type: 'pdfEmbed',
@@ -3039,14 +3112,14 @@
 					}}
 				/>
 			</div>
-			<div class="toolbar-actions" class:mobile={isMobile}>
+			{#if !isMobile}
+			<div class="toolbar-actions">
 				{#if $editorDirty}
 					<span class="save-indicator">Unsaved</span>
 				{/if}
 				{#if $readOnly}
 					<span class="readonly-indicator">View Mode</span>
 				{/if}
-				{#if !isMobile}
 				<button
 					class="icon-btn"
 					class:active={noteSearchOpen}
@@ -3057,7 +3130,6 @@
 						<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
 					</svg>
 				</button>
-				{/if}
 
 				<button
 					class="icon-btn"
@@ -3071,7 +3143,7 @@
 					}}
 					title={$activeNote?.meta.pinned ? 'Unpin note' : 'Pin note'}
 				>
-					<svg width={isMobile ? "20" : "16"} height={isMobile ? "20" : "16"} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<path d="M12 17v5"/>
 						<path d="M9 2h6l-1 7h4l-2 4H8l-2-4h4L9 2z"/>
 					</svg>
@@ -3095,7 +3167,7 @@
 					}}
 					title={isQuickAccess ? 'Remove from Quick Access' : 'Add to Quick Access'}
 				>
-					<svg width={isMobile ? "20" : "16"} height={isMobile ? "20" : "16"} viewBox="0 0 24 24" fill={isQuickAccess ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill={isQuickAccess ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
 					</svg>
 				</button>
@@ -3105,7 +3177,7 @@
 					onclick={() => { showOutline = !showOutline; if (showOutline) updateOutline(); }}
 					title="Outline"
 				>
-					<svg width={isMobile ? "20" : "16"} height={isMobile ? "20" : "16"} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><circle cx="4" cy="12" r="1" fill="currentColor"/><circle cx="4" cy="18" r="1" fill="currentColor"/>
 					</svg>
 				</button>
@@ -3115,12 +3187,11 @@
 					onclick={toggleHistory}
 					title="Version history"
 				>
-					<svg width={isMobile ? "20" : "16"} height={isMobile ? "20" : "16"} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<circle cx="12" cy="12" r="10"/>
 						<polyline points="12 6 12 12 16 14"/>
 					</svg>
 				</button>
-				{#if !isMobile}
 				{#if $appConfig?.enable_wiki_links}
 				<button
 					class="icon-btn"
@@ -3155,8 +3226,8 @@
 						<path d="M5.854 4.854a.5.5 0 10-.708-.708l-3.5 3.5a.5.5 0 000 .708l3.5 3.5a.5.5 0 00.708-.708L2.707 8l3.147-3.146zm4.292 0a.5.5 0 01.708-.708l3.5 3.5a.5.5 0 010 .708l-3.5 3.5a.5.5 0 01-.708-.708L13.293 8l-3.147-3.146z" />
 					</svg>
 				</button>
-				{/if}
 			</div>
+			{/if}
 		</div>
 
 		<div class="editor-body-wrapper">
@@ -3196,19 +3267,11 @@
 			{/if}
 			<div class="editor-body-row">
 			<div class="editor-body">
-				{#if $sourceMode}
-					{#if $appConfig?.show_line_numbers}
-						<div class="line-numbers-clip" aria-hidden="true">
-							<div class="line-numbers">
-								{#each sourceContent.split('\n') as _, i}
-									<span>{i + 1}</span>
-								{/each}
-							</div>
-						</div>
-					{/if}
+				{#if isMobile}
+					<!-- Mobile: both views always in DOM, toggled via display to avoid slow editor re-creation -->
 					<textarea
 						class="source-editor"
-						class:with-line-numbers={$appConfig?.show_line_numbers}
+						style={$sourceMode ? '' : 'display:none'}
 						bind:this={sourceElement}
 						bind:value={sourceContent}
 						readonly={$readOnly}
@@ -3220,7 +3283,6 @@
 						}}
 						onkeydown={(e) => {
 							const mod = e.ctrlKey || e.metaKey;
-							// Shift+Enter: insert two trailing spaces + newline for markdown hard break
 							if (e.key === 'Enter' && e.shiftKey && !mod) {
 								e.preventDefault();
 								const ta = sourceElement;
@@ -3237,71 +3299,130 @@
 								pushSourceHistoryDebounced();
 								return;
 							}
-							// Undo
 							if (mod && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
 								e.preventDefault();
 								sourceUndo();
 								return;
 							}
-							// Redo
 							if ((mod && (e.key === 'z' || e.key === 'Z') && e.shiftKey) || (mod && (e.key === 'y' || e.key === 'Y'))) {
 								e.preventDefault();
 								sourceRedo();
 								return;
 							}
-							if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-								e.preventDefault();
-								pushSourceHistoryImmediate();
-								const ta = sourceElement;
-								const val = ta.value;
-								const start = ta.selectionStart;
-								const lines = val.split('\n');
-								// Find current line index
-								let pos = 0;
-								let curLine = 0;
-								for (let i = 0; i < lines.length; i++) {
-									if (pos + lines[i].length >= start) { curLine = i; break; }
-									pos += lines[i].length + 1;
-								}
-								if (e.key === 'ArrowUp' && curLine > 0) {
-									const tmp = lines[curLine];
-									lines[curLine] = lines[curLine - 1];
-									lines[curLine - 1] = tmp;
-									sourceContent = lines.join('\n');
-									tick().then(() => {
-										const newPos = lines.slice(0, curLine - 1).join('\n').length + 1 + (start - pos);
-										ta.setSelectionRange(newPos, newPos);
-										pushSourceHistoryImmediate();
-									});
-								} else if (e.key === 'ArrowDown' && curLine < lines.length - 1) {
-									const tmp = lines[curLine];
-									lines[curLine] = lines[curLine + 1];
-									lines[curLine + 1] = tmp;
-									sourceContent = lines.join('\n');
-									tick().then(() => {
-										const newPos = lines.slice(0, curLine + 1).join('\n').length + 1 + (start - pos);
-										ta.setSelectionRange(newPos, newPos);
-										pushSourceHistoryImmediate();
-									});
-								}
-								$editorDirty = true;
-								autoSave();
-							}
-						}}
-						onscroll={() => {
-							if ($appConfig?.show_line_numbers) {
-								const clip = sourceElement?.previousElementSibling as HTMLElement;
-								const gutter = clip?.firstElementChild as HTMLElement;
-								if (gutter) {
-									gutter.style.transform = `translateY(-${sourceElement.scrollTop}px)`;
-								}
-							}
 						}}
 						spellcheck="false"
 					></textarea>
-				{:else}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
-					<div class="tiptap-wrapper" bind:this={editorElement} onclick={(e) => { closeLinkContextMenu(); handleEditorClick(e); showOutline = false; }} oncontextmenu={handleEditorContextMenu}></div>
+					<div class="tiptap-wrapper" style={$sourceMode ? 'display:none' : ''} bind:this={editorElement} onclick={(e) => { closeLinkContextMenu(); handleEditorClick(e); showOutline = false; }}></div>
+				{:else}
+					<!-- Desktop: conditional rendering with line numbers -->
+					{#if $sourceMode}
+						{#if $appConfig?.show_line_numbers}
+							<div class="line-numbers-clip" aria-hidden="true">
+								<div class="line-numbers">
+									{#each sourceContent.split('\n') as _, i}
+										<span>{i + 1}</span>
+									{/each}
+								</div>
+							</div>
+						{/if}
+						<textarea
+							class="source-editor"
+							class:with-line-numbers={$appConfig?.show_line_numbers}
+							bind:this={sourceElement}
+							bind:value={sourceContent}
+							readonly={$readOnly}
+							onclick={() => { showOutline = false; }}
+							oninput={() => {
+								$editorDirty = true;
+								autoSave();
+								pushSourceHistoryDebounced();
+							}}
+							onkeydown={(e) => {
+								const mod = e.ctrlKey || e.metaKey;
+								// Shift+Enter: insert two trailing spaces + newline for markdown hard break
+								if (e.key === 'Enter' && e.shiftKey && !mod) {
+									e.preventDefault();
+									const ta = sourceElement;
+									const start = ta.selectionStart;
+									const end = ta.selectionEnd;
+									const val = ta.value;
+									sourceContent = val.slice(0, start) + '  \n' + val.slice(end);
+									tick().then(() => {
+										const newPos = start + 3;
+										ta.setSelectionRange(newPos, newPos);
+									});
+									$editorDirty = true;
+									autoSave();
+									pushSourceHistoryDebounced();
+									return;
+								}
+								// Undo
+								if (mod && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+									e.preventDefault();
+									sourceUndo();
+									return;
+								}
+								// Redo
+								if ((mod && (e.key === 'z' || e.key === 'Z') && e.shiftKey) || (mod && (e.key === 'y' || e.key === 'Y'))) {
+									e.preventDefault();
+									sourceRedo();
+									return;
+								}
+								if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+									e.preventDefault();
+									pushSourceHistoryImmediate();
+									const ta = sourceElement;
+									const val = ta.value;
+									const start = ta.selectionStart;
+									const lines = val.split('\n');
+									// Find current line index
+									let pos = 0;
+									let curLine = 0;
+									for (let i = 0; i < lines.length; i++) {
+										if (pos + lines[i].length >= start) { curLine = i; break; }
+										pos += lines[i].length + 1;
+									}
+									if (e.key === 'ArrowUp' && curLine > 0) {
+										const tmp = lines[curLine];
+										lines[curLine] = lines[curLine - 1];
+										lines[curLine - 1] = tmp;
+										sourceContent = lines.join('\n');
+										tick().then(() => {
+											const newPos = lines.slice(0, curLine - 1).join('\n').length + 1 + (start - pos);
+											ta.setSelectionRange(newPos, newPos);
+											pushSourceHistoryImmediate();
+										});
+									} else if (e.key === 'ArrowDown' && curLine < lines.length - 1) {
+										const tmp = lines[curLine];
+										lines[curLine] = lines[curLine + 1];
+										lines[curLine + 1] = tmp;
+										sourceContent = lines.join('\n');
+										tick().then(() => {
+											const newPos = lines.slice(0, curLine + 1).join('\n').length + 1 + (start - pos);
+											ta.setSelectionRange(newPos, newPos);
+											pushSourceHistoryImmediate();
+										});
+									}
+									$editorDirty = true;
+									autoSave();
+								}
+							}}
+							onscroll={() => {
+								if ($appConfig?.show_line_numbers) {
+									const clip = sourceElement?.previousElementSibling as HTMLElement;
+									const gutter = clip?.firstElementChild as HTMLElement;
+									if (gutter) {
+										gutter.style.transform = `translateY(-${sourceElement.scrollTop}px)`;
+									}
+								}
+							}}
+							spellcheck="false"
+						></textarea>
+					{:else}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div class="tiptap-wrapper" bind:this={editorElement} onclick={(e) => { closeLinkContextMenu(); handleEditorClick(e); showOutline = false; }} oncontextmenu={handleEditorContextMenu}></div>
+					{/if}
 				{/if}
 			</div>
 
@@ -3383,9 +3504,43 @@
 
 		{#if editorReady && !$sourceMode}
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
-			<div class="editor-formatting-bar" style={isMobile && keyboardHeight > 0 ? `bottom: ${keyboardHeight}px` : ''} onclick={() => { headingDropdown = false; colorDropdown = false; highlightDropdown = false; tablePickerOpen = false; alignDropdown = false; insertDropdown = false; }}>
+			<div class="editor-formatting-bar" style={isMobile ? `${keyboardHeight > 0 ? `bottom: ${keyboardHeight}px;` : ''}${anyDropdownOpen ? 'overflow: visible;' : ''}` : ''} onclick={() => { headingDropdown = false; colorDropdown = false; highlightDropdown = false; tablePickerOpen = false; alignDropdown = false; insertDropdown = false; }}>
 				{#if isMobile}
 				<!-- ═══ MOBILE formatting bar: compact, relevant buttons only ═══ -->
+
+				<!-- Insert (+) dropdown — at front like desktop -->
+				<div class="fmt-dropdown-wrap">
+					<button class="fmt-btn insert-btn" onclick={(e) => { e.stopPropagation(); insertDropdown = !insertDropdown; headingDropdown = false; }} title="Insert">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+					</button>
+					{#if insertDropdown}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div class="fmt-dropdown insert-dropdown" onclick={(e) => e.stopPropagation()}>
+							<button onclick={() => { insertDropdown = false; document.querySelector<HTMLInputElement>('#insert-image-input')?.click(); }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 00-2.828 0L6 21"/></svg>
+								Image
+							</button>
+							<button onclick={() => { insertDropdown = false; document.querySelector<HTMLInputElement>('#insert-file-input')?.click(); }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22a2 2 0 01-2-2V4a2 2 0 012-2h8a2.4 2.4 0 011.704.706l3.588 3.588A2.4 2.4 0 0120 8v12a2 2 0 01-2 2z"/><path d="M14 2v5a1 1 0 001 1h5"/></svg>
+								File
+							</button>
+							<button onclick={() => { insertDropdown = false; editor?.chain().focus().setHorizontalRule().run(); }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg>
+								Horizontal Rule
+							</button>
+							<button onclick={() => { insertDropdown = false; editor?.chain().focus().toggleCodeBlock().run(); }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m10 9-3 3 3 3"/><path d="m14 15 3-3-3-3"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+								Code Block
+							</button>
+							<button onclick={() => { insertDropdown = false; editor?.chain().focus().toggleBlockquote().run(); }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 5H3"/><path d="M21 12H8"/><path d="M21 19H8"/><path d="M3 12v7"/></svg>
+								Quote
+							</button>
+						</div>
+					{/if}
+				</div>
+
+				<div class="fmt-sep"></div>
 
 				<!-- Heading dropdown -->
 				<div class="fmt-dropdown-wrap">
@@ -3456,39 +3611,14 @@
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 004 14.5 5.5 5.5 0 009.5 20H13"/></svg>
 				</button>
 
+				{#if $appConfig?.ai_provider && ($appConfig?.ai_provider === 'ollama' || $appConfig?.ai_api_key || $appConfig?.openai_api_key)}
 				<div class="fmt-sep"></div>
-
-				<!-- Insert (+) dropdown — mobile version with common inserts -->
-				<div class="fmt-dropdown-wrap">
-					<button class="fmt-btn insert-btn" onclick={(e) => { e.stopPropagation(); insertDropdown = !insertDropdown; headingDropdown = false; }} title="Insert">
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-					</button>
-					{#if insertDropdown}
-						<!-- svelte-ignore a11y_no_static_element_interactions -->
-						<div class="fmt-dropdown insert-dropdown" onclick={(e) => e.stopPropagation()}>
-							<button onclick={() => { insertDropdown = false; document.querySelector<HTMLInputElement>('#insert-image-input')?.click(); }}>
-								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 00-2.828 0L6 21"/></svg>
-								Image
-							</button>
-							<button onclick={() => { insertDropdown = false; document.querySelector<HTMLInputElement>('#insert-file-input')?.click(); }}>
-								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22a2 2 0 01-2-2V4a2 2 0 012-2h8a2.4 2.4 0 011.704.706l3.588 3.588A2.4 2.4 0 0120 8v12a2 2 0 01-2 2z"/><path d="M14 2v5a1 1 0 001 1h5"/></svg>
-								File
-							</button>
-							<button onclick={() => { insertDropdown = false; editor?.chain().focus().setHorizontalRule().run(); }}>
-								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg>
-								Horizontal Rule
-							</button>
-							<button onclick={() => { insertDropdown = false; editor?.chain().focus().toggleCodeBlock().run(); }}>
-								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m10 9-3 3 3 3"/><path d="m14 15 3-3-3-3"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
-								Code Block
-							</button>
-							<button onclick={() => { insertDropdown = false; editor?.chain().focus().toggleBlockquote().run(); }}>
-								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 5H3"/><path d="M21 12H8"/><path d="M21 19H8"/><path d="M3 12v7"/></svg>
-								Quote
-							</button>
-						</div>
-					{/if}
-				</div>
+				<button class="fmt-btn" onclick={openAiMenu} title="AI Actions">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M12 8V4l-2-2"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M9 13v2"/><path d="M15 13v2"/>
+					</svg>
+				</button>
+				{/if}
 
 				{:else}
 				<!-- ═══ DESKTOP formatting bar: full feature set ═══ -->
@@ -4155,9 +4285,9 @@
 
 {#if aiMenu}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="ai-menu-overlay" onclick={closeAiMenu}>
+	<div class="ai-menu-overlay" class:mobile={isMobile} onclick={closeAiMenu}>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="ai-menu" style="left: {aiMenu.x}px; top: {aiMenu.y}px" onclick={(e) => e.stopPropagation()}>
+		<div class="ai-menu" class:mobile={isMobile} style={isMobile ? '' : `left: ${aiMenu.x}px; top: ${aiMenu.y}px`} onclick={(e) => e.stopPropagation()}>
 			{#if aiResult !== null || aiLoading}
 				<!-- Result view -->
 				<div class="ai-result-header">
@@ -5942,6 +6072,30 @@
 		border-top: 1px solid var(--border);
 		margin: 0;
 	}
+	:global(.tiptap .pdf-embed-mobile) {
+		margin: 8px 0;
+	}
+	:global(.tiptap .pdf-link-mobile) {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 14px 16px;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-color);
+		border-radius: 10px;
+		color: var(--text-primary);
+		font-size: 15px;
+		font-weight: 500;
+		text-decoration: none;
+		cursor: pointer;
+	}
+	:global(.tiptap .pdf-link-mobile:active) {
+		background: var(--bg-hover);
+	}
+	:global(.tiptap .pdf-icon-mobile) {
+		font-size: 20px;
+		line-height: 1;
+	}
 
 	/* Slash commands menu */
 	.slash-menu-overlay {
@@ -6367,7 +6521,7 @@
 	}
 
 	.editor-container.mobile .editor-toolbar {
-		padding: 8px 8px 6px 12px;
+		padding: 8px 16px 6px 16px;
 		flex-shrink: 0;
 		flex-direction: column;
 		align-items: stretch;
@@ -6410,11 +6564,11 @@
 		min-height: 0;
 		overflow-y: auto;
 		-webkit-overflow-scrolling: touch;
-		padding-bottom: 50px;
+		padding: 0;
 	}
 
 	.editor-container.mobile .tiptap-wrapper {
-		min-height: 100%;
+		min-height: 0;
 	}
 
 	.editor-container.mobile .editor-formatting-bar {
@@ -6451,11 +6605,11 @@
 	}
 
 	.editor-container.mobile .fmt-dropdown {
-		position: fixed;
-		bottom: auto;
-		left: 8px;
-		right: 8px;
-		top: auto;
+		position: absolute;
+		bottom: calc(100% + 4px);
+		left: 0;
+		right: auto;
+		min-width: 180px;
 		max-width: calc(100vw - 16px);
 		max-height: 60vh;
 		overflow-y: auto;
@@ -6468,10 +6622,11 @@
 	}
 
 	.editor-container.mobile .insert-dropdown {
-		position: fixed;
-		bottom: 60px;
-		left: 8px;
-		right: 8px;
+		position: absolute;
+		bottom: calc(100% + 4px);
+		left: 0;
+		right: auto;
+		min-width: 200px;
 		max-width: calc(100vw - 16px);
 	}
 
@@ -6484,21 +6639,30 @@
 	}
 
 	.editor-container.mobile :global(.editor-content) {
-		padding: 8px 16px !important;
+		padding: 8px 16px 220px !important;
 		font-size: 16px !important;
 	}
 
 	.editor-container.mobile .source-editor {
-		padding: 8px 16px;
+		padding: 8px 16px 220px;
 		font-size: 15px;
+		white-space: pre-wrap;
+		word-break: break-word;
+		overflow-x: hidden;
+	}
+
+	.editor-container.mobile .editor-body-row {
+		position: relative;
 	}
 
 	.editor-container.mobile .history-panel,
 	.editor-container.mobile .outline-panel {
+		position: absolute;
+		inset: 0;
 		width: 100% !important;
 		max-width: 100%;
 		border-left: none;
-		border-top: 1px solid var(--border-color);
+		z-index: 10;
 	}
 
 	.editor-container.mobile .note-search-bar {
@@ -6508,5 +6672,93 @@
 	.editor-container.mobile .note-search-bar input {
 		padding: 8px 10px;
 		font-size: 15px;
+	}
+
+	/* ═══ AI Menu — Mobile Bottom Sheet ═══ */
+	.ai-menu-overlay.mobile {
+		background: rgba(0, 0, 0, 0.35);
+		display: flex;
+		align-items: flex-end;
+		justify-content: center;
+	}
+
+	.ai-menu.mobile {
+		position: relative;
+		left: auto !important;
+		top: auto !important;
+		width: 100%;
+		max-width: 100%;
+		min-width: 0;
+		border-radius: 16px 16px 0 0;
+		border-bottom: none;
+		max-height: 70vh;
+		padding: 8px 4px calc(env(safe-area-inset-bottom, 0px) + 8px);
+	}
+
+	.ai-menu.mobile .ai-menu-label {
+		padding: 10px 16px 6px;
+		font-size: 12px;
+	}
+
+	.ai-menu.mobile .ai-menu-item {
+		padding: 12px 16px;
+		font-size: 15px;
+		min-height: 44px;
+		border-radius: 8px;
+	}
+
+	.ai-menu.mobile .ai-menu-sep {
+		margin: 4px 8px;
+	}
+
+	.ai-menu.mobile .ai-result-header {
+		padding: 12px 16px 8px;
+	}
+
+	.ai-menu.mobile .ai-result-body {
+		padding: 8px 16px;
+		font-size: 15px;
+		max-height: 40vh;
+	}
+
+	.ai-menu.mobile .ai-result-actions {
+		padding: 8px 16px 4px;
+		gap: 10px;
+	}
+
+	.ai-menu.mobile .ai-result-actions button {
+		padding: 10px 16px;
+		font-size: 14px;
+		min-height: 44px;
+	}
+
+	.ai-menu.mobile .ai-custom-body {
+		padding: 8px 12px;
+	}
+
+	.ai-menu.mobile .ai-custom-input {
+		font-size: 15px;
+		min-height: 80px;
+	}
+
+	.ai-menu.mobile .ai-custom-submit {
+		padding: 10px 16px;
+		font-size: 14px;
+		min-height: 44px;
+	}
+
+	.ai-menu.mobile .ai-custom-header {
+		padding: 10px 12px;
+		font-size: 15px;
+	}
+
+	.ai-menu.mobile .ai-back-btn {
+		min-width: 44px;
+		min-height: 44px;
+	}
+
+	.ai-menu.mobile .ai-error {
+		padding: 12px 16px;
+		font-size: 14px;
 	}
 </style>

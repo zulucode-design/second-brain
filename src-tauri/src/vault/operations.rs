@@ -59,11 +59,11 @@ fn scan_dir_recursive(dir: &Path, vault_root: &str) -> Vec<NotebookEntry> {
         return entries;
     };
 
+    // Collect subdirs (root level only lists directories, note counts come from scan_dir_with_count)
     let mut dirs: Vec<_> = read_dir
         .filter_map(|e| e.ok())
         .filter(|e| {
-            let path = e.path();
-            path.is_dir() && !is_hidden(&path)
+            e.file_type().map(|ft| ft.is_dir()).unwrap_or(false) && !is_hidden(&e.path())
         })
         .collect();
 
@@ -74,6 +74,8 @@ fn scan_dir_recursive(dir: &Path, vault_root: &str) -> Vec<NotebookEntry> {
             .cmp(&b.file_name().to_string_lossy().to_lowercase())
     });
 
+    // Store note_count for the parent directory (used when this is the top-level call)
+    // Each directory pushes its own entry with its own note_count
     for dir_entry in dirs {
         let path = dir_entry.path();
         let name = dir_entry.file_name().to_string_lossy().to_string();
@@ -83,32 +85,71 @@ fn scan_dir_recursive(dir: &Path, vault_root: &str) -> Vec<NotebookEntry> {
             .to_string_lossy()
             .to_string();
 
-        let children = scan_dir_recursive(&path, vault_root);
-        let note_count = count_notes_in_dir(&path);
+        let (children, child_note_count) = scan_dir_with_count(&path, vault_root);
 
         entries.push(NotebookEntry {
             name,
             path: path.to_string_lossy().to_string(),
             relative_path: relative,
             children,
-            note_count,
+            note_count: child_note_count,
         });
     }
 
     entries
 }
 
-fn count_notes_in_dir(dir: &Path) -> usize {
-    fs::read_dir(dir)
-        .map(|rd| {
-            rd.filter_map(|e| e.ok())
-                .filter(|e| {
-                    let path = e.path();
-                    path.is_file() && path.extension().and_then(|x| x.to_str()) == Some("md")
-                })
-                .count()
-        })
-        .unwrap_or(0)
+/// Combined scan: returns (children, note_count) in a single read_dir pass.
+fn scan_dir_with_count(dir: &Path, vault_root: &str) -> (Vec<NotebookEntry>, usize) {
+    let root = Path::new(vault_root);
+
+    let Ok(read_dir) = fs::read_dir(dir) else {
+        return (Vec::new(), 0);
+    };
+
+    let mut subdirs = Vec::new();
+    let mut note_count = 0usize;
+    for entry in read_dir.filter_map(|e| e.ok()) {
+        let ft = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+        if ft.is_dir() && !is_hidden(&entry.path()) {
+            subdirs.push(entry);
+        } else if ft.is_file() && entry.path().extension().and_then(|x| x.to_str()) == Some("md") {
+            note_count += 1;
+        }
+    }
+
+    subdirs.sort_by(|a, b| {
+        a.file_name()
+            .to_string_lossy()
+            .to_lowercase()
+            .cmp(&b.file_name().to_string_lossy().to_lowercase())
+    });
+
+    let mut entries = Vec::new();
+    for dir_entry in subdirs {
+        let path = dir_entry.path();
+        let name = dir_entry.file_name().to_string_lossy().to_string();
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+
+        let (children, child_note_count) = scan_dir_with_count(&path, vault_root);
+
+        entries.push(NotebookEntry {
+            name,
+            path: path.to_string_lossy().to_string(),
+            relative_path: relative,
+            children,
+            note_count: child_note_count,
+        });
+    }
+
+    (entries, note_count)
 }
 
 fn is_hidden(path: &Path) -> bool {
@@ -129,42 +170,136 @@ pub fn scan_notes(vault_path: &str, notebook_path: Option<&str>) -> Result<Vec<N
     let root = Path::new(scan_path);
     let vault_root = Path::new(vault_path);
 
+    log::info!("scan_notes: vault={}, scan={}, exists={}", vault_path, scan_path, root.exists());
+
     if !root.exists() {
         return Err("Path does not exist".to_string());
     }
 
-    let md_files: Vec<PathBuf> = if notebook_path.is_some() {
-        // Only direct children for a specific notebook
-        fs::read_dir(root)
-            .map_err(|e| e.to_string())?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md"))
-            .collect()
-    } else {
-        // Recursive for "All Notes"
-        WalkDir::new(root)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| !is_hidden(e.path()) && !e.path().starts_with(&helixnotes_dir(vault_path)))
-            .map(|e| e.path().to_path_buf())
-            .filter(|p| p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md"))
-            .collect()
-    };
+    // On Android, use metadata-only scan (no file reads) for fast listing on FUSE
+    #[cfg(target_os = "android")]
+    {
+        let mut notes = Vec::new();
+        // Log what read_dir sees
+        if let Ok(rd) = fs::read_dir(root) {
+            let items: Vec<_> = rd.filter_map(|e| e.ok()).collect();
+            log::info!("scan_notes: read_dir found {} entries in {:?}", items.len(), root);
+            for (i, entry) in items.iter().enumerate().take(5) {
+                let ft = entry.file_type().map(|ft| if ft.is_file() { "file" } else if ft.is_dir() { "dir" } else { "other" }).unwrap_or("err");
+                log::info!("  [{}] {:?} type={}", i, entry.file_name(), ft);
+            }
+        } else {
+            log::info!("scan_notes: read_dir FAILED for {:?}", root);
+        }
 
-    // Process files in parallel with partial reads
-    let mut notes: Vec<NoteEntry> = md_files
-        .par_iter()
-        .filter_map(|path| read_note_entry_fast(path, vault_root).ok())
-        .collect();
+        if notebook_path.is_some() {
+            if let Ok(rd) = fs::read_dir(root) {
+                for entry in rd.filter_map(|e| e.ok()) {
+                    let is_file = entry.file_type().map(|ft| ft.is_file()).unwrap_or(false);
+                    if is_file && entry.path().extension().and_then(|x| x.to_str()) == Some("md") {
+                        if let Ok(note) = read_note_entry_metadata_only(&entry.path(), vault_root) {
+                            notes.push(note);
+                        }
+                    }
+                }
+            }
+        } else {
+            let hn_dir = helixnotes_dir(vault_path);
+            for entry in WalkDir::new(root)
+                .into_iter()
+                // filter_entry skips descending into hidden dirs (unlike filter)
+                .filter_entry(|e| !is_hidden(e.path()) && !e.path().starts_with(&hn_dir))
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.file_type().is_file()
+                        && e.path().extension().and_then(|x| x.to_str()) == Some("md")
+                })
+            {
+                if let Ok(note) = read_note_entry_metadata_only(entry.path(), vault_root) {
+                    notes.push(note);
+                }
+            }
+        }
+        log::info!("scan_notes: Android scan found {} notes", notes.len());
+        notes.sort_by(|a, b| b.meta.modified.cmp(&a.meta.modified));
+        return Ok(notes);
+    }
 
-    notes.sort_by(|a, b| b.meta.modified.cmp(&a.meta.modified));
-    Ok(notes)
+    #[cfg(not(target_os = "android"))]
+    {
+        let md_files: Vec<PathBuf> = if notebook_path.is_some() {
+            fs::read_dir(root)
+                .map_err(|e| e.to_string())?
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md"))
+                .collect()
+        } else {
+            WalkDir::new(root)
+                .into_iter()
+                .filter_entry(|e| !is_hidden(e.path()) && !e.path().starts_with(&helixnotes_dir(vault_path)))
+                .filter_map(|e| e.ok())
+                .map(|e| e.path().to_path_buf())
+                .filter(|p| p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md"))
+                .collect()
+        };
+
+        let mut notes: Vec<NoteEntry> = md_files
+            .par_iter()
+            .filter_map(|path| read_note_entry_fast(path, vault_root).ok())
+            .collect();
+
+        notes.sort_by(|a, b| b.meta.modified.cmp(&a.meta.modified));
+        Ok(notes)
+    }
 }
 
 fn read_note_entry(path: &Path, vault_root: &Path) -> Result<NoteEntry, String> {
     let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
     read_note_entry_from_str(&raw, path, vault_root)
+}
+
+/// Android-only: reads just the frontmatter (first 2KB) for tags/title/pinned,
+/// uses filesystem timestamps for dates. No preview text.
+#[cfg(target_os = "android")]
+fn read_note_entry_metadata_only(path: &Path, vault_root: &Path) -> Result<NoteEntry, String> {
+    // Read first 2KB — enough for frontmatter with tags, title, pinned
+    let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut buf = vec![0u8; 2048];
+    let bytes_read = file.read(&mut buf).map_err(|e| e.to_string())?;
+    buf.truncate(bytes_read);
+    let raw = String::from_utf8_lossy(&buf);
+
+    let filename = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    let (mut meta, _content) = frontmatter::parse_note(&raw, &filename);
+
+    // Always use filesystem timestamps on Android (faster than parsing date strings)
+    if let Ok(fs_meta) = fs::metadata(path) {
+        if let Ok(m) = fs_meta.modified() {
+            meta.modified = m.into();
+        }
+        if let Ok(c) = fs_meta.created() {
+            meta.created = c.into();
+        }
+    }
+
+    let relative = path
+        .strip_prefix(vault_root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .to_string();
+
+    Ok(NoteEntry {
+        path: path.to_string_lossy().to_string(),
+        relative_path: relative,
+        meta,
+        preview: String::new(),
+    })
 }
 
 /// Fast version: reads only the first ~2KB of the file (enough for frontmatter + preview).

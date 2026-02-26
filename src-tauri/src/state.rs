@@ -3,10 +3,11 @@ use crate::types::AppConfig;
 use notify::RecommendedWatcher;
 use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
+use std::sync::Arc;
 
 pub struct AppState {
     pub config: Mutex<AppConfig>,
-    pub search_index: Mutex<Option<SearchIndex>>,
+    pub search_index: Mutex<Option<Arc<SearchIndex>>>,
     pub watcher: Mutex<Option<RecommendedWatcher>>,
     pub importing: AtomicBool,
     pub pending_open_file: Mutex<Option<String>>,

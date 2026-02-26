@@ -77,17 +77,19 @@ impl SearchIndex {
 
         for entry in WalkDir::new(vault_path)
             .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| {
+            .filter_entry(|e| {
                 let p = e.path();
-                p.is_file()
-                    && p.extension().and_then(|x| x.to_str()) == Some("md")
-                    && !p.starts_with(&hn_dir)
+                !p.starts_with(&hn_dir)
                     && !p
                         .file_name()
                         .and_then(|n| n.to_str())
                         .map(|n| n.starts_with('.'))
                         .unwrap_or(false)
+            })
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_type().is_file()
+                    && e.path().extension().and_then(|x| x.to_str()) == Some("md")
             })
         {
             if let Ok(raw) = fs::read_to_string(entry.path()) {

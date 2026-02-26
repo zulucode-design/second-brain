@@ -11,12 +11,56 @@
 	let recentVaults: VaultConfig[] = $derived($appConfig?.vaults ?? []);
 	let loading = $state(false);
 	let error = $state('');
+	let vaultName = $state('HelixNotes');
+	let hasPermission = $state(!isMobile);
+	let selectedLocation = $state('Documents');
+	let customPath = $state('');
+
+	const storageLocations = [
+		{ label: 'Documents', path: '/storage/emulated/0/Documents' },
+		{ label: 'Downloads', path: '/storage/emulated/0/Download' },
+		{ label: 'Internal Storage', path: '/storage/emulated/0' },
+	];
+
+	if (isMobile) {
+		checkPermission();
+		setTimeout(checkPermission, 500);
+		(window as any).__storagePermissionGranted = () => { hasPermission = true; };
+		document.addEventListener('visibilitychange', () => {
+			if (document.visibilityState === 'visible') setTimeout(checkPermission, 300);
+		});
+	}
+
+	function checkPermission() {
+		try {
+			const bridge = (window as any).Android;
+			if (bridge?.hasStoragePermission) {
+				hasPermission = bridge.hasStoragePermission() === true;
+			}
+		} catch { /* bridge not ready */ }
+	}
+
+	function requestPermission() {
+		try {
+			const bridge = (window as any).Android;
+			bridge?.requestStoragePermission?.();
+		} catch {
+			error = 'Go to Settings > Apps > HelixNotes > Permissions and enable "All files access".';
+		}
+	}
+
+	function getMobileBasePath(): string {
+		if (selectedLocation === 'Custom') {
+			return customPath.trim() || '/storage/emulated/0/Documents';
+		}
+		return storageLocations.find(l => l.label === selectedLocation)?.path || '/storage/emulated/0/Documents';
+	}
+
+	let fullPath = $derived(isMobile ? `${getMobileBasePath()}/${vaultName.trim() || 'HelixNotes'}` : '');
 
 	async function pickFolder() {
 		if (isMobile) {
-			// Use shared Documents folder for Syncthing/Nextcloud compatibility
-			const vaultPath = '/storage/emulated/0/Documents/HelixNotes';
-			await openSelectedVault(vaultPath);
+			await openSelectedVault(fullPath);
 		} else {
 			const selected = await open({ directory: true, multiple: false, title: 'Choose Notes Folder' });
 			if (selected) {
@@ -29,6 +73,12 @@
 		loading = true;
 		error = '';
 		try {
+			if (isMobile) {
+				try {
+					const bridge = (window as any).Android;
+					bridge?.prepareVaultDir?.(path);
+				} catch { /* Rust will retry mkdir itself */ }
+			}
 			await openVault(path);
 			const config = await getAppConfig();
 			$appConfig = config;
@@ -68,7 +118,41 @@
 		<h1>HelixNotes</h1>
 		<p class="subtitle">Local markdown notes</p>
 		{#if isMobile}
-			<p class="description">Notes are stored in Documents/HelixNotes as Markdown files. Sync with Nextcloud, Syncthing, or any file sync app.</p>
+			<p class="description">Choose where to store your notes. Sync with Syncthing, Nextcloud, or any file sync app.</p>
+
+			{#if !hasPermission}
+				<button class="btn-permission" onclick={requestPermission}>
+					Grant File Access
+				</button>
+				<p class="permission-hint">Required to access Documents, Downloads, and other shared folders.</p>
+			{/if}
+
+			<div class="location-selector">
+				<label class="location-label">Location</label>
+				<div class="location-options">
+					{#each storageLocations as loc}
+						<button
+							class="location-option"
+							class:active={selectedLocation === loc.label}
+							onclick={() => selectedLocation = loc.label}
+						>{loc.label}</button>
+					{/each}
+					<button
+						class="location-option"
+						class:active={selectedLocation === 'Custom'}
+						onclick={() => selectedLocation = 'Custom'}
+					>Custom</button>
+				</div>
+				{#if selectedLocation === 'Custom'}
+					<input class="custom-path-input" type="text" bind:value={customPath} placeholder="/storage/emulated/0/..." />
+				{/if}
+			</div>
+
+			<div class="vault-name-input">
+				<label for="vault-name">Vault name</label>
+				<div class="vault-name-preview"><input id="vault-name" type="text" bind:value={vaultName} placeholder="HelixNotes" /></div>
+				<span class="vault-path-hint">{fullPath}</span>
+			</div>
 		{:else}
 			<p class="description">Your notes are stored as standard Markdown (.md) files. Pick any folder — existing .md files will be recognized automatically.</p>
 		{/if}
@@ -87,13 +171,13 @@
 			{/if}
 		</button>
 
-		{#if !isMobile && $appConfig?.active_vault}
+		{#if $appConfig?.active_vault}
 			<button class="btn-back" onclick={() => ($vaultReady = true)}>
 				Back
 			</button>
 		{/if}
 
-		{#if !isMobile && recentVaults.length > 0}
+		{#if recentVaults.length > 0}
 			<div class="recent">
 				<span class="recent-label">Recent</span>
 				{#each recentVaults as vault}
@@ -110,11 +194,13 @@
 <style>
 	.vault-picker {
 		display: flex;
-		align-items: center;
 		justify-content: center;
 		height: 100vh;
+		height: 100dvh;
 		background: var(--bg-primary);
 		position: relative;
+		overflow-y: auto;
+		-webkit-overflow-scrolling: touch;
 	}
 
 	.window-controls {
@@ -148,6 +234,9 @@
 		max-width: 400px;
 		width: 100%;
 		padding: 48px 32px;
+		padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px));
+		margin: auto;
+		flex-shrink: 0;
 	}
 
 	.logo {
@@ -276,6 +365,130 @@
 		white-space: nowrap;
 	}
 
+	.vault-name-input {
+		margin-bottom: 20px;
+		text-align: left;
+	}
+
+	.vault-name-input label {
+		display: block;
+		font-size: 12px;
+		font-weight: 500;
+		color: var(--text-tertiary);
+		margin-bottom: 6px;
+	}
+
+	.vault-name-preview {
+		display: flex;
+		align-items: center;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		padding: 10px 12px;
+		font-size: 14px;
+		color: var(--text-tertiary);
+	}
+
+	.vault-name-preview input {
+		background: none;
+		border: none;
+		outline: none;
+		color: var(--text-primary);
+		font-size: 14px;
+		font-family: inherit;
+		width: 100%;
+		padding: 0;
+	}
+
+	.location-selector {
+		margin-bottom: 16px;
+		text-align: left;
+	}
+
+	.location-label {
+		display: block;
+		font-size: 12px;
+		font-weight: 500;
+		color: var(--text-tertiary);
+		margin-bottom: 6px;
+	}
+
+	.location-options {
+		display: flex;
+		gap: 6px;
+		flex-wrap: wrap;
+	}
+
+	.location-option {
+		padding: 8px 14px;
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		background: var(--bg-secondary);
+		color: var(--text-secondary);
+		font-size: 13px;
+		font-family: inherit;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.location-option.active {
+		background: var(--accent);
+		color: white;
+		border-color: var(--accent);
+	}
+
+	.custom-path-input {
+		width: 100%;
+		margin-top: 8px;
+		padding: 10px 12px;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		color: var(--text-primary);
+		font-size: 13px;
+		font-family: inherit;
+		outline: none;
+		box-sizing: border-box;
+	}
+
+	.custom-path-input:focus {
+		border-color: var(--accent);
+	}
+
+	.vault-path-hint {
+		display: block;
+		font-size: 11px;
+		color: var(--text-tertiary);
+		margin-top: 6px;
+		opacity: 0.7;
+		word-break: break-all;
+	}
+
+	.btn-permission {
+		width: 100%;
+		padding: 12px 20px;
+		background: var(--accent);
+		color: white;
+		border: none;
+		border-radius: 10px;
+		font-size: 15px;
+		font-weight: 600;
+		cursor: pointer;
+		margin-bottom: 6px;
+		transition: background 0.15s;
+	}
+
+	.btn-permission:hover {
+		background: var(--accent-hover);
+	}
+
+	.permission-hint {
+		font-size: 12px;
+		color: var(--text-tertiary);
+		margin-bottom: 20px;
+		opacity: 0.7;
+	}
+
 	/* Mobile */
 	.mobile .btn-primary {
 		padding: 14px 20px;
@@ -294,5 +507,23 @@
 	.mobile .logo :global(svg) {
 		width: 88px;
 		height: 88px;
+	}
+
+	.mobile .btn-back {
+		padding: 14px 20px;
+		font-size: 16px;
+		border-radius: 12px;
+	}
+
+	.mobile .vault-item {
+		padding: 14px 16px;
+	}
+
+	.mobile .vault-name {
+		font-size: 15px;
+	}
+
+	.mobile .vault-path {
+		font-size: 13px;
 	}
 </style>
