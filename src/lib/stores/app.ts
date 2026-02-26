@@ -59,6 +59,7 @@ export const updateAvailable = writable<{
 } | null>(null);
 export const updateObj = writable<any>(null);
 export const installType = writable<string>("native");
+export const androidApkUrl = writable<string | null>(null);
 
 export async function checkForUpdate() {
   try {
@@ -70,6 +71,37 @@ export async function checkForUpdate() {
     }
   } catch {
     // Silent fail — don't disrupt app startup
+  }
+}
+
+function isNewerVersion(remote: string, local: string): boolean {
+  const r = remote.split(".").map(Number);
+  const l = local.split(".").map(Number);
+  for (let i = 0; i < Math.max(r.length, l.length); i++) {
+    const rv = r[i] || 0;
+    const lv = l[i] || 0;
+    if (rv > lv) return true;
+    if (rv < lv) return false;
+  }
+  return false;
+}
+
+export async function checkForUpdateMobile() {
+  try {
+    const { getVersion } = await import("@tauri-apps/api/app");
+    const currentVersion = await getVersion();
+    const res = await fetch("https://helixnotes.com/latest.json");
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.version && isNewerVersion(data.version, currentVersion)) {
+      updateAvailable.set({ version: data.version, body: data.notes });
+      const android = data.platforms?.["android-universal"];
+      if (android?.url) {
+        androidApkUrl.set(android.url);
+      }
+    }
+  } catch {
+    // Silent fail
   }
 }
 

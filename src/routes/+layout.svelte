@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import '../app.css';
-	import { theme, appConfig, activeNotePath, installType, checkForUpdate } from '$lib/stores/app';
+	import { theme, appConfig, activeNotePath, installType, checkForUpdate, checkForUpdateMobile } from '$lib/stores/app';
 	import { openUrl } from '@tauri-apps/plugin-opener';
 	import { openFile, getInstallType } from '$lib/api';
 	import { get } from 'svelte/store';
@@ -33,9 +33,12 @@
 		return resolved.join('/');
 	}
 
-	// Detect install type and check for updates on startup (skip on mobile — updates via app store)
+	// Detect install type and check for updates on startup
 	onMount(() => {
-		if (!isMobile) {
+		if (isMobile) {
+			installType.set('android');
+			checkForUpdateMobile();
+		} else {
 			getInstallType().then(t => installType.set(t)).catch(() => {});
 			checkForUpdate();
 		}

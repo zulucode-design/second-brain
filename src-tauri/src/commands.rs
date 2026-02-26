@@ -1570,11 +1570,13 @@ pub fn get_install_type() -> String {
     } else if std::path::Path::new("/var/lib/dpkg/info/helix-notes.list").exists() {
         "deb".to_string()
     } else if std::path::Path::new("/var/lib/pacman/local").exists()
-        && std::process::Command::new("pacman")
-            .args(["-Q", "helixnotes"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        && ["helixnotes", "helixnotes-bin", "helixnotes-appimage-bin"].iter().any(|pkg| {
+            std::process::Command::new("pacman")
+                .args(["-Q", pkg])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        })
     {
         "aur".to_string()
     } else if std::env::var("APPIMAGE").is_ok() {

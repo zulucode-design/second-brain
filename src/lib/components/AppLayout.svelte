@@ -32,7 +32,9 @@
 		appConfig,
 		quickAccessPaths,
 		tags,
-		notes
+		notes,
+		updateAvailable as globalUpdateAvailable,
+		settingsTab
 	} from '$lib/stores/app';
 
 	const appWindow = getCurrentWindow();
@@ -446,6 +448,11 @@
 						{$activeNotebook?.name || 'All Notes'}
 					{/if}
 				</span>
+				{#if $globalUpdateAvailable && $mobileView === 'sidebar'}
+					<button class="mobile-update-badge" onclick={() => { $settingsTab = 'updates'; $showSettings = true; }}>
+						v{$globalUpdateAvailable.version}
+					</button>
+				{/if}
 			{/if}
 			<div class="mobile-header-actions">
 				{#if $mobileView === 'editor'}
@@ -746,6 +753,20 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		padding: 0 4px;
+	}
+
+	.mobile-update-badge {
+		background: var(--accent);
+		color: white;
+		border: none;
+		border-radius: 10px;
+		padding: 2px 8px;
+		font-size: 11px;
+		font-weight: 600;
+		font-family: inherit;
+		cursor: pointer;
+		white-space: nowrap;
+		flex-shrink: 0;
 	}
 
 	.mobile-header-actions {

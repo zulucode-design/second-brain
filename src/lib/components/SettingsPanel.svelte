@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { showSettings, theme, appConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady } from '$lib/stores/app';
+	import { showSettings, theme, appConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile } from '$lib/stores/app';
 	import { setTheme, setAccentColor, setFontSize, setFontFamily, setLineHeight, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection } from '$lib/api';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
-	import { check as checkUpdate } from '@tauri-apps/plugin-updater';
 	import { getVersion } from '@tauri-apps/api/app';
+	import { openUrl } from '@tauri-apps/plugin-opener';
 	import type { ImportResult, BackupEntry } from '$lib/types';
 
 	const isMobile = /android|ios/i.test(navigator.userAgent);
@@ -56,15 +56,27 @@
 		updateMessage = null;
 		updateAvailable = null;
 		try {
-			const update = await checkUpdate();
-			if (update) {
-				updateObj = update;
-				$globalUpdateObj = update;
-				updateAvailable = { version: update.version, body: update.body, date: update.date };
-				globalUpdateAvailable.set({ version: update.version, body: update.body });
-				updateMessage = { type: 'info', text: `Version ${update.version} is available!` };
+			if (isMobile) {
+				await checkForUpdateMobile();
+				const global = $globalUpdateAvailable;
+				if (global) {
+					updateAvailable = { version: global.version, body: global.body };
+					updateMessage = { type: 'info', text: `Version ${global.version} is available!` };
+				} else {
+					updateMessage = { type: 'success', text: 'You are on the latest version.' };
+				}
 			} else {
-				updateMessage = { type: 'success', text: 'You are on the latest version.' };
+				const { check: checkUpdate } = await import('@tauri-apps/plugin-updater');
+				const update = await checkUpdate();
+				if (update) {
+					updateObj = update;
+					$globalUpdateObj = update;
+					updateAvailable = { version: update.version, body: update.body, date: update.date };
+					globalUpdateAvailable.set({ version: update.version, body: update.body });
+					updateMessage = { type: 'info', text: `Version ${update.version} is available!` };
+				} else {
+					updateMessage = { type: 'success', text: 'You are on the latest version.' };
+				}
 			}
 		} catch (e) {
 			updateMessage = { type: 'error', text: `Failed to check: ${e}` };
@@ -1204,6 +1216,13 @@
 										<p>Update via your AUR helper:</p>
 										<code>yay -Syu helixnotes</code>
 									</div>
+								{:else if $installType === 'android'}
+									<button class="update-install-btn" onclick={() => { openUrl('https://helixnotes.com/#download').catch(() => {}); }}>
+										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+											<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+										</svg>
+										Download from Website
+									</button>
 								{:else}
 									<a class="update-install-btn" href="https://codeberg.org/ArkHost/HelixNotes/releases" target="_blank" rel="noopener">
 										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
