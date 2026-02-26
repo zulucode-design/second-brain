@@ -5,7 +5,7 @@ A local markdown note-taking app built with Tauri, SvelteKit, and Rust.
 Your notes are stored as standard Markdown files on your local filesystem.
 No cloud, no lock-in.
 
-## Download (v1.1.8)
+## Download (v1.1.9)
 
 ### Linux
 
@@ -23,19 +23,23 @@ curl -fsSL https://repo.arkhost.com/gpg.key | sudo gpg --dearmor -o /usr/share/k
 
 #### AppImage (Arch, Fedora 43+, openSUSE Tumbleweed)
 
-[Download AppImage](https://download.helixnotes.com/releases/v1.1.8/HelixNotes_1.1.8_amd64.AppImage)
+[Download AppImage](https://download.helixnotes.com/releases/v1.1.9/HelixNotes_1.1.9_amd64.AppImage)
 
 #### .deb (manual)
 
-[Download .deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.8/HelixNotes_1.1.8_amd64.deb) — Ubuntu 22.04+
+[Download .deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.9/HelixNotes_1.1.9_amd64.deb) — Ubuntu 22.04+
 
 ### Windows
 
-[Download Installer](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.8/HelixNotes_1.1.8_x64-setup.exe) — Windows 10/11
+[Download Installer](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.9/HelixNotes_1.1.9_x64-setup.exe) — Windows 10/11
 
 ### macOS
 
-[Download .dmg](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.8/HelixNotes_1.1.8_x64.dmg) — macOS (Intel, runs on Apple Silicon via Rosetta)
+[Download .dmg](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.1.9/HelixNotes_1.1.9_x64.dmg) — macOS (Intel, runs on Apple Silicon via Rosetta)
+
+### Android
+
+[Download APK](https://download.helixnotes.com/releases/v1.1.9/HelixNotes_1.1.9_android.apk) — Tested on Android 16
 
 ---
 
@@ -70,7 +74,7 @@ Full documentation: [helixnotes.com/docs](https://helixnotes.com/docs.html)
 
 - **Frontend**: SvelteKit (Svelte 5) + TailwindCSS v4 + TipTap v3
 - **Backend**: Rust (Tauri 2.0) + Tantivy (search) + Notify (file watcher)
-- **Platforms**: Linux (AppImage), Windows, macOS
+- **Platforms**: Linux (AppImage), Windows, macOS, Android
 
 ## Building from Source
 
