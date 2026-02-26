@@ -1,6 +1,6 @@
 [package]
 name = "helixnotes"
-version = "1.1.9"
+version = "1.2.0"
 description = "Local markdown note-taking app"
 authors = ["HelixNotes"]
 license = "AGPL-3.0-or-later"
@@ -43,3 +43,4 @@ tauri-plugin-updater = "2"
 tauri-plugin-single-instance = "2"
 arboard = { version = "3", features = ["image-data", "wayland-data-control"] }
 png = "0.17"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }

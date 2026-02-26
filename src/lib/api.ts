@@ -126,6 +126,10 @@ export async function getAllNoteTitles(): Promise<NoteTitleEntry[]> {
   return invoke("get_all_note_titles");
 }
 
+export async function getGraphData(): Promise<{ nodes: { title: string; path: string }[]; edges: { source: number; target: number }[] }> {
+  return invoke("get_graph_data");
+}
+
 export async function searchNotes(
   query: string,
   limit?: number,
@@ -166,6 +170,10 @@ export async function saveVaultState(vaultState: VaultState): Promise<void> {
 
 export async function readClipboardImage(): Promise<number[]> {
   return invoke("read_clipboard_image");
+}
+
+export async function copyImageToClipboard(path: string): Promise<void> {
+  return invoke("copy_image_to_clipboard", { path });
 }
 
 export async function saveImage(name: string, data: number[]): Promise<string> {

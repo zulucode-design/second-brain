@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { getAllNoteTitles, readNote } from '$lib/api';
-	import { appConfig, activeNotePath } from '$lib/stores/app';
-	import type { NoteTitleEntry } from '$lib/types';
+	import { getGraphData } from '$lib/api';
+	import { activeNotePath } from '$lib/stores/app';
 
 	let { onclose, onnavigate }: {
 		onclose: () => void;
@@ -11,6 +10,9 @@
 
 	let canvas = $state<HTMLCanvasElement>(null!);
 	let loading = $state(true);
+
+	// Start fetching data immediately — don't wait for canvas mount
+	const dataPromise = getGraphData();
 
 	interface GraphNode {
 		id: string;
@@ -31,7 +33,6 @@
 	let edges: GraphEdge[] = [];
 	let nodeIndexMap: Map<string, number> = new Map();
 	let connectedSet: Set<number> = new Set();
-	let animFrame = 0;
 	let pan = { x: 0, y: 0 };
 	let zoom = 1;
 	let dragging: GraphNode | null = null;
@@ -41,75 +42,54 @@
 	let panStart = { x: 0, y: 0 };
 	let hoveredNode: GraphNode | null = null;
 	let glowPhase = 0;
+	let glowFrame = 0;
 
-	const wikiLinkRegex = /\[\[([^\]]+)\]\]/g;
+	// Cache computed styles — read once, not every frame
+	let cachedStyles: { border: string; text: string; textSec: string; accent: string } | null = null;
+
+	function getStyles() {
+		if (cachedStyles) return cachedStyles;
+		const style = getComputedStyle(document.documentElement);
+		cachedStyles = {
+			border: style.getPropertyValue('--border-color').trim() || '#444',
+			text: style.getPropertyValue('--text-primary').trim() || '#eee',
+			textSec: style.getPropertyValue('--text-tertiary').trim() || '#888',
+			accent: style.getPropertyValue('--accent').trim() || '#7b9bd4',
+		};
+		return cachedStyles;
+	}
 
 	async function buildGraph() {
 		loading = true;
 		try {
-			const titles = await getAllNoteTitles();
-			const titleMap = new Map<string, NoteTitleEntry>();
-			for (const t of titles) {
-				titleMap.set(t.title.toLowerCase(), t);
-			}
+			// Use the pre-fetched promise (started before canvas mount)
+			const data = await dataPromise;
 
-			// Create nodes
 			const w = canvas?.width ?? 800;
 			const h = canvas?.height ?? 600;
-			nodes = titles.map((t) => ({
-				id: t.title.toLowerCase(),
-				title: t.title,
-				path: t.path,
-				x: w / 2 + (Math.random() - 0.5) * Math.min(w, h) * 0.6,
-				y: h / 2 + (Math.random() - 0.5) * Math.min(w, h) * 0.6,
-				vx: 0,
-				vy: 0,
-			}));
 
-			// Build index map for O(1) lookups
+			// Build node index map
 			nodeIndexMap = new Map();
-			for (let i = 0; i < nodes.length; i++) {
-				nodeIndexMap.set(nodes[i].id, i);
-			}
+			nodes = data.nodes.map((n, i) => {
+				nodeIndexMap.set(n.title.toLowerCase(), i);
+				return {
+					id: n.title.toLowerCase(),
+					title: n.title,
+					path: n.path,
+					x: w / 2 + (Math.random() - 0.5) * Math.min(w, h) * 0.6,
+					y: h / 2 + (Math.random() - 0.5) * Math.min(w, h) * 0.6,
+					vx: 0,
+					vy: 0,
+				};
+			});
 
-			// Read all notes in parallel (batched) to extract [[wiki-links]]
-			const edgeSet = new Set<string>();
-			edges = [];
-			const BATCH_SIZE = 20;
-			for (let b = 0; b < nodes.length; b += BATCH_SIZE) {
-				const batch = nodes.slice(b, b + BATCH_SIZE);
-				const results = await Promise.allSettled(
-					batch.map(async (node) => {
-						const content = await readNote(node.path);
-						return { node, body: content.content || '' };
-					})
-				);
-				for (const result of results) {
-					if (result.status !== 'fulfilled') continue;
-					const { node, body } = result.value;
-					const nodeIdx = nodeIndexMap.get(node.id)!;
-					let match;
-					wikiLinkRegex.lastIndex = 0;
-					while ((match = wikiLinkRegex.exec(body)) !== null) {
-						// Handle Obsidian syntax: strip |alias, #heading, ^block
-						let rawLink = match[1].trim();
-						const pipeIdx = rawLink.indexOf('|');
-						if (pipeIdx >= 0) rawLink = rawLink.slice(0, pipeIdx).trim();
-						rawLink = rawLink.replace(/#.*$/, '').replace(/\^.*$/, '').trim();
-						const linkTitle = rawLink.toLowerCase();
-						const targetIdx = nodeIndexMap.get(linkTitle);
-						if (linkTitle !== node.id && targetIdx !== undefined) {
-							const edgeKey = nodeIdx < targetIdx ? `${nodeIdx}|${targetIdx}` : `${targetIdx}|${nodeIdx}`;
-							if (!edgeSet.has(edgeKey)) {
-								edgeSet.add(edgeKey);
-								edges.push({ sourceIdx: nodeIdx, targetIdx });
-								connectedSet.add(nodeIdx);
-								connectedSet.add(targetIdx);
-							}
-						}
-					}
-				}
-			}
+			// Map edges and track connected nodes
+			connectedSet = new Set();
+			edges = data.edges.map(e => {
+				connectedSet.add(e.source);
+				connectedSet.add(e.target);
+				return { sourceIdx: e.source, targetIdx: e.target };
+			});
 		} catch (e) {
 			console.error('Failed to build graph:', e);
 		}
@@ -121,17 +101,17 @@
 		if (!canvas || nodes.length === 0) return;
 		const activePath = $activeNotePath || '';
 		const activeNode = nodes.find(n => n.path === activePath);
-
-		// Only center on active note if it has connections
 		if (!activeNode) return;
+
 		const activeIdx = nodeIndexMap.get(activeNode.id);
-		if (activeIdx === undefined || !connectedSet.has(activeIdx)) return;
 
 		// Gather the active node and its direct neighbors
 		const neighborhood: GraphNode[] = [activeNode];
-		for (const edge of edges) {
-			if (edge.sourceIdx === activeIdx) neighborhood.push(nodes[edge.targetIdx]);
-			else if (edge.targetIdx === activeIdx) neighborhood.push(nodes[edge.sourceIdx]);
+		if (activeIdx !== undefined) {
+			for (const edge of edges) {
+				if (edge.sourceIdx === activeIdx) neighborhood.push(nodes[edge.targetIdx]);
+				else if (edge.targetIdx === activeIdx) neighborhood.push(nodes[edge.sourceIdx]);
+			}
 		}
 
 		const w = canvas.width;
@@ -193,18 +173,13 @@
 	}
 
 	function startSimulation() {
-		if (animFrame) cancelAnimationFrame(animFrame);
+		// Run a small batch synchronously for an instant first render
+		for (let i = 0; i < 30; i++) simulate();
 
-		// Run physics synchronously — no need to animate the settling
-		for (let i = 0; i < 300; i++) {
-			simulate();
-		}
-
-		// Center on active note if it has links, otherwise fit all
+		// Center/fit immediately so the user sees something right away
 		const activePath = $activeNotePath || '';
 		const activeNode = nodes.find(n => n.path === activePath);
-		const activeIdx = activeNode ? nodeIndexMap.get(activeNode.id) : undefined;
-		if (activeIdx !== undefined && connectedSet.has(activeIdx)) {
+		if (activeNode) {
 			centerOnActiveNote();
 		} else {
 			fitToView();
@@ -212,9 +187,21 @@
 
 		draw();
 		startGlowLoop();
-	}
 
-	let glowFrame = 0;
+		// Continue settling asynchronously in small batches
+		const totalRemaining = Math.min(270, Math.max(70, nodes.length * 2));
+		let done = 0;
+		function settle() {
+			if (done >= totalRemaining) return;
+			const batch = Math.min(20, totalRemaining - done);
+			for (let i = 0; i < batch; i++) simulate();
+			done += batch;
+			// Re-center while settling
+			if (activeNode) centerOnActiveNote(); else fitToView();
+			requestAnimationFrame(settle);
+		}
+		requestAnimationFrame(settle);
+	}
 
 	function startGlowLoop() {
 		if (glowFrame) cancelAnimationFrame(glowFrame);
@@ -235,16 +222,19 @@
 		const centerX = w / 2;
 		const centerY = h / 2;
 
-		// Repulsion between all nodes
+		// Repulsion between all nodes (skip pairs that are very far apart)
 		for (let i = 0; i < nodeCount; i++) {
 			const a = nodes[i];
 			for (let j = i + 1; j < nodeCount; j++) {
 				const b = nodes[j];
 				const dx = b.x - a.x;
 				const dy = b.y - a.y;
-				const distSq = dx * dx + dy * dy || 1;
-				const force = 800 / distSq;
-				const dist = Math.sqrt(distSq);
+				const distSq = dx * dx + dy * dy;
+				// Skip very distant pairs — negligible force
+				if (distSq > 250000) continue;
+				const d = distSq || 1;
+				const force = 800 / d;
+				const dist = Math.sqrt(d);
 				const fx = (dx / dist) * force;
 				const fy = (dy / dist) * force;
 				a.vx -= fx;
@@ -254,7 +244,7 @@
 			}
 		}
 
-		// Attraction along edges (indexed lookups)
+		// Attraction along edges
 		for (const edge of edges) {
 			const a = nodes[edge.sourceIdx];
 			const b = nodes[edge.targetIdx];
@@ -298,24 +288,20 @@
 		ctx.translate(pan.x, pan.y);
 		ctx.scale(zoom, zoom);
 
-		const style = getComputedStyle(document.documentElement);
-		const borderColor = style.getPropertyValue('--border-color').trim() || '#444';
-		const textColor = style.getPropertyValue('--text-primary').trim() || '#eee';
-		const textSecondary = style.getPropertyValue('--text-tertiary').trim() || '#888';
-		const accent = style.getPropertyValue('--accent').trim() || '#7b9bd4';
+		const { border: borderColor, text: textColor, textSec: textSecondary, accent } = getStyles();
 
 		// Draw edges
 		ctx.strokeStyle = borderColor;
 		ctx.lineWidth = 1;
 		ctx.globalAlpha = 0.4;
+		ctx.beginPath();
 		for (const edge of edges) {
 			const a = nodes[edge.sourceIdx];
 			const b = nodes[edge.targetIdx];
-			ctx.beginPath();
 			ctx.moveTo(a.x, a.y);
 			ctx.lineTo(b.x, b.y);
-			ctx.stroke();
 		}
+		ctx.stroke();
 		ctx.globalAlpha = 1;
 
 		// Determine active note
@@ -369,7 +355,7 @@
 				ctx.globalAlpha = 1;
 			}
 
-			// Label
+			// Label — only for connected/active/hovered nodes
 			if (isActive || isHovered || hasLinks) {
 				ctx.font = `${isActive ? 'bold 13' : isHovered ? '12' : '10'}px -apple-system, BlinkMacSystemFont, sans-serif`;
 				ctx.fillStyle = isActive || isHovered ? textColor : textSecondary;
@@ -465,6 +451,84 @@
 		if (e.key === 'Escape') onclose();
 	}
 
+	// Touch support for mobile
+	let lastTouchDist = 0;
+
+	function handleTouchStart(e: TouchEvent) {
+		if (e.touches.length === 1) {
+			const t = e.touches[0];
+			mouseDownPos = { x: t.clientX, y: t.clientY };
+			dragMoved = false;
+			const node = getNodeAt(t.clientX, t.clientY);
+			if (node) {
+				dragging = node;
+			} else {
+				panning = true;
+				panStart = { x: t.clientX - pan.x, y: t.clientY - pan.y };
+			}
+		} else if (e.touches.length === 2) {
+			dragging = null;
+			panning = false;
+			const dx = e.touches[0].clientX - e.touches[1].clientX;
+			const dy = e.touches[0].clientY - e.touches[1].clientY;
+			lastTouchDist = Math.sqrt(dx * dx + dy * dy);
+		}
+	}
+
+	function handleTouchMove(e: TouchEvent) {
+		e.preventDefault();
+		if (e.touches.length === 1) {
+			const t = e.touches[0];
+			const dx = t.clientX - mouseDownPos.x;
+			const dy = t.clientY - mouseDownPos.y;
+			if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragMoved = true;
+
+			if (dragging && dragMoved) {
+				const rect = canvas.getBoundingClientRect();
+				dragging.x = (t.clientX - rect.left - pan.x) / zoom;
+				dragging.y = (t.clientY - rect.top - pan.y) / zoom;
+				dragging.vx = 0;
+				dragging.vy = 0;
+				draw();
+			} else if (panning) {
+				pan.x = t.clientX - panStart.x;
+				pan.y = t.clientY - panStart.y;
+				draw();
+			}
+		} else if (e.touches.length === 2) {
+			const dx = e.touches[0].clientX - e.touches[1].clientX;
+			const dy = e.touches[0].clientY - e.touches[1].clientY;
+			const dist = Math.sqrt(dx * dx + dy * dy);
+			if (lastTouchDist > 0) {
+				const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+				const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+				const rect = canvas.getBoundingClientRect();
+				const mx = midX - rect.left;
+				const my = midY - rect.top;
+				const oldZoom = zoom;
+				zoom = Math.max(0.2, Math.min(5, zoom * (dist / lastTouchDist)));
+				pan.x = mx - (mx - pan.x) * (zoom / oldZoom);
+				pan.y = my - (my - pan.y) * (zoom / oldZoom);
+				draw();
+			}
+			lastTouchDist = dist;
+		}
+	}
+
+	function handleTouchEnd(e: TouchEvent) {
+		if (e.touches.length === 0) {
+			if (dragging && !dragMoved) {
+				const node = dragging;
+				dragging = null;
+				onnavigate(node.path, node.title);
+				return;
+			}
+			dragging = null;
+			panning = false;
+			lastTouchDist = 0;
+		}
+	}
+
 	$effect(() => {
 		if (canvas) {
 			const rect = canvas.parentElement?.getBoundingClientRect();
@@ -477,7 +541,6 @@
 	});
 
 	onDestroy(() => {
-		if (animFrame) cancelAnimationFrame(animFrame);
 		if (glowFrame) cancelAnimationFrame(glowFrame);
 	});
 </script>
@@ -516,6 +579,9 @@
 				onmousemove={handleMouseMove}
 				onmouseup={handleMouseUp}
 				onwheel={handleWheel}
+				ontouchstart={handleTouchStart}
+				ontouchmove={handleTouchMove}
+				ontouchend={handleTouchEnd}
 			></canvas>
 		</div>
 	</div>
@@ -553,6 +619,20 @@
 		padding: 14px 20px;
 		border-bottom: 1px solid var(--border-light);
 		flex-shrink: 0;
+	}
+
+	@media (max-width: 768px) {
+		.graph-panel {
+			width: 100vw;
+			height: 100vh;
+			max-width: none;
+			max-height: none;
+			border-radius: 0;
+			border: none;
+		}
+		.graph-header {
+			padding-top: calc(env(safe-area-inset-top, 36px) + 14px);
+		}
 	}
 
 	.graph-header h3 {
@@ -594,6 +674,7 @@
 		width: 100%;
 		height: 100%;
 		cursor: grab;
+		touch-action: none;
 	}
 
 	.graph-canvas:active {
@@ -604,21 +685,19 @@
 		position: absolute;
 		inset: 0;
 		display: flex;
-		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: 12px;
-		color: var(--text-tertiary);
+		gap: 10px;
 		font-size: 13px;
+		color: var(--text-tertiary);
 		z-index: 1;
 	}
 
 	.spinner {
-		animation: spin 0.8s linear infinite;
+		animation: spin 1s linear infinite;
 	}
 
 	@keyframes spin {
-		from { transform: rotate(0deg); }
 		to { transform: rotate(360deg); }
 	}
 </style>

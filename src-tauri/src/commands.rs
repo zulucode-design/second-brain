@@ -400,6 +400,128 @@ pub fn get_all_note_titles(state: State<'_, AppState>) -> Result<Vec<NoteTitleEn
     Ok(entries)
 }
 
+// ── Graph ──
+
+#[tauri::command]
+pub fn get_graph_data(state: State<'_, AppState>) -> Result<crate::types::GraphData, String> {
+    use std::collections::{HashMap, HashSet};
+
+    let config = state.config.lock().map_err(|e| e.to_string())?;
+    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let vault = std::path::Path::new(vault_path);
+
+    // Pass 1: collect all notes with titles (fast title extraction, no YAML parsing)
+    let mut graph_nodes = Vec::new();
+    let mut title_to_idx: HashMap<String, usize> = HashMap::new();
+    let mut seen_paths: HashSet<String> = HashSet::new();
+    let mut contents: Vec<String> = Vec::new();
+
+    for entry in walkdir::WalkDir::new(vault)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if !path.is_file() { continue; }
+        let path_str = path.to_string_lossy().to_string();
+        if path_str.contains("/.helixnotes/") || path_str.contains("/.trash/")
+            || path_str.contains("/.stversions/") || path_str.contains("/.stfolder") { continue; }
+        if path.extension().and_then(|e| e.to_str()) != Some("md") { continue; }
+        // Skip Syncthing conflict files
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if name.contains(".sync-conflict-") { continue; }
+        }
+        // Deduplicate by canonical path (handles symlinks)
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let canonical_str = canonical.to_string_lossy().to_string();
+        if !seen_paths.insert(canonical_str) { continue; }
+
+        let raw = std::fs::read_to_string(path).unwrap_or_default();
+
+        // Fast title extraction: scan for "title: " line in frontmatter without full YAML parse
+        let title = extract_title_fast(&raw).unwrap_or_else(|| {
+            path.file_stem().unwrap_or_default().to_string_lossy().to_string()
+        });
+
+        // Deduplicate by title — skip if we already have a node with this title
+        let title_lower = title.to_lowercase();
+        if title_to_idx.contains_key(&title_lower) { continue; }
+
+        let idx = graph_nodes.len();
+        title_to_idx.insert(title_lower, idx);
+        graph_nodes.push(crate::types::GraphNode {
+            title,
+            path: path_str,
+        });
+        contents.push(raw);
+    }
+
+    // Pass 2: extract edges from wiki-links (inline scan, no regex)
+    let mut edges = Vec::new();
+    let mut edge_set: HashSet<(usize, usize)> = HashSet::new();
+
+    for (source_idx, body) in contents.iter().enumerate() {
+        let bytes = body.as_bytes();
+        let len = bytes.len();
+        let mut i = 0;
+        while i + 1 < len {
+            if bytes[i] == b'[' && bytes[i + 1] == b'[' {
+                i += 2;
+                let start = i;
+                while i + 1 < len && !(bytes[i] == b']' && bytes[i + 1] == b']') {
+                    i += 1;
+                }
+                if i + 1 < len {
+                    let link_raw = &body[start..i];
+                    // Strip |alias, #heading, ^block
+                    let link = link_raw.split('|').next().unwrap_or(link_raw);
+                    let link = link.split('#').next().unwrap_or(link);
+                    let link = link.split('^').next().unwrap_or(link);
+                    let link = link.trim().to_lowercase();
+
+                    if let Some(&target_idx) = title_to_idx.get(&link) {
+                        if target_idx != source_idx {
+                            let key = if source_idx < target_idx { (source_idx, target_idx) } else { (target_idx, source_idx) };
+                            if edge_set.insert(key) {
+                                edges.push(crate::types::GraphEdge { source: source_idx, target: target_idx });
+                            }
+                        }
+                    }
+                    i += 2;
+                }
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    Ok(crate::types::GraphData { nodes: graph_nodes, edges })
+}
+
+/// Fast title extraction from frontmatter without full YAML parsing.
+/// Scans for `title: ...` line within `---` fences.
+fn extract_title_fast(raw: &str) -> Option<String> {
+    let trimmed = raw.trim_start();
+    if !trimmed.starts_with("---") { return None; }
+    // Find the closing ---
+    let after_open = &trimmed[3..];
+    let end = after_open.find("\n---")?;
+    let frontmatter = &after_open[..end];
+    for line in frontmatter.lines() {
+        let line = line.trim();
+        if line.starts_with("title:") {
+            let val = line[6..].trim();
+            // Strip surrounding quotes
+            if (val.starts_with('"') && val.ends_with('"')) || (val.starts_with('\'') && val.ends_with('\'')) {
+                return Some(val[1..val.len()-1].to_string());
+            }
+            if !val.is_empty() {
+                return Some(val.to_string());
+            }
+        }
+    }
+    None
+}
+
 // ── Search ──
 
 #[tauri::command]
@@ -507,6 +629,33 @@ pub fn read_clipboard_image() -> Result<Vec<u8>, String> {
 #[tauri::command]
 pub fn read_clipboard_image() -> Result<Vec<u8>, String> {
     Err("Clipboard image reading not supported on Android".to_string())
+}
+
+/// Copy an image file to the system clipboard.
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+pub fn copy_image_to_clipboard(path: String) -> Result<(), String> {
+    let data = std::fs::read(&path).map_err(|e| format!("Failed to read image: {}", e))?;
+    let img = image::load_from_memory(&data)
+        .map_err(|e| format!("Failed to decode image: {}", e))?;
+    let rgba = img.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    let img_data = arboard::ImageData {
+        width: w as usize,
+        height: h as usize,
+        bytes: std::borrow::Cow::Owned(rgba.into_raw()),
+    };
+    let mut clipboard = arboard::Clipboard::new()
+        .map_err(|e| format!("Clipboard init failed: {}", e))?;
+    clipboard.set_image(img_data)
+        .map_err(|e| format!("Failed to set clipboard image: {}", e))?;
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub fn copy_image_to_clipboard(_path: String) -> Result<(), String> {
+    Err("Clipboard image copy not supported on Android".to_string())
 }
 
 // ── Attachments ──

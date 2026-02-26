@@ -36,7 +36,7 @@
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { readFile } from '@tauri-apps/plugin-fs';
 	import { openUrl } from '@tauri-apps/plugin-opener';
-	import { openFile, copyFileTo } from '$lib/api';
+	import { openFile, copyFileTo, copyImageToClipboard as copyImageToClipboardCmd } from '$lib/api';
 	import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, readOnly, quickAccessPaths, notes } from '$lib/stores/app';
 	import { saveNote, saveImage, saveAttachment, readClipboardImage, addQuickAccess, removeQuickAccess, getQuickAccess, getNoteVersions, getNoteVersionContent, createVersion, aiAsk, getAllNoteTitles, readNote, renameNote } from '$lib/api';
@@ -203,7 +203,8 @@
 	let tableContextMenu = $state<{ x: number; y: number } | null>(null);
 	let tablePickerOpen = $state(false);
 	let tablePickerHover = $state({ rows: 0, cols: 0 });
-	let imageToolbar = $state<{ pos: number; x: number; y: number; size: string } | null>(null);
+	let imageToolbar = $state<{ pos: number; x: number; y: number; size: string; src: string } | null>(null);
+	let copyToast = $state<'copying' | 'done' | null>(null);
 	let noteRelativePath = $derived($activeNotePath && $appConfig?.active_vault ? $activeNotePath.replace($appConfig.active_vault + '/', '') : '');
 	let isQuickAccess = $derived(noteRelativePath ? $quickAccessPaths.includes(noteRelativePath) : false);
 
@@ -590,6 +591,8 @@
 	}
 
 	function updateSlashMenu() {
+		const wasSlashTyped = slashTypedByUser;
+		slashTypedByUser = false;
 		if (!editor) return;
 		if (slashTablePicker) return; // Table picker is open, don't interfere
 		const { state } = editor;
@@ -613,10 +616,9 @@
 
 		// Only open the menu if the user typed the slash, or the menu is already open
 		// This prevents triggering when clicking/arrowing into existing paths like /usr/local/bin
-		if (!slashMenu && !slashTypedByUser) {
+		if (!slashMenu && !wasSlashTyped) {
 			return;
 		}
-		slashTypedByUser = false;
 
 		const query = match[2];
 		const slashOffset = textBefore.length - match[0].length + (match[1].length); // position of "/"
@@ -627,11 +629,12 @@
 		const coords = editor.view.coordsAtPos(from);
 
 		let x = coords.left;
-		let y = coords.bottom + 4;
 
-		// Keep menu within viewport
+		// Keep menu within viewport (account for virtual keyboard on mobile)
 		if (x + 240 > window.innerWidth) x = window.innerWidth - 250;
-		if (y + 300 > window.innerHeight) y = coords.top - 304;
+		let y = coords.bottom + 4;
+		const visibleBottom = window.innerHeight - keyboardHeight;
+		if (y + 300 > visibleBottom) y = Math.max(4, visibleBottom - 300);
 
 		slashMenu = { x, y, query, from, to };
 		slashSelectedIndex = 0;
@@ -731,6 +734,7 @@
 	let wikiLinkMenu = $state<{ x: number; y: number; query: string; from: number } | null>(null);
 	let wikiLinkSelectedIndex = $state(0);
 	let wikiLinkTitlesCache = $state<NoteTitleEntry[]>([]);
+	let wikiLinkTypedByUser = false;
 
 	let wikiLinkFiltered = $derived.by(() => {
 		if (!wikiLinkMenu) return wikiLinkTitlesCache;
@@ -800,8 +804,20 @@
 		},
 		parseHTML() {
 			return [
-				{ tag: 'span[data-wiki-link]' },
-				{ tag: 'a[data-wiki-link]' },
+				{
+					tag: 'span[data-wiki-link]',
+					getAttrs: (el: HTMLElement) => ({
+						title: el.getAttribute('data-title') || null,
+						path: el.getAttribute('data-path') || null,
+					}),
+				},
+				{
+					tag: 'a[data-wiki-link]',
+					getAttrs: (el: HTMLElement) => ({
+						title: el.getAttribute('data-title') || null,
+						path: el.getAttribute('data-path') || null,
+					}),
+				},
 			];
 		},
 		renderHTML({ HTMLAttributes }: { HTMLAttributes: Record<string, any> }) {
@@ -875,6 +891,11 @@
 						},
 						handleTextInput: (view, from, to, text) => {
 							if (!$appConfig?.enable_wiki_links) return false;
+							// Detect [[ opening: flag so onTransaction opens the menu on mobile
+							if (text === '[') {
+								const charBefore = from > 0 ? view.state.doc.textBetween(from - 1, from) : '';
+								if (charBefore === '[') wikiLinkTypedByUser = true;
+							}
 							// Detect ]] closing: auto-resolve the current text as a wiki-link
 							if (text === ']' && wikiLinkMenu) {
 								const state = view.state;
@@ -922,6 +943,7 @@
 	});
 
 	function updateWikiLinkMenu() {
+		wikiLinkTypedByUser = false;
 		if (!editor || !$appConfig?.enable_wiki_links) return;
 		const { state } = editor;
 		const { selection } = state;
@@ -931,7 +953,16 @@
 			closeWikiLinkMenu();
 			return;
 		}
-		const textBefore = parentNode.textContent.slice(0, resolvedFrom.parentOffset);
+		// Build textBefore from the actual ProseMirror node content so positions are accurate
+		// (parentNode.textContent flattens images/atoms, causing position miscalculation)
+		let textBefore = '';
+		const cursorOffset = resolvedFrom.parentOffset;
+		parentNode.forEach((child, offset) => {
+			if (offset >= cursorOffset) return false;
+			if (child.isText) {
+				textBefore += child.text!.slice(0, Math.min(child.nodeSize, cursorOffset - offset));
+			}
+		});
 		// Match [[ at start of line or after whitespace
 		const match = textBefore.match(/\[\[([^\]]*)$/);
 		if (!match) {
@@ -941,13 +972,14 @@
 		// Refresh titles when the menu first opens so newly created notes are found
 		if (!wikiLinkMenu) refreshWikiLinkTitles();
 		const query = match[1];
-		const bracketOffset = textBefore.length - match[0].length;
-		const from = resolvedFrom.start() + bracketOffset;
+		// Calculate from as cursor position minus the matched text length ("[[query")
+		const from = resolvedFrom.pos - match[0].length;
 		const coords = editor.view.coordsAtPos(from);
 		let x = coords.left;
-		let y = coords.bottom + 4;
 		if (x + 280 > window.innerWidth) x = window.innerWidth - 290;
-		if (y + 300 > window.innerHeight) y = coords.top - 304;
+		let y = coords.bottom + 4;
+		const visibleBottom = window.innerHeight - keyboardHeight;
+		if (y + 300 > visibleBottom) y = Math.max(4, visibleBottom - 300);
 		wikiLinkMenu = { x, y, query, from };
 		wikiLinkSelectedIndex = 0;
 	}
@@ -2156,9 +2188,9 @@
 						editorState++;
 					});
 				}
-				// On mobile, only check menus when they're already open (avoid work on every keystroke)
-				if (!isMobile || slashMenu) updateSlashMenu();
-				if (!isMobile || wikiLinkMenu) updateWikiLinkMenu();
+				// On mobile, only check menus when they're already open or user just typed trigger char
+				if (!isMobile || slashMenu || slashTypedByUser) updateSlashMenu();
+				if (!isMobile || wikiLinkMenu || wikiLinkTypedByUser) updateWikiLinkMenu();
 			},
 			onUpdate: () => {
 				if (ignoreNextUpdate || isLoadingNote) {
@@ -2188,6 +2220,10 @@
 
 	export function triggerAiMenu() {
 		openAiMenu();
+	}
+
+	export function toggleGraphView() {
+		showGraph = !showGraph;
 	}
 
 	export function addLinkFromToolbar() {
@@ -2250,12 +2286,12 @@
 	}
 
 	function handleEditorClick(event: MouseEvent) {
-		imageToolbar = null;
 		const target = event.target as HTMLElement;
 
 		// Wiki-link click — navigate to linked note
 		const wikiLinkEl = target.closest('span[data-wiki-link]') as HTMLElement | null;
 		if (wikiLinkEl) {
+			imageToolbar = null;
 			event.preventDefault();
 			event.stopPropagation();
 			const path = wikiLinkEl.getAttribute('data-path') || '';
@@ -2264,21 +2300,31 @@
 			return;
 		}
 
-		// Image click — show size toolbar
+		// Image click — toggle size toolbar
 		if (target.tagName === 'IMG' && editor) {
 			event.preventDefault();
 			event.stopPropagation();
 			const pos = editor.view.posAtDOM(target, 0);
-			const rect = target.getBoundingClientRect();
+			// If toolbar is already open for this image, close it
+			if (imageToolbar && imageToolbar.pos === pos) {
+				imageToolbar = null;
+				return;
+			}
 			const node = editor.state.doc.nodeAt(pos);
 			const currentSize = node?.attrs.size || 'full';
-			imageToolbar = { pos, x: rect.left + rect.width / 2, y: rect.top - 8, size: currentSize };
+			const imgSrc = node?.attrs.src || (target as HTMLImageElement).src || '';
+			const toolbarW = isMobile ? 130 : 250;
+			const toolbarH = 38;
+			const x = Math.min(event.clientX, window.innerWidth - toolbarW - 8);
+			const y = Math.min(event.clientY, window.innerHeight - toolbarH - 8);
+			imageToolbar = { pos, x, y, size: currentSize, src: imgSrc };
 			// Move cursor after the image to clear ProseMirror's node selection highlight
 			const afterPos = pos + (node?.nodeSize || 1);
 			editor.chain().setTextSelection(afterPos).run();
 			return;
 		}
 
+		imageToolbar = null;
 	}
 
 	function setImageSize(size: string) {
@@ -2289,6 +2335,62 @@
 		imageToolbar = { ...imageToolbar, size };
 		$editorDirty = true;
 		autoSave();
+	}
+
+	function getImageAbsPath(src: string): string {
+		// asset:// or http://asset.localhost → extract absolute path
+		if (src.startsWith('asset:') || src.startsWith('http://asset.localhost')) {
+			try {
+				const url = new URL(src);
+				let absPath = decodeURIComponent(url.pathname);
+				absPath = absPath.replace(/^\/{2,}/, '/');
+				return absPath;
+			} catch { /* fall through */ }
+		}
+		// Relative path → resolve against note directory
+		let decoded = decodeURIComponent(src);
+		if (decoded.match(/^\/{2,}/)) decoded = decoded.replace(/^\/{2,}/, '/');
+		if (decoded.startsWith('/')) return decoded;
+		if (decoded.includes('.helixnotes/')) {
+			const vaultRoot = $appConfig?.active_vault;
+			if (vaultRoot) {
+				const idx = decoded.indexOf('.helixnotes/');
+				return `${vaultRoot}/${decoded.substring(idx)}`;
+			}
+		}
+		const notePath = $activeNotePath;
+		if (notePath) {
+			const noteDir = notePath.substring(0, notePath.lastIndexOf('/'));
+			return normalizePath(`${noteDir}/${decoded}`);
+		}
+		const vaultRoot = $appConfig?.active_vault;
+		if (vaultRoot) return normalizePath(`${vaultRoot}/${decoded}`);
+		return src;
+	}
+
+	async function copyImageToClipboard() {
+		if (!imageToolbar) return;
+		const absPath = getImageAbsPath(imageToolbar.src);
+		imageToolbar = null;
+		copyToast = 'copying';
+		// Yield to let Svelte render the "Copying..." toast before blocking on IPC
+		await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+		try {
+			await copyImageToClipboardCmd(absPath);
+			copyToast = 'done';
+		} catch (e) {
+			console.error('Failed to copy image:', e);
+			copyToast = null;
+			return;
+		}
+		setTimeout(() => { copyToast = null; }, 1000);
+	}
+
+	function openImageInApp() {
+		if (!imageToolbar) return;
+		const absPath = getImageAbsPath(imageToolbar.src);
+		openFile(absPath).catch(e => console.error('Failed to open image:', e));
+		imageToolbar = null;
 	}
 
 	function handleEditorContextMenu(event: MouseEvent) {
@@ -4189,7 +4291,33 @@
 			<button class:active={imageToolbar.size === 'small'} onclick={() => setImageSize('small')} title="Small (33%)">S</button>
 			<button class:active={imageToolbar.size === 'medium'} onclick={() => setImageSize('medium')} title="Medium (50%)">M</button>
 			<button class:active={imageToolbar.size === 'full'} onclick={() => setImageSize('full')} title="Full width">L</button>
+			{#if !isMobile}
+				<span class="img-toolbar-sep"></span>
+				<button onclick={copyImageToClipboard} title="Copy image">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+				</button>
+				<button onclick={openImageInApp} title="Open in default app">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+				</button>
+			{/if}
 		</div>
+	</div>
+{/if}
+
+{#if copyToast}
+	<div class="copy-toast" class:done={copyToast === 'done'}>
+		{#if copyToast === 'copying'}
+			<svg class="copy-toast-spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+				<circle cx="12" cy="12" r="10" opacity="0.25" />
+				<path d="M12 2a10 10 0 019.95 9" />
+			</svg>
+			Copying...
+		{:else}
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+				<polyline points="20 6 9 17 4 12" />
+			</svg>
+			Copied
+		{/if}
 	</div>
 {/if}
 
@@ -5544,8 +5672,8 @@
 
 	.img-toolbar {
 		position: fixed;
-		transform: translateX(-50%) translateY(-100%);
 		display: flex;
+		align-items: center;
 		gap: 2px;
 		background: var(--bg-primary);
 		border: 1px solid var(--border-color);
@@ -5574,6 +5702,54 @@
 	.img-toolbar button.active {
 		background: var(--accent);
 		color: white;
+	}
+
+	.img-toolbar-sep {
+		width: 1px;
+		height: 16px;
+		background: var(--border-color);
+		margin: 0 2px;
+	}
+
+	.img-toolbar button svg {
+		display: block;
+	}
+
+	.copy-toast {
+		position: fixed;
+		bottom: 24px;
+		right: 24px;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 8px 16px;
+		min-width: 100px;
+		justify-content: center;
+		background: var(--accent);
+		border-radius: 8px;
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+		font-size: 13px;
+		font-weight: 500;
+		color: white;
+		z-index: 9999;
+		animation: toast-in 0.15s ease-out;
+	}
+
+	.copy-toast.done {
+		background: var(--accent);
+	}
+
+	.copy-toast-spinner {
+		animation: copy-spin 0.8s linear infinite;
+	}
+
+	@keyframes toast-in {
+		from { opacity: 0; transform: translateY(8px); }
+		to { opacity: 1; transform: translateY(0); }
+	}
+
+	@keyframes copy-spin {
+		to { transform: rotate(360deg); }
 	}
 
 	:global(.tiptap-wrapper .tiptap mark) {

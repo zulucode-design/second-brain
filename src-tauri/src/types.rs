@@ -254,3 +254,21 @@ pub struct NoteTitleEntry {
     pub title: String,
     pub path: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphData {
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphNode {
+    pub title: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub source: usize,
+    pub target: usize,
+}

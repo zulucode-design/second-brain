@@ -467,11 +467,6 @@
 							{/if}
 						</svg>
 					</button>
-					<button class="mobile-header-btn" class:active={$sourceMode} onclick={() => ($sourceMode = !$sourceMode)} title={$sourceMode ? 'Rich Editor' : 'Source Mode'}>
-						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
-						</svg>
-					</button>
 					<button class="mobile-header-btn" onclick={() => editor?.openNoteSearch()} title="Find in note">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -503,6 +498,14 @@
 							<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
 						</svg>
 					</button>
+					{#if $appConfig?.enable_wiki_links}
+					<button class="mobile-header-btn" onclick={() => editor?.toggleGraphView()} title="Graph View">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/>
+							<line x1="8.5" y1="7.5" x2="15.5" y2="16.5"/><line x1="15.5" y1="7.5" x2="8.5" y2="16.5"/>
+						</svg>
+					</button>
+					{/if}
 					{#if $appConfig?.ai_provider && ($appConfig?.ai_provider === 'ollama' || $appConfig?.ai_api_key || $appConfig?.openai_api_key)}
 					<button class="mobile-header-btn" onclick={() => editor?.triggerAiMenu()} title="AI Actions">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -510,6 +513,11 @@
 						</svg>
 					</button>
 					{/if}
+					<button class="mobile-header-btn" class:active={$sourceMode} onclick={() => ($sourceMode = !$sourceMode)} title={$sourceMode ? 'Rich Editor' : 'Source Mode'}>
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
+						</svg>
+					</button>
 				{:else}
 					<button class="mobile-header-btn" onclick={() => ($showSearch = true)} title="Search">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -780,13 +788,18 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 44px;
-		height: 44px;
+		width: 34px;
+		height: 34px;
 		border: none;
 		background: none;
 		color: var(--text-secondary);
-		border-radius: 10px;
+		border-radius: 8px;
 		cursor: pointer;
+	}
+
+	.mobile-header-btn svg {
+		width: 16px;
+		height: 16px;
 	}
 
 	.mobile-header-btn:active {
