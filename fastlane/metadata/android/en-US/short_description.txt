@@ -1,0 +1,1 @@
+Local markdown note-taking app. No cloud, no lock-in.
