@@ -180,6 +180,7 @@ pub fn run() {
         }));
 
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+        builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
 
         builder = builder.on_window_event(move |window, event| {
             match event {

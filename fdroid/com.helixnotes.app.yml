@@ -1,0 +1,174 @@
+Categories:
+  - Writing
+  - Office
+License: AGPL-3.0-or-later
+AuthorName: ArkHost
+AuthorWebSite: https://helixnotes.com
+SourceCode: https://codeberg.org/ArkHost/HelixNotes
+IssueTracker: https://codeberg.org/ArkHost/HelixNotes/issues
+Changelog: https://codeberg.org/ArkHost/HelixNotes/releases
+
+AutoName: HelixNotes
+
+RepoType: git
+Repo: https://codeberg.org/ArkHost/HelixNotes.git
+
+Builds:
+  - versionName: 1.2.0
+    versionCode: 10200001
+    commit: v1.2.0
+    timeout: 10800
+    sudo:
+      - apt-get update
+      - apt-get install -y make pkg-config libssl-dev
+    output: src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release-unsigned.apk
+    srclibs:
+      - rustup@1.28.1
+      - esbuild@v0.25.0
+    prebuild:
+      - export RUSTUP_HOME="$$rustup$$/rustup"
+      - export CARGO_HOME="$$rustup$$/cargo"
+      - $$rustup$$/rustup-init.sh -y --no-modify-path
+      - export PATH="$$CARGO_HOME$$/bin:$PATH"
+      - rustup target add aarch64-linux-android
+      - cargo install tauri-cli --version ^2.10.0 --locked
+      - cd $$esbuild$$
+      - GOPATH="$PWD/gopath" go build -o esbuild-bin ./cmd/esbuild
+      - cd $$helixnotes$$
+    scandelete:
+      - src-tauri/gen/android/.gradle
+    build:
+      - export RUSTUP_HOME="$$rustup$$/rustup"
+      - export CARGO_HOME="$$rustup$$/cargo"
+      - export PATH="$$CARGO_HOME$$/bin:$$esbuild$$:$PATH"
+      - ln -sf $$esbuild$$/esbuild-bin $$esbuild$$/esbuild
+      - export NDK_HOME="$$NDK$$"
+      - export ANDROID_HOME="$$SDK$$"
+      - corepack enable
+      - corepack prepare pnpm@latest --activate
+      - pnpm install --frozen-lockfile
+      - cargo tauri android build --apk --split-per-abi --ci
+    ndk: 27.0.12077973
+    gradle:
+      - yes
+
+  - versionName: 1.2.0
+    versionCode: 10200002
+    commit: v1.2.0
+    timeout: 10800
+    sudo:
+      - apt-get update
+      - apt-get install -y make pkg-config libssl-dev
+    output: src-tauri/gen/android/app/build/outputs/apk/arm/release/app-arm-release-unsigned.apk
+    srclibs:
+      - rustup@1.28.1
+      - esbuild@v0.25.0
+    prebuild:
+      - export RUSTUP_HOME="$$rustup$$/rustup"
+      - export CARGO_HOME="$$rustup$$/cargo"
+      - $$rustup$$/rustup-init.sh -y --no-modify-path
+      - export PATH="$$CARGO_HOME$$/bin:$PATH"
+      - rustup target add armv7-linux-androideabi
+      - cargo install tauri-cli --version ^2.10.0 --locked
+      - cd $$esbuild$$
+      - GOPATH="$PWD/gopath" go build -o esbuild-bin ./cmd/esbuild
+      - cd $$helixnotes$$
+    scandelete:
+      - src-tauri/gen/android/.gradle
+    build:
+      - export RUSTUP_HOME="$$rustup$$/rustup"
+      - export CARGO_HOME="$$rustup$$/cargo"
+      - export PATH="$$CARGO_HOME$$/bin:$$esbuild$$:$PATH"
+      - ln -sf $$esbuild$$/esbuild-bin $$esbuild$$/esbuild
+      - export NDK_HOME="$$NDK$$"
+      - export ANDROID_HOME="$$SDK$$"
+      - corepack enable
+      - corepack prepare pnpm@latest --activate
+      - pnpm install --frozen-lockfile
+      - cargo tauri android build --apk --split-per-abi --ci
+    ndk: 27.0.12077973
+    gradle:
+      - yes
+
+  - versionName: 1.2.0
+    versionCode: 10200003
+    commit: v1.2.0
+    timeout: 10800
+    sudo:
+      - apt-get update
+      - apt-get install -y make pkg-config libssl-dev
+    output: src-tauri/gen/android/app/build/outputs/apk/x86/release/app-x86-release-unsigned.apk
+    srclibs:
+      - rustup@1.28.1
+      - esbuild@v0.25.0
+    prebuild:
+      - export RUSTUP_HOME="$$rustup$$/rustup"
+      - export CARGO_HOME="$$rustup$$/cargo"
+      - $$rustup$$/rustup-init.sh -y --no-modify-path
+      - export PATH="$$CARGO_HOME$$/bin:$PATH"
+      - rustup target add i686-linux-android
+      - cargo install tauri-cli --version ^2.10.0 --locked
+      - cd $$esbuild$$
+      - GOPATH="$PWD/gopath" go build -o esbuild-bin ./cmd/esbuild
+      - cd $$helixnotes$$
+    scandelete:
+      - src-tauri/gen/android/.gradle
+    build:
+      - export RUSTUP_HOME="$$rustup$$/rustup"
+      - export CARGO_HOME="$$rustup$$/cargo"
+      - export PATH="$$CARGO_HOME$$/bin:$$esbuild$$:$PATH"
+      - ln -sf $$esbuild$$/esbuild-bin $$esbuild$$/esbuild
+      - export NDK_HOME="$$NDK$$"
+      - export ANDROID_HOME="$$SDK$$"
+      - corepack enable
+      - corepack prepare pnpm@latest --activate
+      - pnpm install --frozen-lockfile
+      - cargo tauri android build --apk --split-per-abi --ci
+    ndk: 27.0.12077973
+    gradle:
+      - yes
+
+  - versionName: 1.2.0
+    versionCode: 10200004
+    commit: v1.2.0
+    timeout: 10800
+    sudo:
+      - apt-get update
+      - apt-get install -y make pkg-config libssl-dev
+    output: src-tauri/gen/android/app/build/outputs/apk/x86_64/release/app-x86_64-release-unsigned.apk
+    srclibs:
+      - rustup@1.28.1
+      - esbuild@v0.25.0
+    prebuild:
+      - export RUSTUP_HOME="$$rustup$$/rustup"
+      - export CARGO_HOME="$$rustup$$/cargo"
+      - $$rustup$$/rustup-init.sh -y --no-modify-path
+      - export PATH="$$CARGO_HOME$$/bin:$PATH"
+      - rustup target add x86_64-linux-android
+      - cargo install tauri-cli --version ^2.10.0 --locked
+      - cd $$esbuild$$
+      - GOPATH="$PWD/gopath" go build -o esbuild-bin ./cmd/esbuild
+      - cd $$helixnotes$$
+    scandelete:
+      - src-tauri/gen/android/.gradle
+    build:
+      - export RUSTUP_HOME="$$rustup$$/rustup"
+      - export CARGO_HOME="$$rustup$$/cargo"
+      - export PATH="$$CARGO_HOME$$/bin:$$esbuild$$:$PATH"
+      - ln -sf $$esbuild$$/esbuild-bin $$esbuild$$/esbuild
+      - export NDK_HOME="$$NDK$$"
+      - export ANDROID_HOME="$$SDK$$"
+      - corepack enable
+      - corepack prepare pnpm@latest --activate
+      - pnpm install --frozen-lockfile
+      - cargo tauri android build --apk --split-per-abi --ci
+    ndk: 27.0.12077973
+    gradle:
+      - yes
+
+AllowedAPKSigningKeys: TODO_YOUR_APK_SIGNING_CERT_SHA256
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags ^v[\d.]+$
+CurrentVersion: 1.2.0
+CurrentVersionCode: 10200004

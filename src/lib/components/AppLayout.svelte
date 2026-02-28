@@ -192,34 +192,49 @@
 	}
 
 	// Android back gesture / hardware back button support
-	let mobileNavFromPopstate = false;
+	// We maintain a simple counter of how many views deep we are.
+	// sidebar=0, notelist=1, editor=2. Each forward nav pushes, back pops.
+	let historyDepth = 0;
+	let navFromPopstate = false;
 
 	if (isMobile) {
-		// Seed initial history state
-		history.replaceState({ mobileView: 'sidebar' }, '');
+		history.replaceState({ mobileView: 'sidebar', depth: 0 }, '');
 
-		// When mobileView changes forward, push browser history so Android back gesture works
 		$effect(() => {
 			const view = $mobileView;
-			if (mobileNavFromPopstate) {
-				mobileNavFromPopstate = false;
+			if (navFromPopstate) {
+				navFromPopstate = false;
 				return;
 			}
-			// Replace state to track current view
-			history.pushState({ mobileView: view }, '');
+			const targetDepth = view === 'sidebar' ? 0 : view === 'notelist' ? 1 : 2;
+			if (targetDepth > historyDepth) {
+				// Forward navigation — push entries for each level skipped
+				for (let d = historyDepth + 1; d <= targetDepth; d++) {
+					const v = d === 1 ? 'notelist' : 'editor';
+					history.pushState({ mobileView: v, depth: d }, '');
+				}
+				historyDepth = targetDepth;
+			} else if (targetDepth < historyDepth) {
+				// Programmatic back (e.g. mobileBack button) — go back in history
+				const steps = historyDepth - targetDepth;
+				historyDepth = targetDepth;
+				navFromPopstate = true; // suppress the popstate that history.go triggers
+				history.go(-steps);
+			}
 		});
 
 		window.addEventListener('popstate', (e) => {
-			const currentView = $mobileView;
-			if (currentView === 'sidebar') {
-				// Already at root — let Android handle it (exit app)
+			if (navFromPopstate) {
+				navFromPopstate = false;
 				return;
 			}
-			mobileNavFromPopstate = true;
-			if (currentView === 'editor') $mobileView = 'notelist';
-			else if (currentView === 'notelist') $mobileView = 'sidebar';
-			// Push state again so next back gesture also works
-			history.pushState({ mobileView: $mobileView }, '');
+			const state = e.state;
+			const targetDepth = state?.depth ?? 0;
+			historyDepth = targetDepth;
+			navFromPopstate = true;
+			if (targetDepth === 0) $mobileView = 'sidebar';
+			else if (targetDepth === 1) $mobileView = 'notelist';
+			else $mobileView = 'editor';
 		});
 	}
 
@@ -525,12 +540,7 @@
 							<line x1="21" y1="21" x2="16.65" y2="16.65" />
 						</svg>
 					</button>
-					<button class="mobile-header-btn" onclick={createAndFocusNote} title="New Note">
-						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-							<path d="M12 5v14M5 12h14" />
-						</svg>
-					</button>
-					<button class="mobile-header-btn" onclick={handleDailyNote} title="Daily Note">
+						<button class="mobile-header-btn" onclick={handleDailyNote} title="Daily Note">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
 							<line x1="16" y1="2" x2="16" y2="6" />
@@ -555,6 +565,11 @@
 			</div>
 			<div class="mobile-panel" class:active={$mobileView === 'notelist'}>
 				<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onNoteMoved={() => sidebar?.refresh()} />
+				<button class="mobile-fab" onclick={createAndFocusNote} title="New Note">
+					<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+						<path d="M12 5v14M5 12h14" />
+					</svg>
+				</button>
 			</div>
 			<div class="mobile-panel" class:active={$mobileView === 'editor'}>
 				<Editor bind:this={editor} />
@@ -829,6 +844,29 @@
 	.mobile-panel.active {
 		visibility: visible;
 		pointer-events: auto;
+	}
+
+	.mobile-fab {
+		position: absolute;
+		bottom: 24px;
+		right: 20px;
+		width: 56px;
+		height: 56px;
+		border-radius: 16px;
+		background: var(--accent);
+		color: white;
+		border: none;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+		cursor: pointer;
+		z-index: 10;
+	}
+
+	.mobile-fab:active {
+		transform: scale(0.93);
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 	}
 
 </style>

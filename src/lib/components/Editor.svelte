@@ -199,6 +199,13 @@
 	let linkModalInput = $state<HTMLInputElement>(null!);
 	let linkSelectionFrom = 0;
 	let linkSelectionTo = 0;
+	let linkSuggestIndex = $state(0);
+	let linkSuggestTitles = $state<NoteTitleEntry[]>([]);
+	let linkSuggestFiltered = $derived.by(() => {
+		const q = linkModalUrl.trim().toLowerCase();
+		if (!q || q.startsWith('http://') || q.startsWith('https://') || q.startsWith('mailto:')) return [];
+		return linkSuggestTitles.filter(e => e.title.toLowerCase().includes(q)).slice(0, 8);
+	});
 	let textContextMenu = $state<{ x: number; y: number } | null>(null);
 	let tableContextMenu = $state<{ x: number; y: number } | null>(null);
 	let tablePickerOpen = $state(false);
@@ -1823,7 +1830,12 @@
 				.replace(/<p[^>]*>(.*?)<\/p>/gi, '> $1\n')
 				.replace(/<br\s*\/?>/gi, '\n> ');
 		});
-		md = md.replace(/<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/gi, '[$2]($1)');
+		md = md.replace(/<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/gi, (_m, href, text) => {
+			// Decode percent-encoded href back to readable form for markdown source
+			// Spaces are re-encoded by markdownToHtml preprocessing before markdown-it parsing
+			const decoded = decodeURIComponent(href);
+			return `[${text}](${decoded})`;
+		});
 		md = md.replace(/<img[^>]*>/gi, (match) => {
 			const srcMatch = match.match(/src="([^"]*)"/);
 			const altMatch = match.match(/alt="([^"]*)"/);
@@ -1918,6 +1930,12 @@
 		// Pre-process: percent-encode spaces in image URLs so markdown-it parses them correctly
 		src = src.replace(/!\[([^\]]*)\]\(([^)]*\s[^)]*)\)/g, (match, alt, url) => {
 			return `![${alt}](${url.replace(/ /g, '%20')})`;
+		});
+
+		// Pre-process: percent-encode spaces in link URLs so markdown-it parses them correctly
+		// Matches [text](url with spaces) but not ![image](url) (already handled above)
+		src = src.replace(/(?<!!)\[([^\]]*)\]\(([^)]*\s[^)]*)\)/g, (_match, text, url) => {
+			return `[${text}](${url.replace(/ /g, '%20')})`;
 		});
 
 		// Pre-process: transform PDF embed divs — iframes on desktop, clickable links on mobile
@@ -2232,8 +2250,11 @@
 		linkSelectionFrom = from;
 		linkSelectionTo = to;
 		const previousUrl = editor.getAttributes('link').href || '';
-		linkModalUrl = previousUrl;
+		linkModalUrl = decodeURIComponent(previousUrl);
+		linkSuggestIndex = 0;
 		linkModal = true;
+		// Load note titles for autocomplete
+		getAllNoteTitles().then(t => { linkSuggestTitles = t; }).catch(() => {});
 		tick().then(() => linkModalInput?.focus());
 	}
 
@@ -2243,13 +2264,35 @@
 		if (url === '') {
 			editor.chain().focus().setTextSelection({ from: linkSelectionFrom, to: linkSelectionTo }).extendMarkRange('link').unsetLink().run();
 		} else {
-			if (url && !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url) && !url.startsWith('/') && !url.startsWith('#')) {
+			if (url && !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url) && !url.startsWith('/') && !url.startsWith('#') && !url.endsWith('.md')) {
 				url = 'https://' + url;
 			}
-			editor.chain().focus().setTextSelection({ from: linkSelectionFrom, to: linkSelectionTo }).setMark('link', { href: url }).run();
+			// Store raw URL — encoding is handled during markdown serialization/parsing
+			const href = url.replace(/[()]/g, (c) => encodeURIComponent(c));
+			editor.chain().focus().setTextSelection({ from: linkSelectionFrom, to: linkSelectionTo }).setMark('link', { href }).run();
 		}
 		linkModal = false;
 		linkModalUrl = '';
+	}
+
+	function linkModalSelectNote(entry: NoteTitleEntry) {
+		// Build a relative .md path from the selected note and confirm immediately
+		const vaultRoot = $appConfig?.active_vault;
+		const currentNote = $activeNotePath;
+		if (vaultRoot && currentNote) {
+			const noteDir = currentNote.substring(0, currentNote.lastIndexOf('/'));
+			const targetRel = entry.path.startsWith(vaultRoot) ? entry.path.substring(vaultRoot.length + 1) : entry.path;
+			const currentRel = noteDir.startsWith(vaultRoot) ? noteDir.substring(vaultRoot.length + 1) : noteDir;
+			const targetParts = targetRel.split('/');
+			const currentParts = currentRel ? currentRel.split('/') : [];
+			let common = 0;
+			while (common < targetParts.length && common < currentParts.length && targetParts[common] === currentParts[common]) common++;
+			const ups = currentParts.length - common;
+			linkModalUrl = (ups > 0 ? '../'.repeat(ups) : './') + targetParts.slice(common).join('/');
+		} else {
+			linkModalUrl = entry.title + '.md';
+		}
+		linkModalConfirm();
 	}
 
 	function linkModalCancel() {
@@ -2793,19 +2836,43 @@
 		linkContextMenu = null;
 	}
 
+	/** Resolve a link href to an absolute .md note path, or null if not a note link. */
+	function resolveNoteHref(href: string): string | null {
+		const decoded = decodeURIComponent(href);
+		if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(decoded)) return null;
+		let absPath = decoded;
+		if (!decoded.startsWith('/')) {
+			const notePath = $activeNotePath;
+			if (notePath) {
+				const noteDir = notePath.substring(0, notePath.lastIndexOf('/'));
+				absPath = normalizePath(`${noteDir}/${decoded}`);
+			} else {
+				const vaultRoot = $appConfig?.active_vault;
+				if (vaultRoot) absPath = normalizePath(`${vaultRoot}/${decoded}`);
+			}
+		}
+		return absPath.endsWith('.md') ? absPath : null;
+	}
+
 	function linkMenuOpen() {
 		if (!linkContextMenu) return;
 		const href = linkContextMenu.href;
 		closeLinkContextMenu();
+		// Internal .md note link — navigate within the app
+		const notePath = resolveNoteHref(href);
+		if (notePath) {
+			navigateToWikiLink(notePath, '');
+			return;
+		}
 		if (href.startsWith('http://') || href.startsWith('https://') || href.startsWith('mailto:')) {
 			openUrl(href).catch(console.error);
 		} else {
 			const decoded = decodeURIComponent(href);
 			let absPath = decoded;
 			if (!decoded.startsWith('/')) {
-				const notePath = $activeNotePath;
-				if (notePath) {
-					const noteDir = notePath.substring(0, notePath.lastIndexOf('/'));
+				const np = $activeNotePath;
+				if (np) {
+					const noteDir = np.substring(0, np.lastIndexOf('/'));
 					absPath = normalizePath(`${noteDir}/${decoded}`);
 				} else {
 					const vaultRoot = $appConfig?.active_vault;
@@ -2832,7 +2899,7 @@
 		if (pos >= 0) {
 			editor.chain().focus().setTextSelection(pos).extendMarkRange('link').run();
 		}
-		linkModalUrl = href;
+		linkModalUrl = decodeURIComponent(href);
 		linkModal = true;
 		tick().then(() => linkModalInput?.focus());
 	}
@@ -4574,12 +4641,34 @@
 				class="link-modal-input"
 				bind:this={linkModalInput}
 				bind:value={linkModalUrl}
+				oninput={() => { linkSuggestIndex = 0; }}
 				onkeydown={(e) => {
-					if (e.key === 'Enter') { e.preventDefault(); linkModalConfirm(); }
+					if (linkSuggestFiltered.length > 0) {
+						if (e.key === 'ArrowDown') { e.preventDefault(); linkSuggestIndex = Math.min(linkSuggestIndex + 1, linkSuggestFiltered.length - 1); return; }
+						if (e.key === 'ArrowUp') { e.preventDefault(); linkSuggestIndex = Math.max(linkSuggestIndex - 1, 0); return; }
+						if (e.key === 'Enter') { e.preventDefault(); linkModalSelectNote(linkSuggestFiltered[linkSuggestIndex]); return; }
+					} else {
+						if (e.key === 'Enter') { e.preventDefault(); linkModalConfirm(); }
+					}
 					if (e.key === 'Escape') { e.preventDefault(); linkModalCancel(); }
 				}}
-				placeholder="https://example.com"
+				placeholder="URL or note name"
 			/>
+			{#if linkSuggestFiltered.length > 0}
+				<div class="link-suggest-list">
+					{#each linkSuggestFiltered as entry, i}
+						<button
+							class="link-suggest-item"
+							class:selected={i === linkSuggestIndex}
+							onmouseenter={() => linkSuggestIndex = i}
+							onmousedown={(e) => { e.preventDefault(); linkModalSelectNote(entry); }}
+						>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
+							<span class="link-suggest-title">{entry.title}</span>
+						</button>
+					{/each}
+				</div>
+			{/if}
 			<div class="link-modal-actions">
 				<button class="link-modal-btn cancel" onclick={linkModalCancel}>Cancel</button>
 				<button class="link-modal-btn confirm" onclick={linkModalConfirm}>
@@ -5617,8 +5706,25 @@
 		text-decoration-color: color-mix(in srgb, var(--text-accent) 40%, transparent);
 	}
 
+	:global(.tiptap-wrapper .tiptap a::after) {
+		content: '↗';
+		display: inline;
+		font-size: 0.65em;
+		margin-left: 2px;
+		opacity: 0.5;
+		vertical-align: 15%;
+	}
+
+	:global(.tiptap-wrapper .tiptap a[href$=".md"]::after) {
+		content: '⤴';
+	}
+
 	:global(.tiptap-wrapper .tiptap a:hover) {
 		text-decoration-color: var(--text-accent);
+	}
+
+	:global(.tiptap-wrapper .tiptap a:hover::after) {
+		opacity: 0.8;
 	}
 
 	:global(.tiptap-wrapper .tiptap img) {
@@ -5976,6 +6082,52 @@
 
 	.link-modal-btn.confirm:hover {
 		opacity: 0.9;
+	}
+
+	.link-suggest-list {
+		max-height: 240px;
+		overflow-y: auto;
+		margin-top: 8px;
+		border: 1px solid var(--border-light);
+		border-radius: 8px;
+		padding: 4px;
+	}
+
+	.link-suggest-item {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 7px 10px;
+		border: none;
+		border-radius: 6px;
+		background: none;
+		color: var(--text-primary);
+		font-size: 13px;
+		cursor: pointer;
+		text-align: left;
+	}
+
+	.link-suggest-item:hover,
+	.link-suggest-item.selected {
+		background: var(--accent-light);
+		color: var(--accent);
+	}
+
+	.link-suggest-item svg {
+		flex-shrink: 0;
+		color: var(--text-tertiary);
+	}
+
+	.link-suggest-item:hover svg,
+	.link-suggest-item.selected svg {
+		color: var(--accent);
+	}
+
+	.link-suggest-title {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	/* Text context menu */

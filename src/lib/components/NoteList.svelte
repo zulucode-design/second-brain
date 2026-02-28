@@ -80,6 +80,52 @@
 	let batchMovePicker = $state(false);
 	let batchTagEdit = $state(false);
 
+	// Mobile long-press selection
+	let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+	let longPressTriggered = false;
+	let touchStartPos = { x: 0, y: 0 };
+	const LONG_PRESS_MS = 500;
+	const LONG_PRESS_MOVE_THRESHOLD = 10;
+
+	function handleTouchStart(e: TouchEvent, note: NoteEntry) {
+		longPressTriggered = false;
+		const touch = e.touches[0];
+		touchStartPos = { x: touch.clientX, y: touch.clientY };
+		longPressTimer = setTimeout(() => {
+			longPressTriggered = true;
+			// Vibrate for haptic feedback if available
+			if (navigator.vibrate) navigator.vibrate(30);
+			const next = new Set(selectedPaths);
+			if (next.size === 0 && $activeNotePath && $activeNotePath !== note.path) {
+				next.add($activeNotePath);
+			}
+			if (next.has(note.path)) {
+				next.delete(note.path);
+			} else {
+				next.add(note.path);
+			}
+			selectedPaths = next;
+		}, LONG_PRESS_MS);
+	}
+
+	function handleTouchMove(e: TouchEvent) {
+		if (!longPressTimer) return;
+		const touch = e.touches[0];
+		const dx = touch.clientX - touchStartPos.x;
+		const dy = touch.clientY - touchStartPos.y;
+		if (Math.abs(dx) > LONG_PRESS_MOVE_THRESHOLD || Math.abs(dy) > LONG_PRESS_MOVE_THRESHOLD) {
+			clearTimeout(longPressTimer);
+			longPressTimer = null;
+		}
+	}
+
+	function handleTouchEnd() {
+		if (longPressTimer) {
+			clearTimeout(longPressTimer);
+			longPressTimer = null;
+		}
+	}
+
 	// Quick Access drag-to-reorder
 	let qaDragFrom = $state<number | null>(null);
 	let qaDragOver = $state<number | null>(null);
@@ -504,6 +550,23 @@
 	}
 
 	function handleNoteClick(e: MouseEvent, note: NoteEntry) {
+		// Mobile: if long-press just fired, ignore the click
+		if (isMobile && longPressTriggered) {
+			longPressTriggered = false;
+			e.preventDefault();
+			return;
+		}
+		// Mobile: if in selection mode, tap toggles selection
+		if (isMobile && selectedPaths.size > 0) {
+			const next = new Set(selectedPaths);
+			if (next.has(note.path)) {
+				next.delete(note.path);
+			} else {
+				next.add(note.path);
+			}
+			selectedPaths = next;
+			return;
+		}
 		if (e.ctrlKey || e.metaKey) {
 			// Toggle individual selection
 			const next = new Set(selectedPaths);
@@ -599,7 +662,11 @@
 	function openSortMenu(e: MouseEvent) {
 		e.stopPropagation();
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-		sortMenu = { x: rect.left, y: rect.bottom + 4 };
+		const menuWidth = isMobile ? 220 : 180;
+		let x = rect.left;
+		if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 8;
+		if (x < 4) x = 4;
+		sortMenu = { x, y: rect.bottom + 4 };
 	}
 
 	function setSortMode(mode: SortMode) {
@@ -632,8 +699,8 @@
 				</svg>
 			</button>
 			{#if $viewMode !== 'trash'}
-				<button class="icon-btn" onclick={handleCreateNote} title={`New note (${modKey}+N)`}>
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<button class={isMobile ? 'mobile-create-btn' : 'icon-btn'} onclick={handleCreateNote} title={`New note (${modKey}+N)`}>
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={isMobile ? '3' : '2'} stroke-linecap="round" stroke-linejoin="round">
 						<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
 					</svg>
 				</button>
@@ -726,6 +793,10 @@
 					class:qa-drag-above={$viewMode === 'quickaccess' && qaDragOver === noteIndex && qaDragFrom !== null && qaDragHalf === 'top'}
 					class:qa-drag-below={$viewMode === 'quickaccess' && qaDragOver === noteIndex && qaDragFrom !== null && qaDragHalf === 'bottom'}
 					onclick={(e) => handleNoteClick(e, note)}
+					ontouchstart={(e) => { if (isMobile) handleTouchStart(e, note); }}
+					ontouchmove={(e) => { if (isMobile) handleTouchMove(e); }}
+					ontouchend={() => { if (isMobile) handleTouchEnd(); }}
+					ontouchcancel={() => { if (isMobile) handleTouchEnd(); }}
 					oncontextmenu={(e) => {
 						e.preventDefault();
 						const pos = clampMenu(e.clientX, e.clientY);
@@ -775,6 +846,13 @@
 					}}
 					ondragend={() => { qaDragFrom = null; qaDragOver = null; }}
 				>
+					{#if isMobile && selectedPaths.size > 0}
+						<div class="mobile-select-check" class:checked={selectedPaths.has(note.path)}>
+							{#if selectedPaths.has(note.path)}
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+							{/if}
+						</div>
+					{/if}
 					{#if compact}
 						<div class="note-compact-row" title={getNotebookPath(note) ? `${getNotebookPath(note)}/${note.meta.title}` : note.meta.title}>
 							<span class="note-title">
@@ -1066,6 +1144,7 @@
 
 	.list-actions {
 		display: flex;
+		align-items: center;
 		gap: 2px;
 	}
 
@@ -1566,6 +1645,10 @@
 		padding: 12px 16px;
 	}
 
+	.note-list.mobile .list-actions {
+		gap: 10px;
+	}
+
 	.note-list.mobile .list-title {
 		font-size: 16px;
 	}
@@ -1683,5 +1766,44 @@
 		padding: 12px 16px;
 		font-size: 15px;
 		min-height: 44px;
+	}
+
+	/* Mobile selection checkboxes */
+	.mobile-select-check {
+		width: 22px;
+		height: 22px;
+		border-radius: 50%;
+		border: 2px solid var(--text-tertiary);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		margin-bottom: 4px;
+		transition: all 0.15s ease;
+	}
+
+	.mobile-select-check.checked {
+		background: var(--accent);
+		border-color: var(--accent);
+		color: white;
+	}
+
+	/* Mobile create note button (round, accent-colored) */
+	.mobile-create-btn {
+		background: var(--accent);
+		color: white;
+		border: none;
+		width: 32px;
+		height: 32px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+
+	.mobile-create-btn:active {
+		opacity: 0.8;
 	}
 </style>
