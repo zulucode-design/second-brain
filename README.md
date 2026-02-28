@@ -47,26 +47,16 @@ All releases: [codeberg.org/ArkHost/HelixNotes/releases](https://codeberg.org/Ar
 
 ## Features
 
-- **Markdown editor** with rich formatting toolbar, slash commands, source mode toggle, and code syntax highlighting
-- **Wiki-links** — link notes with `[[Note Title]]` syntax
-- **Graph view** — visualize connections between your notes
-- **Outline panel** — heading navigation for long notes
-- **Full-text search** powered by Tantivy
-- **Math support** — KaTeX rendering for inline and block equations
-- **Daily notes** — one-click button to create or open today's note
-- **AI writing tools** — improve, summarize, translate, and more (Ollama / Anthropic / OpenAI)
-- **Version history** — per-note snapshots with diff view
-- **Backups** — automatic zip-based vault backups
-- **PDF preview** — inline rendering of embedded PDFs
-- **Tag management** — organize notes with tags, bulk edit from context menu
-- **Drag-and-drop** — move notes between notebooks, reorganize notebooks by dragging
-- **Obsidian import** — convert Obsidian wiki-links to standard markdown
-- **Multi-window** — open notes in separate windows (right-click → "Open in New Window")
-- **File associations** — open .md files from your file manager directly in HelixNotes
-- **Themes** — light/dark mode with customizable accent colors, fonts, and line height
-- **Focus mode** — distraction-free writing
-- **View mode** — read-only toggle for distraction-free reading
-- **Local** — everything stays on your machine
+- Markdown editor with toolbar, slash commands, source mode, code highlighting
+- `[[Wiki-links]]` and graph view
+- Full-text search (Tantivy)
+- Outline panel, daily notes, tags, drag-and-drop
+- Math (KaTeX), PDF preview, Obsidian import
+- AI writing tools (Ollama / Anthropic / OpenAI)
+- Version history with diffs, automatic backups
+- Multi-window, file associations, focus mode, view mode
+- Themes, accent colors, fonts
+- Local files, no cloud
 
 Full documentation: [helixnotes.com/docs](https://helixnotes.com/docs.html)
 
