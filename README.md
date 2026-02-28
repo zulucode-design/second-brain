@@ -27,19 +27,19 @@ curl -fsSL https://repo.arkhost.com/gpg.key | sudo gpg --dearmor -o /usr/share/k
 
 #### .deb (manual)
 
-[Download .deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.2.1/HelixNotes_1.2.1_amd64.deb) — Ubuntu 22.04+
+[Download .deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.2.1/HelixNotes_1.2.1_amd64.deb) (Ubuntu 22.04+)
 
 ### Windows
 
-[Download Installer](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.2.1/HelixNotes_1.2.1_x64-setup.exe) — Windows 10/11
+[Download Installer](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.2.1/HelixNotes_1.2.1_x64-setup.exe) (Windows 10/11)
 
 ### macOS
 
-[Download .dmg](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.2.1/HelixNotes_1.2.1_x64.dmg) — macOS (Intel, runs on Apple Silicon via Rosetta)
+[Download .dmg](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.2.1/HelixNotes_1.2.1_x64.dmg) (Intel, runs on Apple Silicon via Rosetta)
 
 ### Android
 
-[Download APK](https://download.helixnotes.com/releases/v1.2.1/HelixNotes_1.2.1_android.apk) — Tested on Android 16
+[Download APK](https://download.helixnotes.com/releases/v1.2.1/HelixNotes_1.2.1_android.apk)
 
 ---
 
