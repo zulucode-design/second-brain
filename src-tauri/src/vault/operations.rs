@@ -1,6 +1,6 @@
 use crate::types::{NoteContent, NoteEntry, NoteMeta, NotebookEntry, VaultState};
 use crate::vault::frontmatter;
-use chrono::{Local, Utc};
+use chrono::{Local, Locale, Utc};
 use rayon::prelude::*;
 use std::fs;
 use std::io::Read;
@@ -449,10 +449,62 @@ pub fn create_note(
     })
 }
 
+fn get_system_locale() -> Locale {
+    let sys = sys_locale::get_locale().unwrap_or_else(|| "en-US".to_string());
+    let lang = sys.split(&['-', '_', '.'][..]).next().unwrap_or("en");
+    match lang {
+        "af" => Locale::af_ZA,
+        "ar" => Locale::ar_SA,
+        "be" => Locale::be_BY,
+        "bg" => Locale::bg_BG,
+        "ca" => Locale::ca_ES,
+        "cs" => Locale::cs_CZ,
+        "da" => Locale::da_DK,
+        "de" => Locale::de_DE,
+        "el" => Locale::el_GR,
+        "es" => Locale::es_ES,
+        "et" => Locale::et_EE,
+        "fi" => Locale::fi_FI,
+        "fr" => Locale::fr_FR,
+        "he" => Locale::he_IL,
+        "hi" => Locale::hi_IN,
+        "hr" => Locale::hr_HR,
+        "hu" => Locale::hu_HU,
+        "id" => Locale::id_ID,
+        "is" => Locale::is_IS,
+        "it" => Locale::it_IT,
+        "ja" => Locale::ja_JP,
+        "ka" => Locale::ka_GE,
+        "ko" => Locale::ko_KR,
+        "lt" => Locale::lt_LT,
+        "lv" => Locale::lv_LV,
+        "mk" => Locale::mk_MK,
+        "nb" | "no" => Locale::nb_NO,
+        "nl" => Locale::nl_NL,
+        "nn" => Locale::nn_NO,
+        "pl" => Locale::pl_PL,
+        "pt" => Locale::pt_BR,
+        "ro" => Locale::ro_RO,
+        "ru" => Locale::ru_RU,
+        "sk" => Locale::sk_SK,
+        "sl" => Locale::sl_SI,
+        "sq" => Locale::sq_AL,
+        "sr" => Locale::sr_RS,
+        "sv" => Locale::sv_SE,
+        "th" => Locale::th_TH,
+        "tr" => Locale::tr_TR,
+        "uk" => Locale::uk_UA,
+        "vi" => Locale::vi_VN,
+        "zh" => Locale::zh_CN,
+        _ => Locale::en_US,
+    }
+}
+
 pub fn create_daily_note(vault_path: &str) -> Result<NoteEntry, String> {
     let today = Local::now();
     let date_str = today.format("%Y-%m-%d").to_string();
-    let title = today.format("%B %d, %Y").to_string();
+    let locale = get_system_locale();
+    let title = today.format_localized("%B %d, %Y", locale).to_string();
 
     let dir = Path::new(vault_path).join("Daily");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;

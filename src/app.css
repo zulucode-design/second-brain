@@ -179,3 +179,94 @@ body.resizing {
         display: none !important;
     }
 }
+
+/* ── Print / Export PDF ── */
+@media print {
+    /* Hide everything except editor content */
+    .titlebar,
+    .sidebar-panel,
+    .notelist-panel,
+    .resize-handle,
+    .toolbar-actions,
+    .editor-body-wrapper .note-search-bar,
+    .formatting-toolbar,
+    .editor-formatting-bar,
+    .history-panel,
+    .outline-panel,
+    .graph-panel,
+    .ai-panel,
+    .link-context-menu,
+    .image-toolbar,
+    .selection-bar {
+        display: none !important;
+    }
+
+    /* Force light theme colors for PDF */
+    :root, :root.dark {
+        --bg-primary: #ffffff !important;
+        --bg-secondary: #f8f9fa !important;
+        --bg-tertiary: #f0f1f3 !important;
+        --bg-editor: #ffffff !important;
+        --text-primary: #1a1a2e !important;
+        --text-secondary: #495057 !important;
+        --text-tertiary: #868e96 !important;
+        --text-accent: #5b6abf !important;
+        --accent: #5b6abf !important;
+        --border-color: #e2e5e9 !important;
+        --border-light: #f0f1f3 !important;
+    }
+
+    html, body {
+        height: auto;
+        overflow: visible;
+        background: white !important;
+        color: #1a1a2e !important;
+        font-size: 12pt;
+        padding: 0;
+    }
+
+    /* Override all scoped height/overflow constraints for print flow */
+    * {
+        overflow: visible !important;
+        height: auto !important;
+        max-height: none !important;
+        min-height: 0 !important;
+    }
+
+    .app-layout {
+        display: block !important;
+    }
+
+    .editor-panel {
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    .ProseMirror {
+        padding: 0 !important;
+        max-width: 100% !important;
+        background: white !important;
+        color: #1a1a2e !important;
+    }
+
+    /* Ensure images fit within page */
+    .ProseMirror img {
+        max-width: 100% !important;
+        page-break-inside: avoid;
+    }
+
+    /* Avoid breaking inside these elements */
+    h1, h2, h3, h4, h5, h6 {
+        page-break-after: avoid;
+    }
+
+    pre, blockquote, table, figure {
+        page-break-inside: avoid;
+    }
+
+    /* Code blocks with light background */
+    .ProseMirror pre, .ProseMirror code {
+        background: #f8f9fa !important;
+        color: #1a1a2e !important;
+    }
+}
