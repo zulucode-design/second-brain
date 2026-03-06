@@ -39,7 +39,7 @@ curl -fsSL https://repo.arkhost.com/gpg.key | sudo gpg --dearmor -o /usr/share/k
 
 ### Android
 
-[Download APK](https://download.helixnotes.com/releases/v1.2.3/HelixNotes_1.2.3_android.apk)
+[Download APK](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.2.3/HelixNotes_1.2.3_android.apk)
 
 ---
 
