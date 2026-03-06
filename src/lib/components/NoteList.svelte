@@ -44,6 +44,8 @@
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
 	const isMobile = /android|ios/i.test(navigator.userAgent);
+	const isAndroid = /android/i.test(navigator.userAgent);
+	let multiSelectMode = $state(false);
 
 	/** Derive tags from current $notes store (avoids re-scanning files on mobile) */
 	function deriveTagsFromNotes() {
@@ -154,6 +156,7 @@
 		selectedPaths = new Set();
 		lastClickedPath = null;
 		batchMovePicker = false;
+		multiSelectMode = false;
 	}
 
 	// Clear selection and reset scroll when view/notebook changes
@@ -556,8 +559,8 @@
 			e.preventDefault();
 			return;
 		}
-		// Mobile: if in selection mode, tap toggles selection
-		if (isMobile && selectedPaths.size > 0) {
+		// Mobile: if in selection mode (or Android multi-select mode), tap toggles selection
+		if (isMobile && (selectedPaths.size > 0 || multiSelectMode)) {
 			const next = new Set(selectedPaths);
 			if (next.has(note.path)) {
 				next.delete(note.path);
@@ -693,6 +696,13 @@
 	<div class="list-header">
 		<span class="list-title">{viewTitle}</span>
 		<div class="list-actions">
+			{#if isAndroid}
+				<button class="icon-btn" class:active-toggle={multiSelectMode} onclick={() => { multiSelectMode = !multiSelectMode; if (!multiSelectMode) clearSelection(); }} title="Multi-select">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<rect x="3" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" />{#if multiSelectMode}<polyline points="6 6.5 7 7.5 9 5.5" stroke-width="2" /><polyline points="6 17.5 7 18.5 9 16.5" stroke-width="2" />{/if}<line x1="14" y1="6.5" x2="21" y2="6.5" /><line x1="14" y1="17.5" x2="21" y2="17.5" />
+					</svg>
+				</button>
+			{/if}
 			<button class="icon-btn" onclick={openSortMenu} title="Sort: {$sortMode}">
 				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<line x1="4" y1="6" x2="11" y2="6" /><line x1="4" y1="12" x2="15" y2="12" /><line x1="4" y1="18" x2="20" y2="18" />
@@ -717,6 +727,7 @@
 					<button class="selection-action danger" onclick={handleBatchPermanentDelete}>Delete</button>
 				{:else}
 					<button class="selection-action" onclick={() => { batchMovePicker = true; }}>Move</button>
+					<button class="selection-action" onclick={() => openBatchTagEdit()}>Tag</button>
 					<button class="selection-action danger" onclick={handleBatchDelete}>Delete</button>
 				{/if}
 				<button class="selection-close" onclick={clearSelection} title="Clear selection">
@@ -751,6 +762,50 @@
 						{/each}
 					</div>
 				{/if}
+			</div>
+		</div>
+	{/if}
+
+	{#if batchTagEdit && !contextMenu}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="batch-move-overlay" onclick={() => batchTagEdit = false}>
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div class="batch-move-picker" onclick={(e) => e.stopPropagation()}>
+				<div class="batch-move-header">
+					<span>Tags for {selectedPaths.size} notes</span>
+					<button class="selection-close" onclick={() => batchTagEdit = false}>
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+					</button>
+				</div>
+				<div class="tag-edit-section">
+					<div class="tag-edit-input-row">
+						<input
+							type="text"
+							class="tag-edit-input"
+							placeholder="Add tag to all..."
+							bind:value={tagEditValue}
+							onkeydown={(e) => {
+								if (e.key === 'Enter') { e.preventDefault(); addTagToBatch(tagEditValue); }
+								if (e.key === 'Escape') { e.preventDefault(); batchTagEdit = false; }
+							}}
+							autofocus
+						/>
+					</div>
+					{#if tagEditTags.length > 0}
+						<div class="tag-edit-list">
+							{#each tagEditTags as tag}
+								<div class="tag-edit-item">
+									<span class="tag-edit-name">#{tag}</span>
+									<button class="tag-edit-remove" onclick={() => removeTagFromBatch(tag)} title="Remove from all">
+										<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+									</button>
+								</div>
+							{/each}
+						</div>
+					{:else}
+						<div class="context-empty">No common tags</div>
+					{/if}
+				</div>
 			</div>
 		</div>
 	{/if}
@@ -793,10 +848,10 @@
 					class:qa-drag-above={$viewMode === 'quickaccess' && qaDragOver === noteIndex && qaDragFrom !== null && qaDragHalf === 'top'}
 					class:qa-drag-below={$viewMode === 'quickaccess' && qaDragOver === noteIndex && qaDragFrom !== null && qaDragHalf === 'bottom'}
 					onclick={(e) => handleNoteClick(e, note)}
-					ontouchstart={(e) => { if (isMobile) handleTouchStart(e, note); }}
-					ontouchmove={(e) => { if (isMobile) handleTouchMove(e); }}
-					ontouchend={() => { if (isMobile) handleTouchEnd(); }}
-					ontouchcancel={() => { if (isMobile) handleTouchEnd(); }}
+					ontouchstart={(e) => { if (isMobile && !isAndroid) handleTouchStart(e, note); }}
+					ontouchmove={(e) => { if (isMobile && !isAndroid) handleTouchMove(e); }}
+					ontouchend={() => { if (isMobile && !isAndroid) handleTouchEnd(); }}
+					ontouchcancel={() => { if (isMobile && !isAndroid) handleTouchEnd(); }}
 					oncontextmenu={(e) => {
 						e.preventDefault();
 						const pos = clampMenu(e.clientX, e.clientY);
@@ -846,13 +901,6 @@
 					}}
 					ondragend={() => { qaDragFrom = null; qaDragOver = null; }}
 				>
-					{#if isMobile && selectedPaths.size > 0}
-						<div class="mobile-select-check" class:checked={selectedPaths.has(note.path)}>
-							{#if selectedPaths.has(note.path)}
-								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-							{/if}
-						</div>
-					{/if}
 					{#if compact}
 						<div class="note-compact-row" title={getNotebookPath(note) ? `${getNotebookPath(note)}/${note.meta.title}` : note.meta.title}>
 							<span class="note-title">
@@ -1170,6 +1218,11 @@
 	.icon-btn:hover {
 		background: var(--bg-hover);
 		color: var(--text-primary);
+	}
+
+	.icon-btn.active-toggle {
+		color: var(--accent);
+		background: color-mix(in srgb, var(--accent) 15%, transparent);
 	}
 
 	.list-content {
@@ -1721,6 +1774,9 @@
 
 	.note-list.mobile .selection-bar {
 		padding: 8px 16px;
+		border-radius: 12px;
+		margin: 4px 8px;
+		border-bottom: none;
 	}
 
 	.note-list.mobile .selection-count {
@@ -1731,6 +1787,7 @@
 		padding: 6px 14px;
 		font-size: 13px;
 		min-height: 36px;
+		border-radius: 10px;
 	}
 
 	.note-list.mobile .context-menu {

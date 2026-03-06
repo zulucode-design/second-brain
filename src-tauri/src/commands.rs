@@ -287,8 +287,11 @@ pub fn create_daily_note(state: State<'_, AppState>) -> Result<NoteEntry, String
 }
 
 #[tauri::command]
-pub fn rename_note(path: String, new_title: String) -> Result<String, String> {
-    operations::rename_note(&path, &new_title)
+pub fn rename_note(state: State<'_, AppState>, path: String, new_title: String) -> Result<String, String> {
+    let config = state.config.lock().map_err(|e| e.to_string())?;
+    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?.clone();
+    drop(config);
+    operations::rename_note(&path, &new_title, &vault_path)
 }
 
 #[tauri::command]

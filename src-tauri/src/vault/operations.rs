@@ -276,7 +276,7 @@ fn read_note_entry_metadata_only(path: &Path, vault_root: &Path) -> Result<NoteE
         .to_string_lossy()
         .to_string();
 
-    let (mut meta, _content) = frontmatter::parse_note(&raw, &filename);
+    let (mut meta, content) = frontmatter::parse_note(&raw, &filename);
 
     // Always use filesystem timestamps on Android (faster than parsing date strings)
     if let Ok(fs_meta) = fs::metadata(path) {
@@ -294,11 +294,13 @@ fn read_note_entry_metadata_only(path: &Path, vault_root: &Path) -> Result<NoteE
         .to_string_lossy()
         .to_string();
 
+    let preview = frontmatter::extract_preview(&content, 120);
+
     Ok(NoteEntry {
         path: path.to_string_lossy().to_string(),
         relative_path: relative,
         meta,
-        preview: String::new(),
+        preview,
     })
 }
 
@@ -623,13 +625,13 @@ pub fn delete_notebook(vault_path: &str, notebook_path: &str) -> Result<(), Stri
     Ok(())
 }
 
-pub fn rename_note(path: &str, new_title: &str) -> Result<String, String> {
+pub fn rename_note(path: &str, new_title: &str, vault_path: &str) -> Result<String, String> {
     let src = Path::new(path);
     if !src.exists() {
         return Err("Note does not exist".to_string());
     }
 
-    // Update frontmatter
+    // Read old title before renaming
     let raw = fs::read_to_string(src).map_err(|e| e.to_string())?;
     let filename = src
         .file_name()
@@ -637,6 +639,10 @@ pub fn rename_note(path: &str, new_title: &str) -> Result<String, String> {
         .to_string_lossy()
         .to_string();
     let (mut meta, content) = frontmatter::parse_note(&raw, &filename);
+    let old_title = meta.title.clone();
+    let old_path_str = src.to_string_lossy().to_string();
+
+    // Update frontmatter
     meta.title = new_title.to_string();
     meta.modified = Utc::now();
     if meta.id.is_empty() {
@@ -653,7 +659,134 @@ pub fn rename_note(path: &str, new_title: &str) -> Result<String, String> {
         fs::rename(src, &new_path).map_err(|e| e.to_string())?;
     }
 
-    Ok(new_path.to_string_lossy().to_string())
+    let new_path_str = new_path.to_string_lossy().to_string();
+
+    // Update wikilinks in other notes that reference this note
+    update_wikilinks_after_rename(vault_path, &old_path_str, &new_path_str, &old_title, new_title);
+
+    Ok(new_path_str)
+}
+
+/// Walk all .md files in the vault and update wikilink references after a note rename.
+/// Updates both HTML data-attributes (data-path, data-title) and raw [[old_title]] references.
+fn update_wikilinks_after_rename(
+    vault_path: &str,
+    old_path: &str,
+    new_path: &str,
+    old_title: &str,
+    new_title: &str,
+) {
+    let vault = Path::new(vault_path);
+    let vault_prefix = format!("{}/", vault_path);
+
+    // Compute vault-relative path refs (without .md) for path-based wikilink refs
+    let old_rel_ref = old_path.strip_prefix(&vault_prefix)
+        .unwrap_or(old_path)
+        .strip_suffix(".md")
+        .unwrap_or(old_path);
+    let new_rel_ref = new_path.strip_prefix(&vault_prefix)
+        .unwrap_or(new_path)
+        .strip_suffix(".md")
+        .unwrap_or(new_path);
+
+    // Check if another note with the same old_title exists in the vault.
+    // If so, title-based replacements (rules 1-3) are ambiguous and must be skipped,
+    // because we can't tell which [[Old Title]] ref points to the renamed note
+    // vs. the other note with the same title.
+    let title_is_unique = !WalkDir::new(vault)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .any(|e| {
+            let p = e.path();
+            if !p.is_file() || p.to_string_lossy().as_ref() == new_path {
+                return false;
+            }
+            if p.extension().and_then(|ext| ext.to_str()) != Some("md") {
+                return false;
+            }
+            let p_str = p.to_string_lossy();
+            if p_str.contains("/.helixnotes/") || p_str.contains("/.trash/") {
+                return false;
+            }
+            // Check if this note's filename (without .md) matches the old title
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.eq_ignore_ascii_case(old_title))
+                .unwrap_or(false)
+        });
+
+    for entry in WalkDir::new(vault)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if !path.is_file() { continue; }
+        let path_str = path.to_string_lossy();
+        if path_str.contains("/.helixnotes/") || path_str.contains("/.trash/") { continue; }
+        if path.extension().and_then(|e| e.to_str()) != Some("md") { continue; }
+        // Skip the renamed note itself
+        if *path_str == *new_path { continue; }
+
+        let content = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let mut result = content.clone();
+
+        // Notes are saved as markdown with [[ref]] or [[ref|display]] syntax.
+        // Update all wikilink forms that reference the renamed note:
+
+        // Title-based rules only apply when the old title is unique in the vault.
+        // If another note shares the same title, these would be ambiguous.
+        if old_title != new_title && title_is_unique {
+            // 1. Short title ref: [[Old Title]] → [[New Title]]
+            result = result.replace(
+                &format!("[[{}]]", old_title),
+                &format!("[[{}]]", new_title),
+            );
+
+            // 2. Short title with alias: [[Old Title|display]] → [[New Title|display]]
+            result = result.replace(
+                &format!("[[{}|", old_title),
+                &format!("[[{}|", new_title),
+            );
+
+            // 3. Short title as alias display: [[ref|Old Title]] → [[ref|New Title]]
+            result = result.replace(
+                &format!("|{}]]", old_title),
+                &format!("|{}]]", new_title),
+            );
+        }
+
+        // Path-based rules are always safe (paths are unique).
+        if old_rel_ref != new_rel_ref {
+            // 4. Path-based ref: [[folder/Old Name]] → [[folder/New Name]]
+            result = result.replace(
+                &format!("[[{}]]", old_rel_ref),
+                &format!("[[{}]]", new_rel_ref),
+            );
+
+            // 5. Path-based ref with alias: [[folder/Old Name|display]] → [[folder/New Name|display]]
+            //    Also update the alias if it matches the old title.
+            //    e.g. [[folder/Old Name|Old Title]] → [[folder/New Name|New Title]]
+            if old_title != new_title {
+                result = result.replace(
+                    &format!("[[{}|{}]]", old_rel_ref, old_title),
+                    &format!("[[{}|{}]]", new_rel_ref, new_title),
+                );
+            }
+            // For aliases that DON'T match the old title, just update the ref part
+            result = result.replace(
+                &format!("[[{}|", old_rel_ref),
+                &format!("[[{}|", new_rel_ref),
+            );
+        }
+
+        if result != content {
+            let _ = fs::write(path, &result);
+        }
+    }
 }
 
 pub fn rename_notebook(path: &str, new_name: &str) -> Result<String, String> {

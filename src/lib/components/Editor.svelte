@@ -742,8 +742,17 @@
 	let wikiLinkSelectedIndex = $state(0);
 	let wikiLinkTitlesCache = $state<NoteTitleEntry[]>([]);
 	let wikiLinkTypedByUser = false;
+	// Disambiguation state: when ]] auto-close finds multiple matches
+	let wikiLinkDisambigEntries = $state<NoteTitleEntry[] | null>(null);
+	let wikiLinkDisambigRef = $state<string | null>(null);
+	let wikiLinkDisambigDisplay = $state<string | null>(null);
+	// Navigation disambiguation: when clicking a wikilink with multiple matches
+	let wikiLinkNavDisambig = $state<{ entries: NoteTitleEntry[]; x: number; y: number } | null>(null);
+	let wikiLinkNavDisambigIndex = $state(0);
 
 	let wikiLinkFiltered = $derived.by(() => {
+		// When disambiguating, show only the exact matches
+		if (wikiLinkDisambigEntries) return wikiLinkDisambigEntries;
 		if (!wikiLinkMenu) return wikiLinkTitlesCache;
 		let q = wikiLinkMenu.query.toLowerCase();
 		if (!q) return wikiLinkTitlesCache;
@@ -757,6 +766,29 @@
 		);
 	});
 
+	// Set of lowercase titles that appear more than once (for disambiguation display)
+	let wikiLinkDuplicateTitles = $derived.by(() => {
+		const counts = new Map<string, number>();
+		for (const e of wikiLinkTitlesCache) {
+			const key = e.title.toLowerCase();
+			counts.set(key, (counts.get(key) ?? 0) + 1);
+		}
+		const dupes = new Set<string>();
+		for (const [key, count] of counts) {
+			if (count > 1) dupes.add(key);
+		}
+		return dupes;
+	});
+
+	function wikiLinkFolderPath(entry: NoteTitleEntry): string {
+		const vaultRoot = $appConfig?.active_vault;
+		if (!vaultRoot || !entry.path) return '';
+		const rel = entry.path.startsWith(vaultRoot + '/') ? entry.path.slice(vaultRoot.length + 1) : entry.path;
+		const parts = rel.split('/');
+		// Return parent folder(s), excluding the filename
+		return parts.length > 1 ? parts.slice(0, -1).join('/') + '/' : '';
+	}
+
 	async function refreshWikiLinkTitles() {
 		try {
 			wikiLinkTitlesCache = await getAllNoteTitles();
@@ -768,6 +800,15 @@
 	function closeWikiLinkMenu() {
 		wikiLinkMenu = null;
 		wikiLinkSelectedIndex = 0;
+		wikiLinkDisambigEntries = null;
+		wikiLinkDisambigRef = null;
+		wikiLinkDisambigDisplay = null;
+	}
+
+	function wikiLinkRelPath(entry: NoteTitleEntry): string | null {
+		const vaultRoot = $appConfig?.active_vault;
+		if (!vaultRoot || !entry.path || !entry.path.startsWith(vaultRoot + '/')) return null;
+		return entry.path.slice(vaultRoot.length + 1).replace(/\.md$/, '');
 	}
 
 	function insertWikiLink(entry: NoteTitleEntry, originalRef?: string) {
@@ -777,9 +818,17 @@
 		const to = editor.state.selection.from;
 		editor.chain().focus().deleteRange({ from, to }).run();
 		// Insert the wiki-link mark
-		// entry.title is the display text, originalRef (if provided) is the full reference (e.g. "note#heading")
+		// For ambiguous titles, use vault-relative path as the ref so it survives source-mode roundtrips
 		const displayText = entry.title;
-		const titleAttr = originalRef || entry.title;
+		let titleAttr = originalRef || entry.title;
+		if (entry.path && wikiLinkDuplicateTitles.has(entry.title.toLowerCase())) {
+			const relPath = wikiLinkRelPath(entry);
+			if (relPath) {
+				// Preserve any #heading or ^block anchors from the original ref
+				const anchor = originalRef ? originalRef.replace(/^[^#^]*/, '') : '';
+				titleAttr = relPath + anchor;
+			}
+		}
 		tick().then(() => {
 			if (!editor) return;
 			editor.chain().focus()
@@ -796,7 +845,12 @@
 	function executeWikiLinkCommand(index: number) {
 		const items = wikiLinkFiltered;
 		if (index < 0 || index >= items.length) return;
-		insertWikiLink(items[index]);
+		if (wikiLinkDisambigEntries) {
+			// In disambiguation mode: use stored display/ref
+			insertWikiLink({ ...items[index], title: wikiLinkDisambigDisplay || items[index].title }, wikiLinkDisambigRef || undefined);
+		} else {
+			insertWikiLink(items[index]);
+		}
 	}
 
 	const WikiLink = TiptapMark.create({
@@ -849,7 +903,7 @@
 									event.stopPropagation();
 									const path = wikiLinkEl.getAttribute('data-path') || '';
 									const title = wikiLinkEl.getAttribute('data-title') || wikiLinkEl.textContent || '';
-									navigateToWikiLink(path, title);
+									navigateToWikiLink(path, title, event as MouseEvent);
 									return true;
 								}
 								return false;
@@ -917,9 +971,18 @@
 										const display = (pipeIdx >= 0 ? rawQuery.slice(pipeIdx + 1) : noteRef).trim();
 										// Strip #heading and ^block for title matching
 										const titleForLookup = noteRef.replace(/#.*$/, '').replace(/\^.*$/, '').trim();
-										const match = wikiLinkTitlesCache.find(e => e.title.toLowerCase() === titleForLookup.toLowerCase());
-										if (match) {
-											insertWikiLink({ ...match, title: display }, noteRef);
+										const matches = wikiLinkTitlesCache.filter(e => e.title.toLowerCase() === titleForLookup.toLowerCase());
+										if (matches.length === 1) {
+											insertWikiLink({ ...matches[0], title: display }, noteRef);
+										} else if (matches.length > 1) {
+											// Multiple matches — show disambiguation picker
+											// Keep the menu open but filter to only the matching entries
+											wikiLinkMenu = { ...wikiLinkMenu!, query: titleForLookup };
+											// Override filtered results to only show exact matches
+											wikiLinkDisambigEntries = matches;
+											wikiLinkDisambigRef = noteRef;
+											wikiLinkDisambigDisplay = display;
+											wikiLinkSelectedIndex = 0;
 										} else {
 											// Insert as unresolved wiki-link (no path)
 											const menuFrom = wikiLinkMenu.from;
@@ -991,22 +1054,57 @@
 		wikiLinkSelectedIndex = 0;
 	}
 
-	async function navigateToWikiLink(path: string, title: string) {
+	async function navigateToWikiLink(path: string, title: string, clickEvent?: MouseEvent) {
 		// title may contain #heading or ^block anchors — strip for note lookup
 		const noteTitle = title.replace(/#.*$/, '').replace(/\^.*$/, '').trim();
 		if (!path) {
+			// Try path-based resolution first (for disambiguated refs like "folder/note")
+			const vaultRoot = $appConfig?.active_vault;
+			if (noteTitle.includes('/') && vaultRoot) {
+				const fullPath = vaultRoot + '/' + noteTitle + '.md';
+				const pathMatch = wikiLinkTitlesCache.find(e => e.path === fullPath);
+				if (pathMatch) {
+					path = pathMatch.path;
+				} else {
+					// Path not found — try title of last segment
+					const lastSegment = noteTitle.split('/').pop()!;
+					const segMatches = wikiLinkTitlesCache.filter(e => e.title.toLowerCase() === lastSegment.toLowerCase());
+					if (segMatches.length === 1) path = segMatches[0].path;
+					else if (segMatches.length > 1) {
+						let x = clickEvent ? clickEvent.clientX : window.innerWidth / 2 - 140;
+						let y = clickEvent ? clickEvent.clientY + 8 : window.innerHeight / 2 - 100;
+						if (x + 280 > window.innerWidth) x = window.innerWidth - 290;
+						if (y + 200 > window.innerHeight) y = Math.max(4, window.innerHeight - 200);
+						wikiLinkNavDisambig = { entries: segMatches, x, y };
+						wikiLinkNavDisambigIndex = 0;
+						return;
+					}
+				}
+			}
+		}
+		if (!path) {
 			// Unresolved link — try to find by title
-			const match = wikiLinkTitlesCache.find(e => e.title.toLowerCase() === noteTitle.toLowerCase());
-			if (match) {
-				path = match.path;
+			const matches = wikiLinkTitlesCache.filter(e => e.title.toLowerCase() === noteTitle.toLowerCase());
+			if (matches.length === 1) {
+				path = matches[0].path;
+			} else if (matches.length > 1) {
+				// Multiple matches — show disambiguation popup
+				let x = clickEvent ? clickEvent.clientX : window.innerWidth / 2 - 140;
+				let y = clickEvent ? clickEvent.clientY + 8 : window.innerHeight / 2 - 100;
+				if (x + 280 > window.innerWidth) x = window.innerWidth - 290;
+				if (y + 200 > window.innerHeight) y = Math.max(4, window.innerHeight - 200);
+				wikiLinkNavDisambig = { entries: matches, x, y };
+				wikiLinkNavDisambigIndex = 0;
+				return;
 			} else {
 				// Offer to create the note (use clean title, not the anchor ref)
+				const cleanTitle = noteTitle.includes('/') ? noteTitle.split('/').pop()! : noteTitle;
 				const notebookRel = $activeNotePath
 					? $activeNotePath.substring(($appConfig?.active_vault?.length ?? 0) + 1).split('/').slice(0, -1).join('/')
 					: null;
 				try {
 					const { createNote } = await import('$lib/api');
-					const newNote = await createNote(notebookRel || null, noteTitle);
+					const newNote = await createNote(notebookRel || null, cleanTitle);
 					// Navigate to the new note
 					const content = await readNote(newNote.path);
 					$activeNote = { ...content, content: content.content };
@@ -1021,6 +1119,17 @@
 			const content = await readNote(path);
 			$activeNote = { ...content, content: content.content };
 			$activeNotePath = path;
+		} catch (e) {
+			console.error('Failed to navigate to wiki-link:', e);
+		}
+	}
+
+	async function navigateToWikiLinkDirect(entry: NoteTitleEntry) {
+		wikiLinkNavDisambig = null;
+		try {
+			const content = await readNote(entry.path);
+			$activeNote = { ...content, content: content.content };
+			$activeNotePath = entry.path;
 		} catch (e) {
 			console.error('Failed to navigate to wiki-link:', e);
 		}
@@ -1917,8 +2026,28 @@
 				const display = (pipeIdx >= 0 ? raw.slice(pipeIdx + 1) : noteRef).trim();
 				// Strip #heading and ^block anchors for title matching
 				const titleForLookup = noteRef.replace(/#.*$/, '').replace(/\^.*$/, '').trim();
-				// Try to resolve the title to a path from cache
-				const match = wikiLinkTitlesCache.find(e => e.title.toLowerCase() === titleForLookup.toLowerCase());
+				// Try to resolve: first by vault-relative path (for disambiguated links), then by title
+				const vaultRoot = $appConfig?.active_vault ?? '';
+				let match: NoteTitleEntry | undefined;
+				if (titleForLookup.includes('/') && vaultRoot) {
+					// Ref contains a path — resolve by matching vault-relative path
+					const fullPath = vaultRoot + '/' + titleForLookup + '.md';
+					match = wikiLinkTitlesCache.find(e => e.path === fullPath);
+				}
+				if (!match) {
+					// Fallback: resolve by title (use the last segment if path-based)
+					const titleOnly = titleForLookup.includes('/') ? titleForLookup.split('/').pop()! : titleForLookup;
+					const titleLower = titleOnly.toLowerCase();
+					const titleMatches = wikiLinkTitlesCache.filter(e => e.title.toLowerCase() === titleLower);
+					if (titleMatches.length === 1) {
+						match = titleMatches[0];
+					} else if (titleMatches.length > 1) {
+						// Multiple matches — prefer the shallowest path (closest to vault root)
+						match = titleMatches.reduce((a, b) =>
+							a.path.split('/').length <= b.path.split('/').length ? a : b
+						);
+					}
+				}
 				const path = match ? match.path : '';
 				return `<span data-wiki-link data-path="${escapeHtml(path)}" data-title="${escapeHtml(noteRef)}" class="wiki-link">${escapeHtml(display)}</span>`;
 			});
@@ -2339,7 +2468,7 @@
 			event.stopPropagation();
 			const path = wikiLinkEl.getAttribute('data-path') || '';
 			const title = wikiLinkEl.getAttribute('data-title') || wikiLinkEl.textContent || '';
-			navigateToWikiLink(path, title);
+			navigateToWikiLink(path, title, event);
 			return;
 		}
 
@@ -3266,6 +3395,8 @@
 											? { ...n, path: newPath, relative_path: n.relative_path.replace(/[^/]+$/, newTitle + '.md'), meta: { ...n.meta, title: newTitle } }
 											: n
 									));
+									// Refresh wiki-link titles cache so links resolve to renamed note
+									refreshWikiLinkTitles();
 								} catch (err) {
 									console.error('Failed to rename note file:', err);
 									notes.update(list => list.map(n =>
@@ -4467,13 +4598,42 @@
 						class="wiki-link-item"
 						class:selected={i === wikiLinkSelectedIndex}
 						onmouseenter={() => wikiLinkSelectedIndex = i}
-						onmousedown={(e) => { e.preventDefault(); insertWikiLink(entry); }}
+						onmousedown={(e) => { e.preventDefault(); if (wikiLinkDisambigEntries) { insertWikiLink({ ...entry, title: wikiLinkDisambigDisplay || entry.title }, wikiLinkDisambigRef || undefined); } else { insertWikiLink(entry); } }}
 					>
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
-						<span class="wiki-link-title">{entry.title}</span>
+						<span class="wiki-link-title-col">
+							<span class="wiki-link-title">{entry.title}</span>
+							{#if wikiLinkDuplicateTitles.has(entry.title.toLowerCase())}
+								<span class="wiki-link-folder">{wikiLinkFolderPath(entry) || '(vault root)'}</span>
+							{/if}
+						</span>
 					</button>
 				{/each}
 			{/if}
+		</div>
+	</div>
+{/if}
+
+{#if wikiLinkNavDisambig}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="wiki-link-overlay" onclick={() => wikiLinkNavDisambig = null}>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="wiki-link-menu" style="left: {wikiLinkNavDisambig.x}px; top: {wikiLinkNavDisambig.y}px" onclick={(e) => e.stopPropagation()}>
+			<div class="wiki-link-disambig-header">Multiple notes found — choose one:</div>
+			{#each wikiLinkNavDisambig.entries as entry, i}
+				<button
+					class="wiki-link-item"
+					class:selected={i === wikiLinkNavDisambigIndex}
+					onmouseenter={() => wikiLinkNavDisambigIndex = i}
+					onmousedown={(e) => { e.preventDefault(); navigateToWikiLinkDirect(entry); }}
+				>
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
+					<span class="wiki-link-title-col">
+						<span class="wiki-link-title">{entry.title}</span>
+						<span class="wiki-link-folder">{wikiLinkFolderPath(entry) || '(vault root)'}</span>
+					</span>
+				</button>
+			{/each}
 		</div>
 	</div>
 {/if}
@@ -5248,7 +5408,7 @@
 		color: var(--text-primary);
 		font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
 		font-size: var(--editor-font-size, 14px);
-		line-height: var(--editor-line-height, 1.6);
+		line-height: 1.3;
 		resize: none;
 		outline: none;
 		padding: 0;
@@ -5276,7 +5436,7 @@
 		padding-top: 8px;
 		font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
 		font-size: var(--editor-font-size, 14px);
-		line-height: var(--editor-line-height, 1.6);
+		line-height: 1.3;
 		color: var(--text-secondary);
 		opacity: 0.5;
 		text-align: right;
@@ -6835,10 +6995,32 @@
 		color: var(--accent);
 	}
 
+	.wiki-link-title-col {
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+		min-width: 0;
+	}
+
 	.wiki-link-title {
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.wiki-link-folder {
+		font-size: 11px;
+		color: var(--text-tertiary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.wiki-link-disambig-header {
+		padding: 8px 10px 4px;
+		font-size: 11px;
+		color: var(--text-tertiary);
+		font-weight: 500;
 	}
 
 	/* ═══ MOBILE (class-based, not media-query, for Android high-DPI) ═══ */
