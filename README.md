@@ -1,5 +1,10 @@
 # HelixNotes
 
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://codeberg.org/ArkHost/HelixNotes/src/branch/main/LICENSE)
+[![Latest Release](https://img.shields.io/badge/release-v1.2.3-green)](https://codeberg.org/ArkHost/HelixNotes/releases)
+[![Website](https://img.shields.io/badge/web-helixnotes.com-purple)](https://helixnotes.com)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS%20%7C%20Android-lightgrey)]()
+
 A local markdown note-taking app built with Tauri, SvelteKit, and Rust.
 
 Your notes are stored as standard Markdown files on your local filesystem.
