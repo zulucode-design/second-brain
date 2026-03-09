@@ -149,7 +149,80 @@ pub fn run() {
             commands::ai_ask,
             commands::get_install_type,
             commands::get_pending_open_file,
-        ]);
+        ])
+        .register_asynchronous_uri_scheme_protocol("imgproxy", |_ctx, request, responder| {
+            let path = request.uri().path().to_string();
+            std::thread::spawn(move || {
+                let encoded = path.strip_prefix('/').unwrap_or(&path);
+                let external_url = percent_decode(encoded);
+
+                if !external_url.starts_with("http://") && !external_url.starts_with("https://") {
+                    let _ = responder.respond(
+                        tauri::http::Response::builder()
+                            .status(400)
+                            .body(Vec::new())
+                            .unwrap(),
+                    );
+                    return;
+                }
+
+                let client = match reqwest::blocking::Client::builder()
+                    .timeout(std::time::Duration::from_secs(30))
+                    .build()
+                {
+                    Ok(c) => c,
+                    Err(_) => {
+                        let _ = responder.respond(
+                            tauri::http::Response::builder()
+                                .status(502)
+                                .body(Vec::new())
+                                .unwrap(),
+                        );
+                        return;
+                    }
+                };
+
+                match client.get(&external_url).send() {
+                    Ok(resp) => {
+                        let content_type = resp
+                            .headers()
+                            .get("content-type")
+                            .and_then(|h| h.to_str().ok())
+                            .unwrap_or("application/octet-stream")
+                            .to_string();
+                        let status = resp.status().as_u16();
+                        match resp.bytes() {
+                            Ok(bytes) => {
+                                let _ = responder.respond(
+                                    tauri::http::Response::builder()
+                                        .status(status)
+                                        .header("Content-Type", &content_type)
+                                        .header("Access-Control-Allow-Origin", "*")
+                                        .body(bytes.to_vec())
+                                        .unwrap(),
+                                );
+                            }
+                            Err(_) => {
+                                let _ = responder.respond(
+                                    tauri::http::Response::builder()
+                                        .status(502)
+                                        .body(Vec::new())
+                                        .unwrap(),
+                                );
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        let _ = responder.respond(
+                            tauri::http::Response::builder()
+                                .status(502)
+                                .body(Vec::new())
+                                .unwrap(),
+                        );
+                    }
+                }
+            });
+        });
 
     #[cfg(not(target_os = "android"))]
     {
@@ -250,4 +323,24 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .build(app)?;
 
     Ok(())
+}
+
+fn percent_decode(input: &str) -> String {
+    let mut output = Vec::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(decoded) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+            {
+                output.push(decoded);
+                i += 3;
+                continue;
+            }
+        }
+        output.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&output).to_string()
 }

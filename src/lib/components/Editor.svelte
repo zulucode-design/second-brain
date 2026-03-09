@@ -1180,9 +1180,18 @@
 	];
 
 	function resolveImageSrc(src: string): string {
-		// Already an absolute URL or data URI
-		if (src.startsWith('http') || src.startsWith('data:') || src.startsWith('asset:') || src.startsWith('blob:')) {
+		// Already a proxied, asset, data, or blob URL
+		if (src.startsWith('data:') || src.startsWith('asset:') || src.startsWith('blob:') || src.startsWith('imgproxy:') || src.startsWith('http://imgproxy.localhost') || src.startsWith('https://imgproxy.localhost')) {
 			return src;
+		}
+		// Already an asset-localhost URL
+		if (src.startsWith('http://asset.localhost') || src.startsWith('https://asset.localhost')) {
+			return src;
+		}
+		// External http/https URLs: proxy through Tauri's imgproxy protocol
+		// to bypass WebKitGTK restrictions on loading external resources
+		if (src.startsWith('http://') || src.startsWith('https://')) {
+			return convertFileSrc(src, 'imgproxy');
 		}
 		// Decode percent-encoding (%20 → space, etc.) for filesystem resolution
 		let decoded = decodeURIComponent(src);
@@ -1876,6 +1885,15 @@
 	function stripAssetSrc(src: string): string {
 		// blob: URLs are not persistable — they were temporary browser references
 		if (src.startsWith('blob:')) return '';
+		// Convert imgproxy:// URLs back to original external URLs for saving
+		if (src.startsWith('imgproxy:') || src.startsWith('http://imgproxy.localhost') || src.startsWith('https://imgproxy.localhost')) {
+			try {
+				const url = new URL(src);
+				return decodeURIComponent(url.pathname.substring(1));
+			} catch {
+				return src;
+			}
+		}
 		// Convert asset:// URLs back to relative paths for saving
 		if (!src.startsWith('asset:') && !src.startsWith('http://asset.localhost')) return src;
 		let absPath = '';
@@ -4489,7 +4507,7 @@
 			<button class:active={imageToolbar.size === 'small'} onclick={() => setImageSize('small')} title="Small (33%)">S</button>
 			<button class:active={imageToolbar.size === 'medium'} onclick={() => setImageSize('medium')} title="Medium (50%)">M</button>
 			<button class:active={imageToolbar.size === 'full'} onclick={() => setImageSize('full')} title="Full width">L</button>
-			{#if !isMobile}
+			{#if !isMobile && !imageToolbar.src.startsWith('imgproxy:') && !imageToolbar.src.startsWith('http://imgproxy.localhost')}
 				<span class="img-toolbar-sep"></span>
 				<button onclick={copyImageToClipboard} title="Copy image">
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
