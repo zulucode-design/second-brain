@@ -14,6 +14,18 @@ export interface NoteEntry {
   preview: string;
 }
 
+export interface TrashNotebookEntry {
+  name: string;
+  path: string;
+  note_count: number;
+  modified: string;
+}
+
+export interface TrashContents {
+  notes: NoteEntry[];
+  notebooks: TrashNotebookEntry[];
+}
+
 export interface NotebookEntry {
   name: string;
   path: string;
@@ -131,4 +143,5 @@ export type ViewMode =
   | "tag"
   | "trash"
   | "search"
-  | "quickaccess";
+  | "quickaccess"
+  | "daily";

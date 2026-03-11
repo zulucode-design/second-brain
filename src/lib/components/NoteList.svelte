@@ -24,17 +24,19 @@
 		saveNote,
 		getTrash,
 		restoreNote,
+		restoreNotebook,
 		permanentDelete,
 		getQuickAccess,
 		addQuickAccess,
 		removeQuickAccess,
 		reorderQuickAccess,
 		moveNote,
-		getAllTags
+		getAllTags,
+		createDailyNote
 	} from '$lib/api';
 	import { formatRelativeTime } from '$lib/utils/time';
 	import { openNoteWindow } from '$lib/utils/window';
-	import type { NoteEntry, SortMode } from '$lib/types';
+	import type { NoteEntry, TrashNotebookEntry, SortMode } from '$lib/types';
 
 	let { onNoteSelected = (_path: string, _content: string) => {}, onNoteMoved = () => {}, onBeforeNoteSwitch = () => {} }: {
 		onNoteSelected?: (path: string, content: string) => void;
@@ -46,6 +48,67 @@
 	const isMobile = /android|ios/i.test(navigator.userAgent);
 	const isAndroid = /android/i.test(navigator.userAgent);
 	let multiSelectMode = $state(false);
+	let trashNotebooks = $state<TrashNotebookEntry[]>([]);
+	let trashBusy = $state<string | null>(null);
+
+	// Calendar state for daily notes view
+	let calMonth = $state(new Date().getMonth());
+	let calYear = $state(new Date().getFullYear());
+	let dailyDates = $state<Set<string>>(new Set());
+
+	const calMonthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+	const calDayNames = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+
+	function calDays(): Array<{ day: number; date: string; current: boolean }> {
+		const first = new Date(calYear, calMonth, 1);
+		const lastDay = new Date(calYear, calMonth + 1, 0).getDate();
+		// Monday=0 offset
+		let startDow = first.getDay() - 1;
+		if (startDow < 0) startDow = 6;
+		const cells: Array<{ day: number; date: string; current: boolean }> = [];
+		for (let i = 0; i < startDow; i++) cells.push({ day: 0, date: '', current: false });
+		for (let d = 1; d <= lastDay; d++) {
+			const mm = String(calMonth + 1).padStart(2, '0');
+			const dd = String(d).padStart(2, '0');
+			const date = `${calYear}-${mm}-${dd}`;
+			const now = new Date();
+			const current = d === now.getDate() && calMonth === now.getMonth() && calYear === now.getFullYear();
+			cells.push({ day: d, date, current });
+		}
+		return cells;
+	}
+
+	function calPrev() {
+		if (calMonth === 0) { calMonth = 11; calYear--; }
+		else calMonth--;
+	}
+	function calNext() {
+		if (calMonth === 11) { calMonth = 0; calYear++; }
+		else calMonth++;
+	}
+	function calToday() {
+		const now = new Date();
+		calMonth = now.getMonth();
+		calYear = now.getFullYear();
+	}
+
+	async function handleDayClick(date: string) {
+		try {
+			const entry = await createDailyNote(date);
+			const content = await readNote(entry.path);
+			onBeforeNoteSwitch();
+			$activeNote = content;
+			$activeNotePath = entry.path;
+			onNoteSelected(entry.path, content.content);
+			if (!dailyDates.has(date)) {
+				dailyDates = new Set([...dailyDates, date]);
+			}
+			noteCache.clear();
+			await refresh();
+		} catch (e) {
+			console.error('Failed to open daily note:', e);
+		}
+	}
 
 	/** Derive tags from current $notes store (avoids re-scanning files on mobile) */
 	function deriveTagsFromNotes() {
@@ -205,6 +268,7 @@
 		if ($viewMode === 'notebook') return $activeNotebook?.name ?? 'Notebook';
 		if ($viewMode === 'tag') return `#${$activeTag}`;
 		if ($viewMode === 'quickaccess') return 'Quick Access';
+		if ($viewMode === 'daily') return 'Daily Notes';
 		if ($viewMode === 'trash') return 'Trash';
 		return 'Notes';
 	});
@@ -214,6 +278,7 @@
 
 	function cacheKey(): string {
 		if ($viewMode === 'trash') return 'trash';
+		if ($viewMode === 'daily') return 'daily';
 		if ($viewMode === 'quickaccess') return 'quickaccess';
 		if ($viewMode === 'tag' && $activeTag) return `tag:${$activeTag}`;
 		if ($viewMode === 'notebook' && $activeNotebook) return `nb:${$activeNotebook.path}`;
@@ -234,7 +299,24 @@
 
 		try {
 			if ($viewMode === 'trash') {
-				$notes = await getTrash();
+				const trash = await getTrash();
+				$notes = trash.notes;
+				trashNotebooks = trash.notebooks;
+			} else if ($viewMode === 'daily') {
+				const vault = $appConfig?.active_vault;
+				if (vault) {
+					$notes = await getNotes(`${vault}/Daily`);
+					// Build set of dates from filenames (YYYY-MM-DD.md)
+					const dates = new Set<string>();
+					for (const n of $notes) {
+						const fname = n.path.split('/').pop() ?? '';
+						const m = fname.match(/^(\d{4}-\d{2}-\d{2})\.md$/);
+						if (m) dates.add(m[1]);
+					}
+					dailyDates = dates;
+				} else {
+					$notes = [];
+				}
 			} else if ($viewMode === 'quickaccess') {
 				$notes = await getQuickAccess();
 			} else if ($viewMode === 'tag' && $activeTag) {
@@ -273,6 +355,14 @@
 	}
 
 	export async function handleCreateNote() {
+		if ($viewMode === 'daily') {
+			const today = new Date();
+			const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+			await handleDayClick(date);
+			calMonth = today.getMonth();
+			calYear = today.getFullYear();
+			return;
+		}
 		const nbRelative = $viewMode === 'notebook' ? $activeNotebook?.relative_path ?? null : null;
 		try {
 			const entry = await createNote(nbRelative, 'Untitled');
@@ -348,6 +438,32 @@
 			}
 		} catch (e) {
 			console.error('Failed to delete permanently:', e);
+		}
+	}
+
+	async function handleRestoreNotebook(nb: TrashNotebookEntry) {
+		trashBusy = nb.path;
+		try {
+			await restoreNotebook(nb.path);
+			noteCache.clear();
+			await refresh();
+		} catch (e) {
+			console.error('Failed to restore notebook:', e);
+		} finally {
+			trashBusy = null;
+		}
+	}
+
+	async function handleDeleteNotebook(nb: TrashNotebookEntry) {
+		trashBusy = nb.path;
+		try {
+			await permanentDelete(nb.path);
+			noteCache.clear();
+			trashNotebooks = trashNotebooks.filter(n => n.path !== nb.path);
+		} catch (e) {
+			console.error('Failed to delete notebook permanently:', e);
+		} finally {
+			trashBusy = null;
 		}
 	}
 
@@ -811,7 +927,41 @@
 	{/if}
 
 	<div class="list-content" bind:this={listContainer} onscroll={onListScroll}>
-		{#if $sortedNotes.length === 0}
+		{#if $viewMode === 'daily'}
+			<div class="cal">
+				<div class="cal-nav">
+					<button class="cal-nav-btn" onclick={calPrev} title="Previous month">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+					</button>
+					<button class="cal-title" onclick={calToday}>{calMonthNames[calMonth]} {calYear}</button>
+					<button class="cal-nav-btn" onclick={calNext} title="Next month">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+					</button>
+				</div>
+				<div class="cal-grid">
+					{#each calDayNames as name}
+						<div class="cal-head">{name}</div>
+					{/each}
+					{#each calDays() as cell}
+						{#if cell.day === 0}
+							<div class="cal-cell empty"></div>
+						{:else}
+							<button
+								class="cal-cell"
+								class:today={cell.current}
+								class:has-note={dailyDates.has(cell.date)}
+								class:active={$activeNotePath?.endsWith(`${cell.date}.md`) ?? false}
+								onclick={() => handleDayClick(cell.date)}
+							>
+								{cell.day}
+							</button>
+						{/if}
+					{/each}
+				</div>
+			</div>
+		{/if}
+
+		{#if $sortedNotes.length === 0 && $viewMode !== 'daily' && (!($viewMode === 'trash') || trashNotebooks.length === 0)}
 			<div class="empty-state">
 				{#if $viewMode === 'trash'}
 					<p>Trash is empty</p>
@@ -820,6 +970,37 @@
 					<button class="btn-link" onclick={handleCreateNote}>Create your first note</button>
 				{/if}
 			</div>
+		{/if}
+
+		{#if $viewMode === 'trash' && trashNotebooks.length > 0}
+			{#each trashNotebooks as nb (nb.path)}
+				<div class="note-item trash-notebook" class:busy={trashBusy === nb.path}>
+					<div class="note-title">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.6">
+							<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+						</svg>
+						{nb.name}
+					</div>
+					{#if trashBusy === nb.path}
+						<div class="note-preview trash-busy">
+							<svg class="spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 2a10 10 0 0 1 10 10"/></svg>
+							Working...
+						</div>
+					{:else}
+						<div class="note-preview">{nb.note_count} {nb.note_count === 1 ? 'note' : 'notes'}</div>
+						<div class="trash-notebook-actions">
+							<button class="trash-nb-btn restore" onclick={() => handleRestoreNotebook(nb)} title="Restore notebook">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 105.64-11.36L1 10"/></svg>
+								Restore
+							</button>
+							<button class="trash-nb-btn delete" onclick={() => handleDeleteNotebook(nb)} title="Delete permanently">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+								Delete
+							</button>
+						</div>
+					{/if}
+				</div>
+			{/each}
 		{/if}
 
 		<div style="height: {topPad}px"></div>
@@ -1870,5 +2051,166 @@
 
 	.mobile-create-btn:active {
 		opacity: 0.8;
+	}
+
+	.trash-notebook .note-title {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.trash-notebook-actions {
+		display: flex;
+		gap: 6px;
+		margin-top: 6px;
+	}
+
+	.trash-nb-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 3px 8px;
+		border: none;
+		border-radius: 4px;
+		font-size: 0.75rem;
+		cursor: pointer;
+		background: var(--bg-hover);
+		color: var(--text-secondary);
+	}
+
+	.trash-nb-btn:hover {
+		background: var(--bg-active);
+	}
+
+	.trash-nb-btn.delete:hover {
+		background: color-mix(in srgb, #ef4444 15%, transparent);
+		color: #ef4444;
+	}
+
+	.trash-notebook.busy {
+		opacity: 0.6;
+		pointer-events: none;
+	}
+
+	.trash-busy {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.spinner {
+		animation: spin 0.8s linear infinite;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
+	}
+
+	/* Calendar */
+	.cal {
+		padding: 8px 10px;
+		border-bottom: 1px solid var(--border);
+	}
+
+	.cal-nav {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 6px;
+	}
+
+	.cal-nav-btn {
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: var(--text-secondary);
+		padding: 4px;
+		border-radius: 4px;
+		display: flex;
+		align-items: center;
+	}
+
+	.cal-nav-btn:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.cal-title {
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: var(--text-primary);
+		background: none;
+		border: none;
+		cursor: pointer;
+		padding: 2px 8px;
+		border-radius: 4px;
+	}
+
+	.cal-title:hover {
+		background: var(--bg-hover);
+	}
+
+	.cal-grid {
+		display: grid;
+		grid-template-columns: repeat(7, 1fr);
+		gap: 4px 2px;
+		padding: 0 2px;
+	}
+
+	.cal-head {
+		font-size: 0.65rem;
+		color: var(--text-secondary);
+		text-align: center;
+		padding: 2px 0;
+		font-weight: 500;
+	}
+
+	.cal-cell {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 0.72rem;
+		width: 28px;
+		height: 28px;
+		border-radius: 50%;
+		border: none;
+		background: none;
+		color: var(--text-secondary);
+		cursor: pointer;
+		padding: 0;
+		margin: 0 auto;
+	}
+
+	.cal-cell.empty {
+		cursor: default;
+	}
+
+	.cal-cell:not(.empty):hover {
+		background: var(--bg-hover);
+	}
+
+	.cal-cell.today {
+		color: var(--accent);
+		font-weight: 700;
+	}
+
+	.cal-cell.has-note {
+		background: color-mix(in srgb, var(--accent) 15%, transparent);
+		color: var(--text-primary);
+		font-weight: 600;
+	}
+
+	.cal-cell.has-note:hover {
+		background: color-mix(in srgb, var(--accent) 25%, transparent);
+	}
+
+	.cal-cell.active {
+		background: var(--accent);
+		color: white;
+		font-weight: 600;
+	}
+
+	.cal-cell.active:hover {
+		background: var(--accent);
 	}
 </style>

@@ -1,6 +1,6 @@
-use crate::types::{NoteContent, NoteEntry, NoteMeta, NotebookEntry, VaultState};
+use crate::types::{NoteContent, NoteEntry, NoteMeta, NotebookEntry, TrashContents, TrashNotebookEntry, VaultState};
 use crate::vault::frontmatter;
-use chrono::{Local, Locale, Utc};
+use chrono::{DateTime, Local, Locale, Utc};
 use rayon::prelude::*;
 use std::fs;
 use std::io::Read;
@@ -63,7 +63,9 @@ fn scan_dir_recursive(dir: &Path, vault_root: &str) -> Vec<NotebookEntry> {
     let mut dirs: Vec<_> = read_dir
         .filter_map(|e| e.ok())
         .filter(|e| {
-            e.file_type().map(|ft| ft.is_dir()).unwrap_or(false) && !is_hidden(&e.path())
+            e.file_type().map(|ft| ft.is_dir()).unwrap_or(false)
+                && !is_hidden(&e.path())
+                && e.file_name().to_string_lossy() != "Daily"
         })
         .collect();
 
@@ -502,11 +504,15 @@ fn get_system_locale() -> Locale {
     }
 }
 
-pub fn create_daily_note(vault_path: &str) -> Result<NoteEntry, String> {
-    let today = Local::now();
-    let date_str = today.format("%Y-%m-%d").to_string();
+pub fn create_daily_note(vault_path: &str, date: Option<&str>) -> Result<NoteEntry, String> {
+    let target_date = match date {
+        Some(d) => chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
+            .map_err(|e| format!("Invalid date: {}", e))?,
+        None => Local::now().date_naive(),
+    };
+    let date_str = target_date.format("%Y-%m-%d").to_string();
     let locale = get_system_locale();
-    let title = today.format_localized("%B %d, %Y", locale).to_string();
+    let title = target_date.format_localized("%B %d, %Y", locale).to_string();
 
     let dir = Path::new(vault_path).join("Daily");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -854,14 +860,29 @@ pub fn move_notebook(notebook_path: &str, dest_parent: &str) -> Result<String, S
     Ok(dest.to_string_lossy().to_string())
 }
 
-pub fn get_trash_notes(vault_path: &str) -> Result<Vec<NoteEntry>, String> {
+/// Remove a directory inside trash if it's empty (after restoring/deleting its last note).
+fn cleanup_empty_trash_dir(vault_path: &str, dir: Option<&Path>) {
+    let trash_dir = helixnotes_dir(vault_path).join("trash");
+    if let Some(d) = dir {
+        if d != trash_dir && d.starts_with(&trash_dir) {
+            if let Ok(mut entries) = fs::read_dir(d) {
+                if entries.next().is_none() {
+                    let _ = fs::remove_dir(d);
+                }
+            }
+        }
+    }
+}
+
+pub fn get_trash_contents(vault_path: &str) -> Result<TrashContents, String> {
     let trash_dir = helixnotes_dir(vault_path).join("trash");
     if !trash_dir.exists() {
-        return Ok(Vec::new());
+        return Ok(TrashContents { notes: Vec::new(), notebooks: Vec::new() });
     }
 
     let vault_root = Path::new(vault_path);
     let mut notes = Vec::new();
+    let mut notebooks = Vec::new();
 
     for entry in fs::read_dir(&trash_dir).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
@@ -870,11 +891,39 @@ pub fn get_trash_notes(vault_path: &str) -> Result<Vec<NoteEntry>, String> {
             if let Ok(note) = read_note_entry(&path, vault_root) {
                 notes.push(note);
             }
+        } else if path.is_dir() {
+            // Deleted notebook — count .md files inside
+            let note_count = WalkDir::new(&path)
+                .min_depth(1)
+                .into_iter()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_file() && e.path().extension().and_then(|x| x.to_str()) == Some("md"))
+                .count();
+            let dirname = path.file_name().unwrap_or_default().to_string_lossy();
+            // Strip timestamp prefix to get original notebook name
+            let name = if dirname.len() > 18 && dirname.chars().nth(17) == Some('_') {
+                dirname[18..].to_string()
+            } else if dirname.len() > 15 && dirname.chars().nth(14) == Some('_') {
+                dirname[15..].to_string()
+            } else {
+                dirname.to_string()
+            };
+            let modified = fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .map(|t| DateTime::<Utc>::from(t))
+                .unwrap_or_else(|_| Utc::now());
+            notebooks.push(TrashNotebookEntry {
+                name,
+                path: path.to_string_lossy().to_string(),
+                note_count,
+                modified,
+            });
         }
     }
 
     notes.sort_by(|a, b| b.meta.modified.cmp(&a.meta.modified));
-    Ok(notes)
+    notebooks.sort_by(|a, b| b.modified.cmp(&a.modified));
+    Ok(TrashContents { notes, notebooks })
 }
 
 pub fn restore_note(
@@ -902,18 +951,49 @@ pub fn restore_note(
         &filename
     };
 
+    let parent = src.parent().map(|p| p.to_path_buf());
     let dest = dest_dir.join(original_name);
+    fs::rename(src, &dest).map_err(|e| e.to_string())?;
+
+    // Clean up empty parent directory (deleted notebook folder) in trash
+    cleanup_empty_trash_dir(vault_path, parent.as_deref());
+
+    Ok(dest.to_string_lossy().to_string())
+}
+
+pub fn restore_notebook(vault_path: &str, trash_path: &str) -> Result<String, String> {
+    let src = Path::new(trash_path);
+    if !src.exists() || !src.is_dir() {
+        return Err("Trashed notebook does not exist".to_string());
+    }
+
+    // Strip timestamp prefix to get original notebook name
+    let dirname = src.file_name().unwrap_or_default().to_string_lossy();
+    let original_name = if dirname.len() > 18 && dirname.chars().nth(17) == Some('_') {
+        &dirname[18..]
+    } else if dirname.len() > 15 && dirname.chars().nth(14) == Some('_') {
+        &dirname[15..]
+    } else {
+        &dirname
+    };
+
+    let dest = Path::new(vault_path).join(original_name);
     fs::rename(src, &dest).map_err(|e| e.to_string())?;
     Ok(dest.to_string_lossy().to_string())
 }
 
-pub fn permanent_delete(path: &str) -> Result<(), String> {
+pub fn permanent_delete(vault_path: &str, path: &str) -> Result<(), String> {
     let p = Path::new(path);
+    let parent = p.parent().map(|pp| pp.to_path_buf());
     if p.is_dir() {
         fs::remove_dir_all(p).map_err(|e| e.to_string())?;
     } else {
         fs::remove_file(p).map_err(|e| e.to_string())?;
     }
+
+    // Clean up empty parent directory (deleted notebook folder) in trash
+    cleanup_empty_trash_dir(vault_path, parent.as_deref());
+
     Ok(())
 }
 

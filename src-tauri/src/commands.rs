@@ -201,9 +201,11 @@ pub fn move_notebook(
 
 #[tauri::command]
 pub fn delete_notebook(state: State<'_, AppState>, path: String) -> Result<(), String> {
-    let config = state.config.lock().map_err(|e| e.to_string())?;
-    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
-    operations::delete_notebook(vault_path, &path)
+    let vault_path = {
+        let config = state.config.lock().map_err(|e| e.to_string())?;
+        config.active_vault.as_ref().ok_or("No active vault")?.clone()
+    };
+    operations::delete_notebook(&vault_path, &path)
 }
 
 // ── Notes ──
@@ -272,10 +274,10 @@ pub fn create_note(
 }
 
 #[tauri::command]
-pub fn create_daily_note(state: State<'_, AppState>) -> Result<NoteEntry, String> {
+pub fn create_daily_note(state: State<'_, AppState>, date: Option<String>) -> Result<NoteEntry, String> {
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
-    let entry = operations::create_daily_note(vault_path)?;
+    let entry = operations::create_daily_note(vault_path, date.as_deref())?;
 
     if let Ok(search_guard) = state.search_index.lock() {
         if let Some(ref search) = *search_guard {
@@ -554,10 +556,10 @@ pub fn reindex(state: State<'_, AppState>) -> Result<(), String> {
 // ── Trash ──
 
 #[tauri::command]
-pub fn get_trash(state: State<'_, AppState>) -> Result<Vec<NoteEntry>, String> {
+pub fn get_trash(state: State<'_, AppState>) -> Result<TrashContents, String> {
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
-    operations::get_trash_notes(vault_path)
+    operations::get_trash_contents(vault_path)
 }
 
 #[tauri::command]
@@ -566,14 +568,29 @@ pub fn restore_note(
     trash_path: String,
     dest_notebook: Option<String>,
 ) -> Result<String, String> {
-    let config = state.config.lock().map_err(|e| e.to_string())?;
-    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
-    operations::restore_note(vault_path, &trash_path, dest_notebook.as_deref())
+    let vault_path = {
+        let config = state.config.lock().map_err(|e| e.to_string())?;
+        config.active_vault.as_ref().ok_or("No active vault")?.clone()
+    };
+    operations::restore_note(&vault_path, &trash_path, dest_notebook.as_deref())
 }
 
 #[tauri::command]
-pub fn permanent_delete(path: String) -> Result<(), String> {
-    operations::permanent_delete(&path)
+pub fn restore_notebook(state: State<'_, AppState>, trash_path: String) -> Result<String, String> {
+    let vault_path = {
+        let config = state.config.lock().map_err(|e| e.to_string())?;
+        config.active_vault.as_ref().ok_or("No active vault")?.clone()
+    };
+    operations::restore_notebook(&vault_path, &trash_path)
+}
+
+#[tauri::command]
+pub fn permanent_delete(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let vault_path = {
+        let config = state.config.lock().map_err(|e| e.to_string())?;
+        config.active_vault.as_ref().ok_or("No active vault")?.clone()
+    };
+    operations::permanent_delete(&vault_path, &path)
 }
 
 #[tauri::command]

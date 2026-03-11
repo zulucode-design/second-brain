@@ -42,12 +42,17 @@
 			const vaultRoot = config?.active_vault;
 			let absPath = decoded;
 			if (!decoded.startsWith('/') && vaultRoot) {
-				const notePath = get(activeNotePath);
-				if (notePath) {
-					const noteDir = notePath.substring(0, notePath.lastIndexOf('/'));
-					absPath = normalizePath(`${noteDir}/${decoded}`);
-				} else {
+				// .helixnotes/ paths are always relative to vault root, not the note's directory
+				if (decoded.startsWith('.helixnotes/')) {
 					absPath = normalizePath(`${vaultRoot}/${decoded}`);
+				} else {
+					const notePath = get(activeNotePath);
+					if (notePath) {
+						const noteDir = notePath.substring(0, notePath.lastIndexOf('/'));
+						absPath = normalizePath(`${noteDir}/${decoded}`);
+					} else {
+						absPath = normalizePath(`${vaultRoot}/${decoded}`);
+					}
 				}
 			}
 			// Internal .md note link — navigate within the app

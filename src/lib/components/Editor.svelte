@@ -199,6 +199,7 @@
 	let linkModalInput = $state<HTMLInputElement>(null!);
 	let linkSelectionFrom = 0;
 	let linkSelectionTo = 0;
+	let linkModalDisplayText = '';
 	let linkSuggestIndex = $state(0);
 	let linkSuggestTitles = $state<NoteTitleEntry[]>([]);
 	let linkSuggestFiltered = $derived.by(() => {
@@ -2416,10 +2417,21 @@
 			}
 			// Store raw URL — encoding is handled during markdown serialization/parsing
 			const href = url.replace(/[()]/g, (c) => encodeURIComponent(c));
-			editor.chain().focus().setTextSelection({ from: linkSelectionFrom, to: linkSelectionTo }).setMark('link', { href }).run();
+			if (linkSelectionFrom === linkSelectionTo) {
+				// No text selected — insert link text with the mark
+				const text = linkModalDisplayText || url.replace(/\.md$/, '').split('/').pop() || url;
+				editor.chain().focus().setTextSelection(linkSelectionFrom).insertContent({
+					type: 'text',
+					text,
+					marks: [{ type: 'link', attrs: { href } }],
+				}).run();
+			} else {
+				editor.chain().focus().setTextSelection({ from: linkSelectionFrom, to: linkSelectionTo }).setMark('link', { href }).run();
+			}
 		}
 		linkModal = false;
 		linkModalUrl = '';
+		linkModalDisplayText = '';
 	}
 
 	function linkModalSelectNote(entry: NoteTitleEntry) {
@@ -2439,12 +2451,14 @@
 		} else {
 			linkModalUrl = entry.title + '.md';
 		}
+		linkModalDisplayText = entry.title;
 		linkModalConfirm();
 	}
 
 	function linkModalCancel() {
 		linkModal = false;
 		linkModalUrl = '';
+		linkModalDisplayText = '';
 		editor?.chain().focus().run();
 	}
 
@@ -3014,19 +3028,7 @@
 		if (href.startsWith('http://') || href.startsWith('https://') || href.startsWith('mailto:')) {
 			openUrl(href).catch(console.error);
 		} else {
-			const decoded = decodeURIComponent(href);
-			let absPath = decoded;
-			if (!decoded.startsWith('/')) {
-				const np = $activeNotePath;
-				if (np) {
-					const noteDir = np.substring(0, np.lastIndexOf('/'));
-					absPath = normalizePath(`${noteDir}/${decoded}`);
-				} else {
-					const vaultRoot = $appConfig?.active_vault;
-					if (vaultRoot) absPath = normalizePath(`${vaultRoot}/${decoded}`);
-				}
-			}
-			openFile(absPath).catch(console.error);
+			openFile(resolveHrefToAbsPath(href)).catch(console.error);
 		}
 	}
 
@@ -3046,8 +3048,13 @@
 		if (pos >= 0) {
 			editor.chain().focus().setTextSelection(pos).extendMarkRange('link').run();
 		}
+		const { from, to } = editor.state.selection;
+		linkSelectionFrom = from;
+		linkSelectionTo = to;
 		linkModalUrl = decodeURIComponent(href);
+		linkModalDisplayText = '';
 		linkModal = true;
+		getAllNoteTitles().then(t => { linkSuggestTitles = t; }).catch(() => {});
 		tick().then(() => linkModalInput?.focus());
 	}
 
@@ -3071,12 +3078,16 @@
 	function resolveHrefToAbsPath(href: string): string {
 		const decoded = decodeURIComponent(href);
 		if (decoded.startsWith('/')) return decoded;
+		// .helixnotes/ paths are always relative to vault root, not the note's directory
+		const vaultRoot = $appConfig?.active_vault;
+		if (decoded.startsWith('.helixnotes/') && vaultRoot) {
+			return normalizePath(`${vaultRoot}/${decoded}`);
+		}
 		const notePath = $activeNotePath;
 		if (notePath) {
 			const noteDir = notePath.substring(0, notePath.lastIndexOf('/'));
 			return normalizePath(`${noteDir}/${decoded}`);
 		}
-		const vaultRoot = $appConfig?.active_vault;
 		if (vaultRoot) return normalizePath(`${vaultRoot}/${decoded}`);
 		return decoded;
 	}

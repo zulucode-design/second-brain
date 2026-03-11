@@ -117,6 +117,7 @@ pub fn run() {
             commands::reindex,
             commands::get_trash,
             commands::restore_note,
+            commands::restore_notebook,
             commands::permanent_delete,
             commands::empty_trash,
             commands::load_vault_state,

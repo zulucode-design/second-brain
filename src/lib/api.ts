@@ -7,6 +7,7 @@ import type {
   NotebookEntry,
   NoteTitleEntry,
   SearchResult,
+  TrashContents,
   VaultState,
   VaultStats,
   ImportResult,
@@ -96,8 +97,8 @@ export async function createNote(
   return invoke("create_note", { notebookRelative, title });
 }
 
-export async function createDailyNote(): Promise<NoteEntry> {
-  return invoke("create_daily_note");
+export async function createDailyNote(date?: string): Promise<NoteEntry> {
+  return invoke("create_daily_note", { date: date ?? null });
 }
 
 export async function renameNote(
@@ -141,7 +142,7 @@ export async function reindex(): Promise<void> {
   return invoke("reindex");
 }
 
-export async function getTrash(): Promise<NoteEntry[]> {
+export async function getTrash(): Promise<TrashContents> {
   return invoke("get_trash");
 }
 
@@ -150,6 +151,10 @@ export async function restoreNote(
   destNotebook: string | null,
 ): Promise<string> {
   return invoke("restore_note", { trashPath, destNotebook });
+}
+
+export async function restoreNotebook(trashPath: string): Promise<string> {
+  return invoke("restore_notebook", { trashPath });
 }
 
 export async function permanentDelete(path: string): Promise<void> {

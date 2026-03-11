@@ -33,6 +33,7 @@
 		quickAccessPaths,
 		tags,
 		notes,
+		viewMode,
 		updateAvailable as globalUpdateAvailable,
 		settingsTab
 	} from '$lib/stores/app';
@@ -183,7 +184,8 @@
 			$activeNotePath = entry.path;
 			$editorDirty = false;
 			editor?.loadNote(entry.path, content.content);
-			noteList?.refresh();
+			$viewMode = 'daily';
+			noteList?.refresh(true);
 			sidebar?.refresh();
 			if (isMobile) $mobileView = 'editor';
 		} catch (e) {
@@ -402,9 +404,11 @@
 				debouncedRefresh();
 			});
 		} else {
-			unlistenFileChange = await listen<FileEvent>('file-changed', async () => {
-				await sidebar?.refresh();
-				await noteList?.refresh(true);
+			const debouncedDesktopRefresh = debounce(async () => {
+				await Promise.all([sidebar?.refresh(), noteList?.refresh(true)]);
+			}, 300);
+			unlistenFileChange = await listen<FileEvent>('file-changed', () => {
+				debouncedDesktopRefresh();
 			});
 		}
 

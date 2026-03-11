@@ -20,6 +20,20 @@ pub struct NoteEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrashContents {
+    pub notes: Vec<NoteEntry>,
+    pub notebooks: Vec<TrashNotebookEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrashNotebookEntry {
+    pub name: String,
+    pub path: String,
+    pub note_count: usize,
+    pub modified: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotebookEntry {
     pub name: String,
     pub path: String,
