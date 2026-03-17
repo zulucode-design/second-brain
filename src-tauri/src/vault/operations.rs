@@ -167,6 +167,22 @@ fn is_hidden(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+pub fn count_root_notes(vault_path: &str) -> Result<usize, String> {
+    let root = Path::new(vault_path);
+    if !root.exists() {
+        return Err("Vault path does not exist".to_string());
+    }
+    let count = fs::read_dir(root)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_type().map(|ft| ft.is_file()).unwrap_or(false)
+                && e.path().extension().and_then(|x| x.to_str()) == Some("md")
+        })
+        .count();
+    Ok(count)
+}
+
 pub fn scan_notes(vault_path: &str, notebook_path: Option<&str>) -> Result<Vec<NoteEntry>, String> {
     let scan_path = notebook_path.unwrap_or(vault_path);
     let root = Path::new(scan_path);

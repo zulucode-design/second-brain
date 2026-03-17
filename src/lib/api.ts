@@ -47,6 +47,10 @@ export async function getNotebooks(): Promise<NotebookEntry[]> {
   return invoke("get_notebooks");
 }
 
+export async function countRootNotes(): Promise<number> {
+  return invoke("count_root_notes");
+}
+
 export async function createNotebook(
   parentRelative: string | null,
   name: string,

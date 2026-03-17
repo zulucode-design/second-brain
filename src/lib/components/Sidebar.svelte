@@ -15,9 +15,10 @@
 		notebookIcons,
 		appConfig,
 		quickAccessPaths,
-		collapsedNotebooks
+		collapsedNotebooks,
+		rootNoteCount
 	} from '$lib/stores/app';
-	import { getNotebooks, getAllTags, createNotebook, deleteNotebook, renameNotebook, moveNotebook, getNotebookIcons, setNotebookIcon, saveAttachment, getQuickAccess, addQuickAccess, removeQuickAccess, emptyTrash, moveNote, readNote, getNotes } from '$lib/api';
+	import { getNotebooks, getAllTags, createNotebook, deleteNotebook, renameNotebook, moveNotebook, getNotebookIcons, setNotebookIcon, saveAttachment, getQuickAccess, addQuickAccess, removeQuickAccess, emptyTrash, moveNote, readNote, getNotes, countRootNotes } from '$lib/api';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { readFile } from '@tauri-apps/plugin-fs';
 	import { convertFileSrc } from '@tauri-apps/api/core';
@@ -53,16 +54,20 @@
 		try {
 			if (isMobile) {
 				// On mobile, parallelize and skip getAllTags (derive from $notes instead)
-				const [nbs, icons, qaNotes] = await Promise.all([
+				const [nbs, icons, qaNotes, rootCount] = await Promise.all([
 					getNotebooks(),
 					getNotebookIcons(),
 					getQuickAccess(),
+					countRootNotes(),
 				]);
 				$notebooks = nbs;
 				$notebookIcons = icons;
 				$quickAccessPaths = qaNotes.map(n => n.relative_path);
+				$rootNoteCount = rootCount;
 			} else {
-				$notebooks = await getNotebooks();
+				const [nbs, rootCount] = await Promise.all([getNotebooks(), countRootNotes()]);
+				$notebooks = nbs;
+				$rootNoteCount = rootCount;
 				$tags = await getAllTags();
 				$notebookIcons = await getNotebookIcons();
 				const qaNotes = await getQuickAccess();
@@ -76,6 +81,19 @@
 	function selectAllNotes() {
 		$viewMode = 'all';
 		$activeNotebook = null;
+		$activeTag = null;
+		onViewChanged();
+	}
+
+	function selectUnfiled() {
+		const vault = $appConfig?.active_vault;
+		if (!vault) return;
+		if ($viewMode === 'notebook' && $activeNotebook?.relative_path === '') {
+			selectAllNotes();
+			return;
+		}
+		$viewMode = 'notebook';
+		$activeNotebook = { name: 'Unfiled Notes', path: vault, relative_path: '', children: [], note_count: $rootNoteCount };
 		$activeTag = null;
 		onViewChanged();
 	}
@@ -466,6 +484,20 @@
 			{/if}
 
 			<div class="notebook-list">
+				{#if $rootNoteCount > 0}
+					<button
+						class="notebook-item"
+						class:active={$viewMode === 'notebook' && $activeNotebook?.relative_path === ''}
+						onclick={selectUnfiled}
+					>
+						<span class="chevron-spacer"></span>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.6">
+							<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+							<polyline points="14 2 14 8 20 8" />
+						</svg>
+						<span class="notebook-name">Unfiled Notes <span class="notebook-count">{$rootNoteCount}</span></span>
+					</button>
+				{/if}
 				{#each $notebooks as nb (nb.path)}
 					{@render notebookItem(nb, 0)}
 				{/each}

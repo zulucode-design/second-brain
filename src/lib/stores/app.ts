@@ -31,6 +31,7 @@ export const collapsedNotebooks = writable<string[]>([]);
 
 // Data
 export const notebooks = writable<NotebookEntry[]>([]);
+export const rootNoteCount = writable<number>(0);
 export const notes = writable<NoteEntry[]>([]);
 export const tags = writable<[string, number][]>([]);
 export const activeNote = writable<NoteContent | null>(null);

@@ -98,6 +98,7 @@ pub fn run() {
             commands::set_font_family,
             commands::set_line_height,
             commands::get_notebooks,
+            commands::count_root_notes,
             commands::create_notebook,
             commands::rename_notebook,
             commands::delete_notebook,

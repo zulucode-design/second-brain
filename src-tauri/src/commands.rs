@@ -113,6 +113,13 @@ pub fn get_notebooks(state: State<'_, AppState>) -> Result<Vec<NotebookEntry>, S
 }
 
 #[tauri::command]
+pub fn count_root_notes(state: State<'_, AppState>) -> Result<usize, String> {
+    let config = state.config.lock().map_err(|e| e.to_string())?;
+    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    operations::count_root_notes(vault_path)
+}
+
+#[tauri::command]
 pub fn create_notebook(
     state: State<'_, AppState>,
     parent_relative: Option<String>,
