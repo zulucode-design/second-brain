@@ -643,6 +643,15 @@ pub fn delete_notebook(vault_path: &str, notebook_path: &str) -> Result<(), Stri
     let trash_name = format!("{}_{}", timestamp, dirname);
     let dest = trash_dir.join(&trash_name);
 
+    // Save original relative path in a sidecar .meta file for restore
+    let relative = src
+        .strip_prefix(vault_path)
+        .unwrap_or(src)
+        .to_string_lossy()
+        .to_string();
+    let meta_path = trash_dir.join(format!("{}.meta", trash_name));
+    let _ = fs::write(&meta_path, &relative);
+
     fs::rename(src, dest).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -983,18 +992,35 @@ pub fn restore_notebook(vault_path: &str, trash_path: &str) -> Result<String, St
         return Err("Trashed notebook does not exist".to_string());
     }
 
-    // Strip timestamp prefix to get original notebook name
     let dirname = src.file_name().unwrap_or_default().to_string_lossy();
-    let original_name = if dirname.len() > 18 && dirname.chars().nth(17) == Some('_') {
-        &dirname[18..]
-    } else if dirname.len() > 15 && dirname.chars().nth(14) == Some('_') {
-        &dirname[15..]
+
+    // Try to read original path from sidecar .meta file
+    let meta_path = src.with_extension("").with_file_name(format!("{}.meta", dirname));
+    let relative = if let Ok(original) = fs::read_to_string(&meta_path) {
+        original
     } else {
-        &dirname
+        // Fallback for notebooks trashed before .meta files existed:
+        // strip timestamp prefix to get notebook name, restore to root
+        let name = if dirname.len() > 18 && dirname.chars().nth(17) == Some('_') {
+            &dirname[18..]
+        } else if dirname.len() > 15 && dirname.chars().nth(14) == Some('_') {
+            &dirname[15..]
+        } else {
+            &dirname
+        };
+        name.to_string()
     };
 
-    let dest = Path::new(vault_path).join(original_name);
+    let dest = Path::new(vault_path).join(&relative);
+
+    // Recreate parent directories if needed
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
     fs::rename(src, &dest).map_err(|e| e.to_string())?;
+    // Clean up .meta file
+    let _ = fs::remove_file(&meta_path);
     Ok(dest.to_string_lossy().to_string())
 }
 
