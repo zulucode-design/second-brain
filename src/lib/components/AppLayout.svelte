@@ -41,7 +41,7 @@
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
 	const isMobile = /android|ios/i.test(navigator.userAgent);
-	import { loadVaultState, saveVaultState, readNote, createDailyNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote, createDailyNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow } from '$lib/utils/window';
 	import { get } from 'svelte/store';
@@ -268,6 +268,11 @@
 		}
 		if (mod && e.shiftKey && e.key === 'N') {
 			e.preventDefault();
+			const isDark = $theme === 'dark' || ($theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+			const next = isDark ? 'light' : 'dark';
+			$theme = next;
+			setTheme(next);
+			return;
 		}
 		if (mod && e.shiftKey && e.key === 'F') {
 			e.preventDefault();
@@ -304,6 +309,26 @@
 			if ($activeNotePath && $activeNote) {
 				openNoteWindow($activeNotePath, $activeNote.meta.title);
 			}
+		}
+		if (mod && e.key === '\\') {
+			e.preventDefault();
+			$sidebarCollapsed = !$sidebarCollapsed;
+			return;
+		}
+		if (mod && e.shiftKey && e.key === 'E') {
+			e.preventDefault();
+			$focusMode = !$focusMode;
+			return;
+		}
+		if (mod && e.shiftKey && e.key === 'R') {
+			e.preventDefault();
+			$readOnly = !$readOnly;
+			return;
+		}
+		if (e.key === 'F11') {
+			e.preventDefault();
+			appWindow.isFullscreen().then(fs => appWindow.setFullscreen(!fs));
+			return;
 		}
 		if (e.key === 'Escape') {
 			if ($showSettings) $showSettings = false;

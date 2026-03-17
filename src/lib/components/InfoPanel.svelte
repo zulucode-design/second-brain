@@ -116,22 +116,37 @@
 					</div>
 				{:else}
 					<div class="shortcuts-section">
-						<h4 class="shortcuts-group-title">Keyboard Shortcuts</h4>
+						<h4 class="shortcuts-group-title">General</h4>
 						<div class="shortcut-row"><span class="shortcut-desc">New note</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>N</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Save</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>S</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Quick open</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>P</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Find in note</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>F</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Search vault</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Save</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>S</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Open note in new window</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd></span></div>
+
+						<h4 class="shortcuts-group-title">Interface</h4>
+						<div class="shortcut-row"><span class="shortcut-desc">Toggle sidebar</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>\</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Toggle dark / light theme</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Toggle focus mode</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Toggle read-only</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Toggle source / WYSIWYG</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Toggle fullscreen</span><span class="shortcut-keys"><kbd>F11</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Close panel / exit focus</span><span class="shortcut-keys"><kbd>Esc</kbd></span></div>
+
+						<h4 class="shortcuts-group-title">Navigation</h4>
+						<div class="shortcut-row"><span class="shortcut-desc">Go back</span><span class="shortcut-keys"><kbd>Alt</kbd>+<kbd>←</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Go forward</span><span class="shortcut-keys"><kbd>Alt</kbd>+<kbd>→</kbd></span></div>
+
+						<h4 class="shortcuts-group-title">Formatting</h4>
 						<div class="shortcut-row"><span class="shortcut-desc">Bold</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>B</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Italic</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>I</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Underline</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>U</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Strikethrough</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Code</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>E</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Link</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>K</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Undo</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Z</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Redo</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Go back</span><span class="shortcut-keys"><kbd>Alt</kbd>+<kbd>←</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Go forward</span><span class="shortcut-keys"><kbd>Alt</kbd>+<kbd>→</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Toggle source mode</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Open note in new window</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Exit focus mode</span><span class="shortcut-keys"><kbd>Esc</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Move line up / down</span><span class="shortcut-keys"><kbd>Alt</kbd>+<kbd>↑↓</kbd></span></div>
 
 						<h4 class="shortcuts-group-title">Editor Commands</h4>
 						<div class="shortcut-row"><span class="shortcut-desc">Slash commands</span><span class="shortcut-keys"><kbd>/</kbd></span></div>
