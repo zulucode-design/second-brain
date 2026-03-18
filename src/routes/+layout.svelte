@@ -33,6 +33,19 @@
 		return resolved.join('/');
 	}
 
+	const isAndroid = /android/i.test(navigator.userAgent);
+
+	function openLocalFile(path: string) {
+		if (isAndroid) {
+			const bridge = (window as any).Android;
+			if (bridge && typeof bridge.openFile === 'function') {
+				bridge.openFile(path);
+			}
+		} else {
+			openFile(path).catch((err) => console.error('Failed to open file:', err));
+		}
+	}
+
 	function resolveAndHandleLink(href: string) {
 		if (href.startsWith('http://') || href.startsWith('https://') || href.startsWith('mailto:')) {
 			openUrl(href).catch((err) => console.error('Failed to open URL:', err));
@@ -62,7 +75,7 @@
 					activeNotePath.set(absPath);
 				}).catch((err) => console.error('Failed to navigate to note:', err));
 			} else {
-				openFile(absPath).catch((err) => console.error('Failed to open file:', err));
+				openLocalFile(absPath);
 			}
 		}
 	}
@@ -81,7 +94,17 @@
 	// Intercept all link clicks in capture phase to prevent webview navigation
 	onMount(() => {
 		function handleLinkClick(e: MouseEvent) {
-			const target = (e.target as HTMLElement)?.closest('a');
+			const el = e.target as HTMLElement;
+			// PDF/attachment embeds: check for data-open-file on target or ancestors
+			const fileTarget = el?.closest('[data-open-file]') as HTMLElement | null;
+			if (fileTarget) {
+				e.preventDefault();
+				e.stopPropagation();
+				e.stopImmediatePropagation();
+				openLocalFile(fileTarget.getAttribute('data-open-file')!);
+				return;
+			}
+			const target = el?.closest('a');
 			if (!target) return;
 			const href = target.getAttribute('href');
 			if (!href) return;
@@ -102,10 +125,22 @@
 			touchStartY = e.touches[0]?.clientY ?? 0;
 		}
 		function handleTouchEnd(e: TouchEvent) {
-			const endY = e.changedTouches[0]?.clientY ?? 0;
+			const touch = e.changedTouches[0];
+			if (!touch) return;
+			const endY = touch.clientY;
 			// If the finger moved > 10px, it's a scroll, not a tap
 			if (Math.abs(endY - touchStartY) > 10) return;
-			const target = (e.target as HTMLElement)?.closest('a');
+			// Android WebView may report e.target as the editor root for elements
+			// inside contenteditable="false" blocks; use elementFromPoint instead
+			const el = (document.elementFromPoint(touch.clientX, touch.clientY) ?? e.target) as HTMLElement;
+			// PDF/attachment embeds: check for data-open-file on target or ancestors
+			const fileTarget = el?.closest('[data-open-file]') as HTMLElement | null;
+			if (fileTarget) {
+				e.preventDefault();
+				openLocalFile(fileTarget.getAttribute('data-open-file')!);
+				return;
+			}
+			const target = el?.closest('a');
 			if (!target) return;
 			const href = target.getAttribute('href');
 			if (!href) return;

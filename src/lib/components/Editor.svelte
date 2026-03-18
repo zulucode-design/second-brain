@@ -307,24 +307,23 @@
 		renderHTML({ HTMLAttributes }) {
 			const src = HTMLAttributes.src || '';
 			const name = HTMLAttributes.name || 'file.pdf';
-			if (isMobile) {
-				// On mobile, render as a clickable link instead of iframe
+			const showInline = !isMobile && ($appConfig?.pdf_preview ?? false);
+			if (showInline) {
 				const vaultRoot = $appConfig?.active_vault ?? '';
+				const pdfHeight = $appConfig?.pdf_height ?? 600;
 				const absPath = normalizePath(`${vaultRoot}/${decodeURIComponent(src)}`);
-				return ['div', mergeAttributes({ 'data-pdf-src': src, 'data-pdf-name': name, class: 'pdf-embed-mobile' }),
-					['a', { href: '#', 'data-open-file': absPath, class: 'pdf-link-mobile', onclick: 'return false;' },
-						['span', { class: 'pdf-icon-mobile' }, '\uD83D\uDCC4'],
-						['span', {}, name],
-					],
+				const displaySrc = convertFileSrc(absPath);
+				return ['div', mergeAttributes({ 'data-pdf-src': src, 'data-pdf-name': name, class: 'pdf-embed' }),
+					['iframe', { src: displaySrc, width: '100%', height: `${pdfHeight}px`, frameborder: '0' }],
+					['p', { class: 'pdf-label' }, name],
 				];
 			}
-			const vaultRoot = $appConfig?.active_vault ?? '';
-			const pdfHeight = $appConfig?.pdf_height ?? 600;
-			const absPath = normalizePath(`${vaultRoot}/${decodeURIComponent(src)}`);
-			const displaySrc = convertFileSrc(absPath);
-			return ['div', mergeAttributes({ 'data-pdf-src': src, 'data-pdf-name': name, class: 'pdf-embed' }),
-				['iframe', { src: displaySrc, width: '100%', height: `${pdfHeight}px`, frameborder: '0' }],
-				['p', { class: 'pdf-label' }, name],
+			// Non-inline: render as a clickable link (mobile + desktop with setting off)
+			return ['div', mergeAttributes({ 'data-pdf-src': src, 'data-pdf-name': name, class: 'pdf-embed-mobile' }),
+				['a', { href: decodeURIComponent(src), class: 'pdf-link-mobile' },
+					['span', { class: 'pdf-icon-mobile' }, '\uD83D\uDCC4'],
+					['span', {}, name],
+				],
 			];
 		},
 	});
@@ -2086,16 +2085,17 @@
 			return `[${text}](${url.replace(/ /g, '%20')})`;
 		});
 
-		// Pre-process: transform PDF embed divs — iframes on desktop, clickable links on mobile
+		// Pre-process: transform PDF embed divs — iframes when inline preview is on, clickable links otherwise
 		src = src.replace(/<div[^>]*data-pdf-src="([^"]*)"[^>]*data-pdf-name="([^"]*)"[^>]*>[^<]*<\/div>/gi, (_, pdfSrc, name) => {
 			const vaultRoot = $appConfig?.active_vault ?? '';
 			const absPath = normalizePath(`${vaultRoot}/${decodeURIComponent(pdfSrc)}`);
-			if (isMobile) {
-				return `<div class="pdf-embed-mobile"><a href="#" data-open-file="${absPath}" class="pdf-link-mobile" onclick="return false;">\uD83D\uDCC4 ${name}</a></div>`;
+			const showInline = !isMobile && ($appConfig?.pdf_preview ?? false);
+			if (showInline) {
+				const pdfHeight = $appConfig?.pdf_height ?? 600;
+				const displaySrc = convertFileSrc(absPath);
+				return `<div data-pdf-src="${pdfSrc}" data-pdf-name="${name}" class="pdf-embed"><iframe src="${displaySrc}" width="100%" height="${pdfHeight}px"></iframe><p class="pdf-label">${name}</p></div>`;
 			}
-			const pdfHeight = $appConfig?.pdf_height ?? 600;
-			const displaySrc = convertFileSrc(absPath);
-			return `<div data-pdf-src="${pdfSrc}" data-pdf-name="${name}" class="pdf-embed"><iframe src="${displaySrc}" width="100%" height="${pdfHeight}px"></iframe><p class="pdf-label">${name}</p></div>`;
+			return `<div data-pdf-src="${pdfSrc}" data-pdf-name="${name}" class="pdf-embed-mobile"><a href="${decodeURIComponent(pdfSrc)}" class="pdf-link-mobile">\uD83D\uDCC4 ${name}</a></div>`;
 		});
 
 		// Pre-process: render KaTeX math — only outside fenced code blocks
@@ -2316,20 +2316,6 @@
 							}
 						}
 					},
-					// On mobile, handle clicks on PDF file links to open in external app
-					...(isMobile ? { click: (_view: any, event: MouseEvent) => {
-						const target = (event.target as HTMLElement).closest('[data-open-file]') as HTMLElement | null;
-						if (target) {
-							event.preventDefault();
-							const filePath = target.getAttribute('data-open-file');
-							if (filePath) {
-								const bridge = (window as any).Android;
-								if (bridge && typeof bridge.openFile === 'function') {
-									bridge.openFile(filePath);
-								}
-							}
-						}
-					}} : {}),
 					// Prevent native text drag — it causes copy-instead-of-move in Tauri's webview.
 					// File drops from OS are handled by Tauri's onDragDropEvent listener instead.
 					dragstart: (_view, event) => {
@@ -3792,7 +3778,7 @@
 							{/each}
 						</div>
 					{/if}
-					{#if historySelected && historyPreview !== null}
+					{#if historySelected}
 						<div class="history-actions">
 							<button class="history-restore-btn" onclick={restoreVersion}>
 								Restore this version
@@ -7194,14 +7180,45 @@
 		position: relative;
 	}
 
+	.editor-container.mobile .editor-body-row:has(.history-panel) > .editor-body,
+	.editor-container.mobile .editor-body-row:has(.outline-panel) > .editor-body {
+		display: none;
+	}
+
 	.editor-container.mobile .history-panel,
 	.editor-container.mobile .outline-panel {
-		position: absolute;
-		inset: 0;
+		position: static;
+		flex: 1;
+		min-height: 0;
 		width: 100% !important;
 		max-width: 100%;
 		border-left: none;
-		z-index: 10;
+	}
+
+	.editor-container.mobile .history-item {
+		padding: 12px 12px;
+		min-height: 48px;
+	}
+
+	.editor-container.mobile .history-list {
+		padding-bottom: 80px;
+	}
+
+	.editor-container.mobile .history-restore-btn {
+		padding: 14px 16px;
+		font-size: 15px;
+	}
+
+	.editor-container.mobile .history-actions {
+		position: fixed;
+		bottom: 0;
+		left: 0;
+		right: 0;
+		padding: 12px;
+		padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+		background: var(--bg-secondary);
+		border-top: 1px solid var(--border-light);
+		z-index: 51;
 	}
 
 	.editor-container.mobile .note-search-bar {
