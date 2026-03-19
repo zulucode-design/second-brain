@@ -252,6 +252,7 @@
 
 	function handleKeydown(e: KeyboardEvent) {
 		const mod = e.ctrlKey || e.metaKey;
+		const code = e.code;
 		if (e.altKey && e.key === 'ArrowLeft') {
 			e.preventDefault();
 			navigateHistory(-1);
@@ -262,11 +263,12 @@
 			navigateHistory(1);
 			return;
 		}
-		if (mod && !e.shiftKey && e.key === 'n') {
+		if (mod && !e.shiftKey && code === 'KeyN') {
 			e.preventDefault();
 			createAndFocusNote();
+			return;
 		}
-		if (mod && e.shiftKey && e.key === 'N') {
+		if (mod && e.shiftKey && code === 'KeyN') {
 			e.preventDefault();
 			const isDark = $theme === 'dark' || ($theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 			const next = isDark ? 'light' : 'dark';
@@ -274,12 +276,12 @@
 			setTheme(next);
 			return;
 		}
-		if (mod && e.shiftKey && e.key === 'F') {
+		if (mod && e.shiftKey && code === 'KeyF') {
 			e.preventDefault();
 			$showSearch = true;
 			return;
 		}
-		if (mod && !e.shiftKey && e.key === 'f') {
+		if (mod && !e.shiftKey && code === 'KeyF') {
 			e.preventDefault();
 			if ($activeNotePath) {
 				editor?.openNoteSearch();
@@ -288,23 +290,25 @@
 			}
 			return;
 		}
-		if (mod && e.key === 'p') {
+		if (mod && !e.shiftKey && code === 'KeyP') {
 			e.preventDefault();
 			$showCommandPalette = true;
+			return;
 		}
-		if (mod && e.key === 's') {
+		if (mod && !e.shiftKey && code === 'KeyS') {
 			e.preventDefault();
 			editor?.forceSave();
+			return;
 		}
-		if (mod && e.key === 'k' && !e.shiftKey && $activeNotePath && !$sourceMode) {
+		if (mod && code === 'KeyK' && !e.shiftKey && $activeNotePath && !$sourceMode) {
 			e.preventDefault();
 			editor?.addLinkFromToolbar();
 		}
-		if (mod && e.shiftKey && e.key === 'M') {
+		if (mod && e.shiftKey && code === 'KeyM') {
 			e.preventDefault();
 			$sourceMode = !$sourceMode;
 		}
-		if (mod && e.shiftKey && e.key === 'W') {
+		if (mod && e.shiftKey && code === 'KeyW') {
 			e.preventDefault();
 			if ($activeNotePath && $activeNote) {
 				openNoteWindow($activeNotePath, $activeNote.meta.title);
@@ -315,12 +319,12 @@
 			$sidebarCollapsed = !$sidebarCollapsed;
 			return;
 		}
-		if (mod && e.shiftKey && e.key === 'E') {
+		if (mod && e.shiftKey && code === 'KeyE') {
 			e.preventDefault();
 			$focusMode = !$focusMode;
 			return;
 		}
-		if (mod && e.shiftKey && e.key === 'R') {
+		if (mod && e.shiftKey && code === 'KeyR') {
 			e.preventDefault();
 			$readOnly = !$readOnly;
 			return;

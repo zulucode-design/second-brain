@@ -257,6 +257,14 @@ pub fn save_note(
     drop(config);
 
     operations::save_note(&path, &meta, &body)?;
+
+    // Re-index note so search picks up changes immediately
+    if let Ok(search_guard) = state.search_index.lock() {
+        if let Some(ref search) = *search_guard {
+            let _ = search.index_note(&path);
+        }
+    }
+
     Ok(())
 }
 
@@ -1368,9 +1376,20 @@ fn resolve_wiki_ref(
 pub fn open_file(path: String) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
-        std::process::Command::new("xdg-open")
-            .arg(&path)
-            .spawn()
+        let mut cmd = std::process::Command::new("xdg-open");
+        cmd.arg(&path);
+        // Clear AppImage environment so child processes find host binaries
+        // (e.g. gio-launch-desktop on GNOME)
+        if std::env::var("APPIMAGE").is_ok() {
+            cmd.env_remove("LD_LIBRARY_PATH")
+                .env_remove("LD_PRELOAD")
+                .env_remove("GIO_LAUNCHED_DESKTOP_FILE")
+                .env_remove("GIO_LAUNCHED_DESKTOP_FILE_PID");
+            if let Ok(original_path) = std::env::var("PATH_ORIG") {
+                cmd.env("PATH", original_path);
+            }
+        }
+        cmd.spawn()
             .map_err(|e| format!("Failed to open {}: {}", path, e))?;
     }
     #[cfg(target_os = "macos")]

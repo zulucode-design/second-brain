@@ -67,11 +67,12 @@
 
 	function handleKeydown(e: KeyboardEvent) {
 		const mod = e.ctrlKey || e.metaKey;
-		if (mod && e.key === 's') {
+		if (mod && !e.shiftKey && e.code === 'KeyS') {
 			e.preventDefault();
 			editor?.forceSave();
+			return;
 		}
-		if (mod && e.shiftKey && e.key === 'M') {
+		if (mod && e.shiftKey && e.code === 'KeyM') {
 			e.preventDefault();
 			$sourceMode = !$sourceMode;
 		}

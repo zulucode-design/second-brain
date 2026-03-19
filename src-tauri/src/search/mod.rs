@@ -9,9 +9,9 @@ use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
 #[cfg(target_os = "android")]
 use tantivy::directory::RamDirectory;
-use tantivy::query::QueryParser;
+use tantivy::query::{BooleanQuery, FuzzyTermQuery, Occur, PhrasePrefixQuery, Query};
 use tantivy::schema::*;
-use tantivy::{Index, IndexWriter, TantivyDocument};
+use tantivy::{Index, IndexWriter, TantivyDocument, Term};
 use walkdir::WalkDir;
 
 pub struct SearchIndex {
@@ -152,14 +152,37 @@ impl SearchIndex {
         let reader = self.index.reader().map_err(|e| e.to_string())?;
         let searcher = reader.searcher();
 
-        let query_parser = QueryParser::for_index(
-            &self.index,
-            vec![self.title_field, self.body_field, self.tags_field],
-        );
+        let fields = vec![self.title_field, self.body_field, self.tags_field];
+        let terms: Vec<String> = query_str
+            .split_whitespace()
+            .map(|t| t.to_lowercase())
+            .collect();
 
-        let query = query_parser
-            .parse_query(query_str)
-            .map_err(|e| e.to_string())?;
+        // For each search term, create prefix + fuzzy queries across all fields (OR),
+        // then AND all terms together
+        let term_queries: Vec<(Occur, Box<dyn Query>)> = terms
+            .iter()
+            .map(|term| {
+                let field_queries: Vec<(Occur, Box<dyn Query>)> = fields
+                    .iter()
+                    .flat_map(|&field| {
+                        let prefix: Box<dyn Query> = Box::new(PhrasePrefixQuery::new(
+                            vec![Term::from_field_text(field, term)],
+                        ));
+                        let fuzzy: Box<dyn Query> = Box::new(FuzzyTermQuery::new(
+                            Term::from_field_text(field, term),
+                            1,
+                            true,
+                        ));
+                        vec![(Occur::Should, prefix), (Occur::Should, fuzzy)]
+                    })
+                    .collect();
+                let combined: Box<dyn Query> = Box::new(BooleanQuery::new(field_queries));
+                (Occur::Must, combined)
+            })
+            .collect();
+
+        let query = BooleanQuery::new(term_queries);
 
         let top_docs = searcher
             .search(&query, &TopDocs::with_limit(limit))
