@@ -1,38 +1,34 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { getGraphData } from '$lib/api';
-	import { activeNotePath } from '$lib/stores/app';
+	import { activeNotePath, appConfig } from '$lib/stores/app';
 
 	let { onclose, onnavigate }: {
 		onclose: () => void;
 		onnavigate: (path: string, title: string) => void;
 	} = $props();
 
+	const isMobile = /android|ios/i.test(navigator.userAgent);
+
 	let canvas = $state<HTMLCanvasElement>(null!);
 	let loading = $state(true);
+	let searchQuery = $state('');
+	let localMode = $state(true); // default: show only active note's neighborhood
 
-	// Start fetching data immediately — don't wait for canvas mount
 	const dataPromise = getGraphData();
 
-	interface GraphNode {
-		id: string;
-		title: string;
-		path: string;
-		x: number;
-		y: number;
-		vx: number;
-		vy: number;
-	}
-
-	interface GraphEdge {
-		sourceIdx: number;
-		targetIdx: number;
-	}
+	interface GraphNode { id: string; title: string; path: string; x: number; y: number; vx: number; vy: number; }
+	interface GraphEdge { sourceIdx: number; targetIdx: number; bidirectional: boolean; }
+	interface LabelRect { x: number; y: number; w: number; h: number; }
 
 	let nodes: GraphNode[] = [];
 	let edges: GraphEdge[] = [];
 	let nodeIndexMap: Map<string, number> = new Map();
 	let connectedSet: Set<number> = new Set();
+	let nodeDegree: number[] = [];
+	let searchMatchSet: Set<number> | null = null;
+	let folderColorMap = new Map<string, string>();
+
 	let pan = { x: 0, y: 0 };
 	let zoom = 1;
 	let dragging: GraphNode | null = null;
@@ -41,34 +37,127 @@
 	let panning = false;
 	let panStart = { x: 0, y: 0 };
 	let hoveredNode: GraphNode | null = null;
+	let hoveredIdx = -1;
+	let hoveredNeighborSet: Set<number> = new Set();
+	let hoveredEdgeSet: Set<number> = new Set();
 	let glowPhase = 0;
-	let glowFrame = 0;
+	let activeNodeIdx = -1;
+	let navigatedFromGraph = false;
 
-	// Cache computed styles — read once, not every frame
-	let cachedStyles: { border: string; text: string; textSec: string; accent: string } | null = null;
+	// Combined animation loop
+	let physicsRemaining = 0;
+	let animFrameId = 0;
+	let lastGlowTs = 0;
+
+	// DPI fix
+	let dpr = 1;
+	let canvasW = 0;
+	let canvasH = 0;
+
+	// Style cache — cleared on theme change
+	let cachedStyles: { border: string; text: string; textSec: string; accent: string; bg: string } | null = null;
+
+	const FOLDER_PALETTE = [
+		'#60a5fa', '#34d399', '#f59e0b', '#a78bfa',
+		'#fb7185', '#22d3ee', '#fb923c', '#86efac',
+	];
 
 	function getStyles() {
 		if (cachedStyles) return cachedStyles;
-		const style = getComputedStyle(document.documentElement);
+		const s = getComputedStyle(document.documentElement);
 		cachedStyles = {
-			border: style.getPropertyValue('--border-color').trim() || '#444',
-			text: style.getPropertyValue('--text-primary').trim() || '#eee',
-			textSec: style.getPropertyValue('--text-tertiary').trim() || '#888',
-			accent: style.getPropertyValue('--accent').trim() || '#7b9bd4',
+			border:  s.getPropertyValue('--border-color').trim() || '#444',
+			text:    s.getPropertyValue('--text-primary').trim() || '#eee',
+			textSec: s.getPropertyValue('--text-secondary').trim() || '#aaa',
+			accent:  s.getPropertyValue('--accent').trim() || '#7b9bd4',
+			bg:      s.getPropertyValue('--bg-primary').trim() || '#1a1a1a',
 		};
 		return cachedStyles;
+	}
+
+	function getFolderKey(path: string): string {
+		const vaultRoot = $appConfig?.active_vault || '';
+		const rel = vaultRoot && path.startsWith(vaultRoot + '/') ? path.slice(vaultRoot.length + 1) : path;
+		const slash = rel.indexOf('/');
+		return slash >= 0 ? rel.slice(0, slash) : '';
+	}
+
+	function buildFolderColors() {
+		const seen = new Map<string, string>();
+		let colorIdx = 0;
+		for (const n of nodes) {
+			const key = getFolderKey(n.path);
+			if (key && !seen.has(key)) {
+				seen.set(key, FOLDER_PALETTE[colorIdx % FOLDER_PALETTE.length]);
+				colorIdx++;
+			}
+		}
+		folderColorMap = seen;
+	}
+
+	function getNodeBaseColor(i: number): string {
+		const { textSec, border } = getStyles();
+		if ((nodeDegree[i] || 0) === 0) return border;
+		const key = getFolderKey(nodes[i].path);
+		return folderColorMap.get(key) || textSec;
+	}
+
+	function getNodeRadius(i: number, isActive: boolean): number {
+		if (isActive) return 8;
+		const deg = nodeDegree[i] || 0;
+		if (deg === 0) return 3;
+		return Math.min(4.5 + deg * 0.7, 9);
+	}
+
+	function updateHoveredState(node: GraphNode | null) {
+		hoveredNode = node;
+		hoveredIdx = node ? nodes.indexOf(node) : -1;
+		hoveredNeighborSet = new Set();
+		hoveredEdgeSet = new Set();
+		if (hoveredIdx < 0) return;
+		hoveredNeighborSet.add(hoveredIdx);
+		for (let i = 0; i < edges.length; i++) {
+			const e = edges[i];
+			if (e.sourceIdx === hoveredIdx || e.targetIdx === hoveredIdx) {
+				hoveredEdgeSet.add(i);
+				hoveredNeighborSet.add(e.sourceIdx);
+				hoveredNeighborSet.add(e.targetIdx);
+			}
+		}
+	}
+
+	// Nodes/edges visible in local mode (active note + direct neighbours)
+	function computeLocalSets(): { nodeSet: Set<number>; edgeSet: Set<number> } {
+		const nodeSet = new Set<number>();
+		const edgeSet = new Set<number>();
+		if (activeNodeIdx < 0) return { nodeSet, edgeSet };
+		nodeSet.add(activeNodeIdx);
+		for (let i = 0; i < edges.length; i++) {
+			const e = edges[i];
+			if (e.sourceIdx === activeNodeIdx || e.targetIdx === activeNodeIdx) {
+				edgeSet.add(i);
+				nodeSet.add(e.sourceIdx);
+				nodeSet.add(e.targetIdx);
+			}
+		}
+		return { nodeSet, edgeSet };
+	}
+
+	function updateSearchMatch() {
+		const q = searchQuery.trim().toLowerCase();
+		if (!q) { searchMatchSet = null; return; }
+		const matched = new Set<number>();
+		nodes.forEach((n, i) => { if (n.title.toLowerCase().includes(q)) matched.add(i); });
+		searchMatchSet = matched;
 	}
 
 	async function buildGraph() {
 		loading = true;
 		try {
-			// Use the pre-fetched promise (started before canvas mount)
 			const data = await dataPromise;
+			const w = canvasW || 800;
+			const h = canvasH || 600;
 
-			const w = canvas?.width ?? 800;
-			const h = canvas?.height ?? 600;
-
-			// Build node index map
 			nodeIndexMap = new Map();
 			nodes = data.nodes.map((n, i) => {
 				nodeIndexMap.set(n.title.toLowerCase(), i);
@@ -76,20 +165,25 @@
 					id: n.title.toLowerCase(),
 					title: n.title,
 					path: n.path,
-					x: w / 2 + (Math.random() - 0.5) * Math.min(w, h) * 0.6,
-					y: h / 2 + (Math.random() - 0.5) * Math.min(w, h) * 0.6,
-					vx: 0,
-					vy: 0,
+					x: w / 2 + (Math.random() - 0.5) * Math.min(w, h) * 0.5,
+					y: h / 2 + (Math.random() - 0.5) * Math.min(w, h) * 0.5,
+					vx: 0, vy: 0,
 				};
 			});
 
-			// Map edges and track connected nodes
 			connectedSet = new Set();
+			nodeDegree = new Array(nodes.length).fill(0);
 			edges = data.edges.map(e => {
 				connectedSet.add(e.source);
 				connectedSet.add(e.target);
-				return { sourceIdx: e.source, targetIdx: e.target };
+				nodeDegree[e.source] = (nodeDegree[e.source] || 0) + 1;
+				nodeDegree[e.target] = (nodeDegree[e.target] || 0) + 1;
+				return { sourceIdx: e.source, targetIdx: e.target, bidirectional: e.bidirectional };
 			});
+
+			buildFolderColors();
+			updateSearchMatch();
+			activeNodeIdx = nodes.findIndex(n => n.path === ($activeNotePath || ''));
 		} catch (e) {
 			console.error('Failed to build graph:', e);
 		}
@@ -98,181 +192,142 @@
 	}
 
 	function centerOnActiveNote() {
-		if (!canvas || nodes.length === 0) return;
-		const activePath = $activeNotePath || '';
-		const activeNode = nodes.find(n => n.path === activePath);
-		if (!activeNode) return;
-
-		const activeIdx = nodeIndexMap.get(activeNode.id);
-
-		// Gather the active node and its direct neighbors
+		if (!canvas || nodes.length === 0 || activeNodeIdx < 0) return;
+		const activeNode = nodes[activeNodeIdx];
 		const neighborhood: GraphNode[] = [activeNode];
-		if (activeIdx !== undefined) {
-			for (const edge of edges) {
-				if (edge.sourceIdx === activeIdx) neighborhood.push(nodes[edge.targetIdx]);
-				else if (edge.targetIdx === activeIdx) neighborhood.push(nodes[edge.sourceIdx]);
-			}
+		for (const edge of edges) {
+			if (edge.sourceIdx === activeNodeIdx) neighborhood.push(nodes[edge.targetIdx]);
+			else if (edge.targetIdx === activeNodeIdx) neighborhood.push(nodes[edge.sourceIdx]);
 		}
-
-		const w = canvas.width;
-		const h = canvas.height;
-		const padding = 80;
-
+		const w = canvasW, h = canvasH, padding = 100;
 		let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 		for (const n of neighborhood) {
-			if (n.x < minX) minX = n.x;
-			if (n.y < minY) minY = n.y;
-			if (n.x > maxX) maxX = n.x;
-			if (n.y > maxY) maxY = n.y;
+			if (n.x < minX) minX = n.x; if (n.y < minY) minY = n.y;
+			if (n.x > maxX) maxX = n.x; if (n.y > maxY) maxY = n.y;
 		}
-
-		const graphW = maxX - minX || 1;
-		const graphH = maxY - minY || 1;
-		const centerX = (minX + maxX) / 2;
-		const centerY = (minY + maxY) / 2;
-
-		zoom = Math.min(
-			(w - padding * 2) / graphW,
-			(h - padding * 2) / graphH,
-			1.8
-		);
-		zoom = Math.max(zoom, 0.5);
-
-		pan.x = w / 2 - centerX * zoom;
-		pan.y = h / 2 - centerY * zoom;
+		const graphW = maxX - minX || 1, graphH = maxY - minY || 1;
+		zoom = Math.max(Math.min((w - padding * 2) / graphW, (h - padding * 2) / graphH, 2), 0.4);
+		pan.x = w / 2 - ((minX + maxX) / 2) * zoom;
+		pan.y = h / 2 - ((minY + maxY) / 2) * zoom;
 	}
 
 	function fitToView() {
 		if (!canvas || nodes.length === 0) return;
-		const w = canvas.width;
-		const h = canvas.height;
-		const padding = 60;
-
+		const w = canvasW, h = canvasH, padding = 70;
 		let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-		for (const node of nodes) {
-			if (node.x < minX) minX = node.x;
-			if (node.y < minY) minY = node.y;
-			if (node.x > maxX) maxX = node.x;
-			if (node.y > maxY) maxY = node.y;
+		for (const n of nodes) {
+			if (n.x < minX) minX = n.x; if (n.y < minY) minY = n.y;
+			if (n.x > maxX) maxX = n.x; if (n.y > maxY) maxY = n.y;
 		}
+		const graphW = maxX - minX || 1, graphH = maxY - minY || 1;
+		zoom = Math.max(Math.min((w - padding * 2) / graphW, (h - padding * 2) / graphH, 2), 0.2);
+		pan.x = w / 2 - ((minX + maxX) / 2) * zoom;
+		pan.y = h / 2 - ((minY + maxY) / 2) * zoom;
+	}
 
-		const graphW = maxX - minX || 1;
-		const graphH = maxY - minY || 1;
-		const centerGraphX = (minX + maxX) / 2;
-		const centerGraphY = (minY + maxY) / 2;
-
-		zoom = Math.min(
-			(w - padding * 2) / graphW,
-			(h - padding * 2) / graphH,
-			2
-		);
-		zoom = Math.max(zoom, 0.2);
-
-		pan.x = w / 2 - centerGraphX * zoom;
-		pan.y = h / 2 - centerGraphY * zoom;
+	function focusActive() {
+		if (activeNodeIdx >= 0) centerOnActiveNote(); else fitToView();
+		draw();
 	}
 
 	function startSimulation() {
-		// Run a small batch synchronously for an instant first render
-		for (let i = 0; i < 30; i++) simulate();
+		// Initial settle — enough for a rough layout, camera set after full physics
+		for (let i = 0; i < 80; i++) simulate();
 
-		// Center/fit immediately so the user sees something right away
-		const activePath = $activeNotePath || '';
-		const activeNode = nodes.find(n => n.path === activePath);
-		if (activeNode) {
-			centerOnActiveNote();
-		} else {
-			fitToView();
-		}
-
+		// Show the full graph while physics finishes settling
+		fitToView();
 		draw();
-		startGlowLoop();
 
-		// Continue settling asynchronously in small batches
-		const totalRemaining = Math.min(270, Math.max(70, nodes.length * 2));
-		let done = 0;
-		function settle() {
-			if (done >= totalRemaining) return;
-			const batch = Math.min(20, totalRemaining - done);
-			for (let i = 0; i < batch; i++) simulate();
-			done += batch;
-			// Re-center while settling
-			if (activeNode) centerOnActiveNote(); else fitToView();
-			requestAnimationFrame(settle);
-		}
-		requestAnimationFrame(settle);
+		// Queue remaining physics — camera will snap to active note when done
+		physicsRemaining = Math.min(400, Math.max(150, nodes.length * 3));
+		startAnimLoop();
 	}
 
-	function startGlowLoop() {
-		if (glowFrame) cancelAnimationFrame(glowFrame);
-		function loop() {
-			glowPhase += 0.04;
-			draw();
-			glowFrame = requestAnimationFrame(loop);
+	function startAnimLoop() {
+		if (animFrameId) cancelAnimationFrame(animFrameId);
+		lastGlowTs = 0;
+
+		function loop(ts: number) {
+			let needsDraw = false;
+
+			// Physics batch
+			if (physicsRemaining > 0) {
+				const batch = Math.min(20, physicsRemaining);
+				for (let i = 0; i < batch; i++) simulate();
+				physicsRemaining -= batch;
+				// When physics is fully settled, snap camera to active note
+				if (physicsRemaining === 0) {
+					if (activeNodeIdx >= 0) centerOnActiveNote(); else fitToView();
+				}
+				needsDraw = true;
+			}
+
+			// Glow pulse for active node — throttled to ~30fps
+			if (activeNodeIdx >= 0) {
+				const elapsed = lastGlowTs > 0 ? Math.min(ts - lastGlowTs, 100) : 16.67;
+				if (lastGlowTs === 0 || ts - lastGlowTs >= 33) {
+					glowPhase += 0.04 * (elapsed / 16.67);
+					lastGlowTs = ts;
+					needsDraw = true;
+				}
+			}
+
+			if (needsDraw) draw();
+
+			if (physicsRemaining > 0 || activeNodeIdx >= 0) {
+				animFrameId = requestAnimationFrame(loop);
+			} else {
+				animFrameId = 0;
+			}
 		}
-		glowFrame = requestAnimationFrame(loop);
+		animFrameId = requestAnimationFrame(loop);
 	}
 
 	function simulate() {
 		const nodeCount = nodes.length;
 		if (nodeCount === 0) return;
+		const w = canvasW || 800, h = canvasH || 600;
+		const centerX = w / 2, centerY = h / 2;
 
-		const w = canvas?.width ?? 800;
-		const h = canvas?.height ?? 600;
-		const centerX = w / 2;
-		const centerY = h / 2;
-
-		// Repulsion between all nodes (skip pairs that are very far apart)
+		// Repulsion
 		for (let i = 0; i < nodeCount; i++) {
 			const a = nodes[i];
 			for (let j = i + 1; j < nodeCount; j++) {
 				const b = nodes[j];
-				const dx = b.x - a.x;
-				const dy = b.y - a.y;
+				const dx = b.x - a.x, dy = b.y - a.y;
 				const distSq = dx * dx + dy * dy;
-				// Skip very distant pairs — negligible force
-				if (distSq > 250000) continue;
+				if (distSq > 360000) continue;
 				const d = distSq || 1;
-				const force = 800 / d;
+				const force = 1500 / d;
 				const dist = Math.sqrt(d);
-				const fx = (dx / dist) * force;
-				const fy = (dy / dist) * force;
-				a.vx -= fx;
-				a.vy -= fy;
-				b.vx += fx;
-				b.vy += fy;
+				const fx = (dx / dist) * force, fy = (dy / dist) * force;
+				a.vx -= fx; a.vy -= fy; b.vx += fx; b.vy += fy;
 			}
 		}
 
-		// Attraction along edges
+		// Spring attraction along edges
 		for (const edge of edges) {
-			const a = nodes[edge.sourceIdx];
-			const b = nodes[edge.targetIdx];
-			const dx = b.x - a.x;
-			const dy = b.y - a.y;
+			const a = nodes[edge.sourceIdx], b = nodes[edge.targetIdx];
+			const dx = b.x - a.x, dy = b.y - a.y;
 			const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-			const force = (dist - 100) * 0.01;
-			const fx = (dx / dist) * force;
-			const fy = (dy / dist) * force;
-			a.vx += fx;
-			a.vy += fy;
-			b.vx -= fx;
-			b.vy -= fy;
+			const force = (dist - 130) * 0.012;
+			const fx = (dx / dist) * force, fy = (dy / dist) * force;
+			a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
 		}
 
-		// Center gravity
-		for (const node of nodes) {
-			node.vx += (centerX - node.x) * 0.001;
-			node.vy += (centerY - node.y) * 0.001;
+		// Center gravity — weaker for isolated nodes so they spread instead of clustering
+		for (let i = 0; i < nodeCount; i++) {
+			const node = nodes[i];
+			const gravity = (nodeDegree[i] || 0) === 0 ? 0.0002 : 0.0008;
+			node.vx += (centerX - node.x) * gravity;
+			node.vy += (centerY - node.y) * gravity;
 		}
 
-		// Apply velocity with damping
+		// Damping + integration
 		for (const node of nodes) {
 			if (node === dragging) continue;
-			node.vx *= 0.85;
-			node.vy *= 0.85;
-			node.x += node.vx;
-			node.y += node.vy;
+			node.vx *= 0.85; node.vy *= 0.85;
+			node.x += node.vx; node.y += node.vy;
 		}
 	}
 
@@ -280,89 +335,253 @@
 		if (!canvas) return;
 		const ctx = canvas.getContext('2d');
 		if (!ctx) return;
-		const w = canvas.width;
-		const h = canvas.height;
 
-		ctx.clearRect(0, 0, w, h);
+		ctx.clearRect(0, 0, canvas.width, canvas.height);
 		ctx.save();
+		ctx.scale(dpr, dpr);
 		ctx.translate(pan.x, pan.y);
 		ctx.scale(zoom, zoom);
 
-		const { border: borderColor, text: textColor, textSec: textSecondary, accent } = getStyles();
+		const { border: borderColor, text: textColor, textSec, accent, bg: bgColor } = getStyles();
+		const activePath = $activeNotePath || '';
+		const pulse = 0.5 + 0.5 * Math.sin(glowPhase);
+		const isHovering = hoveredIdx >= 0;
+		const isSearching = searchMatchSet !== null;
 
-		// Draw edges
-		ctx.strokeStyle = borderColor;
-		ctx.lineWidth = 1;
-		ctx.globalAlpha = 0.4;
-		ctx.beginPath();
-		for (const edge of edges) {
-			const a = nodes[edge.sourceIdx];
-			const b = nodes[edge.targetIdx];
-			ctx.moveTo(a.x, a.y);
-			ctx.lineTo(b.x, b.y);
+		// Local mode: restrict which nodes/edges are visible
+		const { nodeSet: localNodeSet, edgeSet: localEdgeSet } = localMode ? computeLocalSets() : { nodeSet: null as Set<number> | null, edgeSet: null as Set<number> | null };
+
+		// ── Edges ──────────────────────────────────────────────────────────────
+		if (isHovering) {
+			// Dimmed non-connected edges
+			ctx.globalAlpha = 0.06;
+			ctx.strokeStyle = borderColor;
+			ctx.lineWidth = 1;
+			ctx.beginPath();
+			for (let i = 0; i < edges.length; i++) {
+				if (hoveredEdgeSet.has(i)) continue;
+				if (localEdgeSet && !localEdgeSet.has(i)) continue;
+				ctx.moveTo(nodes[edges[i].sourceIdx].x, nodes[edges[i].sourceIdx].y);
+				ctx.lineTo(nodes[edges[i].targetIdx].x, nodes[edges[i].targetIdx].y);
+			}
+			ctx.stroke();
+
+			// Highlighted connected edges
+			ctx.globalAlpha = 0.8;
+			ctx.strokeStyle = accent;
+			ctx.lineWidth = 1.5;
+			ctx.beginPath();
+			for (const i of hoveredEdgeSet) {
+				ctx.moveTo(nodes[edges[i].sourceIdx].x, nodes[edges[i].sourceIdx].y);
+				ctx.lineTo(nodes[edges[i].targetIdx].x, nodes[edges[i].targetIdx].y);
+			}
+			ctx.stroke();
+
+			// Arrowheads on highlighted edges
+			ctx.fillStyle = accent;
+			ctx.globalAlpha = 0.8;
+			const drawArrow = (tipX: number, tipY: number, ux: number, uy: number) => {
+				const bx = tipX - ux * 7, by = tipY - uy * 7;
+				ctx.beginPath();
+				ctx.moveTo(tipX, tipY);
+				ctx.lineTo(bx - uy * 3.5, by + ux * 3.5);
+				ctx.lineTo(bx + uy * 3.5, by - ux * 3.5);
+				ctx.closePath();
+				ctx.fill();
+			};
+			for (const i of hoveredEdgeSet) {
+				const e = edges[i];
+				const src = nodes[e.sourceIdx];
+				const tgt = nodes[e.targetIdx];
+				const dx = tgt.x - src.x, dy = tgt.y - src.y;
+				const dist = Math.sqrt(dx * dx + dy * dy);
+				if (dist < 1) continue;
+				const ux = dx / dist, uy = dy / dist;
+				// Arrow at target end (source → target)
+				const tgtR = getNodeRadius(e.targetIdx, tgt.path === activePath);
+				drawArrow(tgt.x - ux * tgtR, tgt.y - uy * tgtR, ux, uy);
+				// If bidirectional, also draw arrow at source end (target → source)
+				if (e.bidirectional) {
+					const srcR = getNodeRadius(e.sourceIdx, src.path === activePath);
+					drawArrow(src.x + ux * srcR, src.y + uy * srcR, -ux, -uy);
+				}
+			}
+		} else if (isSearching) {
+			// All visible edges faint
+			ctx.strokeStyle = borderColor;
+			ctx.lineWidth = 1;
+			ctx.globalAlpha = 0.07;
+			ctx.beginPath();
+			for (let i = 0; i < edges.length; i++) {
+				if (localEdgeSet && !localEdgeSet.has(i)) continue;
+				ctx.moveTo(nodes[edges[i].sourceIdx].x, nodes[edges[i].sourceIdx].y);
+				ctx.lineTo(nodes[edges[i].targetIdx].x, nodes[edges[i].targetIdx].y);
+			}
+			ctx.stroke();
+			// Edges connected to search matches — brighter
+			ctx.globalAlpha = 0.4;
+			ctx.beginPath();
+			for (let i = 0; i < edges.length; i++) {
+				if (localEdgeSet && !localEdgeSet.has(i)) continue;
+				const e = edges[i];
+				if (searchMatchSet!.has(e.sourceIdx) || searchMatchSet!.has(e.targetIdx)) {
+					ctx.moveTo(nodes[e.sourceIdx].x, nodes[e.sourceIdx].y);
+					ctx.lineTo(nodes[e.targetIdx].x, nodes[e.targetIdx].y);
+				}
+			}
+			ctx.stroke();
+		} else {
+			ctx.strokeStyle = borderColor;
+			ctx.lineWidth = isMobile ? 1.5 : 1;
+			ctx.globalAlpha = isMobile ? 0.65 : 0.35;
+			ctx.beginPath();
+			for (let i = 0; i < edges.length; i++) {
+				if (localEdgeSet && !localEdgeSet.has(i)) continue;
+				ctx.moveTo(nodes[edges[i].sourceIdx].x, nodes[edges[i].sourceIdx].y);
+				ctx.lineTo(nodes[edges[i].targetIdx].x, nodes[edges[i].targetIdx].y);
+			}
+			ctx.stroke();
+
+			// On mobile draw arrowheads always (no hover available)
+			// Sizes divided by zoom so they stay fixed screen size regardless of zoom level
+			if (isMobile) {
+				ctx.fillStyle = borderColor;
+				ctx.globalAlpha = 0.6;
+				const al = 8 / zoom, aw = 4 / zoom;
+				const drawArrow = (tipX: number, tipY: number, ux: number, uy: number) => {
+					const bx = tipX - ux * al, by = tipY - uy * al;
+					ctx.beginPath();
+					ctx.moveTo(tipX, tipY);
+					ctx.lineTo(bx - uy * aw, by + ux * aw);
+					ctx.lineTo(bx + uy * aw, by - ux * aw);
+					ctx.closePath();
+					ctx.fill();
+				};
+				for (let i = 0; i < edges.length; i++) {
+					if (localEdgeSet && !localEdgeSet.has(i)) continue;
+					const e = edges[i];
+					const src = nodes[e.sourceIdx], tgt = nodes[e.targetIdx];
+					const dx = tgt.x - src.x, dy = tgt.y - src.y;
+					const dist = Math.sqrt(dx * dx + dy * dy);
+					if (dist < 1) continue;
+					const ux = dx / dist, uy = dy / dist;
+					const tgtR = getNodeRadius(e.targetIdx, tgt.path === activePath);
+					drawArrow(tgt.x - ux * tgtR, tgt.y - uy * tgtR, ux, uy);
+					if (e.bidirectional) {
+						const srcR = getNodeRadius(e.sourceIdx, src.path === activePath);
+						drawArrow(src.x + ux * srcR, src.y + uy * srcR, -ux, -uy);
+					}
+				}
+			}
 		}
-		ctx.stroke();
 		ctx.globalAlpha = 1;
 
-		// Determine active note
-		const activePath = $activeNotePath || '';
-
-		// Draw nodes
-		const pulse = 0.5 + 0.5 * Math.sin(glowPhase);
+		// ── Nodes + label collection ────────────────────────────────────────────
+		type LabelSpec = { x: number; y: number; text: string; fontSize: number; weight: string; color: string; alpha: number; priority: number; };
+		const labelQueue: LabelSpec[] = [];
 
 		for (let i = 0; i < nodes.length; i++) {
+			// Skip nodes outside local view
+			if (localNodeSet && !localNodeSet.has(i)) continue;
+
 			const node = nodes[i];
 			const isActive = node.path === activePath;
 			const isHovered = node === hoveredNode;
+			const isNeighbor = hoveredNeighborSet.has(i);
 			const hasLinks = connectedSet.has(i);
-			const baseRadius = isActive ? 9 : hasLinks ? 5 : 3.5;
-			const radius = isActive ? baseRadius + pulse * 2 : baseRadius;
+			const matchesSearch = !isSearching || searchMatchSet!.has(i);
 
-			// Active node glow
+			const dimBySearch = isSearching && !matchesSearch;
+			const dimByHover = isHovering && !isActive && !isNeighbor;
+			const dimmed = dimBySearch || dimByHover;
+
+			const radius = getNodeRadius(i, isActive);
+
+			// Active glow ring — opacity pulse, no radius change
 			if (isActive) {
-				const glowRadius = radius + 10 + pulse * 6;
-				const glow = ctx.createRadialGradient(node.x, node.y, radius, node.x, node.y, glowRadius);
-				glow.addColorStop(0, accent + '60');
+				const glowR = radius + 12;
+				const glow = ctx.createRadialGradient(node.x, node.y, radius, node.x, node.y, glowR);
+				const glowAlpha = Math.round((0.25 + pulse * 0.45) * 255).toString(16).padStart(2, '0');
+				glow.addColorStop(0, accent + glowAlpha);
 				glow.addColorStop(1, accent + '00');
+				ctx.globalAlpha = 1;
 				ctx.beginPath();
-				ctx.arc(node.x, node.y, glowRadius, 0, Math.PI * 2);
+				ctx.arc(node.x, node.y, glowR, 0, Math.PI * 2);
 				ctx.fillStyle = glow;
 				ctx.fill();
 			}
 
-			// Node circle
+			// Node fill
+			ctx.globalAlpha = dimmed ? (dimBySearch ? 0.07 : 0.12) : 1;
 			ctx.beginPath();
 			ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
-			if (isActive) {
+			if (isActive || isHovered) {
 				ctx.fillStyle = accent;
-			} else if (isHovered) {
-				ctx.fillStyle = accent;
-			} else if (hasLinks) {
-				ctx.fillStyle = textSecondary;
+			} else if (isHovering && isNeighbor) {
+				ctx.fillStyle = accent + 'bb';
 			} else {
-				ctx.fillStyle = borderColor;
+				ctx.fillStyle = getNodeBaseColor(i);
 			}
 			ctx.fill();
 
-			// Active node ring
+			// Active outer ring — static, alpha pulse only
 			if (isActive) {
+				ctx.globalAlpha = 0.35 + pulse * 0.3;
 				ctx.beginPath();
 				ctx.arc(node.x, node.y, radius + 3, 0, Math.PI * 2);
 				ctx.strokeStyle = accent;
 				ctx.lineWidth = 1.5;
-				ctx.globalAlpha = 0.4 + pulse * 0.3;
 				ctx.stroke();
-				ctx.globalAlpha = 1;
 			}
 
-			// Label — only for connected/active/hovered nodes
-			if (isActive || isHovered || hasLinks) {
-				ctx.font = `${isActive ? 'bold 13' : isHovered ? '12' : '10'}px -apple-system, BlinkMacSystemFont, sans-serif`;
-				ctx.fillStyle = isActive || isHovered ? textColor : textSecondary;
-				ctx.textAlign = 'center';
-				ctx.fillText(node.title, node.x, node.y - radius - 6);
+			ctx.globalAlpha = 1;
+
+			// Queue label (skip for heavily dimmed nodes)
+			if (dimBySearch) continue;
+			const showLabel = isActive || isHovered ||
+				(matchesSearch && isSearching) ||
+				(hasLinks && zoom > 0.45);
+			if (!showLabel) continue;
+
+			const raw = node.title;
+			const text = raw.length > 24 ? raw.slice(0, 22) + '…' : raw;
+			const fontSize = isActive ? 12 : isHovered ? 11 : 10;
+			const weight = isActive ? '600' : '400';
+			const color = isActive || isHovered ? textColor : textSec;
+			const alpha = dimByHover ? 0 : 1;
+			const priority = isActive ? 0 : isHovered ? 1 : (matchesSearch && isSearching ? 2 : 3);
+
+			labelQueue.push({ x: node.x, y: node.y - radius - 5, text, fontSize, weight, color, alpha, priority });
+		}
+
+		// Draw labels with collision avoidance — high-priority labels drawn first
+		labelQueue.sort((a, b) => a.priority - b.priority);
+		const drawnRects: LabelRect[] = [];
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'bottom';
+
+		for (const lab of labelQueue) {
+			if (lab.alpha === 0) continue;
+			ctx.font = `${lab.weight} ${lab.fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+			const tw = ctx.measureText(lab.text).width;
+			const th = lab.fontSize + 2;
+			const rx = lab.x - tw / 2, ry = lab.y - th;
+			const overlaps = drawnRects.some(r =>
+				rx < r.x + r.w + 6 && rx + tw > r.x - 6 &&
+				ry < r.y + r.h + 3 && ry + th > r.y - 3
+			);
+			if (!overlaps) {
+				drawnRects.push({ x: rx, y: ry, w: tw, h: th });
+				ctx.globalAlpha = lab.alpha;
+				ctx.fillStyle = lab.color;
+				ctx.shadowColor = bgColor;
+				ctx.shadowBlur = 5 / zoom;
+				ctx.fillText(lab.text, lab.x, lab.y);
 			}
 		}
+		ctx.shadowBlur = 0;
+		ctx.globalAlpha = 1;
+		ctx.textBaseline = 'alphabetic';
 
 		ctx.restore();
 	}
@@ -374,9 +593,9 @@
 		const y = (clientY - rect.top - pan.y) / zoom;
 		for (let i = nodes.length - 1; i >= 0; i--) {
 			const n = nodes[i];
-			const dx = n.x - x;
-			const dy = n.y - y;
-			if (dx * dx + dy * dy < 100) return n;
+			const dx = n.x - x, dy = n.y - y;
+			const r = getNodeRadius(i, n.path === ($activeNotePath || '')) + 4;
+			if (dx * dx + dy * dy < r * r) return n;
 		}
 		return null;
 	}
@@ -385,27 +604,19 @@
 		mouseDownPos = { x: e.clientX, y: e.clientY };
 		dragMoved = false;
 		const node = getNodeAt(e.clientX, e.clientY);
-		if (node) {
-			dragging = node;
-		} else {
-			panning = true;
-			panStart = { x: e.clientX - pan.x, y: e.clientY - pan.y };
-		}
+		if (node) { dragging = node; }
+		else { panning = true; panStart = { x: e.clientX - pan.x, y: e.clientY - pan.y }; }
 	}
 
 	function handleMouseMove(e: MouseEvent) {
-		const dx = e.clientX - mouseDownPos.x;
-		const dy = e.clientY - mouseDownPos.y;
-		if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
-			dragMoved = true;
-		}
+		const dx = e.clientX - mouseDownPos.x, dy = e.clientY - mouseDownPos.y;
+		if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragMoved = true;
 
 		if (dragging && dragMoved) {
 			const rect = canvas.getBoundingClientRect();
 			dragging.x = (e.clientX - rect.left - pan.x) / zoom;
 			dragging.y = (e.clientY - rect.top - pan.y) / zoom;
-			dragging.vx = 0;
-			dragging.vy = 0;
+			dragging.vx = 0; dragging.vy = 0;
 			draw();
 		} else if (panning) {
 			pan.x = e.clientX - panStart.x;
@@ -414,18 +625,19 @@
 		} else if (!dragging) {
 			const node = getNodeAt(e.clientX, e.clientY);
 			if (node !== hoveredNode) {
-				hoveredNode = node;
+				updateHoveredState(node);
 				if (canvas) canvas.style.cursor = node ? 'pointer' : 'grab';
-				draw();
+				// Restart loop if it stopped (for immediate hover redraws)
+				if (!animFrameId) draw();
 			}
 		}
 	}
 
 	function handleMouseUp(e: MouseEvent) {
 		if (dragging && !dragMoved) {
-			// It was a click, not a drag — navigate
 			const node = dragging;
 			dragging = null;
+			navigatedFromGraph = true;
 			onnavigate(node.path, node.title);
 			return;
 		}
@@ -436,22 +648,21 @@
 	function handleWheel(e: WheelEvent) {
 		e.preventDefault();
 		const rect = canvas.getBoundingClientRect();
-		const mx = e.clientX - rect.left;
-		const my = e.clientY - rect.top;
+		const mx = e.clientX - rect.left, my = e.clientY - rect.top;
 		const oldZoom = zoom;
-		const delta = e.deltaY > 0 ? 0.9 : 1.1;
-		zoom = Math.max(0.2, Math.min(5, zoom * delta));
-		// Zoom toward mouse position
+		zoom = Math.max(0.2, Math.min(5, zoom * (e.deltaY > 0 ? 0.9 : 1.1)));
 		pan.x = mx - (mx - pan.x) * (zoom / oldZoom);
 		pan.y = my - (my - pan.y) * (zoom / oldZoom);
 		draw();
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') onclose();
+		if (e.key === 'Escape') {
+			if (searchQuery) { searchQuery = ''; return; }
+			onclose();
+		}
 	}
 
-	// Touch support for mobile
 	let lastTouchDist = 0;
 
 	function handleTouchStart(e: TouchEvent) {
@@ -460,15 +671,10 @@
 			mouseDownPos = { x: t.clientX, y: t.clientY };
 			dragMoved = false;
 			const node = getNodeAt(t.clientX, t.clientY);
-			if (node) {
-				dragging = node;
-			} else {
-				panning = true;
-				panStart = { x: t.clientX - pan.x, y: t.clientY - pan.y };
-			}
+			if (node) { dragging = node; }
+			else { panning = true; panStart = { x: t.clientX - pan.x, y: t.clientY - pan.y }; }
 		} else if (e.touches.length === 2) {
-			dragging = null;
-			panning = false;
+			dragging = null; panning = false;
 			const dx = e.touches[0].clientX - e.touches[1].clientX;
 			const dy = e.touches[0].clientY - e.touches[1].clientY;
 			lastTouchDist = Math.sqrt(dx * dx + dy * dy);
@@ -479,16 +685,13 @@
 		e.preventDefault();
 		if (e.touches.length === 1) {
 			const t = e.touches[0];
-			const dx = t.clientX - mouseDownPos.x;
-			const dy = t.clientY - mouseDownPos.y;
+			const dx = t.clientX - mouseDownPos.x, dy = t.clientY - mouseDownPos.y;
 			if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragMoved = true;
-
 			if (dragging && dragMoved) {
 				const rect = canvas.getBoundingClientRect();
 				dragging.x = (t.clientX - rect.left - pan.x) / zoom;
 				dragging.y = (t.clientY - rect.top - pan.y) / zoom;
-				dragging.vx = 0;
-				dragging.vy = 0;
+				dragging.vx = 0; dragging.vy = 0;
 				draw();
 			} else if (panning) {
 				pan.x = t.clientX - panStart.x;
@@ -503,8 +706,7 @@
 				const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
 				const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
 				const rect = canvas.getBoundingClientRect();
-				const mx = midX - rect.left;
-				const my = midY - rect.top;
+				const mx = midX - rect.left, my = midY - rect.top;
 				const oldZoom = zoom;
 				zoom = Math.max(0.2, Math.min(5, zoom * (dist / lastTouchDist)));
 				pan.x = mx - (mx - pan.x) * (zoom / oldZoom);
@@ -520,44 +722,115 @@
 			if (dragging && !dragMoved) {
 				const node = dragging;
 				dragging = null;
+				navigatedFromGraph = true;
 				onnavigate(node.path, node.title);
 				return;
 			}
-			dragging = null;
-			panning = false;
-			lastTouchDist = 0;
+			dragging = null; panning = false; lastTouchDist = 0;
 		}
 	}
 
+	// Canvas setup
 	$effect(() => {
 		if (canvas) {
 			const rect = canvas.parentElement?.getBoundingClientRect();
 			if (rect) {
-				canvas.width = rect.width;
-				canvas.height = rect.height;
+				dpr = window.devicePixelRatio || 1;
+				canvasW = rect.width;
+				canvasH = rect.height;
+				canvas.width = canvasW * dpr;
+				canvas.height = canvasH * dpr;
 			}
 			buildGraph();
 		}
 	});
 
+	// React to active note changes (e.g., user clicks node → navigates → re-center)
+	$effect(() => {
+		const ap = $activeNotePath;
+		const newIdx = nodes.findIndex(n => n.path === (ap || ''));
+		activeNodeIdx = newIdx;
+		if (navigatedFromGraph && newIdx >= 0 && canvas) {
+			navigatedFromGraph = false;
+			centerOnActiveNote();
+		}
+		if (newIdx >= 0 && !animFrameId && canvas) startAnimLoop();
+		else if (newIdx < 0 && !animFrameId && canvas) draw(); // remove stale glow immediately
+	});
+
+	// React to search query changes
+	$effect(() => {
+		const _q = searchQuery; // track
+		updateSearchMatch();
+		if (canvas && !animFrameId) draw();
+		if (activeNodeIdx >= 0 && !animFrameId && canvas) startAnimLoop();
+	});
+
 	onDestroy(() => {
-		if (glowFrame) cancelAnimationFrame(glowFrame);
+		if (animFrameId) cancelAnimationFrame(animFrameId);
 	});
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="graph-overlay" onkeydown={handleKeydown}>
-	<div class="graph-panel">
+	<div class="graph-panel" class:mobile={isMobile}>
 		<div class="graph-header">
 			<h3>Graph View</h3>
-			<div class="graph-stats">
-				{#if !loading}
-					{nodes.length} notes, {edges.length} connections
+			<div class="graph-search">
+				<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+				</svg>
+				<!-- svelte-ignore a11y_autofocus -->
+				<input
+					type="text"
+					bind:value={searchQuery}
+					placeholder="Filter notes..."
+					class:active={!!searchQuery}
+				/>
+				{#if searchQuery}
+					<button class="graph-search-clear" aria-label="Clear search" onclick={() => { searchQuery = ''; }}>
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+							<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+						</svg>
+					</button>
 				{/if}
 			</div>
-			<button class="graph-close" onclick={onclose}>
+			<div class="graph-stats">
+				{#if !loading}
+					{#if localMode && activeNodeIdx >= 0}
+						{computeLocalSets().nodeSet.size} notes · {computeLocalSets().edgeSet.size} links
+					{:else}
+						{nodes.length} notes · {edges.length} links
+					{/if}
+					{#if searchMatchSet}
+						· <span class="search-count">{searchMatchSet.size} matched</span>
+					{/if}
+				{/if}
+			</div>
+			<button
+				class="graph-btn"
+				class:active={localMode}
+				title={localMode ? 'Show all notes' : 'Show local graph'}
+				onclick={() => { localMode = !localMode; focusActive(); }}
+			>
+				<!-- network/local icon -->
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/>
+					<line x1="12" y1="7" x2="5" y2="17"/><line x1="12" y1="7" x2="19" y2="17"/>
+				</svg>
+			</button>
+			<button class="graph-btn" onclick={focusActive} title="Focus active note">
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<circle cx="12" cy="12" r="3"/>
+					<line x1="12" y1="2" x2="12" y2="6"/>
+					<line x1="12" y1="18" x2="12" y2="22"/>
+					<line x1="2" y1="12" x2="6" y2="12"/>
+					<line x1="18" y1="12" x2="22" y2="12"/>
+				</svg>
+			</button>
+			<button class="graph-close" aria-label="Close graph" onclick={onclose}>
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+					<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
 				</svg>
 			</button>
 		</div>
@@ -565,8 +838,8 @@
 			{#if loading}
 				<div class="graph-loading">
 					<svg class="spinner" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<circle cx="12" cy="12" r="10" opacity="0.25" />
-						<path d="M12 2a10 10 0 019.95 9" />
+						<circle cx="12" cy="12" r="10" opacity="0.25"/>
+						<path d="M12 2a10 10 0 019.95 9"/>
 					</svg>
 					Building graph...
 				</div>
@@ -615,39 +888,106 @@
 	.graph-header {
 		display: flex;
 		align-items: center;
-		gap: 12px;
-		padding: 14px 20px;
+		gap: 10px;
+		padding: 12px 16px;
 		border-bottom: 1px solid var(--border-light);
 		flex-shrink: 0;
 	}
 
-	@media (max-width: 768px) {
-		.graph-panel {
-			width: 100vw;
-			height: 100vh;
-			max-width: none;
-			max-height: none;
-			border-radius: 0;
-			border: none;
-		}
-		.graph-header {
-			padding-top: calc(env(safe-area-inset-top, 36px) + 14px);
-		}
+	.graph-panel.mobile {
+		width: 100vw;
+		height: 100vh;
+		max-width: none;
+		max-height: none;
+		border-radius: 0;
+		border: none;
+	}
+
+	.graph-panel.mobile .graph-header {
+		padding-top: calc(env(safe-area-inset-top, 36px) + 12px);
+	}
+
+	.graph-panel.mobile .graph-header h3 {
+		display: none;
+	}
+
+	.graph-panel.mobile .graph-stats {
+		display: none;
+	}
+
+	.graph-panel.mobile .graph-search {
+		max-width: none;
 	}
 
 	.graph-header h3 {
-		font-size: 15px;
+		font-size: 14px;
 		font-weight: 600;
 		color: var(--text-primary);
 		margin: 0;
+		white-space: nowrap;
+	}
+
+	.graph-search {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		flex: 1;
+		max-width: 260px;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-light);
+		border-radius: 8px;
+		padding: 4px 8px;
+		color: var(--text-tertiary);
+		transition: border-color 0.15s;
+	}
+
+	.graph-search:focus-within {
+		border-color: var(--accent);
+		color: var(--text-secondary);
+	}
+
+	.graph-search input {
+		background: none;
+		border: none;
+		outline: none;
+		font-size: 12px;
+		color: var(--text-primary);
+		flex: 1;
+		min-width: 0;
+	}
+
+	.graph-search input::placeholder {
+		color: var(--text-tertiary);
+	}
+
+	.graph-search-clear {
+		background: none;
+		border: none;
+		padding: 0;
+		cursor: pointer;
+		color: var(--text-tertiary);
+		display: flex;
+		align-items: center;
+		flex-shrink: 0;
+	}
+
+	.graph-search-clear:hover {
+		color: var(--text-primary);
 	}
 
 	.graph-stats {
 		flex: 1;
-		font-size: 12px;
+		font-size: 11px;
 		color: var(--text-tertiary);
+		white-space: nowrap;
 	}
 
+	.search-count {
+		color: var(--accent);
+		font-weight: 500;
+	}
+
+	.graph-btn,
 	.graph-close {
 		background: none;
 		border: none;
@@ -657,8 +997,15 @@
 		border-radius: 6px;
 		display: flex;
 		align-items: center;
+		flex-shrink: 0;
 	}
 
+	.graph-btn.active {
+		color: var(--accent);
+		background: var(--accent-light);
+	}
+
+	.graph-btn:hover,
 	.graph-close:hover {
 		background: var(--bg-hover);
 		color: var(--text-primary);

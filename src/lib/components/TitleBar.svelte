@@ -221,6 +221,7 @@
 		color: var(--text-primary);
 	}
 
+
 	.switch-vault-btn.active {
 		background: color-mix(in srgb, var(--accent) 18%, transparent);
 		color: var(--accent);

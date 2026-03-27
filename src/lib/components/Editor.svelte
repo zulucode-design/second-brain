@@ -29,16 +29,15 @@
 	import katex from 'katex';
 	import 'katex/dist/katex.min.css';
 	import { Extension, Node as TiptapNode, Mark as TiptapMark, mergeAttributes } from '@tiptap/core';
-	import { Plugin, PluginKey, EditorState } from '@tiptap/pm/state';
+	import { Plugin, PluginKey, EditorState, TextSelection } from '@tiptap/pm/state';
 	import { Decoration, DecorationSet } from '@tiptap/pm/view';
 	import { DOMSerializer } from '@tiptap/pm/model';
 	import { convertFileSrc } from '@tauri-apps/api/core';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { readFile } from '@tauri-apps/plugin-fs';
-	import { openUrl } from '@tauri-apps/plugin-opener';
-	import { openFile, copyFileTo, copyImageToClipboard as copyImageToClipboardCmd } from '$lib/api';
+	import { openFile, openUrl, copyFileTo, copyImageToClipboard as copyImageToClipboardCmd } from '$lib/api';
 	import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, readOnly, quickAccessPaths, notes } from '$lib/stores/app';
+	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, readOnly, quickAccessPaths, notes, navHistory, canGoBack, canGoForward } from '$lib/stores/app';
 	import { saveNote, saveImage, saveAttachment, readClipboardImage, addQuickAccess, removeQuickAccess, getQuickAccess, getNoteVersions, getNoteVersionContent, createVersion, aiAsk, getAllNoteTitles, readNote, renameNote } from '$lib/api';
 	import type { VersionEntry, AiStreamEvent, NoteTitleEntry } from '$lib/types';
 	import { listen } from '@tauri-apps/api/event';
@@ -177,9 +176,10 @@
 			{ label: 'Task List', aliases: ['checklist', 'checkbox', 'todo', 'check'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="6" height="6" rx="1"/><path d="M5 8l1.5 1.5L9 7"/><line x1="13" y1="8" x2="21" y2="8"/><rect x="3" y="14" width="6" height="6" rx="1"/><line x1="13" y1="17" x2="21" y2="17"/></svg>', action: () => editor?.chain().focus().toggleTaskList().run() },
 			{ label: 'Code Block', aliases: ['code', 'codeblock', 'pre', 'snippet'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>', action: () => editor?.chain().focus().toggleCodeBlock().run() },
 			{ label: 'Blockquote', aliases: ['quote', 'blockquote', 'citation'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z"/></svg>', action: () => editor?.chain().focus().toggleBlockquote().run() },
-			{ label: 'Collapsible Section', aliases: ['details', 'accordion', 'collapse', 'toggle', 'summary'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="10 8 14 12 10 16"/></svg>', action: () => editor?.chain().focus().setDetails().run() },
+			{ label: 'Collapsible Section', aliases: ['details', 'accordion', 'collapse', 'toggle', 'summary'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="10 8 14 12 10 16"/></svg>', action: () => insertDetails() },
 			{ label: 'Table', aliases: ['table', 'grid'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>', action: () => { slashTablePicker = true; slashTableHover = { rows: 0, cols: 0 }; } },
 			{ label: 'Horizontal Rule', aliases: ['hr', 'divider', 'line', 'separator', 'rule'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="2" y1="12" x2="22" y2="12"/></svg>', action: () => editor?.chain().focus().setHorizontalRule().run() },
+			{ label: 'Page Break', aliases: ['pagebreak', 'page', 'break', 'newpage', 'print'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="2" y1="9" x2="22" y2="9" stroke-dasharray="4 2"/><line x1="2" y1="15" x2="22" y2="15" stroke-dasharray="4 2"/><path d="M6 5v4M18 5v4M6 15v4M18 15v4"/></svg>', action: () => editor?.chain().focus().insertContent({ type: 'pageBreak' }).run() },
 		];
 	}
 
@@ -214,6 +214,7 @@
 	let imageToolbar = $state<{ pos: number; x: number; y: number; size: string; src: string } | null>(null);
 	let copyToast = $state<'copying' | 'done' | null>(null);
 	let noteRelativePath = $derived($activeNotePath && $appConfig?.active_vault ? $activeNotePath.replace($appConfig.active_vault + '/', '') : '');
+	let noteFolder = $derived(noteRelativePath ? noteRelativePath.substring(0, noteRelativePath.lastIndexOf('/')) : '');
 	let isQuickAccess = $derived(noteRelativePath ? $quickAccessPaths.includes(noteRelativePath) : false);
 
 	const lowlight = createLowlight(common);
@@ -389,6 +390,27 @@
 		},
 	});
 
+	const PageBreak = TiptapNode.create({
+		name: 'pageBreak',
+		group: 'block',
+		atom: true,
+		parseHTML() {
+			return [
+				{ tag: 'div[data-page-break]' },
+				{
+					tag: 'div',
+					getAttrs: (el: HTMLElement) => {
+						const style = el.getAttribute('style') || '';
+						return style.includes('page-break-after') ? {} : false;
+					},
+				},
+			];
+		},
+		renderHTML() {
+			return ['div', { 'data-page-break': 'true', style: 'page-break-after: always; break-after: page;', class: 'page-break' }];
+		},
+	});
+
 	let codeLangDropdown = $state<{ pos: number; x: number; y: number; current: string } | null>(null);
 
 	function openCodeLangDropdown(pos: number, current: string, triggerEl: HTMLElement) {
@@ -497,6 +519,30 @@
 		},
 	});
 
+	// Tab inserts a tab character in plain paragraphs/headings.
+	// Priority 50 < default 100, so list/task/table/codeblock extensions handle Tab first for their own nodes.
+	const TabIndent = Extension.create({
+		name: 'tabIndent',
+		priority: 50,
+		addKeyboardShortcuts() {
+			return {
+				Tab: () => {
+					const sel = this.editor.state.selection;
+					const from = sel.$from;
+					const node = from.node();
+					if (node.type.name !== 'paragraph' && node.type.name !== 'heading') return false;
+					// Don't intercept if inside a list or task item (their extensions handle Tab first,
+					// but guard here too in case of priority edge cases)
+					for (let d = from.depth - 1; d > 0; d--) {
+						const name = from.node(d).type.name;
+						if (name === 'listItem' || name === 'taskItem') return false;
+					}
+					return this.editor.commands.insertContent('\t');
+				},
+			};
+		},
+	});
+
 	const CodeBlockLanguageSelect = Extension.create({
 		name: 'codeBlockLanguageSelect',
 		addGlobalAttributes() {
@@ -597,6 +643,22 @@
 		slashTableHover = { rows: 0, cols: 0 };
 	}
 
+	$effect(() => {
+		if (!slashMenu || slashSelectedIndex < 0) return;
+		slashSelectedIndex; // track
+		tick().then(() => {
+			document.querySelector('.slash-menu .slash-menu-item.selected')?.scrollIntoView({ block: 'nearest' });
+		});
+	});
+
+	$effect(() => {
+		if (!wikiLinkMenu || wikiLinkSelectedIndex < 0) return;
+		wikiLinkSelectedIndex; // track
+		tick().then(() => {
+			document.querySelector('.wiki-link-menu .wiki-link-item.selected')?.scrollIntoView({ block: 'nearest' });
+		});
+	});
+
 	function updateSlashMenu() {
 		const wasSlashTyped = slashTypedByUser;
 		slashTypedByUser = false;
@@ -639,9 +701,11 @@
 
 		// Keep menu within viewport (account for virtual keyboard on mobile)
 		if (x + 240 > window.innerWidth) x = window.innerWidth - 250;
-		let y = coords.bottom + 4;
 		const visibleBottom = window.innerHeight - keyboardHeight;
-		if (y + 300 > visibleBottom) y = Math.max(4, visibleBottom - 300);
+		const menuHeight = 300;
+		let y = coords.bottom + 4;
+		if (y + menuHeight > visibleBottom) y = coords.top - menuHeight - 4;
+		if (y < 4) y = 4;
 
 		slashMenu = { x, y, query, from, to };
 		slashSelectedIndex = 0;
@@ -761,9 +825,22 @@
 		if (pipeIdx >= 0) q = q.slice(0, pipeIdx);
 		q = q.replace(/#.*$/, '').replace(/\^.*$/, '').trim();
 		if (!q) return wikiLinkTitlesCache;
-		return wikiLinkTitlesCache.filter(entry =>
-			entry.title.toLowerCase().includes(q)
-		);
+		// Score: 0 = exact, 1 = starts-with, 2 = word-start, 3 = contains
+		const scored = wikiLinkTitlesCache
+			.map(entry => {
+				const t = entry.title.toLowerCase();
+				let score: number;
+				if (t === q) score = 0;
+				else if (t.startsWith(q)) score = 1;
+				else if (t.includes(' ' + q) || t.includes('-' + q)) score = 2;
+				else if (t.includes(q)) score = 3;
+				else score = -1;
+				return { entry, score };
+			})
+			.filter(x => x.score >= 0)
+			.sort((a, b) => a.score - b.score)
+			.map(x => x.entry);
+		return scored;
 	});
 
 	// Set of lowercase titles that appear more than once (for disambiguation display)
@@ -1047,9 +1124,11 @@
 		const coords = editor.view.coordsAtPos(from);
 		let x = coords.left;
 		if (x + 280 > window.innerWidth) x = window.innerWidth - 290;
-		let y = coords.bottom + 4;
 		const visibleBottom = window.innerHeight - keyboardHeight;
-		if (y + 300 > visibleBottom) y = Math.max(4, visibleBottom - 300);
+		const menuHeight = 360;
+		let y = coords.bottom + 4;
+		if (y + menuHeight > visibleBottom) y = coords.top - menuHeight - 4;
+		if (y < 4) y = 4;
 		wikiLinkMenu = { x, y, query, from };
 		wikiLinkSelectedIndex = 0;
 	}
@@ -1377,6 +1456,18 @@
 		});
 	}
 
+	async function editorNavigateHistory(direction: -1 | 1) {
+		const path = navHistory.go(direction);
+		if (!path) return;
+		flushSave();
+		try {
+			const content = await readNote(path);
+			$activeNote = content;
+			$activeNotePath = path;
+			$editorDirty = false;
+		} catch {}
+	}
+
 	/** Flush unsaved editor content to disk (synchronous serialize + fire-and-forget save).
 	 *  Call BEFORE updating $activeNote/$activeNotePath stores when switching notes. */
 	export function flushSave() {
@@ -1404,9 +1495,11 @@
 		const shouldBeReadOnly = isNewNote ? false : ($appConfig?.default_view_mode ?? false);
 		$readOnly = shouldBeReadOnly;
 		if (editor) editor.setEditable(!shouldBeReadOnly);
+		const editorBody = editorElement?.closest('.editor-body') as HTMLElement | null;
 		if ($sourceMode) {
 			sourceContent = stripTitleH1(content);
 			resetSourceHistory(sourceContent);
+			if (editorBody) editorBody.scrollTop = 0;
 			isLoadingNote = false;
 		} else if (editorElement && editor) {
 			// Editor already exists, just swap content
@@ -1415,8 +1508,19 @@
 			editor.commands.setContent(html);
 			// Clear undo/redo history so it doesn't bleed across notes
 			clearEditorHistory();
-			// Clear loading flag after setContent updates have fired
-			tick().then(() => { isLoadingNote = false; });
+			// Reset scroll and cursor after all ProseMirror/Svelte DOM updates settle
+			tick().then(() => {
+				if (editorBody) editorBody.scrollTop = 0;
+				// Explicitly reset ProseMirror selection to start so TipTap's focus()
+				// (triggered by checkbox clicks etc.) doesn't scroll to the old note's cursor position.
+				if (editor) {
+					const tr = editor.state.tr.setSelection(TextSelection.atStart(editor.state.doc));
+					// No tr.scrollIntoView() — must not trigger any scroll
+					editor.view.dispatch(tr);
+				}
+				requestAnimationFrame(() => { if (editorBody) editorBody.scrollTop = 0; });
+				isLoadingNote = false;
+			});
 		} else {
 			// Editor element not in DOM yet (first note load).
 			// Store content and let the $effect on editorElement handle init.
@@ -1571,6 +1675,8 @@
 				return serializeListItem(node);
 			case 'horizontalRule':
 				return '---\n';
+			case 'pageBreak':
+				return '<div style="page-break-after: always;"></div>\n';
 			case 'table': {
 				// Preserve tables as raw HTML
 				const tempDiv = document.createElement('div');
@@ -2291,12 +2397,62 @@
 				PdfEmbed,
 				MathBlock,
 				MathInline,
-				Details.configure({ persist: false, HTMLAttributes: { class: 'editor-details' } }),
+				PageBreak,
+				Details.configure({ persist: true, HTMLAttributes: { class: 'editor-details' } }),
 				DetailsSummary,
 				DetailsContent,
+				Extension.create({
+					name: 'collapsibleKeymap',
+					addProseMirrorPlugins() {
+						return [new Plugin({
+							key: new PluginKey('collapsibleKeymap'),
+							props: {
+								handleDOMEvents: {
+									keydown(view, event) {
+										const isTab = event.key === 'Tab' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey;
+										const isEnter = event.key === 'Enter' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey;
+										if (!isTab && !isEnter) return false;
+										const { schema, selection } = view.state;
+										const from = selection.$from;
+										let summaryDepth = -1;
+										for (let d = from.depth; d >= 0; d--) {
+											if (from.node(d).type === schema.nodes.detailsSummary) { summaryDepth = d; break; }
+										}
+										if (summaryDepth === -1) return false;
+										event.preventDefault();
+										const detailsDepth = summaryDepth - 1;
+										const detailsNode = from.node(detailsDepth);
+										let detailsContentPos: number | null = null;
+										let pos = from.start(detailsDepth);
+										for (let i = 0; i < detailsNode.childCount; i++) {
+											const child = detailsNode.child(i);
+											if (child.type === schema.nodes.detailsContent) { detailsContentPos = pos + 1; break; }
+											pos += child.nodeSize;
+										}
+										if (detailsContentPos === null) return true;
+										// Open the section if it is closed
+										const domPos = view.domAtPos(from.pos);
+										let domNode = domPos.node as HTMLElement;
+										if (domNode.nodeType === 3) domNode = domNode.parentElement as HTMLElement;
+										const detailsEl = domNode?.closest('[data-type="details"]') as HTMLElement | null;
+										if (detailsEl) openDetailsEl(detailsEl);
+										// Sync open state into document + move cursor (single transaction)
+										const detailsPos = from.before(detailsDepth);
+										view.dispatch(view.state.tr
+											.setNodeMarkup(detailsPos, undefined, { open: true })
+											.setSelection(TextSelection.create(view.state.doc, detailsContentPos))
+										);
+										return true;
+									}
+								}
+							}
+						})];
+					}
+				}),
 				TextAlign.configure({ types: ['heading', 'paragraph'] }),
 				SlashCommands,
 				MoveLineShortcuts,
+				TabIndent,
 				NoteSearchExtension,
 				...($appConfig?.enable_wiki_links ? [WikiLink, WikiLinkAutocomplete] : []),
 			],
@@ -2304,15 +2460,27 @@
 			editorProps: {
 				attributes: { class: 'editor-content' },
 				handleDOMEvents: {
-					// Prevent details toggle button from stealing focus, which causes scroll-to-top.
-					// Also pre-focus the editor with preventScroll so TipTap's focus command
-					// sees hasFocus()=true and skips its scrolling view.focus() call.
+					// Prevent focus-caused scroll jumps when clicking details toggle buttons.
+					// Pre-focusing with preventScroll means TipTap's focus() call sees
+					// hasFocus()=true and skips its scrolling view.focus() call.
+					// For task checkboxes: lock scroll on mousedown (before any dispatch fires)
+					// so that any synchronous or async scroll caused by the toggle is reverted.
 					mousedown: (view, event) => {
 						const target = event.target as HTMLElement;
 						if (target.closest('[data-type="details"] > button')) {
 							event.preventDefault();
 							if (!view.hasFocus()) {
 								(view.dom as HTMLElement).focus({ preventScroll: true });
+							}
+						}
+						if (target.closest('[data-type="taskItem"] input[type="checkbox"]')) {
+							const editorBody = target.closest('.editor-body') as HTMLElement | null;
+							if (editorBody) {
+								const savedScroll = editorBody.scrollTop;
+								const restore = () => { editorBody!.scrollTop = savedScroll; };
+								editorBody.addEventListener('scroll', restore);
+								// Remove after 200ms — covers synchronous, rAF, and setTimeout-based scrolls
+								setTimeout(() => editorBody!.removeEventListener('scroll', restore), 200);
 							}
 						}
 					},
@@ -2756,8 +2924,31 @@
 		closeTextContextMenu();
 	}
 
+	function openDetailsEl(el: HTMLElement) {
+		if (!el.classList.contains('is-open')) {
+			el.classList.add('is-open');
+			(el.querySelector('[data-type="detailsContent"]') as HTMLElement | null)
+				?.dispatchEvent(new Event('toggleDetailsContent'));
+		}
+	}
+
+	function insertDetails() {
+		if (!editor) return;
+		editor.chain().focus().setDetails().run();
+		requestAnimationFrame(() => {
+			if (!editor) return;
+			const domPos = editor.view.domAtPos(editor.state.selection.from);
+			let node = domPos.node as HTMLElement;
+			if (node.nodeType === 3) node = node.parentElement as HTMLElement;
+			const detailsEl = node.closest('[data-type="details"]') as HTMLElement | null;
+			if (detailsEl) openDetailsEl(detailsEl);
+			// Sync open: true into the document so it saves with the note
+			editor.chain().updateAttributes('details', { open: true }).run();
+		});
+	}
+
 	function ctxDetails() {
-		editor?.chain().focus().setDetails().run();
+		insertDetails();
 		closeTextContextMenu();
 	}
 
@@ -3429,6 +3620,16 @@
 			</div>
 			{#if !isMobile}
 			<div class="toolbar-actions">
+				{#if $canGoBack || $canGoForward}
+				<div class="nav-history-btns">
+					<button class="nav-history-btn" disabled={!$canGoBack} onclick={() => editorNavigateHistory(-1)} title="Back (Alt+←)">
+						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+					</button>
+					<button class="nav-history-btn" disabled={!$canGoForward} onclick={() => editorNavigateHistory(1)} title="Forward (Alt+→)">
+						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+					</button>
+				</div>
+				{/if}
 				{#if $editorDirty}
 					<span class="save-indicator">Unsaved</span>
 				{/if}
@@ -3544,6 +3745,31 @@
 			</div>
 			{/if}
 		</div>
+
+		{#if !$focusMode}
+		<div class="note-meta-bar">
+			<span class="note-folder" class:unfiled={!noteFolder}>
+				<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+				{#if noteFolder}
+					{#each noteFolder.split('/') as segment, i}
+						{#if i > 0}<span class="path-sep">›</span>{/if}{segment}
+					{/each}
+				{:else}
+					Unfiled Notes
+				{/if}
+			</span>
+			{#if $activeNote.meta.tags?.length > 0}
+				<span class="meta-divider">·</span>
+			{/if}
+			{#if $activeNote.meta.tags?.length > 0}
+			<span class="note-tags">
+				{#each $activeNote.meta.tags as tag}
+					<span class="note-tag">#{tag}</span>
+				{/each}
+			</span>
+			{/if}
+		</div>
+		{/if}
 
 		<div class="editor-body-wrapper">
 			{#if noteSearchOpen}
@@ -3970,7 +4196,7 @@
 								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 5H3"/><path d="M21 12H8"/><path d="M21 19H8"/><path d="M3 12v7"/></svg>
 								Quote
 							</button>
-							<button onclick={() => { insertDropdown = false; editor?.chain().focus().setDetails().run(); }}>
+							<button onclick={() => { insertDropdown = false; insertDetails(); }}>
 								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="13" height="7" x="8" y="3" rx="1"/><path d="m2 9 3 3-3 3"/><rect width="13" height="7" x="8" y="14" rx="1"/></svg>
 								Collapsible Section
 							</button>
@@ -4079,7 +4305,7 @@
 				</button>
 
 				<!-- Collapsible Section -->
-				<button class="fmt-btn" class:active={(editorState, editor.isActive('details'))} onclick={() => editor?.chain().focus().setDetails().run()} title="Collapsible Section">
+				<button class="fmt-btn" class:active={(editorState, editor.isActive('details'))} onclick={() => insertDetails()} title="Collapsible Section">
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="13" height="7" x="8" y="3" rx="1"/><path d="m2 9 3 3-3 3"/><rect width="13" height="7" x="8" y="14" rx="1"/></svg>
 				</button>
 
@@ -4618,8 +4844,8 @@
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
 						<span class="wiki-link-title-col">
 							<span class="wiki-link-title">{entry.title}</span>
-							{#if wikiLinkDuplicateTitles.has(entry.title.toLowerCase())}
-								<span class="wiki-link-folder">{wikiLinkFolderPath(entry) || '(vault root)'}</span>
+							{#if wikiLinkFolderPath(entry)}
+								<span class="wiki-link-folder">{wikiLinkFolderPath(entry)}</span>
 							{/if}
 						</span>
 					</button>
@@ -4908,6 +5134,40 @@
 		flex-shrink: 0;
 	}
 
+	.nav-history-btns {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		margin-right: auto;
+		flex-shrink: 0;
+	}
+
+	.nav-history-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		border: none;
+		background: none;
+		color: var(--text-tertiary);
+		border-radius: 5px;
+		cursor: pointer;
+		padding: 0;
+		transition: color 0.15s, background 0.15s;
+	}
+
+	.nav-history-btn:hover {
+		color: var(--text-primary);
+		background: var(--bg-hover);
+	}
+
+	.nav-history-btn:disabled {
+		opacity: 0.3;
+		cursor: default;
+		pointer-events: none;
+	}
+
 	.editor-title {
 		flex: 1;
 	}
@@ -4927,6 +5187,57 @@
 
 	.editor-title input::placeholder {
 		color: var(--text-tertiary);
+	}
+
+	.note-meta-bar {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 5px;
+		padding: 0 20px 10px;
+		flex-shrink: 0;
+	}
+
+	.note-folder {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 11px;
+		color: var(--text-tertiary);
+		letter-spacing: 0.01em;
+	}
+
+	.note-folder.unfiled {
+		opacity: 0.6;
+		font-style: italic;
+	}
+
+	.path-sep {
+		font-size: 10px;
+		opacity: 0.5;
+	}
+
+	.meta-divider {
+		font-size: 11px;
+		color: var(--text-tertiary);
+		opacity: 0.4;
+		user-select: none;
+	}
+
+	.note-tags {
+		display: inline-flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 4px;
+	}
+
+	.note-tag {
+		font-size: 11px;
+		color: var(--text-tertiary);
+		background: var(--bg-tertiary);
+		padding: 1px 7px;
+		border-radius: 10px;
+		letter-spacing: 0.01em;
 	}
 
 	.toolbar-actions {
@@ -5198,9 +5509,23 @@
 	.editor-body {
 		flex: 1;
 		overflow-y: auto;
+		overflow-anchor: none;
 		padding: 8px 20px;
 		min-width: 0;
 		position: relative;
+	}
+
+	.editor-body::-webkit-scrollbar {
+		width: 8px;
+	}
+
+	.editor-body::-webkit-scrollbar-thumb {
+		background: var(--text-tertiary);
+		border-radius: 4px;
+	}
+
+	.editor-body::-webkit-scrollbar-thumb:hover {
+		background: var(--text-secondary);
 	}
 
 	.editor-body:has(.source-editor) {
@@ -5738,6 +6063,12 @@
 		transform: rotate(90deg);
 	}
 
+	@starting-style {
+		:global(.tiptap-wrapper .tiptap [data-type="details"].is-open > button::after) {
+			transform: rotate(0deg);
+		}
+	}
+
 	:global(.tiptap-wrapper .tiptap [data-type="details"] summary) {
 		padding: 10px 14px 10px 32px;
 		font-weight: 600;
@@ -5864,7 +6195,10 @@
 		min-width: 0;
 	}
 
-	:global(.tiptap-wrapper .tiptap ul[data-type="taskList"] li[data-checked="true"] > div) {
+	/* Strike through only the direct paragraph content of a checked task item.
+	   Using > p instead of > div prevents text-decoration from bleeding into
+	   nested task lists, since CSS text-decoration cannot be cancelled by descendants. */
+	:global(.tiptap-wrapper .tiptap ul[data-type="taskList"] li[data-checked="true"] > div > p) {
 		text-decoration: line-through;
 		color: var(--text-tertiary);
 	}
@@ -6111,9 +6445,33 @@
 		padding-left: 2px;
 	}
 
-	:global(.tiptap-wrapper .tiptap ul[data-type="taskList"] .is-empty::before) {
+	/* Suppress placeholder on task list / details containers — overlaps with checkbox / toggle button */
+	:global(.tiptap-wrapper .tiptap > ul[data-type="taskList"].is-empty::before),
+	:global(.tiptap-wrapper .tiptap > [data-type="details"].is-empty::before) {
 		content: none;
 	}
+
+	/* Show placeholder on the paragraph inside task item content div */
+	:global(.tiptap-wrapper .tiptap ul[data-type="taskList"] li > div > p.is-empty::before) {
+		content: attr(data-placeholder);
+		color: var(--text-tertiary);
+		pointer-events: none;
+		float: left;
+		height: 0;
+		padding-left: 2px;
+	}
+
+	/* Show placeholder on paragraphs inside collapsible section summary and content */
+	:global(.tiptap-wrapper .tiptap [data-type="detailsSummary"] p.is-empty::before),
+	:global(.tiptap-wrapper .tiptap [data-type="detailsContent"] p.is-empty::before) {
+		content: attr(data-placeholder);
+		color: var(--text-tertiary);
+		pointer-events: none;
+		float: left;
+		height: 0;
+		padding-left: 2px;
+	}
+
 
 	.link-context-overlay {
 		position: fixed;
@@ -6574,6 +6932,36 @@
 		color: var(--text-secondary);
 		border-top: 1px solid var(--border);
 		margin: 0;
+	}
+	:global(.tiptap .page-break) {
+		position: relative;
+		margin: 12px 0;
+		height: 20px;
+		border: none;
+		pointer-events: none;
+		user-select: none;
+	}
+	:global(.tiptap .page-break::before) {
+		content: '';
+		position: absolute;
+		top: 50%;
+		left: 0;
+		right: 0;
+		height: 0;
+		border-top: 2px dashed var(--text-tertiary, #aaa);
+		opacity: 0.5;
+	}
+	:global(.tiptap .page-break::after) {
+		content: 'Page Break';
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		background: var(--bg-primary, #fff);
+		padding: 0 8px;
+		font-size: 11px;
+		color: var(--text-tertiary, #aaa);
+		white-space: nowrap;
 	}
 	:global(.tiptap .pdf-embed-mobile) {
 		margin: 8px 0;

@@ -38,10 +38,11 @@
 	import { openNoteWindow } from '$lib/utils/window';
 	import type { NoteEntry, TrashNotebookEntry, SortMode } from '$lib/types';
 
-	let { onNoteSelected = (_path: string, _content: string) => {}, onNoteMoved = () => {}, onBeforeNoteSwitch = () => {} }: {
+	let { onNoteSelected = (_path: string, _content: string) => {}, onNoteMoved = () => {}, onBeforeNoteSwitch = () => {}, onNoteCreated = () => {} }: {
 		onNoteSelected?: (path: string, content: string) => void;
 		onNoteMoved?: () => void;
 		onBeforeNoteSwitch?: () => void;
+		onNoteCreated?: () => void;
 	} = $props();
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
@@ -230,6 +231,15 @@
 		if (listContainer) listContainer.scrollTop = 0;
 	});
 
+	// Invalidate quickaccess cache when starred notes change (e.g. from Editor star toggle)
+	$effect(() => {
+		$quickAccessPaths;
+		noteCache.delete('quickaccess');
+		if ($viewMode === 'quickaccess') {
+			refresh();
+		}
+	});
+
 	// Track container height via ResizeObserver
 	$effect(() => {
 		if (!listContainer) return;
@@ -369,6 +379,7 @@
 			noteCache.clear();
 			await refresh();
 			await selectNote(entry);
+			onNoteCreated();
 		} catch (e) {
 			console.error('Failed to create note:', e);
 		}
@@ -1410,6 +1421,19 @@
 		flex: 1;
 		overflow-y: auto;
 		padding: 4px;
+	}
+
+	.list-content::-webkit-scrollbar {
+		width: 8px;
+	}
+
+	.list-content::-webkit-scrollbar-thumb {
+		background: var(--text-tertiary);
+		border-radius: 4px;
+	}
+
+	.list-content::-webkit-scrollbar-thumb:hover {
+		background: var(--text-secondary);
 	}
 
 	.note-item {

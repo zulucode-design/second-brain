@@ -1,4 +1,4 @@
-import { writable, derived } from "svelte/store";
+import { writable, derived, get } from "svelte/store";
 import type {
   AppConfig,
   NoteEntry,
@@ -105,6 +105,35 @@ export async function checkForUpdateMobile() {
     // Silent fail
   }
 }
+
+// Note navigation history
+interface NavHistoryState { stack: string[]; index: number; skipping: boolean; }
+function createNavHistory() {
+  const store = writable<NavHistoryState>({ stack: [], index: -1, skipping: false });
+  return {
+    subscribe: store.subscribe,
+    push(path: string) {
+      store.update(s => {
+        if (s.skipping) return { ...s, skipping: false };
+        const trimmed = s.stack.slice(0, s.index + 1);
+        return { stack: [...trimmed, path], index: trimmed.length, skipping: false };
+      });
+    },
+    go(direction: -1 | 1): string | null {
+      let target: string | null = null;
+      store.update(s => {
+        const newIdx = s.index + direction;
+        if (newIdx < 0 || newIdx >= s.stack.length) return s;
+        target = s.stack[newIdx];
+        return { ...s, index: newIdx, skipping: true };
+      });
+      return target;
+    },
+  };
+}
+export const navHistory = createNavHistory();
+export const canGoBack = derived(navHistory, $h => $h.index > 0);
+export const canGoForward = derived(navHistory, $h => $h.index < $h.stack.length - 1);
 
 // Derived
 export const sortedNotes = derived(

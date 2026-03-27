@@ -4,7 +4,7 @@
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
 	import { getVersion } from '@tauri-apps/api/app';
-	import { openUrl } from '@tauri-apps/plugin-opener';
+	import { openUrl } from '$lib/api';
 	import type { ImportResult, BackupEntry } from '$lib/types';
 
 	const isMobile = /android|ios/i.test(navigator.userAgent);

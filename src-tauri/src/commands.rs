@@ -430,9 +430,14 @@ pub fn get_graph_data(state: State<'_, AppState>) -> Result<crate::types::GraphD
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
     let vault = std::path::Path::new(vault_path);
 
-    // Pass 1: collect all notes with titles (fast title extraction, no YAML parsing)
+    // Pass 1: collect ALL notes as nodes (no title deduplication — every note must appear)
     let mut graph_nodes = Vec::new();
-    let mut title_to_idx: HashMap<String, usize> = HashMap::new();
+    // title → list of node indices (one title can map to multiple notes in different folders)
+    let mut title_to_idxs: HashMap<String, Vec<usize>> = HashMap::new();
+    // vault-relative path without extension → idx (for [[subfolder/note]] style links)
+    let mut relpath_to_idx: HashMap<String, usize> = HashMap::new();
+    // absolute path → idx (for fast active-note lookup)
+    let mut path_to_idx: HashMap<String, usize> = HashMap::new();
     let mut seen_paths: HashSet<String> = HashSet::new();
     let mut contents: Vec<String> = Vec::new();
 
@@ -462,12 +467,18 @@ pub fn get_graph_data(state: State<'_, AppState>) -> Result<crate::types::GraphD
             path.file_stem().unwrap_or_default().to_string_lossy().to_string()
         });
 
-        // Deduplicate by title — skip if we already have a node with this title
-        let title_lower = title.to_lowercase();
-        if title_to_idx.contains_key(&title_lower) { continue; }
-
         let idx = graph_nodes.len();
-        title_to_idx.insert(title_lower, idx);
+        let title_lower = title.to_lowercase();
+        title_to_idxs.entry(title_lower).or_default().push(idx);
+        path_to_idx.insert(path_str.clone(), idx);
+
+        // Also index by vault-relative path without extension (e.g. "subfolder/note name")
+        if let Ok(rel) = path.strip_prefix(vault) {
+            let rel_no_ext = rel.with_extension("");
+            let rel_lower = rel_no_ext.to_string_lossy().to_lowercase();
+            relpath_to_idx.entry(rel_lower).or_insert(idx);
+        }
+
         graph_nodes.push(crate::types::GraphNode {
             title,
             path: path_str,
@@ -476,8 +487,22 @@ pub fn get_graph_data(state: State<'_, AppState>) -> Result<crate::types::GraphD
     }
 
     // Pass 2: extract edges from wiki-links (inline scan, no regex)
-    let mut edges = Vec::new();
-    let mut edge_set: HashSet<(usize, usize)> = HashSet::new();
+    // edge_map: (src, tgt) → index in edges vec, used to detect reverse links
+    let mut edges: Vec<crate::types::GraphEdge> = Vec::new();
+    let mut edge_map: HashMap<(usize, usize), usize> = HashMap::new();
+
+    let add_edge = |edges: &mut Vec<crate::types::GraphEdge>, edge_map: &mut HashMap<(usize, usize), usize>, src: usize, tgt: usize| {
+        if src == tgt { return; }
+        if edge_map.contains_key(&(src, tgt)) { return; } // exact duplicate
+        if let Some(&rev_idx) = edge_map.get(&(tgt, src)) {
+            // Reverse direction already exists — mark it as bidirectional
+            edges[rev_idx].bidirectional = true;
+        } else {
+            let idx = edges.len();
+            edge_map.insert((src, tgt), idx);
+            edges.push(crate::types::GraphEdge { source: src, target: tgt, bidirectional: false });
+        }
+    };
 
     for (source_idx, body) in contents.iter().enumerate() {
         let bytes = body.as_bytes();
@@ -498,11 +523,21 @@ pub fn get_graph_data(state: State<'_, AppState>) -> Result<crate::types::GraphD
                     let link = link.split('^').next().unwrap_or(link);
                     let link = link.trim().to_lowercase();
 
-                    if let Some(&target_idx) = title_to_idx.get(&link) {
-                        if target_idx != source_idx {
-                            let key = if source_idx < target_idx { (source_idx, target_idx) } else { (target_idx, source_idx) };
-                            if edge_set.insert(key) {
-                                edges.push(crate::types::GraphEdge { source: source_idx, target: target_idx });
+                    // 1. Try vault-relative path match (e.g. "arkhost/note name")
+                    if let Some(&target_idx) = relpath_to_idx.get(&link) {
+                        add_edge(&mut edges, &mut edge_map, source_idx, target_idx);
+                    } else if let Some(targets) = title_to_idxs.get(&link) {
+                        // 2. Title match — connect to all notes with this title
+                        for &target_idx in targets {
+                            add_edge(&mut edges, &mut edge_map, source_idx, target_idx);
+                        }
+                    } else if link.contains('/') {
+                        // 3. Path-based ref: try last segment as title fallback
+                        if let Some(seg) = link.rsplit('/').next() {
+                            if let Some(targets) = title_to_idxs.get(seg) {
+                                for &target_idx in targets {
+                                    add_edge(&mut edges, &mut edge_map, source_idx, target_idx);
+                                }
                             }
                         }
                     }
@@ -1370,14 +1405,13 @@ fn resolve_wiki_ref(
     reference.to_string()
 }
 
-// ── Open file with system default handler ──
+// ── Open file/URL with system default handler ──
 
-#[tauri::command]
-pub fn open_file(path: String) -> Result<(), String> {
+fn xdg_open(arg: &str) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         let mut cmd = std::process::Command::new("xdg-open");
-        cmd.arg(&path);
+        cmd.arg(arg);
         // Clear AppImage environment so child processes find host binaries
         // (e.g. gio-launch-desktop on GNOME)
         if std::env::var("APPIMAGE").is_ok() {
@@ -1390,23 +1424,33 @@ pub fn open_file(path: String) -> Result<(), String> {
             }
         }
         cmd.spawn()
-            .map_err(|e| format!("Failed to open {}: {}", path, e))?;
+            .map_err(|e| format!("Failed to open {}: {}", arg, e))?;
     }
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
-            .arg(&path)
+            .arg(arg)
             .spawn()
-            .map_err(|e| format!("Failed to open {}: {}", path, e))?;
+            .map_err(|e| format!("Failed to open {}: {}", arg, e))?;
     }
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("cmd")
-            .args(["/C", "start", "", &path])
+            .args(["/C", "start", "", arg])
             .spawn()
-            .map_err(|e| format!("Failed to open {}: {}", path, e))?;
+            .map_err(|e| format!("Failed to open {}: {}", arg, e))?;
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn open_file(path: String) -> Result<(), String> {
+    xdg_open(&path)
+}
+
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    xdg_open(&url)
 }
 
 #[tauri::command]

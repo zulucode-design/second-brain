@@ -285,4 +285,5 @@ pub struct GraphNode {
 pub struct GraphEdge {
     pub source: usize,
     pub target: usize,
+    pub bidirectional: bool,
 }

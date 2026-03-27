@@ -34,8 +34,10 @@
 		tags,
 		notes,
 		viewMode,
+		activeTag,
 		updateAvailable as globalUpdateAvailable,
-		settingsTab
+		settingsTab,
+		navHistory
 	} from '$lib/stores/app';
 
 	const appWindow = getCurrentWindow();
@@ -58,9 +60,7 @@
 	let isQuickAccess = $derived(noteRelativePath ? $quickAccessPaths.includes(noteRelativePath) : false);
 	let backupInterval: ReturnType<typeof setInterval> | null = null;
 
-	let navigatingFromHistory = false;
-	let noteHistory: string[] = [];
-	let noteHistoryIndex = -1;
+
 
 	function parseFrequencyMs(freq: string): number {
 		switch (freq) {
@@ -91,32 +91,19 @@
 	// Track note navigation in history stack
 	$effect(() => {
 		const path = $activeNotePath;
-		if (navigatingFromHistory) {
-			navigatingFromHistory = false;
-			return;
-		}
-		if (path) {
-			// Trim forward history and push
-			noteHistory = [...noteHistory.slice(0, noteHistoryIndex + 1), path];
-			noteHistoryIndex = noteHistory.length - 1;
-		}
+		if (path) navHistory.push(path);
 	});
 
 	function navigateHistory(direction: -1 | 1) {
-		const newIndex = noteHistoryIndex + direction;
-		if (newIndex < 0 || newIndex >= noteHistory.length) return;
-		const path = noteHistory[newIndex];
-		noteHistoryIndex = newIndex;
-		navigatingFromHistory = true;
+		const path = navHistory.go(direction);
+		if (!path) return;
 		readNote(path).then((content) => {
 			editor?.flushSave();
 			$activeNote = content;
 			$activeNotePath = path;
 			$editorDirty = false;
 			editor?.loadNote(path, content.content);
-		}).catch(() => {
-			// Note may have been deleted, ignore
-		});
+		}).catch(() => {});
 	}
 
 	async function handleOpenFile(filePath: string) {
@@ -493,7 +480,7 @@
 					{#if $mobileView === 'sidebar'}
 						HelixNotes
 					{:else}
-						{$activeNotebook?.name || 'All Notes'}
+						{#if $viewMode === 'notebook'}{$activeNotebook?.name ?? 'Notebook'}{:else if $viewMode === 'tag'}#{$activeTag}{:else if $viewMode === 'quickaccess'}Quick Access{:else if $viewMode === 'daily'}Daily Notes{:else if $viewMode === 'trash'}Trash{:else}All Notes{/if}
 					{/if}
 				</span>
 				{#if $globalUpdateAvailable && $mobileView === 'sidebar'}
@@ -597,7 +584,7 @@
 				<Sidebar bind:this={sidebar} onViewChanged={handleViewChanged} />
 			</div>
 			<div class="mobile-panel" class:active={$mobileView === 'notelist'}>
-				<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onNoteMoved={() => sidebar?.refresh()} />
+				<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => editor?.focusTitle()} />
 				<button class="mobile-fab" onclick={createAndFocusNote} title="New Note">
 					<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
 						<path d="M12 5v14M5 12h14" />
@@ -662,7 +649,7 @@
 				{/if}
 
 				<div class="notelist-panel" style="width: {$notelistWidth}px">
-					<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onNoteMoved={() => sidebar?.refresh()} />
+					<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => editor?.focusTitle()} />
 				</div>
 
 				<ResizeHandle onResize={handleNotelistResize} />

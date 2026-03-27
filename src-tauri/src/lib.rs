@@ -137,6 +137,7 @@ pub fn run() {
             commands::get_vault_stats,
             commands::import_obsidian,
             commands::open_file,
+            commands::open_url,
             commands::copy_file_to,
             commands::create_backup,
             commands::list_backups,

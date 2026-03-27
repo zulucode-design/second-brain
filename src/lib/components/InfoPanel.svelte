@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { showInfo, appConfig } from '$lib/stores/app';
 	import { getVaultStats } from '$lib/api';
-	import { openUrl } from '@tauri-apps/plugin-opener';
+	import { openUrl } from '$lib/api';
 	import { getVersion } from '@tauri-apps/api/app';
 	import type { VaultStats } from '$lib/types';
 

@@ -2,8 +2,7 @@
 	import { onMount } from 'svelte';
 	import '../app.css';
 	import { theme, appConfig, activeNote, activeNotePath, installType, checkForUpdate, checkForUpdateMobile } from '$lib/stores/app';
-	import { openUrl } from '@tauri-apps/plugin-opener';
-	import { openFile, readNote, getInstallType } from '$lib/api';
+	import { openFile, openUrl, readNote, getInstallType } from '$lib/api';
 	import { get } from 'svelte/store';
 
 	let { children } = $props();

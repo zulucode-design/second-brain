@@ -267,6 +267,10 @@ export async function openFile(path: string): Promise<void> {
   return invoke("open_file", { path });
 }
 
+export async function openUrl(url: string): Promise<void> {
+  return invoke("open_url", { url });
+}
+
 export async function copyFileTo(
   source: string,
   destination: string,
