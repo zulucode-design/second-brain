@@ -54,7 +54,7 @@
 	let canvasW = 0;
 	let canvasH = 0;
 
-	// Style cache — cleared on theme change
+	// Style cache - cleared on theme change
 	let cachedStyles: { border: string; text: string; textSec: string; accent: string; bg: string } | null = null;
 
 	const FOLDER_PALETTE = [
@@ -231,14 +231,14 @@
 	}
 
 	function startSimulation() {
-		// Initial settle — enough for a rough layout, camera set after full physics
+		// Initial settle - enough for a rough layout, camera set after full physics
 		for (let i = 0; i < 80; i++) simulate();
 
 		// Show the full graph while physics finishes settling
 		fitToView();
 		draw();
 
-		// Queue remaining physics — camera will snap to active note when done
+		// Queue remaining physics - camera will snap to active note when done
 		physicsRemaining = Math.min(400, Math.max(150, nodes.length * 3));
 		startAnimLoop();
 	}
@@ -262,7 +262,7 @@
 				needsDraw = true;
 			}
 
-			// Glow pulse for active node — throttled to ~30fps
+			// Glow pulse for active node - throttled to ~30fps
 			if (activeNodeIdx >= 0) {
 				const elapsed = lastGlowTs > 0 ? Math.min(ts - lastGlowTs, 100) : 16.67;
 				if (lastGlowTs === 0 || ts - lastGlowTs >= 33) {
@@ -315,7 +315,7 @@
 			a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
 		}
 
-		// Center gravity — weaker for isolated nodes so they spread instead of clustering
+		// Center gravity - weaker for isolated nodes so they spread instead of clustering
 		for (let i = 0; i < nodeCount; i++) {
 			const node = nodes[i];
 			const gravity = (nodeDegree[i] || 0) === 0 ? 0.0002 : 0.0008;
@@ -418,7 +418,6 @@
 				ctx.lineTo(nodes[edges[i].targetIdx].x, nodes[edges[i].targetIdx].y);
 			}
 			ctx.stroke();
-			// Edges connected to search matches — brighter
 			ctx.globalAlpha = 0.4;
 			ctx.beginPath();
 			for (let i = 0; i < edges.length; i++) {
@@ -497,7 +496,7 @@
 
 			const radius = getNodeRadius(i, isActive);
 
-			// Active glow ring — opacity pulse, no radius change
+			// Active glow ring - opacity pulse, no radius change
 			if (isActive) {
 				const glowR = radius + 12;
 				const glow = ctx.createRadialGradient(node.x, node.y, radius, node.x, node.y, glowR);
@@ -524,7 +523,7 @@
 			}
 			ctx.fill();
 
-			// Active outer ring — static, alpha pulse only
+			// Active outer ring - static, alpha pulse only
 			if (isActive) {
 				ctx.globalAlpha = 0.35 + pulse * 0.3;
 				ctx.beginPath();
@@ -554,7 +553,7 @@
 			labelQueue.push({ x: node.x, y: node.y - radius - 5, text, fontSize, weight, color, alpha, priority });
 		}
 
-		// Draw labels with collision avoidance — high-priority labels drawn first
+		// Draw labels with collision avoidance - high-priority labels drawn first
 		labelQueue.sort((a, b) => a.priority - b.priority);
 		const drawnRects: LabelRect[] = [];
 		ctx.textAlign = 'center';

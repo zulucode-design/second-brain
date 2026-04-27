@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, tick, untrack } from 'svelte';
+	import { get } from 'svelte/store';
 	import { Editor } from '@tiptap/core';
 	import StarterKit from '@tiptap/starter-kit';
 	import Placeholder from '@tiptap/extension-placeholder';
@@ -35,9 +36,9 @@
 	import { convertFileSrc } from '@tauri-apps/api/core';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { readFile } from '@tauri-apps/plugin-fs';
-	import { openFile, openUrl, copyFileTo, copyImageToClipboard as copyImageToClipboardCmd } from '$lib/api';
+	import { openFile, openUrl, copyFileTo, copyImageToClipboard as copyImageToClipboardCmd, writeBytesTo, copyPngToClipboard } from '$lib/api';
 	import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, readOnly, quickAccessPaths, notes, navHistory, canGoBack, canGoForward } from '$lib/stores/app';
+	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, readOnly, quickAccessPaths, notes, navHistory, canGoBack, canGoForward, viewerNote, notebooks } from '$lib/stores/app';
 	import { saveNote, saveImage, saveAttachment, readClipboardImage, addQuickAccess, removeQuickAccess, getQuickAccess, getNoteVersions, getNoteVersionContent, createVersion, aiAsk, getAllNoteTitles, readNote, renameNote } from '$lib/api';
 	import type { VersionEntry, AiStreamEvent, NoteTitleEntry } from '$lib/types';
 	import { listen } from '@tauri-apps/api/event';
@@ -112,7 +113,6 @@
 	let aiMediaPlaceholders = $state<Map<string, string>>(new Map());
 	let aiStreamUnlisten: (() => void) | null = null;
 
-	// View mode (read-only) — state managed by $readOnly store
 
 	// Outline
 	let showOutline = $state(false);
@@ -180,6 +180,8 @@
 			{ label: 'Table', aliases: ['table', 'grid'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>', action: () => { slashTablePicker = true; slashTableHover = { rows: 0, cols: 0 }; } },
 			{ label: 'Horizontal Rule', aliases: ['hr', 'divider', 'line', 'separator', 'rule'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="2" y1="12" x2="22" y2="12"/></svg>', action: () => editor?.chain().focus().setHorizontalRule().run() },
 			{ label: 'Page Break', aliases: ['pagebreak', 'page', 'break', 'newpage', 'print'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="2" y1="9" x2="22" y2="9" stroke-dasharray="4 2"/><line x1="2" y1="15" x2="22" y2="15" stroke-dasharray="4 2"/><path d="M6 5v4M18 5v4M6 15v4M18 15v4"/></svg>', action: () => editor?.chain().focus().insertContent({ type: 'pageBreak' }).run() },
+			{ label: 'Math Block', aliases: ['math', 'latex', 'equation', 'formula', 'tex', 'katex'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h6l4 14h6"/><path d="M7 19l10-14"/></svg>', action: () => openMathInsert('block') },
+			{ label: 'Math Inline', aliases: ['mathinline', 'inline-math', 'imath', 'inlinemath'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h2l3 8h2"/><path d="M8 12l8-4"/></svg>', action: () => openMathInsert('inline') },
 		];
 	}
 
@@ -213,17 +215,124 @@
 	let tablePickerHover = $state({ rows: 0, cols: 0 });
 	let imageToolbar = $state<{ pos: number; x: number; y: number; size: string; src: string } | null>(null);
 	let copyToast = $state<'copying' | 'done' | null>(null);
+
+	// Math insert/edit modal (opened by /math slash command or double-click on existing math node)
+	let mathModal = $state<{ kind: 'block' | 'inline'; editPos: number | null; tex: string } | null>(null);
+
+	function openMathInsert(kind: 'block' | 'inline') {
+		mathModal = { kind, editPos: null, tex: '' };
+	}
+	function openMathEdit(pos: number, kind: 'block' | 'inline', tex: string) {
+		mathModal = { kind, editPos: pos, tex };
+	}
+	function cancelMathModal() {
+		mathModal = null;
+	}
+	function commitMathModal() {
+		if (!editor || !mathModal) return;
+		const { kind, editPos, tex } = mathModal;
+		const trimmed = tex.trim();
+		mathModal = null;
+		if (!trimmed) return;
+		if (editPos !== null) {
+			const node = editor.state.doc.nodeAt(editPos);
+			if (node && (node.type.name === 'mathBlock' || node.type.name === 'mathInline')) {
+				const tr = editor.state.tr.setNodeAttribute(editPos, 'tex', trimmed);
+				editor.view.dispatch(tr);
+			}
+		} else {
+			const nodeType = kind === 'block' ? 'mathBlock' : 'mathInline';
+			editor.chain().focus().insertContent({ type: nodeType, attrs: { tex: trimmed } }).run();
+		}
+	}
+	function renderMathPreview(tex: string, displayMode: boolean): string {
+		if (!tex.trim()) return '';
+		try {
+			return katex.renderToString(tex, { displayMode, throwOnError: false });
+		} catch (e: any) {
+			return `<span class="math-modal-preview-error">${e?.message || String(e)}</span>`;
+		}
+	}
+
+	// External-file viewer mode UI
+	let viewerImportPickerOpen = $state(false);
+	let viewerImportBusy = $state(false);
+	let viewerToast = $state<string | null>(null);
+	let viewerFlatNotebooks = $derived.by(() => {
+		if (!viewerImportPickerOpen) return [] as Array<{ path: string; name: string; depth: number }>;
+		const out: Array<{ path: string; name: string; depth: number }> = [];
+		const walk = (list: any[], depth: number) => {
+			for (const nb of list) {
+				out.push({ path: nb.path, name: nb.name, depth });
+				if (nb.children?.length) walk(nb.children, depth + 1);
+			}
+		};
+		walk($notebooks, 0);
+		return out;
+	});
+
+	function viewerFlash(msg: string) {
+		viewerToast = msg;
+		setTimeout(() => { viewerToast = null; }, 1500);
+	}
+
+	function closeViewer() {
+		$viewerNote = null;
+		$activeNote = null;
+		$activeNotePath = null;
+		$readOnly = false;
+		$focusMode = false;
+	}
+
+	async function viewerImportTo(folderPath: string) {
+		const v = $viewerNote;
+		const vaultRoot = $appConfig?.active_vault;
+		if (!v || !vaultRoot || viewerImportBusy) return;
+		viewerImportBusy = true;
+		try {
+			const filename = v.path.split('/').pop() || 'imported.md';
+			const baseName = filename.replace(/\.md$/i, '');
+			const folder = folderPath ? `${vaultRoot}/${folderPath}` : vaultRoot;
+			let dest = `${folder}/${filename}`;
+			// Conflict resolution: append (2), (3)... if file exists
+			let n = 2;
+			// readNote throws if file doesn't exist; use it as an existence probe
+			while (true) {
+				try { await readNote(dest); } catch { break; }
+				dest = `${folder}/${baseName} (${n}).md`;
+				n++;
+				if (n > 100) throw new Error('Could not find a free filename');
+			}
+			await copyFileTo(v.path, dest);
+			// Switch to the imported note as a real vault note
+			$viewerNote = null;
+			$readOnly = false;
+			$focusMode = false;
+			viewerImportPickerOpen = false;
+			const content = await readNote(dest);
+			$activeNote = content;
+			$activeNotePath = dest;
+			$editorDirty = false;
+			loadNote(dest, content.content);
+			viewerFlash('Imported');
+		} catch (e: any) {
+			console.error('[Viewer] import failed', e);
+			viewerFlash('Import failed: ' + (e?.message || String(e)));
+		} finally {
+			viewerImportBusy = false;
+		}
+	}
 	let noteRelativePath = $derived($activeNotePath && $appConfig?.active_vault ? $activeNotePath.replace($appConfig.active_vault + '/', '') : '');
 	let noteFolder = $derived(noteRelativePath ? noteRelativePath.substring(0, noteRelativePath.lastIndexOf('/')) : '');
 	let isQuickAccess = $derived(noteRelativePath ? $quickAccessPaths.includes(noteRelativePath) : false);
 
 	const lowlight = createLowlight(common);
-	const codeLanguages = lowlight.listLanguages().sort();
+	const codeLanguages = [...lowlight.listLanguages(), 'mermaid'].sort();
 	const mdit = MarkdownIt({ html: true, linkify: false, breaks: false })
 		.use(markdownItMark)
 		.use(markdownItSup)
 		.use(markdownItSub);
-	// Disable indented code blocks — tab-indented text should stay as text, not become code
+	// Disable indented code blocks - tab-indented text should stay as text, not become code
 	mdit.disable('code');
 
 	function normalizePath(p: string): string {
@@ -348,12 +457,18 @@
 			return ['div', { 'data-math-block': encodeURIComponent(tex), class: 'math-block', contenteditable: 'false' }, ['div', { innerHTML: rendered }]];
 		},
 		addNodeView() {
-			return ({ node }) => {
+			return ({ node, getPos }) => {
 				const dom = document.createElement('div');
 				dom.classList.add('math-block');
 				dom.contentEditable = 'false';
 				dom.setAttribute('data-math-block', encodeURIComponent(node.attrs.tex));
 				dom.innerHTML = katex.renderToString(node.attrs.tex, { displayMode: true, throwOnError: false });
+				dom.addEventListener('dblclick', (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					const pos = typeof getPos === 'function' ? getPos() : null;
+					if (pos !== null && pos !== undefined) openMathEdit(pos, 'block', node.attrs.tex);
+				});
 				return { dom };
 			};
 		},
@@ -379,13 +494,36 @@
 			return ['span', { 'data-math-inline': encodeURIComponent(tex), class: 'math-inline', contenteditable: 'false' }, ['span', { innerHTML: rendered }]];
 		},
 		addNodeView() {
-			return ({ node }) => {
+			return ({ node, getPos }) => {
 				const dom = document.createElement('span');
 				dom.classList.add('math-inline');
 				dom.contentEditable = 'false';
 				dom.setAttribute('data-math-inline', encodeURIComponent(node.attrs.tex));
 				dom.innerHTML = katex.renderToString(node.attrs.tex, { displayMode: false, throwOnError: false });
+				dom.addEventListener('dblclick', (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					const pos = typeof getPos === 'function' ? getPos() : null;
+					if (pos !== null && pos !== undefined) openMathEdit(pos, 'inline', node.attrs.tex);
+				});
 				return { dom };
+			};
+		},
+	});
+
+	const HeadingShortcuts = Extension.create({
+		name: 'headingShortcuts',
+		addKeyboardShortcuts() {
+			const toggle = (level: 1 | 2 | 3 | 4 | 5 | 6) => () =>
+				this.editor.chain().focus().toggleHeading({ level }).run();
+			return {
+				'Mod-1': toggle(1),
+				'Mod-2': toggle(2),
+				'Mod-3': toggle(3),
+				'Mod-4': toggle(4),
+				'Mod-5': toggle(5),
+				'Mod-6': toggle(6),
+				'Mod-0': () => this.editor.chain().focus().setParagraph().run(),
 			};
 		},
 	});
@@ -408,6 +546,281 @@
 		},
 		renderHTML() {
 			return ['div', { 'data-page-break': 'true', style: 'page-break-after: always; break-after: page;', class: 'page-break' }];
+		},
+	});
+
+	const MermaidRenderer = Extension.create({
+		name: 'mermaidRendererOptIn',
+		addProseMirrorPlugins() {
+			console.info('[HelixNotes] Mermaid renderer (opt-in) initialised');
+
+			let mermaidPromise: Promise<any> | null = null;
+			const svgCache = new Map<string, string>();
+			let renderCounter = 0;
+
+			function loadMermaid(): Promise<any> {
+				if (!mermaidPromise) {
+					mermaidPromise = import('mermaid')
+						.then((m) => {
+							const lib = m.default;
+							const isDark = document.documentElement.classList.contains('dark');
+							lib.initialize({
+								startOnLoad: false,
+								theme: isDark ? 'dark' : 'default',
+								securityLevel: 'strict',
+								fontFamily: 'inherit',
+							});
+							return lib;
+						})
+						.catch((e) => { console.error('[Mermaid] load failed', e); return null; });
+				}
+				return mermaidPromise;
+			}
+
+			function showError(container: HTMLElement, msg: string) {
+				container.innerHTML = '';
+				container.classList.remove('mermaid-render-loading');
+				container.classList.add('mermaid-render-error');
+				const text = document.createElement('div');
+				text.textContent = msg;
+				container.appendChild(text);
+				addRetryButton(container, container.getAttribute('data-mermaid-source') || '');
+			}
+
+			function addRetryButton(container: HTMLElement, source: string) {
+				const btn = document.createElement('button');
+				btn.type = 'button';
+				btn.className = 'mermaid-render-btn mermaid-render-btn-small';
+				btn.textContent = '↻ Retry';
+				btn.onclick = (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					renderInto(container, source);
+				};
+				container.appendChild(btn);
+			}
+
+			async function svgToPngBlob(svgEl: SVGElement, scale = 2): Promise<Blob> {
+				const clone = svgEl.cloneNode(true) as SVGElement;
+				if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+				const svgString = new XMLSerializer().serializeToString(clone);
+				const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+				const url = URL.createObjectURL(svgBlob);
+				try {
+					const img = new window.Image();
+					await new Promise<void>((resolve, reject) => {
+						img.onload = () => resolve();
+						img.onerror = () => reject(new Error('SVG image load failed'));
+						img.src = url;
+					});
+					const bbox = svgEl.getBoundingClientRect();
+					const width = Math.max(Math.round(bbox.width || 800), 100);
+					const height = Math.max(Math.round(bbox.height || 600), 100);
+					const canvas = document.createElement('canvas');
+					canvas.width = width * scale;
+					canvas.height = height * scale;
+					const ctx = canvas.getContext('2d');
+					if (!ctx) throw new Error('Canvas not supported');
+					ctx.scale(scale, scale);
+					ctx.fillStyle = document.documentElement.classList.contains('dark') ? '#1e1e1e' : '#ffffff';
+					ctx.fillRect(0, 0, width, height);
+					ctx.drawImage(img, 0, 0, width, height);
+					return await new Promise<Blob>((resolve, reject) => {
+						canvas.toBlob((b) => b ? resolve(b) : reject(new Error('toBlob failed')), 'image/png');
+					});
+				} finally {
+					URL.revokeObjectURL(url);
+				}
+			}
+
+			function flashToast(container: HTMLElement, msg: string) {
+				const existing = container.querySelector('.mermaid-render-toast');
+				if (existing) existing.remove();
+				const toast = document.createElement('div');
+				toast.className = 'mermaid-render-toast';
+				toast.textContent = msg;
+				container.appendChild(toast);
+				setTimeout(() => { if (toast.parentElement) toast.remove(); }, 1500);
+			}
+
+			async function copyDiagram(container: HTMLElement) {
+				const svgEl = container.querySelector('svg') as SVGElement | null;
+				if (!svgEl) return;
+				try {
+					const blob = await svgToPngBlob(svgEl);
+					const buf = new Uint8Array(await blob.arrayBuffer());
+					await copyPngToClipboard(buf);
+					flashToast(container, 'Copied');
+				} catch (e: any) {
+					console.error('[Mermaid] copy failed', e);
+					flashToast(container, 'Copy failed: ' + (e?.message || String(e)));
+				}
+			}
+
+			async function saveDiagram(container: HTMLElement) {
+				const svgEl = container.querySelector('svg') as SVGElement | null;
+				if (!svgEl) return;
+				try {
+					const dest = await saveDialog({
+						defaultPath: 'diagram.png',
+						filters: [
+							{ name: 'PNG Image', extensions: ['png'] },
+							{ name: 'SVG Image', extensions: ['svg'] },
+						],
+					});
+					if (!dest) return;
+					const lower = dest.toLowerCase();
+					if (lower.endsWith('.svg')) {
+						const clone = svgEl.cloneNode(true) as SVGElement;
+						if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+						const svgString = new XMLSerializer().serializeToString(clone);
+						await writeBytesTo(dest, new TextEncoder().encode(svgString));
+					} else {
+						const blob = await svgToPngBlob(svgEl);
+						const buf = new Uint8Array(await blob.arrayBuffer());
+						await writeBytesTo(dest, buf);
+					}
+					flashToast(container, 'Saved');
+				} catch (e: any) {
+					console.error('[Mermaid] save failed', e);
+					flashToast(container, 'Save failed: ' + (e?.message || String(e)));
+				}
+			}
+
+			function addToolbar(container: HTMLElement, source: string) {
+				const toolbar = document.createElement('div');
+				toolbar.className = 'mermaid-render-toolbar';
+
+				const copyBtn = document.createElement('button');
+				copyBtn.type = 'button';
+				copyBtn.className = 'mermaid-render-action';
+				copyBtn.title = 'Copy as PNG';
+				copyBtn.textContent = 'Copy';
+				copyBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); copyDiagram(container); };
+
+				const saveBtn = document.createElement('button');
+				saveBtn.type = 'button';
+				saveBtn.className = 'mermaid-render-action';
+				saveBtn.title = 'Save as PNG or SVG';
+				saveBtn.textContent = 'Save';
+				saveBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); saveDiagram(container); };
+
+				const reRenderBtn = document.createElement('button');
+				reRenderBtn.type = 'button';
+				reRenderBtn.className = 'mermaid-render-action';
+				reRenderBtn.title = 'Re-render diagram';
+				reRenderBtn.textContent = '↻';
+				reRenderBtn.onclick = (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					svgCache.delete(source);
+					renderInto(container, source);
+				};
+
+				toolbar.appendChild(copyBtn);
+				toolbar.appendChild(saveBtn);
+				toolbar.appendChild(reRenderBtn);
+				container.appendChild(toolbar);
+			}
+
+			async function renderInto(container: HTMLElement, source: string) {
+				container.innerHTML = '';
+				container.classList.remove('mermaid-render-error', 'mermaid-render-idle');
+				container.classList.add('mermaid-render-loading');
+
+				const cached = svgCache.get(source);
+				if (cached) {
+					container.classList.remove('mermaid-render-loading');
+					container.innerHTML = cached;
+					addToolbar(container, source);
+					return;
+				}
+
+				const mermaid = await loadMermaid();
+				if (!mermaid) {
+					showError(container, 'Mermaid library failed to load.');
+					return;
+				}
+				try {
+					const parseOk = await mermaid.parse(source, { suppressErrors: true });
+					if (!parseOk) {
+						showError(container, 'Invalid mermaid syntax.');
+						return;
+					}
+					const id = `mermaid-${++renderCounter}`;
+					const { svg } = await mermaid.render(id, source);
+					svgCache.set(source, svg);
+					if (container.isConnected) {
+						container.classList.remove('mermaid-render-loading');
+						container.innerHTML = svg;
+						addToolbar(container, source);
+					}
+				} catch (e: any) {
+					showError(container, 'Render failed: ' + (e?.message || String(e)));
+				}
+			}
+
+			function makeIdleButton(source: string): HTMLElement {
+				const container = document.createElement('div');
+				container.className = 'mermaid-render mermaid-render-idle';
+				container.contentEditable = 'false';
+				container.setAttribute('data-mermaid-source', source);
+
+				const cached = svgCache.get(source);
+				if (cached) {
+					container.classList.remove('mermaid-render-idle');
+					container.innerHTML = cached;
+					addToolbar(container, source);
+					return container;
+				}
+
+				const btn = document.createElement('button');
+				btn.type = 'button';
+				btn.className = 'mermaid-render-btn';
+				btn.textContent = '▶  Render diagram';
+				btn.onclick = (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					renderInto(container, source);
+				};
+				container.appendChild(btn);
+				return container;
+			}
+
+			function buildDecorations(doc: any): DecorationSet {
+				const decos: any[] = [];
+				doc.descendants((node: any, pos: number) => {
+					if (node.type.name === 'codeBlock' && node.attrs.language === 'mermaid') {
+						const source = node.textContent;
+						if (!source.trim()) return;
+						decos.push(
+							Decoration.widget(
+								pos + node.nodeSize,
+								() => makeIdleButton(source),
+								{ side: 1, key: 'mermaid:' + source.length + ':' + (svgCache.has(source) ? 'r' : 'i') },
+							),
+						);
+					}
+				});
+				return DecorationSet.create(doc, decos);
+			}
+
+			const pluginKey = new PluginKey('mermaidRendererOptIn');
+			return [
+				new Plugin({
+					key: pluginKey,
+					state: {
+						init: (_, state) => buildDecorations(state.doc),
+						apply: (tr, old, _oldState, newState) => {
+							if (!tr.docChanged) return old;
+							return buildDecorations(newState.doc);
+						},
+					},
+					props: {
+						decorations(state) { return pluginKey.getState(state); },
+					},
+				}),
+			];
 		},
 	});
 
@@ -820,7 +1233,7 @@
 		if (!wikiLinkMenu) return wikiLinkTitlesCache;
 		let q = wikiLinkMenu.query.toLowerCase();
 		if (!q) return wikiLinkTitlesCache;
-		// Strip |alias, #heading, ^block — only use the note name part for filtering
+		// Strip |alias, #heading, ^block - only use the note name part for filtering
 		const pipeIdx = q.indexOf('|');
 		if (pipeIdx >= 0) q = q.slice(0, pipeIdx);
 		q = q.replace(/#.*$/, '').replace(/\^.*$/, '').trim();
@@ -1039,7 +1452,6 @@
 								const state = view.state;
 								const textBefore = state.doc.textBetween(wikiLinkMenu.from, state.selection.from);
 								if (textBefore.endsWith(']')) {
-									// User typed ]] — resolve the query as a link title
 									// Supports Obsidian syntax: [[note|alias]], [[note#heading]], [[note^block]]
 									const rawQuery = textBefore.slice(2, -1); // strip the [[ and trailing ]
 									if (rawQuery.trim()) {
@@ -1052,7 +1464,6 @@
 										if (matches.length === 1) {
 											insertWikiLink({ ...matches[0], title: display }, noteRef);
 										} else if (matches.length > 1) {
-											// Multiple matches — show disambiguation picker
 											// Keep the menu open but filter to only the matching entries
 											wikiLinkMenu = { ...wikiLinkMenu!, query: titleForLookup };
 											// Override filtered results to only show exact matches
@@ -1134,7 +1545,7 @@
 	}
 
 	async function navigateToWikiLink(path: string, title: string, clickEvent?: MouseEvent) {
-		// title may contain #heading or ^block anchors — strip for note lookup
+		// title may contain #heading or ^block anchors - strip for note lookup
 		const noteTitle = title.replace(/#.*$/, '').replace(/\^.*$/, '').trim();
 		if (!path) {
 			// Try path-based resolution first (for disambiguated refs like "folder/note")
@@ -1145,7 +1556,6 @@
 				if (pathMatch) {
 					path = pathMatch.path;
 				} else {
-					// Path not found — try title of last segment
 					const lastSegment = noteTitle.split('/').pop()!;
 					const segMatches = wikiLinkTitlesCache.filter(e => e.title.toLowerCase() === lastSegment.toLowerCase());
 					if (segMatches.length === 1) path = segMatches[0].path;
@@ -1162,12 +1572,10 @@
 			}
 		}
 		if (!path) {
-			// Unresolved link — try to find by title
 			const matches = wikiLinkTitlesCache.filter(e => e.title.toLowerCase() === noteTitle.toLowerCase());
 			if (matches.length === 1) {
 				path = matches[0].path;
 			} else if (matches.length > 1) {
-				// Multiple matches — show disambiguation popup
 				let x = clickEvent ? clickEvent.clientX : window.innerWidth / 2 - 140;
 				let y = clickEvent ? clickEvent.clientY + 8 : window.innerHeight / 2 - 100;
 				if (x + 280 > window.innerWidth) x = window.innerWidth - 290;
@@ -1305,6 +1713,7 @@
 	}
 
 	const autoSave = debounce(async () => {
+		if (get(viewerNote)) return; // never autosave external viewer files
 		if (!$activeNote || !$activeNotePath || !$editorDirty) return;
 		// Only fix blob images if a paste occurred (avoids full doc scan on every save)
 		if (hasPendingBlobs) {
@@ -1330,6 +1739,7 @@
 	}, isMobile ? 1500 : 500);
 
 	export async function forceSave() {
+		if (get(viewerNote)) return; // viewer files are never written back
 		if (!$activeNote || !$activeNotePath) return;
 		await fixingBlobsPromise;
 		try {
@@ -1354,6 +1764,15 @@
 				if (ro && $editorDirty) forceSave();
 				editor.setEditable(!ro);
 			}
+		});
+	});
+
+	// Belt-and-suspenders: viewer mode is always read-only, regardless of any other path
+	// that might toggle setEditable. Re-asserts every time the editor or viewer state changes.
+	$effect(() => {
+		const v = $viewerNote;
+		untrack(() => {
+			if (editor && v) editor.setEditable(false);
 		});
 	});
 
@@ -1387,7 +1806,7 @@
 		if (!$activeNote || !$activeNotePath || !historySelected) return;
 		try {
 			const raw = historyPreview ?? await getNoteVersionContent($activeNote.meta.id, historySelected.timestamp);
-			// The raw content includes frontmatter — parse out the body
+			// The raw content includes frontmatter - parse out the body
 			const fmEnd = raw.indexOf('---', 4);
 			const body = fmEnd > 0 ? raw.substring(raw.indexOf('\n', fmEnd) + 1) : raw;
 			if (editor) {
@@ -1490,9 +1909,11 @@
 		loadedPath = path;
 		lastSourceMode = $sourceMode;
 		isLoadingNote = true;
-		// Apply default view mode when switching notes — but new notes always open in edit mode
+		// Apply default view mode when switching notes - but new notes always open in edit mode.
+		// Viewer mode (external file) always forces read-only.
+		const isViewer = !!get(viewerNote);
 		const isNewNote = $activeNote?.meta.title === 'Untitled' && !content.replace(/^---[\s\S]*?---\s*/, '').trim();
-		const shouldBeReadOnly = isNewNote ? false : ($appConfig?.default_view_mode ?? false);
+		const shouldBeReadOnly = isViewer ? true : (isNewNote ? false : ($appConfig?.default_view_mode ?? false));
 		$readOnly = shouldBeReadOnly;
 		if (editor) editor.setEditable(!shouldBeReadOnly);
 		const editorBody = editorElement?.closest('.editor-body') as HTMLElement | null;
@@ -1515,7 +1936,7 @@
 				// (triggered by checkbox clicks etc.) doesn't scroll to the old note's cursor position.
 				if (editor) {
 					const tr = editor.state.tr.setSelection(TextSelection.atStart(editor.state.doc));
-					// No tr.scrollIntoView() — must not trigger any scroll
+					// No tr.scrollIntoView() - must not trigger any scroll
 					editor.view.dispatch(tr);
 				}
 				requestAnimationFrame(() => { if (editorBody) editorBody.scrollTop = 0; });
@@ -1543,7 +1964,7 @@
 			const line = lines[i].trim();
 			if (line === '') continue;
 			// Check if it's a heading (any level) matching the note title
-			// Normalize: lowercase, collapse whitespace, strip common separators (- — _)
+			// Normalize: lowercase, collapse whitespace, strip common separators (- - _)
 			const normalize = (s: string) => s.trim().toLowerCase().replace(/[\s\-—_]+/g, ' ');
 			const match = line.match(/^(#{1,6})\s+(.+)$/);
 			if (match && normalize(match[2]) === normalize(title)) {
@@ -1589,25 +2010,16 @@
 	}
 
 	function prosemirrorToMarkdown(doc: any): string {
-		const listTypes = new Set(['bulletList', 'orderedList', 'taskList']);
 		const entries: { text: string; isImage: boolean }[] = [];
-		let prevType = '';
-		let preserveEmptyParas = false;
 		doc.forEach((node: any) => {
 			const isEmpty = node.type.name === 'paragraph' && node.childCount === 0;
-			// After a list, code block, or blockquote, preserve empty paragraphs as HTML comments
-			// so markdown-it doesn't merge adjacent blocks or collapse spacing
-			if (listTypes.has(prevType) || prevType === 'codeBlock' || prevType === 'blockquote') {
-				preserveEmptyParas = true;
-			}
-			if (isEmpty && preserveEmptyParas) {
+			// Preserve every empty paragraph as <!-- --> so markdown round-trip keeps the user's
+			// vertical spacing exactly. markdownToHtml converts the marker back to <p></p> on load.
+			if (isEmpty) {
 				entries.push({ text: '<!-- -->', isImage: false });
-				prevType = node.type.name;
 				return;
 			}
-			preserveEmptyParas = false;
 			entries.push({ text: serializeNode(node), isImage: isImageNode(node) });
-			prevType = node.type.name;
 		});
 		// Join: skip extra \n separator before image nodes so they don't get unwanted blank lines
 		let result = '';
@@ -1720,7 +2132,7 @@
 				parts.push(serializeInline(child));
 			} else if (child.type.name === 'bulletList' || child.type.name === 'orderedList' || child.type.name === 'taskList') {
 				// Indent nested lists so markdown parsers recognize nesting
-				// Use 4 spaces — works for both bullet (- ) and ordered (1. ) parent markers
+				// Use 4 spaces - works for both bullet (- ) and ordered (1. ) parent markers
 				const nested = serializeNode(child).replace(/\n$/, '');
 				const indented = nested.split('\n').map((line: string) => '    ' + line).join('\n');
 				parts.push(indented);
@@ -1989,7 +2401,7 @@
 	}
 
 	function stripAssetSrc(src: string): string {
-		// blob: URLs are not persistable — they were temporary browser references
+		// blob: URLs are not persistable - they were temporary browser references
 		if (src.startsWith('blob:')) return '';
 		// Convert imgproxy:// URLs back to original external URLs for saving
 		if (src.startsWith('imgproxy:') || src.startsWith('http://imgproxy.localhost') || src.startsWith('https://imgproxy.localhost')) {
@@ -2082,7 +2494,7 @@
 		// Preserve PDF embeds as raw HTML
 		const pdfs: string[] = [];
 		md = md.replace(/<div[^>]*data-pdf-src="([^"]*)"[^>]*>[\s\S]*?<\/div>/gi, (match, src) => {
-			// Store with the relative path — we strip convertFileSrc URLs on save
+			// Store with the relative path - we strip convertFileSrc URLs on save
 			const nameMatch = match.match(/data-pdf-name="([^"]*)"/);
 			const name = nameMatch ? nameMatch[1] : src.split('/').pop() || 'file.pdf';
 			pdfs.push(`<div data-pdf-src="${src}" data-pdf-name="${name}" class="pdf-embed"></div>`);
@@ -2154,7 +2566,6 @@
 				const vaultRoot = $appConfig?.active_vault ?? '';
 				let match: NoteTitleEntry | undefined;
 				if (titleForLookup.includes('/') && vaultRoot) {
-					// Ref contains a path — resolve by matching vault-relative path
 					const fullPath = vaultRoot + '/' + titleForLookup + '.md';
 					match = wikiLinkTitlesCache.find(e => e.path === fullPath);
 				}
@@ -2166,7 +2577,7 @@
 					if (titleMatches.length === 1) {
 						match = titleMatches[0];
 					} else if (titleMatches.length > 1) {
-						// Multiple matches — prefer the shallowest path (closest to vault root)
+						// Multiple matches - prefer the shallowest path (closest to vault root)
 						match = titleMatches.reduce((a, b) =>
 							a.path.split('/').length <= b.path.split('/').length ? a : b
 						);
@@ -2191,7 +2602,7 @@
 			return `[${text}](${url.replace(/ /g, '%20')})`;
 		});
 
-		// Pre-process: transform PDF embed divs — iframes when inline preview is on, clickable links otherwise
+		// Pre-process: transform PDF embed divs - iframes when inline preview is on, clickable links otherwise
 		src = src.replace(/<div[^>]*data-pdf-src="([^"]*)"[^>]*data-pdf-name="([^"]*)"[^>]*>[^<]*<\/div>/gi, (_, pdfSrc, name) => {
 			const vaultRoot = $appConfig?.active_vault ?? '';
 			const absPath = normalizePath(`${vaultRoot}/${decodeURIComponent(pdfSrc)}`);
@@ -2204,7 +2615,7 @@
 			return `<div data-pdf-src="${pdfSrc}" data-pdf-name="${name}" class="pdf-embed-mobile"><a href="${decodeURIComponent(pdfSrc)}" class="pdf-link-mobile">\uD83D\uDCC4 ${name}</a></div>`;
 		});
 
-		// Pre-process: render KaTeX math — only outside fenced code blocks
+		// Pre-process: render KaTeX math - only outside fenced code blocks
 		{
 			const lines = src.split('\n');
 			const outLines: string[] = [];
@@ -2256,7 +2667,7 @@
 		// Insert a <div> marker that markdown-it passes through (html: true), then convert to <p></p>
 		src = src.replace(/\n\n(!\[[^\]]*\]\([^)]*\)\s*$)/gm, '\n\n<div data-img-gap></div>\n\n$1');
 
-		// Run markdown-it (single-pass parser — handles headings, bold, italic, strike, code, blockquote, lists, links, images, hr, tables, raw HTML)
+		// Run markdown-it (single-pass parser - handles headings, bold, italic, strike, code, blockquote, lists, links, images, hr, tables, raw HTML)
 		let html = mdit.render(src);
 
 		// Post-process: convert image gap markers into empty paragraphs for ProseMirror
@@ -2339,7 +2750,7 @@
 		const path = $activeNotePath;
 		const note = $activeNote;
 		if (!path) {
-			// Note was deselected (e.g. deleted) — destroy editor so it reinits on next note
+			// Note was deselected (e.g. deleted) - destroy editor so it reinits on next note
 			destroyEditor();
 			loadedPath = '';
 			return;
@@ -2367,6 +2778,7 @@
 
 		editor = new Editor({
 			element: editorElement,
+			editable: !$readOnly,
 			extensions: [
 				StarterKit.configure({ codeBlock: false }),
 				Placeholder.configure({
@@ -2394,6 +2806,7 @@
 				Color,
 				CodeBlockLowlight.configure({ lowlight, enableTabIndentation: true, defaultLanguage: 'text' }),
 				CodeBlockLanguageSelect,
+				MermaidRenderer,
 				PdfEmbed,
 				MathBlock,
 				MathInline,
@@ -2449,7 +2862,10 @@
 						})];
 					}
 				}),
-				TextAlign.configure({ types: ['heading', 'paragraph'] }),
+				TextAlign.configure({ types: ['heading', 'paragraph'] }).extend({
+					addKeyboardShortcuts: () => ({}),
+				}),
+				HeadingShortcuts,
 				SlashCommands,
 				MoveLineShortcuts,
 				TabIndent,
@@ -2458,7 +2874,7 @@
 			],
 			content: html,
 			editorProps: {
-				attributes: { class: 'editor-content' },
+				attributes: { class: 'editor-content', spellcheck: 'false' },
 				handleDOMEvents: {
 					// Prevent focus-caused scroll jumps when clicking details toggle buttons.
 					// Pre-focusing with preventScroll means TipTap's focus() call sees
@@ -2479,12 +2895,12 @@
 								const savedScroll = editorBody.scrollTop;
 								const restore = () => { editorBody!.scrollTop = savedScroll; };
 								editorBody.addEventListener('scroll', restore);
-								// Remove after 200ms — covers synchronous, rAF, and setTimeout-based scrolls
+								// Remove after 200ms - covers synchronous, rAF, and setTimeout-based scrolls
 								setTimeout(() => editorBody!.removeEventListener('scroll', restore), 200);
 							}
 						}
 					},
-					// Prevent native text drag — it causes copy-instead-of-move in Tauri's webview.
+					// Prevent native text drag - it causes copy-instead-of-move in Tauri's webview.
 					// File drops from OS are handled by Tauri's onDragDropEvent listener instead.
 					dragstart: (_view, event) => {
 						const dt = event.dataTransfer;
@@ -2499,9 +2915,35 @@
 					if (!handled) hasPendingBlobs = true; // ProseMirror may insert blob: images from web paste
 					return handled;
 				},
+				// Strip color / font styling from pasted HTML so the editor uses its own theme.
+				// Keeps semantic marks (bold, italic, links, headings, alignment) - drops only the
+				// inline visual styles that fight the app's theme (color, bg-color, font-family, font-size).
+				transformPastedHTML: (html: string) => {
+					if (!/style=|<font/i.test(html)) return html;
+					try {
+						const doc = new DOMParser().parseFromString(html, 'text/html');
+						doc.querySelectorAll('[style]').forEach((el) => {
+							const style = (el as HTMLElement).style;
+							style.color = '';
+							style.backgroundColor = '';
+							style.fontFamily = '';
+							style.fontSize = '';
+							if (!style.cssText.trim()) el.removeAttribute('style');
+						});
+						doc.querySelectorAll('font').forEach((el) => {
+							el.removeAttribute('color');
+							el.removeAttribute('face');
+							el.removeAttribute('size');
+						});
+						return doc.body.innerHTML;
+					} catch (e) {
+						console.warn('[paste] style strip failed', e);
+						return html;
+					}
+				},
 			},
 			onTransaction: () => {
-				// Batch toolbar state updates to once per frame — avoids ~35 isActive() calls per transaction during selection drag
+				// Batch toolbar state updates to once per frame - avoids ~35 isActive() calls per transaction during selection drag
 				if (!editorStateRaf) {
 					editorStateRaf = requestAnimationFrame(() => {
 						editorStateRaf = 0;
@@ -2569,10 +3011,9 @@
 			if (url && !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url) && !url.startsWith('/') && !url.startsWith('#') && !url.endsWith('.md')) {
 				url = 'https://' + url;
 			}
-			// Store raw URL — encoding is handled during markdown serialization/parsing
+			// Store raw URL - encoding is handled during markdown serialization/parsing
 			const href = url.replace(/[()]/g, (c) => encodeURIComponent(c));
 			if (linkSelectionFrom === linkSelectionTo) {
-				// No text selected — insert link text with the mark
 				const text = linkModalDisplayText || url.replace(/\.md$/, '').split('/').pop() || url;
 				editor.chain().focus().setTextSelection(linkSelectionFrom).insertContent({
 					type: 'text',
@@ -2646,7 +3087,6 @@
 	function handleEditorClick(event: MouseEvent) {
 		const target = event.target as HTMLElement;
 
-		// Wiki-link click — navigate to linked note
 		const wikiLinkEl = target.closest('span[data-wiki-link]') as HTMLElement | null;
 		if (wikiLinkEl) {
 			imageToolbar = null;
@@ -2658,7 +3098,6 @@
 			return;
 		}
 
-		// Image click — toggle size toolbar
 		if (target.tagName === 'IMG' && editor) {
 			event.preventDefault();
 			event.stopPropagation();
@@ -2985,10 +3424,8 @@
 			aiSelectedText = selectedText;
 			aiWholeNote = false;
 		} else {
-			// No selection — use the full note content
 			const fullMarkdown = editorToMarkdown();
 			if (!fullMarkdown.trim()) {
-				// Empty note — allow AI to generate content from a prompt
 				aiEmptyNote = true;
 				aiWholeNote = true;
 				aiSelectedText = '';
@@ -3149,7 +3586,7 @@
 			for (const [key, original] of aiMediaPlaceholders) {
 				finalMarkdown = finalMarkdown.replace(key, original);
 			}
-			// Replace entire document — convert markdown back to HTML for TipTap
+			// Replace entire document - convert markdown back to HTML for TipTap
 			editor.commands.setContent(markdownToHtml(finalMarkdown));
 		} else {
 			// Replace the selected range with the AI result (convert markdown → HTML so TipTap renders it properly)
@@ -3196,7 +3633,7 @@
 		if (!linkContextMenu) return;
 		const href = linkContextMenu.href;
 		closeLinkContextMenu();
-		// Internal .md note link — navigate within the app
+		// Internal .md note link - navigate within the app
 		const notePath = resolveNoteHref(href);
 		if (notePath) {
 			navigateToWikiLink(notePath, '');
@@ -3454,7 +3891,7 @@
 		}
 	}
 
-	// Source mode toggle — only react to explicit user toggle, not note switches
+	// Source mode toggle - only react to explicit user toggle, not note switches
 	$effect(() => {
 		const isSource = $sourceMode;
 		// Only act if we have a loaded note
@@ -3560,6 +3997,23 @@
 			</div>
 		</div>
 	{:else}
+		{#if $viewerNote}
+			<div class="viewer-banner">
+				<svg class="viewer-banner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+				</svg>
+				<span class="viewer-banner-label">Read-only viewer</span>
+				<code class="viewer-banner-path" title={$viewerNote.path}>{$viewerNote.path}</code>
+				<div class="viewer-banner-actions">
+					<button type="button" class="viewer-banner-btn primary" onclick={() => (viewerImportPickerOpen = true)} disabled={viewerImportBusy || !$appConfig?.active_vault}>Import to vault…</button>
+					<button type="button" class="viewer-banner-btn" onclick={closeViewer}>Close</button>
+				</div>
+				{#if viewerToast}
+					<span class="viewer-banner-toast">{viewerToast}</span>
+				{/if}
+			</div>
+		{/if}
+		{#if !$viewerNote}
 		<div class="editor-toolbar" class:mobile={isMobile}>
 			<div class="editor-title">
 				<input
@@ -3745,6 +4199,7 @@
 			</div>
 			{/if}
 		</div>
+		{/if}
 
 		{#if !$focusMode}
 		<div class="note-meta-bar">
@@ -3854,7 +4309,7 @@
 						spellcheck="false"
 					></textarea>
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
-					<div class="tiptap-wrapper" style={$sourceMode ? 'display:none' : ''} bind:this={editorElement} onclick={(e) => { closeLinkContextMenu(); handleEditorClick(e); showOutline = false; }}></div>
+					<div class="tiptap-wrapper" style={$sourceMode ? 'display:none' : ''} spellcheck="false" bind:this={editorElement} onclick={(e) => { closeLinkContextMenu(); handleEditorClick(e); showOutline = false; }}></div>
 				{:else}
 					<!-- Desktop: conditional rendering with line numbers -->
 					{#if $sourceMode}
@@ -3962,7 +4417,7 @@
 						></textarea>
 					{:else}
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
-						<div class="tiptap-wrapper" bind:this={editorElement} onclick={(e) => { closeLinkContextMenu(); handleEditorClick(e); showOutline = false; }} oncontextmenu={handleEditorContextMenu}></div>
+						<div class="tiptap-wrapper" spellcheck="false" bind:this={editorElement} onclick={(e) => { closeLinkContextMenu(); handleEditorClick(e); showOutline = false; }} oncontextmenu={handleEditorContextMenu}></div>
 					{/if}
 				{/if}
 			</div>
@@ -4043,13 +4498,13 @@
 			</div>
 		</div>
 
-		{#if editorReady && !$sourceMode}
+		{#if editorReady && !$sourceMode && !$viewerNote}
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div class="editor-formatting-bar" style={isMobile ? `${keyboardHeight > 0 ? `bottom: ${keyboardHeight}px;` : ''}${anyDropdownOpen ? 'overflow: visible;' : ''}` : ''} onclick={() => { headingDropdown = false; colorDropdown = false; highlightDropdown = false; tablePickerOpen = false; alignDropdown = false; insertDropdown = false; }}>
 				{#if isMobile}
 				<!-- ═══ MOBILE formatting bar: compact, relevant buttons only ═══ -->
 
-				<!-- Insert (+) dropdown — at front like desktop -->
+				<!-- Insert (+) dropdown - at front like desktop -->
 				<div class="fmt-dropdown-wrap">
 					<button class="fmt-btn insert-btn" onclick={(e) => { e.stopPropagation(); insertDropdown = !insertDropdown; headingDropdown = false; }} title="Insert">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
@@ -4422,7 +4877,7 @@
 				<!-- Indent / Outdent -->
 				<button class="fmt-btn" onclick={() => {
 					if (!editor) return;
-					// Try list indent first — run() returns true if it succeeded
+					// Try list indent first - run() returns true if it succeeded
 					const sank = editor.chain().focus().sinkListItem('listItem').run();
 					if (!sank) {
 						const sankTask = editor.chain().focus().sinkListItem('taskItem').run();
@@ -4760,6 +5215,72 @@
 	</div>
 {/if}
 
+{#if mathModal}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="math-modal-overlay" onclick={cancelMathModal}>
+		<div class="math-modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Math editor">
+			<div class="math-modal-header">
+				<span>{mathModal.editPos !== null ? 'Edit' : 'Insert'} {mathModal.kind === 'block' ? 'Math Block' : 'Inline Math'}</span>
+				<button type="button" class="math-modal-close" onclick={cancelMathModal} aria-label="Close">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+				</button>
+			</div>
+			<textarea
+				class="math-modal-input"
+				placeholder="LaTeX, e.g. E = mc^2"
+				bind:value={mathModal.tex}
+				onkeydown={(e) => {
+					if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); commitMathModal(); }
+					if (e.key === 'Escape') { e.preventDefault(); cancelMathModal(); }
+				}}
+				autofocus
+			></textarea>
+			<div class="math-modal-preview">
+				{#if mathModal.tex.trim()}
+					<div>{@html renderMathPreview(mathModal.tex, mathModal.kind === 'block')}</div>
+				{:else}
+					<span class="math-modal-preview-empty">Preview appears here…</span>
+				{/if}
+			</div>
+			<div class="math-modal-footer">
+				<span class="math-modal-hint">{modKey}+Enter to {mathModal.editPos !== null ? 'update' : 'insert'} · Esc to cancel</span>
+				<div class="math-modal-actions">
+					<button type="button" onclick={cancelMathModal}>Cancel</button>
+					<button type="button" class="primary" onclick={commitMathModal} disabled={!mathModal.tex.trim()}>
+						{mathModal.editPos !== null ? 'Update' : 'Insert'}
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if viewerImportPickerOpen}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="viewer-import-overlay" onclick={() => (viewerImportPickerOpen = false)}>
+		<div class="viewer-import-picker" onclick={(e) => e.stopPropagation()} role="dialog">
+			<div class="viewer-import-header">
+				<span>Import to folder</span>
+				<button type="button" class="viewer-import-close" onclick={() => (viewerImportPickerOpen = false)} aria-label="Close">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+				</button>
+			</div>
+			<div class="viewer-import-list">
+				<button type="button" class="viewer-import-item" onclick={() => viewerImportTo('')} disabled={viewerImportBusy}>
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+					Vault root
+				</button>
+				{#each viewerFlatNotebooks as nb (nb.path)}
+					<button type="button" class="viewer-import-item" style="padding-left: {12 + nb.depth * 16}px" onclick={() => viewerImportTo(nb.path)} disabled={viewerImportBusy}>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+						{nb.name}
+					</button>
+				{/each}
+			</div>
+		</div>
+	</div>
+{/if}
+
 {#if codeLangDropdown}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="code-lang-overlay" onclick={closeCodeLangDropdown}>
@@ -4860,7 +5381,7 @@
 	<div class="wiki-link-overlay" onclick={() => wikiLinkNavDisambig = null}>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="wiki-link-menu" style="left: {wikiLinkNavDisambig.x}px; top: {wikiLinkNavDisambig.y}px" onclick={(e) => e.stopPropagation()}>
-			<div class="wiki-link-disambig-header">Multiple notes found — choose one:</div>
+			<div class="wiki-link-disambig-header">Multiple notes found - choose one:</div>
 			{#each wikiLinkNavDisambig.entries as entry, i}
 				<button
 					class="wiki-link-item"
@@ -4951,7 +5472,7 @@
 				<button class="ai-menu-item" onclick={() => runAiAction('translate_fr')}>French</button>
 				<button class="ai-menu-item" onclick={() => runAiAction('translate_es')}>Spanish</button>
 			{:else if aiEmptyNote}
-				<!-- Empty note — generate from prompt -->
+				<!-- Empty note - generate from prompt -->
 				<div class="ai-menu-label">Generate Note</div>
 				<div class="ai-custom-body">
 					<textarea
@@ -5897,7 +6418,7 @@
 		opacity: 0.7;
 	}
 
-	/* Syntax highlighting — light mode */
+	/* Syntax highlighting - light mode */
 	:global(.tiptap pre code .hljs-keyword),
 	:global(.tiptap pre code .hljs-selector-tag),
 	:global(.tiptap pre code .hljs-built_in) { color: #d73a49; }
@@ -5929,7 +6450,7 @@
 	:global(.tiptap pre code .hljs-selector-id) { color: #005cc5; }
 	:global(.tiptap pre code .hljs-operator) { color: #d73a49; }
 
-	/* Syntax highlighting — dark mode */
+	/* Syntax highlighting - dark mode */
 	:global(.dark .tiptap pre code .hljs-keyword),
 	:global(.dark .tiptap pre code .hljs-selector-tag),
 	:global(.dark .tiptap pre code .hljs-built_in) { color: #ff7b72; }
@@ -5960,6 +6481,258 @@
 	:global(.dark .tiptap pre code .hljs-selector-class) { color: #d2a8ff; }
 	:global(.dark .tiptap pre code .hljs-selector-id) { color: #79c0ff; }
 	:global(.dark .tiptap pre code .hljs-operator) { color: #ff7b72; }
+
+	.math-modal-overlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.4);
+		z-index: 2200;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+	.math-modal {
+		background: var(--bg-primary);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		min-width: 480px;
+		max-width: 80vw;
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		padding: 16px;
+		box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+	}
+	.math-modal-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		font-weight: 500;
+		font-size: 14px;
+		color: var(--text-primary);
+	}
+	.math-modal-close {
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: var(--text-secondary);
+		padding: 4px;
+		display: flex;
+	}
+	.math-modal-close:hover { color: var(--text-primary); }
+	.math-modal-input {
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 13px;
+		min-height: 80px;
+		padding: 10px;
+		border: 1px solid var(--border);
+		border-radius: 5px;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		resize: vertical;
+		outline: none;
+	}
+	.math-modal-input:focus { border-color: var(--accent); }
+	.math-modal-preview {
+		min-height: 60px;
+		padding: 14px;
+		border: 1px solid var(--border);
+		border-radius: 5px;
+		background: var(--bg-secondary);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		overflow-x: auto;
+		color: var(--text-primary);
+	}
+	.math-modal-preview-empty {
+		color: var(--text-tertiary);
+		font-size: 13px;
+	}
+	.math-modal-preview :global(.math-modal-preview-error) {
+		color: #d32f2f;
+		font-size: 12px;
+		font-family: var(--font-mono, monospace);
+	}
+	.math-modal-footer {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 12px;
+	}
+	.math-modal-hint {
+		font-size: 11px;
+		color: var(--text-tertiary);
+	}
+	.math-modal-actions {
+		display: flex;
+		gap: 8px;
+	}
+	.math-modal-actions button {
+		appearance: none;
+		padding: 6px 14px;
+		border-radius: 5px;
+		cursor: pointer;
+		font-size: 13px;
+		font-family: inherit;
+		border: 1px solid var(--border);
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+	}
+	.math-modal-actions button:hover:not(:disabled) {
+		border-color: var(--accent);
+	}
+	.math-modal-actions button.primary {
+		background: var(--accent);
+		color: var(--accent-fg, white);
+		border-color: var(--accent);
+	}
+	.math-modal-actions button.primary:hover:not(:disabled) {
+		filter: brightness(1.1);
+	}
+	.math-modal-actions button:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.viewer-banner {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 8px 14px;
+		background: var(--bg-tertiary, var(--bg-secondary));
+		border-bottom: 1px solid var(--border);
+		font-size: 13px;
+		color: var(--text-primary);
+		flex-shrink: 0;
+	}
+	.viewer-banner-icon {
+		flex-shrink: 0;
+		color: var(--accent, var(--text-secondary));
+	}
+	.viewer-banner-label {
+		font-weight: 500;
+		flex-shrink: 0;
+	}
+	.viewer-banner-path {
+		color: var(--text-secondary);
+		font-family: var(--font-mono, monospace);
+		font-size: 12px;
+		overflow: hidden;
+		white-space: nowrap;
+		text-overflow: ellipsis;
+		flex: 1;
+		min-width: 0;
+	}
+	.viewer-banner-actions {
+		display: flex;
+		gap: 6px;
+		flex-shrink: 0;
+	}
+	.viewer-banner-btn {
+		appearance: none;
+		background: var(--bg-primary);
+		color: var(--text-primary);
+		border: 1px solid var(--border);
+		border-radius: 5px;
+		padding: 4px 12px;
+		font-size: 12px;
+		cursor: pointer;
+		font-family: inherit;
+	}
+	.viewer-banner-btn:hover:not(:disabled) {
+		border-color: var(--accent);
+	}
+	.viewer-banner-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.viewer-banner-btn.primary {
+		background: var(--accent);
+		color: var(--accent-fg, white);
+		border-color: var(--accent);
+	}
+	.viewer-banner-btn.primary:hover:not(:disabled) {
+		filter: brightness(1.1);
+	}
+	.viewer-banner-toast {
+		font-size: 12px;
+		color: var(--text-secondary);
+		flex-shrink: 0;
+	}
+
+	.viewer-import-overlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.4);
+		z-index: 2100;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+	.viewer-import-picker {
+		background: var(--bg-primary);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		min-width: 320px;
+		max-width: 480px;
+		max-height: 70vh;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+		box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+	}
+	.viewer-import-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 12px 16px;
+		border-bottom: 1px solid var(--border);
+		font-weight: 500;
+		font-size: 14px;
+	}
+	.viewer-import-close {
+		appearance: none;
+		background: none;
+		border: none;
+		color: var(--text-secondary);
+		cursor: pointer;
+		padding: 4px;
+		display: flex;
+	}
+	.viewer-import-close:hover {
+		color: var(--text-primary);
+	}
+	.viewer-import-list {
+		overflow-y: auto;
+		padding: 6px 0;
+	}
+	.viewer-import-item {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		appearance: none;
+		background: none;
+		border: none;
+		color: var(--text-primary);
+		padding: 8px 14px;
+		text-align: left;
+		font-size: 13px;
+		cursor: pointer;
+		font-family: inherit;
+	}
+	.viewer-import-item:hover:not(:disabled) {
+		background: var(--bg-secondary);
+	}
+	.viewer-import-item:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.viewer-import-item svg {
+		color: var(--text-tertiary);
+		flex-shrink: 0;
+	}
 
 	.code-lang-overlay {
 		position: fixed;
@@ -6445,7 +7218,7 @@
 		padding-left: 2px;
 	}
 
-	/* Suppress placeholder on task list / details containers — overlaps with checkbox / toggle button */
+	/* Suppress placeholder on task list / details containers - overlaps with checkbox / toggle button */
 	:global(.tiptap-wrapper .tiptap > ul[data-type="taskList"].is-empty::before),
 	:global(.tiptap-wrapper .tiptap > [data-type="details"].is-empty::before) {
 		content: none;
@@ -6913,6 +7686,102 @@
 	}
 	:global(.tiptap .math-inline) {
 		cursor: default;
+	}
+	:global(.tiptap .mermaid-render) {
+		position: relative;
+		margin: 4px 0 16px;
+		padding: 12px;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		text-align: center;
+		overflow-x: auto;
+		cursor: default;
+		min-height: 32px;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 8px;
+	}
+	:global(.tiptap .mermaid-render-toolbar) {
+		position: absolute;
+		top: 6px;
+		right: 6px;
+		display: flex;
+		gap: 4px;
+		opacity: 0;
+		transition: opacity 0.15s ease;
+	}
+	:global(.tiptap .mermaid-render:hover .mermaid-render-toolbar) {
+		opacity: 1;
+	}
+	:global(.tiptap .mermaid-render-action) {
+		appearance: none;
+		background: var(--bg-primary);
+		color: var(--text-secondary);
+		border: 1px solid var(--border);
+		border-radius: 5px;
+		padding: 3px 9px;
+		font-size: 11px;
+		cursor: pointer;
+		font-family: inherit;
+		line-height: 1.3;
+	}
+	:global(.tiptap .mermaid-render-action:hover) {
+		color: var(--text-primary);
+		border-color: var(--accent);
+	}
+	:global(.tiptap .mermaid-render-toast) {
+		position: absolute;
+		bottom: 8px;
+		right: 8px;
+		background: var(--text-primary);
+		color: var(--bg-primary);
+		padding: 4px 10px;
+		border-radius: 5px;
+		font-size: 12px;
+		max-width: 80%;
+		pointer-events: none;
+		animation: mermaid-toast-fade 1.5s ease;
+	}
+	@keyframes mermaid-toast-fade {
+		0% { opacity: 0; transform: translateY(4px); }
+		15% { opacity: 1; transform: translateY(0); }
+		70% { opacity: 1; }
+		100% { opacity: 0; }
+	}
+	:global(.tiptap .mermaid-render svg) {
+		max-width: 100%;
+		height: auto;
+	}
+	:global(.tiptap .mermaid-render-loading::before) {
+		content: 'Rendering diagram…';
+		color: var(--text-secondary);
+		font-size: 13px;
+	}
+	:global(.tiptap .mermaid-render-error) {
+		color: var(--text-secondary);
+		font-size: 13px;
+	}
+	:global(.tiptap .mermaid-render-btn) {
+		appearance: none;
+		background: var(--bg-tertiary, var(--bg-primary));
+		color: var(--text-primary);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 6px 14px;
+		font-size: 13px;
+		cursor: pointer;
+		font-family: inherit;
+	}
+	:global(.tiptap .mermaid-render-btn:hover) {
+		background: var(--accent);
+		color: var(--accent-fg, white);
+		border-color: var(--accent);
+	}
+	:global(.tiptap .mermaid-render-btn-small) {
+		padding: 3px 10px;
+		font-size: 12px;
 	}
 	:global(.tiptap .pdf-embed) {
 		margin: 12px 0;
@@ -7618,7 +8487,7 @@
 		font-size: 15px;
 	}
 
-	/* ═══ AI Menu — Mobile Bottom Sheet ═══ */
+	/* ═══ AI Menu - Mobile Bottom Sheet ═══ */
 	.ai-menu-overlay.mobile {
 		background: rgba(0, 0, 0, 0.35);
 		display: flex;

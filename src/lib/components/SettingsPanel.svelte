@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { showSettings, theme, appConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile } from '$lib/stores/app';
+	import { showSettings, theme, appConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode } from '$lib/stores/app';
 	import { setTheme, setAccentColor, setFontSize, setFontFamily, setLineHeight, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection } from '$lib/api';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
@@ -600,6 +600,20 @@
 							</div>
 
 							<div class="settings-section">
+								<h3>Notebooks</h3>
+								<label class="setting-toggle">
+									<span class="setting-label">
+										<span class="setting-name">Sort order</span>
+										<span class="setting-desc">Alphabetical (default) or manual. Drag notebooks above/below each other to reorder.</span>
+									</span>
+								</label>
+								<div class="setting-options" style="margin-top: 8px;">
+									<button class="option-btn" class:active={$notebookSortMode === 'alphabetical'} onclick={() => { $notebookSortMode = 'alphabetical'; }}>Alphabetical</button>
+									<button class="option-btn" class:active={$notebookSortMode === 'manual'} onclick={() => { $notebookSortMode = 'manual'; }}>Manual</button>
+								</div>
+							</div>
+
+							<div class="settings-section">
 								<h3>Time Format</h3>
 								<div class="setting-options">
 									<button class="option-btn" class:active={timeFormat === 'relative'} onclick={() => { timeFormat = 'relative'; saveGeneralSettings(); }}>Relative</button>
@@ -716,6 +730,7 @@
 									</button>
 								</label>
 							</div>
+
 
 							{#if !isMobile}
 							<div class="settings-section">

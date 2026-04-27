@@ -199,6 +199,10 @@ pub struct VaultState {
     pub sidebar_collapsed: bool,
     #[serde(default)]
     pub collapsed_notebooks: Vec<String>,
+    #[serde(default)]
+    pub notebook_sort_mode: String,
+    #[serde(default)]
+    pub notebook_order: std::collections::HashMap<String, i32>,
 }
 
 impl Default for VaultState {
@@ -209,6 +213,8 @@ impl Default for VaultState {
             notelist_width: 280.0,
             sidebar_collapsed: false,
             collapsed_notebooks: Vec::new(),
+            notebook_sort_mode: String::new(),
+            notebook_order: std::collections::HashMap::new(),
         }
     }
 }

@@ -139,6 +139,8 @@ pub fn run() {
             commands::open_file,
             commands::open_url,
             commands::copy_file_to,
+            commands::write_bytes_to,
+            commands::copy_png_to_clipboard,
             commands::create_backup,
             commands::list_backups,
             commands::restore_backup,

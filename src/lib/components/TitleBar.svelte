@@ -31,7 +31,7 @@
 		const target = e.target as HTMLElement;
 		if (target.closest('.titlebar-controls') || target.closest('.titlebar-actions')) return;
 
-		// Don't start dragging near window edges — let Tauri handle resize
+		// Don't start dragging near window edges - let Tauri handle resize
 		if (!maximized) {
 			const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 			if (e.clientY - rect.top < RESIZE_EDGE || e.clientX - rect.left < RESIZE_EDGE) return;
@@ -39,7 +39,6 @@
 
 		const now = Date.now();
 		if (now - lastMouseDown < 300) {
-			// Double-click detected — maximize/restore
 			appWindow.toggleMaximize();
 			lastMouseDown = 0;
 			return;

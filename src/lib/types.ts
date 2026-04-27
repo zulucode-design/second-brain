@@ -86,6 +86,8 @@ export interface VaultState {
   notelist_width: number;
   sidebar_collapsed: boolean;
   collapsed_notebooks: string[];
+  notebook_sort_mode?: string;
+  notebook_order?: Record<string, number>;
 }
 
 export interface SearchResult {

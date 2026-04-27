@@ -190,7 +190,6 @@ async fn stream_anthropic(
         }
     }
 
-    // Stream ended — send done
     let _ = app.emit(
         "ai-stream",
         AiStreamEvent {

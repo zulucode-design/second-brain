@@ -37,12 +37,16 @@
 		activeTag,
 		updateAvailable as globalUpdateAvailable,
 		settingsTab,
-		navHistory
+		navHistory,
+		viewerNote,
+		notebookSortMode,
+		notebookOrder
 	} from '$lib/stores/app';
 
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
 	const isMobile = /android|ios/i.test(navigator.userAgent);
+	const isAndroid = /android/i.test(navigator.userAgent);
 	import { loadVaultState, saveVaultState, readNote, createDailyNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow } from '$lib/utils/window';
@@ -110,10 +114,32 @@
 		if (!filePath || !filePath.endsWith('.md')) return;
 		const config = get(appConfig);
 		const vaultRoot = config?.active_vault;
-		if (!vaultRoot || !filePath.startsWith(vaultRoot)) return;
+		const isExternal = !vaultRoot || !filePath.startsWith(vaultRoot + '/');
+
+		// External .md → viewer mode (skipped on Android)
+		if (isExternal) {
+			if (isAndroid) return;
+			try {
+				const content = await readNote(filePath);
+				editor?.flushSave();
+				$viewerNote = { path: filePath, content: content.content };
+				$activeNote = content;
+				$activeNotePath = filePath;
+				$editorDirty = false;
+				$readOnly = true;
+				$focusMode = true;
+				editor?.loadNote(filePath, content.content);
+			} catch (e) {
+				console.error('Failed to open external file:', e);
+			}
+			return;
+		}
+
+		// Vault file: normal flow
 		try {
 			const content = await readNote(filePath);
 			editor?.flushSave();
+			$viewerNote = null;
 			$activeNote = content;
 			$activeNotePath = filePath;
 			$editorDirty = false;
@@ -129,7 +155,9 @@
 			sidebar_width: $sidebarWidth,
 			notelist_width: $notelistWidth,
 			sidebar_collapsed: $sidebarCollapsed,
-			collapsed_notebooks: $collapsedNotebooks
+			collapsed_notebooks: $collapsedNotebooks,
+			notebook_sort_mode: $notebookSortMode,
+			notebook_order: $notebookOrder
 		};
 		try {
 			await saveVaultState(state);
@@ -147,6 +175,8 @@
 	}
 
 	function handleNoteSelected(path: string, content: string) {
+		// Selecting a real vault note exits viewer mode
+		$viewerNote = null;
 		editor?.loadNote(path, content);
 		if (isMobile) $mobileView = 'editor';
 	}
@@ -197,14 +227,13 @@
 			}
 			const targetDepth = view === 'sidebar' ? 0 : view === 'notelist' ? 1 : 2;
 			if (targetDepth > historyDepth) {
-				// Forward navigation — push entries for each level skipped
+				// Forward navigation - push entries for each level skipped
 				for (let d = historyDepth + 1; d <= targetDepth; d++) {
 					const v = d === 1 ? 'notelist' : 'editor';
 					history.pushState({ mobileView: v, depth: d }, '');
 				}
 				historyDepth = targetDepth;
 			} else if (targetDepth < historyDepth) {
-				// Programmatic back (e.g. mobileBack button) — go back in history
 				const steps = historyDepth - targetDepth;
 				historyDepth = targetDepth;
 				navFromPopstate = true; // suppress the popstate that history.go triggers
@@ -313,6 +342,7 @@
 		}
 		if (mod && e.shiftKey && code === 'KeyR') {
 			e.preventDefault();
+			if ($viewerNote) return; // viewer mode is always read-only
 			$readOnly = !$readOnly;
 			return;
 		}
@@ -352,6 +382,12 @@
 		persistState();
 	});
 
+	$effect(() => {
+		$notebookSortMode;
+		$notebookOrder;
+		persistState();
+	});
+
 	onMount(async () => {
 		let lastNotePath: string | null = null;
 		try {
@@ -360,6 +396,8 @@
 			$notelistWidth = state.notelist_width;
 			$sidebarCollapsed = state.sidebar_collapsed;
 			$collapsedNotebooks = state.collapsed_notebooks ?? [];
+			$notebookSortMode = state.notebook_sort_mode === 'manual' ? 'manual' : 'alphabetical';
+			$notebookOrder = state.notebook_order ?? {};
 			lastNotePath = state.last_open_note ?? null;
 		} catch (_) {}
 

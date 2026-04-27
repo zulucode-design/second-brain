@@ -11,7 +11,7 @@ use tauri::{AppHandle, Manager, State};
 pub fn open_vault(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<(), String> {
     operations::ensure_vault_structure(&path)?;
 
-    // Initialize search index — rebuild in background on Android (FUSE is slow)
+    // Initialize search index - rebuild in background on Android (FUSE is slow)
     let search = std::sync::Arc::new(SearchIndex::new(&path)?);
     #[cfg(target_os = "android")]
     {
@@ -430,7 +430,7 @@ pub fn get_graph_data(state: State<'_, AppState>) -> Result<crate::types::GraphD
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
     let vault = std::path::Path::new(vault_path);
 
-    // Pass 1: collect ALL notes as nodes (no title deduplication — every note must appear)
+    // Pass 1: collect ALL notes as nodes (no title deduplication - every note must appear)
     let mut graph_nodes = Vec::new();
     // title → list of node indices (one title can map to multiple notes in different folders)
     let mut title_to_idxs: HashMap<String, Vec<usize>> = HashMap::new();
@@ -495,7 +495,7 @@ pub fn get_graph_data(state: State<'_, AppState>) -> Result<crate::types::GraphD
         if src == tgt { return; }
         if edge_map.contains_key(&(src, tgt)) { return; } // exact duplicate
         if let Some(&rev_idx) = edge_map.get(&(tgt, src)) {
-            // Reverse direction already exists — mark it as bidirectional
+            // Reverse direction already exists - mark it as bidirectional
             edges[rev_idx].bidirectional = true;
         } else {
             let idx = edges.len();
@@ -527,7 +527,7 @@ pub fn get_graph_data(state: State<'_, AppState>) -> Result<crate::types::GraphD
                     if let Some(&target_idx) = relpath_to_idx.get(&link) {
                         add_edge(&mut edges, &mut edge_map, source_idx, target_idx);
                     } else if let Some(targets) = title_to_idxs.get(&link) {
-                        // 2. Title match — connect to all notes with this title
+                        // 2. Title match - connect to all notes with this title
                         for &target_idx in targets {
                             add_edge(&mut edges, &mut edge_map, source_idx, target_idx);
                         }
@@ -725,6 +725,32 @@ pub fn copy_image_to_clipboard(path: String) -> Result<(), String> {
 #[cfg(target_os = "android")]
 #[tauri::command]
 pub fn copy_image_to_clipboard(_path: String) -> Result<(), String> {
+    Err("Clipboard image copy not supported on Android".to_string())
+}
+
+/// Copy PNG bytes directly to the system clipboard.
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+pub fn copy_png_to_clipboard(data: Vec<u8>) -> Result<(), String> {
+    let img = image::load_from_memory(&data)
+        .map_err(|e| format!("Failed to decode image: {}", e))?;
+    let rgba = img.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    let img_data = arboard::ImageData {
+        width: w as usize,
+        height: h as usize,
+        bytes: std::borrow::Cow::Owned(rgba.into_raw()),
+    };
+    let mut clipboard = arboard::Clipboard::new()
+        .map_err(|e| format!("Clipboard init failed: {}", e))?;
+    clipboard.set_image(img_data)
+        .map_err(|e| format!("Failed to set clipboard image: {}", e))?;
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub fn copy_png_to_clipboard(_data: Vec<u8>) -> Result<(), String> {
     Err("Clipboard image copy not supported on Android".to_string())
 }
 
@@ -1459,6 +1485,13 @@ pub fn copy_file_to(source: String, destination: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+pub fn write_bytes_to(destination: String, data: Vec<u8>) -> Result<(), String> {
+    std::fs::write(&destination, &data).map_err(|e| format!("Failed to write file: {}", e))?;
+    Ok(())
+}
+
+
 // ── Backup ──
 
 #[tauri::command]
@@ -1717,10 +1750,10 @@ pub fn ai_ask(
 
     let mut system_prompt = "You are a helpful writing assistant inside a note-taking app called HelixNotes. \
         You help users improve, rewrite, summarize, and transform their text. \
-        Return ONLY the resulting text — no explanations, no markdown code fences, no preamble. \
+        Return ONLY the resulting text - no explanations, no markdown code fences, no preamble. \
         Preserve the original language of the text unless specifically asked to translate. \
         Preserve any markdown formatting (bold, italic, links, images, tables, etc.) unless the user asks to change it. \
-        If the text contains placeholders like __MEDIA_0__, __MEDIA_1__, etc., keep them exactly as they are in their original positions — they represent images and embedded files.".to_string();
+        If the text contains placeholders like __MEDIA_0__, __MEDIA_1__, etc., keep them exactly as they are in their original positions - they represent images and embedded files.".to_string();
 
     if let Some(ref style) = writing_style {
         system_prompt.push_str(&format!(

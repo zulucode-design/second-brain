@@ -61,7 +61,7 @@ pub fn parse_note(raw: &str, filename: &str) -> (NoteMeta, String) {
         .and_then(|s| parse_date_flexible(&s))
         .unwrap_or_else(Utc::now);
 
-    // Don't generate UUID on read — empty string signals "no ID yet"
+    // Don't generate UUID on read - empty string signals "no ID yet"
     let id = fm.id.unwrap_or_default();
 
     let meta = NoteMeta {
@@ -309,7 +309,7 @@ fn strip_html_and_markdown(input: &str) -> String {
             continue;
         }
 
-        // Markdown links: [text](url) — keep the text, skip the URL
+        // Markdown links: [text](url) - keep the text, skip the URL
         if ch == '[' {
             let mut link_text = String::new();
             let mut depth = 1;

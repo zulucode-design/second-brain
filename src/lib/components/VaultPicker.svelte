@@ -154,7 +154,7 @@
 				<span class="vault-path-hint">{fullPath}</span>
 			</div>
 		{:else}
-			<p class="description">Your notes are stored as standard Markdown (.md) files. Pick any folder — existing .md files will be recognized automatically.</p>
+			<p class="description">Your notes are stored as standard Markdown (.md) files. Pick any folder - existing .md files will be recognized automatically.</p>
 		{/if}
 
 		{#if error}

@@ -281,7 +281,7 @@ fn read_note_entry(path: &Path, vault_root: &Path) -> Result<NoteEntry, String> 
 /// uses filesystem timestamps for dates. No preview text.
 #[cfg(target_os = "android")]
 fn read_note_entry_metadata_only(path: &Path, vault_root: &Path) -> Result<NoteEntry, String> {
-    // Read first 2KB — enough for frontmatter with tags, title, pinned
+    // Read first 2KB - enough for frontmatter with tags, title, pinned
     let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
     let mut buf = vec![0u8; 2048];
     let bytes_read = file.read(&mut buf).map_err(|e| e.to_string())?;
@@ -917,7 +917,6 @@ pub fn get_trash_contents(vault_path: &str) -> Result<TrashContents, String> {
                 notes.push(note);
             }
         } else if path.is_dir() {
-            // Deleted notebook — count .md files inside
             let note_count = WalkDir::new(&path)
                 .min_depth(1)
                 .into_iter()

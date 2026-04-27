@@ -67,7 +67,7 @@
 					}
 				}
 			}
-			// Internal .md note link — navigate within the app
+			// Internal .md note link - navigate within the app
 			if (absPath.endsWith('.md')) {
 				readNote(absPath).then((content) => {
 					activeNote.set({ ...content, content: content.content });

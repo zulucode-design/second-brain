@@ -16,7 +16,9 @@
 		appConfig,
 		quickAccessPaths,
 		collapsedNotebooks,
-		rootNoteCount
+		rootNoteCount,
+		notebookSortMode,
+		notebookOrder
 	} from '$lib/stores/app';
 	import { getNotebooks, getAllTags, createNotebook, deleteNotebook, renameNotebook, moveNotebook, getNotebookIcons, setNotebookIcon, saveAttachment, getQuickAccess, addQuickAccess, removeQuickAccess, emptyTrash, moveNote, readNote, getNotes, countRootNotes } from '$lib/api';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
@@ -36,7 +38,23 @@
 	let newNotebookName = $state('');
 	let showNewNotebook = $state(false);
 	let dropTargetPath = $state<string | null>(null);
+	let dropPosition = $state<'above' | 'into' | 'below' | null>(null);
 	let draggedNotebookPath = $state<string | null>(null);
+
+	// Apply manual ordering recursively when in 'manual' sort mode.
+	// In 'alphabetical' mode the Rust scanner already sorts, so we pass through unchanged.
+	function sortNotebooksTree(tree: NotebookEntry[]): NotebookEntry[] {
+		if ($notebookSortMode !== 'manual') return tree;
+		const order = $notebookOrder;
+		const sorted = [...tree].sort((a, b) => {
+			const oa = order[a.path] ?? Number.MAX_SAFE_INTEGER;
+			const ob = order[b.path] ?? Number.MAX_SAFE_INTEGER;
+			if (oa !== ob) return oa - ob;
+			return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+		});
+		return sorted.map(nb => ({ ...nb, children: sortNotebooksTree(nb.children) }));
+	}
+	let sortedNotebooks = $derived(sortNotebooksTree($notebooks));
 	let contextMenu = $state<{ x: number; y: number; notebook: NotebookEntry } | null>(null);
 	let trashContextMenu = $state<{ x: number; y: number } | null>(null);
 	let tagsCollapsed = $state(true);
@@ -262,6 +280,94 @@
 			await refresh();
 		} catch (e) {
 			console.error('Failed to move notebook:', e);
+		}
+	}
+
+	function findSiblingsOfPath(tree: NotebookEntry[], parentPath: string, vaultRoot: string): NotebookEntry[] {
+		if (parentPath === vaultRoot) return tree;
+		for (const nb of tree) {
+			if (nb.path === parentPath) return nb.children;
+			if (nb.children.length > 0) {
+				const found = findSiblingsOfPath(nb.children, parentPath, vaultRoot);
+				if (found.length > 0) return found;
+			}
+		}
+		return [];
+	}
+
+	async function handleNotebookReorder(srcPath: string, targetPath: string, position: 'above' | 'below') {
+		dropTargetPath = null;
+		dropPosition = null;
+		draggedNotebookPath = null;
+		if (srcPath === targetPath) return;
+		if (targetPath.startsWith(srcPath + '/')) return; // can't move into descendant
+		const vaultRoot = $appConfig?.active_vault;
+		if (!vaultRoot) return;
+
+		const srcParent = srcPath.substring(0, srcPath.lastIndexOf('/'));
+		const targetParent = targetPath.substring(0, targetPath.lastIndexOf('/'));
+		let actualSrcPath = srcPath;
+
+		try {
+			// Step 1: if different parents, move src into target's parent first
+			if (srcParent !== targetParent) {
+				const oldName = srcPath.split('/').pop() || '';
+				const newPath = targetParent === vaultRoot
+					? vaultRoot + '/' + oldName
+					: targetParent + '/' + oldName;
+				await moveNotebook(srcPath, targetParent);
+				// Migrate paths in collapsedNotebooks
+				$collapsedNotebooks = $collapsedNotebooks.map(p => {
+					if (p === srcPath) return newPath;
+					if (p.startsWith(srcPath + '/')) return newPath + p.slice(srcPath.length);
+					return p;
+				});
+				// Migrate paths in notebookOrder
+				const migrated: Record<string, number> = {};
+				for (const [p, v] of Object.entries($notebookOrder)) {
+					if (p === srcPath) migrated[newPath] = v;
+					else if (p.startsWith(srcPath + '/')) migrated[newPath + p.slice(srcPath.length)] = v;
+					else migrated[p] = v;
+				}
+				$notebookOrder = migrated;
+				// Update active notebook/note
+				if ($activeNotebook?.path === srcPath || $activeNotebook?.path.startsWith(srcPath + '/')) {
+					selectAllNotes();
+				}
+				if ($activeNotePath && $activeNotePath.startsWith(srcPath + '/')) {
+					const newNotePath = newPath + $activeNotePath.slice(srcPath.length);
+					$activeNotePath = newNotePath;
+					$activeNote = await readNote(newNotePath);
+				}
+				$notebookIcons = await getNotebookIcons();
+				await refresh();
+				actualSrcPath = newPath;
+			}
+
+			// Step 2: reorder within target's parent
+			const siblings = findSiblingsOfPath($notebooks, targetParent, vaultRoot);
+			const sortedSiblings = sortNotebooksTree(siblings);
+			const without = sortedSiblings.filter(s => s.path !== actualSrcPath);
+			const targetIdx = without.findIndex(s => s.path === targetPath);
+			if (targetIdx === -1) return;
+			const insertIdx = position === 'above' ? targetIdx : targetIdx + 1;
+			const newSequence = [
+				...without.slice(0, insertIdx).map(s => s.path),
+				actualSrcPath,
+				...without.slice(insertIdx).map(s => s.path),
+			];
+
+			// Assign sequential positions to all siblings (only within this parent)
+			const newOrder = { ...$notebookOrder };
+			newSequence.forEach((path, idx) => {
+				newOrder[path] = idx;
+			});
+			$notebookOrder = newOrder;
+
+			// Auto-enable manual mode (the act of reordering implies user wants this)
+			if ($notebookSortMode !== 'manual') $notebookSortMode = 'manual';
+		} catch (e) {
+			console.error('Failed to reorder notebook:', e);
 		}
 	}
 
@@ -499,7 +605,7 @@
 						<span class="notebook-name">Unfiled Notes <span class="notebook-count">{$rootNoteCount}</span></span>
 					</button>
 				{/if}
-				{#each $notebooks as nb (nb.path)}
+				{#each sortedNotebooks as nb (nb.path)}
 					{@render notebookItem(nb, 0)}
 				{/each}
 			</div>
@@ -649,13 +755,15 @@
 		<button
 			class="notebook-item"
 			class:active={$viewMode === 'notebook' && $activeNotebook?.path === nb.path}
-			class:drop-target={dropTargetPath === nb.path}
+			class:drop-target={dropTargetPath === nb.path && dropPosition === 'into'}
+			class:drop-above={dropTargetPath === nb.path && dropPosition === 'above'}
+			class:drop-below={dropTargetPath === nb.path && dropPosition === 'below'}
 			style="padding-left: {8 + depth * 16}px"
 			draggable="true"
 			onclick={() => selectNotebook(nb)}
 			oncontextmenu={(e) => onContextMenu(e, nb)}
 			ondragstart={(e) => { draggedNotebookPath = nb.path; e.dataTransfer!.setData('text/plain', nb.path); e.dataTransfer!.effectAllowed = 'move'; }}
-			ondragend={() => { draggedNotebookPath = null; }}
+			ondragend={() => { draggedNotebookPath = null; dropPosition = null; }}
 			ondragover={(e) => {
 				e.preventDefault();
 				if (draggedNotebookPath) {
@@ -664,17 +772,33 @@
 						e.dataTransfer!.dropEffect = 'none';
 						return;
 					}
-					// Prevent no-op (already in this parent)
+				}
+				// Decide drop position from cursor Y within the row: top 30% = above, bottom 30% = below, middle = into
+				const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+				const relY = (e.clientY - rect.top) / rect.height;
+				let pos: 'above' | 'into' | 'below';
+				if (draggedNotebookPath && relY < 0.3) pos = 'above';
+				else if (draggedNotebookPath && relY > 0.7) pos = 'below';
+				else pos = 'into';
+				// For 'into', reject if already in that parent (no-op)
+				if (pos === 'into' && draggedNotebookPath) {
 					const parentDir = draggedNotebookPath.substring(0, draggedNotebookPath.lastIndexOf('/'));
 					if (parentDir === nb.path) { e.dataTransfer!.dropEffect = 'none'; return; }
 				}
 				e.dataTransfer!.dropEffect = 'move';
 				dropTargetPath = nb.path;
+				dropPosition = pos;
 			}}
-			ondragleave={() => { if (dropTargetPath === nb.path) dropTargetPath = null; }}
+			ondragleave={() => { if (dropTargetPath === nb.path) { dropTargetPath = null; dropPosition = null; } }}
 			ondrop={(e) => {
+				e.preventDefault();
+				const pos = dropPosition;
 				if (draggedNotebookPath) {
-					handleNotebookDrop(e, nb.path);
+					if (pos === 'above' || pos === 'below') {
+						handleNotebookReorder(draggedNotebookPath, nb.path, pos);
+					} else {
+						handleNotebookDrop(e, nb.path);
+					}
 				} else {
 					handleNoteDrop(e, nb);
 				}
@@ -908,6 +1032,12 @@
 		outline: 2px dashed var(--accent);
 		outline-offset: -2px;
 		border-radius: 6px;
+	}
+	.notebook-item.drop-above {
+		box-shadow: 0 -2px 0 0 var(--accent);
+	}
+	.notebook-item.drop-below {
+		box-shadow: 0 2px 0 0 var(--accent);
 	}
 
 	.chevron {

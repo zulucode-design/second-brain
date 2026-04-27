@@ -36,6 +36,7 @@
 	} from '$lib/api';
 	import { formatRelativeTime } from '$lib/utils/time';
 	import { openNoteWindow } from '$lib/utils/window';
+	import { revealItemInDir } from '@tauri-apps/plugin-opener';
 	import type { NoteEntry, TrashNotebookEntry, SortMode } from '$lib/types';
 
 	let { onNoteSelected = (_path: string, _content: string) => {}, onNoteMoved = () => {}, onBeforeNoteSwitch = () => {}, onNoteCreated = () => {} }: {
@@ -714,7 +715,7 @@
 			return;
 		}
 		if (e.shiftKey) {
-			// Range select — use lastClickedPath or active note as anchor
+			// Range select - use lastClickedPath or active note as anchor
 			const anchor = lastClickedPath || $activeNotePath;
 			if (!anchor) { selectNote(note); return; }
 			const paths = $sortedNotes.map(n => n.path);
@@ -731,7 +732,6 @@
 			}
 			return;
 		}
-		// Normal click — clear selection, open note
 		clearSelection();
 		selectNote(note);
 	}
@@ -1311,6 +1311,14 @@
 				</svg>
 				Open in New Window
 			</button>
+			{#if !isMobile}
+			<button onclick={async () => { const n = contextMenu!.note; contextMenu = null; try { await revealItemInDir(n.path); } catch (e) { console.error('Failed to reveal in file manager:', e); } }}>
+				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+				</svg>
+				Show in File Manager
+			</button>
+			{/if}
 			<button onclick={() => startRename(contextMenu!.note)}>
 				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<path d="M17 3a2.85 2.85 0 114 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/>

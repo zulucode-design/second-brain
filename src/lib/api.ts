@@ -278,6 +278,17 @@ export async function copyFileTo(
   return invoke("copy_file_to", { source, destination });
 }
 
+export async function writeBytesTo(
+  destination: string,
+  data: Uint8Array,
+): Promise<void> {
+  return invoke("write_bytes_to", { destination, data: Array.from(data) });
+}
+
+export async function copyPngToClipboard(data: Uint8Array): Promise<void> {
+  return invoke("copy_png_to_clipboard", { data: Array.from(data) });
+}
+
 // ── Backup ──
 
 export async function createBackup(): Promise<void> {

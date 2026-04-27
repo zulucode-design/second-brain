@@ -29,6 +29,13 @@ export const notebookIcons = writable<Record<string, string>>({});
 export const quickAccessPaths = writable<string[]>([]);
 export const collapsedNotebooks = writable<string[]>([]);
 
+// Notebook sort: 'alphabetical' (default) or 'manual' (drag-to-reorder, persisted in notebookOrder).
+export const notebookSortMode = writable<"alphabetical" | "manual">(
+  "alphabetical",
+);
+// Map from notebook absolute path → ordinal position (lower = earlier). Only consulted when notebookSortMode === 'manual'.
+export const notebookOrder = writable<Record<string, number>>({});
+
 // Data
 export const notebooks = writable<NotebookEntry[]>([]);
 export const rootNoteCount = writable<number>(0);
@@ -38,6 +45,13 @@ export const activeNote = writable<NoteContent | null>(null);
 export const activeNotePath = writable<string | null>(null);
 export const activeNotebook = writable<NotebookEntry | null>(null);
 export const activeTag = writable<string | null>(null);
+
+// External-file viewer mode: set when an .md file outside the active vault is opened.
+// While set, the editor is forced read-only, autosave is suppressed, and a banner
+// offering "Import to vault" / "Close" is shown.
+export const viewerNote = writable<{ path: string; content: string } | null>(
+  null,
+);
 
 // Mobile state
 export const mobileView = writable<"sidebar" | "notelist" | "editor">(
@@ -71,7 +85,7 @@ export async function checkForUpdate() {
       updateObj.set(update);
     }
   } catch {
-    // Silent fail — don't disrupt app startup
+    // Silent fail - don't disrupt app startup
   }
 }
 
@@ -174,6 +188,8 @@ export const vaultState = derived(
     notelistWidth,
     sidebarCollapsed,
     collapsedNotebooks,
+    notebookSortMode,
+    notebookOrder,
   ],
   ([
     $activeNotePath,
@@ -181,6 +197,8 @@ export const vaultState = derived(
     $notelistWidth,
     $sidebarCollapsed,
     $collapsedNotebooks,
+    $notebookSortMode,
+    $notebookOrder,
   ]) => {
     return {
       last_open_note: $activeNotePath,
@@ -188,6 +206,8 @@ export const vaultState = derived(
       notelist_width: $notelistWidth,
       sidebar_collapsed: $sidebarCollapsed,
       collapsed_notebooks: $collapsedNotebooks,
+      notebook_sort_mode: $notebookSortMode,
+      notebook_order: $notebookOrder,
     } satisfies VaultState;
   },
 );

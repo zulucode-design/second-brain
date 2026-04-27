@@ -157,7 +157,7 @@ fn prune_versions(dir: &Path, max: u32) -> Result<(), String> {
         .filter(|p| p.extension().map_or(false, |ext| ext == "md"))
         .collect();
 
-    // Sort by name (timestamps sort lexicographically) — newest last
+    // Sort by name (timestamps sort lexicographically) - newest last
     files.sort();
 
     if files.len() as u32 > max {

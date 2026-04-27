@@ -207,7 +207,7 @@ pub fn restore_backup(vault_path: &str, backup_path: &str) -> Result<(), String>
             .to_string_lossy()
             .to_string();
 
-        // Keep hidden dirs (.helixnotes) — we'll handle attachments separately
+        // Keep hidden dirs (.helixnotes) - we'll handle attachments separately
         if name.starts_with('.') {
             continue;
         }
