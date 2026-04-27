@@ -690,13 +690,17 @@
 			function addToolbar(container: HTMLElement, source: string) {
 				const toolbar = document.createElement('div');
 				toolbar.className = 'mermaid-render-toolbar';
+				const isAndroid = /android/i.test(navigator.userAgent);
 
-				const copyBtn = document.createElement('button');
-				copyBtn.type = 'button';
-				copyBtn.className = 'mermaid-render-action';
-				copyBtn.title = 'Copy as PNG';
-				copyBtn.textContent = 'Copy';
-				copyBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); copyDiagram(container); };
+				if (!isAndroid) {
+					const copyBtn = document.createElement('button');
+					copyBtn.type = 'button';
+					copyBtn.className = 'mermaid-render-action';
+					copyBtn.title = 'Copy as PNG';
+					copyBtn.textContent = 'Copy';
+					copyBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); copyDiagram(container); };
+					toolbar.appendChild(copyBtn);
+				}
 
 				const saveBtn = document.createElement('button');
 				saveBtn.type = 'button';
@@ -717,7 +721,6 @@
 					renderInto(container, source);
 				};
 
-				toolbar.appendChild(copyBtn);
 				toolbar.appendChild(saveBtn);
 				toolbar.appendChild(reRenderBtn);
 				container.appendChild(toolbar);
