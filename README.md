@@ -1,7 +1,7 @@
 # HelixNotes
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://codeberg.org/ArkHost/HelixNotes/src/branch/main/LICENSE)
-[![Latest Release](https://img.shields.io/badge/release-v1.2.8-green)](https://codeberg.org/ArkHost/HelixNotes/releases)
+[![Latest Release](https://img.shields.io/badge/release-v1.2.9-green)](https://codeberg.org/ArkHost/HelixNotes/releases)
 [![Website](https://img.shields.io/badge/web-helixnotes.com-purple)](https://helixnotes.com)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS%20%7C%20Android-lightgrey)]()
 
@@ -10,7 +10,7 @@ A local markdown note-taking app built with Tauri, SvelteKit, and Rust.
 Your notes are stored as standard Markdown files on your local filesystem.
 No cloud, no lock-in.
 
-## Download (v1.2.8)
+## Download (v1.2.9)
 
 ### Linux
 
@@ -28,23 +28,23 @@ curl -fsSL https://repo.arkhost.com/gpg.key | sudo gpg --dearmor -o /usr/share/k
 
 #### AppImage (Arch, Fedora 43+, openSUSE Tumbleweed)
 
-[Download AppImage](https://download.helixnotes.com/releases/v1.2.8/HelixNotes_1.2.8_amd64.AppImage)
+[Download AppImage](https://download.helixnotes.com/releases/v1.2.9/HelixNotes_1.2.9_amd64.AppImage)
 
 #### .deb (manual)
 
-[Download .deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.2.8/HelixNotes_1.2.8_amd64.deb) (Ubuntu 22.04+)
+[Download .deb](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.2.9/HelixNotes_1.2.9_amd64.deb) (Ubuntu 22.04+)
 
 ### Windows
 
-[Download Installer](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.2.8/HelixNotes_1.2.8_x64-setup.exe) (Windows 10/11)
+[Download Installer](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.2.9/HelixNotes_1.2.9_x64-setup.exe) (Windows 10/11)
 
 ### macOS
 
-[Download .dmg](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.2.8/HelixNotes_1.2.8_x64.dmg) (Intel, runs on Apple Silicon via Rosetta)
+[Download .dmg](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.2.9/HelixNotes_1.2.9_x64.dmg) (Intel, runs on Apple Silicon via Rosetta)
 
 ### Android
 
-[Download APK](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.2.8/HelixNotes_1.2.8_android.apk)
+[Download APK](https://codeberg.org/ArkHost/HelixNotes/releases/download/v1.2.9/HelixNotes_1.2.9_android.apk)
 
 ---
 
@@ -56,7 +56,11 @@ All releases: [codeberg.org/ArkHost/HelixNotes/releases](https://codeberg.org/Ar
 - `[[Wiki-links]]` and graph view
 - Full-text search (Tantivy)
 - Outline panel, daily notes with calendar view, tags, drag-and-drop
-- Math (KaTeX), PDF preview, Obsidian import
+- Live KaTeX math editor (`/math`, `/imath`) with modal preview, double-click to edit
+- Mermaid diagrams (opt-in render, copy as PNG, save as PNG/SVG)
+- Manual notebook sorting (drag to reorder above, into, or below)
+- External `.md` viewer mode with import-to-vault flow
+- PDF preview, Obsidian import, "Show in File Manager"
 - AI writing tools (Ollama / Anthropic / OpenAI)
 - Version history with diffs, automatic backups
 - Multi-window, file associations, focus mode, view mode
