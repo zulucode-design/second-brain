@@ -8,6 +8,9 @@ node_modules
 /.svelte-kit
 /build
 
+# Nix
+/result
+
 # Tauri
 /src-tauri/target
 /src-tauri/gen

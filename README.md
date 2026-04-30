@@ -26,6 +26,64 @@ yay -S helixnotes-appimage-bin
 curl -fsSL https://repo.arkhost.com/gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/arkhost.gpg && echo "deb [signed-by=/usr/share/keyrings/arkhost.gpg arch=amd64] https://repo.arkhost.com stable main" | sudo tee /etc/apt/sources.list.d/helixnotes.list && sudo apt update && sudo apt install helix-notes
 ```
 
+#### NixOS
+
+<details>
+<summary>flake.nix</summary>
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    helix-notes = {
+      url = "git+https://codeberg.org/ArkHost/HelixNotes";
+      # inputs.nixpkgs.follows = "nixpkgs";
+    }
+  };
+
+  outputs = {
+    nixpkgs,
+    helix-notes,
+    ...
+  }: let
+    system = "x86_64-linux";
+    pkgs = nixpkgs.legacyPackages.${system};
+  in {
+    nixosConfigurations.default = nixpkgs.lib.nixosSystem {
+      system = system;
+      specialArgs = { inherit helix-notes; };
+
+      modules = [
+        /path/to/configuration.nix
+      ];
+    };
+  };
+}
+```
+</details>
+
+
+<details>
+<summary>configuration.nix</summary>
+
+```nix
+{
+  config,
+  lib,
+  pkgs,
+  helix-notes,
+  ...
+}:
+{
+  users.users.<USERNAME> = {
+    packages = with pkgs; [
+      (helix-notes.packages.${pkgs.stdenv.hostPlatform.system}.default)
+    ];
+  };
+}
+```
+</details>
+
 #### AppImage (Arch, Fedora 43+, openSUSE Tumbleweed)
 
 [Download AppImage](https://download.helixnotes.com/releases/v1.2.9/HelixNotes_1.2.9_amd64.AppImage)
