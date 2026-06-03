@@ -1,3 +1,0 @@
-- Internal note links ([[wiki-links]] open the linked note)
-- Mobile UI improvements
-- Window state persistence (desktop)
