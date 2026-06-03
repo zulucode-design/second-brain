@@ -219,14 +219,20 @@
 	let aiApiKey = $derived.by(() => {
 		if (aiProvider === 'openai') return _openaiKey;
 		if (aiProvider === 'ollama') return '';
+		if (aiProvider === 'openai_compatible') return _openaiCompatibleKey;
 		return _anthropicKey;
 	});
 	let _anthropicKey = $state($appConfig?.ai_api_key ?? '');
 	let _openaiKey = $state($appConfig?.openai_api_key ?? '');
 	let _ollamaBaseUrl = $state($appConfig?.ollama_base_url ?? 'http://localhost:11434');
+	let _ollamaApiKey = $state($appConfig?.ollama_api_key ?? '');
+	let _openaiCompatibleBaseUrl = $state($appConfig?.openai_compatible_base_url ?? '');
+	let _openaiCompatibleKey = $state($appConfig?.openai_compatible_api_key ?? '');
 	let aiModel = $state($appConfig?.ai_model ?? 'claude-sonnet-4-6');
 	let aiWritingStyle = $state($appConfig?.ai_writing_style ?? '');
 	let aiShowKey = $state(false);
+	let aiShowCompatibleKey = $state(false);
+	let aiShowOllamaKey = $state(false);
 	let aiTestLoading = $state(false);
 	let aiTestMessage = $state<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -245,7 +251,16 @@
 
 	async function saveAiSettings() {
 		const baseUrl = aiProvider === 'ollama' ? (_ollamaBaseUrl || null) : null;
-		await setAiSettings(aiProvider, aiApiKey || null, aiModel, aiWritingStyle || null, baseUrl);
+		await setAiSettings(
+			aiProvider,
+			aiApiKey || null,
+			aiModel,
+			aiWritingStyle || null,
+			baseUrl,
+			_ollamaApiKey || null,
+			_openaiCompatibleBaseUrl || null,
+			_openaiCompatibleKey || null,
+		);
 		if ($appConfig) {
 			$appConfig = {
 				...$appConfig,
@@ -253,6 +268,9 @@
 				ai_api_key: _anthropicKey || null,
 				openai_api_key: _openaiKey || null,
 				ollama_base_url: _ollamaBaseUrl || null,
+				ollama_api_key: _ollamaApiKey || null,
+				openai_compatible_base_url: _openaiCompatibleBaseUrl || null,
+				openai_compatible_api_key: _openaiCompatibleKey || null,
 				ai_model: aiModel,
 				ai_writing_style: aiWritingStyle || null,
 			};
@@ -1037,16 +1055,17 @@
 						<div class="tab-content">
 							<div class="settings-section">
 								<h3>Provider</h3>
-								<div class="setting-options">
+								<div class="setting-options" style="flex-wrap: wrap;">
 									<button class="option-btn" class:active={!aiProvider} onclick={() => { if (!aiProvider) return; aiProvider = null; aiTestMessage = null; saveAiSettings(); }}>Disabled</button>
 									<button class="option-btn" class:active={aiProvider === 'ollama'} onclick={() => { if (aiProvider === 'ollama') return; aiProvider = 'ollama'; aiModel = 'gemma3:4b'; aiTestMessage = null; saveAiSettings(); }}>Ollama</button>
 									<button class="option-btn" class:active={aiProvider === 'anthropic'} onclick={() => { if (aiProvider === 'anthropic') return; aiProvider = 'anthropic'; aiModel = 'claude-sonnet-4-6'; aiTestMessage = null; saveAiSettings(); }}>Anthropic</button>
 									<button class="option-btn" class:active={aiProvider === 'openai'} onclick={() => { if (aiProvider === 'openai') return; aiProvider = 'openai'; aiModel = 'gpt-5.2'; aiTestMessage = null; saveAiSettings(); }}>OpenAI</button>
+									<button class="option-btn" class:active={aiProvider === 'openai_compatible'} onclick={() => { if (aiProvider === 'openai_compatible') return; aiProvider = 'openai_compatible'; aiModel = ''; aiTestMessage = null; saveAiSettings(); }}>Compatible</button>
 								</div>
 							</div>
 
 							{#if aiProvider}
-								{#if aiProvider === 'ollama'}
+								{#if aiProvider === 'ollama' || aiProvider === 'openai_compatible'}
 									<p class="setting-hint" style="color: var(--text-success, #4ade80); margin-top: -4px; margin-bottom: 12px;">Your data stays on your device. No text is sent to any external server.</p>
 								{:else}
 									<p class="setting-hint" style="color: var(--text-warning, #f59e0b); margin-top: -4px; margin-bottom: 12px;">Your selected text and note content will be sent to {aiProvider === 'openai' ? 'OpenAI' : 'Anthropic'} servers for processing.</p>
@@ -1064,6 +1083,59 @@
 											onblur={saveAiSettings}
 										/>
 										<p class="setting-hint">Ollama server address. Install from <a href="https://ollama.com" target="_blank" class="ai-link">ollama.com</a></p>
+									</div>
+									<div class="settings-section">
+										<h3>API Key <span style="font-weight: 400; text-transform: none; font-size: 11px;">(optional)</span></h3>
+										<div class="ai-key-row">
+											<input
+												type={aiShowOllamaKey ? 'text' : 'password'}
+												class="ai-key-input"
+												placeholder="Only required if your server requires auth"
+												value={_ollamaApiKey}
+												oninput={(e) => { _ollamaApiKey = (e.target as HTMLInputElement).value; }}
+												onblur={saveAiSettings}
+											/>
+											<button class="ai-key-toggle" onclick={() => aiShowOllamaKey = !aiShowOllamaKey} title={aiShowOllamaKey ? 'Hide' : 'Show'}>
+												{#if aiShowOllamaKey}
+													<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+												{:else}
+													<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+												{/if}
+											</button>
+										</div>
+									</div>
+								{:else if aiProvider === 'openai_compatible'}
+									<div class="settings-section">
+										<h3>Server URL</h3>
+										<input
+											type="text"
+											class="ai-key-input"
+											placeholder="http://localhost:1234"
+											value={_openaiCompatibleBaseUrl}
+											oninput={(e) => { _openaiCompatibleBaseUrl = (e.target as HTMLInputElement).value; }}
+											onblur={saveAiSettings}
+										/>
+										<p class="setting-hint">Base URL for any OpenAI-compatible server (LM Studio, LocalAI, vLLM, etc.). Uses the <code>v1/completions</code> endpoint.</p>
+									</div>
+									<div class="settings-section">
+										<h3>API Key <span style="font-weight: 400; text-transform: none; font-size: 11px;">(optional)</span></h3>
+										<div class="ai-key-row">
+											<input
+												type={aiShowCompatibleKey ? 'text' : 'password'}
+												class="ai-key-input"
+												placeholder="Leave empty if no auth required"
+												value={_openaiCompatibleKey}
+												oninput={(e) => { _openaiCompatibleKey = (e.target as HTMLInputElement).value; }}
+												onblur={saveAiSettings}
+											/>
+											<button class="ai-key-toggle" onclick={() => aiShowCompatibleKey = !aiShowCompatibleKey} title={aiShowCompatibleKey ? 'Hide' : 'Show'}>
+												{#if aiShowCompatibleKey}
+													<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+												{:else}
+													<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+												{/if}
+											</button>
+										</div>
 									</div>
 								{:else}
 									<div class="settings-section">
@@ -1095,16 +1167,16 @@
 
 								<div class="settings-section">
 									<h3>Model</h3>
-									{#if aiProvider === 'ollama'}
+									{#if aiProvider === 'ollama' || aiProvider === 'openai_compatible'}
 										<input
 											type="text"
 											class="ai-key-input"
-											placeholder="gemma3:4b"
+											placeholder={aiProvider === 'ollama' ? 'gemma3:4b' : 'Enter model name'}
 											value={aiModel}
 											oninput={(e) => { aiModel = (e.target as HTMLInputElement).value; }}
 											onblur={saveAiSettings}
 										/>
-										<p class="setting-hint">Enter the model name as shown by <code>ollama list</code></p>
+										<p class="setting-hint">{aiProvider === 'ollama' ? 'Enter the model name as shown by <code>ollama list</code>' : 'Enter the model name as required by your server'}</p>
 									{:else}
 										<div class="ai-model-options">
 											{#each aiModels as m}
@@ -1136,7 +1208,7 @@
 
 								<div class="settings-section">
 									<h3>Connection</h3>
-									<button class="import-btn" onclick={handleTestAi} disabled={aiTestLoading || (aiProvider !== 'ollama' && !aiApiKey)}>
+									<button class="import-btn" onclick={handleTestAi} disabled={aiTestLoading || (aiProvider === 'openai_compatible' && !_openaiCompatibleBaseUrl) || (aiProvider !== 'ollama' && aiProvider !== 'openai_compatible' && !aiApiKey)}>
 										{#if aiTestLoading}
 											<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
 											Testing...

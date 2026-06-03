@@ -109,6 +109,12 @@ pub struct AppConfig {
     pub openai_api_key: Option<String>,
     #[serde(default)]
     pub ollama_base_url: Option<String>,
+    #[serde(default)]
+    pub ollama_api_key: Option<String>,
+    #[serde(default)]
+    pub openai_compatible_base_url: Option<String>,
+    #[serde(default)]
+    pub openai_compatible_api_key: Option<String>,
     #[serde(default = "default_ai_model")]
     pub ai_model: String,
     #[serde(default)]
@@ -181,6 +187,9 @@ impl Default for AppConfig {
             ai_api_key: None,
             openai_api_key: None,
             ollama_base_url: None,
+            ollama_api_key: None,
+            openai_compatible_base_url: None,
+            openai_compatible_api_key: None,
             ai_model: "claude-sonnet-4-6".to_string(),
             ai_writing_style: None,
             default_view_mode: false,

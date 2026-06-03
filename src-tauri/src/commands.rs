@@ -1654,12 +1654,22 @@ pub fn set_ai_settings(
     model: String,
     writing_style: Option<String>,
     base_url: Option<String>,
+    ollama_api_key: Option<String>,
+    openai_compatible_base_url: Option<String>,
+    openai_compatible_api_key: Option<String>,
 ) -> Result<(), String> {
     let mut config = state.config.lock().map_err(|e| e.to_string())?;
     let key = api_key.filter(|k| !k.is_empty());
     match provider.as_deref() {
         Some("openai") => config.openai_api_key = key,
-        Some("ollama") => config.ollama_base_url = base_url.filter(|u| !u.trim().is_empty()),
+        Some("ollama") => {
+            config.ollama_base_url = base_url.filter(|u| !u.trim().is_empty());
+            config.ollama_api_key = ollama_api_key.filter(|k| !k.is_empty());
+        }
+        Some("openai_compatible") => {
+            config.openai_compatible_base_url = openai_compatible_base_url.filter(|u| !u.trim().is_empty());
+            config.openai_compatible_api_key = openai_compatible_api_key.filter(|k| !k.is_empty());
+        }
         _ => config.ai_api_key = key,
     }
     config.ai_provider = provider;
@@ -1678,17 +1688,18 @@ pub fn test_ai_connection(app: AppHandle) -> Result<(), String> {
             .ai_provider
             .clone()
             .unwrap_or_else(|| "anthropic".to_string());
-        let key = if provider == "ollama" {
-            // Ollama doesn't require an API key
-            Some(String::new())
-        } else if provider == "openai" {
-            config.openai_api_key.clone()
-        } else {
-            config.ai_api_key.clone()
+        let key = match provider.as_str() {
+            "ollama" => Some(config.ollama_api_key.clone().unwrap_or_default()),
+            "openai_compatible" => Some(config.openai_compatible_api_key.clone().unwrap_or_default()),
+            "openai" => config.openai_api_key.clone(),
+            _ => config.ai_api_key.clone(),
         }
         .ok_or("No API key configured")?;
         let model = config.ai_model.clone();
-        let base_url = config.ollama_base_url.clone();
+        let base_url = match provider.as_str() {
+            "openai_compatible" => config.openai_compatible_base_url.clone(),
+            _ => config.ollama_base_url.clone(),
+        };
         (provider, key, model, base_url)
     };
 
@@ -1734,17 +1745,19 @@ pub fn ai_ask(
             .ai_provider
             .clone()
             .unwrap_or_else(|| "anthropic".to_string());
-        let key = if provider == "ollama" {
-            Some(String::new())
-        } else if provider == "openai" {
-            config.openai_api_key.clone()
-        } else {
-            config.ai_api_key.clone()
+        let key = match provider.as_str() {
+            "ollama" => Some(config.ollama_api_key.clone().unwrap_or_default()),
+            "openai_compatible" => Some(config.openai_compatible_api_key.clone().unwrap_or_default()),
+            "openai" => config.openai_api_key.clone(),
+            _ => config.ai_api_key.clone(),
         }
         .ok_or("No API key configured. Go to Settings > AI to set up your API key.")?;
         let model = config.ai_model.clone();
         let style = config.ai_writing_style.clone();
-        let base_url = config.ollama_base_url.clone();
+        let base_url = match provider.as_str() {
+            "openai_compatible" => config.openai_compatible_base_url.clone(),
+            _ => config.ollama_base_url.clone(),
+        };
         (provider, key, model, style, base_url)
     };
 

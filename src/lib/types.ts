@@ -73,6 +73,9 @@ export interface AppConfig {
   ai_api_key: string | null;
   openai_api_key: string | null;
   ollama_base_url: string | null;
+  ollama_api_key: string | null;
+  openai_compatible_base_url: string | null;
+  openai_compatible_api_key: string | null;
   ai_model: string;
   ai_writing_style: string | null;
   default_view_mode: boolean;

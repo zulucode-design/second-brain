@@ -351,8 +351,14 @@ export async function setAiSettings(
   model: string,
   writingStyle: string | null,
   baseUrl: string | null = null,
+  ollamaApiKey: string | null = null,
+  openaiCompatibleBaseUrl: string | null = null,
+  openaiCompatibleApiKey: string | null = null,
 ): Promise<void> {
-  return invoke("set_ai_settings", { provider, apiKey, model, writingStyle, baseUrl });
+  return invoke("set_ai_settings", {
+    provider, apiKey, model, writingStyle, baseUrl,
+    ollamaApiKey, openaiCompatibleBaseUrl, openaiCompatibleApiKey,
+  });
 }
 
 export async function testAiConnection(): Promise<void> {
