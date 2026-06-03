@@ -31,7 +31,7 @@
 	} = $props();
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
-	const isMobile = /android|ios/i.test(navigator.userAgent);
+	const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
 
 	let editingNotebook = $state<string | null>(null);
 	let editValue = $state('');

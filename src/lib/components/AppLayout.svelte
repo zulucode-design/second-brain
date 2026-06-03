@@ -45,7 +45,7 @@
 
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
-	const isMobile = /android|ios/i.test(navigator.userAgent);
+	const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
 	const isAndroid = /android/i.test(navigator.userAgent);
 	import { loadVaultState, saveVaultState, readNote, createDailyNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';

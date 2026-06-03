@@ -194,8 +194,8 @@ pub fn scan_notes(vault_path: &str, notebook_path: Option<&str>) -> Result<Vec<N
         return Err("Path does not exist".to_string());
     }
 
-    // On Android, use metadata-only scan (no file reads) for fast listing on FUSE
-    #[cfg(target_os = "android")]
+    // On mobile, use metadata-only scan (no file reads) for fast listing on sandboxed FS
+    #[cfg(mobile)]
     {
         let mut notes = Vec::new();
         // Log what read_dir sees
@@ -238,12 +238,12 @@ pub fn scan_notes(vault_path: &str, notebook_path: Option<&str>) -> Result<Vec<N
                 }
             }
         }
-        log::info!("scan_notes: Android scan found {} notes", notes.len());
+        log::info!("scan_notes: mobile scan found {} notes", notes.len());
         notes.sort_by(|a, b| b.meta.modified.cmp(&a.meta.modified));
         return Ok(notes);
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         let md_files: Vec<PathBuf> = if notebook_path.is_some() {
             fs::read_dir(root)
@@ -279,7 +279,7 @@ fn read_note_entry(path: &Path, vault_root: &Path) -> Result<NoteEntry, String> 
 
 /// Android-only: reads just the frontmatter (first 2KB) for tags/title/pinned,
 /// uses filesystem timestamps for dates. No preview text.
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 fn read_note_entry_metadata_only(path: &Path, vault_root: &Path) -> Result<NoteEntry, String> {
     // Read first 2KB - enough for frontmatter with tags, title, pinned
     let mut file = fs::File::open(path).map_err(|e| e.to_string())?;

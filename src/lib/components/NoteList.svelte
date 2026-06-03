@@ -47,7 +47,7 @@
 	} = $props();
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
-	const isMobile = /android|ios/i.test(navigator.userAgent);
+	const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
 	const isAndroid = /android/i.test(navigator.userAgent);
 	let multiSelectMode = $state(false);
 	let trashNotebooks = $state<TrashNotebookEntry[]>([]);

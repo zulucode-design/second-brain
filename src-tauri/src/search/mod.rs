@@ -5,9 +5,9 @@ use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
 use tantivy::collector::TopDocs;
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 use tantivy::directory::MmapDirectory;
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 use tantivy::directory::RamDirectory;
 use tantivy::query::{BooleanQuery, FuzzyTermQuery, Occur, PhrasePrefixQuery, Query};
 use tantivy::schema::*;
@@ -34,14 +34,14 @@ impl SearchIndex {
         let tags_field = schema_builder.add_text_field("tags", TEXT | STORED);
         let schema = schema_builder.build();
 
-        // Android: use in-memory index (flock doesn't work on /storage/emulated FUSE filesystem)
+        // Mobile: use in-memory index (flock is unreliable on the sandboxed/FUSE filesystem)
         // Desktop: use mmap directory for persistent index on disk
-        #[cfg(target_os = "android")]
+        #[cfg(mobile)]
         let index = {
             let dir = RamDirectory::create();
             Index::open_or_create(dir, schema.clone()).map_err(|e| e.to_string())?
         };
-        #[cfg(not(target_os = "android"))]
+        #[cfg(desktop)]
         let index = {
             let index_dir = helixnotes_dir(vault_path).join("search_index");
             fs::create_dir_all(&index_dir).map_err(|e| e.to_string())?;
@@ -49,9 +49,9 @@ impl SearchIndex {
             Index::open_or_create(dir, schema.clone()).map_err(|e| e.to_string())?
         };
 
-        #[cfg(target_os = "android")]
+        #[cfg(mobile)]
         let heap_size = 15_000_000;
-        #[cfg(not(target_os = "android"))]
+        #[cfg(desktop)]
         let heap_size = 50_000_000;
 
         let writer = index.writer(heap_size).map_err(|e| e.to_string())?;

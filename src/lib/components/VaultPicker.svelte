@@ -1,20 +1,22 @@
 <script lang="ts">
 	import { open } from '@tauri-apps/plugin-dialog';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
+	import { documentDir } from '@tauri-apps/api/path';
 	import { openVault, getAppConfig } from '$lib/api';
 	import { appConfig, vaultReady } from '$lib/stores/app';
+	import { isAndroid, isIOS, isMobile } from '$lib/platform';
 	import type { VaultConfig } from '$lib/types';
 
 	const appWindow = getCurrentWindow();
-	const isMobile = /android|ios/i.test(navigator.userAgent);
 
 	let recentVaults: VaultConfig[] = $derived($appConfig?.vaults ?? []);
 	let loading = $state(false);
 	let error = $state('');
 	let vaultName = $state('HelixNotes');
-	let hasPermission = $state(!isMobile);
+	let hasPermission = $state(!isAndroid);
 	let selectedLocation = $state('Documents');
 	let customPath = $state('');
+	let iosBasePath = $state('');
 
 	const storageLocations = [
 		{ label: 'Documents', path: '/storage/emulated/0/Documents' },
@@ -22,13 +24,17 @@
 		{ label: 'Internal Storage', path: '/storage/emulated/0' },
 	];
 
-	if (isMobile) {
+	if (isAndroid) {
 		checkPermission();
 		setTimeout(checkPermission, 500);
 		(window as any).__storagePermissionGranted = () => { hasPermission = true; };
 		document.addEventListener('visibilitychange', () => {
 			if (document.visibilityState === 'visible') setTimeout(checkPermission, 300);
 		});
+	}
+	if (isIOS) {
+		// iOS is sandboxed: the vault lives in the app's Documents dir (exposed via the Files app).
+		documentDir().then((d) => { iosBasePath = d.replace(/\/+$/, ''); }).catch(() => {});
 	}
 
 	function checkPermission() {
@@ -56,10 +62,17 @@
 		return storageLocations.find(l => l.label === selectedLocation)?.path || '/storage/emulated/0/Documents';
 	}
 
-	let fullPath = $derived(isMobile ? `${getMobileBasePath()}/${vaultName.trim() || 'HelixNotes'}` : '');
+	let fullPath = $derived(
+		isIOS ? `${iosBasePath}/${vaultName.trim() || 'HelixNotes'}`
+		: isAndroid ? `${getMobileBasePath()}/${vaultName.trim() || 'HelixNotes'}`
+		: ''
+	);
 
 	async function pickFolder() {
-		if (isMobile) {
+		if (isIOS) {
+			const base = iosBasePath || (await documentDir()).replace(/\/+$/, '');
+			await openSelectedVault(`${base}/${vaultName.trim() || 'HelixNotes'}`);
+		} else if (isAndroid) {
 			await openSelectedVault(fullPath);
 		} else {
 			const selected = await open({ directory: true, multiple: false, title: 'Choose Notes Folder' });
@@ -73,7 +86,7 @@
 		loading = true;
 		error = '';
 		try {
-			if (isMobile) {
+			if (isAndroid) {
 				try {
 					const bridge = (window as any).Android;
 					bridge?.prepareVaultDir?.(path);
@@ -84,7 +97,12 @@
 			$appConfig = config;
 			$vaultReady = true;
 		} catch (e) {
-			error = String(e);
+			const msg = String(e);
+			if (isAndroid && /os error 13|permission denied/i.test(msg)) {
+				error = 'Storage permission is required. Enable file access for HelixNotes in your system settings, then try again.';
+			} else {
+				error = msg;
+			}
 		} finally {
 			loading = false;
 		}
@@ -118,15 +136,20 @@
 		<h1>HelixNotes</h1>
 		<p class="subtitle">Local markdown notes</p>
 		{#if isMobile}
-			<p class="description">Choose where to store your notes. Sync with Syncthing, Nextcloud, or any file sync app.</p>
+			{#if isIOS}
+				<p class="description">Your notes are saved in the app's folder and appear in the Files app under "On My iPhone &rarr; HelixNotes".</p>
+			{:else}
+				<p class="description">Choose where to store your notes. Sync with Syncthing, Nextcloud, or any file sync app.</p>
+			{/if}
 
-			{#if !hasPermission}
+			{#if isAndroid && !hasPermission}
 				<button class="btn-permission" onclick={requestPermission}>
 					Grant File Access
 				</button>
 				<p class="permission-hint">Required to access Documents, Downloads, and other shared folders.</p>
 			{/if}
 
+			{#if isAndroid}
 			<div class="location-selector">
 				<label class="location-label">Location</label>
 				<div class="location-options">
@@ -147,6 +170,7 @@
 					<input class="custom-path-input" type="text" bind:value={customPath} placeholder="/storage/emulated/0/..." />
 				{/if}
 			</div>
+			{/if}
 
 			<div class="vault-name-input">
 				<label for="vault-name">Vault name</label>

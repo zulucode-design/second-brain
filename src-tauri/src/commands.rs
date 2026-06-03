@@ -11,18 +11,18 @@ use tauri::{AppHandle, Manager, State};
 pub fn open_vault(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<(), String> {
     operations::ensure_vault_structure(&path)?;
 
-    // Initialize search index - rebuild in background on Android (FUSE is slow)
+    // Initialize search index - rebuild in background on mobile (sandboxed FS is slow)
     let search = std::sync::Arc::new(SearchIndex::new(&path)?);
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         let search_bg = search.clone();
         let vault = path.clone();
         std::thread::spawn(move || {
             let _ = search_bg.rebuild(&vault);
-            log::info!("Android: search index rebuild complete");
+            log::info!("mobile: search index rebuild complete");
         });
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         search.rebuild(&path)?;
     }
@@ -670,7 +670,7 @@ pub fn save_vault_state(state: State<'_, AppState>, vault_state: VaultState) -> 
 
 /// Read image from system clipboard (bypasses WebKitGTK clipboard bug).
 /// Returns PNG bytes as Vec<u8>, or error if no image on clipboard.
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 #[tauri::command]
 pub fn read_clipboard_image() -> Result<Vec<u8>, String> {
     let mut clipboard =
@@ -695,14 +695,14 @@ pub fn read_clipboard_image() -> Result<Vec<u8>, String> {
     Ok(buf)
 }
 
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 #[tauri::command]
 pub fn read_clipboard_image() -> Result<Vec<u8>, String> {
     Err("Clipboard image reading not supported on Android".to_string())
 }
 
 /// Copy an image file to the system clipboard.
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 #[tauri::command]
 pub fn copy_image_to_clipboard(path: String) -> Result<(), String> {
     let data = std::fs::read(&path).map_err(|e| format!("Failed to read image: {}", e))?;
@@ -722,14 +722,14 @@ pub fn copy_image_to_clipboard(path: String) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 #[tauri::command]
 pub fn copy_image_to_clipboard(_path: String) -> Result<(), String> {
     Err("Clipboard image copy not supported on Android".to_string())
 }
 
 /// Copy PNG bytes directly to the system clipboard.
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 #[tauri::command]
 pub fn copy_png_to_clipboard(data: Vec<u8>) -> Result<(), String> {
     let img = image::load_from_memory(&data)
@@ -748,7 +748,7 @@ pub fn copy_png_to_clipboard(data: Vec<u8>) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 #[tauri::command]
 pub fn copy_png_to_clipboard(_data: Vec<u8>) -> Result<(), String> {
     Err("Clipboard image copy not supported on Android".to_string())
@@ -1798,17 +1798,21 @@ pub fn ai_ask(
 
 // ── Helpers ──
 
-static ANDROID_CONFIG_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+// On mobile (Android + iOS) the OS config dir is injected at startup via the Tauri
+// path resolver, since dirs::config_dir() is not reliable in the app sandbox.
+static MOBILE_CONFIG_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
-pub fn set_android_config_dir(path: std::path::PathBuf) {
-    let _ = ANDROID_CONFIG_DIR.set(path);
+pub fn set_mobile_config_dir(path: std::path::PathBuf) {
+    let _ = MOBILE_CONFIG_DIR.set(path);
 }
 
 fn app_config_path() -> Result<std::path::PathBuf, String> {
-    let app_dir = if let Some(config_dir) = dirs::config_dir() {
+    // Prefer the injected mobile dir when present (set only on mobile); fall back to
+    // the platform config dir on desktop.
+    let app_dir = if let Some(mobile_dir) = MOBILE_CONFIG_DIR.get() {
+        mobile_dir.join("helixnotes")
+    } else if let Some(config_dir) = dirs::config_dir() {
         config_dir.join("helixnotes")
-    } else if let Some(android_dir) = ANDROID_CONFIG_DIR.get() {
-        android_dir.join("helixnotes")
     } else {
         return Err("Config directory not available yet".to_string());
     };

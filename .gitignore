@@ -10,7 +10,15 @@ node_modules
 
 # Tauri
 /src-tauri/target
-/src-tauri/gen
+
+# Track Android source (MainActivity.kt, manifest, proguard, gradle); Tauri's nested
+# gen/android/.gitignore + app/.gitignore keep build/, .gradle/, .cxx/, generated/, *.so out.
+/src-tauri/gen/*
+!/src-tauri/gen/android/
+
+# Never commit signing secrets (nested ignore misses keystore.properties)
+/src-tauri/gen/android/keystore.properties
+/src-tauri/gen/android/key.properties
 
 # OS
 .DS_Store

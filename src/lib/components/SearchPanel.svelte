@@ -83,7 +83,7 @@
 		return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 	}
 
-	const isMobile = /android|ios/i.test(navigator.userAgent);
+	const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
 
 	async function openResult(result: SearchResult) {
 		try {

@@ -6,7 +6,7 @@
 	import type { VaultStats } from '$lib/types';
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
-	const isMobile = /android|ios/i.test(navigator.userAgent);
+	const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
 
 	let stats = $state<VaultStats | null>(null);
 	let activeTab = $state<'about' | 'shortcuts'>(isMobile ? 'about' : 'shortcuts');

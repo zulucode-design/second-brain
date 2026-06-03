@@ -46,7 +46,7 @@
 	import GraphView from './GraphView.svelte';
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
-	const isMobile = /android|ios/i.test(navigator.userAgent);
+	const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
 
 	// Track virtual keyboard height on mobile via visualViewport
 	let keyboardHeight = $state(0);
@@ -59,6 +59,8 @@
 
 	let editorElement = $state<HTMLDivElement>(null!);
 	let sourceElement = $state<HTMLTextAreaElement>(null!);
+	const LARGE_DOC_CHARS = 100_000;
+	let isLargeDoc = $state(false);
 	let editor: Editor | null = null;
 	let editorReady = $state(false);
 	let sourceContent = $state('');
@@ -245,6 +247,38 @@
 			editor.chain().focus().insertContent({ type: nodeType, attrs: { tex: trimmed } }).run();
 		}
 	}
+	const katexCache = new Map<string, string>();
+	function renderKatex(tex: string, displayMode: boolean): string {
+		const key = (displayMode ? 'B:' : 'I:') + tex;
+		let html = katexCache.get(key);
+		if (html === undefined) {
+			try {
+				html = katex.renderToString(tex, { displayMode, throwOnError: false });
+			} catch {
+				html = `<span class="katex-error">${tex}</span>`;
+			}
+			katexCache.set(key, html);
+		}
+		return html;
+	}
+
+	let mathObserver: IntersectionObserver | null = null;
+	const mathPending = new WeakMap<Element, () => void>();
+	function observeMath(dom: HTMLElement, render: () => void) {
+		if (!mathObserver) {
+			const root = (editorElement?.closest('.editor-body') as Element) ?? null;
+			mathObserver = new IntersectionObserver((entries) => {
+				for (const e of entries) {
+					if (!e.isIntersecting) continue;
+					const fn = mathPending.get(e.target);
+					if (fn) { mathPending.delete(e.target); mathObserver!.unobserve(e.target); fn(); }
+				}
+			}, { root, rootMargin: '1000px 0px' });
+		}
+		mathPending.set(dom, render);
+		mathObserver.observe(dom);
+	}
+
 	function renderMathPreview(tex: string, displayMode: boolean): string {
 		if (!tex.trim()) return '';
 		try {
@@ -453,7 +487,7 @@
 		},
 		renderHTML({ HTMLAttributes }) {
 			const tex = HTMLAttributes.tex || '';
-			const rendered = katex.renderToString(tex, { displayMode: true, throwOnError: false });
+			const rendered = renderKatex(tex, true);
 			return ['div', { 'data-math-block': encodeURIComponent(tex), class: 'math-block', contenteditable: 'false' }, ['div', { innerHTML: rendered }]];
 		},
 		addNodeView() {
@@ -462,14 +496,15 @@
 				dom.classList.add('math-block');
 				dom.contentEditable = 'false';
 				dom.setAttribute('data-math-block', encodeURIComponent(node.attrs.tex));
-				dom.innerHTML = katex.renderToString(node.attrs.tex, { displayMode: true, throwOnError: false });
+				const render = () => { dom.innerHTML = renderKatex(node.attrs.tex, true); };
+				if (isLargeDoc) { dom.textContent = node.attrs.tex; observeMath(dom, render); } else { render(); }
 				dom.addEventListener('dblclick', (e) => {
 					e.preventDefault();
 					e.stopPropagation();
 					const pos = typeof getPos === 'function' ? getPos() : null;
 					if (pos !== null && pos !== undefined) openMathEdit(pos, 'block', node.attrs.tex);
 				});
-				return { dom };
+				return { dom, destroy() { mathObserver?.unobserve(dom); mathPending.delete(dom); } };
 			};
 		},
 	});
@@ -490,7 +525,7 @@
 		},
 		renderHTML({ HTMLAttributes }) {
 			const tex = HTMLAttributes.tex || '';
-			const rendered = katex.renderToString(tex, { displayMode: false, throwOnError: false });
+			const rendered = renderKatex(tex, false);
 			return ['span', { 'data-math-inline': encodeURIComponent(tex), class: 'math-inline', contenteditable: 'false' }, ['span', { innerHTML: rendered }]];
 		},
 		addNodeView() {
@@ -499,14 +534,15 @@
 				dom.classList.add('math-inline');
 				dom.contentEditable = 'false';
 				dom.setAttribute('data-math-inline', encodeURIComponent(node.attrs.tex));
-				dom.innerHTML = katex.renderToString(node.attrs.tex, { displayMode: false, throwOnError: false });
+				const render = () => { dom.innerHTML = renderKatex(node.attrs.tex, false); };
+				if (isLargeDoc) { dom.textContent = node.attrs.tex; observeMath(dom, render); } else { render(); }
 				dom.addEventListener('dblclick', (e) => {
 					e.preventDefault();
 					e.stopPropagation();
 					const pos = typeof getPos === 'function' ? getPos() : null;
 					if (pos !== null && pos !== undefined) openMathEdit(pos, 'inline', node.attrs.tex);
 				});
-				return { dom };
+				return { dom, destroy() { mathObserver?.unobserve(dom); mathPending.delete(dom); } };
 			};
 		},
 	});
@@ -1912,6 +1948,7 @@
 		loadedPath = path;
 		lastSourceMode = $sourceMode;
 		isLoadingNote = true;
+		isLargeDoc = content.length > LARGE_DOC_CHARS;
 		// Apply default view mode when switching notes - but new notes always open in edit mode.
 		// Viewer mode (external file) always forces read-only.
 		const isViewer = !!get(viewerNote);
@@ -2633,9 +2670,7 @@
 					if (!mathBlock) { mathBlock = []; continue; }
 					const tex = mathBlock.join('\n').trim();
 					mathBlock = null;
-					try {
-						outLines.push(`<div data-math-block="${encodeURIComponent(tex)}" class="math-block">${katex.renderToString(tex, { displayMode: true, throwOnError: false })}</div>`);
-					} catch { outLines.push('$$', tex, '$$'); }
+					outLines.push(`<div data-math-block="${encodeURIComponent(tex)}" class="math-block"></div>`);
 					continue;
 				}
 				if (mathBlock) { mathBlock.push(line); continue; }
@@ -2645,11 +2680,9 @@
 				let offset = 0;
 				for (const m of processed.matchAll(/(?<!\$)\$(?!\$)([^\n$]+?)(?<!\$)\$(?!\$)/g)) {
 					const tex = m[1].trim();
-					try {
-						const html = `<span data-math-inline="${encodeURIComponent(tex)}" class="math-inline">${katex.renderToString(tex, { displayMode: false, throwOnError: false })}</span>`;
-						result = result.slice(0, m.index! + offset) + html + result.slice(m.index! + m[0].length + offset);
-						offset += html.length - m[0].length;
-					} catch { /* leave as-is */ }
+					const html = `<span data-math-inline="${encodeURIComponent(tex)}" class="math-inline"></span>`;
+					result = result.slice(0, m.index! + offset) + html + result.slice(m.index! + m[0].length + offset);
+					offset += html.length - m[0].length;
 				}
 				outLines.push(result);
 			}
@@ -2769,6 +2802,8 @@
 			editor.destroy();
 			editor = null;
 		}
+		mathObserver?.disconnect();
+		mathObserver = null;
 		editorReady = false;
 		closeSlashMenu();
 	}
@@ -2777,6 +2812,7 @@
 		if (!editorElement) return;
 		destroyEditor();
 
+		isLargeDoc = content.length > LARGE_DOC_CHARS;
 		const html = markdownToHtml(content);
 
 		editor = new Editor({
@@ -4312,7 +4348,7 @@
 						spellcheck="false"
 					></textarea>
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
-					<div class="tiptap-wrapper" style={$sourceMode ? 'display:none' : ''} spellcheck="false" bind:this={editorElement} onclick={(e) => { closeLinkContextMenu(); handleEditorClick(e); showOutline = false; }}></div>
+					<div class="tiptap-wrapper" class:large-doc={isLargeDoc} style={$sourceMode ? 'display:none' : ''} spellcheck="false" bind:this={editorElement} onclick={(e) => { closeLinkContextMenu(); handleEditorClick(e); showOutline = false; }}></div>
 				{:else}
 					<!-- Desktop: conditional rendering with line numbers -->
 					{#if $sourceMode}
@@ -4420,7 +4456,7 @@
 						></textarea>
 					{:else}
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
-						<div class="tiptap-wrapper" spellcheck="false" bind:this={editorElement} onclick={(e) => { closeLinkContextMenu(); handleEditorClick(e); showOutline = false; }} oncontextmenu={handleEditorContextMenu}></div>
+						<div class="tiptap-wrapper" class:large-doc={isLargeDoc} spellcheck="false" bind:this={editorElement} onclick={(e) => { closeLinkContextMenu(); handleEditorClick(e); showOutline = false; }} oncontextmenu={handleEditorContextMenu}></div>
 					{/if}
 				{/if}
 			</div>

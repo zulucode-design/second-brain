@@ -7,7 +7,7 @@
 
 	let { children } = $props();
 
-	const isMobile = /android|ios/i.test(navigator.userAgent);
+	const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
 
 	// Reactively apply theme class to <html> whenever $theme changes
 	$effect(() => {
@@ -158,6 +158,25 @@
 				document.removeEventListener('touchstart', handleTouchStart, true);
 				document.removeEventListener('touchend', handleTouchEnd, true);
 			}
+		};
+	});
+
+	// On Windows the native OS drag-drop handler is disabled (dragDropEnabled:false
+	// in tauri.windows.conf.json) so HTML5 drag-and-drop works for reordering. With it
+	// off, a file dropped outside a drop zone would make the webview navigate to / open
+	// that file, replacing the app. Swallow any drag that bubbles up unhandled. Real drop
+	// zones (editor, sidebar reordering) call preventDefault in their own handlers first;
+	// these bubble-phase listeners only act as a fallback. On macOS/Linux OS file drops are
+	// intercepted natively and never surface as HTML5 events, so this is a harmless no-op there.
+	onMount(() => {
+		function preventNavigate(e: DragEvent) {
+			e.preventDefault();
+		}
+		window.addEventListener('dragover', preventNavigate);
+		window.addEventListener('drop', preventNavigate);
+		return () => {
+			window.removeEventListener('dragover', preventNavigate);
+			window.removeEventListener('drop', preventNavigate);
 		};
 	});
 </script>

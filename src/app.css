@@ -5,6 +5,37 @@
     src: local("Inter");
 }
 
+/* JetBrains Mono - self-hosted (see static/fonts/jetbrains-mono/, OFL-1.1).
+   Used for code blocks, inline code, the raw source editor, and the "Mono" font option. */
+@font-face {
+    font-family: "JetBrains Mono";
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("/fonts/jetbrains-mono/JetBrainsMono-Regular.woff2") format("woff2");
+}
+@font-face {
+    font-family: "JetBrains Mono";
+    font-style: italic;
+    font-weight: 400;
+    font-display: swap;
+    src: url("/fonts/jetbrains-mono/JetBrainsMono-Italic.woff2") format("woff2");
+}
+@font-face {
+    font-family: "JetBrains Mono";
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url("/fonts/jetbrains-mono/JetBrainsMono-Bold.woff2") format("woff2");
+}
+@font-face {
+    font-family: "JetBrains Mono";
+    font-style: italic;
+    font-weight: 700;
+    font-display: swap;
+    src: url("/fonts/jetbrains-mono/JetBrainsMono-BoldItalic.woff2") format("woff2");
+}
+
 :root {
     /* Light theme */
     --bg-primary: #ffffff;
@@ -32,6 +63,9 @@
     --sidebar-width: 220px;
     --notelist-width: 280px;
     --panel-resize-handle: 3px;
+    /* Monospace / code font (self-hosted JetBrains Mono, see @font-face above) */
+    --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace,
+        monospace;
 }
 
 :root.dark {
@@ -153,6 +187,15 @@ body {
 body.resizing .ProseMirror {
     pointer-events: none;
     contain: strict;
+}
+
+/* Skip layout/paint of off-screen blocks in very large (math-heavy) notes. */
+.tiptap-wrapper.large-doc .ProseMirror > * {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 2rem;
+}
+.tiptap-wrapper.large-doc .ProseMirror > .math-block {
+    contain-intrinsic-size: auto 3.5rem;
 }
 
 body.resizing {

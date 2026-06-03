@@ -11,7 +11,7 @@ use state::AppState;
 #[allow(unused_imports)]
 use tauri::{Emitter, Manager};
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
@@ -20,14 +20,20 @@ use tauri::{
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Work around blank window from WebKitGTK DMABUF/GBM allocation failures on some Linux GPUs.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install rustls crypto provider");
 
     let config = commands::load_app_config();
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     let show_tray = config.show_tray_icon;
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     let close_to_tray = config.close_to_tray && show_tray;
     let app_state = AppState::new(config);
 
@@ -44,28 +50,28 @@ pub fn run() {
                 )?;
             }
 
-            // On Android, set config dir from Tauri's path resolver, then reload config
-            #[cfg(target_os = "android")]
+            // On mobile, set config dir from Tauri's path resolver, then reload config
+            #[cfg(mobile)]
             {
                 if let Ok(config_dir) = app.path().config_dir() {
-                    commands::set_android_config_dir(config_dir);
+                    commands::set_mobile_config_dir(config_dir);
                 } else if let Ok(data_dir) = app.path().data_dir() {
-                    commands::set_android_config_dir(data_dir);
+                    commands::set_mobile_config_dir(data_dir);
                 }
-                // Reload config now that the Android config dir is available
+                // Reload config now that the mobile config dir is available
                 let reloaded = commands::load_app_config();
                 let _ = app.state::<AppState>().config.lock().map(|mut cfg| {
                     *cfg = reloaded;
                 });
             }
 
-            #[cfg(not(target_os = "android"))]
+            #[cfg(desktop)]
             if show_tray {
                 setup_tray(app)?;
             }
 
             // Check CLI args for a .md file path on initial launch
-            #[cfg(not(target_os = "android"))]
+            #[cfg(desktop)]
             {
                 let file_arg = std::env::args().skip(1).find(|a| {
                     let a = a.trim();
@@ -229,7 +235,7 @@ pub fn run() {
             });
         });
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             // Always show/focus the main window
@@ -290,7 +296,7 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(desktop)]
 fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let show = MenuItemBuilder::with_id("show", "Show HelixNotes").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;

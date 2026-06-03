@@ -7,7 +7,7 @@
 	import { openUrl } from '$lib/api';
 	import type { ImportResult, BackupEntry } from '$lib/types';
 
-	const isMobile = /android|ios/i.test(navigator.userAgent);
+	const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
 
 	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'ai' | 'updates';
 	let activeTab = $state<Tab>('styling');
@@ -301,7 +301,7 @@
 	];
 
 	const fontFamilyPresets = [
-		{ name: 'System', value: 'system', stack: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' },
+		{ name: 'System', value: 'system', stack: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' },
 		{ name: 'Inter', value: 'inter', stack: '"Inter", -apple-system, BlinkMacSystemFont, sans-serif' },
 		{ name: 'Georgia', value: 'georgia', stack: 'Georgia, "Times New Roman", serif' },
 		{ name: 'Merriweather', value: 'merriweather', stack: '"Merriweather", Georgia, serif' },
