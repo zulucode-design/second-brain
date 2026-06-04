@@ -34,10 +34,16 @@
 	});
 
 	$effect(() => {
-		const themeValue = $theme || 'system';
+		const t = $theme || 'system';
+		const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula'];
+		const namedThemes = ['solarized-light', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-light', 'github-dark', 'dracula'];
 		const root = document.documentElement;
 		root.classList.remove('dark');
-		if (themeValue === 'dark' || (themeValue === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+		root.removeAttribute('data-theme');
+		if (namedThemes.includes(t)) {
+			root.setAttribute('data-theme', t);
+			if (darkThemes.includes(t)) root.classList.add('dark');
+		} else if (t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
 			root.classList.add('dark');
 		}
 	});

@@ -300,6 +300,24 @@
 		}
 	}
 
+	const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula'];
+	let isThemeDark = $derived(
+		darkThemes.includes($theme) || ($theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+	);
+
+	const themePresets = [
+		{ id: 'light', label: 'Light', bg: '#ffffff', sidebar: '#f8f9fa', accent: '#5b6abf' },
+		{ id: 'dark', label: 'Dark', bg: '#1a1b26', sidebar: '#1f2029', accent: '#89b4fa' },
+		{ id: 'solarized-light', label: 'Solarized Light', bg: '#fdf6e3', sidebar: '#eee8d5', accent: '#268bd2' },
+		{ id: 'solarized-dark', label: 'Solarized Dark', bg: '#002b36', sidebar: '#073642', accent: '#268bd2' },
+		{ id: 'catppuccin', label: 'Catppuccin', bg: '#1e1e2e', sidebar: '#181825', accent: '#89b4fa' },
+		{ id: 'nord', label: 'Nord', bg: '#2e3440', sidebar: '#3b4252', accent: '#81a1c1' },
+		{ id: 'tokyo-night', label: 'Tokyo Night', bg: '#1a1b26', sidebar: '#16161e', accent: '#7aa2f7' },
+		{ id: 'github-light', label: 'GitHub Light', bg: '#ffffff', sidebar: '#f6f8fa', accent: '#0969da' },
+		{ id: 'github-dark', label: 'GitHub Dark', bg: '#0d1117', sidebar: '#161b22', accent: '#58a6ff' },
+		{ id: 'dracula', label: 'Dracula', bg: '#282a36', sidebar: '#21222c', accent: '#bd93f9' },
+	];
+
 	const accentPresets = [
 		{ name: 'Indigo', light: '#5b6abf', dark: '#7b9bd4' },
 		{ name: 'Rose', light: '#e11d48', dark: '#d4768a' },
@@ -435,7 +453,7 @@
 
 	function applyAccent(preset: typeof accentPresets[0]) {
 		const root = document.documentElement;
-		const isDark = $theme === 'dark' || ($theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+		const isDark = darkThemes.includes($theme) || ($theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 		const color = isDark ? preset.dark : preset.light;
 
 		root.style.setProperty('--accent', color);
@@ -815,27 +833,23 @@
 						<div class="tab-content">
 							<div class="settings-section">
 								<h3>Theme</h3>
-								<div class="theme-toggle">
-									<button class="theme-btn" class:active={$theme === 'light'} onclick={() => { $theme = 'light'; setTheme('light'); }}>
-										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<circle cx="12" cy="12" r="5" />
-											<line x1="12" y1="1" x2="12" y2="3" />
-											<line x1="12" y1="21" x2="12" y2="23" />
-											<line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-											<line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-											<line x1="1" y1="12" x2="3" y2="12" />
-											<line x1="21" y1="12" x2="23" y2="12" />
-											<line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-											<line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-										</svg>
-										Light
-									</button>
-									<button class="theme-btn" class:active={$theme === 'dark'} onclick={() => { $theme = 'dark'; setTheme('dark'); }}>
-										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
-										</svg>
-										Dark
-									</button>
+								<div class="theme-grid">
+									{#each themePresets as preset}
+										<button
+											class="theme-swatch"
+											class:active={$theme === preset.id}
+											onclick={() => { $theme = preset.id; setTheme(preset.id); }}
+											title={preset.label}
+										>
+											<span class="theme-preview" style="--preview-bg: {preset.bg}; --preview-sidebar: {preset.sidebar}; --preview-accent: {preset.accent}">
+												<span class="preview-sidebar"></span>
+												<span class="preview-main">
+													<span class="preview-accent-bar"></span>
+												</span>
+											</span>
+											<span class="theme-label">{preset.label}</span>
+										</button>
+									{/each}
 								</div>
 							</div>
 
@@ -846,7 +860,7 @@
 										<button
 											class="accent-swatch"
 											class:active={activeAccent === preset.name}
-											style="--swatch-color: {$theme === 'dark' ? preset.dark : preset.light}"
+											style="--swatch-color: {isThemeDark ? preset.dark : preset.light}"
 											onclick={() => selectAccent(preset)}
 											title={preset.name}
 										>
@@ -1613,35 +1627,75 @@
 		font-weight: 500;
 	}
 
-	.theme-toggle {
-		display: flex;
+	.theme-grid {
+		display: grid;
+		grid-template-columns: repeat(5, 1fr);
 		gap: 8px;
 	}
 
-	.theme-btn {
-		flex: 1;
+	.theme-swatch {
 		display: flex;
+		flex-direction: column;
 		align-items: center;
-		justify-content: center;
-		gap: 8px;
-		padding: 10px 16px;
+		gap: 5px;
+		padding: 6px;
 		border: 1px solid var(--border-color);
-		border-radius: 10px;
+		border-radius: 8px;
 		background: var(--bg-secondary);
-		color: var(--text-secondary);
-		font-size: 13px;
 		cursor: pointer;
 		transition: all 0.15s;
 	}
 
-	.theme-btn:hover {
-		background: var(--bg-hover);
-		color: var(--text-primary);
+	.theme-swatch:hover {
+		border-color: var(--text-tertiary);
 	}
 
-	.theme-btn.active {
+	.theme-swatch.active {
 		border-color: var(--accent);
-		background: var(--accent-light);
+		box-shadow: 0 0 0 2px var(--accent-light);
+	}
+
+	.theme-preview {
+		display: flex;
+		width: 100%;
+		height: 32px;
+		border-radius: 4px;
+		overflow: hidden;
+		background: var(--preview-bg);
+		border: 1px solid rgba(0,0,0,0.1);
+	}
+
+	.preview-sidebar {
+		width: 30%;
+		background: var(--preview-sidebar);
+		flex-shrink: 0;
+	}
+
+	.preview-main {
+		flex: 1;
+		background: var(--preview-bg);
+		padding: 4px;
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+	}
+
+	.preview-accent-bar {
+		height: 3px;
+		width: 60%;
+		background: var(--preview-accent);
+		border-radius: 2px;
+	}
+
+	.theme-label {
+		font-size: 10px;
+		color: var(--text-secondary);
+		text-align: center;
+		line-height: 1.2;
+		word-break: break-word;
+	}
+
+	.theme-swatch.active .theme-label {
 		color: var(--accent);
 	}
 

@@ -56,6 +56,46 @@
 			}
 		},
 		{
+			id: 'theme-solarized-light',
+			label: 'Switch to Solarized Light Theme',
+			action: () => { $theme = 'solarized-light'; setTheme('solarized-light'); applyTheme('solarized-light'); $showCommandPalette = false; }
+		},
+		{
+			id: 'theme-solarized-dark',
+			label: 'Switch to Solarized Dark Theme',
+			action: () => { $theme = 'solarized-dark'; setTheme('solarized-dark'); applyTheme('solarized-dark'); $showCommandPalette = false; }
+		},
+		{
+			id: 'theme-catppuccin',
+			label: 'Switch to Catppuccin Theme',
+			action: () => { $theme = 'catppuccin'; setTheme('catppuccin'); applyTheme('catppuccin'); $showCommandPalette = false; }
+		},
+		{
+			id: 'theme-nord',
+			label: 'Switch to Nord Theme',
+			action: () => { $theme = 'nord'; setTheme('nord'); applyTheme('nord'); $showCommandPalette = false; }
+		},
+		{
+			id: 'theme-tokyo-night',
+			label: 'Switch to Tokyo Night Theme',
+			action: () => { $theme = 'tokyo-night'; setTheme('tokyo-night'); applyTheme('tokyo-night'); $showCommandPalette = false; }
+		},
+		{
+			id: 'theme-github-light',
+			label: 'Switch to GitHub Light Theme',
+			action: () => { $theme = 'github-light'; setTheme('github-light'); applyTheme('github-light'); $showCommandPalette = false; }
+		},
+		{
+			id: 'theme-github-dark',
+			label: 'Switch to GitHub Dark Theme',
+			action: () => { $theme = 'github-dark'; setTheme('github-dark'); applyTheme('github-dark'); $showCommandPalette = false; }
+		},
+		{
+			id: 'theme-dracula',
+			label: 'Switch to Dracula Theme',
+			action: () => { $theme = 'dracula'; setTheme('dracula'); applyTheme('dracula'); $showCommandPalette = false; }
+		},
+		{
 			id: 'toggle-source',
 			label: 'Toggle Source/WYSIWYG Mode',
 			action: () => {
@@ -102,9 +142,15 @@
 	}
 
 	function applyTheme(t: string) {
+		const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula'];
+		const namedThemes = ['solarized-light', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-light', 'github-dark', 'dracula'];
 		const root = document.documentElement;
 		root.classList.remove('dark');
-		if (t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+		root.removeAttribute('data-theme');
+		if (namedThemes.includes(t)) {
+			root.setAttribute('data-theme', t);
+			if (darkThemes.includes(t)) root.classList.add('dark');
+		} else if (t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
 			root.classList.add('dark');
 		}
 	}

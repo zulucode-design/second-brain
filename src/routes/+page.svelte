@@ -26,8 +26,14 @@
 			// Apply theme immediately to prevent flash
 			const themeValue = config.theme || 'system';
 			const root = document.documentElement;
+			const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula'];
+			const namedThemes = ['solarized-light', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-light', 'github-dark', 'dracula'];
 			root.classList.remove('dark');
-			if (themeValue === 'dark' || (themeValue === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+			root.removeAttribute('data-theme');
+			if (namedThemes.includes(themeValue)) {
+				root.setAttribute('data-theme', themeValue);
+				if (darkThemes.includes(themeValue)) root.classList.add('dark');
+			} else if (themeValue === 'dark' || (themeValue === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
 				root.classList.add('dark');
 			}
 
@@ -67,7 +73,7 @@
 				const preset = accentPresets[config.accent_color];
 				if (preset) {
 					const themeVal = config.theme || 'light';
-					const isDark = themeVal === 'dark' || (themeVal === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+					const isDark = darkThemes.includes(themeVal) || (themeVal === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 					const color = isDark ? preset.dark : preset.light;
 					const root = document.documentElement;
 					root.style.setProperty('--accent', color);

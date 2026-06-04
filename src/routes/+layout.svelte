@@ -11,16 +11,22 @@
 
 	// Reactively apply theme class to <html> whenever $theme changes
 	$effect(() => {
-		const t = $theme;
+		applyTheme($theme);
+	});
+
+	function applyTheme(t: string) {
+		const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula'];
+		const namedThemes = ['solarized-light', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-light', 'github-dark', 'dracula'];
 		const root = document.documentElement;
 		root.classList.remove('dark');
-		if (
-			t === 'dark' ||
-			(t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
-		) {
+		root.removeAttribute('data-theme');
+		if (namedThemes.includes(t)) {
+			root.setAttribute('data-theme', t);
+			if (darkThemes.includes(t)) root.classList.add('dark');
+		} else if (t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
 			root.classList.add('dark');
 		}
-	});
+	}
 
 	function normalizePath(p: string): string {
 		const parts = p.split('/');
