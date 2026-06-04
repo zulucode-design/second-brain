@@ -43,6 +43,10 @@ export async function setLineHeight(height: number): Promise<void> {
   return invoke("set_line_height", { height });
 }
 
+export async function setUiScale(scale: number): Promise<void> {
+  return invoke("set_ui_scale", { scale });
+}
+
 export async function getNotebooks(): Promise<NotebookEntry[]> {
   return invoke("get_notebooks");
 }

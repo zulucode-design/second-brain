@@ -103,6 +103,14 @@ pub fn set_line_height(state: State<'_, AppState>, height: f64) -> Result<(), St
     Ok(())
 }
 
+#[tauri::command]
+pub fn set_ui_scale(state: State<'_, AppState>, scale: f64) -> Result<(), String> {
+    let mut config = state.config.lock().map_err(|e| e.to_string())?;
+    config.ui_scale = Some(scale);
+    save_app_config(&config)?;
+    Ok(())
+}
+
 // ── Notebooks ──
 
 #[tauri::command]

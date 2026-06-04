@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { showSettings, theme, appConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode } from '$lib/stores/app';
-	import { setTheme, setAccentColor, setFontSize, setFontFamily, setLineHeight, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection } from '$lib/api';
+	import { setTheme, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection } from '$lib/api';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
 	import { getVersion } from '@tauri-apps/api/app';
+	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import { openUrl } from '$lib/api';
 	import type { ImportResult, BackupEntry } from '$lib/types';
 
@@ -336,10 +337,21 @@
 		{ label: 'Loose', value: 2.0 },
 	];
 
+	const uiScalePresets = [
+		{ label: '80%', value: 0.8 },
+		{ label: '90%', value: 0.9 },
+		{ label: '100%', value: 1 },
+		{ label: '125%', value: 1.25 },
+		{ label: '150%', value: 1.5 },
+		{ label: '175%', value: 1.75 },
+		{ label: '200%', value: 2 },
+	];
+
 	let activeAccent = $state($appConfig?.accent_color ?? 'Indigo');
 	let activeFontSize = $state($appConfig?.font_size ?? 14);
 	let activeFontFamily = $state($appConfig?.font_family ?? 'system');
 	let activeLineHeight = $state($appConfig?.line_height ?? 1.6);
+	let activeUiScale = $state($appConfig?.ui_scale ?? 1);
 
 	// General settings
 	let compactNotes = $state($appConfig?.compact_notes ?? false);
@@ -475,6 +487,21 @@
 
 	function applyLineHeight(value: number) {
 		document.documentElement.style.setProperty('--editor-line-height', String(value));
+	}
+
+	function selectUiScale(value: number) {
+		activeUiScale = value;
+		applyUiScale(value);
+		if ($appConfig) $appConfig.ui_scale = value;
+		setUiScale(value).catch((e) => console.error('Failed to save interface scale:', e));
+	}
+
+	async function applyUiScale(value: number) {
+		try {
+			await getCurrentWebview().setZoom(value);
+		} catch (e) {
+			console.error('Failed to apply interface scale:', e);
+		}
 	}
 
 	function close() {
@@ -845,6 +872,24 @@
 									{/each}
 								</div>
 							</div>
+
+							{#if !isMobile}
+								<div class="settings-section">
+									<h3>Interface Scale</h3>
+									<div class="font-size-options">
+										{#each uiScalePresets as preset}
+											<button
+												class="font-size-btn"
+												class:active={activeUiScale === preset.value}
+												onclick={() => selectUiScale(preset.value)}
+											>
+												<span class="font-size-label">{preset.label}</span>
+											</button>
+										{/each}
+									</div>
+									<p class="setting-hint">Zooms the whole app: every panel, menu, and the editor. Use Default (100%) to reset.</p>
+								</div>
+							{/if}
 
 							<div class="settings-section">
 								<h3>Line Height</h3>

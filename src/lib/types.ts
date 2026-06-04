@@ -54,6 +54,7 @@ export interface AppConfig {
   font_size: number | null;
   font_family: string | null;
   line_height: number | null;
+  ui_scale: number | null;
   compact_notes: boolean;
   time_format: string;
   gpu_acceleration: boolean;

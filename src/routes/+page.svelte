@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { appConfig, vaultReady, theme } from '$lib/stores/app';
 	import { getAppConfig, openVault } from '$lib/api';
+	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import VaultPicker from '$lib/components/VaultPicker.svelte';
 	import AppLayout from '$lib/components/AppLayout.svelte';
 	import NoteWindow from '$lib/components/NoteWindow.svelte';
@@ -75,6 +76,15 @@
 					root.style.setProperty('--accent-light', isDark
 						? `color-mix(in srgb, ${color} 10%, transparent)`
 						: `color-mix(in srgb, ${color} 8%, transparent)`);
+				}
+			}
+
+			// Apply saved interface scale (desktop main window only; no-ops gracefully elsewhere)
+			if (!noteWindowPath && config.ui_scale && config.ui_scale !== 1) {
+				try {
+					await getCurrentWebview().setZoom(config.ui_scale);
+				} catch (e) {
+					console.error('Failed to apply interface scale:', e);
 				}
 			}
 
