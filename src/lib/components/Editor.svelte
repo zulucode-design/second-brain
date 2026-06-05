@@ -4214,7 +4214,7 @@
 					</svg>
 				</button>
 				{/if}
-				{#if $appConfig?.ai_provider && ($appConfig?.ai_provider === 'ollama' || $appConfig?.ai_api_key || $appConfig?.openai_api_key)}
+				{#if $appConfig?.ai_provider}
 				<button
 					class="icon-btn"
 					onclick={openAiMenu}
@@ -4646,7 +4646,7 @@
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 004 14.5 5.5 5.5 0 009.5 20H13"/></svg>
 				</button>
 
-				{#if $appConfig?.ai_provider && ($appConfig?.ai_provider === 'ollama' || $appConfig?.ai_api_key || $appConfig?.openai_api_key)}
+				{#if $appConfig?.ai_provider}
 				<div class="fmt-sep"></div>
 				<button class="fmt-btn" onclick={openAiMenu} title="AI Actions">
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -5133,7 +5133,7 @@
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><polyline points="4.5 6.5 6 8 8.5 4.5"/><line x1="13" y1="6.5" x2="21" y2="6.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><line x1="13" y1="17.5" x2="21" y2="17.5"/></svg>
 				Task List
 			</button>
-			{#if $appConfig?.ai_provider && ($appConfig?.ai_provider === 'ollama' || $appConfig?.ai_api_key || $appConfig?.openai_api_key)}
+			{#if $appConfig?.ai_provider}
 				<div class="text-ctx-sep"></div>
 				<button onclick={openAiMenu}>
 					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
