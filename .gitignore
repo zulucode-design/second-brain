@@ -1,5 +1,10 @@
 node_modules
 
+# Foreign lockfiles - this project uses pnpm (pnpm-lock.yaml is the only lockfile)
+package-lock.json
+yarn.lock
+bun.lockb
+
 # Output
 .output
 .vercel

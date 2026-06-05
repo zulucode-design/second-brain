@@ -4,6 +4,7 @@
 	import { theme, appConfig, activeNote, activeNotePath, installType, checkForUpdate, checkForUpdateMobile } from '$lib/stores/app';
 	import { openFile, openUrl, readNote, getInstallType } from '$lib/api';
 	import { get } from 'svelte/store';
+	import ResizeHandles from '$lib/components/ResizeHandles.svelte';
 
 	let { children } = $props();
 
@@ -194,3 +195,5 @@
 </svelte:head>
 
 {@render children()}
+
+<ResizeHandles />

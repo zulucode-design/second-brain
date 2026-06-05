@@ -6075,6 +6075,12 @@
 		position: relative;
 	}
 
+	/* Inset the scrollbar off the window's right edge so the window resize handle
+	   (ResizeHandles in +layout) has clean space and doesn't swallow the scrollbar. */
+	.editor-container:not(.mobile) .editor-body {
+		margin-right: 8px;
+	}
+
 	.editor-body::-webkit-scrollbar {
 		width: 8px;
 	}
