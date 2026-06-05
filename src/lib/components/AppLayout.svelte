@@ -585,7 +585,7 @@
 						</svg>
 					</button>
 					{/if}
-					{#if $appConfig?.ai_provider && ($appConfig?.ai_provider === 'ollama' || $appConfig?.ai_api_key || $appConfig?.openai_api_key)}
+					{#if $appConfig?.ai_provider}
 					<button class="mobile-header-btn" onclick={() => editor?.triggerAiMenu()} title="AI Actions">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M12 8V4l-2-2"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M9 13v2"/><path d="M15 13v2"/>
