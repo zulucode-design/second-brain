@@ -2678,7 +2678,7 @@
 				const processed = line.replace(/`[^`]*`/g, m => '\x00'.repeat(m.length));
 				let result = line;
 				let offset = 0;
-				for (const m of processed.matchAll(/(?<!\$)\$(?!\$)([^\n$]+?)(?<!\$)\$(?!\$)/g)) {
+				for (const m of processed.matchAll(/(?<!\$)\$(?![\s$])([^\n$]+?)(?<!\s)\$(?!\$)(?!\d)/g)) {
 					const tex = m[1].trim();
 					const html = `<span data-math-inline="${encodeURIComponent(tex)}" class="math-inline"></span>`;
 					result = result.slice(0, m.index! + offset) + html + result.slice(m.index! + m[0].length + offset);
@@ -2834,7 +2834,7 @@
 				TableRow,
 				CustomTableCell,
 				CustomTableHeader,
-				Link.configure({ openOnClick: false, HTMLAttributes: { class: 'editor-link' }, isAllowedUri: (url, ctx) => ctx.defaultValidate(url) || !url.startsWith('javascript:') }),
+				Link.configure({ openOnClick: false, HTMLAttributes: { class: 'editor-link' }, isAllowedUri: (url, ctx) => ctx.defaultValidate(url) || !url.startsWith('javascript:'), shouldAutoLink: (url) => /^https?:\/\//.test(url) }),
 				CustomImage.configure({ inline: true, HTMLAttributes: { class: 'editor-image' } }),
 				Highlight.configure({ multicolor: true }),
 				Typography,
