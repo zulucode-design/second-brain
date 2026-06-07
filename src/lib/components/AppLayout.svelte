@@ -694,7 +694,7 @@
 				<Sidebar bind:this={sidebar} onViewChanged={handleViewChanged} />
 			</div>
 			<div class="mobile-panel" class:active={$mobileView === 'notelist'}>
-				<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => editor?.focusTitle()} />
+				<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); sidebar?.refresh(); }} />
 				<button class="mobile-fab" onclick={createAndFocusNote} title="New Note">
 					<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
 						<path d="M12 5v14M5 12h14" />
@@ -759,7 +759,7 @@
 				{/if}
 
 				<div class="notelist-panel" style="width: {$notelistWidth}px">
-					<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => editor?.focusTitle()} />
+					<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); sidebar?.refresh(); }} />
 				</div>
 
 				<ResizeHandle onResize={handleNotelistResize} />
