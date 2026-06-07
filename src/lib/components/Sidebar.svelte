@@ -576,7 +576,9 @@
 			{#if showNewNotebook}
 				<div class="new-notebook-input">
 					{#if newNotebookParent}
-						<span class="new-notebook-parent">{newNotebookParent.name}/</span>
+						<button class="new-notebook-parent" title="Click to create a top-level notebook instead" onmousedown={(e) => { e.preventDefault(); newNotebookParent = null; }}>
+							{newNotebookParent.name}/<span class="new-notebook-parent-x" aria-hidden="true">×</span>
+						</button>
 					{/if}
 					<input
 						type="text"
@@ -969,11 +971,30 @@
 	}
 
 	.new-notebook-parent {
-		padding: 4px 0 4px 8px;
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		margin: 0 2px 0 6px;
+		padding: 2px 5px;
 		color: var(--text-tertiary);
 		font-size: inherit;
 		white-space: nowrap;
 		flex-shrink: 0;
+		border: none;
+		border-radius: 4px;
+		background: var(--bg-hover);
+		cursor: pointer;
+	}
+
+	.new-notebook-parent:hover {
+		color: var(--text-primary);
+		background: var(--accent-light);
+	}
+
+	.new-notebook-parent-x {
+		font-size: 13px;
+		line-height: 1;
+		opacity: 0.7;
 	}
 
 	.new-notebook-input input {
