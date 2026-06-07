@@ -1397,18 +1397,22 @@
 									<button class="option-btn" class:active={!syncProvider} onclick={() => { syncProvider = null; syncMessage = null; syncTestMessage = null; saveSyncSettings(); }}>Disabled</button>
 									<button class="option-btn" class:active={syncProvider === 'webdav'} onclick={() => { syncProvider = 'webdav'; syncMessage = null; syncTestMessage = null; saveSyncSettings(); }}>WebDAV</button>
 								</div>
-								<p class="setting-hint">Sync your notes to your own WebDAV server (Nextcloud, ownCloud, a NAS). Your vault stays local on each device; the server is the shared hub.</p>
+								<p class="setting-hint">Sync your vault to your own WebDAV server (Nextcloud, ownCloud, a NAS).</p>
 							</div>
 
 							{#if syncProvider === 'webdav'}
 								<div class="settings-section">
 									<h3>Server URL</h3>
-									<input type="text" class="ai-key-input" placeholder="https://cloud.example.com/remote.php/dav/files/USER/HelixNotes" value={syncUrl} oninput={(e) => { syncUrl = (e.target as HTMLInputElement).value; }} onblur={saveSyncSettings} />
-									<p class="setting-hint">Full WebDAV URL of the folder to sync into. On Nextcloud: <code>https://your-server/remote.php/dav/files/USERNAME/FolderName</code></p>
+									<div class="ai-key-row">
+										<input type="text" class="ai-key-input" placeholder="https://cloud.example.com/remote.php/dav/files/USER/HelixNotes" value={syncUrl} oninput={(e) => { syncUrl = (e.target as HTMLInputElement).value; }} onblur={saveSyncSettings} />
+									</div>
+									<p class="setting-hint" style="overflow-x: auto;">WebDAV folder URL, e.g. <code style="white-space: nowrap;">https://your-server/remote.php/dav/files/USER/Folder</code></p>
 								</div>
 								<div class="settings-section">
 									<h3>Username</h3>
-									<input type="text" class="ai-key-input" placeholder="your username" value={syncUsername} oninput={(e) => { syncUsername = (e.target as HTMLInputElement).value; }} onblur={saveSyncSettings} />
+									<div class="ai-key-row">
+										<input type="text" class="ai-key-input" placeholder="your username" value={syncUsername} oninput={(e) => { syncUsername = (e.target as HTMLInputElement).value; }} onblur={saveSyncSettings} />
+									</div>
 								</div>
 								<div class="settings-section">
 									<h3>Password</h3>
@@ -1422,7 +1426,7 @@
 											{/if}
 										</button>
 									</div>
-									<p class="setting-hint">Use an app password / token, not your main account password. Stored locally on this device (like AI keys).</p>
+									<p class="setting-hint">Use an app password, not your main one. Stored locally on this device.</p>
 								</div>
 
 								<div class="settings-section">
@@ -1472,7 +1476,7 @@
 									{#if $appConfig?.last_sync_time}
 										<p class="setting-hint">Last sync: {new Date($appConfig.last_sync_time).toLocaleString()}</p>
 									{/if}
-									<p class="setting-hint">Manual sync. If the same note was edited on two devices, the second version is kept as a "(conflict ...)" copy so nothing is lost.</p>
+									<p class="setting-hint">If a note is edited on two devices, both are kept (one as a "(conflict)" copy).</p>
 								</div>
 								<div class="settings-section">
 									<h3>Automatic Sync</h3>
@@ -1481,18 +1485,18 @@
 											<button class="option-btn" class:active={syncIntervalMinutes === opt.v} onclick={() => { syncIntervalMinutes = opt.v; saveSyncSettings(); }}>{opt.l}</button>
 										{/each}
 									</div>
-									<p class="setting-hint">Sync automatically on this interval.</p>
+									<p class="setting-hint">How often to sync in the background.</p>
 									<label class="setting-toggle" style="margin-top: 12px;">
 										<span class="setting-label">
 											<span class="setting-name">Sync when a note changes</span>
-											<span class="setting-desc">Sync a few seconds after you edit a note.</span>
+											<span class="setting-desc">Sync shortly after you edit a note.</span>
 										</span>
 										<button class="toggle-switch" class:on={syncOnChange} onclick={() => { syncOnChange = !syncOnChange; saveSyncSettings(); }}><span class="toggle-knob"></span></button>
 									</label>
 									<label class="setting-toggle">
 										<span class="setting-label">
 											<span class="setting-name">Sync when the vault opens</span>
-											<span class="setting-desc">Pull the latest changes on startup.</span>
+											<span class="setting-desc">Sync once when the app starts.</span>
 										</span>
 										<button class="toggle-switch" class:on={syncOnOpen} onclick={() => { syncOnOpen = !syncOnOpen; saveSyncSettings(); }}><span class="toggle-knob"></span></button>
 									</label>
@@ -1730,6 +1734,7 @@
 	.setting-hint {
 		font-size: 13px;
 		color: var(--text-tertiary);
+		margin-top: 6px;
 	}
 
 	.setting-toggle {
