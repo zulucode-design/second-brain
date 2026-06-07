@@ -406,7 +406,6 @@ body.resizing {
 
 /* ── Mobile (Android/iOS) ── */
 @media (max-width: 768px) {
-    html,
     body {
         padding-top: env(safe-area-inset-top);
         padding-bottom: env(safe-area-inset-bottom);
