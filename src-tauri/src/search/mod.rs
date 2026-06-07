@@ -20,6 +20,16 @@ use walkdir::WalkDir;
 /// notes, so this never loses data).
 const INDEX_SCHEMA_VERSION: &str = "2-cjk-bigram";
 
+/// Per-vault search index dir in local app-data, kept out of the (possibly synced) vault.
+#[cfg(desktop)]
+fn vault_index_base(vault_path: &str) -> Option<std::path::PathBuf> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(vault_path.as_bytes());
+    let key: String = hasher.finalize()[..8].iter().map(|b| format!("{:02x}", b)).collect();
+    dirs::data_local_dir().map(|d| d.join("helixnotes").join("search").join(key))
+}
+
 /// True for characters in the CJK / Japanese / Korean blocks, which are written
 /// without spaces between words. These get uni/bi-gram tokenized so substring
 /// search works; everything else keeps the default word-splitting behaviour.
@@ -188,13 +198,17 @@ impl SearchIndex {
         };
         #[cfg(desktop)]
         let index = {
+            let base = vault_index_base(vault_path)
+                .unwrap_or_else(|| helixnotes_dir(vault_path).join("search_index"));
+            let index_dir = base.join("index");
+            let version_path = base.join("version");
+
+            // Remove the old in-vault index so it stops syncing.
             let hn = helixnotes_dir(vault_path);
-            let index_dir = hn.join("search_index");
-            let version_path = hn.join("search_index.version");
-            // One-time wipe when the schema/tokenizer version changes, so a stale
-            // index built with the old tokenizer is rebuilt. open_vault always calls
-            // rebuild() afterwards, and the index is derived from the .md files, so
-            // wiping never loses data.
+            let _ = fs::remove_dir_all(hn.join("search_index"));
+            let _ = fs::remove_file(hn.join("search_index.version"));
+
+            // One-time wipe when the schema/tokenizer version changes; rebuild() repopulates.
             let version_ok = fs::read_to_string(&version_path)
                 .map(|v| v.trim() == INDEX_SCHEMA_VERSION)
                 .unwrap_or(false);
