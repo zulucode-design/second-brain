@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { showSettings, theme, appConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode } from '$lib/stores/app';
-	import { setTheme, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection } from '$lib/api';
+	import { setTheme, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow } from '$lib/api';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
 	import { getVersion } from '@tauri-apps/api/app';
@@ -10,7 +10,7 @@
 
 	const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
 
-	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'ai' | 'updates';
+	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'ai' | 'sync' | 'updates';
 	let activeTab = $state<Tab>('styling');
 
 	// Updates state
@@ -297,6 +297,78 @@
 			aiTestMessage = { type: 'error', text: String(e) };
 			aiTestLoading = false;
 			unlisten();
+		}
+	}
+
+	// ── WebDAV sync ──
+	let syncProvider = $state<string | null>($appConfig?.sync_provider ?? null);
+	let syncUrl = $state($appConfig?.webdav_url ?? '');
+	let syncUsername = $state($appConfig?.webdav_username ?? '');
+	let syncPassword = $state($appConfig?.webdav_password ?? '');
+	let syncShowPassword = $state(false);
+	let syncTestLoading = $state(false);
+	let syncTestMessage = $state<{ type: 'success' | 'error'; text: string } | null>(null);
+	let syncRunning = $state(false);
+	let syncMessage = $state<{ type: 'success' | 'error'; text: string } | null>(null);
+	let syncOnOpen = $state($appConfig?.sync_on_open ?? false);
+	let syncOnChange = $state($appConfig?.sync_on_change ?? false);
+	let syncIntervalMinutes = $state($appConfig?.sync_interval_minutes ?? 0);
+
+	async function saveSyncSettings() {
+		await setSyncSettings(syncProvider, syncUrl || null, syncUsername || null, syncPassword || null, syncOnOpen, syncOnChange, syncIntervalMinutes);
+	}
+
+	async function handleTestSync() {
+		syncTestLoading = true;
+		syncTestMessage = null;
+		const unlisten = await listen<{ success: boolean; message?: string; error?: string }>('sync-test-result', (event) => {
+			const data = event.payload;
+			syncTestMessage = data.success
+				? { type: 'success', text: data.message ?? 'Connection successful' }
+				: { type: 'error', text: data.error ?? 'Connection failed' };
+			syncTestLoading = false;
+			unlisten();
+		});
+		try {
+			await saveSyncSettings();
+			await testSyncConnection();
+		} catch (e) {
+			syncTestMessage = { type: 'error', text: String(e) };
+			syncTestLoading = false;
+			unlisten();
+		}
+	}
+
+	async function handleSyncNow() {
+		syncRunning = true;
+		syncMessage = null;
+		const unlisteners: Array<() => void> = [];
+		const cleanup = () => { unlisteners.forEach((u) => u()); };
+		unlisteners.push(await listen<{ success: boolean; summary?: { uploaded?: number; downloaded?: number; deleted_local?: number; deleted_remote?: number; conflicts?: number }; last_sync_time?: string }>('sync-done', (event) => {
+			const s = event.payload.summary ?? {};
+			const parts: string[] = [];
+			if (s.uploaded) parts.push(`${s.uploaded} uploaded`);
+			if (s.downloaded) parts.push(`${s.downloaded} downloaded`);
+			const deleted = (s.deleted_local ?? 0) + (s.deleted_remote ?? 0);
+			if (deleted) parts.push(`${deleted} deleted`);
+			if (s.conflicts) parts.push(`${s.conflicts} conflict copies`);
+			syncMessage = { type: 'success', text: parts.length ? `Synced: ${parts.join(', ')}.` : 'Already up to date.' };
+			syncRunning = false;
+			if ($appConfig && event.payload.last_sync_time) $appConfig = { ...$appConfig, last_sync_time: event.payload.last_sync_time };
+			cleanup();
+		}));
+		unlisteners.push(await listen<{ error?: string }>('sync-error', (event) => {
+			syncMessage = { type: 'error', text: event.payload.error ?? 'Sync failed' };
+			syncRunning = false;
+			cleanup();
+		}));
+		try {
+			await saveSyncSettings();
+			await syncNow();
+		} catch (e) {
+			syncMessage = { type: 'error', text: String(e) };
+			syncRunning = false;
+			cleanup();
 		}
 	}
 
@@ -637,6 +709,12 @@
 							<path d="M12 8V4l-2-2"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M9 13v2"/><path d="M15 13v2"/>
 						</svg>
 						AI
+					</button>
+					<button class="tab-btn" class:active={activeTab === 'sync'} onclick={() => activeTab = 'sync'}>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/>
+						</svg>
+						Sync
 					</button>
 					<button class="tab-btn" class:active={activeTab === 'updates'} onclick={() => activeTab = 'updates'}>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1295,6 +1373,117 @@
 								{:else}
 									<p class="import-desc">Select text in the editor and right-click to access AI writing tools: improve, fix grammar, rewrite, summarize, translate, and more.</p>
 								{/if}
+								</div>
+							{/if}
+						</div>
+
+					{:else if activeTab === 'sync'}
+						<div class="tab-content">
+							<div class="settings-section">
+								<h3>Provider</h3>
+								<div class="setting-options">
+									<button class="option-btn" class:active={!syncProvider} onclick={() => { syncProvider = null; syncMessage = null; syncTestMessage = null; saveSyncSettings(); }}>Disabled</button>
+									<button class="option-btn" class:active={syncProvider === 'webdav'} onclick={() => { syncProvider = 'webdav'; syncMessage = null; syncTestMessage = null; saveSyncSettings(); }}>WebDAV</button>
+								</div>
+								<p class="setting-hint">Sync your notes to your own WebDAV server (Nextcloud, ownCloud, a NAS). Your vault stays local on each device; the server is the shared hub.</p>
+							</div>
+
+							{#if syncProvider === 'webdav'}
+								<div class="settings-section">
+									<h3>Server URL</h3>
+									<input type="text" class="ai-key-input" placeholder="https://cloud.example.com/remote.php/dav/files/USER/HelixNotes" value={syncUrl} oninput={(e) => { syncUrl = (e.target as HTMLInputElement).value; }} onblur={saveSyncSettings} />
+									<p class="setting-hint">Full WebDAV URL of the folder to sync into. On Nextcloud: <code>https://your-server/remote.php/dav/files/USERNAME/FolderName</code></p>
+								</div>
+								<div class="settings-section">
+									<h3>Username</h3>
+									<input type="text" class="ai-key-input" placeholder="your username" value={syncUsername} oninput={(e) => { syncUsername = (e.target as HTMLInputElement).value; }} onblur={saveSyncSettings} />
+								</div>
+								<div class="settings-section">
+									<h3>Password</h3>
+									<div class="ai-key-row">
+										<input type={syncShowPassword ? 'text' : 'password'} class="ai-key-input" placeholder="app password" value={syncPassword} oninput={(e) => { syncPassword = (e.target as HTMLInputElement).value; }} onblur={saveSyncSettings} />
+										<button class="ai-key-toggle" onclick={() => syncShowPassword = !syncShowPassword} title={syncShowPassword ? 'Hide' : 'Show'}>
+											{#if syncShowPassword}
+												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+											{:else}
+												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+											{/if}
+										</button>
+									</div>
+									<p class="setting-hint">Use an app password / token, not your main account password. Stored locally on this device (like AI keys).</p>
+								</div>
+
+								<div class="settings-section">
+									<h3>Connection</h3>
+									<button class="import-btn" onclick={handleTestSync} disabled={syncTestLoading || !syncUrl}>
+										{#if syncTestLoading}
+											<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
+											Testing...
+										{:else}
+											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
+											Test Connection
+										{/if}
+									</button>
+									{#if syncTestMessage}
+										<div class="import-result {syncTestMessage.type}">
+											{#if syncTestMessage.type === 'success'}
+												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
+											{:else}
+												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
+											{/if}
+											<span>{syncTestMessage.text}</span>
+										</div>
+									{/if}
+								</div>
+
+								<div class="settings-section">
+									<h3>Sync</h3>
+									<button class="import-btn" onclick={handleSyncNow} disabled={syncRunning || !syncUrl}>
+										{#if syncRunning}
+											<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
+											Syncing...
+										{:else}
+											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>
+											Sync Now
+										{/if}
+									</button>
+									{#if syncMessage}
+										<div class="import-result {syncMessage.type}">
+											{#if syncMessage.type === 'success'}
+												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
+											{:else}
+												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
+											{/if}
+											<span>{syncMessage.text}</span>
+										</div>
+									{/if}
+									{#if $appConfig?.last_sync_time}
+										<p class="setting-hint">Last sync: {new Date($appConfig.last_sync_time).toLocaleString()}</p>
+									{/if}
+									<p class="setting-hint">Manual sync. If the same note was edited on two devices, the second version is kept as a "(conflict ...)" copy so nothing is lost.</p>
+								</div>
+								<div class="settings-section">
+									<h3>Automatic Sync</h3>
+									<div class="setting-options">
+										{#each [{ v: 0, l: 'Off' }, { v: 5, l: '5 min' }, { v: 15, l: '15 min' }, { v: 30, l: '30 min' }, { v: 60, l: '60 min' }] as opt}
+											<button class="option-btn" class:active={syncIntervalMinutes === opt.v} onclick={() => { syncIntervalMinutes = opt.v; saveSyncSettings(); }}>{opt.l}</button>
+										{/each}
+									</div>
+									<p class="setting-hint">Sync automatically on this interval.</p>
+									<label class="setting-toggle" style="margin-top: 12px;">
+										<span class="setting-label">
+											<span class="setting-name">Sync when a note changes</span>
+											<span class="setting-desc">Sync a few seconds after you edit a note.</span>
+										</span>
+										<button class="toggle-switch" class:on={syncOnChange} onclick={() => { syncOnChange = !syncOnChange; saveSyncSettings(); }}><span class="toggle-knob"></span></button>
+									</label>
+									<label class="setting-toggle">
+										<span class="setting-label">
+											<span class="setting-name">Sync when the vault opens</span>
+											<span class="setting-desc">Pull the latest changes on startup.</span>
+										</span>
+										<button class="toggle-switch" class:on={syncOnOpen} onclick={() => { syncOnOpen = !syncOnOpen; saveSyncSettings(); }}><span class="toggle-knob"></span></button>
+									</label>
 								</div>
 							{/if}
 						</div>

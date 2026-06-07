@@ -1742,6 +1742,128 @@ pub fn test_ai_connection(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// ── Sync (WebDAV) ──
+
+fn sync_config_from(config: &AppConfig) -> Result<crate::sync::WebdavConfig, String> {
+    if config.sync_provider.as_deref() != Some("webdav") {
+        return Err("Sync is not configured".to_string());
+    }
+    let url = config
+        .webdav_url
+        .clone()
+        .filter(|u| !u.trim().is_empty())
+        .ok_or("WebDAV URL is not set")?;
+    Ok(crate::sync::WebdavConfig {
+        url,
+        username: config.webdav_username.clone().unwrap_or_default(),
+        password: config.webdav_password.clone().unwrap_or_default(),
+    })
+}
+
+#[tauri::command]
+pub fn set_sync_settings(
+    state: State<'_, AppState>,
+    provider: Option<String>,
+    url: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
+    sync_on_open: bool,
+    sync_on_change: bool,
+    sync_interval_minutes: u32,
+) -> Result<(), String> {
+    let mut config = state.config.lock().map_err(|e| e.to_string())?;
+    config.sync_provider = provider.filter(|p| !p.is_empty());
+    config.webdav_url = url.filter(|u| !u.trim().is_empty());
+    config.webdav_username = username.filter(|u| !u.is_empty());
+    config.webdav_password = password.filter(|p| !p.is_empty());
+    config.sync_on_open = sync_on_open;
+    config.sync_on_change = sync_on_change;
+    config.sync_interval_minutes = sync_interval_minutes;
+    save_app_config(&config)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn test_sync_connection(app: AppHandle) -> Result<(), String> {
+    let cfg = {
+        let state = app.state::<AppState>();
+        let config = state.config.lock().map_err(|e| e.to_string())?;
+        sync_config_from(&config)?
+    };
+    std::thread::spawn(move || {
+        use tauri::Emitter;
+        match crate::sync::test_connection(cfg) {
+            Ok(msg) => {
+                let _ = app.emit(
+                    "sync-test-result",
+                    serde_json::json!({ "success": true, "message": msg }),
+                );
+            }
+            Err(e) => {
+                let _ = app.emit(
+                    "sync-test-result",
+                    serde_json::json!({ "success": false, "error": e }),
+                );
+            }
+        }
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub fn sync_now(app: AppHandle) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    // Guard against overlapping syncs (manual button + interval + on-change can collide).
+    if app.state::<AppState>().syncing.swap(true, Ordering::SeqCst) {
+        return Ok(()); // a sync is already running
+    }
+    let (vault, cfg) = {
+        let state = app.state::<AppState>();
+        let config = match state.config.lock() {
+            Ok(c) => c,
+            Err(e) => {
+                state.syncing.store(false, Ordering::SeqCst);
+                return Err(e.to_string());
+            }
+        };
+        let gathered = config
+            .active_vault
+            .clone()
+            .ok_or_else(|| "No active vault".to_string())
+            .and_then(|v| sync_config_from(&config).map(|c| (v, c)));
+        match gathered {
+            Ok(vc) => vc,
+            Err(e) => {
+                drop(config);
+                state.syncing.store(false, Ordering::SeqCst);
+                return Err(e);
+            }
+        }
+    };
+    std::thread::spawn(move || {
+        use tauri::Emitter;
+        let result = crate::sync::run_sync(app.clone(), vault, cfg);
+        app.state::<AppState>().syncing.store(false, Ordering::SeqCst);
+        match result {
+            Ok(summary) => {
+                let ts = chrono::Utc::now().to_rfc3339();
+                if let Ok(mut config) = app.state::<AppState>().config.lock() {
+                    config.last_sync_time = Some(ts.clone());
+                    let _ = save_app_config(&config);
+                }
+                let _ = app.emit(
+                    "sync-done",
+                    serde_json::json!({ "success": true, "summary": summary, "last_sync_time": ts }),
+                );
+            }
+            Err(e) => {
+                let _ = app.emit("sync-error", serde_json::json!({ "success": false, "error": e }));
+            }
+        }
+    });
+    Ok(())
+}
+
 #[tauri::command]
 pub fn ai_ask(
     app: AppHandle,

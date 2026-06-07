@@ -38,6 +38,9 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "blocking"] }
 futures = "0.3"
 rayon = "1"
+quick-xml = "0.36"
+urlencoding = "2"
+sha2 = "0.10"
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"

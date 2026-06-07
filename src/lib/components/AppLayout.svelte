@@ -40,14 +40,15 @@
 		navHistory,
 		viewerNote,
 		notebookSortMode,
-		notebookOrder
+		notebookOrder,
+		syncState
 	} from '$lib/stores/app';
 
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
 	const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
 	const isAndroid = /android/i.test(navigator.userAgent);
-	import { loadVaultState, saveVaultState, readNote, createDailyNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote, createDailyNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow } from '$lib/utils/window';
 	import { get } from 'svelte/store';
@@ -63,6 +64,11 @@
 	let noteRelativePath = $derived($activeNotePath && $appConfig?.active_vault ? $activeNotePath.replace($appConfig.active_vault + '/', '') : '');
 	let isQuickAccess = $derived(noteRelativePath ? $quickAccessPaths.includes(noteRelativePath) : false);
 	let backupInterval: ReturnType<typeof setInterval> | null = null;
+	let syncInterval: ReturnType<typeof setInterval> | null = null;
+	let unlistenSync: Array<() => void> = [];
+	let unsubDirty: (() => void) | null = null;
+	let onChangeSyncTimer: ReturnType<typeof setTimeout> | null = null;
+	let prevDirty = false;
 
 
 
@@ -90,6 +96,27 @@
 			});
 			try { await createBackup(); } catch (_) { unlisten(); }
 		}
+	}
+
+	function syncConfigured(): boolean {
+		return get(appConfig)?.sync_provider === 'webdav';
+	}
+
+	// Auto-sync on a timer (only when configured and an interval is set).
+	async function checkScheduledSync() {
+		const config = get(appConfig);
+		if (config?.sync_provider !== 'webdav') return;
+		const mins = config.sync_interval_minutes ?? 0;
+		if (!mins || get(syncState).running) return;
+		const last = config.last_sync_time ? new Date(config.last_sync_time).getTime() : 0;
+		if (Date.now() - last >= mins * 60 * 1000) {
+			try { await syncNow(); } catch (_) {}
+		}
+	}
+
+	export async function triggerSyncNow() {
+		if (!syncConfigured() || get(syncState).running) return;
+		try { await syncNow(); } catch (_) {}
 	}
 
 	// Track note navigation in history stack
@@ -486,12 +513,44 @@
 		// Scheduled backup: check on startup and every 5 minutes
 		checkScheduledBackup();
 		backupInterval = setInterval(checkScheduledBackup, 5 * 60 * 1000);
+
+		// ── WebDAV sync: global status + auto-sync triggers ──
+		unlistenSync.push(await listen('sync-progress', () => syncState.set({ running: true, error: null })));
+		unlistenSync.push(await listen('sync-done', (event: any) => {
+			syncState.set({ running: false, error: null });
+			const cur = get(appConfig);
+			if (cur && event.payload?.last_sync_time) appConfig.set({ ...cur, last_sync_time: event.payload.last_sync_time });
+		}));
+		unlistenSync.push(await listen('sync-error', (event: any) => syncState.set({ running: false, error: event.payload?.error ?? 'Sync failed' })));
+
+		// Sync when the vault opens (if enabled)
+		if (syncConfigured() && get(appConfig)?.sync_on_open) {
+			try { await syncNow(); } catch (_) {}
+		}
+
+		// Auto-sync interval: check on startup and every minute
+		checkScheduledSync();
+		syncInterval = setInterval(checkScheduledSync, 60 * 1000);
+
+		// Auto-sync on note change: a save flips editorDirty true -> false. Debounce a sync.
+		unsubDirty = editorDirty.subscribe((d) => {
+			const config = get(appConfig);
+			if (prevDirty && !d && config?.sync_provider === 'webdav' && config?.sync_on_change) {
+				if (onChangeSyncTimer) clearTimeout(onChangeSyncTimer);
+				onChangeSyncTimer = setTimeout(() => { if (!get(syncState).running) syncNow().catch(() => {}); }, 15000);
+			}
+			prevDirty = d;
+		});
 	});
 
 	onDestroy(() => {
 		unlistenFileChange?.();
 		unlistenOpenFile?.();
 		if (backupInterval) clearInterval(backupInterval);
+		if (syncInterval) clearInterval(syncInterval);
+		if (onChangeSyncTimer) clearTimeout(onChangeSyncTimer);
+		unsubDirty?.();
+		unlistenSync.forEach((u) => u());
 	});
 </script>
 
@@ -589,6 +648,13 @@
 					<button class="mobile-header-btn" onclick={() => editor?.triggerAiMenu()} title="AI Actions">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M12 8V4l-2-2"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M9 13v2"/><path d="M15 13v2"/>
+						</svg>
+					</button>
+					{/if}
+					{#if $appConfig?.sync_provider === 'webdav'}
+					<button class="mobile-header-btn" class:active={$syncState.running} onclick={triggerSyncNow} disabled={$syncState.running} title={$syncState.error ? `Sync error: ${$syncState.error}` : ($syncState.running ? 'Syncing...' : 'Sync now')}>
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class:sync-spin={$syncState.running}>
+							<path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/>
 						</svg>
 					</button>
 					{/if}

@@ -404,6 +404,17 @@ body.resizing {
     user-select: none;
 }
 
+/* Spinner for the sync button while a sync is running. */
+.sync-spin {
+    animation: sync-spin 1s linear infinite;
+    transform-origin: 50% 50%;
+}
+@keyframes sync-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 /* ── Mobile (Android/iOS) ── */
 @media (max-width: 768px) {
     body {

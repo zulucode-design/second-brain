@@ -129,6 +129,23 @@ pub struct AppConfig {
     pub close_to_tray: bool,
     #[serde(default = "default_true")]
     pub enable_wiki_links: bool,
+    // WebDAV sync (opt-in; all off by default). Endpoint is fully user-configured.
+    #[serde(default)]
+    pub sync_provider: Option<String>,
+    #[serde(default)]
+    pub webdav_url: Option<String>,
+    #[serde(default)]
+    pub webdav_username: Option<String>,
+    #[serde(default)]
+    pub webdav_password: Option<String>,
+    #[serde(default)]
+    pub sync_on_open: bool,
+    #[serde(default)]
+    pub sync_on_change: bool,
+    #[serde(default)]
+    pub sync_interval_minutes: u32,
+    #[serde(default)]
+    pub last_sync_time: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -199,6 +216,14 @@ impl Default for AppConfig {
             show_tray_icon: false,
             close_to_tray: false,
             enable_wiki_links: true,
+            sync_provider: None,
+            webdav_url: None,
+            webdav_username: None,
+            webdav_password: None,
+            sync_on_open: false,
+            sync_on_change: false,
+            sync_interval_minutes: 0,
+            last_sync_time: None,
         }
     }
 }

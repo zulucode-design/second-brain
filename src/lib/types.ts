@@ -82,6 +82,14 @@ export interface AppConfig {
   default_view_mode: boolean;
   show_tray_icon: boolean;
   enable_wiki_links: boolean;
+  sync_provider: string | null;
+  webdav_url: string | null;
+  webdav_username: string | null;
+  webdav_password: string | null;
+  sync_on_open: boolean;
+  sync_on_change: boolean;
+  sync_interval_minutes: number;
+  last_sync_time: string | null;
 }
 
 export interface VaultState {

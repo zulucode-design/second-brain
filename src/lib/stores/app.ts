@@ -67,6 +67,13 @@ export const readOnly = writable(false);
 // Theme
 export const theme = writable<string>("system");
 
+// Sync (WebDAV) - global status so the top-bar button reflects any sync,
+// whoever triggered it (manual button, settings, interval, on-change).
+export const syncState = writable<{ running: boolean; error: string | null }>({
+  running: false,
+  error: null,
+});
+
 // Update state
 export const updateAvailable = writable<{
   version: string;
