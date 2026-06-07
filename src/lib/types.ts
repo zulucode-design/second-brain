@@ -83,6 +83,7 @@ export interface AppConfig {
   default_view_mode: boolean;
   show_tray_icon: boolean;
   enable_wiki_links: boolean;
+  restore_last_session: boolean;
   sync_provider: string | null;
   webdav_url: string | null;
   webdav_username: string | null;
@@ -102,6 +103,9 @@ export interface VaultState {
   notebook_sort_mode?: string;
   notebook_order?: Record<string, number>;
   sort_mode?: string;
+  last_view_mode?: string;
+  last_notebook?: string | null;
+  last_tag?: string | null;
 }
 
 export interface SearchResult {

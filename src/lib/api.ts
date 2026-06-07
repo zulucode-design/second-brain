@@ -226,6 +226,7 @@ export async function setGeneralSettings(
   closeToTray: boolean,
   enableWikiLinks: boolean,
   showNoteDates: boolean,
+  restoreLastSession: boolean,
 ): Promise<void> {
   return invoke("set_general_settings", {
     compactNotes,
@@ -242,6 +243,7 @@ export async function setGeneralSettings(
     closeToTray,
     enableWikiLinks,
     showNoteDates,
+    restoreLastSession,
   });
 }
 

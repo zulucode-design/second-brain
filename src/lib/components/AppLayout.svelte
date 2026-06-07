@@ -33,6 +33,8 @@
 		quickAccessPaths,
 		tags,
 		notes,
+		notebooks,
+		rootNoteCount,
 		viewMode,
 		sortMode,
 		activeTag,
@@ -53,7 +55,16 @@
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow } from '$lib/utils/window';
 	import { get } from 'svelte/store';
-	import type { VaultState, FileEvent } from '$lib/types';
+	import type { VaultState, FileEvent, NotebookEntry } from '$lib/types';
+
+	function findNotebookByPath(list: NotebookEntry[], relPath: string): NotebookEntry | null {
+		for (const nb of list) {
+			if (nb.relative_path === relPath) return nb;
+			const found = findNotebookByPath(nb.children, relPath);
+			if (found) return found;
+		}
+		return null;
+	}
 
 	let sidebar: Sidebar;
 	let noteList: NoteList;
@@ -186,7 +197,10 @@
 			collapsed_notebooks: $collapsedNotebooks,
 			notebook_sort_mode: $notebookSortMode,
 			notebook_order: $notebookOrder,
-			sort_mode: $sortMode
+			sort_mode: $sortMode,
+			last_view_mode: $viewMode,
+			last_notebook: $activeNotebook?.relative_path ?? null,
+			last_tag: $activeTag
 		};
 		try {
 			await saveVaultState(state);
@@ -428,8 +442,18 @@
 		persistState();
 	});
 
+	$effect(() => {
+		$viewMode;
+		$activeNotebook;
+		$activeTag;
+		persistState();
+	});
+
 	onMount(async () => {
 		let lastNotePath: string | null = null;
+		let lastViewMode = '';
+		let lastNotebook: string | null = null;
+		let lastTag: string | null = null;
 		try {
 			const state = await loadVaultState();
 			$sidebarWidth = state.sidebar_width;
@@ -440,6 +464,9 @@
 			$notebookOrder = state.notebook_order ?? {};
 			if (state.sort_mode === 'created' || state.sort_mode === 'title' || state.sort_mode === 'modified') $sortMode = state.sort_mode;
 			lastNotePath = state.last_open_note ?? null;
+			lastViewMode = state.last_view_mode ?? '';
+			lastNotebook = state.last_notebook ?? null;
+			lastTag = state.last_tag ?? null;
 		} catch (_) {}
 
 		// On mobile, prefetch last-opened note so first tap is instant
@@ -456,6 +483,34 @@
 
 		// Run sidebar and note list refresh in parallel
 		await Promise.all([sidebar?.refresh(), noteList?.refresh()]);
+
+		// Restore the last session (view + open note) if enabled.
+		if ($appConfig?.restore_last_session) {
+			const vault = $appConfig?.active_vault;
+			if (lastViewMode === 'notebook' && lastNotebook === '' && vault) {
+				$viewMode = 'notebook';
+				$activeNotebook = { name: 'Unfiled Notes', path: vault, relative_path: '', children: [], note_count: $rootNoteCount };
+				$activeTag = null;
+				await noteList?.refresh();
+			} else if (lastViewMode === 'notebook' && lastNotebook) {
+				const nb = findNotebookByPath($notebooks, lastNotebook);
+				if (nb) { $viewMode = 'notebook'; $activeNotebook = nb; $activeTag = null; await noteList?.refresh(); }
+			} else if (lastViewMode === 'tag' && lastTag) {
+				$viewMode = 'tag'; $activeTag = lastTag; $activeNotebook = null; await noteList?.refresh();
+			} else if (lastViewMode === 'quickaccess') {
+				$viewMode = 'quickaccess'; $activeNotebook = null; $activeTag = null; await noteList?.refresh();
+			}
+			// Open the last note on desktop (mobile reopens it via its own prefetch path below).
+			if (!isMobile && lastNotePath) {
+				try {
+					const content = await readNote(lastNotePath);
+					$activeNote = content;
+					$activeNotePath = lastNotePath;
+					$editorDirty = false;
+					editor?.loadNote(lastNotePath, content.content);
+				} catch (_) {}
+			}
+		}
 
 		// On mobile, derive tags from the scanned notes (avoids a separate full-scan Rust call)
 		if (isMobile) {

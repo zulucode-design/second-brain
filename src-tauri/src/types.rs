@@ -131,6 +131,8 @@ pub struct AppConfig {
     pub close_to_tray: bool,
     #[serde(default = "default_true")]
     pub enable_wiki_links: bool,
+    #[serde(default)]
+    pub restore_last_session: bool,
     // WebDAV sync (opt-in; all off by default). Endpoint is fully user-configured.
     #[serde(default)]
     pub sync_provider: Option<String>,
@@ -219,6 +221,7 @@ impl Default for AppConfig {
             show_tray_icon: false,
             close_to_tray: false,
             enable_wiki_links: true,
+            restore_last_session: false,
             sync_provider: None,
             webdav_url: None,
             webdav_username: None,
@@ -245,6 +248,12 @@ pub struct VaultState {
     pub notebook_order: std::collections::HashMap<String, i32>,
     #[serde(default)]
     pub sort_mode: String,
+    #[serde(default)]
+    pub last_view_mode: String,
+    #[serde(default)]
+    pub last_notebook: Option<String>,
+    #[serde(default)]
+    pub last_tag: Option<String>,
 }
 
 impl Default for VaultState {
@@ -258,6 +267,9 @@ impl Default for VaultState {
             notebook_sort_mode: String::new(),
             notebook_order: std::collections::HashMap::new(),
             sort_mode: String::new(),
+            last_view_mode: String::new(),
+            last_notebook: None,
+            last_tag: None,
         }
     }
 }

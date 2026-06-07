@@ -458,6 +458,7 @@
 	// General settings
 	let compactNotes = $state($appConfig?.compact_notes ?? false);
 	let showNoteDates = $state($appConfig?.show_note_dates ?? true);
+	let restoreLastSession = $state($appConfig?.restore_last_session ?? false);
 	let timeFormat = $state($appConfig?.time_format ?? 'relative');
 	let gpuAcceleration = $state($appConfig?.gpu_acceleration ?? true);
 	let autostart = $state($appConfig?.autostart ?? false);
@@ -514,6 +515,7 @@
 		if ($appConfig) {
 			$appConfig.compact_notes = compactNotes;
 			$appConfig.show_note_dates = showNoteDates;
+			$appConfig.restore_last_session = restoreLastSession;
 			$appConfig.time_format = timeFormat;
 			$appConfig.gpu_acceleration = gpuAcceleration;
 			$appConfig.autostart = autostart;
@@ -527,7 +529,7 @@
 			$appConfig.close_to_tray = closeToTray;
 			$appConfig.enable_wiki_links = enableWikiLinks;
 		}
-		setGeneralSettings(compactNotes, timeFormat, gpuAcceleration, autostart, pdfPreview, pdfHeight, titleMode, hideTitleInBody, showLineNumbers, defaultViewMode, showTrayIcon, closeToTray, enableWikiLinks, showNoteDates)
+		setGeneralSettings(compactNotes, timeFormat, gpuAcceleration, autostart, pdfPreview, pdfHeight, titleMode, hideTitleInBody, showLineNumbers, defaultViewMode, showTrayIcon, closeToTray, enableWikiLinks, showNoteDates, restoreLastSession)
 			.catch((e) => console.error('Failed to save general settings:', e));
 	}
 
@@ -649,6 +651,7 @@
 		if ($appConfig) {
 			compactNotes = $appConfig.compact_notes ?? false;
 			showNoteDates = $appConfig.show_note_dates ?? true;
+			restoreLastSession = $appConfig.restore_last_session ?? false;
 			timeFormat = $appConfig.time_format ?? 'relative';
 			gpuAcceleration = $appConfig.gpu_acceleration ?? true;
 			autostart = $appConfig.autostart ?? false;
@@ -878,6 +881,15 @@
 										<span class="setting-desc">Notes open as read-only by default. Click the eye icon to switch to editing.</span>
 									</span>
 									<button class="toggle-switch" class:on={defaultViewMode} onclick={() => { defaultViewMode = !defaultViewMode; saveGeneralSettings(); }}>
+										<span class="toggle-knob"></span>
+									</button>
+								</label>
+								<label class="setting-toggle">
+									<span class="setting-label">
+										<span class="setting-name">Restore last session on launch</span>
+										<span class="setting-desc">Reopen the note and folder you were last using, instead of All Notes.</span>
+									</span>
+									<button class="toggle-switch" class:on={restoreLastSession} onclick={() => { restoreLastSession = !restoreLastSession; saveGeneralSettings(); }}>
 										<span class="toggle-knob"></span>
 									</button>
 								</label>

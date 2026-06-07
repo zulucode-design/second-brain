@@ -831,10 +831,12 @@ pub fn set_general_settings(
     close_to_tray: bool,
     enable_wiki_links: bool,
     show_note_dates: bool,
+    restore_last_session: bool,
 ) -> Result<(), String> {
     let mut config = state.config.lock().map_err(|e| e.to_string())?;
     config.compact_notes = compact_notes;
     config.show_note_dates = show_note_dates;
+    config.restore_last_session = restore_last_session;
     config.time_format = time_format;
     config.gpu_acceleration = gpu_acceleration;
     config.autostart = autostart;
