@@ -375,7 +375,19 @@
 			calYear = today.getFullYear();
 			return;
 		}
-		const nbRelative = $viewMode === 'notebook' ? $activeNotebook?.relative_path ?? null : null;
+		// Target: active notebook, else the open note's folder, else root.
+		let nbRelative: string | null = null;
+		if ($viewMode === 'notebook' && $activeNotebook) {
+			nbRelative = $activeNotebook.relative_path || null;
+		} else if ($appConfig?.active_vault && $activeNotePath) {
+			const vaultN = $appConfig.active_vault.replace(/\\/g, '/');
+			const apN = $activeNotePath.replace(/\\/g, '/');
+			if (apN.startsWith(vaultN + '/')) {
+				const rel = apN.slice(vaultN.length + 1);
+				const slash = rel.lastIndexOf('/');
+				if (slash > 0) nbRelative = rel.slice(0, slash);
+			}
+		}
 		try {
 			const entry = await createNote(nbRelative, 'Untitled');
 			noteCache.clear();
