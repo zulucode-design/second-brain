@@ -100,6 +100,7 @@ export interface VaultState {
   collapsed_notebooks: string[];
   notebook_sort_mode?: string;
   notebook_order?: Record<string, number>;
+  sort_mode?: string;
 }
 
 export interface SearchResult {

@@ -240,6 +240,8 @@ pub struct VaultState {
     pub notebook_sort_mode: String,
     #[serde(default)]
     pub notebook_order: std::collections::HashMap<String, i32>,
+    #[serde(default)]
+    pub sort_mode: String,
 }
 
 impl Default for VaultState {
@@ -252,6 +254,7 @@ impl Default for VaultState {
             collapsed_notebooks: Vec::new(),
             notebook_sort_mode: String::new(),
             notebook_order: std::collections::HashMap::new(),
+            sort_mode: String::new(),
         }
     }
 }

@@ -34,6 +34,7 @@
 		tags,
 		notes,
 		viewMode,
+		sortMode,
 		activeTag,
 		updateAvailable as globalUpdateAvailable,
 		settingsTab,
@@ -184,7 +185,8 @@
 			sidebar_collapsed: $sidebarCollapsed,
 			collapsed_notebooks: $collapsedNotebooks,
 			notebook_sort_mode: $notebookSortMode,
-			notebook_order: $notebookOrder
+			notebook_order: $notebookOrder,
+			sort_mode: $sortMode
 		};
 		try {
 			await saveVaultState(state);
@@ -421,6 +423,11 @@
 		persistState();
 	});
 
+	$effect(() => {
+		$sortMode;
+		persistState();
+	});
+
 	onMount(async () => {
 		let lastNotePath: string | null = null;
 		try {
@@ -431,6 +438,7 @@
 			$collapsedNotebooks = state.collapsed_notebooks ?? [];
 			$notebookSortMode = state.notebook_sort_mode === 'manual' ? 'manual' : 'alphabetical';
 			$notebookOrder = state.notebook_order ?? {};
+			if (state.sort_mode === 'created' || state.sort_mode === 'title' || state.sort_mode === 'modified') $sortMode = state.sort_mode;
 			lastNotePath = state.last_open_note ?? null;
 		} catch (_) {}
 
