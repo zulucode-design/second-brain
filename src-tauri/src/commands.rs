@@ -387,10 +387,14 @@ pub fn get_all_note_titles(state: State<'_, AppState>) -> Result<Vec<NoteTitleEn
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
     let vault = std::path::Path::new(vault_path);
+    let hn_dir = operations::helixnotes_dir(vault_path);
     let mut entries = Vec::new();
 
     for entry in walkdir::WalkDir::new(vault)
         .into_iter()
+        // Cross-platform exclusion (string "/.helixnotes/" checks miss Windows
+        // backslash paths, which leaked .helixnotes/history snapshots in as dupes).
+        .filter_entry(|e| !operations::is_hidden(e.path()) && !e.path().starts_with(&hn_dir))
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
@@ -398,9 +402,6 @@ pub fn get_all_note_titles(state: State<'_, AppState>) -> Result<Vec<NoteTitleEn
             continue;
         }
         let path_str = path.to_string_lossy();
-        if path_str.contains("/.helixnotes/") || path_str.contains("/.trash/") {
-            continue;
-        }
         if path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
         }
@@ -449,15 +450,17 @@ pub fn get_graph_data(state: State<'_, AppState>) -> Result<crate::types::GraphD
     let mut seen_paths: HashSet<String> = HashSet::new();
     let mut contents: Vec<String> = Vec::new();
 
+    let hn_dir = operations::helixnotes_dir(vault_path);
     for entry in walkdir::WalkDir::new(vault)
         .into_iter()
+        // Cross-platform exclusion (string "/.helixnotes/" checks miss Windows
+        // backslash paths; is_hidden also covers .stversions/.stfolder/.trash/.git).
+        .filter_entry(|e| !operations::is_hidden(e.path()) && !e.path().starts_with(&hn_dir))
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
         if !path.is_file() { continue; }
         let path_str = path.to_string_lossy().to_string();
-        if path_str.contains("/.helixnotes/") || path_str.contains("/.trash/")
-            || path_str.contains("/.stversions/") || path_str.contains("/.stfolder") { continue; }
         if path.extension().and_then(|e| e.to_str()) != Some("md") { continue; }
         // Skip Syncthing conflict files
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
@@ -483,7 +486,8 @@ pub fn get_graph_data(state: State<'_, AppState>) -> Result<crate::types::GraphD
         // Also index by vault-relative path without extension (e.g. "subfolder/note name")
         if let Ok(rel) = path.strip_prefix(vault) {
             let rel_no_ext = rel.with_extension("");
-            let rel_lower = rel_no_ext.to_string_lossy().to_lowercase();
+            // Normalize Windows backslashes so [[folder/note]] links resolve cross-platform.
+            let rel_lower = rel_no_ext.to_string_lossy().replace('\\', "/").to_lowercase();
             relpath_to_idx.entry(rel_lower).or_insert(idx);
         }
 

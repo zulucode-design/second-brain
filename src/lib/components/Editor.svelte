@@ -1325,7 +1325,10 @@
 	function wikiLinkFolderPath(entry: NoteTitleEntry): string {
 		const vaultRoot = $appConfig?.active_vault;
 		if (!vaultRoot || !entry.path) return '';
-		const rel = entry.path.startsWith(vaultRoot + '/') ? entry.path.slice(vaultRoot.length + 1) : entry.path;
+		// Normalize Windows backslashes so the folder subtitle shows there too.
+		const path = entry.path.replace(/\\/g, '/');
+		const root = vaultRoot.replace(/\\/g, '/');
+		const rel = path.startsWith(root + '/') ? path.slice(root.length + 1) : path;
 		const parts = rel.split('/');
 		// Return parent folder(s), excluding the filename
 		return parts.length > 1 ? parts.slice(0, -1).join('/') + '/' : '';

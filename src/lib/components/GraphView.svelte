@@ -76,8 +76,10 @@
 	}
 
 	function getFolderKey(path: string): string {
-		const vaultRoot = $appConfig?.active_vault || '';
-		const rel = vaultRoot && path.startsWith(vaultRoot + '/') ? path.slice(vaultRoot.length + 1) : path;
+		// Normalize Windows backslashes so folder grouping/colours work there too.
+		const p = (path || '').replace(/\\/g, '/');
+		const vaultRoot = ($appConfig?.active_vault || '').replace(/\\/g, '/');
+		const rel = vaultRoot && p.startsWith(vaultRoot + '/') ? p.slice(vaultRoot.length + 1) : p;
 		const slash = rel.indexOf('/');
 		return slash >= 0 ? rel.slice(0, slash) : '';
 	}

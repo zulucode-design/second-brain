@@ -154,7 +154,7 @@ fn scan_dir_with_count(dir: &Path, vault_root: &str) -> (Vec<NotebookEntry>, usi
     (entries, note_count)
 }
 
-fn is_hidden(path: &Path) -> bool {
+pub(crate) fn is_hidden(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
         .map(|n| {
@@ -708,17 +708,20 @@ fn update_wikilinks_after_rename(
     new_title: &str,
 ) {
     let vault = Path::new(vault_path);
-    let vault_prefix = format!("{}/", vault_path);
+    let hn_dir = helixnotes_dir(vault_path);
 
-    // Compute vault-relative path refs (without .md) for path-based wikilink refs
-    let old_rel_ref = old_path.strip_prefix(&vault_prefix)
-        .unwrap_or(old_path)
-        .strip_suffix(".md")
-        .unwrap_or(old_path);
-    let new_rel_ref = new_path.strip_prefix(&vault_prefix)
-        .unwrap_or(new_path)
-        .strip_suffix(".md")
-        .unwrap_or(new_path);
+    // Vault-relative path ref (without .md), normalized to forward slashes so it
+    // matches [[folder/note]] wikilinks on Windows (OS paths use backslashes there).
+    let rel_ref = |p: &str| -> String {
+        let rel = Path::new(p)
+            .strip_prefix(vault)
+            .map(|r| r.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| p.to_string())
+            .replace('\\', "/");
+        rel.strip_suffix(".md").unwrap_or(&rel).to_string()
+    };
+    let old_rel_ref = rel_ref(old_path);
+    let new_rel_ref = rel_ref(new_path);
 
     // Check if another note with the same old_title exists in the vault.
     // If so, title-based replacements (rules 1-3) are ambiguous and must be skipped,
@@ -726,6 +729,7 @@ fn update_wikilinks_after_rename(
     // vs. the other note with the same title.
     let title_is_unique = !WalkDir::new(vault)
         .into_iter()
+        .filter_entry(|e| !is_hidden(e.path()) && !e.path().starts_with(&hn_dir))
         .filter_map(|e| e.ok())
         .any(|e| {
             let p = e.path();
@@ -733,10 +737,6 @@ fn update_wikilinks_after_rename(
                 return false;
             }
             if p.extension().and_then(|ext| ext.to_str()) != Some("md") {
-                return false;
-            }
-            let p_str = p.to_string_lossy();
-            if p_str.contains("/.helixnotes/") || p_str.contains("/.trash/") {
                 return false;
             }
             // Check if this note's filename (without .md) matches the old title
@@ -748,12 +748,12 @@ fn update_wikilinks_after_rename(
 
     for entry in WalkDir::new(vault)
         .into_iter()
+        .filter_entry(|e| !is_hidden(e.path()) && !e.path().starts_with(&hn_dir))
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
         if !path.is_file() { continue; }
         let path_str = path.to_string_lossy();
-        if path_str.contains("/.helixnotes/") || path_str.contains("/.trash/") { continue; }
         if path.extension().and_then(|e| e.to_str()) != Some("md") { continue; }
         // Skip the renamed note itself
         if *path_str == *new_path { continue; }
