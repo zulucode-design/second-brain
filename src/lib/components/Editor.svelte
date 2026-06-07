@@ -2928,7 +2928,7 @@
 								(view.dom as HTMLElement).focus({ preventScroll: true });
 							}
 						}
-						if (target.closest('[data-type="taskItem"] input[type="checkbox"]')) {
+						if (target.closest('li[data-checked] > label')) {
 							const editorBody = target.closest('.editor-body') as HTMLElement | null;
 							if (editorBody) {
 								const savedScroll = editorBody.scrollTop;
@@ -2938,6 +2938,47 @@
 								setTimeout(() => editorBody!.removeEventListener('scroll', restore), 200);
 							}
 						}
+					},
+					// Let task-list checkboxes be ticked in View Mode (read-only) without
+					// entering edit mode - e.g. a shopping list on mobile, where editing would
+					// pop the soft keyboard. TipTap leaves the checkbox clickable in read-only
+					// but reverts the toggle on `change`; we intercept the click, cancel the
+					// native toggle, and dispatch the attr change ourselves so it persists via
+					// the normal onUpdate -> autoSave path. Edit mode keeps TipTap's behaviour.
+					click: (view, event) => {
+						if (!get(readOnly)) return false;
+						if (get(viewerNote)) return false; // external viewer files are never saved
+						const target = event.target as HTMLElement;
+						const label = target.closest('li[data-checked] > label');
+						if (!label) return false;
+						// Cancel the native checkbox toggle (and the label->input click cascade)
+						// so it doesn't fight our transaction; the node-view update will set the
+						// visual state from the new doc value.
+						event.preventDefault();
+						const li = label.closest('li') as HTMLElement | null;
+						if (!li) return false;
+						// Probe position from the content <div> (the real contentDOM), not the <li>
+						// outer node-view element, so posAtDOM lands inside the task item's content.
+						const probe = (li.querySelector(':scope > div') as HTMLElement | null) || li;
+						const pos = view.posAtDOM(probe, 0);
+						const resolved = view.state.doc.resolve(pos);
+						let itemPos = -1;
+						let attrs: Record<string, any> | null = null;
+						for (let d = resolved.depth; d >= 0; d--) {
+							if (resolved.node(d).type.name === 'taskItem') {
+								itemPos = resolved.before(d);
+								attrs = resolved.node(d).attrs;
+								break;
+							}
+						}
+						if (itemPos < 0) {
+							// Fallback: pos landed just before the item rather than inside it.
+							const n = view.state.doc.nodeAt(pos);
+							if (n && n.type.name === 'taskItem') { itemPos = pos; attrs = n.attrs; }
+						}
+						if (itemPos < 0 || !attrs) return false;
+						view.dispatch(view.state.tr.setNodeMarkup(itemPos, undefined, { ...attrs, checked: !attrs.checked }));
+						return true;
 					},
 					// Prevent native text drag - it causes copy-instead-of-move in Tauri's webview.
 					// File drops from OS are handled by Tauri's onDragDropEvent listener instead.
@@ -6987,12 +7028,12 @@
 		transition: background 0.15s, border-color 0.15s;
 	}
 
-	:global(.tiptap-wrapper .tiptap ul[data-type="taskList"] li label input[type="checkbox"]:checked) {
+	:global(.tiptap-wrapper .tiptap ul[data-type="taskList"] li[data-checked="true"] label input[type="checkbox"]) {
 		background: var(--accent);
 		border-color: var(--accent);
 	}
 
-	:global(.tiptap-wrapper .tiptap ul[data-type="taskList"] li label input[type="checkbox"]:checked::after) {
+	:global(.tiptap-wrapper .tiptap ul[data-type="taskList"] li[data-checked="true"] label input[type="checkbox"]::after) {
 		content: '';
 		position: absolute;
 		left: 3px;
