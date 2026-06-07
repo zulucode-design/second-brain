@@ -457,6 +457,7 @@
 
 	// General settings
 	let compactNotes = $state($appConfig?.compact_notes ?? false);
+	let showNoteDates = $state($appConfig?.show_note_dates ?? true);
 	let timeFormat = $state($appConfig?.time_format ?? 'relative');
 	let gpuAcceleration = $state($appConfig?.gpu_acceleration ?? true);
 	let autostart = $state($appConfig?.autostart ?? false);
@@ -512,6 +513,7 @@
 	function saveGeneralSettings() {
 		if ($appConfig) {
 			$appConfig.compact_notes = compactNotes;
+			$appConfig.show_note_dates = showNoteDates;
 			$appConfig.time_format = timeFormat;
 			$appConfig.gpu_acceleration = gpuAcceleration;
 			$appConfig.autostart = autostart;
@@ -525,7 +527,7 @@
 			$appConfig.close_to_tray = closeToTray;
 			$appConfig.enable_wiki_links = enableWikiLinks;
 		}
-		setGeneralSettings(compactNotes, timeFormat, gpuAcceleration, autostart, pdfPreview, pdfHeight, titleMode, hideTitleInBody, showLineNumbers, defaultViewMode, showTrayIcon, closeToTray, enableWikiLinks)
+		setGeneralSettings(compactNotes, timeFormat, gpuAcceleration, autostart, pdfPreview, pdfHeight, titleMode, hideTitleInBody, showLineNumbers, defaultViewMode, showTrayIcon, closeToTray, enableWikiLinks, showNoteDates)
 			.catch((e) => console.error('Failed to save general settings:', e));
 	}
 
@@ -646,6 +648,7 @@
 		// Sync general settings
 		if ($appConfig) {
 			compactNotes = $appConfig.compact_notes ?? false;
+			showNoteDates = $appConfig.show_note_dates ?? true;
 			timeFormat = $appConfig.time_format ?? 'relative';
 			gpuAcceleration = $appConfig.gpu_acceleration ?? true;
 			autostart = $appConfig.autostart ?? false;
@@ -747,6 +750,15 @@
 										<span class="setting-desc">Show notes in a denser layout without preview</span>
 									</span>
 									<button class="toggle-switch" class:on={compactNotes} onclick={() => { compactNotes = !compactNotes; saveGeneralSettings(); }}>
+										<span class="toggle-knob"></span>
+									</button>
+								</label>
+								<label class="setting-toggle">
+									<span class="setting-label">
+										<span class="setting-name">Show dates</span>
+										<span class="setting-desc">Show the date next to each note in the list</span>
+									</span>
+									<button class="toggle-switch" class:on={showNoteDates} onclick={() => { showNoteDates = !showNoteDates; saveGeneralSettings(); }}>
 										<span class="toggle-knob"></span>
 									</button>
 								</label>

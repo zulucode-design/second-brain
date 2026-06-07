@@ -830,9 +830,11 @@ pub fn set_general_settings(
     show_tray_icon: bool,
     close_to_tray: bool,
     enable_wiki_links: bool,
+    show_note_dates: bool,
 ) -> Result<(), String> {
     let mut config = state.config.lock().map_err(|e| e.to_string())?;
     config.compact_notes = compact_notes;
+    config.show_note_dates = show_note_dates;
     config.time_format = time_format;
     config.gpu_acceleration = gpu_acceleration;
     config.autostart = autostart;

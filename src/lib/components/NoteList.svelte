@@ -132,6 +132,7 @@
 	}
 
 	let compact = $derived($appConfig?.compact_notes ?? false);
+	let showDates = $derived($appConfig?.show_note_dates !== false);
 	let contextMenu = $state<{ x: number; y: number; note: NoteEntry } | null>(null);
 	let sortMenu = $state<{ x: number; y: number } | null>(null);
 	let editingNote = $state<string | null>(null);
@@ -1111,7 +1112,7 @@
 							{#if getNotebookPath(note)}
 								<span class="note-notebook">{getNotebookPath(note)}</span>
 							{/if}
-							<span class="note-date-compact" title={`Created ${formatDate(note.meta.created)}\nModified ${formatDate(note.meta.modified)}`}>{formatRelativeTime($sortMode === 'created' ? note.meta.created : note.meta.modified)}</span>
+							{#if showDates}<span class="note-date-compact" title={`Created ${formatDate(note.meta.created)}\nModified ${formatDate(note.meta.modified)}`}>{formatRelativeTime($sortMode === 'created' ? note.meta.created : note.meta.modified)}</span>{/if}
 						</div>
 					{:else}
 						<div class="note-title" title={getNotebookPath(note) ? `${getNotebookPath(note)}/${note.meta.title}` : note.meta.title}>
@@ -1131,9 +1132,9 @@
 						<div class="note-meta">
 							{#if getNotebookPath(note)}
 								<span class="note-notebook">{getNotebookPath(note)}</span>
-								<span class="note-meta-sep">&middot;</span>
+								{#if showDates}<span class="note-meta-sep">&middot;</span>{/if}
 							{/if}
-							<span class="note-date" title={`Created ${formatDate(note.meta.created)}\nModified ${formatDate(note.meta.modified)}`}>{formatRelativeTime($sortMode === 'created' ? note.meta.created : note.meta.modified)}</span>
+							{#if showDates}<span class="note-date" title={`Created ${formatDate(note.meta.created)}\nModified ${formatDate(note.meta.modified)}`}>{formatRelativeTime($sortMode === 'created' ? note.meta.created : note.meta.modified)}</span>{/if}
 							{#if note.meta.tags.length > 0}
 								<span class="note-tags">
 									{#each note.meta.tags.slice(0, 3) as tag}

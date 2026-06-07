@@ -73,6 +73,8 @@ pub struct AppConfig {
     pub ui_scale: Option<f64>,
     #[serde(default)]
     pub compact_notes: bool,
+    #[serde(default = "default_true")]
+    pub show_note_dates: bool,
     #[serde(default)]
     pub time_format: String,
     #[serde(default)]
@@ -188,6 +190,7 @@ impl Default for AppConfig {
             line_height: None,
             ui_scale: None,
             compact_notes: false,
+            show_note_dates: true,
             time_format: "relative".to_string(),
             gpu_acceleration: true,
             autostart: false,

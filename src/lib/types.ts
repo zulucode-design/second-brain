@@ -56,6 +56,7 @@ export interface AppConfig {
   line_height: number | null;
   ui_scale: number | null;
   compact_notes: boolean;
+  show_note_dates: boolean;
   time_format: string;
   gpu_acceleration: boolean;
   autostart: boolean;
