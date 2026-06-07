@@ -316,6 +316,18 @@
 
 	async function saveSyncSettings() {
 		await setSyncSettings(syncProvider, syncUrl || null, syncUsername || null, syncPassword || null, syncOnOpen, syncOnChange, syncIntervalMinutes);
+		// Reflect into the global store so the top-bar button visibility and the auto-sync
+		// triggers update live, without needing an app restart.
+		if ($appConfig) $appConfig = {
+			...$appConfig,
+			sync_provider: syncProvider,
+			webdav_url: syncUrl || null,
+			webdav_username: syncUsername || null,
+			webdav_password: syncPassword || null,
+			sync_on_open: syncOnOpen,
+			sync_on_change: syncOnChange,
+			sync_interval_minutes: syncIntervalMinutes,
+		};
 	}
 
 	async function handleTestSync() {
