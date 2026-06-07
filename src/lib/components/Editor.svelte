@@ -160,6 +160,10 @@
 	let slashSelectedIndex = $state(0);
 	let slashTablePicker = $state(false);
 	let slashTableHover = $state({ rows: 0, cols: 0 });
+	let slashColorPicker = $state(false);
+	let slashColorHex = $state('#4b6abf');
+	let slashColorInputEl = $state<HTMLInputElement | null>(null);
+	const colorPresets = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#6366f1', '#a855f7', '#ec4899', '#64748b', '#000000', '#ffffff'];
 
 	interface SlashCommand {
 		label: string;
@@ -197,6 +201,7 @@
 			{ label: 'Date', aliases: ['date', 'today', 'day'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>', action: () => insertTimestamp('date') },
 			{ label: 'Time', aliases: ['time', 'clock'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>', action: () => insertTimestamp('time') },
 			{ label: 'Date & Time', aliases: ['datetime', 'now', 'timestamp', 'stamp'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/><circle cx="18" cy="17" r="4"/><path d="M18 15.5v1.5l1 1"/></svg>', action: () => insertTimestamp('datetime') },
+			{ label: 'Color', aliases: ['color', 'colour', 'hex', 'rgb', 'swatch', 'palette'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>', action: () => { slashColorPicker = true; } },
 		];
 	}
 
@@ -924,6 +929,60 @@
 		},
 	});
 
+	// Color swatch decorations: render a small filled square before every hex/rgb/hsl color
+	// literal (in normal text AND code blocks), VSCode-style. These are view-only widget
+	// decorations, so they never touch the document/markdown - the note stores only the plain
+	// color text and the swatch is re-derived on load.
+	const colorSwatchPluginKey = new PluginKey('colorSwatch');
+	const COLOR_LITERAL_RE = /#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\b|(?:rgb|rgba|hsl|hsla)\([^)\n]{1,64}\)/g;
+
+	function makeColorSwatch(color: string): HTMLElement {
+		const span = document.createElement('span');
+		span.className = 'color-swatch';
+		span.contentEditable = 'false';
+		span.style.backgroundColor = color;
+		return span;
+	}
+
+	function buildColorSwatchDecorations(doc: any): DecorationSet {
+		const decos: any[] = [];
+		doc.descendants((node: any, pos: number) => {
+			if (!node.isText || !node.text) return;
+			const text: string = node.text;
+			COLOR_LITERAL_RE.lastIndex = 0;
+			let m: RegExpExecArray | null;
+			while ((m = COLOR_LITERAL_RE.exec(text)) !== null) {
+				const color = m[0];
+				// Validate with the browser's own CSS parser so junk (rgb(foo), #12345) gets no swatch.
+				if (!CSS.supports('color', color)) continue;
+				const at = pos + m.index;
+				decos.push(Decoration.widget(at, () => makeColorSwatch(color), { side: -1, key: 'cs:' + color + '@' + at }));
+			}
+		});
+		return DecorationSet.create(doc, decos);
+	}
+
+	const ColorSwatch = Extension.create({
+		name: 'colorSwatch',
+		addProseMirrorPlugins() {
+			return [
+				new Plugin({
+					key: colorSwatchPluginKey,
+					state: {
+						init: (_, state) => buildColorSwatchDecorations(state.doc),
+						apply: (tr, old, _oldState, newState) => {
+							if (!tr.docChanged) return old;
+							return buildColorSwatchDecorations(newState.doc);
+						},
+					},
+					props: {
+						decorations(state) { return colorSwatchPluginKey.getState(state); },
+					},
+				}),
+			];
+		},
+	});
+
 	const MoveLineShortcuts = Extension.create({
 		name: 'moveLineShortcuts',
 		addProseMirrorPlugins() {
@@ -1084,6 +1143,14 @@
 			editor.chain().focus().deleteRange({ from: slashMenu.from, to: slashMenu.to }).run();
 			return;
 		}
+		// Color opens a sub-picker too
+		if (cmd.label === 'Color') {
+			slashColorPicker = true;
+			slashSelectedIndex = 0;
+			editor.chain().focus().deleteRange({ from: slashMenu.from, to: slashMenu.to }).run();
+			tick().then(() => slashColorInputEl?.focus());
+			return;
+		}
 		// Delete the slash trigger text (/ + query)
 		editor.chain().focus().deleteRange({ from: slashMenu.from, to: slashMenu.to }).run();
 		slashMenu = null;
@@ -1098,6 +1165,14 @@
 		closeSlashMenu();
 	}
 
+	function insertColor(color: string) {
+		if (!editor) return;
+		const c = (color || '').trim();
+		if (!c || !CSS.supports('color', c)) { closeSlashMenu(); return; }
+		editor.chain().focus().insertContent(c).run();
+		closeSlashMenu();
+	}
+
 	// Track whether the user just typed a slash (vs cursor moving into existing text)
 	let slashTypedByUser = false;
 
@@ -1106,6 +1181,7 @@
 		slashSelectedIndex = 0;
 		slashTablePicker = false;
 		slashTableHover = { rows: 0, cols: 0 };
+		slashColorPicker = false;
 	}
 
 	$effect(() => {
@@ -1128,7 +1204,7 @@
 		const wasSlashTyped = slashTypedByUser;
 		slashTypedByUser = false;
 		if (!editor) return;
-		if (slashTablePicker) return; // Table picker is open, don't interfere
+		if (slashTablePicker || slashColorPicker) return; // a sub-picker is open, don't interfere
 		const { state } = editor;
 		const { selection } = state;
 		const resolvedFrom = selection.$from;
@@ -1191,6 +1267,13 @@
 						},
 						handleKeyDown: (_view, event) => {
 							if (!slashMenu) return false;
+							if (slashColorPicker) {
+								if (event.key === 'Escape') {
+									event.preventDefault();
+									closeSlashMenu();
+								}
+								return true; // the picker's own inputs handle the rest
+							}
 							if (slashTablePicker) {
 								if (event.key === 'Escape') {
 									event.preventDefault();
@@ -2925,6 +3008,7 @@
 				MoveLineShortcuts,
 				TabIndent,
 				NoteSearchExtension,
+				ColorSwatch,
 				...($appConfig?.enable_wiki_links ? [WikiLink, WikiLinkAutocomplete] : []),
 			],
 			content: html,
@@ -5440,6 +5524,27 @@
 					</div>
 					<div class="slash-table-picker-label">
 						{slashTableHover.rows > 0 ? `${slashTableHover.rows} x ${slashTableHover.cols}` : 'Select table size'}
+					</div>
+				</div>
+			{:else if slashColorPicker}
+				<div class="slash-color-picker">
+					<div class="slash-color-swatches">
+						{#each colorPresets as c}
+							<button class="slash-color-swatch" style="background: {c}" title={c} aria-label={c} onmousedown={(e) => { e.preventDefault(); insertColor(c); }}></button>
+						{/each}
+					</div>
+					<div class="slash-color-row">
+						<input type="color" class="slash-color-native" value={/^#[0-9a-fA-F]{6}$/.test(slashColorHex) ? slashColorHex : '#4b6abf'} oninput={(e) => { slashColorHex = (e.target as HTMLInputElement).value; }} title="Pick a color" />
+						<input
+							type="text"
+							class="slash-color-input"
+							bind:this={slashColorInputEl}
+							value={slashColorHex}
+							placeholder="#hex or rgb(...)"
+							oninput={(e) => { slashColorHex = (e.target as HTMLInputElement).value; }}
+							onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); insertColor(slashColorHex); } else if (e.key === 'Escape') { e.preventDefault(); closeSlashMenu(); } }}
+						/>
+						<button class="slash-color-insert" onmousedown={(e) => { e.preventDefault(); insertColor(slashColorHex); }}>Insert</button>
 					</div>
 				</div>
 			{:else if slashFiltered.length === 0}
@@ -8068,6 +8173,81 @@
 		color: var(--text-secondary);
 		margin-top: 6px;
 		font-weight: 500;
+	}
+
+	/* Color swatch preview shown before a color literal (VSCode-style decorator) */
+	:global(.tiptap-wrapper .tiptap .color-swatch) {
+		display: inline-block;
+		width: 0.8em;
+		height: 0.8em;
+		border-radius: 3px;
+		margin-right: 0.3em;
+		vertical-align: baseline;
+		border: 1px solid var(--border-color);
+		box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+		user-select: none;
+	}
+
+	/* /color slash sub-picker */
+	.slash-color-picker {
+		padding: 8px;
+		width: 210px;
+	}
+	.slash-color-swatches {
+		display: grid;
+		grid-template-columns: repeat(6, 1fr);
+		gap: 6px;
+		margin-bottom: 8px;
+	}
+	.slash-color-swatch {
+		width: 100%;
+		aspect-ratio: 1;
+		border-radius: 5px;
+		border: 1px solid var(--border-color);
+		box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+		cursor: pointer;
+		padding: 0;
+	}
+	.slash-color-swatch:hover {
+		transform: scale(1.1);
+	}
+	.slash-color-row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.slash-color-native {
+		width: 28px;
+		height: 28px;
+		padding: 0;
+		border: 1px solid var(--border-color);
+		border-radius: 6px;
+		background: none;
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+	.slash-color-input {
+		flex: 1;
+		min-width: 0;
+		padding: 6px 8px;
+		border: 1px solid var(--border-color);
+		border-radius: 6px;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		font-size: 12px;
+		font-family: monospace;
+		outline: none;
+	}
+	.slash-color-insert {
+		padding: 6px 10px;
+		border: none;
+		border-radius: 6px;
+		background: var(--accent);
+		color: #fff;
+		font-size: 12px;
+		font-weight: 500;
+		cursor: pointer;
+		flex-shrink: 0;
 	}
 
 	/* AI Menu */
