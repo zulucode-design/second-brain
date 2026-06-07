@@ -239,14 +239,14 @@
 
 	const anthropicModels = [
 		{ value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', desc: 'Balanced' },
-		{ value: 'claude-opus-4-6', label: 'Claude Opus 4.6', desc: 'Most capable' },
+		{ value: 'claude-opus-4-8', label: 'Claude Opus 4.8', desc: 'Most capable' },
 		{ value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', desc: 'Fast' },
 	];
 	const openaiModels = [
-		{ value: 'gpt-5.2', label: 'GPT-5.2', desc: 'Most capable' },
-		{ value: 'gpt-5.1', label: 'GPT-5.1', desc: 'Balanced' },
+		{ value: 'gpt-5.5', label: 'GPT-5.5', desc: 'Most capable' },
+		{ value: 'gpt-5.4', label: 'GPT-5.4', desc: 'Balanced' },
 		{ value: 'gpt-5-mini', label: 'GPT-5 Mini', desc: 'Fast' },
-		{ value: 'gpt-4.1', label: 'GPT-4.1', desc: 'Previous gen' },
+		{ value: 'gpt-5.2', label: 'GPT-5.2', desc: 'Previous gen' },
 	];
 	let aiModels = $derived(aiProvider === 'openai' ? openaiModels : anthropicModels);
 
@@ -1118,7 +1118,7 @@
 									<button class="option-btn" class:active={!aiProvider} onclick={() => { if (!aiProvider) return; aiProvider = null; aiTestMessage = null; saveAiSettings(); }}>Disabled</button>
 									<button class="option-btn" class:active={aiProvider === 'ollama'} onclick={() => { if (aiProvider === 'ollama') return; aiProvider = 'ollama'; aiModel = 'gemma3:4b'; aiTestMessage = null; saveAiSettings(); }}>Ollama</button>
 									<button class="option-btn" class:active={aiProvider === 'anthropic'} onclick={() => { if (aiProvider === 'anthropic') return; aiProvider = 'anthropic'; aiModel = 'claude-sonnet-4-6'; aiTestMessage = null; saveAiSettings(); }}>Anthropic</button>
-									<button class="option-btn" class:active={aiProvider === 'openai'} onclick={() => { if (aiProvider === 'openai') return; aiProvider = 'openai'; aiModel = 'gpt-5.2'; aiTestMessage = null; saveAiSettings(); }}>OpenAI</button>
+									<button class="option-btn" class:active={aiProvider === 'openai'} onclick={() => { if (aiProvider === 'openai') return; aiProvider = 'openai'; aiModel = 'gpt-5.5'; aiTestMessage = null; saveAiSettings(); }}>OpenAI</button>
 									<button class="option-btn" class:active={aiProvider === 'openai_compatible'} onclick={() => { if (aiProvider === 'openai_compatible') return; aiProvider = 'openai_compatible'; aiModel = ''; aiTestMessage = null; saveAiSettings(); }}>Compatible</button>
 								</div>
 							</div>
