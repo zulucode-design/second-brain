@@ -44,6 +44,7 @@
 	import { listen } from '@tauri-apps/api/event';
 	import { debounce } from '$lib/utils/debounce';
 	import GraphView from './GraphView.svelte';
+	import TagSuggestInput from './TagSuggestInput.svelte';
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
 	const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -142,6 +143,7 @@
 	// Version history
 	let showHistory = $state(false);
 	let showGraph = $state(false);
+	let tagMenu = $state<{ x: number; y: number } | null>(null);
 	let historyVersions = $state<VersionEntry[]>([]);
 	let historyPreview = $state<string | null>(null);
 	let historySelected = $state<VersionEntry | null>(null);
@@ -1892,6 +1894,31 @@
 		} catch (e) {
 			console.error('Save failed:', e);
 		}
+	}
+
+	// ── Tag editing (active note) ──
+	function toggleTagMenu(e: MouseEvent) {
+		if (tagMenu) { tagMenu = null; return; }
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		const width = 240;
+		const x = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+		tagMenu = { x, y: rect.bottom + 4 };
+	}
+
+	function addActiveNoteTag(tag: string) {
+		if (!$activeNote) return;
+		const cleaned = tag.trim().toLowerCase();
+		if (!cleaned || $activeNote.meta.tags.includes(cleaned)) return;
+		$activeNote = { ...$activeNote, meta: { ...$activeNote.meta, tags: [...$activeNote.meta.tags, cleaned] } };
+		$editorDirty = true;
+		autoSave();
+	}
+
+	function removeActiveNoteTag(tag: string) {
+		if (!$activeNote) return;
+		$activeNote = { ...$activeNote, meta: { ...$activeNote.meta, tags: $activeNote.meta.tags.filter((t) => t !== tag) } };
+		$editorDirty = true;
+		autoSave();
 	}
 
 	// Sync editor editable state when readOnly store changes (from titlebar or editor)
@@ -4323,6 +4350,17 @@
 
 				<button
 					class="icon-btn"
+					class:active={!!tagMenu}
+					onclick={toggleTagMenu}
+					title="Edit tags"
+				>
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+						<line x1="7" y1="7" x2="7.01" y2="7"/>
+					</svg>
+				</button>
+				<button
+					class="icon-btn"
 					class:active={$activeNote?.meta.pinned}
 					onclick={() => {
 						if ($activeNote) {
@@ -4433,16 +4471,14 @@
 					Unfiled Notes
 				{/if}
 			</span>
-			{#if $activeNote.meta.tags?.length > 0}
-				<span class="meta-divider">·</span>
-			{/if}
-			{#if $activeNote.meta.tags?.length > 0}
-			<span class="note-tags">
-				{#each $activeNote.meta.tags as tag}
-					<span class="note-tag">#{tag}</span>
-				{/each}
-			</span>
-			{/if}
+			<span class="meta-divider">·</span>
+			<button class="note-tags-trigger" onclick={toggleTagMenu} title="Edit tags">
+				{#if $activeNote.meta.tags?.length > 0}
+					{#each $activeNote.meta.tags as tag}<span class="note-tag">#{tag}</span>{/each}
+				{:else}
+					<span class="note-tags-add">+ Tags</span>
+				{/if}
+			</button>
 		</div>
 		{/if}
 
@@ -5516,6 +5552,35 @@
 	</div>
 {/if}
 
+{#if tagMenu && $activeNote}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<div class="tag-menu-overlay" onclick={() => (tagMenu = null)}>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<div class="tag-menu" style="left: {tagMenu.x}px; top: {tagMenu.y}px" onclick={(e) => e.stopPropagation()}>
+			{#if $activeNote.meta.tags.length > 0}
+				<div class="tag-menu-list">
+					{#each $activeNote.meta.tags as tag}
+						<span class="tag-menu-chip">
+							#{tag}
+							<button class="tag-menu-remove" onclick={() => removeActiveNoteTag(tag)} title="Remove tag" aria-label="Remove tag">
+								<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+							</button>
+						</span>
+					{/each}
+				</div>
+			{/if}
+			<TagSuggestInput
+				existing={$activeNote.meta.tags}
+				placeholder="Add tag..."
+				onsubmit={(t) => addActiveNoteTag(t)}
+				oncancel={() => (tagMenu = null)}
+			/>
+		</div>
+	</div>
+{/if}
+
 {#if codeLangDropdown}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="code-lang-overlay" onclick={closeCodeLangDropdown}>
@@ -6001,11 +6066,18 @@
 		user-select: none;
 	}
 
-	.note-tags {
+	.note-tags-trigger {
 		display: inline-flex;
 		align-items: center;
 		flex-wrap: wrap;
 		gap: 4px;
+		border: none;
+		background: none;
+		padding: 0;
+		margin: 0;
+		font: inherit;
+		color: inherit;
+		cursor: pointer;
 	}
 
 	.note-tag {
@@ -6015,6 +6087,17 @@
 		padding: 1px 7px;
 		border-radius: 10px;
 		letter-spacing: 0.01em;
+	}
+
+	.note-tags-add {
+		font-size: 11px;
+		color: var(--text-tertiary);
+		opacity: 0.65;
+	}
+
+	.note-tags-trigger:hover .note-tags-add {
+		opacity: 1;
+		color: var(--accent);
 	}
 
 	.toolbar-actions {
@@ -6994,6 +7077,58 @@
 	.viewer-import-item svg {
 		color: var(--text-tertiary);
 		flex-shrink: 0;
+	}
+
+	.tag-menu-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 2000;
+	}
+
+	.tag-menu {
+		position: fixed;
+		width: 240px;
+		background: var(--bg-primary);
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		box-shadow: var(--shadow-lg);
+		padding: 8px;
+		z-index: 2001;
+	}
+
+	.tag-menu-list {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+		margin-bottom: 8px;
+	}
+
+	.tag-menu-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		font-size: 11px;
+		color: var(--text-secondary);
+		background: var(--bg-tertiary);
+		padding: 2px 4px 2px 8px;
+		border-radius: 10px;
+	}
+
+	.tag-menu-remove {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border: none;
+		background: none;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		padding: 1px;
+		border-radius: 50%;
+	}
+
+	.tag-menu-remove:hover {
+		color: var(--danger, #e53e3e);
+		background: color-mix(in srgb, var(--danger, #e53e3e) 12%, transparent);
 	}
 
 	.code-lang-overlay {
