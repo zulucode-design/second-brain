@@ -13,6 +13,7 @@ import type {
   ImportResult,
   BackupEntry,
   VersionEntry,
+  TaskItem,
 } from "./types";
 
 export async function openVault(path: string): Promise<void> {
@@ -329,6 +330,39 @@ export async function setBackupSettings(
     location,
     includeAttachments,
   });
+}
+
+// ── Tasks ──
+
+export async function getTasks(): Promise<TaskItem[]> {
+  return invoke("get_tasks");
+}
+
+export async function setTaskDone(
+  notePath: string,
+  line: number,
+  rawLine: string,
+  done: boolean,
+): Promise<void> {
+  return invoke("set_task_done", { notePath, line, rawLine, done });
+}
+
+export async function setTaskPriority(
+  notePath: string,
+  line: number,
+  rawLine: string,
+  priority: string | null,
+): Promise<void> {
+  return invoke("set_task_priority", { notePath, line, rawLine, priority });
+}
+
+export async function setTaskDue(
+  notePath: string,
+  line: number,
+  rawLine: string,
+  due: string | null,
+): Promise<void> {
+  return invoke("set_task_due", { notePath, line, rawLine, due });
 }
 
 // ── Sync (WebDAV) ──

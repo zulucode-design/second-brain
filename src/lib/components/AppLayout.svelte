@@ -51,11 +51,11 @@
 	const isMac = navigator.platform.startsWith('Mac');
 	const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
 	const isAndroid = /android/i.test(navigator.userAgent);
-	import { loadVaultState, saveVaultState, readNote, createDailyNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote, createDailyNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, setTaskDone, setTaskPriority, setTaskDue } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow } from '$lib/utils/window';
 	import { get } from 'svelte/store';
-	import type { VaultState, FileEvent, NotebookEntry } from '$lib/types';
+	import type { VaultState, FileEvent, NotebookEntry, TaskItem } from '$lib/types';
 
 	function findNotebookByPath(list: NotebookEntry[], relPath: string): NotebookEntry | null {
 		for (const nb of list) {
@@ -217,14 +217,19 @@
 		persistState();
 	}
 
+	// Tasks view: the editor pane shows a placeholder until a task is opened from the list.
+	let taskNoteOpened = $state(false);
+
 	function handleNoteSelected(path: string, content: string) {
 		// Selecting a real vault note exits viewer mode
 		$viewerNote = null;
+		taskNoteOpened = true;
 		editor?.loadNote(path, content);
 		if (isMobile) $mobileView = 'editor';
 	}
 
 	function handleViewChanged() {
+		taskNoteOpened = false;
 		noteList?.refresh();
 		if (isMobile) $mobileView = 'notelist';
 	}
@@ -233,6 +238,63 @@
 		await noteList?.handleCreateNote();
 		editor?.focusTitle();
 		if (isMobile) $mobileView = 'editor';
+	}
+
+	// Toggle a task done from the Tasks view. If the task's note is open in the editor,
+	// flush first then reload after the file edit (so we never clobber unsaved edits).
+	async function toggleTask(task: TaskItem) {
+		const done = !task.completed;
+		const isActive = task.note_path === $activeNotePath;
+		if (isActive) await editor?.forceSave();
+		try {
+			await setTaskDone(task.note_path, task.line, task.raw_line, done);
+		} catch (e) {
+			console.error('Failed to toggle task:', e);
+		}
+		if (isActive) {
+			try {
+				const content = await readNote(task.note_path);
+				$activeNote = content;
+				$editorDirty = false;
+				editor?.loadNote(task.note_path, content.content);
+			} catch (_) {}
+		}
+	}
+
+	async function changeTaskPriority(task: TaskItem, priority: string | null) {
+		const isActive = task.note_path === $activeNotePath;
+		if (isActive) await editor?.forceSave();
+		try {
+			await setTaskPriority(task.note_path, task.line, task.raw_line, priority);
+		} catch (e) {
+			console.error('Failed to set task priority:', e);
+		}
+		if (isActive) {
+			try {
+				const content = await readNote(task.note_path);
+				$activeNote = content;
+				$editorDirty = false;
+				editor?.loadNote(task.note_path, content.content);
+			} catch (_) {}
+		}
+	}
+
+	async function changeTaskDue(task: TaskItem, due: string | null) {
+		const isActive = task.note_path === $activeNotePath;
+		if (isActive) await editor?.forceSave();
+		try {
+			await setTaskDue(task.note_path, task.line, task.raw_line, due);
+		} catch (e) {
+			console.error('Failed to set task due date:', e);
+		}
+		if (isActive) {
+			try {
+				const content = await readNote(task.note_path);
+				$activeNote = content;
+				$editorDirty = false;
+				editor?.loadNote(task.note_path, content.content);
+			} catch (_) {}
+		}
 	}
 
 	async function handleDailyNote() {
@@ -757,7 +819,7 @@
 				<Sidebar bind:this={sidebar} onViewChanged={handleViewChanged} />
 			</div>
 			<div class="mobile-panel" class:active={$mobileView === 'notelist'}>
-				<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); sidebar?.refresh(); }} />
+				<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); sidebar?.refresh(); }} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
 				<button class="mobile-fab" onclick={createAndFocusNote} title="New Note">
 					<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
 						<path d="M12 5v14M5 12h14" />
@@ -822,7 +884,7 @@
 				{/if}
 
 				<div class="notelist-panel" style="width: {$notelistWidth}px">
-					<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); sidebar?.refresh(); }} />
+					<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); sidebar?.refresh(); }} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
 				</div>
 
 				<ResizeHandle onResize={handleNotelistResize} />
@@ -830,6 +892,14 @@
 
 			<div class="editor-panel">
 				<Editor bind:this={editor} />
+				{#if $viewMode === 'tasks' && !taskNoteOpened}
+					<div class="tasks-editor-placeholder">
+						<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+						</svg>
+						<p>Select a task to open its note</p>
+					</div>
+				{/if}
 			</div>
 		</div>
 	</div>
@@ -872,6 +942,21 @@
 		height: 100%;
 		overflow: hidden;
 		min-width: 300px;
+		position: relative;
+	}
+
+	.tasks-editor-placeholder {
+		position: absolute;
+		inset: 0;
+		z-index: 5;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 12px;
+		background: var(--bg-primary);
+		color: var(--text-tertiary);
+		font-size: 14px;
 	}
 
 	.focus-topbar {

@@ -348,3 +348,15 @@ pub struct GraphEdge {
     pub target: usize,
     pub bidirectional: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskItem {
+    pub note_path: String,
+    pub note_title: String,
+    pub line: usize,
+    pub raw_line: String,
+    pub text: String,
+    pub completed: bool,
+    pub due: Option<String>,
+    pub priority: Option<String>,
+}

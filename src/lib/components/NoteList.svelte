@@ -37,13 +37,17 @@
 	import { formatRelativeTime, formatDate } from '$lib/utils/time';
 	import { openNoteWindow } from '$lib/utils/window';
 	import { revealItemInDir } from '@tauri-apps/plugin-opener';
-	import type { NoteEntry, TrashNotebookEntry, SortMode } from '$lib/types';
+	import type { NoteEntry, TrashNotebookEntry, SortMode, TaskItem } from '$lib/types';
+	import TasksView from './TasksView.svelte';
 
-	let { onNoteSelected = (_path: string, _content: string) => {}, onNoteMoved = () => {}, onBeforeNoteSwitch = () => {}, onNoteCreated = () => {} }: {
+	let { onNoteSelected = (_path: string, _content: string) => {}, onNoteMoved = () => {}, onBeforeNoteSwitch = () => {}, onNoteCreated = () => {}, onToggleTask = async (_t: TaskItem) => {}, onSetTaskPriority = async (_t: TaskItem, _p: string | null) => {}, onSetTaskDue = async (_t: TaskItem, _d: string | null) => {} }: {
 		onNoteSelected?: (path: string, content: string) => void;
 		onNoteMoved?: () => void;
 		onBeforeNoteSwitch?: () => void;
 		onNoteCreated?: () => void;
+		onToggleTask?: (t: TaskItem) => Promise<void>;
+		onSetTaskPriority?: (t: TaskItem, p: string | null) => Promise<void>;
+		onSetTaskDue?: (t: TaskItem, d: string | null) => Promise<void>;
 	} = $props();
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
@@ -281,6 +285,7 @@
 		if ($viewMode === 'tag') return `#${$activeTag}`;
 		if ($viewMode === 'quickaccess') return 'Quick Access';
 		if ($viewMode === 'daily') return 'Daily Notes';
+		if ($viewMode === 'tasks') return 'Tasks';
 		if ($viewMode === 'trash') return 'Trash';
 		return 'Notes';
 	});
@@ -298,6 +303,7 @@
 	}
 
 	export async function refresh(invalidate = false) {
+		if ($viewMode === 'tasks') { $notes = []; return; } // Tasks view fetches its own data
 		if (invalidate) {
 			noteCache.clear();
 		}
@@ -363,6 +369,19 @@
 			onNoteSelected(note.path, content.content);
 		} catch (e) {
 			console.error('Failed to read note:', e);
+		}
+	}
+
+	async function openTask(task: TaskItem) {
+		try {
+			const content = await readNote(task.note_path);
+			onBeforeNoteSwitch();
+			$activeNote = content;
+			$activeNotePath = task.note_path;
+			$editorDirty = false;
+			onNoteSelected(task.note_path, content.content);
+		} catch (e) {
+			console.error('Failed to open task note:', e);
 		}
 	}
 
@@ -836,6 +855,7 @@
 	<div class="list-header">
 		<span class="list-title">{viewTitle}</span>
 		<div class="list-actions">
+			{#if $viewMode !== 'tasks'}
 			{#if isAndroid}
 				<button class="icon-btn" class:active-toggle={multiSelectMode} onclick={() => { multiSelectMode = !multiSelectMode; if (!multiSelectMode) clearSelection(); }} title="Multi-select">
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -854,6 +874,7 @@
 						<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
 					</svg>
 				</button>
+			{/if}
 			{/if}
 		</div>
 	</div>
@@ -951,6 +972,9 @@
 	{/if}
 
 	<div class="list-content" bind:this={listContainer} onscroll={onListScroll}>
+		{#if $viewMode === 'tasks'}
+			<TasksView onOpenTask={openTask} onToggleTask={onToggleTask} onSetTaskPriority={onSetTaskPriority} onSetTaskDue={onSetTaskDue} />
+		{/if}
 		{#if $viewMode === 'daily'}
 			<div class="cal">
 				<div class="cal-nav">
@@ -985,7 +1009,7 @@
 			</div>
 		{/if}
 
-		{#if $sortedNotes.length === 0 && $viewMode !== 'daily' && (!($viewMode === 'trash') || trashNotebooks.length === 0)}
+		{#if $sortedNotes.length === 0 && $viewMode !== 'daily' && $viewMode !== 'tasks' && (!($viewMode === 'trash') || trashNotebooks.length === 0)}
 			<div class="empty-state">
 				{#if $viewMode === 'trash'}
 					<p>Trash is empty</p>

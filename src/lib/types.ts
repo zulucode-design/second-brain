@@ -164,4 +164,16 @@ export type ViewMode =
   | "trash"
   | "search"
   | "quickaccess"
-  | "daily";
+  | "daily"
+  | "tasks";
+
+export interface TaskItem {
+  note_path: string;
+  note_title: string;
+  line: number;
+  raw_line: string;
+  text: string;
+  completed: boolean;
+  due: string | null;
+  priority: string | null;
+}

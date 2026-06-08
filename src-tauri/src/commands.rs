@@ -589,6 +589,254 @@ fn extract_title_fast(raw: &str) -> Option<String> {
     None
 }
 
+// ── Tasks ──
+
+#[tauri::command]
+pub fn get_tasks(state: State<'_, AppState>) -> Result<Vec<crate::types::TaskItem>, String> {
+    let config = state.config.lock().map_err(|e| e.to_string())?;
+    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let vault = std::path::Path::new(vault_path);
+    let hn_dir = operations::helixnotes_dir(vault_path);
+
+    let task_re = regex::Regex::new(r"^\s*[-*]\s\[([ xX])\]\s+(.+?)\s*$").unwrap();
+    let due_re = regex::Regex::new(r"\bdue:(\d{4}-\d{2}-\d{2})\b").unwrap();
+    let prio_re = regex::Regex::new(r"(?i)(?:^|\s)!(high|medium|med|low)\b").unwrap();
+
+    let mut tasks = Vec::new();
+    for entry in walkdir::WalkDir::new(vault)
+        .into_iter()
+        .filter_entry(|e| !operations::is_hidden(e.path()) && !e.path().starts_with(&hn_dir))
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let raw = match std::fs::read_to_string(path) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let (meta, body) = crate::vault::frontmatter::parse_note(&raw, &filename);
+        let note_path = path.to_string_lossy().to_string();
+
+        for (i, line) in body.lines().enumerate() {
+            let caps = match task_re.captures(line) {
+                Some(c) => c,
+                None => continue,
+            };
+            let completed = !caps[1].trim().is_empty(); // 'x'/'X' completed, ' ' open
+            let content = caps[2].to_string();
+
+            let due = due_re.captures(&content).map(|c| c[1].to_string());
+            let priority = prio_re.captures(&content).map(|c| {
+                let p = c[1].to_lowercase();
+                if p == "medium" { "med".to_string() } else { p }
+            });
+            // Strip metadata tokens for the display text, then collapse whitespace.
+            let mut text = due_re.replace_all(&content, "").to_string();
+            text = prio_re.replace_all(&text, " ").to_string();
+            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+
+            tasks.push(crate::types::TaskItem {
+                note_path: note_path.clone(),
+                note_title: meta.title.clone(),
+                line: i,
+                raw_line: line.to_string(),
+                text,
+                completed,
+                due,
+                priority,
+            });
+        }
+    }
+    Ok(tasks)
+}
+
+fn toggle_checkbox_line(line: &str, done: bool) -> String {
+    let mut s = line.to_string();
+    if done {
+        if let Some(pos) = s.find("[ ]") {
+            s.replace_range(pos..pos + 3, "[x]");
+        }
+    } else {
+        for marker in ["[x]", "[X]"] {
+            if let Some(pos) = s.find(marker) {
+                s.replace_range(pos..pos + 3, "[ ]");
+                break;
+            }
+        }
+    }
+    s
+}
+
+#[tauri::command]
+pub fn set_task_done(
+    state: State<'_, AppState>,
+    note_path: String,
+    line: usize,
+    raw_line: String,
+    done: bool,
+) -> Result<(), String> {
+    let p = std::path::Path::new(&note_path);
+    let raw = std::fs::read_to_string(p).map_err(|e| e.to_string())?;
+    let filename = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let (meta, body) = crate::vault::frontmatter::parse_note(&raw, &filename);
+
+    let mut lines: Vec<String> = body.lines().map(|l| l.to_string()).collect();
+    // Verify the expected line; if the note drifted, fall back to the first exact match.
+    let idx = if lines.get(line).map(|l| *l == raw_line).unwrap_or(false) {
+        line
+    } else {
+        lines
+            .iter()
+            .position(|l| *l == raw_line)
+            .ok_or("Task line not found (note changed)")?
+    };
+
+    let toggled = toggle_checkbox_line(&lines[idx], done);
+    if toggled == lines[idx] {
+        return Ok(()); // already in the desired state
+    }
+    lines[idx] = toggled;
+    let mut new_body = lines.join("\n");
+    if body.ends_with('\n') && !new_body.ends_with('\n') {
+        new_body.push('\n');
+    }
+    operations::save_note(&note_path, &meta, &new_body)?;
+
+    if let Ok(guard) = state.search_index.lock() {
+        if let Some(search) = guard.as_ref() {
+            let _ = search.index_note(&note_path);
+        }
+    }
+    Ok(())
+}
+
+fn set_priority_on_line(line: &str, priority: Option<&str>) -> String {
+    let prio_re = regex::Regex::new(r"(?i)(?:^|\s)!(?:high|medium|med|low)\b").unwrap();
+    let stripped = prio_re.replace_all(line, "").to_string();
+    let stripped = stripped.trim_end();
+    match priority {
+        Some(p) => format!("{} !{}", stripped, p),
+        None => stripped.to_string(),
+    }
+}
+
+#[tauri::command]
+pub fn set_task_priority(
+    state: State<'_, AppState>,
+    note_path: String,
+    line: usize,
+    raw_line: String,
+    priority: Option<String>,
+) -> Result<(), String> {
+    // Normalize/validate priority ("medium" -> "med"); None clears it.
+    let prio = match priority.as_deref() {
+        None | Some("") | Some("none") => None,
+        Some("high") => Some("high"),
+        Some("med") | Some("medium") => Some("med"),
+        Some("low") => Some("low"),
+        Some(_) => return Err("Invalid priority".to_string()),
+    };
+
+    let p = std::path::Path::new(&note_path);
+    let raw = std::fs::read_to_string(p).map_err(|e| e.to_string())?;
+    let filename = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let (meta, body) = crate::vault::frontmatter::parse_note(&raw, &filename);
+
+    let mut lines: Vec<String> = body.lines().map(|l| l.to_string()).collect();
+    let idx = if lines.get(line).map(|l| *l == raw_line).unwrap_or(false) {
+        line
+    } else {
+        lines
+            .iter()
+            .position(|l| *l == raw_line)
+            .ok_or("Task line not found (note changed)")?
+    };
+
+    let updated = set_priority_on_line(&lines[idx], prio);
+    if updated == lines[idx] {
+        return Ok(());
+    }
+    lines[idx] = updated;
+    let mut new_body = lines.join("\n");
+    if body.ends_with('\n') && !new_body.ends_with('\n') {
+        new_body.push('\n');
+    }
+    operations::save_note(&note_path, &meta, &new_body)?;
+
+    if let Ok(guard) = state.search_index.lock() {
+        if let Some(search) = guard.as_ref() {
+            let _ = search.index_note(&note_path);
+        }
+    }
+    Ok(())
+}
+
+fn set_due_on_line(line: &str, due: Option<&str>) -> String {
+    let due_re = regex::Regex::new(r"(?:^|\s)due:\d{4}-\d{2}-\d{2}\b").unwrap();
+    let stripped = due_re.replace_all(line, "").to_string();
+    let stripped = stripped.trim_end();
+    match due {
+        Some(d) => format!("{} due:{}", stripped, d),
+        None => stripped.to_string(),
+    }
+}
+
+#[tauri::command]
+pub fn set_task_due(
+    state: State<'_, AppState>,
+    note_path: String,
+    line: usize,
+    raw_line: String,
+    due: Option<String>,
+) -> Result<(), String> {
+    // Validate format (YYYY-MM-DD); None/empty clears the due date.
+    let date_re = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap();
+    let due_val: Option<&str> = match due.as_deref() {
+        None | Some("") => None,
+        Some(d) if date_re.is_match(d) => Some(d),
+        Some(_) => return Err("Invalid due date".to_string()),
+    };
+
+    let p = std::path::Path::new(&note_path);
+    let raw = std::fs::read_to_string(p).map_err(|e| e.to_string())?;
+    let filename = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let (meta, body) = crate::vault::frontmatter::parse_note(&raw, &filename);
+
+    let mut lines: Vec<String> = body.lines().map(|l| l.to_string()).collect();
+    let idx = if lines.get(line).map(|l| *l == raw_line).unwrap_or(false) {
+        line
+    } else {
+        lines
+            .iter()
+            .position(|l| *l == raw_line)
+            .ok_or("Task line not found (note changed)")?
+    };
+
+    let updated = set_due_on_line(&lines[idx], due_val);
+    if updated == lines[idx] {
+        return Ok(());
+    }
+    lines[idx] = updated;
+    let mut new_body = lines.join("\n");
+    if body.ends_with('\n') && !new_body.ends_with('\n') {
+        new_body.push('\n');
+    }
+    operations::save_note(&note_path, &meta, &new_body)?;
+
+    if let Ok(guard) = state.search_index.lock() {
+        if let Some(search) = guard.as_ref() {
+            let _ = search.index_note(&note_path);
+        }
+    }
+    Ok(())
+}
+
 // ── Search ──
 
 #[tauri::command]
