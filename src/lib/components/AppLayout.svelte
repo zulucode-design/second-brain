@@ -37,6 +37,7 @@
 		rootNoteCount,
 		viewMode,
 		sortMode,
+		tasksLayout,
 		activeTag,
 		updateAvailable as globalUpdateAvailable,
 		settingsTab,
@@ -200,7 +201,8 @@
 			sort_mode: $sortMode,
 			last_view_mode: $viewMode,
 			last_notebook: $activeNotebook?.relative_path ?? null,
-			last_tag: $activeTag
+			last_tag: $activeTag,
+			tasks_layout: $tasksLayout
 		};
 		try {
 			await saveVaultState(state);
@@ -501,6 +503,7 @@
 
 	$effect(() => {
 		$sortMode;
+		$tasksLayout;
 		persistState();
 	});
 
@@ -525,6 +528,7 @@
 			$notebookSortMode = state.notebook_sort_mode === 'manual' ? 'manual' : 'alphabetical';
 			$notebookOrder = state.notebook_order ?? {};
 			if (state.sort_mode === 'created' || state.sort_mode === 'title' || state.sort_mode === 'modified') $sortMode = state.sort_mode;
+			if (state.tasks_layout === 'calendar' || state.tasks_layout === 'list') $tasksLayout = state.tasks_layout;
 			lastNotePath = state.last_open_note ?? null;
 			lastViewMode = state.last_view_mode ?? '';
 			lastNotebook = state.last_notebook ?? null;

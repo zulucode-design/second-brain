@@ -2237,8 +2237,7 @@
 	.cal-grid {
 		display: grid;
 		grid-template-columns: repeat(7, 1fr);
-		gap: 4px 2px;
-		padding: 0 2px;
+		gap: 2px;
 	}
 
 	.cal-head {
@@ -2250,19 +2249,18 @@
 	}
 
 	.cal-cell {
+		position: relative;
+		aspect-ratio: 1;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		font-size: 0.72rem;
-		width: 28px;
-		height: 28px;
-		border-radius: 50%;
-		border: none;
+		font-size: 12px;
+		border: 1px solid transparent;
+		border-radius: 6px;
 		background: none;
 		color: var(--text-secondary);
 		cursor: pointer;
 		padding: 0;
-		margin: 0 auto;
 	}
 
 	.cal-cell.empty {
@@ -2274,6 +2272,7 @@
 	}
 
 	.cal-cell.today {
+		border-color: var(--accent);
 		color: var(--accent);
 		font-weight: 700;
 	}

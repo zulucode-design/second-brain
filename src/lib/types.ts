@@ -106,6 +106,7 @@ export interface VaultState {
   last_view_mode?: string;
   last_notebook?: string | null;
   last_tag?: string | null;
+  tasks_layout?: string;
 }
 
 export interface SearchResult {

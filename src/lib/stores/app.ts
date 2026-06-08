@@ -16,6 +16,7 @@ export const vaultReady = writable(false);
 // UI state
 export const viewMode = writable<ViewMode>("all");
 export const sortMode = writable<SortMode>("modified");
+export const tasksLayout = writable<"list" | "calendar">("list");
 export const sidebarCollapsed = writable(false);
 export const sidebarWidth = writable(220);
 export const notelistWidth = writable(280);

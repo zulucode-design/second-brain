@@ -254,6 +254,8 @@ pub struct VaultState {
     pub last_notebook: Option<String>,
     #[serde(default)]
     pub last_tag: Option<String>,
+    #[serde(default)]
+    pub tasks_layout: String,
 }
 
 impl Default for VaultState {
@@ -270,6 +272,7 @@ impl Default for VaultState {
             last_view_mode: String::new(),
             last_notebook: None,
             last_tag: None,
+            tasks_layout: String::new(),
         }
     }
 }

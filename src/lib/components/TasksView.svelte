@@ -3,6 +3,8 @@
 	import { listen } from '@tauri-apps/api/event';
 	import { getTasks } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
+	import { tasksLayout } from '$lib/stores/app';
+	import { isAndroid } from '$lib/platform';
 	import type { TaskItem, FileEvent } from '$lib/types';
 
 	let { onOpenTask = (_t: TaskItem) => {}, onToggleTask = async (_t: TaskItem) => {}, onSetTaskPriority = async (_t: TaskItem, _p: string | null) => {}, onSetTaskDue = async (_t: TaskItem, _d: string | null) => {} }: {
@@ -94,14 +96,15 @@
 	}
 
 	// ── Calendar ──
-	let viewLayout = $state<'list' | 'calendar'>('list');
+	// Layout persists per-vault (tasksLayout store -> VaultState). Android is always List.
+	const viewLayout = $derived(isAndroid ? 'list' : $tasksLayout);
 	const calNow = new Date();
 	let calMonth = $state(calNow.getMonth());
 	let calYear = $state(calNow.getFullYear());
 	let selectedDate = $state(today);
 
 	const calMonthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-	const calDayNames = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+	const calDayNames = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
 
 	// Calendar tasks share the list's hide-completed filter (no sort).
 	const calBase = $derived(tasks.filter((t) => !hideCompleted || !t.completed));
@@ -130,7 +133,8 @@
 	);
 
 	function calDays() {
-		const firstWeekday = new Date(calYear, calMonth, 1).getDay();
+		// Monday-first: shift so Mon=0 ... Sun=6
+		const firstWeekday = (new Date(calYear, calMonth, 1).getDay() + 6) % 7;
 		const lastDate = new Date(calYear, calMonth + 1, 0).getDate();
 		const cells: { day: number; date: string; current: boolean }[] = [];
 		for (let i = 0; i < firstWeekday; i++) cells.push({ day: 0, date: '', current: false });
@@ -181,10 +185,12 @@
 	{/if}
 	<div class="tasks-controls">
 		<button class="tasks-ctl" class:active={hideCompleted} onclick={() => (hideCompleted = !hideCompleted)} title="Hide completed tasks">Hide done</button>
-		<div class="tasks-layout">
-			<button class="tasks-ctl" class:active={viewLayout === 'list'} onclick={() => (viewLayout = 'list')} title="List view">List</button>
-			<button class="tasks-ctl" class:active={viewLayout === 'calendar'} onclick={() => (viewLayout = 'calendar')} title="Calendar view">Calendar</button>
-		</div>
+		{#if !isAndroid}
+			<div class="tasks-layout">
+				<button class="tasks-ctl" class:active={viewLayout === 'list'} onclick={() => ($tasksLayout = 'list')} title="List view">List</button>
+				<button class="tasks-ctl" class:active={viewLayout === 'calendar'} onclick={() => ($tasksLayout = 'calendar')} title="Calendar view">Calendar</button>
+			</div>
+		{/if}
 		{#if viewLayout === 'list'}
 			<div class="tasks-sort">
 				{#each [['due', 'Due'], ['priority', 'Priority'], ['note', 'Note']] as [v, label]}
@@ -638,7 +644,7 @@
 	}
 	.cal-cell.empty { cursor: default; }
 	.cal-cell:not(.empty):hover { background: var(--bg-hover); }
-	.cal-cell.today { border-color: var(--accent); }
+	.cal-cell.today { border-color: var(--accent); color: var(--accent); font-weight: 700; }
 	.cal-cell.active { background: var(--accent); color: #fff; }
 	.cal-cell.drop-over {
 		border: 1px dashed var(--accent);
