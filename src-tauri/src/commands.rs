@@ -1067,6 +1067,7 @@ pub fn set_general_settings(
     state: State<'_, AppState>,
     compact_notes: bool,
     time_format: String,
+    week_start: String,
     gpu_acceleration: bool,
     autostart: bool,
     pdf_preview: bool,
@@ -1086,6 +1087,7 @@ pub fn set_general_settings(
     config.show_note_dates = show_note_dates;
     config.restore_last_session = restore_last_session;
     config.time_format = time_format;
+    config.week_start = week_start;
     config.gpu_acceleration = gpu_acceleration;
     config.autostart = autostart;
     config.pdf_preview = pdf_preview;

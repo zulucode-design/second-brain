@@ -3,7 +3,7 @@
 	import { listen } from '@tauri-apps/api/event';
 	import { getTasks } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
-	import { tasksLayout } from '$lib/stores/app';
+	import { tasksLayout, appConfig } from '$lib/stores/app';
 	import { isAndroid } from '$lib/platform';
 	import type { TaskItem, FileEvent } from '$lib/types';
 
@@ -104,7 +104,10 @@
 	let selectedDate = $state(today);
 
 	const calMonthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-	const calDayNames = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+	// 0 = Sunday, 1 = Monday (default). Day names + grid offset follow the setting.
+	const weekStartsOn = $derived($appConfig?.week_start === 'sunday' ? 0 : 1);
+	const DOW = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+	const calDayNames = $derived([...DOW.slice(weekStartsOn), ...DOW.slice(0, weekStartsOn)]);
 
 	// Calendar tasks share the list's hide-completed filter (no sort).
 	const calBase = $derived(tasks.filter((t) => !hideCompleted || !t.completed));
@@ -133,8 +136,7 @@
 	);
 
 	function calDays() {
-		// Monday-first: shift so Mon=0 ... Sun=6
-		const firstWeekday = (new Date(calYear, calMonth, 1).getDay() + 6) % 7;
+		const firstWeekday = (new Date(calYear, calMonth, 1).getDay() - weekStartsOn + 7) % 7;
 		const lastDate = new Date(calYear, calMonth + 1, 0).getDate();
 		const cells: { day: number; date: string; current: boolean }[] = [];
 		for (let i = 0; i < firstWeekday; i++) cells.push({ day: 0, date: '', current: false });

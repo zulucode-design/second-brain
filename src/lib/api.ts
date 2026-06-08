@@ -215,6 +215,7 @@ export async function setNotebookIcon(
 export async function setGeneralSettings(
   compactNotes: boolean,
   timeFormat: string,
+  weekStart: string,
   gpuAcceleration: boolean,
   autostart: boolean,
   pdfPreview: boolean,
@@ -232,6 +233,7 @@ export async function setGeneralSettings(
   return invoke("set_general_settings", {
     compactNotes,
     timeFormat,
+    weekStart,
     gpuAcceleration,
     autostart,
     pdfPreview,

@@ -64,14 +64,15 @@
 	let dailyDates = $state<Set<string>>(new Set());
 
 	const calMonthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-	const calDayNames = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+	// 0 = Sunday, 1 = Monday (default). Day names + grid offset follow the setting.
+	const weekStartsOn = $derived($appConfig?.week_start === 'sunday' ? 0 : 1);
+	const DOW = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+	const calDayNames = $derived([...DOW.slice(weekStartsOn), ...DOW.slice(0, weekStartsOn)]);
 
 	function calDays(): Array<{ day: number; date: string; current: boolean }> {
 		const first = new Date(calYear, calMonth, 1);
 		const lastDay = new Date(calYear, calMonth + 1, 0).getDate();
-		// Monday=0 offset
-		let startDow = first.getDay() - 1;
-		if (startDow < 0) startDow = 6;
+		const startDow = (first.getDay() - weekStartsOn + 7) % 7;
 		const cells: Array<{ day: number; date: string; current: boolean }> = [];
 		for (let i = 0; i < startDow; i++) cells.push({ day: 0, date: '', current: false });
 		for (let d = 1; d <= lastDay; d++) {

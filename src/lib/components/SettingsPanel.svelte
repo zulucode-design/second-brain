@@ -460,6 +460,7 @@
 	let showNoteDates = $state($appConfig?.show_note_dates ?? true);
 	let restoreLastSession = $state($appConfig?.restore_last_session ?? false);
 	let timeFormat = $state($appConfig?.time_format ?? 'relative');
+	let weekStart = $state($appConfig?.week_start ?? 'monday');
 	let gpuAcceleration = $state($appConfig?.gpu_acceleration ?? true);
 	let autostart = $state($appConfig?.autostart ?? false);
 
@@ -517,6 +518,7 @@
 			$appConfig.show_note_dates = showNoteDates;
 			$appConfig.restore_last_session = restoreLastSession;
 			$appConfig.time_format = timeFormat;
+			$appConfig.week_start = weekStart;
 			$appConfig.gpu_acceleration = gpuAcceleration;
 			$appConfig.autostart = autostart;
 			$appConfig.pdf_preview = pdfPreview;
@@ -529,7 +531,7 @@
 			$appConfig.close_to_tray = closeToTray;
 			$appConfig.enable_wiki_links = enableWikiLinks;
 		}
-		setGeneralSettings(compactNotes, timeFormat, gpuAcceleration, autostart, pdfPreview, pdfHeight, titleMode, hideTitleInBody, showLineNumbers, defaultViewMode, showTrayIcon, closeToTray, enableWikiLinks, showNoteDates, restoreLastSession)
+		setGeneralSettings(compactNotes, timeFormat, weekStart, gpuAcceleration, autostart, pdfPreview, pdfHeight, titleMode, hideTitleInBody, showLineNumbers, defaultViewMode, showTrayIcon, closeToTray, enableWikiLinks, showNoteDates, restoreLastSession)
 			.catch((e) => console.error('Failed to save general settings:', e));
 	}
 
@@ -653,6 +655,7 @@
 			showNoteDates = $appConfig.show_note_dates ?? true;
 			restoreLastSession = $appConfig.restore_last_session ?? false;
 			timeFormat = $appConfig.time_format ?? 'relative';
+			weekStart = $appConfig.week_start ?? 'monday';
 			gpuAcceleration = $appConfig.gpu_acceleration ?? true;
 			autostart = $appConfig.autostart ?? false;
 			pdfPreview = $appConfig.pdf_preview ?? false;
@@ -787,6 +790,14 @@
 									<button class="option-btn" class:active={timeFormat === 'relative'} onclick={() => { timeFormat = 'relative'; saveGeneralSettings(); }}>Relative</button>
 									<button class="option-btn" class:active={timeFormat === '12h'} onclick={() => { timeFormat = '12h'; saveGeneralSettings(); }}>12-hour</button>
 									<button class="option-btn" class:active={timeFormat === '24h'} onclick={() => { timeFormat = '24h'; saveGeneralSettings(); }}>24-hour</button>
+								</div>
+							</div>
+
+							<div class="settings-section">
+								<h3>Start week on</h3>
+								<div class="setting-options">
+									<button class="option-btn" class:active={weekStart === 'monday'} onclick={() => { weekStart = 'monday'; saveGeneralSettings(); }}>Monday</button>
+									<button class="option-btn" class:active={weekStart === 'sunday'} onclick={() => { weekStart = 'sunday'; saveGeneralSettings(); }}>Sunday</button>
 								</div>
 							</div>
 
