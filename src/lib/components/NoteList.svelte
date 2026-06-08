@@ -39,6 +39,7 @@
 	import { revealItemInDir } from '@tauri-apps/plugin-opener';
 	import type { NoteEntry, TrashNotebookEntry, SortMode, TaskItem } from '$lib/types';
 	import TasksView from './TasksView.svelte';
+	import TagSuggestInput from './TagSuggestInput.svelte';
 
 	let { onNoteSelected = (_path: string, _content: string) => {}, onNoteMoved = () => {}, onBeforeNoteSwitch = () => {}, onNoteCreated = () => {}, onToggleTask = async (_t: TaskItem) => {}, onSetTaskPriority = async (_t: TaskItem, _p: string | null) => {}, onSetTaskDue = async (_t: TaskItem, _d: string | null) => {} }: {
 		onNoteSelected?: (path: string, content: string) => void;
@@ -131,7 +132,7 @@
 		if (isMobile) {
 			deriveTagsFromNotes();
 		} else {
-			await refreshTags();
+			try { $tags = await getAllTags(); } catch (_) {}
 		}
 	}
 
@@ -143,7 +144,6 @@
 	let editValue = $state('');
 	let movePickerNote = $state<NoteEntry | null>(null);
 	let tagEditNote = $state<NoteEntry | null>(null);
-	let tagEditValue = $state('');
 	let tagEditTags = $state<string[]>([]);
 
 	// Multi-select
@@ -532,7 +532,7 @@
 	function openTagEdit(note: NoteEntry) {
 		tagEditNote = note;
 		tagEditTags = [...note.meta.tags];
-		tagEditValue = '';
+		refreshTags();
 	}
 
 	async function addTagToNote(tag: string) {
@@ -540,7 +540,6 @@
 		const cleaned = tag.trim().toLowerCase();
 		if (tagEditTags.includes(cleaned)) return;
 		tagEditTags = [...tagEditTags, cleaned];
-		tagEditValue = '';
 		await saveTagsForNote(tagEditNote, tagEditTags);
 	}
 
@@ -569,7 +568,7 @@
 
 	function openBatchTagEdit() {
 		batchTagEdit = true;
-		tagEditValue = '';
+		refreshTags();
 		// Show tags common to ALL selected notes
 		const selectedNotes = $notes.filter(n => selectedPaths.has(n.path));
 		if (selectedNotes.length === 0) { tagEditTags = []; return; }
@@ -581,7 +580,6 @@
 	async function addTagToBatch(tag: string) {
 		if (!tag.trim()) return;
 		const cleaned = tag.trim().toLowerCase();
-		tagEditValue = '';
 		if (!tagEditTags.includes(cleaned)) tagEditTags = [...tagEditTags, cleaned];
 		try {
 			for (const path of selectedPaths) {
@@ -940,16 +938,11 @@
 				</div>
 				<div class="tag-edit-section">
 					<div class="tag-edit-input-row">
-						<input
-							type="text"
-							class="tag-edit-input"
+						<TagSuggestInput
+							existing={tagEditTags}
 							placeholder="Add tag to all..."
-							bind:value={tagEditValue}
-							onkeydown={(e) => {
-								if (e.key === 'Enter') { e.preventDefault(); addTagToBatch(tagEditValue); }
-								if (e.key === 'Escape') { e.preventDefault(); batchTagEdit = false; }
-							}}
-							autofocus
+							onsubmit={(t) => addTagToBatch(t)}
+							oncancel={() => batchTagEdit = false}
 						/>
 					</div>
 					{#if tagEditTags.length > 0}
@@ -1208,16 +1201,11 @@
 				<div class="context-sep"></div>
 				<div class="tag-edit-section">
 					<div class="tag-edit-input-row">
-						<input
-							type="text"
-							class="tag-edit-input"
+						<TagSuggestInput
+							existing={tagEditTags}
 							placeholder="Add tag to all..."
-							bind:value={tagEditValue}
-							onkeydown={(e) => {
-								if (e.key === 'Enter') { e.preventDefault(); addTagToBatch(tagEditValue); }
-								if (e.key === 'Escape') { e.preventDefault(); batchTagEdit = false; }
-							}}
-							autofocus
+							onsubmit={(t) => addTagToBatch(t)}
+							oncancel={() => batchTagEdit = false}
 						/>
 					</div>
 					{#if tagEditTags.length > 0}
@@ -1265,16 +1253,11 @@
 			<div class="context-sep"></div>
 			<div class="tag-edit-section">
 				<div class="tag-edit-input-row">
-					<input
-						type="text"
-						class="tag-edit-input"
+					<TagSuggestInput
+						existing={tagEditTags}
 						placeholder="Add tag..."
-						bind:value={tagEditValue}
-						onkeydown={(e) => {
-							if (e.key === 'Enter') { e.preventDefault(); addTagToNote(tagEditValue); }
-							if (e.key === 'Escape') { e.preventDefault(); tagEditNote = null; }
-						}}
-						autofocus
+						onsubmit={(t) => addTagToNote(t)}
+						oncancel={() => tagEditNote = null}
 					/>
 				</div>
 				{#if tagEditTags.length > 0}
