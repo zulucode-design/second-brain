@@ -22,7 +22,7 @@
         inherit pname version;
         src = ./.;
 
-        cargoHash = "sha256-Xk3+a4FION/b0Ktp3SpA5w7uatt96uSEadV9t2bZqw8=";
+        cargoHash = "sha256-QF4HMYBjrxCBiq6PcsNy+kEOq/j+3zDzlcT5dy7MtQk=";
 
         pnpmDeps = pkgs.fetchPnpmDeps {
           inherit pname version;
