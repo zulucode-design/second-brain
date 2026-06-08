@@ -3000,6 +3000,41 @@
 						})];
 					}
 				}),
+				Extension.create({
+					name: 'detailsOpenAttrSync',
+					addProseMirrorPlugins() {
+						return [new Plugin({
+							key: new PluginKey('detailsOpenAttrSync'),
+							props: {
+								handleDOMEvents: {
+									click(view, event) {
+										const btn = (event.target as HTMLElement)?.closest?.('button');
+										const detailsEl = btn && btn.parentElement?.getAttribute('data-type') === 'details'
+											? (btn.parentElement as HTMLElement) : null;
+										if (!detailsEl) return false;
+										// The extension's button handler already toggled the is-open class; sync
+										// node.attrs.open to it. Fixes the first node (pos 0), where upstream's
+										// `if (!pos)` guard skips persisting the attribute.
+										const isOpen = detailsEl.classList.contains('is-open');
+										const probe = detailsEl.querySelector('[data-type="detailsContent"]') ?? detailsEl;
+										let pos: number;
+										try { pos = view.posAtDOM(probe, 0); } catch { return false; }
+										const resolved = view.state.doc.resolve(pos);
+										for (let d = resolved.depth; d >= 0; d--) {
+											if (resolved.node(d).type.name === 'details') {
+												if (resolved.node(d).attrs.open !== isOpen) {
+													view.dispatch(view.state.tr.setNodeMarkup(resolved.before(d), undefined, { open: isOpen }));
+												}
+												break;
+											}
+										}
+										return false;
+									}
+								}
+							}
+						})];
+					}
+				}),
 				TextAlign.configure({ types: ['heading', 'paragraph'] }).extend({
 					addKeyboardShortcuts: () => ({}),
 				}),
