@@ -1841,21 +1841,6 @@
 		padding: 2px 8px 4px;
 	}
 
-	.tag-edit-input {
-		width: 100%;
-		padding: 4px 8px;
-		border: 1px solid var(--border-color);
-		border-radius: 4px;
-		background: var(--bg-secondary);
-		color: var(--text-primary);
-		font-size: 12px;
-		outline: none;
-	}
-
-	.tag-edit-input:focus {
-		border-color: var(--accent);
-	}
-
 	.tag-edit-list {
 		max-height: 160px;
 		overflow-y: auto;

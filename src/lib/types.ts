@@ -65,6 +65,7 @@ export interface AppConfig {
   pdf_height: number;
   title_mode: string;
   hide_title_in_body: boolean;
+  show_line_numbers: boolean;
   backup_enabled: boolean;
   backup_frequency: string;
   backup_max_count: number;
@@ -83,6 +84,7 @@ export interface AppConfig {
   ai_writing_style: string | null;
   default_view_mode: boolean;
   show_tray_icon: boolean;
+  close_to_tray: boolean;
   enable_wiki_links: boolean;
   restore_last_session: boolean;
   sync_provider: string | null;
