@@ -162,6 +162,7 @@ pnpm tauri build
 
 ![Editor](https://cdn.helixnotes.com/assets/screenshots/screenshot-1.png)
 ![Tasks calendar](https://cdn.helixnotes.com/assets/screenshots/screenshot-2.png)
+![Graph view](https://cdn.helixnotes.com/assets/screenshots/screenshot-7.png)
 ![Daily notes](https://cdn.helixnotes.com/assets/screenshots/screenshot-4.png)
 ![Themes](https://cdn.helixnotes.com/assets/screenshots/screenshot-6.png)
 
