@@ -824,11 +824,6 @@
 			</div>
 			<div class="mobile-panel" class:active={$mobileView === 'notelist'}>
 				<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); sidebar?.refresh(); }} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
-				<button class="mobile-fab" onclick={createAndFocusNote} title="New Note">
-					<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-						<path d="M12 5v14M5 12h14" />
-					</svg>
-				</button>
 			</div>
 			<div class="mobile-panel" class:active={$mobileView === 'editor'}>
 				<Editor bind:this={editor} />
@@ -1126,29 +1121,6 @@
 	.mobile-panel.active {
 		visibility: visible;
 		pointer-events: auto;
-	}
-
-	.mobile-fab {
-		position: absolute;
-		bottom: 24px;
-		right: 20px;
-		width: 56px;
-		height: 56px;
-		border-radius: 16px;
-		background: var(--accent);
-		color: white;
-		border: none;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-		cursor: pointer;
-		z-index: 10;
-	}
-
-	.mobile-fab:active {
-		transform: scale(0.93);
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 	}
 
 </style>
