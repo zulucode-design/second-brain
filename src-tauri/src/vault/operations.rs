@@ -520,15 +520,27 @@ fn get_system_locale() -> Locale {
     }
 }
 
-pub fn create_daily_note(vault_path: &str, date: Option<&str>) -> Result<NoteEntry, String> {
+pub fn create_daily_note(
+    vault_path: &str,
+    date: Option<&str>,
+    format: &str,
+) -> Result<NoteEntry, String> {
     let target_date = match date {
         Some(d) => chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
             .map_err(|e| format!("Invalid date: {}", e))?,
         None => Local::now().date_naive(),
     };
     let date_str = target_date.format("%Y-%m-%d").to_string();
-    let locale = get_system_locale();
-    let title = target_date.format_localized("%B %d, %Y", locale).to_string();
+    let title = match format {
+        "iso" => target_date.format("%Y-%m-%d").to_string(),
+        "long" => target_date.format("%B %-d, %Y").to_string(),
+        "us" => target_date.format("%m/%d/%Y").to_string(),
+        "eu" => target_date.format("%d/%m/%Y").to_string(),
+        _ => {
+            let locale = get_system_locale();
+            target_date.format_localized("%B %d, %Y", locale).to_string()
+        }
+    };
 
     let dir = Path::new(vault_path).join("Daily");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;

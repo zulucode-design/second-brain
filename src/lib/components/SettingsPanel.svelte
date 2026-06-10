@@ -461,6 +461,7 @@
 	let restoreLastSession = $state($appConfig?.restore_last_session ?? false);
 	let timeFormat = $state($appConfig?.time_format ?? 'relative');
 	let weekStart = $state($appConfig?.week_start ?? 'monday');
+	let dailyTitleFormat = $state($appConfig?.daily_title_format ?? 'localized');
 	let gpuAcceleration = $state($appConfig?.gpu_acceleration ?? true);
 	let autostart = $state($appConfig?.autostart ?? false);
 
@@ -519,6 +520,7 @@
 			$appConfig.restore_last_session = restoreLastSession;
 			$appConfig.time_format = timeFormat;
 			$appConfig.week_start = weekStart;
+			$appConfig.daily_title_format = dailyTitleFormat;
 			$appConfig.gpu_acceleration = gpuAcceleration;
 			$appConfig.autostart = autostart;
 			$appConfig.pdf_preview = pdfPreview;
@@ -531,7 +533,7 @@
 			$appConfig.close_to_tray = closeToTray;
 			$appConfig.enable_wiki_links = enableWikiLinks;
 		}
-		setGeneralSettings(compactNotes, timeFormat, weekStart, gpuAcceleration, autostart, pdfPreview, pdfHeight, titleMode, hideTitleInBody, showLineNumbers, defaultViewMode, showTrayIcon, closeToTray, enableWikiLinks, showNoteDates, restoreLastSession)
+		setGeneralSettings(compactNotes, timeFormat, weekStart, dailyTitleFormat, gpuAcceleration, autostart, pdfPreview, pdfHeight, titleMode, hideTitleInBody, showLineNumbers, defaultViewMode, showTrayIcon, closeToTray, enableWikiLinks, showNoteDates, restoreLastSession)
 			.catch((e) => console.error('Failed to save general settings:', e));
 	}
 
@@ -656,6 +658,7 @@
 			restoreLastSession = $appConfig.restore_last_session ?? false;
 			timeFormat = $appConfig.time_format ?? 'relative';
 			weekStart = $appConfig.week_start ?? 'monday';
+			dailyTitleFormat = $appConfig.daily_title_format ?? 'localized';
 			gpuAcceleration = $appConfig.gpu_acceleration ?? true;
 			autostart = $appConfig.autostart ?? false;
 			pdfPreview = $appConfig.pdf_preview ?? false;
@@ -798,6 +801,17 @@
 								<div class="setting-options">
 									<button class="option-btn" class:active={weekStart === 'monday'} onclick={() => { weekStart = 'monday'; saveGeneralSettings(); }}>Monday</button>
 									<button class="option-btn" class:active={weekStart === 'sunday'} onclick={() => { weekStart = 'sunday'; saveGeneralSettings(); }}>Sunday</button>
+								</div>
+							</div>
+
+							<div class="settings-section">
+								<h3>Daily note title format</h3>
+								<div class="setting-options">
+									<button class="option-btn" class:active={dailyTitleFormat === 'localized'} onclick={() => { dailyTitleFormat = 'localized'; saveGeneralSettings(); }}>Localized</button>
+									<button class="option-btn" class:active={dailyTitleFormat === 'iso'} onclick={() => { dailyTitleFormat = 'iso'; saveGeneralSettings(); }}>2026-06-10</button>
+									<button class="option-btn" class:active={dailyTitleFormat === 'long'} onclick={() => { dailyTitleFormat = 'long'; saveGeneralSettings(); }}>June 10, 2026</button>
+									<button class="option-btn" class:active={dailyTitleFormat === 'us'} onclick={() => { dailyTitleFormat = 'us'; saveGeneralSettings(); }}>06/10/2026</button>
+									<button class="option-btn" class:active={dailyTitleFormat === 'eu'} onclick={() => { dailyTitleFormat = 'eu'; saveGeneralSettings(); }}>10/06/2026</button>
 								</div>
 							</div>
 

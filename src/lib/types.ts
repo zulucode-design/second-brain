@@ -59,6 +59,7 @@ export interface AppConfig {
   show_note_dates: boolean;
   time_format: string;
   week_start: string;
+  daily_title_format: string;
   gpu_acceleration: boolean;
   autostart: boolean;
   pdf_preview: boolean;

@@ -79,6 +79,8 @@ pub struct AppConfig {
     pub time_format: String,
     #[serde(default = "default_week_start")]
     pub week_start: String,
+    #[serde(default = "default_daily_title_format")]
+    pub daily_title_format: String,
     #[serde(default)]
     pub gpu_acceleration: bool,
     #[serde(default)]
@@ -178,6 +180,10 @@ fn default_week_start() -> String {
     "monday".to_string()
 }
 
+fn default_daily_title_format() -> String {
+    "localized".to_string()
+}
+
 fn default_max_versions() -> u32 {
     20
 }
@@ -201,6 +207,7 @@ impl Default for AppConfig {
             show_note_dates: true,
             time_format: "relative".to_string(),
             week_start: "monday".to_string(),
+            daily_title_format: "localized".to_string(),
             gpu_acceleration: true,
             autostart: false,
             pdf_preview: false,

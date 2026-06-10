@@ -300,7 +300,7 @@ pub fn create_note(
 pub fn create_daily_note(state: State<'_, AppState>, date: Option<String>) -> Result<NoteEntry, String> {
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
-    let entry = operations::create_daily_note(vault_path, date.as_deref())?;
+    let entry = operations::create_daily_note(vault_path, date.as_deref(), &config.daily_title_format)?;
 
     if let Ok(search_guard) = state.search_index.lock() {
         if let Some(ref search) = *search_guard {
@@ -1068,6 +1068,7 @@ pub fn set_general_settings(
     compact_notes: bool,
     time_format: String,
     week_start: String,
+    daily_title_format: String,
     gpu_acceleration: bool,
     autostart: bool,
     pdf_preview: bool,
@@ -1088,6 +1089,7 @@ pub fn set_general_settings(
     config.restore_last_session = restore_last_session;
     config.time_format = time_format;
     config.week_start = week_start;
+    config.daily_title_format = daily_title_format;
     config.gpu_acceleration = gpu_acceleration;
     config.autostart = autostart;
     config.pdf_preview = pdf_preview;
