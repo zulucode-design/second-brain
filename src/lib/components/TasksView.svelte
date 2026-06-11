@@ -16,6 +16,7 @@
 
 	let tasks = $state<TaskItem[]>([]);
 	let loading = $state(true);
+	let taskQuery = $state('');
 	let unlisten: (() => void) | null = null;
 
 	async function load() {
@@ -41,11 +42,18 @@
 
 	const prioRank: Record<string, number> = { high: 0, med: 1, low: 2 };
 	function prank(p: string | null) { return p ? (prioRank[p] ?? 3) : 3; }
+	// Free-text task filter: matches the task text or its note title (case-insensitive).
+	function matchesQuery(t: TaskItem): boolean {
+		const q = taskQuery.trim().toLowerCase();
+		if (!q) return true;
+		return t.text.toLowerCase().includes(q) || t.note_title.toLowerCase().includes(q);
+	}
 
 	const filtered = $derived.by(() => {
 		let list = tasks.slice();
 		if ($tasksHideCompleted) list = list.filter((t) => !t.completed);
 		if ($tasksOnlyFlagged) list = list.filter((t) => !!t.due || !!t.priority);
+		list = list.filter(matchesQuery);
 		list.sort((a, b) => {
 			if (a.completed !== b.completed) return a.completed ? 1 : -1; // done last
 			if ($tasksSort === 'priority') {
@@ -109,7 +117,7 @@
 	const calDayNames = $derived([...DOW.slice(weekStartsOn), ...DOW.slice(0, weekStartsOn)]);
 
 	// Calendar tasks share the list's hide-completed filter (no sort).
-	const calBase = $derived(tasks.filter((t) => (!$tasksHideCompleted || !t.completed) && (!$tasksOnlyFlagged || !!t.due || !!t.priority)));
+	const calBase = $derived(tasks.filter((t) => (!$tasksHideCompleted || !t.completed) && (!$tasksOnlyFlagged || !!t.due || !!t.priority) && matchesQuery(t)));
 
 	const tasksByDate = $derived.by(() => {
 		const m = new Map<string, TaskItem[]>();
@@ -185,6 +193,7 @@
 		<button class="prio-backdrop" onclick={() => { prioMenuFor = null; dueMenuFor = null; }} aria-label="Close menu"></button>
 	{/if}
 	<div class="tasks-controls">
+		<input class="tasks-filter" type="text" placeholder="Filter tasks…" bind:value={taskQuery} onkeydown={(e) => { if (e.key === 'Escape') taskQuery = ''; }} aria-label="Filter tasks by text" />
 		<button class="tasks-ctl" class:active={$tasksHideCompleted} onclick={() => ($tasksHideCompleted = !$tasksHideCompleted)} title="Hide completed tasks">Hide done</button>
 		<button class="tasks-ctl" class:active={$tasksOnlyFlagged} onclick={() => ($tasksOnlyFlagged = !$tasksOnlyFlagged)} title="Only show tasks with a due date or priority">Flagged</button>
 		{#if !isAndroid}
@@ -366,6 +375,17 @@
 		color: #fff;
 		border-color: var(--accent);
 	}
+	.tasks-filter {
+		width: 150px;
+		padding: 3px 8px;
+		border: 1px solid var(--border-color);
+		border-radius: 5px;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		font-size: 12px;
+	}
+	.tasks-filter::placeholder { color: var(--text-tertiary); }
+	.tasks-filter:focus { outline: none; border-color: var(--accent); }
 	.tasks-list {
 		flex: 1;
 		overflow-y: auto;
