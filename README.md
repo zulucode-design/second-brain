@@ -26,6 +26,12 @@ yay -S helixnotes-appimage-bin
 curl -fsSL https://repo.arkhost.com/gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/arkhost.gpg && echo "deb [signed-by=/usr/share/keyrings/arkhost.gpg arch=amd64] https://repo.arkhost.com stable main" | sudo tee /etc/apt/sources.list.d/helixnotes.list && sudo apt update && sudo apt install helix-notes
 ```
 
+#### Solus (EOPKG)
+
+```bash
+sudo eopkg it helixnotes
+```
+
 #### NixOS
 
 <details>
