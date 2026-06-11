@@ -814,8 +814,14 @@
 			ondragleave={() => { if (dropTargetPath === nb.path) { dropTargetPath = null; dropPosition = null; } }}
 			ondrop={(e) => {
 				e.preventDefault();
-				const pos = dropPosition;
 				if (draggedNotebookPath) {
+					// Recompute the drop position from the drop coordinates, not the dragover-set
+					// state: dragleave over the row's child nodes (chevron/icon/label) clears
+					// dropPosition before drop (esp. Windows WebView2), which mis-routed every drop
+					// to "nest" and broke reorder + un-nest. (issue #97)
+					const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+					const relY = (e.clientY - rect.top) / rect.height;
+					const pos = relY < 0.3 ? 'above' : relY > 0.7 ? 'below' : 'into';
 					if (pos === 'above' || pos === 'below') {
 						handleNotebookReorder(draggedNotebookPath, nb.path, pos);
 					} else {
