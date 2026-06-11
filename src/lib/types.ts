@@ -111,6 +111,9 @@ export interface VaultState {
   last_notebook?: string | null;
   last_tag?: string | null;
   tasks_layout?: string;
+  tasks_hide_completed?: boolean;
+  tasks_only_flagged?: boolean;
+  tasks_sort?: string;
 }
 
 export interface SearchResult {

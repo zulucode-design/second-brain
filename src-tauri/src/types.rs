@@ -270,6 +270,12 @@ pub struct VaultState {
     pub last_tag: Option<String>,
     #[serde(default)]
     pub tasks_layout: String,
+    #[serde(default = "default_true")]
+    pub tasks_hide_completed: bool,
+    #[serde(default)]
+    pub tasks_only_flagged: bool,
+    #[serde(default)]
+    pub tasks_sort: String,
 }
 
 impl Default for VaultState {
@@ -287,6 +293,9 @@ impl Default for VaultState {
             last_notebook: None,
             last_tag: None,
             tasks_layout: String::new(),
+            tasks_hide_completed: true,
+            tasks_only_flagged: false,
+            tasks_sort: String::new(),
         }
     }
 }

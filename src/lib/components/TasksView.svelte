@@ -3,7 +3,7 @@
 	import { listen } from '@tauri-apps/api/event';
 	import { getTasks } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
-	import { tasksLayout, appConfig } from '$lib/stores/app';
+	import { tasksLayout, tasksHideCompleted, tasksOnlyFlagged, tasksSort, appConfig } from '$lib/stores/app';
 	import { isAndroid } from '$lib/platform';
 	import type { TaskItem, FileEvent } from '$lib/types';
 
@@ -16,8 +16,6 @@
 
 	let tasks = $state<TaskItem[]>([]);
 	let loading = $state(true);
-	let hideCompleted = $state(true);
-	let sortBy = $state<'due' | 'priority' | 'note'>('due');
 	let unlisten: (() => void) | null = null;
 
 	async function load() {
@@ -46,13 +44,14 @@
 
 	const filtered = $derived.by(() => {
 		let list = tasks.slice();
-		if (hideCompleted) list = list.filter((t) => !t.completed);
+		if ($tasksHideCompleted) list = list.filter((t) => !t.completed);
+		if ($tasksOnlyFlagged) list = list.filter((t) => !!t.due || !!t.priority);
 		list.sort((a, b) => {
 			if (a.completed !== b.completed) return a.completed ? 1 : -1; // done last
-			if (sortBy === 'priority') {
+			if ($tasksSort === 'priority') {
 				const d = prank(a.priority) - prank(b.priority);
 				if (d) return d;
-			} else if (sortBy === 'note') {
+			} else if ($tasksSort === 'note') {
 				const d = a.note_title.localeCompare(b.note_title);
 				if (d) return d;
 			} else {
@@ -110,7 +109,7 @@
 	const calDayNames = $derived([...DOW.slice(weekStartsOn), ...DOW.slice(0, weekStartsOn)]);
 
 	// Calendar tasks share the list's hide-completed filter (no sort).
-	const calBase = $derived(tasks.filter((t) => !hideCompleted || !t.completed));
+	const calBase = $derived(tasks.filter((t) => (!$tasksHideCompleted || !t.completed) && (!$tasksOnlyFlagged || !!t.due || !!t.priority)));
 
 	const tasksByDate = $derived.by(() => {
 		const m = new Map<string, TaskItem[]>();
@@ -186,7 +185,8 @@
 		<button class="prio-backdrop" onclick={() => { prioMenuFor = null; dueMenuFor = null; }} aria-label="Close menu"></button>
 	{/if}
 	<div class="tasks-controls">
-		<button class="tasks-ctl" class:active={hideCompleted} onclick={() => (hideCompleted = !hideCompleted)} title="Hide completed tasks">Hide done</button>
+		<button class="tasks-ctl" class:active={$tasksHideCompleted} onclick={() => ($tasksHideCompleted = !$tasksHideCompleted)} title="Hide completed tasks">Hide done</button>
+		<button class="tasks-ctl" class:active={$tasksOnlyFlagged} onclick={() => ($tasksOnlyFlagged = !$tasksOnlyFlagged)} title="Only show tasks with a due date or priority">Flagged</button>
 		{#if !isAndroid}
 			<div class="tasks-layout">
 				<button class="tasks-ctl" class:active={viewLayout === 'list'} onclick={() => ($tasksLayout = 'list')} title="List view">List</button>
@@ -196,7 +196,7 @@
 		{#if viewLayout === 'list'}
 			<div class="tasks-sort">
 				{#each [['due', 'Due'], ['priority', 'Priority'], ['note', 'Note']] as [v, label]}
-					<button class="tasks-ctl" class:active={sortBy === v} onclick={() => (sortBy = v as 'due' | 'priority' | 'note')}>{label}</button>
+					<button class="tasks-ctl" class:active={$tasksSort === v} onclick={() => ($tasksSort = v as 'due' | 'priority' | 'note')}>{label}</button>
 				{/each}
 			</div>
 		{/if}
@@ -458,7 +458,7 @@
 		background: transparent;
 		color: var(--text-tertiary);
 		border: 1px dashed var(--border-color);
-		opacity: 0;
+		opacity: 0.4;
 		transition: opacity 0.1s;
 	}
 	.task-row:hover .task-prio.prio-none { opacity: 1; }
@@ -529,7 +529,7 @@
 		background: transparent;
 		border-style: dashed;
 		color: var(--text-tertiary);
-		opacity: 0;
+		opacity: 0.4;
 		transition: opacity 0.1s;
 	}
 	.task-row:hover .task-due:not(.set) { opacity: 1; }

@@ -38,6 +38,9 @@
 		viewMode,
 		sortMode,
 		tasksLayout,
+		tasksHideCompleted,
+		tasksOnlyFlagged,
+		tasksSort,
 		activeTag,
 		updateAvailable as globalUpdateAvailable,
 		settingsTab,
@@ -202,7 +205,10 @@
 			last_view_mode: $viewMode,
 			last_notebook: $activeNotebook?.relative_path ?? null,
 			last_tag: $activeTag,
-			tasks_layout: $tasksLayout
+			tasks_layout: $tasksLayout,
+			tasks_hide_completed: $tasksHideCompleted,
+			tasks_only_flagged: $tasksOnlyFlagged,
+			tasks_sort: $tasksSort
 		};
 		try {
 			await saveVaultState(state);
@@ -504,6 +510,9 @@
 	$effect(() => {
 		$sortMode;
 		$tasksLayout;
+		$tasksHideCompleted;
+		$tasksOnlyFlagged;
+		$tasksSort;
 		persistState();
 	});
 
@@ -529,6 +538,9 @@
 			$notebookOrder = state.notebook_order ?? {};
 			if (state.sort_mode === 'created' || state.sort_mode === 'title' || state.sort_mode === 'modified') $sortMode = state.sort_mode;
 			if (state.tasks_layout === 'calendar' || state.tasks_layout === 'list') $tasksLayout = state.tasks_layout;
+			if (typeof state.tasks_hide_completed === 'boolean') $tasksHideCompleted = state.tasks_hide_completed;
+			if (typeof state.tasks_only_flagged === 'boolean') $tasksOnlyFlagged = state.tasks_only_flagged;
+			if (state.tasks_sort === 'due' || state.tasks_sort === 'priority' || state.tasks_sort === 'note') $tasksSort = state.tasks_sort;
 			lastNotePath = state.last_open_note ?? null;
 			lastViewMode = state.last_view_mode ?? '';
 			lastNotebook = state.last_notebook ?? null;
