@@ -148,6 +148,8 @@ pub fn run() {
             commands::remove_quick_access,
             commands::reorder_quick_access,
             commands::get_vault_stats,
+            commands::find_orphaned_attachments,
+            commands::trash_orphaned_attachments,
             commands::import_obsidian,
             commands::open_file,
             commands::open_url,

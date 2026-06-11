@@ -1658,6 +1658,115 @@ fn pathdiff(target: &str, base: &str) -> Result<String, ()> {
     Ok(result.to_string_lossy().to_string())
 }
 
+// ── Orphaned attachment cleanup ──
+
+#[derive(serde::Serialize)]
+pub struct OrphanAttachment {
+    pub name: String,
+    pub size: u64,
+}
+
+// Conservatively find files in .helixnotes/attachments not referenced by ANY note. Scans every
+// .md in the vault (including .helixnotes/trash, so a restorable trashed note keeps its files)
+// and matches each filename against both the raw note text and a percent-decoded copy (so a
+// URL-encoded path like `my%20file.png` still counts as a reference). When in doubt a file is
+// KEPT: a leftover orphan is harmless, a wrong deletion is not.
+fn scan_orphaned_attachments(vault: &str) -> Result<Vec<(String, u64)>, String> {
+    let attachments_dir = operations::helixnotes_dir(vault).join("attachments");
+    if !attachments_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut files: Vec<(String, u64)> = Vec::new();
+    for entry in std::fs::read_dir(&attachments_dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let p = entry.path();
+        if p.is_file() {
+            let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            files.push((name, size));
+        }
+    }
+    if files.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut haystack = String::new();
+    for entry in walkdir::WalkDir::new(vault).into_iter().filter_map(|e| e.ok()) {
+        let p = entry.path();
+        if p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md") {
+            if let Ok(content) = std::fs::read_to_string(p) {
+                haystack.push_str(&content);
+                haystack.push('\n');
+            }
+        }
+    }
+    let decoded = percent_decode(&haystack);
+    let orphans = files
+        .into_iter()
+        .filter(|(name, _)| !haystack.contains(name.as_str()) && !decoded.contains(name.as_str()))
+        .collect();
+    Ok(orphans)
+}
+
+#[tauri::command]
+pub fn find_orphaned_attachments(
+    state: State<'_, AppState>,
+) -> Result<Vec<OrphanAttachment>, String> {
+    let vault = {
+        let config = state.config.lock().map_err(|e| e.to_string())?;
+        config.active_vault.clone().ok_or("No active vault")?
+    };
+    let orphans = scan_orphaned_attachments(&vault)?;
+    Ok(orphans
+        .into_iter()
+        .map(|(name, size)| OrphanAttachment { name, size })
+        .collect())
+}
+
+#[tauri::command]
+pub fn trash_orphaned_attachments(
+    state: State<'_, AppState>,
+    names: Vec<String>,
+) -> Result<u32, String> {
+    let vault = {
+        let config = state.config.lock().map_err(|e| e.to_string())?;
+        config.active_vault.clone().ok_or("No active vault")?
+    };
+    // Re-scan now and only move files that are STILL orphaned (guards against a reference added
+    // between scan and confirm), intersected with the caller's selection.
+    let current: std::collections::HashSet<String> = scan_orphaned_attachments(&vault)?
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
+    let attachments_dir = operations::helixnotes_dir(&vault).join("attachments");
+    let trash_dir = operations::helixnotes_dir(&vault).join("trash");
+    std::fs::create_dir_all(&trash_dir).map_err(|e| e.to_string())?;
+    let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S%3f").to_string();
+    let mut moved = 0u32;
+    for (i, name) in names.iter().enumerate() {
+        if !current.contains(name) {
+            continue;
+        }
+        // Path-traversal guard: only act on a bare filename inside the attachments dir.
+        if std::path::Path::new(name)
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .as_deref()
+            != Some(name.as_str())
+        {
+            continue;
+        }
+        let src = attachments_dir.join(name);
+        if !src.is_file() {
+            continue;
+        }
+        let dest = trash_dir.join(format!("{}_{}_attachment_{}", stamp, i, name));
+        if std::fs::rename(&src, &dest).is_ok() {
+            moved += 1;
+        }
+    }
+    Ok(moved)
+}
+
 fn percent_decode(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut chars = s.bytes();

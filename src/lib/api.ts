@@ -276,6 +276,19 @@ export async function getVaultStats(): Promise<VaultStats> {
   return invoke("get_vault_stats");
 }
 
+export interface OrphanAttachment {
+  name: string;
+  size: number;
+}
+
+export async function findOrphanedAttachments(): Promise<OrphanAttachment[]> {
+  return invoke("find_orphaned_attachments");
+}
+
+export async function trashOrphanedAttachments(names: string[]): Promise<number> {
+  return invoke("trash_orphaned_attachments", { names });
+}
+
 export async function importObsidian(): Promise<void> {
   return invoke("import_obsidian");
 }
