@@ -55,8 +55,8 @@ pub fn ai_request(
                     if url.is_empty() {
                         Err("No base URL configured for OpenAI Compatible provider".to_string())
                     } else {
-                        let url = format!("{}/v1/completions", url.trim_end_matches('/'));
-                        stream_completions(
+                        let url = format!("{}/v1/chat/completions", normalize_openai_base(url));
+                        stream_openai(
                             &app,
                             &url,
                             key_opt,
@@ -92,6 +92,13 @@ pub fn ai_request(
             }
         });
     });
+}
+
+/// Normalize an OpenAI-compatible base URL: drop a trailing slash and a trailing `/v1`,
+/// so both `https://host` and `https://host/v1` work (we append `/v1/chat/completions`).
+fn normalize_openai_base(base: &str) -> String {
+    let b = base.trim().trim_end_matches('/');
+    b.strip_suffix("/v1").unwrap_or(b).trim_end_matches('/').to_string()
 }
 
 async fn stream_anthropic(
@@ -386,8 +393,8 @@ pub async fn test_connection(
             if url.is_empty() {
                 return Err("No base URL configured for OpenAI Compatible provider".to_string());
             }
-            let url = format!("{}/v1/completions", url.trim_end_matches('/'));
-            test_completions(&url, key_opt, model).await
+            let url = format!("{}/v1/chat/completions", normalize_openai_base(url));
+            test_openai(&url, key_opt, model).await
         }
         _ => test_anthropic(api_key, model).await,
     }
@@ -412,167 +419,6 @@ async fn test_anthropic(api_key: &str, model: &str) -> Result<String, String> {
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Connection failed: {}", e))?;
-
-    if response.status().is_success() {
-        Ok("Connection successful".to_string())
-    } else {
-        let status = response.status();
-        let body_text = response.text().await.unwrap_or_default();
-        Err(format!("API error {}: {}", status, body_text))
-    }
-}
-
-async fn stream_completions(
-    app: &AppHandle,
-    url: &str,
-    api_key: Option<&str>,
-    model: &str,
-    system_prompt: &str,
-    user_message: &str,
-    _request_id: &str,
-) -> Result<(), String> {
-    let client = Client::new();
-
-    let prompt = format!("{}\n\nUser: {}\nAssistant:", system_prompt, user_message);
-
-    let body = json!({
-        "model": model,
-        "prompt": prompt,
-        "max_tokens": 4096,
-        "stream": true,
-        "temperature": 0.7
-    });
-
-    let mut req = client
-        .post(url)
-        .header("content-type", "application/json");
-
-    if let Some(key) = api_key {
-        req = req.header("Authorization", format!("Bearer {}", key));
-    }
-
-    let response = req
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {}", e))?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body_text = response.text().await.unwrap_or_default();
-        return Err(format!("API error {}: {}", status, body_text));
-    }
-
-    // Parse SSE stream
-    use futures::StreamExt;
-    let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-        // Process complete SSE events from buffer
-        while let Some(event_end) = buffer.find("\n\n") {
-            let event_str = buffer[..event_end].to_string();
-            buffer = buffer[event_end + 2..].to_string();
-
-            for line in event_str.lines() {
-                if let Some(data) = line.strip_prefix("data: ") {
-                    if data == "[DONE]" {
-                        let _ = app.emit(
-                            "ai-stream",
-                            AiStreamEvent {
-                                event_type: "done".to_string(),
-                                text: None,
-                                error: None,
-                            },
-                        );
-                        return Ok(());
-                    }
-
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-                        // Completions streaming: choices[0].text
-                        if let Some(text) = parsed["choices"][0]["text"].as_str() {
-                            if !text.is_empty() {
-                                let _ = app.emit(
-                                    "ai-stream",
-                                    AiStreamEvent {
-                                        event_type: "text".to_string(),
-                                        text: Some(text.to_string()),
-                                        error: None,
-                                    },
-                                );
-                            }
-                        }
-
-                        // Check finish_reason
-                        if let Some(reason) = parsed["choices"][0]["finish_reason"].as_str() {
-                            if reason == "stop" || reason == "length" {
-                                let _ = app.emit(
-                                    "ai-stream",
-                                    AiStreamEvent {
-                                        event_type: "done".to_string(),
-                                        text: None,
-                                        error: None,
-                                    },
-                                );
-                                return Ok(());
-                            }
-                        }
-
-                        // Check for error in stream
-                        if let Some(err) = parsed["error"]["message"].as_str() {
-                            let _ = app.emit(
-                                "ai-stream",
-                                AiStreamEvent {
-                                    event_type: "error".to_string(),
-                                    text: None,
-                                    error: Some(err.to_string()),
-                                },
-                            );
-                            return Err(err.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let _ = app.emit(
-        "ai-stream",
-        AiStreamEvent {
-            event_type: "done".to_string(),
-            text: None,
-            error: None,
-        },
-    );
-
-    Ok(())
-}
-
-async fn test_completions(url: &str, api_key: Option<&str>, model: &str) -> Result<String, String> {
-    let client = Client::new();
-
-    let body = json!({
-        "model": model,
-        "prompt": "Hi",
-        "max_tokens": 10,
-    });
-
-    let mut req = client
-        .post(url)
-        .header("content-type", "application/json");
-
-    if let Some(key) = api_key {
-        req = req.header("Authorization", format!("Bearer {}", key));
-    }
-
-    let response = req
         .json(&body)
         .send()
         .await

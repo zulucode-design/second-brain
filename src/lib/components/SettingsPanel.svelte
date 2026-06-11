@@ -1313,7 +1313,7 @@
 											oninput={(e) => { _openaiCompatibleBaseUrl = (e.target as HTMLInputElement).value; }}
 											onblur={saveAiSettings}
 										/>
-										<p class="setting-hint">Base URL for any OpenAI-compatible server (LM Studio, LocalAI, vLLM, etc.). Uses the <code>v1/completions</code> endpoint.</p>
+										<p class="setting-hint">Base URL for any OpenAI-compatible server (LM Studio, LocalAI, vLLM, Nvidia NIM, etc.). Enter the server root; the app appends <code>/v1/chat/completions</code> (a trailing <code>/v1</code> is fine too).</p>
 									</div>
 									<div class="settings-section">
 										<h3>API Key <span style="font-weight: 400; text-transform: none; font-size: 11px;">(optional)</span></h3>
