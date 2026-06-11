@@ -8894,12 +8894,14 @@
 
 	.editor-container.mobile :global(.editor-content) {
 		padding: 8px 16px 220px !important;
-		font-size: 16px !important;
+		/* Respect the user's font-size setting; 16px is the default. (issue #100)
+		   Auto-zoom isn't a concern: the viewport sets user-scalable=no. */
+		font-size: var(--editor-font-size, 16px) !important;
 	}
 
 	.editor-container.mobile .source-editor {
 		padding: 8px 16px 220px;
-		font-size: 15px;
+		font-size: var(--editor-font-size, 15px);
 		white-space: pre-wrap;
 		word-break: break-word;
 		overflow-x: hidden;
