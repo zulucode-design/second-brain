@@ -6620,12 +6620,18 @@
 		padding: 0;
 		margin: 0;
 		user-select: text;
-		white-space: pre;
-		overflow-x: auto;
+		/* Wrap long lines instead of horizontal-scrolling (matches mobile). (issue #100) */
+		white-space: pre-wrap;
+		word-break: break-word;
+		overflow-x: hidden;
 	}
 
 	.source-editor.with-line-numbers {
 		padding-left: 48px;
+		/* The line-number gutter has one fixed row per line, so wrapping would desync it.
+		   Keep no-wrap (horizontal scroll) whenever line numbers are on. (issue #100) */
+		white-space: pre;
+		overflow-x: auto;
 	}
 
 	.line-numbers-clip {
