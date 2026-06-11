@@ -67,6 +67,22 @@
 			$collapsedNotebooks = [...$collapsedNotebooks, path];
 		}
 	}
+	// Collapse-all / expand-all: toggles every notebook that has children.
+	function collectParentPaths(tree: NotebookEntry[]): string[] {
+		const out: string[] = [];
+		for (const nb of tree) {
+			if (nb.children && nb.children.length > 0) {
+				out.push(nb.path);
+				out.push(...collectParentPaths(nb.children));
+			}
+		}
+		return out;
+	}
+	const allParentPaths = $derived(collectParentPaths($notebooks));
+	const allCollapsed = $derived(allParentPaths.length > 0 && allParentPaths.every((p) => $collapsedNotebooks.includes(p)));
+	function toggleAllCollapse() {
+		$collapsedNotebooks = allCollapsed ? [] : [...allParentPaths];
+	}
 
 
 	export async function refresh() {
@@ -578,19 +594,32 @@
 				}}
 			>
 				<span class="section-title">Notebooks</span>
-				<button class="icon-btn-sm" onclick={() => {
-					if (showNewNotebook) {
-						showNewNotebook = false; newNotebookName = ''; newNotebookParent = null;
-					} else {
-						// Unfiled Notes is the root pseudo-notebook (empty relative_path); treat it as root.
-						newNotebookParent = ($viewMode === 'notebook' && $activeNotebook?.relative_path) ? $activeNotebook : null;
-						showNewNotebook = true;
-					}
-				}} title={$viewMode === 'notebook' && $activeNotebook?.relative_path ? `New notebook inside ${$activeNotebook.name}` : 'New notebook'}>
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-						<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-					</svg>
-				</button>
+				<div class="section-actions">
+					{#if allParentPaths.length > 0}
+						<button class="icon-btn-sm" onclick={(e) => { e.stopPropagation(); toggleAllCollapse(); }} title={allCollapsed ? 'Expand all notebooks' : 'Collapse all notebooks'} aria-label={allCollapsed ? 'Expand all notebooks' : 'Collapse all notebooks'}>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								{#if allCollapsed}
+									<path d="m7 15 5 5 5-5" /><path d="m7 9 5-5 5 5" />
+								{:else}
+									<path d="m7 20 5-5 5 5" /><path d="m7 4 5 5 5-5" />
+								{/if}
+							</svg>
+						</button>
+					{/if}
+					<button class="icon-btn-sm" onclick={() => {
+						if (showNewNotebook) {
+							showNewNotebook = false; newNotebookName = ''; newNotebookParent = null;
+						} else {
+							// Unfiled Notes is the root pseudo-notebook (empty relative_path); treat it as root.
+							newNotebookParent = ($viewMode === 'notebook' && $activeNotebook?.relative_path) ? $activeNotebook : null;
+							showNewNotebook = true;
+						}
+					}} title={$viewMode === 'notebook' && $activeNotebook?.relative_path ? `New notebook inside ${$activeNotebook.name}` : 'New notebook'}>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+						</svg>
+					</button>
+				</div>
 			</div>
 
 			{#if showNewNotebook}
@@ -952,6 +981,11 @@
 		color: var(--text-tertiary);
 	}
 
+	.section-actions {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+	}
 	.icon-btn, .icon-btn-sm {
 		background: none;
 		border: none;
