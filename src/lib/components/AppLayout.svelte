@@ -48,12 +48,13 @@
 		viewerNote,
 		notebookSortMode,
 		notebookOrder,
-		syncState
+		syncState,
+		platformIsMobile
 	} from '$lib/stores/app';
 
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
-	const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+	const isMobile = $derived($platformIsMobile);
 	const isAndroid = /android/i.test(navigator.userAgent);
 	import { loadVaultState, saveVaultState, readNote, createDailyNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, setTaskDone, setTaskPriority, setTaskDue } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
@@ -329,7 +330,7 @@
 	let historyDepth = 0;
 	let navFromPopstate = false;
 
-	if (isMobile) {
+	if (get(platformIsMobile)) {
 		history.replaceState({ mobileView: 'sidebar', depth: 0 }, '');
 
 		$effect(() => {

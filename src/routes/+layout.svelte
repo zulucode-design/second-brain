@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import '../app.css';
-	import { theme, appConfig, activeNote, activeNotePath, installType, checkForUpdate, checkForUpdateMobile, isManagedInstall } from '$lib/stores/app';
-	import { openFile, openUrl, readNote, getInstallType } from '$lib/api';
+	import { theme, appConfig, activeNote, activeNotePath, installType, platformIsMobile, checkForUpdate, checkForUpdateMobile, isManagedInstall } from '$lib/stores/app';
+	import { openFile, openUrl, readNote, getInstallType, isMobilePlatform } from '$lib/api';
 	import { get } from 'svelte/store';
 	import ResizeHandles from '$lib/components/ResizeHandles.svelte';
 
@@ -88,6 +88,8 @@
 
 	// Detect install type and check for updates on startup
 	onMount(() => {
+		// Authoritative platform from the backend (compile-time), overriding the UA guess. (#63)
+		isMobilePlatform().then((m) => platformIsMobile.set(m)).catch(() => {});
 		if (isMobile) {
 			installType.set('android');
 			checkForUpdateMobile();

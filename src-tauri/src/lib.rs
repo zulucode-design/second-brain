@@ -171,6 +171,7 @@ pub fn run() {
             commands::test_sync_connection,
             commands::sync_now,
             commands::get_install_type,
+            commands::is_mobile_platform,
             commands::get_pending_open_file,
         ])
         .register_asynchronous_uri_scheme_protocol("imgproxy", |_ctx, request, responder| {

@@ -463,6 +463,10 @@ export async function getInstallType(): Promise<string> {
   return invoke("get_install_type");
 }
 
+export async function isMobilePlatform(): Promise<boolean> {
+  return invoke("is_mobile_platform");
+}
+
 export async function getPendingOpenFile(): Promise<string | null> {
   return invoke("get_pending_open_file");
 }

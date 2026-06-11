@@ -2365,6 +2365,13 @@ fn save_app_config(config: &AppConfig) -> Result<(), String> {
 // ── Install Type Detection ──
 
 #[tauri::command]
+pub fn is_mobile_platform() -> bool {
+    // Compile-time platform: true only for the Android/iOS builds. Authoritative, unlike the
+    // webview user-agent, which some desktop WebKitGTK builds report mobile-looking (issue #63).
+    cfg!(mobile)
+}
+
+#[tauri::command]
 pub fn get_install_type() -> String {
     // Build-time override for distro packagers (e.g. Solus): build with
     // HELIXNOTES_INSTALL_TYPE=solus to report that type and suppress the in-app updater.
