@@ -1740,8 +1740,12 @@ fn xdg_open(arg: &str) -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW: open the URL/path without flashing a console window.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         std::process::Command::new("cmd")
             .args(["/C", "start", "", arg])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| format!("Failed to open {}: {}", arg, e))?;
     }
@@ -2253,6 +2257,13 @@ fn save_app_config(config: &AppConfig) -> Result<(), String> {
 
 #[tauri::command]
 pub fn get_install_type() -> String {
+    // Build-time override for distro packagers (e.g. Solus): build with
+    // HELIXNOTES_INSTALL_TYPE=solus to report that type and suppress the in-app updater.
+    if let Some(forced) = option_env!("HELIXNOTES_INSTALL_TYPE") {
+        if !forced.is_empty() {
+            return forced.to_string();
+        }
+    }
     if cfg!(target_os = "macos") {
         "macos".to_string()
     } else if cfg!(target_os = "windows") {

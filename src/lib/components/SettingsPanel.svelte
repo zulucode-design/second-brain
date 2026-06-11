@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { showSettings, theme, appConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode } from '$lib/stores/app';
+	import { showSettings, theme, appConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall } from '$lib/stores/app';
 	import { setTheme, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow } from '$lib/api';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
@@ -1258,7 +1258,7 @@
 									<button class="option-btn" class:active={aiProvider === 'ollama'} onclick={() => { if (aiProvider === 'ollama') return; aiProvider = 'ollama'; aiModel = 'gemma3:4b'; aiTestMessage = null; saveAiSettings(); }}>Ollama</button>
 									<button class="option-btn" class:active={aiProvider === 'anthropic'} onclick={() => { if (aiProvider === 'anthropic') return; aiProvider = 'anthropic'; aiModel = 'claude-sonnet-4-6'; aiTestMessage = null; saveAiSettings(); }}>Anthropic</button>
 									<button class="option-btn" class:active={aiProvider === 'openai'} onclick={() => { if (aiProvider === 'openai') return; aiProvider = 'openai'; aiModel = 'gpt-5.5'; aiTestMessage = null; saveAiSettings(); }}>OpenAI</button>
-									<button class="option-btn" class:active={aiProvider === 'openai_compatible'} onclick={() => { if (aiProvider === 'openai_compatible') return; aiProvider = 'openai_compatible'; aiModel = ''; aiTestMessage = null; saveAiSettings(); }}>Compatible</button>
+									<button class="option-btn" class:active={aiProvider === 'openai_compatible'} onclick={() => { if (aiProvider === 'openai_compatible') return; aiProvider = 'openai_compatible'; aiModel = ''; aiTestMessage = null; saveAiSettings(); }}>OpenAI Compatible</button>
 								</div>
 							</div>
 
@@ -1560,6 +1560,12 @@
 								<p class="update-version">HelixNotes <strong>v{appVersion}</strong></p>
 							</div>
 
+							{#if isManagedInstall($installType)}
+							<div class="settings-section">
+								<h3>Updates</h3>
+								<p class="setting-hint">HelixNotes was installed through your system package manager, which delivers updates. The app does not check for or install updates on its own.</p>
+							</div>
+							{:else}
 							<div class="settings-section">
 								<h3>Check for Updates</h3>
 								<button class="import-btn" onclick={handleCheckUpdate} disabled={updateChecking || updateDownloading}>
@@ -1574,6 +1580,7 @@
 									{/if}
 								</button>
 							</div>
+							{/if}
 
 							{#if updateAvailable}
 								<div class="settings-section">

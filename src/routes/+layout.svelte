@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import '../app.css';
-	import { theme, appConfig, activeNote, activeNotePath, installType, checkForUpdate, checkForUpdateMobile } from '$lib/stores/app';
+	import { theme, appConfig, activeNote, activeNotePath, installType, checkForUpdate, checkForUpdateMobile, isManagedInstall } from '$lib/stores/app';
 	import { openFile, openUrl, readNote, getInstallType } from '$lib/api';
 	import { get } from 'svelte/store';
 	import ResizeHandles from '$lib/components/ResizeHandles.svelte';
@@ -53,7 +53,7 @@
 	}
 
 	function resolveAndHandleLink(href: string) {
-		if (href.startsWith('http://') || href.startsWith('https://') || href.startsWith('mailto:')) {
+		if (href.startsWith('http://') || href.startsWith('https://') || href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('sms:')) {
 			openUrl(href).catch((err) => console.error('Failed to open URL:', err));
 		} else if (!href.startsWith('#')) {
 			const decoded = decodeURIComponent(href);
@@ -92,8 +92,10 @@
 			installType.set('android');
 			checkForUpdateMobile();
 		} else {
-			getInstallType().then(t => installType.set(t)).catch(() => {});
-			checkForUpdate();
+			getInstallType().then(t => {
+				installType.set(t);
+				if (!isManagedInstall(t)) checkForUpdate();
+			}).catch(() => {});
 		}
 	});
 

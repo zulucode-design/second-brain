@@ -87,6 +87,15 @@ export const updateObj = writable<any>(null);
 export const installType = writable<string>("native");
 export const androidApkUrl = writable<string | null>(null);
 
+// Install types that handle their own updates (in-app auto-updater, or a
+// package-manager notice for deb/aur). Anything else - e.g. a distro repo build
+// that sets the HELIXNOTES_INSTALL_TYPE build flag (Solus, etc.) - is "managed":
+// the app does no update check and shows no update UI at all.
+const SELF_UPDATING_INSTALL_TYPES = ["macos", "windows", "deb", "aur", "appimage", "native", "android"];
+export function isManagedInstall(type: string): boolean {
+  return !SELF_UPDATING_INSTALL_TYPES.includes(type);
+}
+
 export async function checkForUpdate() {
   try {
     const { check } = await import("@tauri-apps/plugin-updater");
