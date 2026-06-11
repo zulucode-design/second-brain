@@ -52,6 +52,17 @@ pub fn open_vault(app: AppHandle, state: State<'_, AppState>, path: String) -> R
 }
 
 #[tauri::command]
+pub fn remove_vault(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let mut config = state.config.lock().map_err(|e| e.to_string())?;
+    config.vaults.retain(|v| v.path != path);
+    if config.active_vault.as_deref() == Some(path.as_str()) {
+        config.active_vault = None;
+    }
+    save_app_config(&config)?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn get_app_config(state: State<'_, AppState>) -> Result<AppConfig, String> {
     let config = state.config.lock().map_err(|e| e.to_string())?;
     Ok(config.clone())

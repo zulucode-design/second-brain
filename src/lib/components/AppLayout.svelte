@@ -724,7 +724,7 @@
 					{#if $mobileView === 'sidebar'}
 						HelixNotes
 					{:else}
-						{#if $viewMode === 'notebook'}{$activeNotebook?.name ?? 'Notebook'}{:else if $viewMode === 'tag'}#{$activeTag}{:else if $viewMode === 'quickaccess'}Quick Access{:else if $viewMode === 'daily'}Daily Notes{:else if $viewMode === 'trash'}Trash{:else}All Notes{/if}
+						{#if $viewMode === 'notebook'}{$activeNotebook?.name ?? 'Notebook'}{:else if $viewMode === 'tag'}#{$activeTag}{:else if $viewMode === 'quickaccess'}Quick Access{:else if $viewMode === 'daily'}Daily Notes{:else if $viewMode === 'tasks'}Tasks{:else if $viewMode === 'trash'}Trash{:else}All Notes{/if}
 					{/if}
 				</span>
 				{#if $globalUpdateAvailable && $mobileView === 'sidebar'}

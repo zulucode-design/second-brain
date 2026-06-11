@@ -2,7 +2,7 @@
 	import { open } from '@tauri-apps/plugin-dialog';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { documentDir } from '@tauri-apps/api/path';
-	import { openVault, getAppConfig } from '$lib/api';
+	import { openVault, removeVault, getAppConfig } from '$lib/api';
 	import { appConfig, vaultReady } from '$lib/stores/app';
 	import { isAndroid, isIOS, isMobile } from '$lib/platform';
 	import type { VaultConfig } from '$lib/types';
@@ -107,6 +107,15 @@
 			loading = false;
 		}
 	}
+
+	async function forgetVault(path: string) {
+		try {
+			await removeVault(path);
+			$appConfig = await getAppConfig();
+		} catch (e) {
+			error = String(e);
+		}
+	}
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -205,10 +214,18 @@
 			<div class="recent">
 				<span class="recent-label">Recent</span>
 				{#each recentVaults as vault}
-					<button class="vault-item" onclick={() => openSelectedVault(vault.path)}>
-						<span class="vault-name">{vault.name}</span>
-						<span class="vault-path">{vault.path}</span>
-					</button>
+					<div class="vault-row">
+						<button class="vault-item" onclick={() => openSelectedVault(vault.path)}>
+							<span class="vault-name">{vault.name}</span>
+							<span class="vault-path">{vault.path}</span>
+						</button>
+						<button class="vault-remove" title="Remove from list" aria-label="Remove from list" onclick={() => forgetVault(vault.path)}>
+							<svg width="12" height="12" viewBox="0 0 10 10">
+								<line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+								<line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+							</svg>
+						</button>
+					</div>
 				{/each}
 			</div>
 		{/if}
@@ -387,6 +404,48 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.vault-row {
+		display: flex;
+		align-items: stretch;
+		gap: 6px;
+		margin-bottom: 6px;
+	}
+
+	.vault-row .vault-item {
+		flex: 1;
+		min-width: 0;
+		margin-bottom: 0;
+	}
+
+	.vault-remove {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		width: 36px;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		opacity: 0;
+		transition: opacity 0.15s, background 0.15s, color 0.15s;
+	}
+
+	.vault-row:hover .vault-remove,
+	.vault-remove:focus-visible {
+		opacity: 1;
+	}
+
+	.vault-remove:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
+	}
+
+	.vault-picker.mobile .vault-remove {
+		opacity: 1;
 	}
 
 	.vault-name-input {

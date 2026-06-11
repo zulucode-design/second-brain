@@ -20,6 +20,10 @@ export async function openVault(path: string): Promise<void> {
   return invoke("open_vault", { path });
 }
 
+export async function removeVault(path: string): Promise<void> {
+  return invoke("remove_vault", { path });
+}
+
 export async function getAppConfig(): Promise<AppConfig> {
   return invoke("get_app_config");
 }

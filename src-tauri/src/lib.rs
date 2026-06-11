@@ -98,6 +98,7 @@ pub fn run() {
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             commands::open_vault,
+            commands::remove_vault,
             commands::get_app_config,
             commands::set_theme,
             commands::set_accent_color,
