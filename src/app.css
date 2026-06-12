@@ -36,6 +36,121 @@
     src: url("/fonts/jetbrains-mono/JetBrainsMono-BoldItalic.woff2") format("woff2");
 }
 
+/* Reading fonts - self-hosted (static/fonts/<name>/, OFL-1.1). Offered in the font picker;
+   bundled so they render the same on every platform instead of falling back to a system serif. */
+@font-face {
+    font-family: "Lora";
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("/fonts/lora/Lora-Regular.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Lora";
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url("/fonts/lora/Lora-Bold.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Lora";
+    font-style: italic;
+    font-weight: 400;
+    font-display: swap;
+    src: url("/fonts/lora/Lora-Italic.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Lora";
+    font-style: italic;
+    font-weight: 700;
+    font-display: swap;
+    src: url("/fonts/lora/Lora-BoldItalic.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Merriweather";
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("/fonts/merriweather/Merriweather-Regular.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Merriweather";
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url("/fonts/merriweather/Merriweather-Bold.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Merriweather";
+    font-style: italic;
+    font-weight: 400;
+    font-display: swap;
+    src: url("/fonts/merriweather/Merriweather-Italic.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Merriweather";
+    font-style: italic;
+    font-weight: 700;
+    font-display: swap;
+    src: url("/fonts/merriweather/Merriweather-BoldItalic.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Literata";
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("/fonts/literata/Literata-Regular.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Literata";
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url("/fonts/literata/Literata-Bold.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Literata";
+    font-style: italic;
+    font-weight: 400;
+    font-display: swap;
+    src: url("/fonts/literata/Literata-Italic.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Literata";
+    font-style: italic;
+    font-weight: 700;
+    font-display: swap;
+    src: url("/fonts/literata/Literata-BoldItalic.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Open Sans";
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("/fonts/open-sans/OpenSans-Regular.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Open Sans";
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url("/fonts/open-sans/OpenSans-Bold.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Open Sans";
+    font-style: italic;
+    font-weight: 400;
+    font-display: swap;
+    src: url("/fonts/open-sans/OpenSans-Italic.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Open Sans";
+    font-style: italic;
+    font-weight: 700;
+    font-display: swap;
+    src: url("/fonts/open-sans/OpenSans-BoldItalic.woff2") format("woff2");
+}
+
 :root {
     /* Light theme */
     --bg-primary: #ffffff;

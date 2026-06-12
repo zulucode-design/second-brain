@@ -26,6 +26,13 @@ class MainActivity : TauriActivity() {
     super.onWebViewCreate(webView)
     this.webView = webView
     webView.addJavascriptInterface(StorageBridge(this), "Android")
+    // Render text at the size CSS specifies, ignoring the device's system font-size
+    // accessibility setting (textZoom is otherwise tied to the system font scale). (#100)
+    webView.settings.textZoom = 100
+    // The actual fix: disable WebView "text autosizing" / font-boosting, which recomputes
+    // paragraph font-size and line-height from viewport heuristics and ignores our CSS (only
+    // size + line-height were affected; font-family was fine). NORMAL turns it off. (#100)
+    webView.settings.layoutAlgorithm = android.webkit.WebSettings.LayoutAlgorithm.NORMAL
   }
 
   override fun onResume() {
