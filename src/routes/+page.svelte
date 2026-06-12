@@ -26,8 +26,8 @@
 			// Apply theme immediately to prevent flash
 			const themeValue = config.theme || 'system';
 			const root = document.documentElement;
-			const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula'];
-			const namedThemes = ['solarized-light', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-light', 'github-dark', 'dracula'];
+			const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'dark-coffee', 'crimson'];
+			const namedThemes = ['solarized-light', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-light', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'light-coffee', 'dark-coffee', 'cotton-candy', 'crimson', 'cloud', 'peach'];
 			root.classList.remove('dark');
 			root.removeAttribute('data-theme');
 			if (namedThemes.includes(themeValue)) {
@@ -60,21 +60,31 @@
 			}
 			// Apply saved accent
 			if (config.accent_color) {
-				const accentPresets: Record<string, { light: string; dark: string }> = {
-					Indigo: { light: '#5b6abf', dark: '#7b9bd4' },
-					Rose: { light: '#e11d48', dark: '#d4768a' },
-					Emerald: { light: '#059669', dark: '#5bab8a' },
-					Amber: { light: '#d97706', dark: '#c9a04e' },
-					Purple: { light: '#7c3aed', dark: '#9a82c4' },
-					Cyan: { light: '#0891b2', dark: '#5ba8b5' },
-					Orange: { light: '#ea580c', dark: '#c98560' },
-					Teal: { light: '#0d9488', dark: '#5fada5' },
-				};
-				const preset = accentPresets[config.accent_color];
-				if (preset) {
-					const themeVal = config.theme || 'light';
-					const isDark = darkThemes.includes(themeVal) || (themeVal === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-					const color = isDark ? preset.dark : preset.light;
+				const themeVal = config.theme || 'light';
+				const isDark = darkThemes.includes(themeVal) || (themeVal === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+				let color: string | null = null;
+				if (config.accent_color.startsWith('#')) {
+					color = config.accent_color;
+				} else {
+					const accentPresets: Record<string, { light: string; dark: string }> = {
+						Indigo: { light: '#5b6abf', dark: '#7b9bd4' },
+						Rose: { light: '#e11d48', dark: '#d4768a' },
+						Emerald: { light: '#059669', dark: '#5bab8a' },
+						Amber: { light: '#d97706', dark: '#c9a04e' },
+						Purple: { light: '#7c3aed', dark: '#9a82c4' },
+						Cyan: { light: '#0891b2', dark: '#5ba8b5' },
+						Orange: { light: '#ea580c', dark: '#c98560' },
+						Teal: { light: '#0d9488', dark: '#5fada5' },
+						Sakura: { light: '#d4547a', dark: '#f4a0b5' },
+						Gold: { light: '#b8860b', dark: '#fabd2f' },
+						Lavender: { light: '#9d5cdb', dark: '#c084fc' },
+						Sky: { light: '#0284c7', dark: '#38bdf8' },
+						Coral: { light: '#e85d4a', dark: '#ff8a7a' },
+					};
+					const preset = accentPresets[config.accent_color];
+					if (preset) color = isDark ? preset.dark : preset.light;
+				}
+				if (color) {
 					const root = document.documentElement;
 					root.style.setProperty('--accent', color);
 					root.style.setProperty('--text-accent', color);

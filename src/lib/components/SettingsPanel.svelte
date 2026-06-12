@@ -384,7 +384,7 @@
 		}
 	}
 
-	const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit'];
+	const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'dark-coffee', 'crimson'];
 	let isThemeDark = $derived(
 		darkThemes.includes($theme) || ($theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
 	);
@@ -408,6 +408,12 @@
 		{ id: 'synthwave', label: 'Synthwave', bg: '#0d0221', sidebar: '#130332', accent: '#ff6ac1' },
 		{ id: 'ember', label: 'Ember', bg: '#0f0a06', sidebar: '#1a1008', accent: '#ff8c42' },
 		{ id: 'moonlit', label: 'Moonlit', bg: '#0a0d12', sidebar: '#0f1520', accent: '#b0cceb' },
+		{ id: 'light-coffee', label: 'Light Coffee', bg: '#fdf8f3', sidebar: '#f5ede0', accent: '#8b5e3c' },
+		{ id: 'dark-coffee', label: 'Dark Coffee', bg: '#1a1008', sidebar: '#211408', accent: '#c8894d' },
+		{ id: 'cotton-candy', label: 'Cotton Candy', bg: '#fff0f8', sidebar: '#ffe8f4', accent: '#e85fa0' },
+		{ id: 'crimson', label: 'Crimson', bg: '#1a0808', sidebar: '#220a0a', accent: '#e83535' },
+		{ id: 'cloud', label: 'Cloud', bg: '#f0f8ff', sidebar: '#e4f2fc', accent: '#2879c8' },
+		{ id: 'peach', label: 'Peach', bg: '#fff8f4', sidebar: '#ffeee4', accent: '#e8704a' },
 	];
 
 	const accentPresets = [
@@ -463,10 +469,19 @@
 	];
 
 	let activeAccent = $state($appConfig?.accent_color ?? 'Indigo');
+	let customAccentColor = $state(($appConfig?.accent_color?.startsWith('#') ? $appConfig.accent_color : null) ?? '#5b6abf');
 	let activeFontSize = $state($appConfig?.font_size ?? 14);
 	let activeFontFamily = $state($appConfig?.font_family ?? 'system');
 	let activeLineHeight = $state($appConfig?.line_height ?? 1.6);
 	let activeUiScale = $state($appConfig?.ui_scale ?? 1);
+	let themeDropdownOpen = $state(false);
+	let accentDropdownOpen = $state(false);
+	let activeThemePreset = $derived(themePresets.find(p => p.id === $theme) ?? themePresets[0]);
+	let activeAccentPreset = $derived(accentPresets.find(p => p.name === activeAccent) ?? accentPresets[0]);
+	let isCustomAccent = $derived(activeAccent.startsWith('#'));
+	let activeAccentColor = $derived(
+		isCustomAccent ? activeAccent : (isThemeDark ? activeAccentPreset.dark : activeAccentPreset.light)
+	);
 
 	// General settings
 	let compactNotes = $state($appConfig?.compact_notes ?? false);
@@ -579,6 +594,23 @@
 		setAccentColor(accentName).catch((e) => console.error('Failed to save accent:', e));
 	}
 
+	function applyCustomAccent(hex: string) {
+		const root = document.documentElement;
+		const isDark = darkThemes.includes($theme) || ($theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+		root.style.setProperty('--accent', hex);
+		root.style.setProperty('--text-accent', hex);
+		root.style.setProperty('--accent-hover', hex);
+		root.style.setProperty('--accent-light', `color-mix(in srgb, ${hex} ${isDark ? '10%' : '8%'}, transparent)`);
+	}
+
+	function selectCustomAccent(hex: string) {
+		customAccentColor = hex;
+		activeAccent = hex;
+		applyCustomAccent(hex);
+		if ($appConfig) $appConfig.accent_color = hex;
+		setAccentColor(hex).catch((e) => console.error('Failed to save custom accent:', e));
+	}
+
 	function selectFontSize(size: number) {
 		activeFontSize = size;
 		applyFontSize(size);
@@ -627,6 +659,14 @@
 		}
 	}
 
+	function clickOutside(node: HTMLElement, callback: () => void) {
+		function handle(e: MouseEvent) {
+			if (!node.contains(e.target as Node)) callback();
+		}
+		document.addEventListener('mousedown', handle, true);
+		return { destroy() { document.removeEventListener('mousedown', handle, true); } };
+	}
+
 	function close() {
 		// Ensure AI settings are saved when closing (in case input wasn't blurred)
 		// Only save if the key differs from what's already stored
@@ -640,10 +680,16 @@
 	$effect(() => {
 		const savedAccent = $appConfig?.accent_color;
 		if (savedAccent) {
-			const preset = accentPresets.find(p => p.name === savedAccent);
-			if (preset) {
+			if (savedAccent.startsWith('#')) {
 				activeAccent = savedAccent;
-				applyAccent(preset);
+				customAccentColor = savedAccent;
+				applyCustomAccent(savedAccent);
+			} else {
+				const preset = accentPresets.find(p => p.name === savedAccent);
+				if (preset) {
+					activeAccent = savedAccent;
+					applyAccent(preset);
+				}
 			}
 		}
 		const savedSize = $appConfig?.font_size;
@@ -983,44 +1029,95 @@
 						</div>
 					{:else if activeTab === 'styling'}
 						<div class="tab-content">
+							<div class="two-col-sections">
 							<div class="settings-section">
 								<h3>Theme</h3>
-								<div class="theme-grid">
-									{#each themePresets as preset}
-										<button
-											class="theme-swatch"
-											class:active={$theme === preset.id}
-											onclick={() => { $theme = preset.id; setTheme(preset.id); }}
-											title={preset.label}
-										>
-											<span class="theme-preview" style="--preview-bg: {preset.bg}; --preview-sidebar: {preset.sidebar}; --preview-accent: {preset.accent}">
-												<span class="preview-sidebar"></span>
-												<span class="preview-main">
-													<span class="preview-accent-bar"></span>
-												</span>
+								<div class="dropdown-wrap">
+									<button
+										class="dropdown-trigger"
+										class:open={themeDropdownOpen}
+										onclick={() => { themeDropdownOpen = !themeDropdownOpen; accentDropdownOpen = false; }}
+									>
+										<span class="dropdown-preview" style="--preview-bg: {activeThemePreset.bg}; --preview-sidebar: {activeThemePreset.sidebar}; --preview-accent: {activeThemePreset.accent}">
+											<span class="preview-sidebar"></span>
+											<span class="preview-main">
+												<span class="preview-accent-bar"></span>
 											</span>
-											<span class="theme-label">{preset.label}</span>
-										</button>
-									{/each}
+										</span>
+										<span class="dropdown-trigger-label">{activeThemePreset.label}</span>
+										<svg class="dropdown-chevron" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+									</button>
+									{#if themeDropdownOpen}
+										<div class="dropdown-list" use:clickOutside={() => themeDropdownOpen = false}>
+											{#each themePresets as preset}
+												<button
+													class="dropdown-item"
+													class:active={$theme === preset.id}
+													onclick={() => { $theme = preset.id; setTheme(preset.id); themeDropdownOpen = false; }}
+												>
+													<span class="dropdown-preview" style="--preview-bg: {preset.bg}; --preview-sidebar: {preset.sidebar}; --preview-accent: {preset.accent}">
+														<span class="preview-sidebar"></span>
+														<span class="preview-main">
+															<span class="preview-accent-bar"></span>
+														</span>
+													</span>
+													<span class="dropdown-item-label">{preset.label}</span>
+													{#if $theme === preset.id}
+														<svg class="dropdown-check" viewBox="0 0 16 16" fill="none"><path d="M3 8l4 4 6-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+													{/if}
+												</button>
+											{/each}
+										</div>
+									{/if}
 								</div>
 							</div>
 
 							<div class="settings-section">
 								<h3>Accent Color</h3>
-								<div class="accent-grid">
-									{#each accentPresets as preset}
-										<button
-											class="accent-swatch"
-											class:active={activeAccent === preset.name}
-											style="--swatch-color: {isThemeDark ? preset.dark : preset.light}"
-											onclick={() => selectAccent(preset)}
-											title={preset.name}
-										>
-											<span class="swatch-circle"></span>
-											<span class="swatch-label">{preset.name}</span>
-										</button>
-									{/each}
+								<div class="dropdown-wrap">
+									<button
+										class="dropdown-trigger"
+										class:open={accentDropdownOpen}
+										onclick={() => { accentDropdownOpen = !accentDropdownOpen; themeDropdownOpen = false; }}
+									>
+										<span class="accent-dot" style="background: {activeAccentColor}"></span>
+										<span class="dropdown-trigger-label">{isCustomAccent ? 'Custom' : activeAccentPreset.name}</span>
+										<svg class="dropdown-chevron" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+									</button>
+									{#if accentDropdownOpen}
+										<div class="dropdown-list" use:clickOutside={() => accentDropdownOpen = false}>
+											{#each accentPresets as preset}
+												<button
+													class="dropdown-item"
+													class:active={activeAccent === preset.name}
+													onclick={() => { selectAccent(preset); accentDropdownOpen = false; }}
+												>
+													<span class="accent-dot" style="background: {isThemeDark ? preset.dark : preset.light}"></span>
+													<span class="dropdown-item-label">{preset.name}</span>
+													{#if activeAccent === preset.name}
+														<svg class="dropdown-check" viewBox="0 0 16 16" fill="none"><path d="M3 8l4 4 6-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+													{/if}
+												</button>
+											{/each}
+											<div class="dropdown-divider"></div>
+											<label class="dropdown-item custom-accent-item" class:active={isCustomAccent}>
+												<span class="accent-dot" style="background: {customAccentColor}"></span>
+												<span class="dropdown-item-label">Custom</span>
+												<input
+													type="color"
+													class="color-wheel-input"
+													value={customAccentColor}
+													oninput={(e) => applyCustomAccent(e.currentTarget.value)}
+													onchange={(e) => selectCustomAccent(e.currentTarget.value)}
+												/>
+												{#if isCustomAccent}
+													<svg class="dropdown-check" viewBox="0 0 16 16" fill="none"><path d="M3 8l4 4 6-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+												{/if}
+											</label>
+										</div>
+									{/if}
 								</div>
+							</div>
 							</div>
 
 							<div class="settings-section">
@@ -1902,42 +1999,116 @@
 		font-weight: 500;
 	}
 
-	.theme-grid {
+	.two-col-sections {
 		display: grid;
-		grid-template-columns: repeat(5, 1fr);
-		gap: 8px;
+		grid-template-columns: 1fr 1fr;
+		gap: 0 16px;
 	}
 
-	.theme-swatch {
+	.two-col-sections .settings-section {
+		margin-bottom: 24px;
+	}
+
+	.dropdown-wrap {
+		position: relative;
+	}
+
+	.dropdown-trigger {
+		width: 100%;
 		display: flex;
-		flex-direction: column;
 		align-items: center;
-		gap: 5px;
-		padding: 6px;
+		gap: 10px;
+		padding: 8px 10px;
+		background: var(--bg-secondary);
 		border: 1px solid var(--border-color);
 		border-radius: 8px;
-		background: var(--bg-secondary);
 		cursor: pointer;
-		transition: all 0.15s;
+		transition: border-color 0.15s;
 	}
 
-	.theme-swatch:hover {
-		border-color: var(--text-tertiary);
-	}
-
-	.theme-swatch.active {
+	.dropdown-trigger:hover,
+	.dropdown-trigger.open {
 		border-color: var(--accent);
-		box-shadow: 0 0 0 2px var(--accent-light);
 	}
 
-	.theme-preview {
-		display: flex;
+	.dropdown-trigger-label {
+		flex: 1;
+		font-size: 13px;
+		color: var(--text-primary);
+		text-align: left;
+	}
+
+	.dropdown-chevron {
+		width: 14px;
+		height: 14px;
+		color: var(--text-tertiary);
+		flex-shrink: 0;
+		transition: transform 0.15s;
+	}
+
+	.dropdown-trigger.open .dropdown-chevron {
+		transform: rotate(180deg);
+	}
+
+	.dropdown-list {
+		position: absolute;
+		top: calc(100% + 4px);
+		left: 0;
+		right: 0;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		box-shadow: var(--shadow-md);
+		z-index: 100;
+		max-height: 240px;
+		overflow-y: auto;
+		padding: 4px;
+	}
+
+	.dropdown-item {
 		width: 100%;
-		height: 32px;
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 7px 8px;
+		border-radius: 5px;
+		background: none;
+		border: none;
+		cursor: pointer;
+		transition: background 0.1s;
+	}
+
+	.dropdown-item:hover {
+		background: var(--bg-hover);
+	}
+
+	.dropdown-item.active {
+		background: var(--accent-light);
+	}
+
+	.dropdown-item-label {
+		flex: 1;
+		font-size: 13px;
+		color: var(--text-primary);
+		text-align: left;
+	}
+
+	.dropdown-check {
+		width: 14px;
+		height: 14px;
+		color: var(--accent);
+		flex-shrink: 0;
+	}
+
+	.dropdown-preview {
+		display: flex;
+		width: 36px;
+		height: 22px;
 		border-radius: 4px;
 		overflow: hidden;
 		background: var(--preview-bg);
-		border: 1px solid rgba(0,0,0,0.1);
+		border: 1px solid rgba(0,0,0,0.12);
+		flex-shrink: 0;
 	}
 
 	.preview-sidebar {
@@ -1949,10 +2120,10 @@
 	.preview-main {
 		flex: 1;
 		background: var(--preview-bg);
-		padding: 4px;
+		padding: 3px;
 		display: flex;
 		flex-direction: column;
-		gap: 3px;
+		gap: 2px;
 	}
 
 	.preview-accent-bar {
@@ -1962,62 +2133,33 @@
 		border-radius: 2px;
 	}
 
-	.theme-label {
-		font-size: 10px;
-		color: var(--text-secondary);
-		text-align: center;
-		line-height: 1.2;
-		word-break: break-word;
-	}
-
-	.theme-swatch.active .theme-label {
-		color: var(--accent);
-	}
-
-	.accent-grid {
-		display: grid;
-		grid-template-columns: repeat(4, 1fr);
-		gap: 8px;
-	}
-
-	.accent-swatch {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 6px;
-		padding: 12px 8px;
-		border: 1px solid var(--border-color);
-		border-radius: 10px;
-		background: var(--bg-secondary);
-		cursor: pointer;
-		transition: all 0.15s;
-	}
-
-	.accent-swatch:hover {
-		background: var(--bg-hover);
-		border-color: var(--swatch-color);
-	}
-
-	.accent-swatch.active {
-		border-color: var(--swatch-color);
-		background: var(--accent-light);
-	}
-
-	.swatch-circle {
-		width: 24px;
-		height: 24px;
+	.accent-dot {
+		width: 18px;
+		height: 18px;
 		border-radius: 50%;
-		background: var(--swatch-color);
+		flex-shrink: 0;
 	}
 
-	.swatch-label {
-		font-size: 11px;
-		color: var(--text-secondary);
+	.dropdown-divider {
+		height: 1px;
+		background: var(--border-light);
+		margin: 4px 0;
 	}
 
-	.accent-swatch.active .swatch-label {
-		color: var(--text-primary);
-		font-weight: 500;
+	.custom-accent-item {
+		cursor: pointer;
+		position: relative;
+	}
+
+	.color-wheel-input {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		opacity: 0;
+		cursor: pointer;
+		border: none;
+		padding: 0;
 	}
 
 	.font-size-options {
@@ -2684,15 +2826,6 @@
 	.settings-panel.mobile .theme-btn {
 		padding: 12px 10px;
 		font-size: 14px;
-	}
-
-	.settings-panel.mobile .accent-grid {
-		grid-template-columns: repeat(4, 1fr);
-		gap: 10px;
-	}
-
-	.settings-panel.mobile .accent-swatch {
-		padding: 14px 8px;
 	}
 
 	.settings-panel.mobile .font-size-options {
