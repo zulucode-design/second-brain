@@ -884,6 +884,53 @@
 		},
 	});
 
+	const COPY_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+	const CHECK_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+
+	const CopyButtonExtension = Extension.create({
+		name: 'codeBlockCopyButton',
+		addProseMirrorPlugins() {
+			function buildDecorations(doc: any): DecorationSet {
+				const decos: any[] = [];
+				doc.descendants((node: any, pos: number) => {
+					if (node.type.name === 'codeBlock') {
+						const btn = document.createElement('button');
+						btn.className = 'code-copy-btn';
+						btn.title = 'Copy code';
+						btn.innerHTML = COPY_ICON;
+						btn.addEventListener('click', (e) => {
+							e.preventDefault();
+							e.stopPropagation();
+							navigator.clipboard.writeText(node.textContent).then(() => {
+								btn.innerHTML = CHECK_ICON;
+								btn.classList.add('copied');
+								setTimeout(() => {
+									btn.innerHTML = COPY_ICON;
+									btn.classList.remove('copied');
+								}, 1500);
+							});
+						});
+						decos.push(Decoration.widget(pos + 1, btn, { side: -1, key: `copy-btn:${pos}` }));
+					}
+				});
+				return DecorationSet.create(doc, decos);
+			}
+			const pluginKey = new PluginKey('codeBlockCopyButton');
+			return [
+				new Plugin({
+					key: pluginKey,
+					state: {
+						init: (_, state) => buildDecorations(state.doc),
+						apply: (tr, old) => { if (!tr.docChanged) return old; return buildDecorations(tr.doc); },
+					},
+					props: {
+						decorations(state) { return pluginKey.getState(state); },
+					},
+				}),
+			];
+		},
+	});
+
 	let codeLangDropdown = $state<{ pos: number; x: number; y: number; current: string } | null>(null);
 
 	function openCodeLangDropdown(pos: number, current: string, triggerEl: HTMLElement) {
@@ -2972,6 +3019,7 @@
 				Color,
 				CodeBlockLowlight.configure({ lowlight, enableTabIndentation: true, defaultLanguage: 'text' }),
 				CodeBlockLanguageSelect,
+				CopyButtonExtension,
 				MermaidRenderer,
 				PdfEmbed,
 				MathBlock,
@@ -6743,6 +6791,43 @@
 		padding: 0;
 		font-size: 13px;
 		line-height: 1.5;
+	}
+
+	:global(.tiptap-wrapper .tiptap .code-copy-btn) {
+		position: absolute;
+		top: 6px;
+		right: 76px;
+		padding: 3px 6px;
+		border-radius: 5px;
+		background: transparent;
+		border: 1px solid transparent;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		opacity: 0.35;
+		z-index: 2;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		line-height: 0;
+		transition: opacity 0.15s, background 0.15s, border-color 0.15s, color 0.15s;
+	}
+
+	:global(.tiptap-wrapper .tiptap .code-copy-btn svg) {
+		width: 1em;
+		height: 1em;
+	}
+
+	:global(.tiptap-wrapper .tiptap pre:hover .code-copy-btn) {
+		opacity: 1;
+		background: var(--bg-secondary);
+		border-color: var(--border-color);
+	}
+
+	:global(.tiptap-wrapper .tiptap .code-copy-btn.copied) {
+		opacity: 1;
+		color: var(--text-accent);
+		background: var(--accent-light);
+		border-color: var(--text-accent);
 	}
 
 	:global(.tiptap-wrapper .tiptap pre)::after {
