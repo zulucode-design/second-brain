@@ -131,7 +131,7 @@ All releases: [codeberg.org/ArkHost/HelixNotes/releases](https://codeberg.org/Ar
 - **Optional WebDAV sync** to your own server (Nextcloud, ownCloud, a NAS): manual or automatic, with keep-both conflict copies
 - Version history with diffs, automatic backups
 - Multi-window, file associations, focus mode, view mode
-- Themes (light, dark, and 6 palettes), accent colors, fonts, 80-200% interface scale
+- Themes (light, dark, and 14 palettes), accent colors, fonts, 80-200% interface scale
 - Local plain-text files, no company cloud
 
 Full documentation: [helixnotes.com/docs](https://helixnotes.com/docs.html)
