@@ -509,6 +509,10 @@ html,
 body {
     height: 100%;
     overflow: hidden;
+    /* Stop the Android WebView from auto-scaling ("boosting") text, which ignores our
+       CSS font-size and makes the font-size setting do nothing on Android. (issue #100) */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
     font-family: var(
         --editor-font-family,
         "Inter",
