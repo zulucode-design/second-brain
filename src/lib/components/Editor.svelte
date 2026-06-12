@@ -376,7 +376,8 @@
 			viewerImportBusy = false;
 		}
 	}
-	let noteRelativePath = $derived($activeNotePath && $appConfig?.active_vault ? $activeNotePath.replace($appConfig.active_vault + '/', '') : '');
+	// Normalize Windows backslashes to '/' so the prefix strip and folder split work cross-platform (issue #99).
+	let noteRelativePath = $derived($activeNotePath && $appConfig?.active_vault ? $activeNotePath.replace(/\\/g, '/').replace($appConfig.active_vault.replace(/\\/g, '/') + '/', '') : '');
 	let noteFolder = $derived(noteRelativePath ? noteRelativePath.substring(0, noteRelativePath.lastIndexOf('/')) : '');
 	let isQuickAccess = $derived(noteRelativePath ? $quickAccessPaths.includes(noteRelativePath) : false);
 
