@@ -350,20 +350,46 @@ impl WebdavClient {
     }
 }
 
-/// Map a WebDAV `href` to a vault-relative path (forward slash). Returns None for
-/// the base collection itself.
-fn href_to_relpath(href: &str, base_path: &str) -> Option<String> {
-    let path = if href.starts_with("http://") || href.starts_with("https://") {
-        reqwest::Url::parse(href).ok()?.path().to_string()
+/// Map a WebDAV `href` to a vault-relative path (forward slash).
+/// `Ok(None)` is the base collection itself. `Err` means the href could not be mapped
+/// (e.g. it does not sit under the configured base path, as some providers like Infomaniak
+/// kDrive return). Callers MUST treat `Err` as a hard failure: silently dropping an
+/// unmappable href makes that file look deleted on the remote, and the reconciler then
+/// wipes the local copy. (issue #102)
+fn href_to_relpath(href: &str, base_path: &str) -> Result<Option<String>, String> {
+    // Pull out just the path component (some servers return absolute-URL hrefs).
+    let raw = if href.starts_with("http://") || href.starts_with("https://") {
+        reqwest::Url::parse(href)
+            .map_err(|e| format!("invalid remote href URL '{href}': {e}"))?
+            .path()
+            .to_string()
     } else {
         href.to_string()
     };
-    let path = path.trim_end_matches('/');
-    let rest = path.strip_prefix(base_path)?.trim_start_matches('/');
+    // Compare DECODED paths, not the raw percent-encoded strings. Providers differ in how they
+    // encode hrefs: Infomaniak kDrive lowercases the hex (`%5b`/`%5d`) and encodes spaces, while
+    // reqwest emits uppercase hex (`%5B`/`%5D`) for base_path. A raw strip_prefix then spuriously
+    // fails, every remote file looks deleted, and the reconciler wipes the local copies. Decoding
+    // both sides first makes the prefix match encoding-agnostic. (issue #102)
+    let path = urlencoding::decode(raw.trim_end_matches('/'))
+        .map_err(|e| format!("bad percent-encoding in remote path '{raw}': {e}"))?
+        .into_owned();
+    let base = urlencoding::decode(base_path.trim_end_matches('/'))
+        .map_err(|e| format!("bad percent-encoding in WebDAV base path '{base_path}': {e}"))?
+        .into_owned();
+    let rest = match path.strip_prefix(&base) {
+        Some(r) => r.trim_start_matches('/'),
+        None => {
+            return Err(format!(
+                "remote path '{path}' is not under the configured WebDAV folder '{base}'. \
+                 Aborting before deleting anything locally - please report this URL."
+            ))
+        }
+    };
     if rest.is_empty() {
-        return None;
+        return Ok(None); // the base collection itself
     }
-    Some(urlencoding::decode(rest).ok()?.into_owned())
+    Ok(Some(rest.to_string()))
 }
 
 fn parse_multistatus(xml: &str, base_path: &str) -> Result<Vec<RemoteEntry>, String> {
@@ -427,7 +453,7 @@ fn parse_multistatus(xml: &str, base_path: &str) -> Result<Vec<RemoteEntry>, Str
                 }
                 b"response" => {
                     if let Some(h) = href.take() {
-                        if let Some(rel) = href_to_relpath(&h, base_path) {
+                        if let Some(rel) = href_to_relpath(&h, base_path)? {
                             entries.push(RemoteEntry {
                                 relpath: rel,
                                 etag: etag.take().map(|s| normalize_etag(&s)).unwrap_or_default(),
@@ -641,6 +667,20 @@ pub fn run_sync(app: tauri::AppHandle, vault: String, cfg: WebdavConfig) -> Resu
         .collect();
     let local = scan_local(&vault)?;
     let manifest = load_manifest(&vault);
+
+    // Safety guard (issue #102): never treat an empty remote listing as "everything was
+    // deleted remotely". If a prior sync exists (non-empty manifest) but the remote came back
+    // empty, it is almost certainly a listing failure (e.g. a provider whose paths we can't
+    // map), not a real mass-deletion - so abort instead of wiping local notes.
+    if remote.is_empty() && !manifest.files.is_empty() {
+        return Err(
+            "Sync aborted to protect your notes: the WebDAV server returned an empty file list \
+             even though files were synced before, so no local files were deleted. This usually \
+             means the server reports paths in a format the app can't read yet - please report \
+             your WebDAV provider and folder URL."
+                .to_string(),
+        );
+    }
 
     let _ = app.emit("sync-progress", serde_json::json!({ "status": "syncing" }));
     // Mute the watcher across local writes so a pull doesn't storm the reindex path.
