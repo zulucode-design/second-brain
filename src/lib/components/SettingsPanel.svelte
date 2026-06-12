@@ -384,7 +384,7 @@
 		}
 	}
 
-	const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula'];
+	const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit'];
 	let isThemeDark = $derived(
 		darkThemes.includes($theme) || ($theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
 	);
@@ -400,6 +400,14 @@
 		{ id: 'github-light', label: 'GitHub Light', bg: '#ffffff', sidebar: '#f6f8fa', accent: '#0969da' },
 		{ id: 'github-dark', label: 'GitHub Dark', bg: '#0d1117', sidebar: '#161b22', accent: '#58a6ff' },
 		{ id: 'dracula', label: 'Dracula', bg: '#282a36', sidebar: '#21222c', accent: '#bd93f9' },
+		{ id: 'midnight-tide', label: 'Midnight Tide', bg: '#020122', sidebar: '#050a38', accent: '#2dd4bf' },
+		{ id: 'blueberry', label: 'Blueberry', bg: '#1a1a2e', sidebar: '#16213e', accent: '#7b9cff' },
+		{ id: 'forest-green', label: 'Forest Green', bg: '#1a2318', sidebar: '#1f2b1c', accent: '#6dbf67' },
+		{ id: 'gruvbox', label: 'Gruvbox', bg: '#282828', sidebar: '#1d2021', accent: '#fabd2f' },
+		{ id: 'cherry-blossom', label: 'Cherry Blossom', bg: '#1a0e12', sidebar: '#221218', accent: '#f4a0b5' },
+		{ id: 'synthwave', label: 'Synthwave', bg: '#0d0221', sidebar: '#130332', accent: '#ff6ac1' },
+		{ id: 'ember', label: 'Ember', bg: '#0f0a06', sidebar: '#1a1008', accent: '#ff8c42' },
+		{ id: 'moonlit', label: 'Moonlit', bg: '#0a0d12', sidebar: '#0f1520', accent: '#b0cceb' },
 	];
 
 	const accentPresets = [
@@ -411,6 +419,11 @@
 		{ name: 'Cyan', light: '#0891b2', dark: '#5ba8b5' },
 		{ name: 'Orange', light: '#ea580c', dark: '#c98560' },
 		{ name: 'Teal', light: '#0d9488', dark: '#5fada5' },
+		{ name: 'Sakura', light: '#d4547a', dark: '#f4a0b5' },
+		{ name: 'Gold', light: '#b8860b', dark: '#fabd2f' },
+		{ name: 'Lavender', light: '#9d5cdb', dark: '#c084fc' },
+		{ name: 'Sky', light: '#0284c7', dark: '#38bdf8' },
+		{ name: 'Coral', light: '#e85d4a', dark: '#ff8a7a' },
 	];
 
 	const fontSizePresets = [
