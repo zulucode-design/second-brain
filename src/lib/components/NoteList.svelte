@@ -310,7 +310,9 @@
 		}
 
 		const key = cacheKey();
-		const cached = noteCache.get(key);
+		// Never serve the trash view from cache: emptying / restoring / deleting changes it,
+		// and a stale cache left it showing cleared items until an app restart. Always re-read.
+		const cached = $viewMode === 'trash' ? undefined : noteCache.get(key);
 		if (cached) {
 			$notes = cached;
 			return;
