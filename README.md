@@ -123,6 +123,7 @@ All releases: [codeberg.org/ArkHost/HelixNotes/releases](https://codeberg.org/Ar
 - Outline panel, daily notes with calendar view, tags with autocomplete, drag-and-drop
 - Live KaTeX math editor (`/math`, `/imath`) with modal preview, double-click to edit
 - Mermaid diagrams (opt-in render, copy as PNG, save as PNG/SVG)
+- Encrypted secret blocks (`/secret`) stored as portable `helix-secret` markdown fences
 - Insert date/time (`/date`, `/time`, `/now`), color swatches (`/color`), configurable week start
 - Manual notebook sorting (drag to reorder above, into, or below)
 - External `.md` viewer mode with import-to-vault flow

@@ -43,6 +43,7 @@
 	import type { VersionEntry, AiStreamEvent, NoteTitleEntry } from '$lib/types';
 	import { listen } from '@tauri-apps/api/event';
 	import { debounce } from '$lib/utils/debounce';
+	import { encryptSecretText, decryptSecretText, readSecretTitle } from '$lib/utils/secrets';
 	import GraphView from './GraphView.svelte';
 	import TagSuggestInput from './TagSuggestInput.svelte';
 
@@ -215,6 +216,7 @@
 			{ label: 'Numbered List', aliases: ['ol', 'ordered', 'number'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><text x="1" y="9" font-size="8" fill="currentColor" stroke="none">1</text><text x="1" y="15" font-size="8" fill="currentColor" stroke="none">2</text><text x="1" y="21" font-size="8" fill="currentColor" stroke="none">3</text></svg>', action: () => editor?.chain().focus().toggleOrderedList().run() },
 			{ label: 'Task List', aliases: ['checklist', 'checkbox', 'todo', 'check'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="6" height="6" rx="1"/><path d="M5 8l1.5 1.5L9 7"/><line x1="13" y1="8" x2="21" y2="8"/><rect x="3" y="14" width="6" height="6" rx="1"/><line x1="13" y1="17" x2="21" y2="17"/></svg>', action: () => editor?.chain().focus().toggleTaskList().run() },
 			{ label: 'Code Block', aliases: ['code', 'codeblock', 'pre', 'snippet'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>', action: () => editor?.chain().focus().toggleCodeBlock().run() },
+			{ label: 'Secret', aliases: ['secret', 'encrypt', 'password', 'private'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>', action: () => openSecretInsert() },
 			{ label: 'Blockquote', aliases: ['quote', 'blockquote', 'citation'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z"/></svg>', action: () => editor?.chain().focus().toggleBlockquote().run() },
 			{ label: 'Collapsible Section', aliases: ['details', 'accordion', 'collapse', 'toggle', 'summary'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="10 8 14 12 10 16"/></svg>', action: () => insertDetails() },
 			{ label: 'Table', aliases: ['table', 'grid'], icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>', action: () => { slashTablePicker = true; slashTableHover = { rows: 0, cols: 0 }; } },
@@ -287,6 +289,77 @@
 		} else {
 			const nodeType = kind === 'block' ? 'mathBlock' : 'mathInline';
 			editor.chain().focus().insertContent({ type: nodeType, attrs: { tex: trimmed } }).run();
+		}
+	}
+
+	type SecretModalState = {
+		title: string;
+		text: string;
+		passphrase: string;
+		confirmPassphrase: string;
+		from: number;
+		to: number;
+		error: string;
+		busy: boolean;
+	};
+
+	let secretModal = $state<SecretModalState | null>(null);
+	let secretTitleInput = $state<HTMLInputElement | null>(null);
+
+	function selectedPlainText(): string {
+		if (!editor) return '';
+		const { from, to } = editor.state.selection;
+		return from === to ? '' : editor.state.doc.textBetween(from, to, '\n\n');
+	}
+
+	function openSecretInsert() {
+		const selection = editor?.state.selection;
+		secretModal = {
+			title: 'Encrypted secret',
+			text: selectedPlainText(),
+			passphrase: '',
+			confirmPassphrase: '',
+			from: selection?.from ?? 0,
+			to: selection?.to ?? 0,
+			error: '',
+			busy: false,
+		};
+		tick().then(() => {
+			secretTitleInput?.focus();
+			secretTitleInput?.select();
+		});
+	}
+
+	function cancelSecretModal() {
+		secretModal = null;
+	}
+
+	async function commitSecretModal() {
+		if (!editor || !secretModal || secretModal.busy) return;
+		if (!secretModal.text) {
+			secretModal.error = 'Secret text is required.';
+			return;
+		}
+		if (!secretModal.passphrase) {
+			secretModal.error = 'Passphrase is required.';
+			return;
+		}
+		if (secretModal.passphrase !== secretModal.confirmPassphrase) {
+			secretModal.error = 'Passphrases do not match.';
+			return;
+		}
+		secretModal.busy = true;
+		secretModal.error = '';
+		try {
+			const payload = await encryptSecretText(secretModal.text, secretModal.passphrase, secretModal.title);
+			const { from, to } = secretModal;
+			secretModal = null;
+			editor.chain().focus().setTextSelection({ from, to }).insertContent({ type: 'secretBlock', attrs: { payload } }).run();
+		} catch (e: any) {
+			if (secretModal) {
+				secretModal.error = e?.message || 'Could not encrypt secret.';
+				secretModal.busy = false;
+			}
 		}
 	}
 	const katexCache = new Map<string, string>();
@@ -512,6 +585,144 @@
 					['span', {}, name],
 				],
 			];
+		},
+	});
+
+	function renderSecretNode(dom: HTMLElement, payload: string) {
+		dom.textContent = '';
+		const secretTitle = readSecretTitle(payload);
+
+		const header = document.createElement('div');
+		header.className = 'secret-block-header';
+
+		const title = document.createElement('span');
+		title.className = 'secret-block-title';
+		title.innerHTML = '<svg class="secret-block-lock" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>';
+		title.append(document.createTextNode(secretTitle));
+
+		const badge = document.createElement('span');
+		badge.className = 'secret-block-badge';
+		badge.textContent = 'AES-GCM';
+
+		header.append(title, badge);
+
+		const form = document.createElement('form');
+		form.className = 'secret-block-form';
+
+		const input = document.createElement('input');
+		input.type = 'password';
+		input.placeholder = 'Passphrase';
+		input.autocomplete = 'current-password';
+
+		const unlock = document.createElement('button');
+		unlock.type = 'submit';
+		unlock.textContent = 'Unlock';
+
+		const error = document.createElement('div');
+		error.className = 'secret-block-error';
+
+		form.append(input, unlock);
+		dom.append(header, form, error);
+
+		form.addEventListener('submit', async (event) => {
+			event.preventDefault();
+			error.textContent = '';
+			unlock.disabled = true;
+			try {
+				const plaintext = await decryptSecretText(payload, input.value);
+				renderUnlockedSecretNode(dom, payload, plaintext);
+			} catch (e: any) {
+				error.textContent = e?.message || 'Unable to unlock secret.';
+				unlock.disabled = false;
+			}
+		});
+	}
+
+	function renderUnlockedSecretNode(dom: HTMLElement, payload: string, plaintext: string) {
+		dom.textContent = '';
+		const secretTitle = readSecretTitle(payload);
+
+		const header = document.createElement('div');
+		header.className = 'secret-block-header';
+
+		const title = document.createElement('span');
+		title.className = 'secret-block-title';
+		title.textContent = secretTitle;
+
+		const actions = document.createElement('div');
+		actions.className = 'secret-block-actions';
+
+		const copy = document.createElement('button');
+		copy.type = 'button';
+		copy.textContent = 'Copy';
+		copy.addEventListener('click', async () => {
+			await navigator.clipboard.writeText(plaintext);
+			copy.textContent = 'Copied';
+			setTimeout(() => { copy.textContent = 'Copy'; }, 1200);
+		});
+
+		const lock = document.createElement('button');
+		lock.type = 'button';
+		lock.textContent = 'Lock';
+		lock.addEventListener('click', () => renderSecretNode(dom, payload));
+
+		actions.append(copy, lock);
+		header.append(title, actions);
+
+		const body = document.createElement('pre');
+		body.className = 'secret-block-plaintext';
+		body.textContent = plaintext;
+
+		dom.append(header, body);
+	}
+
+	function decodeSecretPayload(value: string): string {
+		try {
+			return decodeURIComponent(value);
+		} catch {
+			return '';
+		}
+	}
+
+	const SecretBlock = TiptapNode.create({
+		name: 'secretBlock',
+		group: 'block',
+		atom: true,
+		selectable: true,
+		addAttributes() {
+			return { payload: { default: '' } };
+		},
+		parseHTML() {
+			return [{
+				tag: 'div[data-secret-block]',
+				getAttrs: (el: HTMLElement) => ({
+					payload: decodeSecretPayload(el.getAttribute('data-secret-block') || ''),
+				}),
+			}];
+		},
+		renderHTML({ HTMLAttributes }) {
+			const payload = HTMLAttributes.payload || '';
+			return ['div', { 'data-secret-block': encodeURIComponent(payload), class: 'secret-block' }];
+		},
+		addNodeView() {
+			return ({ node }) => {
+				let payload = node.attrs.payload || '';
+				const dom = document.createElement('div');
+				dom.className = 'secret-block';
+				dom.contentEditable = 'false';
+				renderSecretNode(dom, payload);
+				return {
+					dom,
+					update(updatedNode) {
+						if (updatedNode.type.name !== 'secretBlock') return false;
+						payload = updatedNode.attrs.payload || '';
+						renderSecretNode(dom, payload);
+						return true;
+					},
+					stopEvent: () => true,
+					ignoreMutation: () => true,
+				};
+			};
 		},
 	});
 
@@ -2361,6 +2572,10 @@
 				const name = node.attrs.name || '';
 				return `<div data-pdf-src="${src}" data-pdf-name="${name}" class="pdf-embed"></div>\n`;
 			}
+			case 'secretBlock': {
+				const payload = (node.attrs.payload || '').trim();
+				return `\`\`\`helix-secret\n${payload}\n\`\`\`\n`;
+			}
 			case 'mathBlock': {
 				const tex = node.attrs.tex || '';
 				return `$$\n${tex}\n$$\n`;
@@ -2809,8 +3024,40 @@
 		return md.trim() + '\n';
 	}
 
+	function secretFencesToHtml(md: string): string {
+		const lines = md.split('\n');
+		const out: string[] = [];
+		for (let i = 0; i < lines.length; i++) {
+			if (!/^\s*```helix-secret\s*$/.test(lines[i])) {
+				out.push(lines[i]);
+				continue;
+			}
+
+			const payloadLines: string[] = [];
+			let closedAt = -1;
+			for (let j = i + 1; j < lines.length; j++) {
+				if (/^\s*```\s*$/.test(lines[j])) {
+					closedAt = j;
+					break;
+				}
+				payloadLines.push(lines[j]);
+			}
+
+			if (closedAt === -1) {
+				out.push(lines[i], ...payloadLines);
+				break;
+			}
+
+			const payload = payloadLines.join('\n');
+			out.push(`<div data-secret-block="${escapeHtml(encodeURIComponent(payload))}"></div>`);
+			i = closedAt;
+		}
+		return out.join('\n');
+	}
+
 	function markdownToHtml(md: string): string {
 		let src = stripTitleH1(md);
+		src = secretFencesToHtml(src);
 
 		// Pre-process: convert [[Note Title]] wiki-links to HTML anchors
 		// Supports Obsidian syntax: [[note|alias]], [[note#heading]], [[note^block]]
@@ -3068,6 +3315,7 @@
 				CopyButtonExtension,
 				MermaidRenderer,
 				PdfEmbed,
+				SecretBlock,
 				MathBlock,
 				MathInline,
 				PageBreak,
@@ -4883,6 +5131,10 @@
 								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m10 9-3 3 3 3"/><path d="m14 15 3-3-3-3"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
 								Code Block
 							</button>
+							<button onclick={() => { insertDropdown = false; openSecretInsert(); }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+								Secret
+							</button>
 							<button onclick={() => { insertDropdown = false; editor?.chain().focus().toggleBlockquote().run(); }}>
 								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 5H3"/><path d="M21 12H8"/><path d="M21 19H8"/><path d="M3 12v7"/></svg>
 								Quote
@@ -5008,6 +5260,10 @@
 							<button onclick={() => { insertDropdown = false; editor?.chain().focus().toggleCodeBlock().run(); }}>
 								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m10 9-3 3 3 3"/><path d="m14 15 3-3-3-3"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
 								Code Block
+							</button>
+							<button onclick={() => { insertDropdown = false; openSecretInsert(); }}>
+								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+								Secret
 							</button>
 							<button onclick={() => { insertDropdown = false; editor?.chain().focus().toggleBlockquote().run(); }}>
 								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 5H3"/><path d="M21 12H8"/><path d="M21 19H8"/><path d="M3 12v7"/></svg>
@@ -5618,6 +5874,74 @@
 					<button type="button" onclick={cancelMathModal}>Cancel</button>
 					<button type="button" class="primary" onclick={commitMathModal} disabled={!mathModal.tex.trim()}>
 						{mathModal.editPos !== null ? 'Update' : 'Insert'}
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if secretModal}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="math-modal-overlay" onclick={cancelSecretModal}>
+		<div class="math-modal secret-modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Encrypted secret editor">
+			<div class="math-modal-header">
+				<span>Insert Secret</span>
+				<button type="button" class="math-modal-close" onclick={cancelSecretModal} aria-label="Close">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+				</button>
+			</div>
+			<input
+				class="secret-modal-title"
+				type="text"
+				placeholder="Title"
+				bind:value={secretModal.title}
+				bind:this={secretTitleInput}
+				onkeydown={(e) => {
+					if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); commitSecretModal(); }
+					if (e.key === 'Escape') { e.preventDefault(); cancelSecretModal(); }
+				}}
+			/>
+			<textarea
+				class="math-modal-input secret-modal-text"
+				placeholder="Secret text"
+				bind:value={secretModal.text}
+				onkeydown={(e) => {
+					if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); commitSecretModal(); }
+					if (e.key === 'Escape') { e.preventDefault(); cancelSecretModal(); }
+				}}
+			></textarea>
+			<div class="secret-modal-fields">
+				<input
+					type="password"
+					placeholder="Passphrase"
+					autocomplete="new-password"
+					bind:value={secretModal.passphrase}
+					onkeydown={(e) => {
+						if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); commitSecretModal(); }
+						if (e.key === 'Escape') { e.preventDefault(); cancelSecretModal(); }
+					}}
+				/>
+				<input
+					type="password"
+					placeholder="Confirm passphrase"
+					autocomplete="new-password"
+					bind:value={secretModal.confirmPassphrase}
+					onkeydown={(e) => {
+						if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); commitSecretModal(); }
+						if (e.key === 'Escape') { e.preventDefault(); cancelSecretModal(); }
+					}}
+				/>
+			</div>
+			{#if secretModal.error}
+				<div class="secret-modal-error">{secretModal.error}</div>
+			{/if}
+			<div class="math-modal-footer">
+				<span class="math-modal-hint">Stored as a portable helix-secret markdown block</span>
+				<div class="math-modal-actions">
+					<button type="button" onclick={cancelSecretModal} disabled={secretModal.busy}>Cancel</button>
+					<button type="button" class="primary" onclick={commitSecretModal} disabled={secretModal.busy || !secretModal.text || !secretModal.passphrase || !secretModal.confirmPassphrase}>
+						{secretModal.busy ? 'Encrypting...' : 'Encrypt'}
 					</button>
 				</div>
 			</div>
@@ -6910,6 +7234,101 @@
 		opacity: 0.7;
 	}
 
+	:global(.tiptap-wrapper .tiptap .secret-block) {
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: color-mix(in srgb, var(--accent) 7%, var(--bg-secondary));
+		margin: 1em 0;
+		padding: 12px;
+		user-select: text;
+	}
+
+	:global(.secret-block-header) {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin-bottom: 10px;
+	}
+
+	:global(.secret-block-title) {
+		display: inline-flex;
+		align-items: center;
+		gap: 7px;
+		font-weight: 600;
+		font-size: 13px;
+		color: var(--text-primary);
+	}
+
+	:global(.secret-block-lock) {
+		flex: 0 0 auto;
+	}
+
+	:global(.secret-block-badge) {
+		font-family: 'JetBrains Mono', ui-monospace, monospace;
+		font-size: 11px;
+		color: var(--text-tertiary);
+	}
+
+	:global(.secret-block-form),
+	:global(.secret-block-actions) {
+		display: flex;
+		gap: 8px;
+	}
+
+	:global(.secret-block-form input) {
+		flex: 1;
+		min-width: 0;
+		border: 1px solid var(--border);
+		border-radius: 5px;
+		background: var(--bg-primary);
+		color: var(--text-primary);
+		padding: 7px 9px;
+		font: inherit;
+	}
+
+	:global(.secret-block-form input:focus) {
+		outline: none;
+		border-color: var(--accent);
+	}
+
+	:global(.secret-block-form button),
+	:global(.secret-block-actions button) {
+		border: 1px solid var(--border);
+		border-radius: 5px;
+		background: var(--bg-primary);
+		color: var(--text-primary);
+		padding: 7px 10px;
+		font: inherit;
+		cursor: pointer;
+	}
+
+	:global(.secret-block-form button:hover:not(:disabled)),
+	:global(.secret-block-actions button:hover) {
+		border-color: var(--accent);
+	}
+
+	:global(.secret-block-form button:disabled) {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	:global(.secret-block-error) {
+		color: #d32f2f;
+		font-size: 12px;
+		margin-top: 8px;
+	}
+
+	:global(.secret-block-plaintext) {
+		margin: 0;
+		white-space: pre-wrap;
+		word-break: break-word;
+		font-family: 'JetBrains Mono', ui-monospace, monospace;
+		font-size: 13px;
+		line-height: 1.5;
+		color: var(--text-primary);
+	}
+
 	/* Syntax highlighting - light mode */
 	:global(.tiptap pre code .hljs-keyword),
 	:global(.tiptap pre code .hljs-selector-tag),
@@ -7085,6 +7504,59 @@
 	.math-modal-actions button:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
+	}
+
+	.secret-modal {
+		max-width: min(720px, 92vw);
+	}
+
+	.secret-modal-text {
+		min-height: 140px;
+	}
+
+	.secret-modal-title {
+		border: 1px solid var(--border);
+		border-radius: 5px;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		padding: 9px 10px;
+		font: inherit;
+		outline: none;
+	}
+
+	.secret-modal-title:focus {
+		border-color: var(--accent);
+	}
+
+	.secret-modal-fields {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 10px;
+	}
+
+	.secret-modal-fields input {
+		border: 1px solid var(--border);
+		border-radius: 5px;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		padding: 9px 10px;
+		font: inherit;
+		outline: none;
+	}
+
+	.secret-modal-fields input:focus {
+		border-color: var(--accent);
+	}
+
+	.secret-modal-error {
+		color: #d32f2f;
+		font-size: 12px;
+	}
+
+	@media (max-width: 640px) {
+		.secret-modal-fields {
+			grid-template-columns: 1fr;
+		}
 	}
 
 	.viewer-banner {
