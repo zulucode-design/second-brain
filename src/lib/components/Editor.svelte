@@ -86,6 +86,28 @@
 	let alignDropdown = $state(false);
 	let insertDropdown = $state(false);
 
+	function scrollEditorBodyToBottom(source: HTMLElement | null | undefined = editorElement) {
+		const editorBody = source?.closest('.editor-body') as HTMLElement | null;
+		if (!editorBody) return;
+		editorBody.scrollTop = editorBody.scrollHeight;
+		requestAnimationFrame(() => {
+			editorBody.scrollTop = editorBody.scrollHeight;
+		});
+	}
+
+	function handleSourceCtrlEnd(event: KeyboardEvent) {
+		if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.key !== 'End') return false;
+		event.preventDefault();
+		const ta = sourceElement;
+		ta.focus({ preventScroll: true });
+		ta.setSelectionRange(sourceContent.length, sourceContent.length);
+		ta.scrollTop = ta.scrollHeight;
+		requestAnimationFrame(() => {
+			ta.scrollTop = ta.scrollHeight;
+		});
+		return true;
+	}
+
 	function closeAllDropdowns() {
 		headingDropdown = false;
 		colorDropdown = false;
@@ -582,6 +604,30 @@
 				'Mod-6': toggle(6),
 				'Mod-0': () => this.editor.chain().focus().setParagraph().run(),
 			};
+		},
+	});
+
+	const CtrlEndScrollPastEnd = Extension.create({
+		name: 'ctrlEndScrollPastEnd',
+		addProseMirrorPlugins() {
+			return [
+				new Plugin({
+					key: new PluginKey('ctrlEndScrollPastEnd'),
+					props: {
+						handleDOMEvents: {
+							keydown(view, event) {
+								if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.key !== 'End') return false;
+								event.preventDefault();
+								const tr = view.state.tr.setSelection(TextSelection.atEnd(view.state.doc));
+								view.dispatch(tr);
+								(view.dom as HTMLElement).focus({ preventScroll: true });
+								scrollEditorBodyToBottom(view.dom as HTMLElement);
+								return true;
+							},
+						},
+					},
+				}),
+			];
 		},
 	});
 
@@ -3115,6 +3161,7 @@
 				TextAlign.configure({ types: ['heading', 'paragraph'] }).extend({
 					addKeyboardShortcuts: () => ({}),
 				}),
+				CtrlEndScrollPastEnd,
 				HeadingShortcuts,
 				SlashCommands,
 				MoveLineShortcuts,
@@ -4584,6 +4631,7 @@
 							pushSourceHistoryDebounced();
 						}}
 						onkeydown={(e) => {
+							if (handleSourceCtrlEnd(e)) return;
 							const mod = e.ctrlKey || e.metaKey;
 							if (e.key === 'Enter' && e.shiftKey && !mod) {
 								e.preventDefault();
@@ -4641,6 +4689,7 @@
 								pushSourceHistoryDebounced();
 							}}
 							onkeydown={(e) => {
+								if (handleSourceCtrlEnd(e)) return;
 								const mod = e.ctrlKey || e.metaKey;
 								// Shift+Enter: insert two trailing spaces + newline for markdown hard break
 								if (e.key === 'Enter' && e.shiftKey && !mod) {
@@ -6667,7 +6716,7 @@
 		line-height: 1.3;
 		resize: none;
 		outline: none;
-		padding: 0;
+		padding: 0 0 var(--editor-scroll-past-end, 65vh);
 		margin: 0;
 		user-select: text;
 		/* Wrap long lines instead of horizontal-scrolling (matches mobile). (issue #100) */
@@ -6723,6 +6772,11 @@
 		font-size: var(--editor-font-size, 14px);
 		font-family: var(--editor-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
 		overflow: hidden;
+	}
+
+	.editor-container:not(.mobile) :global(.tiptap-wrapper .tiptap) {
+		min-height: calc(100% + var(--editor-scroll-past-end, 65vh));
+		padding-bottom: var(--editor-scroll-past-end, 65vh);
 	}
 
 	:global(.tiptap-wrapper .tiptap p) {
