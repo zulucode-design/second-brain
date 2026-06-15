@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { appConfig, vaultReady, theme } from '$lib/stores/app';
-	import { getAppConfig, openVault } from '$lib/api';
+	import { getAppConfig, openVault, setFontSize } from '$lib/api';
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import VaultPicker from '$lib/components/VaultPicker.svelte';
 	import AppLayout from '$lib/components/AppLayout.svelte';
@@ -9,6 +9,60 @@
 
 	let loading = $state(true);
 	let noteWindowPath = $state<string | null>(null);
+	let fontSizeSaveTimer: ReturnType<typeof setTimeout> | null = null;
+	let removeEditorZoomShortcuts: (() => void) | null = null;
+
+	const defaultEditorFontSize = 14;
+	const minEditorFontSize = 10;
+	const maxEditorFontSize = 32;
+
+	function setEditorFontSize(value: number) {
+		const nextSize = Math.max(minEditorFontSize, Math.min(maxEditorFontSize, Math.round(value)));
+		if ($appConfig) $appConfig.font_size = nextSize;
+		document.documentElement.style.setProperty('--editor-font-size', `${nextSize}px`);
+		if (fontSizeSaveTimer) clearTimeout(fontSizeSaveTimer);
+		fontSizeSaveTimer = setTimeout(() => {
+			setFontSize(nextSize).catch((e) => console.error('Failed to save font size:', e));
+			fontSizeSaveTimer = null;
+		}, 150);
+	}
+
+	function installEditorZoomShortcuts() {
+		const zoomEditor = (delta: number) => setEditorFontSize(($appConfig?.font_size ?? defaultEditorFontSize) + delta);
+		const handleKeydown = (event: KeyboardEvent) => {
+			if (!event.ctrlKey && !event.metaKey) return;
+			if (event.altKey || event.shiftKey) return;
+
+			if (event.key === '+' || event.key === '=') {
+				event.preventDefault();
+				event.stopPropagation();
+				zoomEditor(1);
+			} else if (event.key === '-' || event.key === '_') {
+				event.preventDefault();
+				event.stopPropagation();
+				zoomEditor(-1);
+			} else if (event.key === '0') {
+				event.preventDefault();
+				event.stopPropagation();
+				setEditorFontSize(defaultEditorFontSize);
+			}
+		};
+
+		const handleWheel = (event: WheelEvent) => {
+			if (!event.ctrlKey && !event.metaKey) return;
+			event.preventDefault();
+			event.stopPropagation();
+			zoomEditor(event.deltaY < 0 ? 1 : -1);
+		};
+
+		window.addEventListener('keydown', handleKeydown);
+		window.addEventListener('wheel', handleWheel, { passive: false, capture: true });
+
+		return () => {
+			window.removeEventListener('keydown', handleKeydown);
+			window.removeEventListener('wheel', handleWheel, { capture: true });
+		};
+	}
 
 	onMount(async () => {
 		// Check for note window mode
@@ -103,6 +157,7 @@
 					console.error('Failed to apply interface scale:', e);
 				}
 			}
+			if (!noteWindowPath) removeEditorZoomShortcuts = installEditorZoomShortcuts();
 
 			// Auto-open last vault if available
 			if (config.active_vault) {
@@ -120,6 +175,11 @@
 			// First launch or no config
 		}
 		loading = false;
+	});
+
+	onDestroy(() => {
+		removeEditorZoomShortcuts?.();
+		if (fontSizeSaveTimer) clearTimeout(fontSizeSaveTimer);
 	});
 </script>
 
