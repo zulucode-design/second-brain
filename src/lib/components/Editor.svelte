@@ -30,7 +30,7 @@
 	import katex from 'katex';
 	import 'katex/dist/katex.min.css';
 	import { Extension, Node as TiptapNode, Mark as TiptapMark, mergeAttributes } from '@tiptap/core';
-	import { Plugin, PluginKey, EditorState, TextSelection } from '@tiptap/pm/state';
+	import { Plugin, PluginKey, EditorState, Selection, TextSelection } from '@tiptap/pm/state';
 	import { Decoration, DecorationSet } from '@tiptap/pm/view';
 	import { DOMSerializer } from '@tiptap/pm/model';
 	import { convertFileSrc } from '@tauri-apps/api/core';
@@ -3065,10 +3065,11 @@
 										if (detailsEl) openDetailsEl(detailsEl);
 										// Sync open state into document + move cursor (single transaction)
 										const detailsPos = from.before(detailsDepth);
-										view.dispatch(view.state.tr
-											.setNodeMarkup(detailsPos, undefined, { open: true })
-											.setSelection(TextSelection.create(view.state.doc, detailsContentPos))
-										);
+										const tr = view.state.tr.setNodeMarkup(detailsPos, undefined, { open: true });
+										const mappedContentPos = tr.mapping.map(detailsContentPos);
+										tr.setSelection(Selection.near(tr.doc.resolve(mappedContentPos), 1));
+										view.dispatch(tr.scrollIntoView());
+										view.focus();
 										return true;
 									}
 								}
