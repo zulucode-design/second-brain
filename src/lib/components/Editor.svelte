@@ -2013,19 +2013,28 @@
 											wikiLinkDisambigDisplay = display;
 											wikiLinkSelectedIndex = 0;
 										} else {
-											// Insert as unresolved wiki-link (no path)
-											const menuFrom = wikiLinkMenu.from;
-											const curTo = state.selection.from;
-											closeWikiLinkMenu();
-											// Delete [[ text + query + the trailing ]
-											editor?.chain().focus().deleteRange({ from: menuFrom, to: curTo }).run();
-											tick().then(() => {
-												editor?.chain().focus().insertContent({
-													type: 'text',
-													text: display,
-													marks: [{ type: 'wikiLink', attrs: { title: noteRef, path: '', aliased: display !== noteRef } }],
-												}).run();
+										// Insert as unresolved wiki-link (no path)
+										const menuFrom = wikiLinkMenu.from;
+										const curTo = state.selection.from;
+										closeWikiLinkMenu();
+										tick().then(() => {
+											if (!editor) return;
+											// Use a single ProseMirror transaction to replace [[query] with the
+											// wiki-link and clear stored marks atomically, preventing the inclusive
+											// mark from bleeding into subsequent text. Do NOT call deleteRange first
+											// — that would shift positions and make menuFrom/curTo invalid here.
+											const { tr, schema } = editor.view.state;
+											const wikiLinkMark = schema.marks.wikiLink.create({
+												title: noteRef,
+												path: '',
+												aliased: display !== noteRef,
 											});
+											const textNode = schema.text(display, [wikiLinkMark]);
+											tr.replaceWith(menuFrom, curTo, textNode);
+											tr.setSelection(TextSelection.create(tr.doc, menuFrom + display.length));
+											tr.setStoredMarks([]);
+											editor.view.dispatch(tr);
+										});
 										}
 									} else {
 										closeWikiLinkMenu();
