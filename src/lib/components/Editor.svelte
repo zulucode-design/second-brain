@@ -1689,6 +1689,9 @@
 	// Navigation disambiguation: when clicking a wikilink with multiple matches
 	let wikiLinkNavDisambig = $state<{ entries: NoteTitleEntry[]; x: number; y: number } | null>(null);
 	let wikiLinkNavDisambigIndex = $state(0);
+	// Tracks the wiki-link mark under the cursor across transactions, used to detect
+	// when the cursor leaves a link so we can rename the linked note if needed.
+	let prevCursorWikiMark: any = null;
 
 	let wikiLinkFiltered = $derived.by(() => {
 		// When disambiguating, show only the exact matches
@@ -1767,6 +1770,55 @@
 		return entry.path.slice(vaultRoot.length + 1).replace(/\.md$/, '');
 	}
 
+	// Scan the document for wiki-link marks whose visible text has been changed by
+	// the user (text ≠ stored title, and the link is not an explicit alias).
+	// Each match triggers a note rename and the mark is updated in-place.
+	async function checkWikiLinkRenames() {
+		if (!editor || !$appConfig?.enable_wiki_links || isLoadingNote) return;
+
+		type RenameItem = { pos: number; size: number; mark: any; newTitle: string };
+		const toRename: RenameItem[] = [];
+
+		editor.state.doc.descendants((node: any, pos: number) => {
+			if (!node.isText) return;
+			const wikiMark = node.marks.find((m: any) => m.type.name === 'wikiLink');
+			// Skip unresolved links (no path) and explicit aliases
+			if (!wikiMark || !wikiMark.attrs.path || wikiMark.attrs.aliased) return;
+			const text = (node.text as string || '').trim();
+			const storedTitle = (wikiMark.attrs.title as string || '').trim();
+			if (text && text !== storedTitle) {
+				toRename.push({ pos, size: node.nodeSize, mark: wikiMark, newTitle: text });
+			}
+		});
+
+		if (toRename.length === 0) return;
+
+		// Save the current note before renaming so the Rust backend has the latest content
+		await forceSave();
+
+		for (const item of toRename) {
+			try {
+				const newPath = await renameNote(item.mark.attrs.path, item.newTitle);
+				// Update the mark attrs in the editor (title + path) so the next save
+				// serialises [[NewTitle]] and doesn't re-trigger the rename check
+				if (editor) {
+					const wikiMarkType = editor.schema.marks.wikiLink;
+					const tr = editor.state.tr;
+					tr.addMark(
+						item.pos,
+						item.pos + item.size,
+						wikiMarkType.create({ title: item.newTitle, path: newPath, aliased: false }),
+					);
+					ignoreNextUpdate = true;
+					editor.view.dispatch(tr);
+				}
+				refreshWikiLinkTitles();
+			} catch (e) {
+				console.error('Failed to rename note from wiki-link edit:', e);
+			}
+		}
+	}
+
 	function insertWikiLink(entry: NoteTitleEntry, originalRef?: string) {
 		if (!editor || !wikiLinkMenu) return;
 		const { from } = wikiLinkMenu;
@@ -1791,7 +1843,7 @@
 				.insertContent({
 					type: 'text',
 					text: displayText,
-					marks: [{ type: 'wikiLink', attrs: { title: titleAttr, path: entry.path } }],
+					marks: [{ type: 'wikiLink', attrs: { title: titleAttr, path: entry.path, aliased: displayText !== titleAttr } }],
 				})
 				.run();
 		});
@@ -1811,39 +1863,59 @@
 
 	const WikiLink = TiptapMark.create({
 		name: 'wikiLink',
-		inclusive: false,
+		// inclusive: true so typing at the end of a link extends the mark, allowing
+		// the user to edit a title in-place. Moving the cursor one step past the mark
+		// exits it, so typing plain text after a link still works normally.
+		inclusive: true,
 		excludes: 'link',
 		addAttributes() {
 			return {
 				title: { default: null },
 				path: { default: null },
+				// aliased=true when the display text was explicitly different from the note
+				// title (e.g. [[Note|display]]). Aliased links are never used for rename detection.
+				aliased: { default: false },
 			};
 		},
 		parseHTML() {
 			return [
 				{
 					tag: 'span[data-wiki-link]',
-					getAttrs: (el: HTMLElement) => ({
-						title: el.getAttribute('data-title') || null,
-						path: el.getAttribute('data-path') || null,
-					}),
+					getAttrs: (el: HTMLElement) => {
+						const title = el.getAttribute('data-title') || null;
+						const text = el.textContent || '';
+						return {
+							title,
+							path: el.getAttribute('data-path') || null,
+							// Detect alias from the HTML: if the visible text differs from the
+							// stored title the link was serialised as [[ref|display]]
+							aliased: el.getAttribute('data-aliased') === '1' || (!!title && text !== title),
+						};
+					},
 				},
 				{
 					tag: 'a[data-wiki-link]',
-					getAttrs: (el: HTMLElement) => ({
-						title: el.getAttribute('data-title') || null,
-						path: el.getAttribute('data-path') || null,
-					}),
+					getAttrs: (el: HTMLElement) => {
+						const title = el.getAttribute('data-title') || null;
+						const text = el.textContent || '';
+						return {
+							title,
+							path: el.getAttribute('data-path') || null,
+							aliased: el.getAttribute('data-aliased') === '1' || (!!title && text !== title),
+						};
+					},
 				},
 			];
 		},
 		renderHTML({ HTMLAttributes }: { HTMLAttributes: Record<string, any> }) {
-			return ['span', {
+			const attrs: Record<string, string> = {
 				'data-wiki-link': '',
 				'data-path': HTMLAttributes.path || '',
 				'data-title': HTMLAttributes.title || '',
 				class: 'wiki-link',
-			}, 0];
+			};
+			if (HTMLAttributes.aliased) attrs['data-aliased'] = '1';
+			return ['span', attrs, 0];
 		},
 		addProseMirrorPlugins() {
 			return [
@@ -1858,7 +1930,10 @@
 									event.preventDefault();
 									event.stopPropagation();
 									const path = wikiLinkEl.getAttribute('data-path') || '';
-									const title = wikiLinkEl.getAttribute('data-title') || wikiLinkEl.textContent || '';
+									// Prefer displayed text over stored title — if the user edited the
+									// link text after the note was deleted, textContent reflects the
+									// new name they want, while data-title still holds the old one.
+									const title = wikiLinkEl.textContent || wikiLinkEl.getAttribute('data-title') || '';
 									navigateToWikiLink(path, title, event as MouseEvent);
 									return true;
 								}
@@ -1948,7 +2023,7 @@
 												editor?.chain().focus().insertContent({
 													type: 'text',
 													text: display,
-													marks: [{ type: 'wikiLink', attrs: { title: noteRef, path: '' } }],
+													marks: [{ type: 'wikiLink', attrs: { title: noteRef, path: '', aliased: display !== noteRef } }],
 												}).run();
 											});
 										}
@@ -1987,8 +2062,9 @@
 				textBefore += child.text!.slice(0, Math.min(child.nodeSize, cursorOffset - offset));
 			}
 		});
-		// Match [[ at start of line or after whitespace
-		const match = textBefore.match(/\[\[([^\]]*)$/);
+		// Match [[ — also allow exactly one trailing ] so the menu stays open after
+		// the first ] of ]] is typed, letting handleTextInput catch the closing ]]
+		const match = textBefore.match(/\[\[([^\]]*)\]?$/);
 		if (!match) {
 			closeWikiLinkMenu();
 			return;
@@ -2050,20 +2126,25 @@
 				wikiLinkNavDisambigIndex = 0;
 				return;
 			} else {
-				// Offer to create the note (use clean title, not the anchor ref)
+				// Create the note (use clean title, not the anchor ref)
 				const cleanTitle = noteTitle.includes('/') ? noteTitle.split('/').pop()! : noteTitle;
 				const notebookRel = $activeNotePath
 					? $activeNotePath.substring(($appConfig?.active_vault?.length ?? 0) + 1).split('/').slice(0, -1).join('/')
 					: null;
 				try {
+					// Save the current note before navigating away
+					await forceSave();
 					const { createNote } = await import('$lib/api');
 					const newNote = await createNote(notebookRel || null, cleanTitle);
+					// Refresh titles cache so the new note resolves on future clicks
+					refreshWikiLinkTitles();
 					// Navigate to the new note
 					const content = await readNote(newNote.path);
 					$activeNote = { ...content, content: content.content };
 					$activeNotePath = newNote.path;
+					$editorDirty = false;
 				} catch (e) {
-					console.error('Failed to create note:', e);
+					console.error('Failed to create note from wiki-link:', e);
 				}
 				return;
 			}
@@ -2073,7 +2154,10 @@
 			$activeNote = { ...content, content: content.content };
 			$activeNotePath = path;
 		} catch (e) {
-			console.error('Failed to navigate to wiki-link:', e);
+			// Note at path no longer exists (deleted/moved). Refresh cache and
+			// retry as unresolved so the user can recreate it from the link.
+			await refreshWikiLinkTitles();
+			await navigateToWikiLink('', title, clickEvent);
 		}
 	}
 
@@ -3562,6 +3646,15 @@
 				// On mobile, only check menus when they're already open or user just typed trigger char
 				if (!isMobile || slashMenu || slashTypedByUser) updateSlashMenu();
 				if (!isMobile || wikiLinkMenu || wikiLinkTypedByUser) updateWikiLinkMenu();
+				// Detect when cursor leaves a wiki-link mark and trigger rename check
+				if ($appConfig?.enable_wiki_links && editor) {
+					const curMarks = editor.state.selection.$from.marks();
+					const curWikiMark = curMarks.find((m: any) => m.type.name === 'wikiLink') ?? null;
+					if (prevCursorWikiMark && !curWikiMark) {
+						checkWikiLinkRenames();
+					}
+					prevCursorWikiMark = curWikiMark;
+				}
 			},
 			onUpdate: () => {
 				if (ignoreNextUpdate || isLoadingNote) {
@@ -3702,7 +3795,7 @@
 			event.preventDefault();
 			event.stopPropagation();
 			const path = wikiLinkEl.getAttribute('data-path') || '';
-			const title = wikiLinkEl.getAttribute('data-title') || wikiLinkEl.textContent || '';
+			const title = wikiLinkEl.textContent || wikiLinkEl.getAttribute('data-title') || '';
 			navigateToWikiLink(path, title, event);
 			return;
 		}
@@ -4590,8 +4683,18 @@
 		};
 	});
 
+	// Refresh wiki-link title cache whenever vault files change so that deleted
+	// notes become unresolved and newly created notes become resolvable.
+	let unlistenFileChange: (() => void) | null = null;
+	if ($appConfig?.enable_wiki_links) {
+		listen('file-changed', () => {
+			if ($appConfig?.enable_wiki_links) refreshWikiLinkTitles();
+		}).then(fn => { unlistenFileChange = fn; });
+	}
+
 	onDestroy(() => {
 		destroyEditor();
+		unlistenFileChange?.();
 	});
 </script>
 
