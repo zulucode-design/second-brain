@@ -7413,11 +7413,13 @@
 	:global(.secret-block-actions) {
 		display: flex;
 		gap: 8px;
+		min-width: 0;
 	}
 
 	:global(.secret-block-form input) {
 		flex: 1;
 		min-width: 0;
+		width: 0;
 		border: 1px solid var(--border);
 		border-radius: 5px;
 		background: var(--bg-primary);
