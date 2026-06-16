@@ -634,6 +634,7 @@
 		input.type = 'password';
 		input.placeholder = 'Passphrase';
 		input.autocomplete = 'current-password';
+		input.size = 1;
 
 		const unlock = document.createElement('button');
 		unlock.type = 'submit';
