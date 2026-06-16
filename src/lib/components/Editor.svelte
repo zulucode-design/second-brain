@@ -44,6 +44,8 @@
 	import { listen } from '@tauri-apps/api/event';
 	import { debounce } from '$lib/utils/debounce';
 	import { encryptSecretText, decryptSecretText, readSecretTitle } from '$lib/utils/secrets';
+	import { WrapSelectedText } from '$lib/editor/extensions/wrapSelectedText';
+	import { wrapTextareaSelection } from '$lib/editor/source/selectionPairs';
 	import GraphView from './GraphView.svelte';
 	import TagSuggestInput from './TagSuggestInput.svelte';
 
@@ -106,6 +108,25 @@
 		requestAnimationFrame(() => {
 			ta.scrollTop = ta.scrollHeight;
 		});
+		return true;
+	}
+
+	function handleSourceSelectionPair(event: KeyboardEvent) {
+		if (event.ctrlKey || event.metaKey || event.altKey || event.key.length !== 1) return false;
+		const ta = sourceElement;
+		if (!ta) return false;
+		const wrapped = wrapTextareaSelection(ta.value, ta.selectionStart, ta.selectionEnd, event.key);
+		if (!wrapped) return false;
+
+		event.preventDefault();
+		pushSourceHistoryImmediate();
+		sourceContent = wrapped.value;
+		tick().then(() => {
+			ta.setSelectionRange(wrapped.selectionStart, wrapped.selectionEnd);
+			pushSourceHistoryImmediate();
+		});
+		$editorDirty = true;
+		autoSave();
 		return true;
 	}
 
@@ -3411,6 +3432,7 @@
 				}),
 				CtrlEndScrollPastEnd,
 				HeadingShortcuts,
+				WrapSelectedText,
 				SlashCommands,
 				MoveLineShortcuts,
 				TabIndent,
@@ -4880,6 +4902,7 @@
 						}}
 						onkeydown={(e) => {
 							if (handleSourceCtrlEnd(e)) return;
+							if (handleSourceSelectionPair(e)) return;
 							const mod = e.ctrlKey || e.metaKey;
 							if (e.key === 'Enter' && e.shiftKey && !mod) {
 								e.preventDefault();
@@ -4938,6 +4961,7 @@
 							}}
 							onkeydown={(e) => {
 								if (handleSourceCtrlEnd(e)) return;
+								if (handleSourceSelectionPair(e)) return;
 								const mod = e.ctrlKey || e.metaKey;
 								// Shift+Enter: insert two trailing spaces + newline for markdown hard break
 								if (e.key === 'Enter' && e.shiftKey && !mod) {
