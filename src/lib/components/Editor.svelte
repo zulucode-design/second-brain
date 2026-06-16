@@ -7377,6 +7377,8 @@
 		margin: 1em 0;
 		padding: 12px;
 		user-select: text;
+		box-sizing: border-box;
+		max-width: 100%;
 	}
 
 	:global(.secret-block-header) {
