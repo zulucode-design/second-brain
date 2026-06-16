@@ -7547,7 +7547,7 @@
 		background: var(--bg-primary);
 		border: 1px solid var(--border);
 		border-radius: 8px;
-		min-width: 480px;
+		min-width: min(480px, 92vw);
 		max-width: 80vw;
 		display: flex;
 		flex-direction: column;
