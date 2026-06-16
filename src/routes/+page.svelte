@@ -16,10 +16,50 @@
 	const minEditorFontSize = 10;
 	const maxEditorFontSize = 32;
 
+	function getEditorScrollSurface(): HTMLElement | HTMLTextAreaElement | null {
+		const sourceEditor = document.querySelector<HTMLTextAreaElement>('.source-editor');
+		if (sourceEditor && getComputedStyle(sourceEditor).display !== 'none') return sourceEditor;
+		return document.querySelector<HTMLElement>('.editor-body');
+	}
+
+	function preserveEditorViewportAfterLayout(scrollSurface: HTMLElement | HTMLTextAreaElement | null) {
+		if (!scrollSurface) return () => {};
+
+		const isSourceEditor = scrollSurface instanceof HTMLTextAreaElement;
+		const maxScroll = scrollSurface.scrollHeight - scrollSurface.clientHeight;
+		const scrollRatio = maxScroll > 0 ? scrollSurface.scrollTop / maxScroll : 0;
+		const rect = scrollSurface.getBoundingClientRect();
+		const anchorY = Math.min(rect.bottom - 1, rect.top + Math.max(16, rect.height * 0.25));
+		let anchorElement: HTMLElement | null = null;
+		let anchorOffset = 0;
+
+		if (!isSourceEditor) {
+			const candidate = document.elementFromPoint(rect.left + Math.min(80, rect.width / 2), anchorY);
+			anchorElement = candidate?.closest('.tiptap *') as HTMLElement | null;
+			if (anchorElement) anchorOffset = anchorElement.getBoundingClientRect().top - rect.top;
+		}
+
+		return () => {
+			requestAnimationFrame(() => {
+				requestAnimationFrame(() => {
+					if (anchorElement && scrollSurface.contains(anchorElement)) {
+						const nextRect = scrollSurface.getBoundingClientRect();
+						scrollSurface.scrollTop += anchorElement.getBoundingClientRect().top - nextRect.top - anchorOffset;
+					} else {
+						const nextMaxScroll = scrollSurface.scrollHeight - scrollSurface.clientHeight;
+						scrollSurface.scrollTop = Math.max(0, nextMaxScroll * scrollRatio);
+					}
+				});
+			});
+		};
+	}
+
 	function setEditorFontSize(value: number) {
 		const nextSize = Math.max(minEditorFontSize, Math.min(maxEditorFontSize, Math.round(value)));
+		const restoreEditorViewport = preserveEditorViewportAfterLayout(getEditorScrollSurface());
 		if ($appConfig) $appConfig.font_size = nextSize;
 		document.documentElement.style.setProperty('--editor-font-size', `${nextSize}px`);
+		restoreEditorViewport();
 		if (fontSizeSaveTimer) clearTimeout(fontSizeSaveTimer);
 		fontSizeSaveTimer = setTimeout(() => {
 			setFontSize(nextSize).catch((e) => console.error('Failed to save font size:', e));
