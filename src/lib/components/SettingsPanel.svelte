@@ -384,7 +384,7 @@
 		}
 	}
 
-	const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'dark-coffee', 'crimson'];
+	const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'dark-coffee', 'crimson', 'material-dark', 'monokai', 'rose-pine', 'everforest', 'horizon', 'cyberpunk', 'black'];
 	let isThemeDark = $derived(
 		darkThemes.includes($theme) || ($theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
 	);
@@ -414,6 +414,14 @@
 		{ id: 'crimson', label: 'Crimson', bg: '#1a0808', sidebar: '#220a0a', accent: '#e83535' },
 		{ id: 'cloud', label: 'Cloud', bg: '#f0f8ff', sidebar: '#e4f2fc', accent: '#2879c8' },
 		{ id: 'peach', label: 'Peach', bg: '#fff8f4', sidebar: '#ffeee4', accent: '#e8704a' },
+		{ id: 'material-dark', label: 'Material Dark', bg: '#212121', sidebar: '#1b1b1b', accent: '#80cbc4' },
+		{ id: 'material-light', label: 'Material Light', bg: '#fafafa', sidebar: '#f5f5f5', accent: '#00897b' },
+		{ id: 'monokai', label: 'Monokai', bg: '#272822', sidebar: '#1e1f1c', accent: '#a6e22e' },
+		{ id: 'rose-pine', label: 'Rosé Pine', bg: '#191724', sidebar: '#1f1d2e', accent: '#c4a7e7' },
+		{ id: 'everforest', label: 'Everforest', bg: '#2d353b', sidebar: '#272e33', accent: '#83c092' },
+		{ id: 'horizon', label: 'Horizon', bg: '#1c1e26', sidebar: '#16181f', accent: '#e9547f' },
+		{ id: 'cyberpunk', label: 'Cyberpunk', bg: '#0a0e17', sidebar: '#060911', accent: '#ff0080' },
+		{ id: 'black', label: 'Black', bg: '#000000', sidebar: '#0a0a0a', accent: '#ffffff' },
 	];
 
 	const accentPresets = [
