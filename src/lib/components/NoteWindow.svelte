@@ -16,6 +16,8 @@
 
 	let { notePath }: { notePath: string } = $props();
 
+	import { darkThemes } from '$lib/platform';
+
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
 	let editor = $state<Editor>(null!);
@@ -35,8 +37,7 @@
 
 	$effect(() => {
 		const t = $theme || 'system';
-		const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'dark-coffee', 'crimson'];
-		const namedThemes = ['solarized-light', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-light', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'light-coffee', 'dark-coffee', 'cotton-candy', 'crimson', 'cloud', 'peach'];
+		const namedThemes = ['solarized-light', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-light', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'light-coffee', 'dark-coffee', 'cotton-candy', 'crimson', 'cloud', 'peach', 'material-dark', 'material-light', 'monokai', 'rose-pine', 'everforest', 'horizon', 'cyberpunk', 'black', 'one-dark'];
 		const root = document.documentElement;
 		root.classList.remove('dark');
 		root.removeAttribute('data-theme');

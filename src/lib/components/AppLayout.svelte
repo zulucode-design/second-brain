@@ -57,6 +57,7 @@
 	const isMobile = $derived($platformIsMobile);
 	const isAndroid = /android/i.test(navigator.userAgent);
 	import { loadVaultState, saveVaultState, readNote, createDailyNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, setTaskDone, setTaskPriority, setTaskDue } from '$lib/api';
+	import { darkThemes } from '$lib/platform';
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow } from '$lib/utils/window';
 	import { get } from 'svelte/store';
@@ -475,8 +476,7 @@
 	}
 
 	function applyTheme(t: string) {
-		const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'dark-coffee', 'crimson'];
-		const namedThemes = ['solarized-light', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-light', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'light-coffee', 'dark-coffee', 'cotton-candy', 'crimson', 'cloud', 'peach'];
+		const namedThemes = ['solarized-light', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-light', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'light-coffee', 'dark-coffee', 'cotton-candy', 'crimson', 'cloud', 'peach', 'material-dark', 'material-light', 'monokai', 'rose-pine', 'everforest', 'horizon', 'cyberpunk', 'black', 'one-dark'];
 		const root = document.documentElement;
 		root.classList.remove('dark');
 		root.removeAttribute('data-theme');

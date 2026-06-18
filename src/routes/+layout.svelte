@@ -4,6 +4,7 @@
 	import { theme, appConfig, activeNote, activeNotePath, installType, platformIsMobile, checkForUpdate, checkForUpdateMobile, isManagedInstall } from '$lib/stores/app';
 	import { openFile, openUrl, readNote, getInstallType, isMobilePlatform } from '$lib/api';
 	import { get } from 'svelte/store';
+	import { darkThemes } from '$lib/platform';
 	import ResizeHandles from '$lib/components/ResizeHandles.svelte';
 
 	let { children } = $props();
@@ -16,7 +17,6 @@
 	});
 
 	function applyTheme(t: string) {
-		const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'dark-coffee', 'crimson', 'material-dark', 'monokai', 'rose-pine', 'everforest', 'horizon', 'cyberpunk', 'black', 'one-dark'];
 		const namedThemes = ['solarized-light', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-light', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'light-coffee', 'dark-coffee', 'cotton-candy', 'crimson', 'cloud', 'peach', 'material-dark', 'material-light', 'monokai', 'rose-pine', 'everforest', 'horizon', 'cyberpunk', 'black', 'one-dark'];
 		const root = document.documentElement;
 		root.classList.remove('dark');

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { showSettings, theme, appConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall } from '$lib/stores/app';
 	import { setTheme, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow } from '$lib/api';
+	import { darkThemes } from '$lib/platform';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
 	import { getVersion } from '@tauri-apps/api/app';
@@ -384,7 +385,6 @@
 		}
 	}
 
-	const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'dark-coffee', 'crimson', 'material-dark', 'monokai', 'rose-pine', 'everforest', 'horizon', 'cyberpunk', 'black', 'one-dark'];
 	let isThemeDark = $derived(
 		darkThemes.includes($theme) || ($theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
 	);
