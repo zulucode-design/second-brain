@@ -8608,8 +8608,6 @@
 		box-shadow: var(--shadow-lg);
 		padding: 4px;
 		min-width: 200px;
-		max-height: calc(100vh - 16px);
-		overflow-y: auto;
 		z-index: 1501;
 	}
 
