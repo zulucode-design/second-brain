@@ -384,7 +384,7 @@
 		}
 	}
 
-	const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'dark-coffee', 'crimson', 'material-dark', 'monokai', 'rose-pine', 'everforest', 'horizon', 'cyberpunk', 'black'];
+	const darkThemes = ['dark', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'dark-coffee', 'crimson', 'material-dark', 'monokai', 'rose-pine', 'everforest', 'horizon', 'cyberpunk', 'black', 'one-dark'];
 	let isThemeDark = $derived(
 		darkThemes.includes($theme) || ($theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
 	);
@@ -422,6 +422,7 @@
 		{ id: 'horizon', label: 'Horizon', bg: '#1c1e26', sidebar: '#16181f', accent: '#e9547f' },
 		{ id: 'cyberpunk', label: 'Cyberpunk', bg: '#0a0e17', sidebar: '#060911', accent: '#ff0080' },
 		{ id: 'black', label: 'Black', bg: '#000000', sidebar: '#0a0a0a', accent: '#ffffff' },
+		{ id: 'one-dark', label: 'One Dark', bg: '#282c34', sidebar: '#21252b', accent: '#61afef' },
 	];
 
 	const accentPresets = [
@@ -571,6 +572,13 @@
 		}
 		setGeneralSettings(compactNotes, timeFormat, weekStart, dailyTitleFormat, gpuAcceleration, autostart, pdfPreview, pdfHeight, titleMode, hideTitleInBody, showLineNumbers, defaultViewMode, showTrayIcon, closeToTray, enableWikiLinks, showNoteDates, restoreLastSession)
 			.catch((e) => console.error('Failed to save general settings:', e));
+	}
+
+	function selectTheme(preset: typeof themePresets[0]) {
+		$theme = preset.id;
+		setTheme(preset.id);
+		themeDropdownOpen = false;
+		selectCustomAccent(preset.accent);
 	}
 
 	function selectAccent(preset: typeof accentPresets[0]) {
@@ -1061,7 +1069,7 @@
 												<button
 													class="dropdown-item"
 													class:active={$theme === preset.id}
-													onclick={() => { $theme = preset.id; setTheme(preset.id); themeDropdownOpen = false; }}
+													onclick={() => selectTheme(preset)}
 												>
 													<span class="dropdown-preview" style="--preview-bg: {preset.bg}; --preview-sidebar: {preset.sidebar}; --preview-accent: {preset.accent}">
 														<span class="preview-sidebar"></span>
