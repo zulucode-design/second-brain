@@ -213,17 +213,46 @@
 		await focusNewNotebookInput();
 	}
 
+	function getNotebookNameSegments(name: string): string[] | null {
+		const segments = name.split('/').map((segment) => segment.trim());
+		if (segments.some((segment) => !segment || segment === '.' || segment === '..' || segment.includes('\\'))) {
+			return null;
+		}
+		return segments;
+	}
+
 	async function handleCreateNotebook() {
 		if (!newNotebookName.trim()) return;
 		try {
+			const trimmedName = newNotebookName.trim();
 			const parentRel = newNotebookParent?.relative_path ?? null;
-			await createNotebook(parentRel, newNotebookName.trim());
+			const name = parentRel ? trimmedName : getNotebookNameSegments(trimmedName)?.join('/');
+			if (!name) return;
+
+			await createNotebook(parentRel, name);
 			newNotebookName = '';
 			showNewNotebook = false;
 			newNotebookParent = null;
 			await refresh();
 		} catch (e) {
 			console.error('Failed to create notebook:', e);
+		}
+	}
+
+	function handleNewNotebookKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter') {
+			handleCreateNotebook();
+			return;
+		}
+		if (e.key === 'Escape') {
+			showNewNotebook = false;
+			newNotebookName = '';
+			newNotebookParent = null;
+			return;
+		}
+		if (e.key === 'Backspace' && newNotebookParent && newNotebookName.length === 0) {
+			e.preventDefault();
+			newNotebookParent = null;
 		}
 	}
 
@@ -657,10 +686,7 @@
 						type="text"
 						bind:value={newNotebookName}
 						placeholder={newNotebookParent ? 'Sub-notebook name...' : 'Notebook name...'}
-						onkeydown={(e) => {
-							if (e.key === 'Enter') handleCreateNotebook();
-							if (e.key === 'Escape') { showNewNotebook = false; newNotebookName = ''; newNotebookParent = null; }
-						}}
+						onkeydown={handleNewNotebookKeydown}
 					/>
 				</div>
 			{/if}
