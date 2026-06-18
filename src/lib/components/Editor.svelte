@@ -276,7 +276,7 @@
 		if (!q || q.startsWith('http://') || q.startsWith('https://') || q.startsWith('mailto:')) return [];
 		return linkSuggestTitles.filter(e => e.title.toLowerCase().includes(q)).slice(0, 8);
 	});
-	let textContextMenu = $state<{ x: number; y: number } | null>(null);
+	let textContextMenu = $state<{ x: number; y: number; submenuLeft: boolean } | null>(null);
 	let tableContextMenu = $state<{ x: number; y: number } | null>(null);
 	let tablePickerOpen = $state(false);
 	let tablePickerHover = $state({ rows: 0, cols: 0 });
@@ -3949,7 +3949,9 @@
 		if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 8;
 		if (x < 4) x = 4;
 		if (y < 4) y = 4;
-		textContextMenu = { x, y };
+		const submenuWidth = 150;
+		const submenuLeft = x + menuWidth + submenuWidth > window.innerWidth;
+		textContextMenu = { x, y, submenuLeft };
 	}
 
 	function closeTextContextMenu() {
@@ -5784,7 +5786,7 @@
 					<svg class="submenu-arrow" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 6 15 12 9 18"/></svg>
 				</button>
 				{#if ctxHeadingSubmenu}
-					<div class="text-ctx-submenu">
+					<div class="text-ctx-submenu" class:flip-left={textContextMenu?.submenuLeft}>
 						<button class:active={(editorState, editor?.isActive('heading', { level: 1 }))} onclick={() => ctxSetHeading(1)}>Heading 1</button>
 						<button class:active={(editorState, editor?.isActive('heading', { level: 2 }))} onclick={() => ctxSetHeading(2)}>Heading 2</button>
 						<button class:active={(editorState, editor?.isActive('heading', { level: 3 }))} onclick={() => ctxSetHeading(3)}>Heading 3</button>
@@ -8683,6 +8685,13 @@
 		padding: 4px;
 		min-width: 140px;
 		z-index: 1502;
+	}
+
+	.text-ctx-submenu.flip-left {
+		left: auto;
+		right: 100%;
+		margin-left: 0;
+		margin-right: 2px;
 	}
 
 	.text-ctx-submenu button {
