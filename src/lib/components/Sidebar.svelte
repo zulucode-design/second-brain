@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import {
 		notebooks,
 		notes,
@@ -37,6 +38,7 @@
 	let editValue = $state('');
 	let newNotebookName = $state('');
 	let showNewNotebook = $state(false);
+	let newNotebookInput: HTMLInputElement | null = $state(null);
 	let dropTargetPath = $state<string | null>(null);
 	let dropPosition = $state<'above' | 'into' | 'below' | null>(null);
 	let draggedNotebookPath = $state<string | null>(null);
@@ -181,6 +183,35 @@
 	}
 
 	let newNotebookParent = $state<NotebookEntry | null>(null);
+
+	async function focusNewNotebookInput() {
+		await tick();
+		newNotebookInput?.focus();
+	}
+
+	async function toggleNewNotebookInput() {
+		if (showNewNotebook) {
+			showNewNotebook = false;
+			newNotebookName = '';
+			newNotebookParent = null;
+			return;
+		}
+
+		// Unfiled Notes is the root pseudo-notebook (empty relative_path); treat it as root.
+		newNotebookParent = ($viewMode === 'notebook' && $activeNotebook?.relative_path) ? $activeNotebook : null;
+		showNewNotebook = true;
+		await focusNewNotebookInput();
+	}
+
+	async function startNewNotebookFromSidebar(e: MouseEvent) {
+		const target = e.target as HTMLElement | null;
+		if (target?.closest('button, input, .context-menu, .delete-confirm-overlay')) return;
+
+		newNotebookParent = ($viewMode === 'notebook' && $activeNotebook?.relative_path) ? $activeNotebook : null;
+		newNotebookName = '';
+		showNewNotebook = true;
+		await focusNewNotebookInput();
+	}
 
 	async function handleCreateNotebook() {
 		if (!newNotebookName.trim()) return;
@@ -486,7 +517,7 @@
 
 <svelte:window onclick={handleWindowClick} />
 
-<aside class="sidebar" class:collapsed={$sidebarCollapsed} class:mobile={isMobile}>
+<aside class="sidebar" class:collapsed={$sidebarCollapsed} class:mobile={isMobile} ondblclick={startNewNotebookFromSidebar}>
 	{#if !isMobile}
 	<div class="sidebar-header">
 		<button class="collapse-btn" onclick={() => ($sidebarCollapsed = !$sidebarCollapsed)} title="Toggle sidebar">
@@ -606,15 +637,7 @@
 							</svg>
 						</button>
 					{/if}
-					<button class="icon-btn-sm" onclick={() => {
-						if (showNewNotebook) {
-							showNewNotebook = false; newNotebookName = ''; newNotebookParent = null;
-						} else {
-							// Unfiled Notes is the root pseudo-notebook (empty relative_path); treat it as root.
-							newNotebookParent = ($viewMode === 'notebook' && $activeNotebook?.relative_path) ? $activeNotebook : null;
-							showNewNotebook = true;
-						}
-					}} title={$viewMode === 'notebook' && $activeNotebook?.relative_path ? `New notebook inside ${$activeNotebook.name}` : 'New notebook'}>
+					<button class="icon-btn-sm" onclick={toggleNewNotebookInput} title={$viewMode === 'notebook' && $activeNotebook?.relative_path ? `New notebook inside ${$activeNotebook.name}` : 'New notebook'}>
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
 						</svg>
@@ -630,6 +653,7 @@
 						</button>
 					{/if}
 					<input
+						bind:this={newNotebookInput}
 						type="text"
 						bind:value={newNotebookName}
 						placeholder={newNotebookParent ? 'Sub-notebook name...' : 'Notebook name...'}
