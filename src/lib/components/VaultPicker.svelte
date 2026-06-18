@@ -215,8 +215,8 @@
 				<span class="recent-label">Recent</span>
 				{#each recentVaults as vault}
 					<div class="vault-row">
-						<button class="vault-item" onclick={() => openSelectedVault(vault.path)}>
-							<span class="vault-name">{vault.name}</span>
+						<button class="vault-item" class:current={vault.path === $appConfig?.active_vault} onclick={() => openSelectedVault(vault.path)}>
+							<span class="vault-name">{vault.name}{#if vault.path === $appConfig?.active_vault}<span class="vault-current-badge">Current</span>{/if}</span>
 							<span class="vault-path">{vault.path}</span>
 						</button>
 						<button class="vault-remove" title="Remove from list" aria-label="Remove from list" onclick={() => forgetVault(vault.path)}>
@@ -387,6 +387,24 @@
 
 	.vault-item:hover {
 		background: var(--bg-hover);
+	}
+
+	.vault-item.current {
+		border-color: var(--accent);
+	}
+
+	.vault-current-badge {
+		display: inline-block;
+		font-size: 10px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--accent);
+		background: color-mix(in srgb, var(--accent) 12%, transparent);
+		padding: 2px 7px;
+		border-radius: 10px;
+		margin-left: 8px;
+		vertical-align: middle;
 	}
 
 	.vault-name {
