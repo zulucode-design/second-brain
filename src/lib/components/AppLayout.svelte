@@ -361,6 +361,16 @@
 				navFromPopstate = false;
 				return;
 			}
+			// If a modal is open, close it instead of navigating
+			if ($showSettings || $showInfo || $showSearch || $showCommandPalette) {
+				$showSettings = false;
+				$showInfo = false;
+				$showSearch = false;
+				$showCommandPalette = false;
+				// Re-push the current state so the next back still works
+				history.pushState({ mobileView: $mobileView, depth: historyDepth }, '');
+				return;
+			}
 			const state = e.state;
 			const targetDepth = state?.depth ?? 0;
 			historyDepth = targetDepth;
