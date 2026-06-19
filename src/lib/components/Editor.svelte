@@ -78,6 +78,7 @@
 	let fixingBlobsPromise: Promise<void> = Promise.resolve();
 	let hasPendingBlobs = false;
 	let lastSourceMode = $sourceMode;
+	let sourceSwapPending = false;
 	let linkContextMenu = $state<{ x: number; y: number; href: string; anchor: HTMLAnchorElement } | null>(null);
 	let titleWasStripped = false;
 	let strippedTitle = '';
@@ -3327,7 +3328,7 @@
 	// When editorElement appears in DOM, initialize TipTap.
 	// On mobile, pre-create editor with empty content so first note load is fast.
 	$effect(() => {
-		if (editorElement && !editor) {
+		if (editorElement && !editor && !sourceSwapPending) {
 			if (pendingContent !== null) {
 				createEditor(pendingContent);
 				pendingContent = null;
@@ -4640,12 +4641,14 @@
 				}
 			} else {
 				// Desktop: destroy old editor, wait for DOM swap, then recreate.
+				sourceSwapPending = true;
 				destroyEditor();
 				const content = sourceContent || ($activeNote?.content ?? '');
 				tick().then(() => {
 					if (editorElement && !editor) {
 						createEditor(content);
 					}
+					sourceSwapPending = false;
 				});
 			}
 		}
