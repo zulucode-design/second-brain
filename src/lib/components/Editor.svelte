@@ -4620,17 +4620,15 @@
 			// Switching TO source: fix blob images first, then extract markdown
 			if (hasPendingBlobs) {
 				hasPendingBlobs = false;
-				fixingBlobsPromise = fixBlobImages();
-			}
-			const doSwap = () => {
+				fixBlobImages().then(() => {
+					sourceContent = editor ? editorToMarkdown() : ($activeNote?.content ?? '');
+					resetSourceHistory(sourceContent);
+					lastSourceMode = true;
+				});
+			} else {
 				sourceContent = editor ? editorToMarkdown() : ($activeNote?.content ?? '');
 				resetSourceHistory(sourceContent);
 				lastSourceMode = true;
-			};
-			if (fixingBlobsPromise) {
-				fixingBlobsPromise.then(doSwap);
-			} else {
-				doSwap();
 			}
 		} else if (!isSource && lastSourceMode) {
 			lastSourceMode = false;
