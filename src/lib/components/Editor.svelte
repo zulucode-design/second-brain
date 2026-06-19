@@ -4057,7 +4057,7 @@
 			let x = event.clientX;
 			let y = event.clientY;
 			const menuWidth = 220;
-			const menuHeight = 520;
+			const menuHeight = 560;
 			if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 8;
 			if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 8;
 			if (x < 4) x = 4;
