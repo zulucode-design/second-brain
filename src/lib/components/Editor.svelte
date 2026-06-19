@@ -278,7 +278,7 @@
 		return linkSuggestTitles.filter(e => e.title.toLowerCase().includes(q)).slice(0, 8);
 	});
 	let textContextMenu = $state<{ x: number; y: number; submenuLeft: boolean } | null>(null);
-	let tableContextMenu = $state<{ x: number; y: number } | null>(null);
+	let tableContextMenu = $state<{ x: number; y: number; hasStyling: boolean } | null>(null);
 	let tablePickerOpen = $state(false);
 	let tablePickerHover = $state({ rows: 0, cols: 0 });
 	let imageToolbar = $state<{ pos: number; x: number; y: number; size: string; src: string } | null>(null);
@@ -4057,12 +4057,29 @@
 			let x = event.clientX;
 			let y = event.clientY;
 			const menuWidth = 220;
-			const menuHeight = 560;
+			const menuHeight = 600;
 			if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 8;
 			if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 8;
 			if (x < 4) x = 4;
 			if (y < 4) y = 4;
-			tableContextMenu = { x, y };
+			let hasStyling = false;
+			const $editor = editor;
+			if ($editor) {
+				const pos = $editor.view.posAtDOM(event.target as Node, 0);
+				let resolved = $editor.state.doc.resolve(pos);
+				for (let d = resolved.depth; d >= 0; d--) {
+					if (resolved.node(d).type.name === 'table') {
+						resolved.node(d).descendants((n: any) => {
+							if (n.type.name === 'tableCell' || n.type.name === 'tableHeader') {
+								if (n.attrs.backgroundColor || (n.attrs.colspan > 1) || (n.attrs.rowspan > 1)) hasStyling = true;
+							}
+							return true;
+						});
+						break;
+					}
+				}
+			}
+			tableContextMenu = { x, y, hasStyling };
 			return;
 		}
 		// Show text context menu for any right-click in editor
@@ -6005,7 +6022,7 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="table-ctx-overlay" onclick={closeTableContextMenu}>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="table-ctx-menu" style="left: {tableContextMenu.x}px; top: {tableContextMenu.y}px" onclick={(e) => e.stopPropagation()}>
+		<div class="table-ctx-menu" style="left: {tableContextMenu.x}px; top: {tableContextMenu.y}px; max-height: calc(100vh - {tableContextMenu.y}px - 8px); overflow-y: auto;" onclick={(e) => e.stopPropagation()}>
 			<button onclick={tblAddRowBefore}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h18"/><path d="M12 3v3"/><polyline points="9 4.5 12 2 15 4.5"/></svg>
 				Add Row Above
@@ -6062,11 +6079,13 @@
 				{/each}
 			</div>
 			<div class="table-ctx-sep"></div>
+			{#if tableContextMenu.hasStyling}
 			<button onclick={resetTableToMarkdown} title="Strip cell colors and merged cells, output as plain markdown">
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 11-3-6.7"/><polyline points="21 4 21 10 15 10"/></svg>
 				Reset to Markdown
 			</button>
 			<div class="table-ctx-sep"></div>
+			{/if}
 			<button class="danger" onclick={tblDeleteTable}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
 				Delete Table
