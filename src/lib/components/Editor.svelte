@@ -1461,7 +1461,7 @@
 								if (!pre) return false;
 								// Check if click is in the top-right corner (language button area)
 								const rect = pre.getBoundingClientRect();
-								if (event.clientX < rect.right - 70 || event.clientY > rect.top + 30) return false;
+								if (event.clientX < rect.right - 100 || event.clientY > rect.top + 30) return false;
 								// Find the code block position
 								const pos = view.posAtDOM(pre, 0);
 								const resolved = view.state.doc.resolve(pos);
@@ -1482,10 +1482,10 @@
 								// Virtual trigger for dropdown positioning
 								const triggerEl = document.createElement('div');
 								triggerEl.getBoundingClientRect = () => ({
-									top: rect.top + 6, bottom: rect.top + 26,
-									left: rect.right - 60, right: rect.right - 6,
-									width: 54, height: 20,
-									x: rect.right - 60, y: rect.top + 6,
+									top: rect.top + 5, bottom: rect.top + 25,
+									left: rect.right - 100, right: rect.right - 34,
+									width: 66, height: 20,
+									x: rect.right - 100, y: rect.top + 5,
 									toJSON() { return this; },
 								});
 								openCodeLangDropdown(cbPos + 1, cbNode.attrs.language || '', triggerEl as any);
@@ -7362,15 +7362,15 @@
 
 	:global(.tiptap-wrapper .tiptap .code-copy-btn) {
 		position: absolute;
-		top: 6px;
-		right: 76px;
-		padding: 3px 6px;
-		border-radius: 5px;
+		top: 5px;
+		right: 5px;
+		padding: 2px 6px;
+		border-radius: 4px;
 		background: transparent;
 		border: 1px solid transparent;
 		color: var(--text-tertiary);
 		cursor: pointer;
-		opacity: 0.35;
+		opacity: 0;
 		z-index: 2;
 		display: flex;
 		align-items: center;
@@ -7400,8 +7400,8 @@
 	:global(.tiptap-wrapper .tiptap pre)::after {
 		content: attr(data-language);
 		position: absolute;
-		top: 6px;
-		right: 6px;
+		top: 5px;
+		right: 34px;
 		padding: 2px 6px;
 		border-radius: 4px;
 		background: transparent;
@@ -7412,6 +7412,7 @@
 		opacity: 0;
 		pointer-events: none;
 		z-index: 1;
+		transition: opacity 0.15s;
 	}
 
 	:global(.tiptap-wrapper .tiptap pre[data-language=""])::after {
@@ -7419,7 +7420,7 @@
 	}
 
 	:global(.tiptap-wrapper .tiptap pre:hover)::after {
-		opacity: 0.7;
+		opacity: 1;
 	}
 
 	:global(.tiptap-wrapper .tiptap .secret-block) {
