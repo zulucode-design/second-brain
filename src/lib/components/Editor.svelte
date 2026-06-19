@@ -78,7 +78,6 @@
 	let fixingBlobsPromise: Promise<void> = Promise.resolve();
 	let hasPendingBlobs = false;
 	let lastSourceMode = $sourceMode;
-	let sourceSwapPending = false;
 	let linkContextMenu = $state<{ x: number; y: number; href: string; anchor: HTMLAnchorElement } | null>(null);
 	let titleWasStripped = false;
 	let strippedTitle = '';
@@ -3328,11 +3327,11 @@
 	// When editorElement appears in DOM, initialize TipTap.
 	// On mobile, pre-create editor with empty content so first note load is fast.
 	$effect(() => {
-		if (editorElement && !editor && !sourceSwapPending) {
+		if (editorElement && !editor) {
 			if (pendingContent !== null) {
 				createEditor(pendingContent);
 				pendingContent = null;
-			} else if (isMobile) {
+			} else if (isMobile && !lastSourceMode) {
 				createEditor('');
 			}
 		}
@@ -3393,9 +3392,6 @@
 
 	function createEditor(content: string) {
 		if (!editorElement) return;
-		// Don't call destroyEditor here — it sets editorReady=false which
-		// triggers reactivity and races with the tick().then() in the
-		// source-mode swap. Just destroy the editor instance directly.
 		if (editor) {
 			editor.destroy();
 			editor = null;
@@ -4640,15 +4636,14 @@
 					editor.commands.setContent(markdownToHtml(content));
 				}
 			} else {
-				// Desktop: destroy old editor, wait for DOM swap, then recreate.
-				sourceSwapPending = true;
+				// Desktop: destroy old editor (its DOM element is gone),
+				// wait for DOM to swap textarea→div, then create editor on new element.
 				destroyEditor();
 				const content = sourceContent || ($activeNote?.content ?? '');
 				tick().then(() => {
 					if (editorElement && !editor) {
 						createEditor(content);
 					}
-					sourceSwapPending = false;
 				});
 			}
 		}
