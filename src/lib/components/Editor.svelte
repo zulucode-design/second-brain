@@ -4634,23 +4634,23 @@
 			}
 		} else if (!isSource && lastSourceMode) {
 			lastSourceMode = false;
-			const content = sourceContent || ($activeNote?.content ?? '');
-			// Wait for Svelte to toggle display back to the editor element,
-			// then update content. The editor stays alive (no destroy/recreate).
-			tick().then(() => {
+			if (isMobile) {
+				// Mobile: editor stays in DOM, just update its content
+				const content = sourceContent || ($activeNote?.content ?? '');
 				if (editor) {
 					ignoreNextUpdate = true;
 					editor.commands.setContent(markdownToHtml(content));
-					// Force image re-render for WebViews that don't trigger loads on setContent
-					requestAnimationFrame(() => {
-						if (!editor) return;
-						editor.view.dom.querySelectorAll('img').forEach((img) => {
-							const src = img.getAttribute('src');
-							if (src) img.setAttribute('src', src);
-						});
-					});
 				}
-			});
+			} else {
+				// Desktop: destroy old editor, wait for DOM swap, then recreate.
+				destroyEditor();
+				const content = sourceContent || ($activeNote?.content ?? '');
+				tick().then(() => {
+					if (editorElement && !editor) {
+						createEditor(content);
+					}
+				});
+			}
 		}
 	});
 
