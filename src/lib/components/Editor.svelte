@@ -3283,7 +3283,7 @@
 		// Pre-process: strip list-separator comments before markdown-it.
 		// markdown-it treats <!-- --> as an HTML block start, swallowing the
 		// next line (e.g. an image) as raw HTML instead of parsing it.
-		src = src.replace(/^<!-- -->\s*$/gm, '');
+		src = src.replace(/<!-- -->/g, '');
 
 		// Pre-process: preserve blank lines before image-only lines
 		// markdown-it collapses blank lines into paragraph breaks, losing the empty paragraph.
