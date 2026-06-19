@@ -4616,36 +4616,37 @@
 		// Only act if we have a loaded note
 		if (!loadedPath) return;
 
-		if (isSource && !lastSourceMode) {
-			// Switching TO source: extract markdown from editor
-			sourceContent = editor ? editorToMarkdown() : ($activeNote?.content ?? '');
-			resetSourceHistory(sourceContent);
-			lastSourceMode = true;
-		} else if (!isSource && lastSourceMode) {
-			lastSourceMode = false;
-			if (isMobile) {
-				// Mobile: editor stays in DOM, just update its content
-				const content = sourceContent || ($activeNote?.content ?? '');
-				if (editor) {
-					ignoreNextUpdate = true;
-					editor.commands.setContent(markdownToHtml(content));
-				}
-			} else {
-				// Desktop: destroy old editor, wait for DOM swap, then recreate.
-				destroyEditor();
-				const content = sourceContent || ($activeNote?.content ?? '');
-				tick().then(() => {
-					if (editorElement && !editor) {
-						createEditor(content);
-					} else if (!editor) {
-						// editorElement not ready yet — retry next frame
-						requestAnimationFrame(() => {
-							if (editorElement && !editor) createEditor(content);
-						});
+		// untrack: prevent flushSave() (inside destroyEditor) from adding
+		// $editorDirty/$activeNote as effect dependencies, which causes
+		// the effect to re-run and race with tick().then() — resulting in
+		// the editor failing to render on every other source-mode switch.
+		untrack(() => {
+			if (isSource && !lastSourceMode) {
+				// Switching TO source: extract markdown from editor
+				sourceContent = editor ? editorToMarkdown() : ($activeNote?.content ?? '');
+				resetSourceHistory(sourceContent);
+				lastSourceMode = true;
+			} else if (!isSource && lastSourceMode) {
+				lastSourceMode = false;
+				if (isMobile) {
+					// Mobile: editor stays in DOM, just update its content
+					const content = sourceContent || ($activeNote?.content ?? '');
+					if (editor) {
+						ignoreNextUpdate = true;
+						editor.commands.setContent(markdownToHtml(content));
 					}
-				});
+				} else {
+					// Desktop: destroy old editor, wait for DOM swap, then recreate.
+					destroyEditor();
+					const content = sourceContent || ($activeNote?.content ?? '');
+					tick().then(() => {
+						if (editorElement && !editor) {
+							createEditor(content);
+						}
+					});
+				}
 			}
-		}
+		});
 	});
 
 	// Tauri drag-drop listener for OS file drops (browser DragEvent doesn't have files in Tauri)
