@@ -2671,6 +2671,57 @@
 		return result.replace(/\n{3,}/g, '\n\n').trim() + '\n';
 	}
 
+	function tableToMarkdown(table: any): string {
+		const rows: string[][] = [];
+		let hasHeader = false;
+		table.forEach((row: any) => {
+			if (row.type.name !== 'tableRow') return;
+			const cells: string[] = [];
+			row.forEach((cell: any) => {
+				if (cell.type.name === 'tableHeader') hasHeader = true;
+				cells.push(serializeInline(cell).replace(/\|/g, '\\|').replace(/\n/g, ' '));
+			});
+			rows.push(cells);
+		});
+		if (rows.length === 0) return '';
+		const colCount = Math.max(...rows.map(r => r.length));
+		const lines: string[] = [];
+		rows.forEach((row, i) => {
+			lines.push('| ' + row.join(' | ') + ' |');
+			if (i === 0 && hasHeader) {
+				lines.push('| ' + Array(colCount).fill('---').join(' | ') + ' |');
+			}
+		});
+		return lines.join('\n');
+	}
+
+	function resetTableToMarkdown() {
+		if (!editor) return;
+		const { state } = editor;
+		let { tr } = state;
+		let changed = false;
+		state.doc.descendants((node: any, pos: number) => {
+			if (node.type.name === 'tableCell' || node.type.name === 'tableHeader') {
+				if (node.attrs.backgroundColor || (node.attrs.colspan && node.attrs.colspan > 1) || (node.attrs.rowspan && node.attrs.rowspan > 1)) {
+					tr = tr.setNodeMarkup(pos, undefined, {
+						...node.attrs,
+						backgroundColor: null,
+						colspan: 1,
+						rowspan: 1,
+					});
+					changed = true;
+				}
+			}
+			return true;
+		});
+		if (changed) {
+			editor.view.dispatch(tr);
+			$editorDirty = true;
+			autoSave();
+		}
+		closeTableContextMenu();
+	}
+
 	function serializeNode(node: any): string {
 		switch (node.type.name) {
 			case 'paragraph': {
@@ -2727,11 +2778,23 @@
 			case 'pageBreak':
 				return '<div style="page-break-after: always;"></div>\n';
 			case 'table': {
-				// Preserve tables as raw HTML
-				const tempDiv = document.createElement('div');
-				const frag = DOMSerializer.fromSchema(editor!.schema).serializeNode(node);
-				tempDiv.appendChild(frag);
-				return tempDiv.innerHTML + '\n';
+				// Check if any cell has styling (background color) or if there are merged cells
+				let hasStyling = false;
+				node.descendants((child: any) => {
+					if (child.type.name === 'tableCell' || child.type.name === 'tableHeader') {
+						if (child.attrs.backgroundColor) hasStyling = true;
+						if (child.attrs.colspan && child.attrs.colspan > 1) hasStyling = true;
+						if (child.attrs.rowspan && child.attrs.rowspan > 1) hasStyling = true;
+					}
+					return false;
+				});
+				if (hasStyling) {
+					const tempDiv = document.createElement('div');
+					const frag = DOMSerializer.fromSchema(editor!.schema).serializeNode(node);
+					tempDiv.appendChild(frag);
+					return tempDiv.innerHTML + '\n';
+				}
+				return tableToMarkdown(node) + '\n';
 			}
 			case 'pdfEmbed': {
 				const src = node.attrs.src || '';
@@ -5994,6 +6057,11 @@
 					></button>
 				{/each}
 			</div>
+			<div class="table-ctx-sep"></div>
+			<button onclick={resetTableToMarkdown} title="Strip cell colors and merged cells, output as plain markdown">
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 11-3-6.7"/><polyline points="21 4 21 10 15 10"/></svg>
+				Reset to Markdown
+			</button>
 			<div class="table-ctx-sep"></div>
 			<button class="danger" onclick={tblDeleteTable}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
