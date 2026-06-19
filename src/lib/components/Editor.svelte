@@ -4063,10 +4063,9 @@
 			if (x < 4) x = 4;
 			if (y < 4) y = 4;
 			let hasStyling = false;
-			const $editor = editor;
-			if ($editor) {
-				const pos = $editor.view.posAtDOM(event.target as Node, 0);
-				let resolved = $editor.state.doc.resolve(pos);
+			if (editor) {
+				const pos = editor.view.posAtDOM(event.target as Node, 0);
+				let resolved = editor.state.doc.resolve(pos);
 				for (let d = resolved.depth; d >= 0; d--) {
 					if (resolved.node(d).type.name === 'table') {
 						resolved.node(d).descendants((n: any) => {
