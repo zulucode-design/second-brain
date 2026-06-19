@@ -36,6 +36,7 @@
 
 	let editingNotebook = $state<string | null>(null);
 	let editValue = $state('');
+	let renameInput: HTMLInputElement | null = $state(null);
 	let newNotebookName = $state('');
 	let showNewNotebook = $state(false);
 	let newNotebookInput: HTMLInputElement | null = $state(null);
@@ -454,10 +455,13 @@
 		}
 	}
 
-	function startRename(nb: NotebookEntry) {
+	async function startRename(nb: NotebookEntry) {
 		contextMenu = null;
 		editingNotebook = nb.path;
 		editValue = nb.name;
+		await tick();
+		renameInput?.focus();
+		renameInput?.select();
 	}
 
 	async function handleSetIcon(nb: NotebookEntry) {
@@ -844,6 +848,7 @@
 			<input
 				type="text"
 				class="rename-input"
+				bind:this={renameInput}
 				bind:value={editValue}
 				onkeydown={(e) => {
 					if (e.key === 'Enter') handleRename(nb);
@@ -862,6 +867,12 @@
 			style="padding-left: {8 + depth * 16}px"
 			draggable="true"
 			onclick={() => selectNotebook(nb)}
+			onkeydown={(e) => {
+				if (e.key === 'F2') {
+					e.preventDefault();
+					startRename(nb);
+				}
+			}}
 			oncontextmenu={(e) => onContextMenu(e, nb)}
 			ondragstart={(e) => { draggedNotebookPath = nb.path; e.dataTransfer!.setData('text/plain', nb.path); e.dataTransfer!.effectAllowed = 'move'; }}
 			ondragend={() => { draggedNotebookPath = null; dropPosition = null; }}

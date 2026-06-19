@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import {
 		notes,
 		sortedNotes,
@@ -143,6 +144,7 @@
 	let sortMenu = $state<{ x: number; y: number } | null>(null);
 	let editingNote = $state<string | null>(null);
 	let editValue = $state('');
+	let renameInput: HTMLInputElement | null = $state(null);
 	let movePickerNote = $state<NoteEntry | null>(null);
 	let tagEditNote = $state<NoteEntry | null>(null);
 	let tagEditTags = $state<string[]>([]);
@@ -701,10 +703,13 @@
 		contextMenu = { x, y, note };
 	}
 
-	function startRename(note: NoteEntry) {
+	async function startRename(note: NoteEntry) {
 		contextMenu = null;
 		editingNote = note.path;
 		editValue = note.meta.title;
+		await tick();
+		renameInput?.focus();
+		renameInput?.select();
 	}
 
 	function getNotebookPath(note: NoteEntry): string {
@@ -1055,6 +1060,7 @@
 					<input
 						type="text"
 						class="rename-input"
+						bind:this={renameInput}
 						bind:value={editValue}
 						onkeydown={(e) => {
 							if (e.key === 'Enter') handleRename(note);
@@ -1073,6 +1079,12 @@
 					class:qa-drag-above={$viewMode === 'quickaccess' && qaDragOver === noteIndex && qaDragFrom !== null && qaDragHalf === 'top'}
 					class:qa-drag-below={$viewMode === 'quickaccess' && qaDragOver === noteIndex && qaDragFrom !== null && qaDragHalf === 'bottom'}
 					onclick={(e) => handleNoteClick(e, note)}
+					onkeydown={(e) => {
+						if (e.key === 'F2') {
+							e.preventDefault();
+							startRename(note);
+						}
+					}}
 					ontouchstart={(e) => { if (isMobile && !isAndroid) handleTouchStart(e, note); }}
 					ontouchmove={(e) => { if (isMobile && !isAndroid) handleTouchMove(e); }}
 					ontouchend={() => { if (isMobile && !isAndroid) handleTouchEnd(); }}
