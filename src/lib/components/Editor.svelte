@@ -3280,6 +3280,11 @@
 		src = src.replace(/^([\s>]*)-\s\[ \][^\S\n]+(.+)$/gm, '$1- <tiptask checked="false">$2</tiptask>');
 		src = src.replace(/^([\s>]*)-\s\[ \][^\S\n]*$/gm, '$1- <tiptask checked="false">&nbsp;</tiptask>');
 
+		// Pre-process: strip list-separator comments before markdown-it.
+		// markdown-it treats <!-- --> as an HTML block start, swallowing the
+		// next line (e.g. an image) as raw HTML instead of parsing it.
+		src = src.replace(/<!-- -->/g, '\n');
+
 		// Pre-process: preserve blank lines before image-only lines
 		// markdown-it collapses blank lines into paragraph breaks, losing the empty paragraph.
 		// Insert a <div> marker that markdown-it passes through (html: true), then convert to <p></p>
@@ -3331,7 +3336,7 @@
 			if (pendingContent !== null) {
 				createEditor(pendingContent);
 				pendingContent = null;
-			} else if (isMobile) {
+			} else if (isMobile && !lastSourceMode) {
 				createEditor('');
 			}
 		}
@@ -3392,7 +3397,12 @@
 
 	function createEditor(content: string) {
 		if (!editorElement) return;
-		destroyEditor();
+		if (editor) {
+			editor.destroy();
+			editor = null;
+		}
+		mathObserver?.disconnect();
+		mathObserver = null;
 
 		isLargeDoc = content.length > LARGE_DOC_CHARS;
 		const html = markdownToHtml(content);
