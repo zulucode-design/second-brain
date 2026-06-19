@@ -2679,7 +2679,11 @@
 			const cells: string[] = [];
 			row.forEach((cell: any) => {
 				if (cell.type.name === 'tableHeader') hasHeader = true;
-				cells.push(serializeInline(cell).replace(/\|/g, '\\|').replace(/\n/g, ' '));
+				const cellText: string[] = [];
+				cell.forEach((p: any) => {
+					cellText.push(serializeInline(p));
+				});
+				cells.push(cellText.join(' ').replace(/\|/g, '\\|').replace(/\n/g, ' '));
 			});
 			rows.push(cells);
 		});
