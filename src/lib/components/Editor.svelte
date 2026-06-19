@@ -1211,10 +1211,20 @@
 	});
 
 	let codeLangDropdown = $state<{ pos: number; x: number; y: number; current: string } | null>(null);
+	let codeLangSearch = $state('');
+	let codeLangInput = $state<HTMLInputElement | null>(null);
+
+	let codeLangFiltered = $derived.by(() => {
+		if (!codeLangSearch) return codeLanguages;
+		const q = codeLangSearch.toLowerCase();
+		return codeLanguages.filter(l => l.includes(q));
+	});
 
 	function openCodeLangDropdown(pos: number, current: string, triggerEl: HTMLElement) {
 		const rect = triggerEl.getBoundingClientRect();
+		codeLangSearch = '';
 		codeLangDropdown = { pos, x: rect.right, y: rect.bottom + 4, current };
+		tick().then(() => codeLangInput?.focus());
 	}
 
 	function selectCodeLang(lang: string) {
@@ -6197,18 +6207,27 @@
 	<div class="code-lang-overlay" onclick={closeCodeLangDropdown}>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="code-lang-dropdown" style="left: {codeLangDropdown.x}px; top: {codeLangDropdown.y}px" onclick={(e) => e.stopPropagation()}>
-			<button
-				class="code-lang-option"
-				class:active={codeLangDropdown.current === ''}
-				onclick={() => selectCodeLang('')}
-			>auto</button>
-			{#each codeLanguages as lang}
+			<input class="code-lang-search" type="text" placeholder="Search..." bind:this={codeLangInput} bind:value={codeLangSearch} onkeydown={(e) => {
+				if (e.key === 'Enter' && codeLangFiltered.length > 0) selectCodeLang(codeLangFiltered[0]);
+				if (e.key === 'Escape') closeCodeLangDropdown();
+			}} />
+			{#if !codeLangSearch}
+				<button
+					class="code-lang-option"
+					class:active={codeLangDropdown.current === ''}
+					onclick={() => selectCodeLang('')}
+				>auto</button>
+			{/if}
+			{#each codeLangFiltered as lang}
 				<button
 					class="code-lang-option"
 					class:active={codeLangDropdown.current === lang}
 					onclick={() => selectCodeLang(lang)}
 				>{lang}</button>
 			{/each}
+			{#if codeLangFiltered.length === 0}
+				<div class="code-lang-empty">No match</div>
+			{/if}
 		</div>
 	</div>
 {/if}
@@ -7957,10 +7976,34 @@
 		border-radius: 8px;
 		box-shadow: var(--shadow-lg);
 		padding: 4px;
-		max-height: 280px;
+		max-height: 320px;
 		overflow-y: auto;
-		min-width: 130px;
+		min-width: 150px;
 		z-index: 2001;
+	}
+
+	.code-lang-search {
+		width: 100%;
+		box-sizing: border-box;
+		padding: 5px 8px;
+		margin-bottom: 4px;
+		border: 1px solid var(--border-color);
+		border-radius: 5px;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		font-size: 12px;
+		outline: none;
+	}
+
+	.code-lang-search:focus {
+		border-color: var(--accent);
+	}
+
+	.code-lang-empty {
+		padding: 8px;
+		text-align: center;
+		color: var(--text-tertiary);
+		font-size: 12px;
 	}
 
 	.code-lang-dropdown::-webkit-scrollbar {
