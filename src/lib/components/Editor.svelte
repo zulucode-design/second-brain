@@ -4617,19 +4617,10 @@
 		if (!loadedPath) return;
 
 		if (isSource && !lastSourceMode) {
-			// Switching TO source: fix blob images first, then extract markdown
-			if (hasPendingBlobs) {
-				hasPendingBlobs = false;
-				fixBlobImages().then(() => {
-					sourceContent = editor ? editorToMarkdown() : ($activeNote?.content ?? '');
-					resetSourceHistory(sourceContent);
-					lastSourceMode = true;
-				});
-			} else {
-				sourceContent = editor ? editorToMarkdown() : ($activeNote?.content ?? '');
-				resetSourceHistory(sourceContent);
-				lastSourceMode = true;
-			}
+			// Switching TO source: extract markdown from editor
+			sourceContent = editor ? editorToMarkdown() : ($activeNote?.content ?? '');
+			resetSourceHistory(sourceContent);
+			lastSourceMode = true;
 		} else if (!isSource && lastSourceMode) {
 			lastSourceMode = false;
 			if (isMobile) {
@@ -4646,6 +4637,11 @@
 				tick().then(() => {
 					if (editorElement && !editor) {
 						createEditor(content);
+					} else if (!editor) {
+						// editorElement not ready yet — retry next frame
+						requestAnimationFrame(() => {
+							if (editorElement && !editor) createEditor(content);
+						});
 					}
 				});
 			}
