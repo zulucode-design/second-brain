@@ -4617,10 +4617,21 @@
 		if (!loadedPath) return;
 
 		if (isSource && !lastSourceMode) {
-			// Switching TO source: extract markdown from editor
-			sourceContent = editor ? editorToMarkdown() : ($activeNote?.content ?? '');
-			resetSourceHistory(sourceContent);
-			lastSourceMode = true;
+			// Switching TO source: fix blob images first, then extract markdown
+			if (hasPendingBlobs) {
+				hasPendingBlobs = false;
+				fixingBlobsPromise = fixBlobImages();
+			}
+			const doSwap = () => {
+				sourceContent = editor ? editorToMarkdown() : ($activeNote?.content ?? '');
+				resetSourceHistory(sourceContent);
+				lastSourceMode = true;
+			};
+			if (fixingBlobsPromise) {
+				fixingBlobsPromise.then(doSwap);
+			} else {
+				doSwap();
+			}
 		} else if (!isSource && lastSourceMode) {
 			lastSourceMode = false;
 			if (isMobile) {
