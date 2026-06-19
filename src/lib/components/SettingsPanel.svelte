@@ -508,6 +508,7 @@
 	let titleMode = $state($appConfig?.title_mode ?? 'input');
 	let hideTitleInBody = $state($appConfig?.hide_title_in_body ?? false);
 	let showLineNumbers = $state($appConfig?.show_line_numbers ?? false);
+	let showLinkArrows = $state($appConfig?.show_link_arrows ?? true);
 	let defaultViewMode = $state($appConfig?.default_view_mode ?? false);
 	let showTrayIcon = $state($appConfig?.show_tray_icon ?? false);
 	let closeToTray = $state($appConfig?.close_to_tray ?? false);
@@ -565,13 +566,18 @@
 			$appConfig.title_mode = titleMode;
 			$appConfig.hide_title_in_body = hideTitleInBody;
 			$appConfig.show_line_numbers = showLineNumbers;
+			$appConfig.show_link_arrows = showLinkArrows;
 			$appConfig.default_view_mode = defaultViewMode;
 			$appConfig.show_tray_icon = showTrayIcon;
 			$appConfig.close_to_tray = closeToTray;
 			$appConfig.enable_wiki_links = enableWikiLinks;
-		}
-		setGeneralSettings(compactNotes, timeFormat, weekStart, dailyTitleFormat, gpuAcceleration, autostart, pdfPreview, pdfHeight, titleMode, hideTitleInBody, showLineNumbers, defaultViewMode, showTrayIcon, closeToTray, enableWikiLinks, showNoteDates, restoreLastSession)
+			}
+			setGeneralSettings(compactNotes, timeFormat, weekStart, dailyTitleFormat, gpuAcceleration, autostart, pdfPreview, pdfHeight, titleMode, hideTitleInBody, showLineNumbers, showLinkArrows, defaultViewMode, showTrayIcon, closeToTray, enableWikiLinks, showNoteDates, restoreLastSession)
 			.catch((e) => console.error('Failed to save general settings:', e));
+	}
+
+	function applyLinkArrows() {
+		document.documentElement.classList.toggle('no-link-arrows', !showLinkArrows);
 	}
 
 	function selectTheme(preset: typeof themePresets[0]) {
@@ -961,6 +967,15 @@
 										<span class="setting-desc">Hide the first heading when it matches the note title</span>
 									</span>
 									<button class="toggle-switch" class:on={hideTitleInBody} onclick={() => { hideTitleInBody = !hideTitleInBody; saveGeneralSettings(); }}>
+										<span class="toggle-knob"></span>
+									</button>
+								</label>
+								<label class="setting-toggle" style="margin-top: 12px;">
+									<span class="setting-label">
+										<span class="setting-name">Show link arrows</span>
+										<span class="setting-desc">Display the arrow icon after external links</span>
+									</span>
+									<button class="toggle-switch" class:on={showLinkArrows} onclick={() => { showLinkArrows = !showLinkArrows; saveGeneralSettings(); applyLinkArrows(); }}>
 										<span class="toggle-knob"></span>
 									</button>
 								</label>

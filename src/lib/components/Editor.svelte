@@ -8156,6 +8156,14 @@
 		vertical-align: 15%;
 	}
 
+	:global(html.no-link-arrows .tiptap-wrapper .tiptap a::after) {
+		content: none;
+	}
+
+	:global(html.no-link-arrows .tiptap-wrapper .tiptap a[href$=".md"]::after) {
+		content: none;
+	}
+
 	:global(.tiptap-wrapper .tiptap a[href$=".md"]::after) {
 		content: '⤴';
 	}

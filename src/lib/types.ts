@@ -67,6 +67,7 @@ export interface AppConfig {
   title_mode: string;
   hide_title_in_body: boolean;
   show_line_numbers: boolean;
+  show_link_arrows: boolean;
   backup_enabled: boolean;
   backup_frequency: string;
   backup_max_count: number;

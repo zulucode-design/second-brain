@@ -1087,6 +1087,7 @@ pub fn set_general_settings(
     title_mode: String,
     hide_title_in_body: bool,
     show_line_numbers: bool,
+    show_link_arrows: bool,
     default_view_mode: bool,
     show_tray_icon: bool,
     close_to_tray: bool,
@@ -1108,6 +1109,7 @@ pub fn set_general_settings(
     config.title_mode = title_mode;
     config.hide_title_in_body = hide_title_in_body;
     config.show_line_numbers = show_line_numbers;
+    config.show_link_arrows = show_link_arrows;
     config.default_view_mode = default_view_mode;
     config.show_tray_icon = show_tray_icon;
     config.close_to_tray = close_to_tray;
