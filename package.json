@@ -59,6 +59,7 @@
     "@tiptap/starter-kit": "^3.19.0",
     "@types/katex": "^0.16.8",
     "@types/markdown-it": "^14.1.2",
+    "highlight.js": "^11.11.1",
     "katex": "^0.16.28",
     "lowlight": "^3.3.0",
     "markdown-it": "^14.1.0",
