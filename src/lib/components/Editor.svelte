@@ -7370,7 +7370,7 @@
 		border: 1px solid transparent;
 		color: var(--text-tertiary);
 		cursor: pointer;
-		opacity: 0;
+		opacity: 0.4;
 		z-index: 2;
 		display: flex;
 		align-items: center;
@@ -7409,7 +7409,7 @@
 		font-size: 11px;
 		font-family: 'JetBrains Mono', 'Fira Code', monospace;
 		cursor: pointer;
-		opacity: 0;
+		opacity: 0.4;
 		pointer-events: none;
 		z-index: 1;
 		transition: opacity 0.15s;
