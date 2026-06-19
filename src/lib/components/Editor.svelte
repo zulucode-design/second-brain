@@ -2790,7 +2790,7 @@
 						if (child.attrs.colspan && child.attrs.colspan > 1) hasStyling = true;
 						if (child.attrs.rowspan && child.attrs.rowspan > 1) hasStyling = true;
 					}
-					return false;
+					return true;
 				});
 				if (hasStyling) {
 					const tempDiv = document.createElement('div');
