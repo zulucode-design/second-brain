@@ -23,6 +23,7 @@
 	import { Details, DetailsSummary, DetailsContent } from '@tiptap/extension-details';
 	import TextAlign from '@tiptap/extension-text-align';
 	import { common, createLowlight } from 'lowlight';
+	import powershell from 'highlight.js/lib/languages/powershell';
 	import MarkdownIt from 'markdown-it';
 	import markdownItMark from 'markdown-it-mark';
 	import markdownItSup from 'markdown-it-sup';
@@ -498,6 +499,7 @@
 	let isQuickAccess = $derived(noteRelativePath ? $quickAccessPaths.includes(noteRelativePath) : false);
 
 	const lowlight = createLowlight(common);
+	lowlight.register('powershell', powershell);
 	const codeLanguages = [...lowlight.listLanguages(), 'mermaid'].sort();
 	const mdit = MarkdownIt({ html: true, linkify: false, breaks: false })
 		.use(markdownItMark)
