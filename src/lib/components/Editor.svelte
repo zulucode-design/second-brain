@@ -4634,24 +4634,23 @@
 			}
 		} else if (!isSource && lastSourceMode) {
 			lastSourceMode = false;
-			// Both desktop and mobile: keep editor alive, just update content.
-			// Destroying/recreating the editor on desktop caused images not to
-			// render on the first switch back from source mode.
 			const content = sourceContent || ($activeNote?.content ?? '');
-			if (editor) {
-				ignoreNextUpdate = true;
-				editor.commands.setContent(markdownToHtml(content));
-				// Force a re-render of images that may not load after setContent
-				requestAnimationFrame(() => {
-					if (!editor) return;
-					editor.view.dom.querySelectorAll('img').forEach((img) => {
-						const src = img.getAttribute('src');
-						if (src) {
-							img.setAttribute('src', src);
-						}
+			// Wait for Svelte to toggle display back to the editor element,
+			// then update content. The editor stays alive (no destroy/recreate).
+			tick().then(() => {
+				if (editor) {
+					ignoreNextUpdate = true;
+					editor.commands.setContent(markdownToHtml(content));
+					// Force image re-render for WebViews that don't trigger loads on setContent
+					requestAnimationFrame(() => {
+						if (!editor) return;
+						editor.view.dom.querySelectorAll('img').forEach((img) => {
+							const src = img.getAttribute('src');
+							if (src) img.setAttribute('src', src);
+						});
 					});
-				});
-			}
+				}
+			});
 		}
 	});
 
