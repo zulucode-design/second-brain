@@ -6210,7 +6210,7 @@
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="code-lang-dropdown" style="left: {codeLangDropdown.x}px; top: {codeLangDropdown.y}px" onclick={(e) => e.stopPropagation()}>
 			<input class="code-lang-search" type="text" placeholder="Search..." bind:this={codeLangInput} bind:value={codeLangSearch} onkeydown={(e) => {
-				if (e.key === 'Enter' && codeLangFiltered.length > 0) selectCodeLang(codeLangFiltered[0]);
+				if (e.key === 'Enter' && codeLangFiltered.length > 0) { e.preventDefault(); e.stopPropagation(); selectCodeLang(codeLangFiltered[0]); }
 				if (e.key === 'Escape') closeCodeLangDropdown();
 			}} />
 			{#if !codeLangSearch}
