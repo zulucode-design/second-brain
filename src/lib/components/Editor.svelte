@@ -4634,22 +4634,22 @@
 			}
 		} else if (!isSource && lastSourceMode) {
 			lastSourceMode = false;
-			if (isMobile) {
-				// Mobile: editor stays in DOM, just update its content
-				const content = sourceContent || ($activeNote?.content ?? '');
-				if (editor) {
-					ignoreNextUpdate = true;
-					editor.commands.setContent(markdownToHtml(content));
-				}
-			} else {
-				// Desktop: destroy old editor (its DOM element is gone),
-				// wait for DOM to swap textarea→div, then create editor on new element.
-				destroyEditor();
-				const content = sourceContent || ($activeNote?.content ?? '');
-				tick().then(() => {
-					if (editorElement && !editor) {
-						createEditor(content);
-					}
+			// Both desktop and mobile: keep editor alive, just update content.
+			// Destroying/recreating the editor on desktop caused images not to
+			// render on the first switch back from source mode.
+			const content = sourceContent || ($activeNote?.content ?? '');
+			if (editor) {
+				ignoreNextUpdate = true;
+				editor.commands.setContent(markdownToHtml(content));
+				// Force a re-render of images that may not load after setContent
+				requestAnimationFrame(() => {
+					if (!editor) return;
+					editor.view.dom.querySelectorAll('img').forEach((img) => {
+						const src = img.getAttribute('src');
+						if (src) {
+							img.setAttribute('src', src);
+						}
+					});
 				});
 			}
 		}
