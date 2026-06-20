@@ -55,6 +55,7 @@ export interface AppConfig {
   font_family: string | null;
   line_height: number | null;
   ui_scale: number | null;
+  content_width: number | null;
   compact_notes: boolean;
   show_note_dates: boolean;
   time_format: string;

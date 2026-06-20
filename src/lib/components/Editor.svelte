@@ -7433,7 +7433,8 @@
 		resize: none;
 		outline: none;
 		padding: 0 0 var(--editor-scroll-past-end, 65vh);
-		margin: 0;
+		margin: 0 auto;
+		max-width: var(--editor-content-width, none);
 		user-select: text;
 		/* Wrap long lines instead of horizontal-scrolling (matches mobile). (issue #100) */
 		white-space: pre-wrap;
@@ -7447,6 +7448,9 @@
 		   Keep no-wrap (horizontal scroll) whenever line numbers are on. (issue #100) */
 		white-space: pre;
 		overflow-x: auto;
+		/* The line-number gutter is pinned to the left edge, so don't center/cap here. (#137) */
+		max-width: none;
+		margin: 0;
 	}
 
 	.line-numbers-clip {
@@ -7479,6 +7483,12 @@
 	.tiptap-wrapper {
 		height: 100%;
 		user-select: text;
+		/* Optional reading-width cap (Settings > Styling > Note Width). Default `none` = full
+		   width; when set, the text column is capped and centered. Scrollbar stays at the
+		   panel edge because only the inner content is constrained, not .editor-body. (#137) */
+		max-width: var(--editor-content-width, none);
+		margin-left: auto;
+		margin-right: auto;
 	}
 
 	:global(.tiptap-wrapper .tiptap) {

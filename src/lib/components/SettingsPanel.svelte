@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { showSettings, theme, appConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall } from '$lib/stores/app';
-	import { setTheme, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow } from '$lib/api';
+	import { setTheme, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow } from '$lib/api';
 	import { darkThemes } from '$lib/platform';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
@@ -477,12 +477,20 @@
 		{ label: '200%', value: 2 },
 	];
 
+	const contentWidthPresets: { label: string; value: number | null }[] = [
+		{ label: 'Narrow', value: 600 },
+		{ label: 'Medium', value: 760 },
+		{ label: 'Wide', value: 960 },
+		{ label: 'Full', value: null },
+	];
+
 	let activeAccent = $state($appConfig?.accent_color ?? 'Indigo');
 	let customAccentColor = $state(($appConfig?.accent_color?.startsWith('#') ? $appConfig.accent_color : null) ?? '#5b6abf');
 	let activeFontSize = $state($appConfig?.font_size ?? 14);
 	let activeFontFamily = $state($appConfig?.font_family ?? 'system');
 	let activeLineHeight = $state($appConfig?.line_height ?? 1.6);
 	let activeUiScale = $state($appConfig?.ui_scale ?? 1);
+	let activeContentWidth = $state<number | null>($appConfig?.content_width ?? null);
 	let themeDropdownOpen = $state(false);
 	let accentDropdownOpen = $state(false);
 	let activeThemePreset = $derived(themePresets.find(p => p.id === $theme) ?? themePresets[0]);
@@ -681,6 +689,17 @@
 		}
 	}
 
+	function selectContentWidth(value: number | null) {
+		activeContentWidth = value;
+		applyContentWidth(value);
+		if ($appConfig) $appConfig.content_width = value;
+		setContentWidth(value).catch((e) => console.error('Failed to save content width:', e));
+	}
+
+	function applyContentWidth(value: number | null) {
+		document.documentElement.style.setProperty('--editor-content-width', value ? `${value}px` : 'none');
+	}
+
 	function clickOutside(node: HTMLElement, callback: () => void) {
 		function handle(e: MouseEvent) {
 			if (!node.contains(e.target as Node)) callback();
@@ -731,6 +750,11 @@
 		if (savedLineHeight) {
 			activeLineHeight = savedLineHeight;
 			applyLineHeight(savedLineHeight);
+		}
+		const savedContentWidth = $appConfig?.content_width;
+		if (savedContentWidth) {
+			activeContentWidth = savedContentWidth;
+			applyContentWidth(savedContentWidth);
 		}
 		// Sync general settings
 		if ($appConfig) {
@@ -1182,6 +1206,24 @@
 										{/each}
 									</div>
 									<p class="setting-hint">Zooms the whole app: every panel, menu, and the editor. Use Default (100%) to reset.</p>
+								</div>
+							{/if}
+
+							{#if !isMobile}
+								<div class="settings-section">
+									<h3>Note Width</h3>
+									<div class="font-size-options">
+										{#each contentWidthPresets as preset}
+											<button
+												class="font-size-btn"
+												class:active={activeContentWidth === preset.value}
+												onclick={() => selectContentWidth(preset.value)}
+											>
+												<span class="font-size-label">{preset.label}</span>
+											</button>
+										{/each}
+									</div>
+									<p class="setting-hint">Caps the width of the note text for easier reading on wide screens; the column stays centered. Most noticeable in Focus Mode. "Full" uses the entire width.</p>
 								</div>
 							{/if}
 

@@ -138,6 +138,9 @@
 			if (config.line_height) {
 				document.documentElement.style.setProperty('--editor-line-height', String(config.line_height));
 			}
+			if (config.content_width) {
+				document.documentElement.style.setProperty('--editor-content-width', `${config.content_width}px`);
+			}
 			if (config.font_family) {
 				const fontStacks: Record<string, string> = {
 					system: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',

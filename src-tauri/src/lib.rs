@@ -106,6 +106,7 @@ pub fn run() {
             commands::set_font_family,
             commands::set_line_height,
             commands::set_ui_scale,
+            commands::set_content_width,
             commands::get_notebooks,
             commands::count_root_notes,
             commands::create_notebook,

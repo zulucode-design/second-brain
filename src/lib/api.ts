@@ -52,6 +52,10 @@ export async function setUiScale(scale: number): Promise<void> {
   return invoke("set_ui_scale", { scale });
 }
 
+export async function setContentWidth(width: number | null): Promise<void> {
+  return invoke("set_content_width", { width });
+}
+
 export async function getNotebooks(): Promise<NotebookEntry[]> {
   return invoke("get_notebooks");
 }

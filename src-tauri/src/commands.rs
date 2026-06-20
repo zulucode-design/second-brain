@@ -122,6 +122,14 @@ pub fn set_ui_scale(state: State<'_, AppState>, scale: f64) -> Result<(), String
     Ok(())
 }
 
+#[tauri::command]
+pub fn set_content_width(state: State<'_, AppState>, width: Option<u32>) -> Result<(), String> {
+    let mut config = state.config.lock().map_err(|e| e.to_string())?;
+    config.content_width = width;
+    save_app_config(&config)?;
+    Ok(())
+}
+
 // ── Notebooks ──
 
 #[tauri::command]

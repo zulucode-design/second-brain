@@ -72,6 +72,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub ui_scale: Option<f64>,
     #[serde(default)]
+    pub content_width: Option<u32>,
+    #[serde(default)]
     pub compact_notes: bool,
     #[serde(default = "default_true")]
     pub show_note_dates: bool,
@@ -205,6 +207,7 @@ impl Default for AppConfig {
             font_family: None,
             line_height: None,
             ui_scale: None,
+            content_width: None,
             compact_notes: false,
             show_note_dates: true,
             time_format: "relative".to_string(),
