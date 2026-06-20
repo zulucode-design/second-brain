@@ -339,14 +339,29 @@ impl WebdavClient {
         Ok(())
     }
 
-    fn put_with_dirs(
+    /// Read a file's authoritative remote etag via a Depth-0 PROPFIND. The PUT-response
+    /// etag is unreliable across WebDAV servers (some omit it, some differ in format from
+    /// the getetag PROPFIND returns), so we always source the manifest etag from PROPFIND
+    /// to keep it consistent with future listings. (issue #147)
+    fn etag_for(&self, relpath: &str) -> String {
+        self.propfind(relpath, "0")
+            .ok()
+            .and_then(|es| es.into_iter().find(|e| !e.is_dir).map(|e| e.etag))
+            .unwrap_or_default()
+    }
+
+    /// PUT a file (creating parent collections first), then read back its authoritative
+    /// etag via PROPFIND. Returns the PROPFIND etag (empty if the server exposes no
+    /// getetag), NOT the PUT-response etag, which is unreliable across servers. (issue #147)
+    fn upload(
         &self,
         relpath: &str,
         bytes: &[u8],
         created: &mut HashSet<String>,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<String, String> {
         self.ensure_dirs(relpath, created)?;
-        self.put(relpath, bytes)
+        self.put(relpath, bytes)?; // PUT-response etag intentionally discarded
+        Ok(self.etag_for(relpath))
     }
 }
 
@@ -511,12 +526,12 @@ fn apply_changes(
                     );
                 } else if local_changed && !remote_changed {
                     let bytes = fs::read(&lf.path).map_err(|e| e.to_string())?;
-                    let etag = client.put_with_dirs(key, &bytes, &mut created)?;
+                    let etag = client.upload(key, &bytes, &mut created)?;
                     new_m.files.insert(
                         key.clone(),
                         ManifestEntry {
                             local_hash: lf.hash.clone(),
-                            remote_etag: etag.unwrap_or_else(|| re.clone()),
+                            remote_etag: etag,
                         },
                     );
                     sum.uploaded += 1;
@@ -556,12 +571,12 @@ fn apply_changes(
                         );
                         let ckey = conflict_relpath(key, &stamp);
                         write_local(vault_path, &ckey, &lbytes)?;
-                        let cetag = client.put_with_dirs(&ckey, &lbytes, &mut created)?;
+                        let cetag = client.upload(&ckey, &lbytes, &mut created)?;
                         new_m.files.insert(
                             ckey,
                             ManifestEntry {
                                 local_hash: sha256_hex(&lbytes),
-                                remote_etag: cetag.unwrap_or_default(),
+                                remote_etag: cetag,
                             },
                         );
                         sum.conflicts += 1;
@@ -572,12 +587,12 @@ fn apply_changes(
                 None => {
                     // new local -> upload
                     let bytes = fs::read(&lf.path).map_err(|e| e.to_string())?;
-                    let etag = client.put_with_dirs(key, &bytes, &mut created)?;
+                    let etag = client.upload(key, &bytes, &mut created)?;
                     new_m.files.insert(
                         key.clone(),
                         ManifestEntry {
                             local_hash: lf.hash.clone(),
-                            remote_etag: etag.unwrap_or_default(),
+                            remote_etag: etag,
                         },
                     );
                     sum.uploaded += 1;
@@ -586,12 +601,12 @@ fn apply_changes(
                     if me.local_hash != lf.hash {
                         // remote deleted but local edited -> resurrect (upload)
                         let bytes = fs::read(&lf.path).map_err(|e| e.to_string())?;
-                        let etag = client.put_with_dirs(key, &bytes, &mut created)?;
+                        let etag = client.upload(key, &bytes, &mut created)?;
                         new_m.files.insert(
                             key.clone(),
                             ManifestEntry {
                                 local_hash: lf.hash.clone(),
-                                remote_etag: etag.unwrap_or_default(),
+                                remote_etag: etag,
                             },
                         );
                         sum.uploaded += 1;
