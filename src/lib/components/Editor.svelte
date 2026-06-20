@@ -2981,11 +2981,63 @@
 		// Only steal focus when navigating (Enter/Shift+Enter), not while typing
 		if (focusTextarea) sourceElement.focus();
 		sourceElement.setSelectionRange(match.from, match.to);
-		// Scroll the match into view
-		const linesBefore = sourceContent.substring(0, match.from).split('\n').length;
+		scrollSourceToOffset(match.from);
+	}
+
+	// Centre the source textarea's viewport on the line containing `offset`.
+	function scrollSourceToOffset(offset: number) {
+		if (!sourceElement) return;
+		const linesBefore = sourceContent.substring(0, offset).split('\n').length;
 		const lineHeight = parseFloat(getComputedStyle(sourceElement).lineHeight) || 20;
-		const targetScroll = (linesBefore - 1) * lineHeight - sourceElement.clientHeight / 2;
-		sourceElement.scrollTop = Math.max(0, targetScroll);
+		sourceElement.scrollTop = Math.max(0, (linesBefore - 1) * lineHeight - sourceElement.clientHeight / 2);
+	}
+
+	// ── Caret carry-over between the rich editor and the markdown source view (issue #125) ──
+	// The caret is a ProseMirror doc position in one mode and a character offset in the other,
+	// and the markdown<->doc conversion is lossy, so rather than invert the conversion we anchor
+	// on VISIBLE TEXT. `scanAlign` walks the markdown source against the doc's plain text (its
+	// non-whitespace characters); markup characters don't match the next expected visible char and
+	// are skipped, so the scan locks onto real words and self-resynchronises. This stays correct
+	// even at the end of a long note and is decoupled from how serialization happens to format.
+	//   - stopAtNw >= 0: stop once that many visible chars have matched -> srcOffset is the source
+	//     position just past them (maps a doc caret to a source offset).
+	//   - limit >= 0: stop at source index `limit` -> nwCount is how many visible chars precede it
+	//     (maps a source caret to a doc visible-char count).
+	function scanAlign(source: string, docNonWs: string, opts: { limit?: number; stopAtNw?: number }): { srcOffset: number; nwCount: number } {
+		const limit = opts.limit ?? -1;
+		const stopAtNw = opts.stopAtNw ?? -1;
+		if (stopAtNw === 0) return { srcOffset: 0, nwCount: 0 };
+		let k = 0;
+		let i = 0;
+		for (; i < source.length; i++) {
+			if (limit >= 0 && i >= limit) break;
+			const c = source[i];
+			if (c === ' ' || c === '\n' || c === '\t' || c === '\r') continue;
+			if (c === docNonWs[k]) {
+				k++;
+				if (stopAtNw >= 0 && k >= stopAtNw) { i++; break; }
+			}
+		}
+		return { srcOffset: i, nwCount: k };
+	}
+
+	// The whole editor doc as plain text with whitespace removed (the alignment alphabet).
+	function docNonWhitespace(): string {
+		if (!editor) return '';
+		return editor.state.doc.textBetween(0, editor.state.doc.content.size, '\n', '').replace(/\s/g, '');
+	}
+
+	// Editor doc position just after the `targetNw`-th non-whitespace character.
+	function docPosForNonWsCount(doc: any, targetNw: number): number {
+		if (targetNw <= 0) return 0;
+		const nwAt = (pos: number) => doc.textBetween(0, pos, '\n', '').replace(/\s/g, '').length;
+		let lo = 0;
+		let hi = doc.content.size;
+		while (lo < hi) {
+			const mid = (lo + hi) >> 1;
+			if (nwAt(mid) >= targetNw) hi = mid; else lo = mid + 1;
+		}
+		return lo;
 	}
 
 	function resetSourceHistory(content: string) {
@@ -4776,27 +4828,53 @@
 		if (!loadedPath) return;
 
 		if (isSource && !lastSourceMode) {
-			// Switching TO source: extract markdown from editor
+			// Switching TO source: extract markdown, then drop the caret on the same word (#125).
+			const caretNonWs = editor
+				? editor.state.doc.textBetween(0, editor.state.selection.from, '\n', '').replace(/\s/g, '').length
+				: 0;
+			const docNonWs = docNonWhitespace();
 			sourceContent = editor ? editorToMarkdown() : ($activeNote?.content ?? '');
 			resetSourceHistory(sourceContent);
 			lastSourceMode = true;
+			const target = caretNonWs > 0 ? scanAlign(sourceContent, docNonWs, { stopAtNw: caretNonWs }).srcOffset : 0;
+			tick().then(() => {
+				if (!sourceElement) return;
+				if (!isMobile) sourceElement.focus();
+				sourceElement.setSelectionRange(target, target);
+				scrollSourceToOffset(target);
+			});
 		} else if (!isSource && lastSourceMode) {
 			lastSourceMode = false;
+			// Capture the source caret before the textarea is torn down (#125).
+			const srcOffset = sourceElement ? sourceElement.selectionStart : 0;
+			const srcText = sourceContent;
+			// Re-anchor the caret in the rich editor once it holds the new content.
+			const restoreRichCaret = () => {
+				if (!editor) return;
+				const nwBefore = scanAlign(srcText, docNonWhitespace(), { limit: srcOffset }).nwCount;
+				const pos = Math.min(docPosForNonWsCount(editor.state.doc, nwBefore), editor.state.doc.content.size);
+				const sel = TextSelection.near(editor.state.doc.resolve(pos));
+				editor.view.dispatch(editor.state.tr.setSelection(sel).scrollIntoView());
+				if (!isMobile) editor.view.focus();
+				requestAnimationFrame(() => editor?.commands.scrollIntoView());
+			};
 			if (isMobile) {
 				// Mobile: editor stays in DOM, just update its content
-				const content = sourceContent || ($activeNote?.content ?? '');
+				const content = srcText || ($activeNote?.content ?? '');
 				if (editor) {
 					ignoreNextUpdate = true;
 					editor.commands.setContent(markdownToHtml(content));
+					tick().then(restoreRichCaret);
 				}
 			} else {
 				// Desktop: destroy old editor (its DOM element is gone),
 				// wait for DOM to swap textarea→div, then create editor on new element.
 				destroyEditor();
-				const content = sourceContent || ($activeNote?.content ?? '');
+				const content = srcText || ($activeNote?.content ?? '');
 				tick().then(() => {
 					if (editorElement && !editor) {
 						createEditor(content);
+						restoreRichCaret();
 					}
 				});
 			}
