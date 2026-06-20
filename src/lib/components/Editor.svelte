@@ -3331,6 +3331,21 @@
 		// Pre-process: fix image paths with multiple leading slashes (from broken saves)
 		src = src.replace(/!\[([^\]]*)\]\((\/{2,})(home\/)/g, '![$1](/home/');
 
+		// Pre-process: normalize link/image destinations for strict-CommonMark markdown-it.
+		// Handles angle-bracket destinations <url>, optional titles ("..."/'...'/(...)), and the
+		// non-standard %20 separator some exporters (e.g. Notesnook) emit between url and title.
+		// Emits clean [label](encoded-url); titles are dropped (we never serialize them anyway).
+		src = src.replace(
+			/(!?)(\[[^\]]*\])\(<([^>]*)>(?:(?:\s|%20)*(?:"[^"]*"|'[^']*'|\([^)]*\)))?(?:\s|%20)*\)/g,
+			(_m, bang, label, url) => `${bang}${label}(${url.replace(/ /g, '%20')})`
+		);
+		// Bare destination with a trailing quoted title: [label](url "title") -> drop title, encode spaces.
+		// Stops our own space-encoder below from mangling valid CommonMark titled links.
+		src = src.replace(
+			/(!?)(\[[^\]]*\])\(([^()<>]*?)(?:\s|%20)+(?:"[^"]*"|'[^']*')(?:\s|%20)*\)/g,
+			(_m, bang, label, url) => `${bang}${label}(${url.replace(/ /g, '%20')})`
+		);
+
 		// Pre-process: percent-encode spaces in image URLs so markdown-it parses them correctly
 		src = src.replace(/!\[([^\]]*)\]\(([^)]*\s[^)]*)\)/g, (match, alt, url) => {
 			return `![${alt}](${url.replace(/ /g, '%20')})`;
