@@ -1010,6 +1010,16 @@
 		flex: 1;
 		overflow-y: auto;
 		padding: 4px 0;
+		border-top: 1px solid var(--border-light);
+	}
+
+	/* Pin the Notebooks header so its collapse/expand-all button stays reachable while the tree
+	   scrolls; the section's border-top draws the divider above it, matching the Tags section. (issue #126) */
+	.section > .section-header {
+		position: sticky;
+		top: 0;
+		z-index: 1;
+		background: var(--bg-secondary);
 	}
 
 	.tags-section {
