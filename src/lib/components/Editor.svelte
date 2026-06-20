@@ -5573,6 +5573,53 @@
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 5h8"/><path d="M13 12h8"/><path d="M13 19h8"/><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/></svg>
 				</button>
 
+				<!-- Indent / Outdent (no Tab key on mobile soft keyboards) -->
+				<button class="fmt-btn" onclick={() => {
+					if (!editor) return;
+					// Try list indent first - run() returns true if it succeeded
+					const sank = editor.chain().focus().sinkListItem('listItem').run();
+					if (!sank) {
+						const sankTask = editor.chain().focus().sinkListItem('taskItem').run();
+						if (!sankTask && editor.state.selection.empty) {
+							editor.chain().focus().insertContent('\t').run();
+						}
+					}
+				}} title="Indent">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="4" x2="21" y2="4"/><line x1="11" y1="9" x2="21" y2="9"/><line x1="11" y1="14" x2="21" y2="14"/><line x1="3" y1="19" x2="21" y2="19"/><polyline points="3 9 7 11.5 3 14"/></svg>
+				</button>
+				<button class="fmt-btn" onclick={() => {
+					if (!editor) return;
+					const lifted = editor.chain().focus().liftListItem('listItem').run();
+					if (!lifted) {
+						const liftedTask = editor.chain().focus().liftListItem('taskItem').run();
+						if (!liftedTask && editor.state.selection.empty) {
+							// Remove leading tab/spaces from current line
+							const { from } = editor.state.selection;
+							const pos = editor.state.doc.resolve(from);
+							const lineStart = pos.start(pos.depth);
+							const lineText = editor.state.doc.textBetween(lineStart, pos.end(pos.depth));
+							if (lineText.startsWith('\t')) {
+								editor.chain().focus().command(({ tr }) => {
+									tr.delete(lineStart, lineStart + 1);
+									return true;
+								}).run();
+							} else if (lineText.startsWith('    ')) {
+								editor.chain().focus().command(({ tr }) => {
+									tr.delete(lineStart, lineStart + 4);
+									return true;
+								}).run();
+							} else if (lineText.startsWith('  ')) {
+								editor.chain().focus().command(({ tr }) => {
+									tr.delete(lineStart, lineStart + 2);
+									return true;
+								}).run();
+							}
+						}
+					}
+				}} title="Outdent">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="4" x2="21" y2="4"/><line x1="11" y1="9" x2="21" y2="9"/><line x1="11" y1="14" x2="21" y2="14"/><line x1="3" y1="19" x2="21" y2="19"/><polyline points="7 9 3 11.5 7 14"/></svg>
+				</button>
+
 				<div class="fmt-sep"></div>
 
 				<!-- Highlight -->
