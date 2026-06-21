@@ -257,7 +257,7 @@
 		}
 	}
 
-	function startNewSubNotebook(nb: NotebookEntry) {
+	async function startNewSubNotebook(nb: NotebookEntry) {
 		contextMenu = null;
 		newNotebookParent = nb;
 		newNotebookName = '';
@@ -266,6 +266,7 @@
 		if ($collapsedNotebooks.includes(nb.path)) {
 			$collapsedNotebooks = $collapsedNotebooks.filter(p => p !== nb.path);
 		}
+		await focusNewNotebookInput();
 	}
 
 	async function handleRename(nb: NotebookEntry) {
