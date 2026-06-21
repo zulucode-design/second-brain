@@ -21,6 +21,7 @@ export const tasksHideCompleted = writable<boolean>(true);
 export const tasksOnlyFlagged = writable<boolean>(false);
 export const tasksSort = writable<"due" | "priority" | "note">("due");
 export const sidebarCollapsed = writable(false);
+export const notelistCollapsed = writable(false);
 export const sidebarWidth = writable(220);
 export const notelistWidth = writable(280);
 export const searchQuery = writable("");
@@ -212,6 +213,7 @@ export const vaultState = derived(
     sidebarWidth,
     notelistWidth,
     sidebarCollapsed,
+    notelistCollapsed,
     collapsedNotebooks,
     notebookSortMode,
     notebookOrder,
@@ -221,6 +223,7 @@ export const vaultState = derived(
     $sidebarWidth,
     $notelistWidth,
     $sidebarCollapsed,
+    $notelistCollapsed,
     $collapsedNotebooks,
     $notebookSortMode,
     $notebookOrder,
@@ -230,6 +233,7 @@ export const vaultState = derived(
       sidebar_width: $sidebarWidth,
       notelist_width: $notelistWidth,
       sidebar_collapsed: $sidebarCollapsed,
+      notelist_collapsed: $notelistCollapsed,
       collapsed_notebooks: $collapsedNotebooks,
       notebook_sort_mode: $notebookSortMode,
       notebook_order: $notebookOrder,

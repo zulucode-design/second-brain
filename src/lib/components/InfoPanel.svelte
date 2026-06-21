@@ -168,6 +168,7 @@
 
 						<h4 class="shortcuts-group-title">Interface</h4>
 						<div class="shortcut-row"><span class="shortcut-desc">Toggle sidebar</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>\</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Toggle notes list</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>\</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Toggle dark / light theme</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Toggle focus mode</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Toggle read-only</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd></span></div>

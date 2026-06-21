@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { listen } from '@tauri-apps/api/event';
 	import Sidebar from './Sidebar.svelte';
 	import NoteList from './NoteList.svelte';
@@ -15,6 +15,7 @@
 		sidebarWidth,
 		notelistWidth,
 		sidebarCollapsed,
+		notelistCollapsed,
 		collapsedNotebooks,
 		showSearch,
 		showCommandPalette,
@@ -200,6 +201,7 @@
 			sidebar_width: $sidebarWidth,
 			notelist_width: $notelistWidth,
 			sidebar_collapsed: $sidebarCollapsed,
+			notelist_collapsed: $notelistCollapsed,
 			collapsed_notebooks: $collapsedNotebooks,
 			notebook_sort_mode: $notebookSortMode,
 			notebook_order: $notebookOrder,
@@ -225,6 +227,19 @@
 	function handleNotelistResize(delta: number) {
 		$notelistWidth = Math.max(200, Math.min(500, $notelistWidth + delta));
 		persistState();
+	}
+
+	function revealNoteList() {
+		$notelistCollapsed = false;
+		tick().then(() => noteList?.refresh());
+	}
+
+	function toggleNoteList() {
+		const nextCollapsed = !$notelistCollapsed;
+		$notelistCollapsed = nextCollapsed;
+		if (!nextCollapsed) {
+			tick().then(() => noteList?.refresh());
+		}
 	}
 
 	// Tasks view: the editor pane shows a placeholder until a task is opened from the list.
@@ -455,9 +470,13 @@
 				openNoteWindow($activeNotePath, $activeNote.meta.title);
 			}
 		}
-		if (mod && e.key === '\\') {
+		if (mod && (code === 'Backslash' || e.key === '\\' || e.key === '|')) {
 			e.preventDefault();
-			$sidebarCollapsed = !$sidebarCollapsed;
+			if (e.shiftKey) {
+				toggleNoteList();
+			} else {
+				$sidebarCollapsed = !$sidebarCollapsed;
+			}
 			return;
 		}
 		if (mod && e.shiftKey && code === 'KeyE') {
@@ -513,6 +532,12 @@
 	});
 
 	$effect(() => {
+		$sidebarCollapsed;
+		$notelistCollapsed;
+		persistState();
+	});
+
+	$effect(() => {
 		$notebookSortMode;
 		$notebookOrder;
 		persistState();
@@ -544,6 +569,7 @@
 			$sidebarWidth = state.sidebar_width;
 			$notelistWidth = state.notelist_width;
 			$sidebarCollapsed = state.sidebar_collapsed;
+			$notelistCollapsed = state.notelist_collapsed ?? false;
 			$collapsedNotebooks = state.collapsed_notebooks ?? [];
 			$notebookSortMode = state.notebook_sort_mode === 'manual' ? 'manual' : 'alphabetical';
 			$notebookOrder = state.notebook_order ?? {};
@@ -905,11 +931,24 @@
 					<ResizeHandle onResize={handleSidebarResize} />
 				{/if}
 
-				<div class="notelist-panel" style="width: {$notelistWidth}px">
-					<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); sidebar?.refresh(); }} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
-				</div>
+				{#if !$notelistCollapsed}
+					<div class="notelist-panel" style="width: {$notelistWidth}px">
+						<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); sidebar?.refresh(); }} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
+					</div>
 
-				<ResizeHandle onResize={handleNotelistResize} />
+					<ResizeHandle onResize={handleNotelistResize} />
+				{:else}
+					<div class="notelist-restore-panel">
+						<button class="notelist-restore-btn" onclick={revealNoteList} title={`Show notes list (${isMac ? '⌘' : 'Ctrl'}+Shift+\\)`} aria-label="Show notes list">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<line x1="8" y1="6" x2="20" y2="6" />
+								<line x1="8" y1="12" x2="20" y2="12" />
+								<line x1="8" y1="18" x2="20" y2="18" />
+								<polyline points="5 8 3 12 5 16" />
+							</svg>
+						</button>
+					</div>
+				{/if}
 			{/if}
 
 			<div class="editor-panel">
@@ -957,6 +996,36 @@
 		flex-shrink: 0;
 		height: 100%;
 		overflow: hidden;
+	}
+
+	.notelist-restore-panel {
+		flex-shrink: 0;
+		width: 36px;
+		height: 100%;
+		padding-top: 8px;
+		display: flex;
+		justify-content: center;
+		background: var(--bg-primary);
+		border-right: 1px solid var(--border-color);
+	}
+
+	.notelist-restore-btn {
+		width: 24px;
+		height: 24px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		border: none;
+		border-radius: 4px;
+		background: transparent;
+		color: var(--text-tertiary);
+		cursor: pointer;
+	}
+
+	.notelist-restore-btn:hover {
+		background: var(--bg-hover);
+		color: var(--text-primary);
 	}
 
 	.editor-panel {

@@ -105,6 +105,7 @@ export interface VaultState {
   sidebar_width: number;
   notelist_width: number;
   sidebar_collapsed: boolean;
+  notelist_collapsed: boolean;
   collapsed_notebooks: string[];
   notebook_sort_mode?: string;
   notebook_order?: Record<string, number>;
