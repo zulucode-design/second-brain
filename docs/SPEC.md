@@ -67,23 +67,49 @@ headroom for local AI models on the desktop.
 
 - **Source of truth**: plain markdown files on disk, one file per note, in PARA folders.
   Human-readable, greppable, portable, no lock-in.
-- **Index**: a derived, rebuildable index for full-text search (Tantivy, inherited) and
-  vector embeddings for semantic search (to be added).
+- **Index**: two derived, rebuildable indices —
+  - **Tantivy** (inherited, unchanged) for full-text search
+  - **SQLite** (new, via `rusqlite`) holding embeddings as blobs plus semantic metadata
 - **Metadata**: YAML frontmatter (`vault/frontmatter.rs` already supports this) — the PARA
   category lives here.
 
-> **Open engineering decision**: HelixNotes uses Tantivy, not SQLite. We must decide
-> whether to keep Tantivy for full-text and add a separate embeddings store, or consolidate
-> onto SQLite (FTS5 + vector extension). Do not treat "markdown + SQLite" from early
-> planning as settled — the fork changed this premise.
+**Decided 2026-08-23: keep Tantivy, add SQLite alongside it.** Consolidating everything
+onto SQLite (FTS5 + a vector extension) would mean removing working, tested search code and
+permanently diverging from upstream, making every future upstream search change a manual
+merge conflict. The fork exists to inherit working machinery; search is the most
+load-bearing piece we inherited.
+
+Start with **brute-force cosine similarity** over embeddings stored as SQLite blobs. At
+personal-vault scale (~1k–10k notes) this is fast enough, and it avoids depending on
+`sqlite-vec`, which is still pre-1.0. Add an ANN index (usearch/HNSW, LanceDB) only if
+measurement shows it is needed.
+
+Rejected: MySQL / SQL Server / Oracle (available via the Uniandes software catalog). They
+are client-server databases requiring a running DB server on every machine, which is wrong
+for an embedded desktop app and impossible to ship to other users. Their academic licenses
+are also tied to enrollment and incompatible with a public AGPL repo.
 
 ### Version history / backup
 
-HelixNotes ships per-note version history (`history.rs`) and backup (`backup.rs`).
+**Decided 2026-08-23: no git auto-commit.** Verified redundant against three inherited
+protections:
 
-> **Open engineering decision**: evaluate whether the inherited version history already
-> satisfies the local-backup requirement, or whether to add git auto-commit-on-save on top.
-> Do not build git auto-commit before confirming the existing feature is insufficient.
+1. **Trash on delete** — `vault/operations.rs::delete_note` moves files to
+   `.helixnotes/trash/<timestamp>_<name>`; it never hard-deletes.
+2. **Per-note version history** — `history.rs` snapshots at ≥5 min intervals into
+   `.helixnotes/history/<note-id>/`, pruned to `max_versions`. Survives note deletion,
+   since `delete_note` does not remove the history directory.
+3. **Automatic whole-vault backups** — `backup.rs` zips the vault (attachments optional)
+   on a configurable interval, triggered from `AppLayout.svelte`, with restore and
+   max-count pruning.
+
+**Remaining gap to handle.** All three are bounded/pruned, and backup restore is
+all-or-nothing — it rolls back good changes along with bad. Vanilla HelixNotes never writes
+to many notes at once, but this app adds Notion sync and AI operations that can modify
+dozens of notes in a single run.
+
+Mitigation (no new dependencies): **force a vault backup immediately before each Notion
+sync run and before any bulk AI operation**, reusing the existing `create_backup` path.
 
 ---
 
