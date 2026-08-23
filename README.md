@@ -1,205 +1,58 @@
-# HelixNotes
+# Second Brain
 
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://gitlab.com/ArkHost/HelixNotes/-/blob/main/LICENSE)
-[![Latest Release](https://img.shields.io/badge/release-v1.3.4-green)](https://gitlab.com/ArkHost/HelixNotes/-/releases/v1.3.4)
-[![Website](https://img.shields.io/badge/web-helixnotes.com-purple)](https://helixnotes.com)
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS%20%7C%20Android-lightgrey)]()
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](./LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)]()
 
-A local markdown note-taking app built with Tauri, SvelteKit, and Rust.
+A personal knowledge management desktop app implementing Tiago Forte's
+*Building a Second Brain* (BASB) methodology — PARA organization, frictionless capture,
+and a local-AI-assisted knowledge graph.
 
-Your notes are stored as standard Markdown files on your local filesystem.
-No cloud, no lock-in.
+Built with Tauri 2, SvelteKit, and Rust. Notes are plain Markdown files on your
+filesystem. No lock-in.
 
-## Download (v1.3.4)
+> **Status: early development.** The design is settled and documented in
+> [`docs/SPEC.md`](./docs/SPEC.md); implementation is in progress.
 
-### Linux
+## What it does
 
-#### AppImage
+**PARA organization** — every note lives in exactly one of Projects, Areas, Resources, or
+Archives. You choose the category at capture time; the AI never files anything for you.
 
-The AppImage works only on Fedora 43+, Arch Linux, and openSUSE Tumbleweed (x86_64).
+**Frictionless capture** — a global hotkey opens a capture overlay from anywhere. Markdown
+notes, web clippings (paste a URL), files and PDFs, and voice memos with local
+transcription.
 
-[Download AppImage](https://download.helixnotes.com/releases/v1.3.4/HelixNotes_1.3.4_amd64.AppImage)
+**Knowledge graph** — a scrollable, zoomable map of the vault. Solid edges are links you
+made; dashed edges are AI-detected semantic similarity, which you can promote to real links.
 
-#### Distro-specific packages
+**Local AI, no cloud** — Ollama and whisper.cpp run on your own hardware for semantic
+search, note Q&A, transcription, and similarity detection. A weaker second machine reaches
+the stronger one over a private Tailscale network. When AI is unreachable, everything else
+keeps working.
 
-##### Fedora 43+ (DNF)
+**Notion sync** — optional two-way sync so notes are reachable from anywhere, with
+conflicts surfaced for you to resolve rather than silently overwritten.
 
-```bash
-sudo dnf config-manager addrepo \
-  --from-repofile=https://repo.arkhost.com/helixnotes.repo
-sudo dnf install helix-notes
-```
+## Development
 
-##### Debian / Ubuntu / Mint (APT)
-
-```bash
-curl -fsSL https://repo.arkhost.com/gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/arkhost.gpg && echo "deb [signed-by=/usr/share/keyrings/arkhost.gpg arch=amd64] https://repo.arkhost.com stable main" | sudo tee /etc/apt/sources.list.d/helixnotes.list && sudo apt update && sudo apt install helix-notes
-```
-
-##### Arch / Manjaro (AUR)
-
-```bash
-yay -S helixnotes-appimage-bin
-```
-
-##### Solus (EOPKG)
-
-```bash
-sudo eopkg it helixnotes
-```
-
-##### NixOS
-
-<details>
-<summary>flake.nix</summary>
-
-```nix
-{
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    helix-notes = {
-      url = "git+https://gitlab.com/ArkHost/HelixNotes";
-      # inputs.nixpkgs.follows = "nixpkgs";
-    }
-  };
-
-  outputs = {
-    nixpkgs,
-    helix-notes,
-    ...
-  }: let
-    system = "x86_64-linux";
-    pkgs = nixpkgs.legacyPackages.${system};
-  in {
-    nixosConfigurations.default = nixpkgs.lib.nixosSystem {
-      system = system;
-      specialArgs = { inherit helix-notes; };
-
-      modules = [
-        /path/to/configuration.nix
-      ];
-    };
-  };
-}
-```
-</details>
-
-
-<details>
-<summary>configuration.nix</summary>
-
-```nix
-{
-  config,
-  lib,
-  pkgs,
-  helix-notes,
-  ...
-}:
-{
-  users.users.<USERNAME> = {
-    packages = with pkgs; [
-      (helix-notes.packages.${pkgs.stdenv.hostPlatform.system}.default)
-    ];
-  };
-}
-```
-</details>
-
-#### Manual package downloads
-
-- [.deb](https://download.helixnotes.com/releases/v1.3.4/HelixNotes_1.3.4_amd64.deb) (Ubuntu 22.04+)
-- [.rpm](https://download.helixnotes.com/releases/v1.3.4/HelixNotes-1.3.4-1.x86_64.rpm)
-
-### Windows
-
-[Download Installer](https://download.helixnotes.com/releases/v1.3.4/HelixNotes_1.3.4_x64-setup.exe) (Windows 10/11)
-
-### macOS
-
-[Download .dmg (Apple Silicon)](https://download.helixnotes.com/releases/v1.3.4/HelixNotes_1.3.4_aarch64.dmg) (M-series Macs)
-
-> **"HelixNotes is damaged and can't be opened"?** The app isn't damaged. The macOS build isn't notarized by Apple yet, so Gatekeeper blocks it on Apple Silicon. Run this once in Terminal, then open it normally (you'll need to redo it after each update):
->
-> ```bash
-> xattr -cr /Applications/HelixNotes.app
-> ```
-
-### Android
-
-[Download APK](https://download.helixnotes.com/releases/v1.3.4/HelixNotes_1.3.4_android.apk)
-
----
-
-All releases: [gitlab.com/ArkHost/HelixNotes/-/releases](https://gitlab.com/ArkHost/HelixNotes/-/releases)
-
-## Features
-
-- Markdown editor with toolbar, slash commands, source mode, code highlighting
-- **Tasks view**: aggregate `- [ ]` checklists from across all notes, set priority and due dates, work in a list or a calendar (drag a task to reschedule)
-- `[[Wiki-links]]` and graph view
-- Full-text search (Tantivy), CJK-aware for Chinese, Japanese, and Korean
-- Outline panel, daily notes with calendar view, tags with autocomplete, drag-and-drop
-- Live KaTeX math editor (`/math`, `/imath`) with modal preview, double-click to edit
-- Mermaid diagrams (opt-in render, copy as PNG, save as PNG/SVG)
-- Encrypted secret blocks (`/secret`) stored as portable `helix-secret` markdown fences
-- Insert date/time (`/date`, `/time`, `/now`), color swatches (`/color`), configurable week start
-- Manual notebook sorting (drag to reorder above, into, or below)
-- External `.md` viewer mode with import-to-vault flow
-- PDF preview, Obsidian import, "Show in File Manager"
-- AI writing tools (Ollama / OpenAI-compatible / Anthropic / OpenAI)
-- **Optional WebDAV sync** to your own server (Nextcloud, ownCloud, a NAS): manual or automatic, with keep-both conflict copies
-- Version history with diffs, automatic backups
-- Multi-window, file associations, focus mode, view mode
-- Themes (light, dark, and 14 palettes), accent colors, fonts, 80-200% interface scale
-- Local plain-text files, no company cloud
-
-Full documentation: [helixnotes.com/docs](https://helixnotes.com/docs.html)
-
-## Tech Stack
-
-- **Frontend**: SvelteKit (Svelte 5) + TailwindCSS v4 + TipTap v3
-- **Backend**: Rust (Tauri 2.0) + Tantivy (search) + Notify (file watcher)
-- **Platforms**: Linux (AppImage), Windows, macOS, Android
-
-## Building from Source
-
-### Prerequisites
-
-- [Rust](https://rustup.rs/) (1.88+)
-- [Node.js](https://nodejs.org/) (18+)
-- [pnpm](https://pnpm.io/)
-- System dependencies for Tauri: see [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
-
-### Development
+Requires Rust (MSRV 1.88), Node, and pnpm.
 
 ```bash
 pnpm install
-pnpm tauri dev
+pnpm tauri:dev     # run the app
+pnpm verify        # typecheck, tests, clippy, build
 ```
 
-### Verification
+Linux builds also need the usual Tauri system dependencies (WebKitGTK and friends) — see
+the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
 
-Run the frontend checks and tests, Rust tests and lints, and production frontend build with one command:
+## Credits and license
 
-```bash
-pnpm verify
-```
+This project is a fork of **[HelixNotes](https://gitlab.com/ArkHost/HelixNotes)** by Yuri
+Karamian, a local-first Markdown note-taking app. The upstream project provides the Tauri
+shell, editor, vault handling, Tantivy search, graph renderer, and sync foundations that
+this app builds on. Enormous credit to that work.
 
-### Production Build
-
-```bash
-pnpm tauri build
-```
-
-## Screenshots
-
-![Editor](https://cdn.helixnotes.com/assets/screenshots/screenshot-1.png)
-![Tasks calendar](https://cdn.helixnotes.com/assets/screenshots/screenshot-2.png)
-![Graph view](https://cdn.helixnotes.com/assets/screenshots/screenshot-7.png)
-![Daily notes](https://cdn.helixnotes.com/assets/screenshots/screenshot-4.png)
-![Themes](https://cdn.helixnotes.com/assets/screenshots/screenshot-6.png)
-
-## License
-
-[AGPL-3.0](https://gitlab.com/ArkHost/HelixNotes/-/blob/main/LICENSE)
+Licensed under **AGPL-3.0-or-later**, inherited from upstream. See [`LICENSE`](./LICENSE).
+Modified versions that you distribute (including over a network) must also be released
+under the AGPL.
