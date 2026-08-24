@@ -168,9 +168,9 @@
 	async function checkScheduledSync() {
 		const vc = activeVaultConfig(get(appConfig));
 		if (vc?.sync_provider !== 'webdav') return;
-		const mins = vc.sync_interval_minutes ?? 0;
+		const mins = vc.schedule?.interval_minutes ?? 0;
 		if (!mins || get(syncState).running) return;
-		const last = vc.last_sync_time ? new Date(vc.last_sync_time).getTime() : 0;
+		const last = vc.schedule?.last_sync_time ? new Date(vc.schedule?.last_sync_time).getTime() : 0;
 		if (Date.now() - last >= mins * 60 * 1000) {
 			try { await syncNow(); } catch (_) {}
 		}
@@ -805,7 +805,7 @@
 		unlistenSync.push(await listen('sync-error', (event: any) => syncState.set({ running: false, error: event.payload?.error ?? 'Sync failed' })));
 
 		// Sync when the vault opens (if enabled)
-		if (syncConfigured() && activeVaultConfig(get(appConfig))?.sync_on_open) {
+		if (syncConfigured() && activeVaultConfig(get(appConfig))?.schedule?.on_open) {
 			try { await syncNow(); } catch (_) {}
 		}
 
@@ -816,7 +816,7 @@
 		// Auto-sync on note change: a save flips editorDirty true -> false. Debounce a sync.
 		unsubDirty = editorDirty.subscribe((d) => {
 			const vc = activeVaultConfig(get(appConfig));
-			if (prevDirty && !d && vc?.sync_provider === 'webdav' && vc?.sync_on_change) {
+			if (prevDirty && !d && vc?.sync_provider === 'webdav' && vc?.schedule?.on_change) {
 				if (onChangeSyncTimer) clearTimeout(onChangeSyncTimer);
 				onChangeSyncTimer = setTimeout(() => { if (!get(syncState).running) syncNow().catch(() => {}); }, 15000);
 			}

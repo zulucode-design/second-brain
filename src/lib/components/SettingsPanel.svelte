@@ -385,17 +385,17 @@
 
 	// ── WebDAV sync ──
 	let syncProvider = $state<string | null>(activeVaultConfig($appConfig)?.sync_provider ?? null);
-	let syncUrl = $state(activeVaultConfig($appConfig)?.webdav_url ?? '');
-	let syncUsername = $state(activeVaultConfig($appConfig)?.webdav_username ?? '');
-	let syncPassword = $state(activeVaultConfig($appConfig)?.webdav_password ?? '');
+	let syncUrl = $state(activeVaultConfig($appConfig)?.credentials?.webdav?.url ?? '');
+	let syncUsername = $state(activeVaultConfig($appConfig)?.credentials?.webdav?.username ?? '');
+	let syncPassword = $state(activeVaultConfig($appConfig)?.credentials?.webdav?.password ?? '');
 	let syncShowPassword = $state(false);
 	let syncTestLoading = $state(false);
 	let syncTestMessage = $state<{ type: 'success' | 'error'; text: string } | null>(null);
 	let syncRunning = $state(false);
 	let syncMessage = $state<{ type: 'success' | 'error'; text: string } | null>(null);
-	let syncOnOpen = $state(activeVaultConfig($appConfig)?.sync_on_open ?? false);
-	let syncOnChange = $state(activeVaultConfig($appConfig)?.sync_on_change ?? false);
-	let syncIntervalMinutes = $state(activeVaultConfig($appConfig)?.sync_interval_minutes ?? 0);
+	let syncOnOpen = $state(activeVaultConfig($appConfig)?.schedule?.on_open ?? false);
+	let syncOnChange = $state(activeVaultConfig($appConfig)?.schedule?.on_change ?? false);
+	let syncIntervalMinutes = $state(activeVaultConfig($appConfig)?.schedule?.interval_minutes ?? 0);
 
 	// Re-seed the sync form when the active vault changes, so Settings reflects the current vault.
 	let lastSyncVault: string | null = null;
@@ -409,12 +409,12 @@
 		lastSyncVault = identity;
 		const vc = activeVaultConfig($appConfig);
 		syncProvider = vc?.sync_provider ?? null;
-		syncUrl = vc?.webdav_url ?? '';
-		syncUsername = vc?.webdav_username ?? '';
-		syncPassword = vc?.webdav_password ?? '';
-		syncOnOpen = vc?.sync_on_open ?? false;
-		syncOnChange = vc?.sync_on_change ?? false;
-		syncIntervalMinutes = vc?.sync_interval_minutes ?? 0;
+		syncUrl = vc?.credentials?.webdav?.url ?? '';
+		syncUsername = vc?.credentials?.webdav?.username ?? '';
+		syncPassword = vc?.credentials?.webdav?.password ?? '';
+		syncOnOpen = vc?.schedule?.on_open ?? false;
+		syncOnChange = vc?.schedule?.on_change ?? false;
+		syncIntervalMinutes = vc?.schedule?.interval_minutes ?? 0;
 	});
 
 	async function saveSyncSettings() {
@@ -2477,8 +2477,8 @@
 											<span>{syncMessage.text}</span>
 										</div>
 									{/if}
-									{#if activeVaultConfig($appConfig)?.last_sync_time}
-										<p class="setting-hint">Last sync: {new Date(activeVaultConfig($appConfig)!.last_sync_time!).toLocaleString()}</p>
+									{#if activeVaultConfig($appConfig)?.schedule?.last_sync_time}
+										<p class="setting-hint">Last sync: {new Date(activeVaultConfig($appConfig)!.schedule?.last_sync_time!).toLocaleString()}</p>
 									{/if}
 									<p class="setting-hint">If a note is edited on two devices, both are kept (one as a "(conflict)" copy).</p>
 								</div>

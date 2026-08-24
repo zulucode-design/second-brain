@@ -2475,18 +2475,19 @@ mod vault_identity_tests {
 
 fn sync_config_from(config: &AppConfig) -> Result<crate::sync::WebdavConfig, String> {
     let v = active_vault_config(config)?;
-    if v.sync_provider.as_deref() != Some("webdav") {
+    if !v.sync.uses("webdav") {
         return Err("Sync is not configured".to_string());
     }
-    let url = v
-        .webdav_url
+    let webdav = &v.sync.credentials.webdav;
+    let url = webdav
+        .url
         .clone()
         .filter(|u| !u.trim().is_empty())
         .ok_or("WebDAV URL is not set")?;
     Ok(crate::sync::WebdavConfig {
         url,
-        username: v.webdav_username.clone().unwrap_or_default(),
-        password: v.webdav_password.clone().unwrap_or_default(),
+        username: webdav.username.clone().unwrap_or_default(),
+        password: webdav.password.clone().unwrap_or_default(),
     })
 }
 
@@ -2505,13 +2506,13 @@ pub fn set_sync_settings(
     let mut config = state.config.lock().map_err(|e| e.to_string())?;
     let active_index = active_vault_index(&config)?;
     let v = &mut config.vaults[active_index];
-    v.sync_provider = provider.filter(|p| !p.is_empty());
-    v.webdav_url = url.filter(|u| !u.trim().is_empty());
-    v.webdav_username = username.filter(|u| !u.is_empty());
-    v.webdav_password = password.filter(|p| !p.is_empty());
-    v.sync_on_open = sync_on_open;
-    v.sync_on_change = sync_on_change;
-    v.sync_interval_minutes = sync_interval_minutes;
+    v.sync.provider = provider.filter(|p| !p.is_empty());
+    v.sync.credentials.webdav.url = url.filter(|u| !u.trim().is_empty());
+    v.sync.credentials.webdav.username = username.filter(|u| !u.is_empty());
+    v.sync.credentials.webdav.password = password.filter(|p| !p.is_empty());
+    v.sync.schedule.on_open = sync_on_open;
+    v.sync.schedule.on_change = sync_on_change;
+    v.sync.schedule.interval_minutes = sync_interval_minutes;
     save_app_config(&config)?;
     Ok(())
 }
@@ -2588,7 +2589,7 @@ pub fn sync_now(app: AppHandle) -> Result<(), String> {
                     if let Some(vault_config) = config.vaults.iter_mut().find(|candidate| {
                         vault_matches_identity(candidate, &vault, bookmark_id.as_deref())
                     }) {
-                        vault_config.last_sync_time = Some(ts.clone());
+                        vault_config.sync.schedule.last_sync_time = Some(ts.clone());
                     }
                     let _ = save_app_config(&config);
                 }
@@ -2746,32 +2747,18 @@ pub fn load_app_config() -> AppConfig {
 // One-time migration: WebDAV sync moved from global AppConfig to per-vault VaultConfig.
 // Copy the old global settings into the active vault's config if it has none yet. Idempotent.
 fn migrate_global_sync_to_vault(config: &mut AppConfig) -> bool {
-    if config.sync_provider.is_none() && config.webdav_url.is_none() {
+    if !config.legacy_sync.is_configured() {
         return false;
     }
     let Ok(active_index) = active_vault_index(config) else {
         return false;
     };
-    let g_provider = config.sync_provider.clone();
-    let g_url = config.webdav_url.clone();
-    let g_user = config.webdav_username.clone();
-    let g_pass = config.webdav_password.clone();
-    let g_on_open = config.sync_on_open;
-    let g_on_change = config.sync_on_change;
-    let g_interval = config.sync_interval_minutes;
-    let g_last = config.last_sync_time.clone();
+    let legacy = config.legacy_sync.clone();
     let v = &mut config.vaults[active_index];
-    if v.sync_provider.is_some() || v.webdav_url.is_some() {
-        return false; // already migrated / has its own config
+    if v.sync.is_configured() {
+        return false; // already migrated, or the vault has its own settings
     }
-    v.sync_provider = g_provider;
-    v.webdav_url = g_url;
-    v.webdav_username = g_user;
-    v.webdav_password = g_pass;
-    v.sync_on_open = g_on_open;
-    v.sync_on_change = g_on_change;
-    v.sync_interval_minutes = g_interval;
-    v.last_sync_time = g_last;
+    v.sync = legacy;
     true
 }
 

@@ -8,6 +8,7 @@ mod image_proxy;
 mod search;
 mod state;
 mod sync;
+mod sync_config;
 mod types;
 mod vault;
 
