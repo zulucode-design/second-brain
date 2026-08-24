@@ -7,6 +7,7 @@ import type {
   NoteMeta,
   NotebookEntry,
   NoteTitleEntry,
+  ParaCategory,
   SearchResult,
   TrashContents,
   VaultState,
@@ -149,8 +150,20 @@ export async function duplicateNote(path: string): Promise<NoteEntry> {
   return invoke("duplicate_note", { path });
 }
 
-export async function createDailyNote(date?: string): Promise<NoteEntry> {
-  return invoke("create_daily_note", { date: date ?? null });
+/**
+ * Notes that carry no category and so cannot be filed. A non-empty result means the
+ * user has something to resolve.
+ */
+export async function listUnfiledNotes(): Promise<NoteEntry[]> {
+  return invoke("list_unfiled_notes");
+}
+
+/** Give an unfiled note a category, moving it into that category's folder. */
+export async function fileUnfiledNote(
+  notePath: string,
+  category: ParaCategory,
+): Promise<string> {
+  return invoke("file_unfiled_note", { notePath, category });
 }
 
 export async function renameNote(

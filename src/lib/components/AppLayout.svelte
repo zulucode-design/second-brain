@@ -57,13 +57,14 @@
 		syncState,
 		platformIsMobile,
 		activeVaultConfig,
+		unfiledNotes,
 	} from '$lib/stores/app';
 	import { keybindings, matchAction } from '$lib/keybindings';
 
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
 	const isMobile = $derived($platformIsMobile);
-	import { loadVaultState, saveVaultState, readNote, deleteNote, createDailyNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, getAppConfig, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, getAppConfig, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes } from '$lib/api';
 	import { darkThemes, isAndroid } from '$lib/platform';
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow } from '$lib/utils/window';
@@ -390,21 +391,17 @@
 		}
 	}
 
-	async function handleDailyNote() {
+	/**
+	 * Reload the notes that have no category.
+	 *
+	 * Called after opening a vault, because reconciliation on open may have set notes
+	 * aside, and after filing one, so the count reflects what is left.
+	 */
+	async function refreshUnfiled() {
 		try {
-			const entry = await createDailyNote();
-			const content = await readNote(entry.path);
-			editor?.flushSave();
-			$activeNote = content;
-			$activeNotePath = entry.path;
-			$editorDirty = false;
-			editor?.loadNote(entry.path, content.content);
-			$viewMode = 'daily';
-			noteList?.refresh(true);
-			sidebar?.refresh();
-			if (isMobile) $mobileView = 'editor';
+			$unfiledNotes = await listUnfiledNotes();
 		} catch (e) {
-			console.error('Failed to create/open daily note:', e);
+			console.error('Failed to load unfiled notes:', e);
 		}
 	}
 
@@ -659,6 +656,10 @@
 			lastTag = state.last_tag ?? null;
 		} catch (_) {}
 
+		// Opening the vault reconciles note locations against their categories, which may
+		// have set notes aside for want of one. Load them so the user is told.
+		await refreshUnfiled();
+
 		const restoreLastSession = $appConfig?.restore_last_session === true;
 
 		// On mobile, prefetch last-opened note so first tap is instant
@@ -850,7 +851,7 @@
 					{#if $mobileView === 'sidebar'}
 						HelixNotes
 					{:else}
-						{#if $viewMode === 'notebook'}{$activeNotebook?.name ?? 'Notebook'}{:else if $viewMode === 'tag'}#{$activeTag}{:else if $viewMode === 'quickaccess'}Quick Access{:else if $viewMode === 'daily'}Daily Notes{:else if $viewMode === 'tasks'}Tasks{:else if $viewMode === 'trash'}Trash{:else}All Notes{/if}
+						{#if $viewMode === 'notebook'}{$activeNotebook?.name ?? 'Notebook'}{:else if $viewMode === 'tag'}#{$activeTag}{:else if $viewMode === 'quickaccess'}Quick Access{:else if $viewMode === 'tasks'}Tasks{:else if $viewMode === 'unfiled'}Unfiled{:else if $viewMode === 'trash'}Trash{:else}All Notes{/if}
 					{/if}
 				</span>
 				{#if $globalUpdateAvailable && $mobileView === 'sidebar'}
@@ -937,14 +938,6 @@
 							<line x1="21" y1="21" x2="16.65" y2="16.65" />
 						</svg>
 					</button>
-						<button class="mobile-header-btn" onclick={handleDailyNote} title="Daily Note">
-						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-							<line x1="16" y1="2" x2="16" y2="6" />
-							<line x1="8" y1="2" x2="8" y2="6" />
-							<line x1="3" y1="10" x2="21" y2="10" />
-						</svg>
-					</button>
 					<button class="mobile-header-btn" onclick={() => ($showInfo = true)} title="Info">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<circle cx="12" cy="12" r="10" />
@@ -1015,7 +1008,7 @@
 				</div>
 			</div>
 		{:else}
-			<TitleBar onNewNote={createAndFocusNote} onDailyNote={handleDailyNote} onSelectNote={selectNoteFromSwitcher} />
+			<TitleBar onNewNote={createAndFocusNote} onSelectNote={selectNoteFromSwitcher} />
 		{/if}
 		<div class="app-layout">
 			{#if !$focusMode}

@@ -334,6 +334,8 @@ fn normalize_frontmatter(raw: &str, path: &Path) -> (NoteMeta, String) {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    // Imported notes arrive uncategorised. Where they land in the vault decides their
+    // category, and the caller doing the filing is what records it.
     let meta = NoteMeta {
         id,
         title,
@@ -341,6 +343,7 @@ fn normalize_frontmatter(raw: &str, path: &Path) -> (NoteMeta, String) {
         pinned,
         created,
         modified,
+        category: None,
     };
     (meta, result.content)
 }

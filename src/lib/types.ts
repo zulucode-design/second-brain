@@ -1,3 +1,13 @@
+/** The four PARA buckets. Fixed by the method, so this is not user-configurable. */
+export const PARA_CATEGORIES = [
+  "Projects",
+  "Areas",
+  "Resources",
+  "Archives",
+] as const;
+
+export type ParaCategory = (typeof PARA_CATEGORIES)[number];
+
 export interface NoteMeta {
   id: string;
   title: string;
@@ -5,6 +15,8 @@ export interface NoteMeta {
   pinned: boolean;
   created: string;
   modified: string;
+  /** `null` for notes predating PARA filing; never defaulted to a bucket. */
+  category: ParaCategory | null;
 }
 
 export interface NoteEntry {
@@ -81,7 +93,7 @@ export interface CustomTheme {
   colors: CustomThemeColors;
 }
 
-export type StartupView = "all" | "quickaccess" | "tasks" | "daily";
+export type StartupView = "all" | "quickaccess" | "tasks";
 
 export interface AppConfig {
   vaults: VaultConfig[];
@@ -230,8 +242,9 @@ export type ViewMode =
   | "trash"
   | "search"
   | "quickaccess"
-  | "daily"
-  | "tasks";
+  | "tasks"
+  /** Notes with no category, which must be filed before they can live anywhere. */
+  | "unfiled";
 
 export interface TaskItem {
   note_path: string;

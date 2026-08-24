@@ -129,6 +129,37 @@ mapping 1:1.
 **Category is chosen at capture time** — there is no unfiled Inbox stage. The user always
 files deliberately; the AI never auto-files.
 
+### The note's category is the only source of truth
+
+**Decided 2026-08-23.** A note's own `category` field decides what it is. Folders are
+only where an already-categorised note is stored, so a folder never determines, overrides,
+or implies a note's category.
+
+When the two disagree — an external program, a file sync, or a file manager put a file
+somewhere that contradicts it — **the file moves to match the note**. The note is never
+rewritten to match the folder. Reconciliation runs when a vault opens, so no other program
+can leave a note stored somewhere its category does not allow.
+
+Moving a note between categories *inside the app* is the opposite case: that is the user
+saying what the note now is, so the note's category is updated and the file follows.
+
+A note carrying no category cannot be stored anywhere, since every location implies a
+category it does not have. Those notes go to a holding area under the app's metadata
+folder and are surfaced to the user, who must give each one a category. This covers notes
+from a vault predating PARA and any note arriving without one. A missing category is never
+guessed.
+
+> An earlier draft had this the other way round, with the folder as the source of truth and
+> frontmatter as a mirror. That was rejected: it let any program that moved a file silently
+> recategorise a note.
+
+### No time-based organisation
+
+Notes are stored by category, never by when they were made. The upstream daily-notes
+feature — a `Daily` folder, a calendar view, and a "new daily note" action — is **removed
+entirely**, because it filed notes by date and produced the one kind of note with no
+category.
+
 ---
 
 ## 5. Capture UX
@@ -317,3 +348,36 @@ Carried forward into ticket breakdown — these are unresolved, not settled:
    properties, including the identity/mapping table that links a local file to a Notion
    page ID.
 6. **Tailscale**: bundled guidance vs. assumed pre-installed by the user.
+7. **Multi-vault support**: inherited, kept, and unused. See §12.
+
+---
+
+## 12. Vaults, and why they are not categories
+
+A **vault** is the whole second brain: the root folder holding the entire note collection,
+plus a `.helixnotes/` folder carrying that collection's search index, trash, attachments,
+version history, holding area, and sync settings. The four categories live *inside* one
+vault. The hierarchy is **one vault → four categories → notes**.
+
+Only one vault is open at a time: `active_vault` is a single value, and opening a vault
+replaces the active search index.
+
+**Decided 2026-08-23: keep one vault, leave multi-vault support unused.** There will only
+ever be one second brain, so the extra vaults are dead weight rather than a feature. They
+are also harmless, so removing them is not urgent.
+
+**Rejected: making each category its own vault.** It reads naturally — four categories,
+four containers — but because only one vault is open at a time it would break features
+this project has already committed to:
+
+| Committed feature | What one-vault-per-category would do to it |
+| --- | --- |
+| Knowledge graph (§7) | Could only ever draw one category, so a Project linked to a Resource becomes unrepresentable — which is the point of the graph |
+| Semantic search (§6) | Four separate indices; a question only searches the open category |
+| Capture-time similarity | Could only compare against one category |
+| Moving between categories | Becomes a cross-vault migration, losing index entry and version history |
+| Holding area for uncategorised notes | Has no home, belonging to no category |
+
+**If this is revisited**, the requirement to preserve is that search, the graph, and
+similarity all see *every* note at once, regardless of category. Any change that scopes
+them to one category at a time is the failure this rejection is about.

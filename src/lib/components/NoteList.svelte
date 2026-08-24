@@ -17,7 +17,8 @@
 		noteOrder,
 		notebooks,
 		tags,
-		mobileView
+		mobileView,
+		unfiledNotes
 	} from '$lib/stores/app';
 	import {
 		getNotes,
@@ -37,13 +38,16 @@
 		reorderQuickAccess,
 		moveNote,
 		getAllTags,
-		createDailyNote,
-		revealFile
+		revealFile,
+		listUnfiledNotes,
+		fileUnfiledNote
 	} from '$lib/api';
 	import { formatRelativeTime, formatDate, dateBucketLabel } from '$lib/utils/time';
 	import { openNoteWindow } from '$lib/utils/window';
 	import { encodeNoteDragPaths } from '$lib/utils/note-drag';
-	import type { NoteEntry, TrashNotebookEntry, SortMode, TaskItem } from '$lib/types';
+	import { showToast } from '$lib/utils/toast';
+	import type { NoteEntry, TrashNotebookEntry, SortMode, TaskItem, ParaCategory } from '$lib/types';
+	import { PARA_CATEGORIES } from '$lib/types';
 	import TasksView from './TasksView.svelte';
 	import TagSuggestInput from './TagSuggestInput.svelte';
 	import { isMobile, isAndroid } from '$lib/platform';
@@ -64,63 +68,32 @@
 	let trashNotebooks = $state<TrashNotebookEntry[]>([]);
 	let trashBusy = $state<string | null>(null);
 
-	// Calendar state for daily notes view
-	let calMonth = $state(new Date().getMonth());
-	let calYear = $state(new Date().getFullYear());
-	let dailyDates = $state<Set<string>>(new Set());
 
-	const calMonthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-	// 0 = Sunday, 1 = Monday (default). Day names + grid offset follow the setting.
-	const weekStartsOn = $derived($appConfig?.week_start === 'sunday' ? 0 : 1);
-	const DOW = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-	const calDayNames = $derived([...DOW.slice(weekStartsOn), ...DOW.slice(0, weekStartsOn)]);
+	// The note currently being filed, so its buttons can be disabled while the move runs.
+	let filingPath = $state<string | null>(null);
 
-	function calDays(): Array<{ day: number; date: string; current: boolean }> {
-		const first = new Date(calYear, calMonth, 1);
-		const lastDay = new Date(calYear, calMonth + 1, 0).getDate();
-		const startDow = (first.getDay() - weekStartsOn + 7) % 7;
-		const cells: Array<{ day: number; date: string; current: boolean }> = [];
-		for (let i = 0; i < startDow; i++) cells.push({ day: 0, date: '', current: false });
-		for (let d = 1; d <= lastDay; d++) {
-			const mm = String(calMonth + 1).padStart(2, '0');
-			const dd = String(d).padStart(2, '0');
-			const date = `${calYear}-${mm}-${dd}`;
-			const now = new Date();
-			const current = d === now.getDate() && calMonth === now.getMonth() && calYear === now.getFullYear();
-			cells.push({ day: d, date, current });
-		}
-		return cells;
-	}
-
-	function calPrev() {
-		if (calMonth === 0) { calMonth = 11; calYear--; }
-		else calMonth--;
-	}
-	function calNext() {
-		if (calMonth === 11) { calMonth = 0; calYear++; }
-		else calMonth++;
-	}
-	function calToday() {
-		const now = new Date();
-		calMonth = now.getMonth();
-		calYear = now.getFullYear();
-	}
-
-	async function handleDayClick(date: string) {
+	/**
+	 * Give an unfiled note a category, which moves it out of the holding area.
+	 *
+	 * The note is written first and moved second, so a failure leaves it in the holding
+	 * area rather than somewhere it cannot be found.
+	 */
+	async function handleFileUnder(note: NoteEntry, category: ParaCategory) {
+		filingPath = note.path;
 		try {
-			const entry = await createDailyNote(date);
-			const content = await readNote(entry.path);
-			onBeforeNoteSwitch();
-			$activeNote = content;
-			$activeNotePath = entry.path;
-			onNoteSelected(entry.path, content.content);
-			if (!dailyDates.has(date)) {
-				dailyDates = new Set([...dailyDates, date]);
+			await fileUnfiledNote(note.path, category);
+			if ($activeNotePath === note.path) {
+				$activeNotePath = null;
+				$activeNote = null;
 			}
 			noteCache.clear();
 			await refresh();
+			showToast(`Filed under ${category}`);
 		} catch (e) {
-			console.error('Failed to open daily note:', e);
+			console.error('Failed to file note:', e);
+			showToast(`Could not file the note under ${category}.`);
+		} finally {
+			filingPath = null;
 		}
 	}
 
@@ -328,7 +301,7 @@
 		if ($viewMode === 'notebook') return $activeNotebook?.name ?? 'Notebook';
 		if ($viewMode === 'tag') return `#${$activeTag}`;
 		if ($viewMode === 'quickaccess') return 'Quick Access';
-		if ($viewMode === 'daily') return 'Daily Notes';
+		if ($viewMode === 'unfiled') return 'Unfiled';
 		if ($viewMode === 'tasks') return 'Tasks';
 		if ($viewMode === 'trash') return 'Trash';
 		return 'Notes';
@@ -339,7 +312,7 @@
 
 	function cacheKey(): string {
 		if ($viewMode === 'trash') return 'trash';
-		if ($viewMode === 'daily') return 'daily';
+		if ($viewMode === 'unfiled') return 'unfiled';
 		if ($viewMode === 'quickaccess') return 'quickaccess';
 		if ($viewMode === 'tag' && $activeTag) return `tag:${$activeTag}`;
 		if ($viewMode === 'notebook' && $activeNotebook) return `nb:${$activeNotebook.path}`;
@@ -366,21 +339,10 @@
 				const trash = await getTrash();
 				$notes = trash.notes;
 				trashNotebooks = trash.notebooks;
-			} else if ($viewMode === 'daily') {
-				const vault = $appConfig?.active_vault;
-				if (vault) {
-					$notes = await getNotes(`${vault}/Daily`);
-					// Build set of dates from filenames (YYYY-MM-DD.md)
-					const dates = new Set<string>();
-					for (const n of $notes) {
-						const fname = n.path.split('/').pop() ?? '';
-						const m = fname.match(/^(\d{4}-\d{2}-\d{2})\.md$/);
-						if (m) dates.add(m[1]);
-					}
-					dailyDates = dates;
-				} else {
-					$notes = [];
-				}
+			} else if ($viewMode === 'unfiled') {
+				// Notes with no category, waiting to be filed.
+				$notes = await listUnfiledNotes();
+				$unfiledNotes = $notes;
 			} else if ($viewMode === 'quickaccess') {
 				$notes = await getQuickAccess();
 			} else if ($viewMode === 'tag' && $activeTag) {
@@ -433,14 +395,8 @@
 
 	export async function handleCreateNote() {
 		if ($viewMode === 'quickaccess' || $viewMode === 'trash') return;
-		if ($viewMode === 'daily') {
-			const today = new Date();
-			const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-			await handleDayClick(date);
-			calMonth = today.getMonth();
-			calYear = today.getFullYear();
-			return;
-		}
+		// Unfiled is a queue to empty, not a place to add to.
+		if ($viewMode === 'unfiled') return;
 		// Target: active notebook, else the open note's folder, else root.
 		let nbRelative: string | null = null;
 		if ($viewMode === 'notebook' && $activeNotebook) {
@@ -467,6 +423,13 @@
 			onNoteCreated();
 		} catch (e) {
 			console.error('Failed to create note:', e);
+			// Most often this is a note with no PARA category to file it under. Saying so
+			// beats a button that appears to do nothing.
+			showToast(
+				nbRelative
+					? 'Could not create the note.'
+					: 'Pick a category first — notes are filed under Projects, Areas, Resources, or Archives.'
+			);
 		}
 	}
 
@@ -1155,46 +1118,15 @@
 		{#if $viewMode === 'tasks'}
 			<TasksView onOpenTask={openTask} onToggleTask={onToggleTask} onSetTaskPriority={onSetTaskPriority} onSetTaskDue={onSetTaskDue} />
 		{/if}
-		{#if $viewMode === 'daily'}
-			<div class="cal">
-				<div class="cal-nav">
-					<button class="cal-nav-btn" onclick={calPrev} title="Previous month">
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-					</button>
-					<button class="cal-title" onclick={calToday}>{calMonthNames[calMonth]} {calYear}</button>
-					<button class="cal-nav-btn" onclick={calNext} title="Next month">
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-					</button>
-				</div>
-				<div class="cal-grid">
-					{#each calDayNames as name}
-						<div class="cal-head">{name}</div>
-					{/each}
-					{#each calDays() as cell}
-						{#if cell.day === 0}
-							<div class="cal-cell empty"></div>
-						{:else}
-							<button
-								class="cal-cell"
-								class:today={cell.current}
-								class:has-note={dailyDates.has(cell.date)}
-								class:active={$activeNotePath?.endsWith(`${cell.date}.md`) ?? false}
-								onclick={() => handleDayClick(cell.date)}
-							>
-								{cell.day}
-							</button>
-						{/if}
-					{/each}
-				</div>
-			</div>
-		{/if}
 
-		{#if $sortedNotes.length === 0 && $viewMode !== 'daily' && $viewMode !== 'tasks' && (!($viewMode === 'trash') || trashNotebooks.length === 0)}
+		{#if $sortedNotes.length === 0 && $viewMode !== 'tasks' && (!($viewMode === 'trash') || trashNotebooks.length === 0)}
 			<div class="empty-state">
 				{#if $viewMode === 'trash'}
 					<p>Trash is empty</p>
 				{:else if $viewMode === 'quickaccess'}
 					<p>No starred notes</p>
+				{:else if $viewMode === 'unfiled'}
+					<p>Nothing waiting to be filed</p>
 				{:else}
 					<p>No notes yet</p>
 					<button class="btn-link" onclick={handleCreateNote}>Create your first note</button>
@@ -1395,6 +1327,21 @@
 					</span>
 				{/if}
 			</button>
+			{#if $viewMode === 'unfiled'}
+				<!-- A note here cannot be stored anywhere until it has a category, so the
+				     choice is offered inline rather than buried in a menu. -->
+				<div class="file-under" role="group" aria-label="File {note.meta.title} under">
+					{#each PARA_CATEGORIES as category}
+						<button
+							class="file-under-btn"
+							disabled={filingPath === note.path}
+							onclick={() => handleFileUnder(note, category)}
+						>
+							{category}
+						</button>
+					{/each}
+				</div>
+			{/if}
 			{/if}
 		{/snippet}
 
@@ -2444,110 +2391,32 @@
 		to { transform: rotate(360deg); }
 	}
 
-	/* Calendar */
-	.cal {
-		padding: 8px 10px;
-		border-bottom: 1px solid var(--border);
-	}
-
-	.cal-nav {
+	/* Inline category picker shown under notes that have no category. */
+	.file-under {
 		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		margin-bottom: 6px;
+		flex-wrap: wrap;
+		gap: 4px;
+		padding: 0 12px 10px;
 	}
 
-	.cal-nav-btn {
-		background: none;
-		border: none;
-		cursor: pointer;
+	.file-under-btn {
+		padding: 3px 8px;
+		border: 1px solid var(--border-color);
+		border-radius: 999px;
+		background: var(--bg-secondary);
 		color: var(--text-secondary);
-		padding: 4px;
-		border-radius: 4px;
-		display: flex;
-		align-items: center;
-	}
-
-	.cal-nav-btn:hover {
-		background: var(--bg-hover);
-		color: var(--text-primary);
-	}
-
-	.cal-title {
-		font-size: 0.8rem;
-		font-weight: 600;
-		color: var(--text-primary);
-		background: none;
-		border: none;
+		font-size: 11px;
 		cursor: pointer;
-		padding: 2px 8px;
-		border-radius: 4px;
+		transition: all 0.1s;
 	}
 
-	.cal-title:hover {
-		background: var(--bg-hover);
-	}
-
-	.cal-grid {
-		display: grid;
-		grid-template-columns: repeat(7, 1fr);
-		gap: 2px;
-	}
-
-	.cal-head {
-		font-size: 0.65rem;
-		color: var(--text-secondary);
-		text-align: center;
-		padding: 2px 0;
-		font-weight: 500;
-	}
-
-	.cal-cell {
-		position: relative;
-		aspect-ratio: 1;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-size: 12px;
-		border: 1px solid transparent;
-		border-radius: 6px;
-		background: none;
-		color: var(--text-secondary);
-		cursor: pointer;
-		padding: 0;
-	}
-
-	.cal-cell.empty {
-		cursor: default;
-	}
-
-	.cal-cell:not(.empty):hover {
-		background: var(--bg-hover);
-	}
-
-	.cal-cell.today {
+	.file-under-btn:hover:not(:disabled) {
 		border-color: var(--accent);
 		color: var(--accent);
-		font-weight: 700;
 	}
 
-	.cal-cell.has-note {
-		background: color-mix(in srgb, var(--accent) 15%, transparent);
-		color: var(--text-primary);
-		font-weight: 600;
-	}
-
-	.cal-cell.has-note:hover {
-		background: color-mix(in srgb, var(--accent) 25%, transparent);
-	}
-
-	.cal-cell.active {
-		background: var(--accent);
-		color: white;
-		font-weight: 600;
-	}
-
-	.cal-cell.active:hover {
-		background: var(--accent);
+	.file-under-btn:disabled {
+		opacity: 0.5;
+		cursor: default;
 	}
 </style>
