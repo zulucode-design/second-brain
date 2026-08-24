@@ -1277,12 +1277,6 @@
 									</button>
 								</label>
 								<label class="setting-toggle">
-									<span class="setting-label"><span class="setting-name">Daily Notes</span></span>
-									<button class="toggle-switch" class:on={showDailyNotes} role="switch" aria-checked={showDailyNotes} aria-label="Show Daily Notes" onclick={() => { showDailyNotes = !showDailyNotes; saveGeneralSettings(); }}>
-										<span class="toggle-knob"></span>
-									</button>
-								</label>
-								<label class="setting-toggle">
 									<span class="setting-label"><span class="setting-name">Trash</span></span>
 									<button class="toggle-switch" class:on={showTrash} role="switch" aria-checked={showTrash} aria-label="Show Trash" onclick={() => { showTrash = !showTrash; saveGeneralSettings(); }}>
 										<span class="toggle-knob"></span>
@@ -1316,7 +1310,6 @@
 									<button class="option-btn" class:active={startupView === 'all'} onclick={() => { startupView = 'all'; saveGeneralSettings(); }}>All Notes</button>
 									<button class="option-btn" class:active={startupView === 'quickaccess'} onclick={() => { startupView = 'quickaccess'; saveGeneralSettings(); }}>Quick Access</button>
 									<button class="option-btn" class:active={startupView === 'tasks'} onclick={() => { startupView = 'tasks'; saveGeneralSettings(); }}>Tasks</button>
-									<button class="option-btn" class:active={startupView === 'daily'} onclick={() => { startupView = 'daily'; saveGeneralSettings(); }}>Daily Notes</button>
 								</div>
 								<label class="setting-toggle" style="margin-top: 12px;">
 									<span class="setting-label">

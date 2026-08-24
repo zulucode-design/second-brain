@@ -17,11 +17,11 @@ export interface StartupState {
 
 export function normalizeStartupView(value: unknown): StartupView {
   switch (value) {
-    case "daily":
     case "quickaccess":
     case "tasks":
       return value;
     default:
+      // Anything else, including a "daily" left in an older config, falls back.
       return "all";
   }
 }
@@ -29,7 +29,6 @@ export function normalizeStartupView(value: unknown): StartupView {
 function restorableListView(value: unknown): RestorableListView | null {
   switch (value) {
     case "all":
-    case "daily":
     case "quickaccess":
     case "tasks":
     case "trash":

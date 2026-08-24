@@ -1,4 +1,5 @@
 use crate::types::NoteMeta;
+use crate::vault::para::ParaCategory;
 use chrono::{NaiveDate, NaiveDateTime, Utc};
 use gray_matter::engine::YAML;
 use gray_matter::Matter;
@@ -12,6 +13,7 @@ struct RawFrontmatter {
     pinned: Option<bool>,
     created: Option<String>,
     modified: Option<String>,
+    category: Option<String>,
 }
 
 /// Try to parse a date string in multiple common formats.
@@ -64,6 +66,10 @@ pub fn parse_note(raw: &str, filename: &str) -> (NoteMeta, String) {
     // Don't generate UUID on read - empty string signals "no ID yet"
     let id = fm.id.unwrap_or_default();
 
+    // An unrecognised category value reads as uncategorised rather than erroring: a
+    // hand-edited or foreign value should not make the note unopenable.
+    let category = fm.category.as_deref().and_then(ParaCategory::from_name);
+
     let meta = NoteMeta {
         id,
         title,
@@ -71,6 +77,7 @@ pub fn parse_note(raw: &str, filename: &str) -> (NoteMeta, String) {
         pinned: fm.pinned.unwrap_or(false),
         created,
         modified,
+        category,
     };
 
     let content = result.content;
@@ -114,14 +121,22 @@ pub fn serialize_frontmatter(meta: &NoteMeta) -> String {
         )
     };
 
+    // Uncategorised notes omit the key entirely rather than writing a null, so an
+    // untouched pre-PARA vault keeps frontmatter it would have had before.
+    let category_line = match meta.category {
+        Some(c) => format!("category: {}\n", c.folder_name()),
+        None => String::new(),
+    };
+
     format!(
-        "---\nid: \"{}\"\ntitle: \"{}\"\ntags: {}\npinned: {}\ncreated: {}\nmodified: {}\n---\n",
+        "---\nid: \"{}\"\ntitle: \"{}\"\ntags: {}\npinned: {}\ncreated: {}\nmodified: {}\n{}---\n",
         meta.id,
         meta.title.replace('"', "\\\""),
         tags_str,
         meta.pinned,
         meta.created.to_rfc3339(),
         meta.modified.to_rfc3339(),
+        category_line,
     )
 }
 
@@ -180,6 +195,19 @@ pub fn merge_frontmatter(original_raw: &str, meta: &NoteMeta, body: &str) -> Str
         serde_yaml::Value::String("modified".into()),
         serde_yaml::Value::String(meta.modified.to_rfc3339()),
     );
+    // Removing the key when uncategorised keeps a stale category from outliving a move
+    // out of the PARA folders.
+    match meta.category {
+        Some(c) => {
+            mapping.insert(
+                serde_yaml::Value::String("category".into()),
+                serde_yaml::Value::String(c.folder_name().to_string()),
+            );
+        }
+        None => {
+            mapping.remove(serde_yaml::Value::String("category".into()));
+        }
+    }
 
     // Serialize the mapping back to YAML
     let yaml_str = match serde_yaml::to_string(&serde_yaml::Value::Mapping(mapping)) {
@@ -397,6 +425,79 @@ fn strip_html_and_markdown(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn meta_with_category(category: Option<ParaCategory>) -> NoteMeta {
+        NoteMeta {
+            id: "note-id".to_string(),
+            title: "A note".to_string(),
+            tags: Vec::new(),
+            pinned: false,
+            created: Utc::now(),
+            modified: Utc::now(),
+            category,
+        }
+    }
+
+    #[test]
+    fn category_survives_a_write_then_read() {
+        // The acceptance criterion "every note records its category durably" comes down
+        // to this round-trip.
+        for category in ParaCategory::ALL {
+            let raw = update_note_raw(&meta_with_category(Some(category)), "body\n");
+            let (parsed, _) = parse_note(&raw, "a-note.md");
+            assert_eq!(parsed.category, Some(category));
+        }
+    }
+
+    #[test]
+    fn an_uncategorised_note_writes_no_category_key() {
+        let raw = update_note_raw(&meta_with_category(None), "body\n");
+        assert!(!raw.contains("category"));
+        let (parsed, _) = parse_note(&raw, "a-note.md");
+        assert_eq!(parsed.category, None);
+    }
+
+    #[test]
+    fn a_note_predating_para_reads_as_uncategorised() {
+        let raw = "---\nid: \"x\"\ntitle: \"Old\"\n---\nbody\n";
+        let (parsed, _) = parse_note(raw, "old.md");
+        assert_eq!(parsed.category, None);
+        assert_eq!(parsed.title, "Old");
+    }
+
+    #[test]
+    fn an_unrecognised_category_reads_as_uncategorised_rather_than_failing() {
+        // A hand-edited or foreign value must not make the note unopenable.
+        let raw = "---\nid: \"x\"\ntitle: \"Odd\"\ncategory: Inbox\n---\nbody\n";
+        let (parsed, _) = parse_note(raw, "odd.md");
+        assert_eq!(parsed.category, None);
+        assert_eq!(parsed.title, "Odd");
+    }
+
+    #[test]
+    fn merging_sets_the_category_and_keeps_unknown_keys() {
+        let original = "---\nid: \"x\"\ntitle: \"Note\"\ncustom_field: keep-me\n---\nbody\n";
+        let merged = merge_frontmatter(
+            original,
+            &meta_with_category(Some(ParaCategory::Resources)),
+            "body\n",
+        );
+
+        assert!(merged.contains("custom_field"));
+        assert!(merged.contains("keep-me"));
+        let (parsed, _) = parse_note(&merged, "note.md");
+        assert_eq!(parsed.category, Some(ParaCategory::Resources));
+    }
+
+    #[test]
+    fn merging_drops_a_category_that_no_longer_applies() {
+        // Moving a note out of the PARA folders must not leave a stale category behind.
+        let original = "---\nid: \"x\"\ntitle: \"Note\"\ncategory: Projects\n---\nbody\n";
+        let merged = merge_frontmatter(original, &meta_with_category(None), "body\n");
+
+        let (parsed, _) = parse_note(&merged, "note.md");
+        assert_eq!(parsed.category, None);
+    }
 
     #[test]
     fn test_extract_preview_basic() {

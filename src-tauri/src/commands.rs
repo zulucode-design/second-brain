@@ -68,6 +68,21 @@ fn open_vault_path(
 ) -> Result<(), String> {
     operations::ensure_vault_structure(&path)?;
 
+    // Put any note an external program misplaced back under its own category before the
+    // search index is built, so the index never records a note at a path it is about to
+    // move away from.
+    match operations::reconcile_categories(&path) {
+        Ok(report) => {
+            if report.relocated > 0 {
+                log::info!("Moved {} notes back under their category", report.relocated);
+            }
+            if report.needs_attention() {
+                log::warn!("{} notes have no category", report.unfiled.len());
+            }
+        }
+        Err(e) => log::warn!("Could not reconcile note categories: {}", e),
+    }
+
     // Stage the search index and watcher before replacing the active runtime.
     let search = std::sync::Arc::new(SearchIndex::new(&path)?);
     #[cfg(target_os = "ios")]
@@ -714,19 +729,32 @@ pub fn create_note(
     Ok(entry)
 }
 
+/// Notes that carry no category and so cannot be filed.
+///
+/// Non-empty means the user has something to resolve: until each one is given a
+/// category, the app cannot say where it belongs.
 #[tauri::command]
-pub fn create_daily_note(
-    state: State<'_, AppState>,
-    date: Option<String>,
-) -> Result<NoteEntry, String> {
+pub fn list_unfiled_notes(state: State<'_, AppState>) -> Result<Vec<NoteEntry>, String> {
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
-    let entry =
-        operations::create_daily_note(vault_path, date.as_deref(), &config.daily_title_format)?;
+    operations::list_unfiled_notes(vault_path)
+}
 
-    index_note_bg(&state, &entry.path);
+/// Give an unfiled note a category, which moves it out of the holding area and into that
+/// category's folder.
+#[tauri::command]
+pub fn file_unfiled_note(
+    state: State<'_, AppState>,
+    note_path: String,
+    category: String,
+) -> Result<String, String> {
+    let config = state.config.lock().map_err(|e| e.to_string())?;
+    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let new_path = operations::file_unfiled_note(vault_path, &note_path, &category)?;
 
-    Ok(entry)
+    index_note_bg(&state, &new_path);
+
+    Ok(new_path)
 }
 
 #[tauri::command]

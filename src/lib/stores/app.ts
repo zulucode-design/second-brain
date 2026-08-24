@@ -26,6 +26,14 @@ export function activeVaultConfig(c: AppConfig | null): VaultConfig | null {
 }
 export const vaultReady = writable(false);
 
+/**
+ * Notes carrying no category, which cannot be filed until the user gives them one.
+ *
+ * Refreshed when a vault opens and whenever one is filed. A non-empty list is work the
+ * user has to do, so it is surfaced rather than hidden behind a setting.
+ */
+export const unfiledNotes = writable<NoteEntry[]>([]);
+
 // UI state
 export const viewMode = writable<ViewMode>("all");
 export const sortMode = writable<SortMode>("modified");

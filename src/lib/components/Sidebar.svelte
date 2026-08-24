@@ -19,7 +19,8 @@
 		collapsedNotebooks,
 		rootNoteCount,
 		notebookSortMode,
-		notebookOrder
+		notebookOrder,
+		unfiledNotes
 	} from '$lib/stores/app';
 	import { getNotebooks, getAllTags, createNotebook, deleteNotebook, renameNotebook, moveNotebook, getNotebookIcons, setNotebookIcon, saveAttachment, getQuickAccess, addQuickAccess, removeQuickAccess, emptyTrash, moveNote, readNote, countRootNotes } from '$lib/api';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
@@ -43,13 +44,17 @@
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
 
-	// Whether any top nav item (All Notes, Quick Access, Tasks, Daily Notes, Trash) is visible.
+	const unfiledCount = $derived($unfiledNotes.length);
+
+	// Whether any top nav item (All Notes, Quick Access, Tasks, Unfiled, Trash) is visible.
 	// When all are hidden we drop the empty <nav> and its divider so the tree sits flush.
+	// Unfiled is not configurable: it appears only when notes need a category, and
+	// hiding it would hide work the user has to do.
 	const anyNavItem = $derived(
 		$appConfig?.show_all_notes !== false ||
 		$appConfig?.show_quick_access !== false ||
 		$appConfig?.show_tasks !== false ||
-		$appConfig?.show_daily_notes !== false ||
+		unfiledCount > 0 ||
 		$appConfig?.show_trash !== false
 	);
 
@@ -200,8 +205,8 @@
 		onViewChanged();
 	}
 
-	function selectDaily() {
-		$viewMode = 'daily';
+	function selectNeedsCategory() {
+		$viewMode = 'unfiled';
 		$activeNotebook = null;
 		$activeTag = null;
 		onViewChanged();
@@ -765,19 +770,19 @@
 			</button>
 			{/if}
 
-			{#if $appConfig?.show_daily_notes !== false}
+			{#if unfiledCount > 0}
 			<button
 				class="nav-item"
-				class:active={$viewMode === 'daily'}
-				onclick={selectDaily}
+				class:active={$viewMode === 'unfiled'}
+				onclick={selectNeedsCategory}
 			>
 				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-					<line x1="16" y1="2" x2="16" y2="6" />
-					<line x1="8" y1="2" x2="8" y2="6" />
-					<line x1="3" y1="10" x2="21" y2="10" />
+					<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+					<line x1="12" y1="9" x2="12" y2="13" />
+					<line x1="12" y1="17" x2="12.01" y2="17" />
 				</svg>
-				<span>Daily Notes</span>
+				<span>Needs a category</span>
+				<span class="unfiled-count">{unfiledCount}</span>
 			</button>
 			{/if}
 
@@ -1240,6 +1245,21 @@
 	.sidebar-nav {
 		padding: 8px 6px;
 		flex-shrink: 0;
+	}
+
+	/* Count of notes still needing a category. Carries its own colour because it is
+	   outstanding work, not a neutral tally. */
+	.unfiled-count {
+		margin-left: auto;
+		min-width: 18px;
+		padding: 0 5px;
+		border-radius: 9px;
+		background: var(--accent);
+		color: var(--bg-primary);
+		font-size: 11px;
+		font-weight: 600;
+		line-height: 18px;
+		text-align: center;
 	}
 
 	.nav-item {

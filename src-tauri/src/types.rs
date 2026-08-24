@@ -9,6 +9,13 @@ pub struct NoteMeta {
     pub pinned: bool,
     pub created: DateTime<Utc>,
     pub modified: DateTime<Utc>,
+    /// The PARA bucket this note is filed under.
+    ///
+    /// `None` means the note predates PARA filing (a vault imported or created before
+    /// this structure existed). It is never a default: guessing a bucket would file a
+    /// note the user never categorised.
+    #[serde(default)]
+    pub category: Option<crate::vault::para::ParaCategory>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

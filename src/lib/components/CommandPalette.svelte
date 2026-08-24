@@ -7,7 +7,7 @@
 	// if it was hidden), so opening a view here behaves exactly like clicking it in the sidebar.
 	let { onNavigate = () => {} }: { onNavigate?: () => void } = $props();
 
-	function openView(mode: 'all' | 'quickaccess' | 'tasks' | 'daily' | 'trash') {
+	function openView(mode: 'all' | 'quickaccess' | 'tasks' | 'unfiled' | 'trash') {
 		$viewMode = mode;
 		$activeNotebook = null;
 		$activeTag = null;
@@ -54,9 +54,9 @@
 			action: () => openView('tasks')
 		},
 		{
-			id: 'open-daily',
-			label: 'Open Daily Notes',
-			action: () => openView('daily')
+			id: 'open-unfiled',
+			label: 'Open Unfiled Notes',
+			action: () => openView('unfiled')
 		},
 		{
 			id: 'open-trash',
