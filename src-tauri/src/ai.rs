@@ -6,7 +6,6 @@ use crate::types::AiStreamEvent;
 
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 const OPENAI_API_URL: &str = "https://api.openai.com/v1/chat/completions";
-use crate::ai_health::DEFAULT_URL as OLLAMA_DEFAULT_URL;
 
 /// A client that gives up rather than waiting indefinitely.
 ///
@@ -16,7 +15,8 @@ use crate::ai_health::DEFAULT_URL as OLLAMA_DEFAULT_URL;
 /// request: a real answer legitimately takes a while to stream.
 fn client() -> Client {
     Client::builder()
-        .connect_timeout(crate::ai_health::PROBE_TIMEOUT)
+        .connect_timeout(crate::ai_health::REQUEST_CONNECT_TIMEOUT)
+        .read_timeout(crate::ai_health::REQUEST_STALL_TIMEOUT)
         .build()
         .unwrap_or_else(|_| Client::new())
 }
@@ -55,7 +55,7 @@ pub fn ai_request(
                     .await
                 }
                 "ollama" => {
-                    let url = base_url.as_deref().unwrap_or(OLLAMA_DEFAULT_URL);
+                    let url = crate::ai_health::resolve_base_url(base_url.as_deref());
                     let url = format!("{}/v1/chat/completions", url.trim_end_matches('/'));
                     stream_openai(
                         &app,
@@ -407,9 +407,14 @@ pub async fn test_connection(
     match provider {
         "openai" => test_openai(OPENAI_API_URL, Some(api_key), model).await,
         "ollama" => {
-            let url = base_url.unwrap_or(OLLAMA_DEFAULT_URL);
-            let url = format!("{}/v1/chat/completions", url.trim_end_matches('/'));
-            test_openai(&url, key_opt, model).await
+            // Reuse the health probe so the button reports the same actionable reason the
+            // status readout does, rather than a raw transport error.
+            let url = crate::ai_health::resolve_base_url(base_url);
+            let status = crate::ai_health::probe(url, model).await;
+            match status.reason {
+                Some(reason) => Err(reason),
+                None => Ok(format!("Connected to Ollama at {url}")),
+            }
         }
         "openai_compatible" => {
             let url = base_url.unwrap_or("");

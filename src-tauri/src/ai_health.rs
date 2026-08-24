@@ -19,8 +19,27 @@ use std::time::Duration;
 /// minutes. This bound is what keeps that from ever being waited on.
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How long to wait for a user-facing request to connect.
+///
+/// Separate from the probe bound so the two can move independently: a probe is a
+/// background check nobody is waiting on, a request has someone watching it.
+pub const REQUEST_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long a request may go without producing any data before it is abandoned.
+///
+/// A connection that is accepted and then stalls would otherwise hang forever, since the
+/// connect bound is already satisfied. Set well above any believable gap between tokens
+/// so a slow model is never cut off mid-answer.
+pub const REQUEST_STALL_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Gap between probes while the backend is answering.
 pub const INTERVAL_WHEN_AVAILABLE: Duration = Duration::from_secs(120);
+
+/// Gap between checks when there is no Ollama backend to watch at all.
+///
+/// Only the provider setting can change this, so the poller just needs to notice that
+/// eventually rather than poll for it.
+pub const INTERVAL_WHEN_IDLE: Duration = Duration::from_secs(300);
 
 /// Gap between probes while it is not.
 ///
@@ -74,7 +93,14 @@ impl AiStatus {
 }
 
 /// How long to wait before probing again.
-pub fn next_probe_interval(status: &AiStatus) -> Duration {
+///
+/// `tracking` is false when the configured provider is not Ollama, in which case there is
+/// nothing to watch and the poller should idle rather than wake every few seconds to do
+/// nothing.
+pub fn next_probe_interval(status: &AiStatus, tracking: bool) -> Duration {
+    if !tracking {
+        return INTERVAL_WHEN_IDLE;
+    }
     match status.availability {
         Availability::Available => INTERVAL_WHEN_AVAILABLE,
         // Unknown is treated as unavailable: probe soon, because nothing is known yet.
@@ -87,6 +113,10 @@ pub fn next_probe_interval(status: &AiStatus) -> Duration {
 /// The distinction that matters is between "the machine did not answer" and "something
 /// answered but was not the backend", because the fixes are different: wake the desktop or
 /// reconnect the network, versus check what is running on that port.
+pub fn not_ollama(endpoint: &str, detail: &str) -> String {
+    format!("{endpoint} answered, but {detail}. Check what is running on that address.")
+}
+
 pub fn describe_failure(endpoint: &str, error: &reqwest::Error) -> String {
     if error.is_timeout() {
         return format!(
@@ -101,21 +131,26 @@ pub fn describe_failure(endpoint: &str, error: &reqwest::Error) -> String {
              and that both machines are on the same private network."
         );
     }
-    if let Some(status) = error.status() {
-        return format!("{endpoint} answered with {status}, which is not Ollama.");
-    }
     format!("Could not reach {endpoint}: {error}")
 }
 
 /// Whether a model appears in Ollama's list of installed models.
 ///
-/// Ollama reports names with a tag (`llama3:latest`), so a bare name is matched against
-/// the part before the colon; asking for `llama3` should find `llama3:latest`.
+/// Ollama resolves a bare name to its `:latest` tag, so `llama3` means `llama3:latest`
+/// specifically, not "any tag of llama3". Matching it against `llama3:8b` would report a
+/// model as present that a request would then fail to find.
 pub fn model_installed(tags_response: &serde_json::Value, model: &str) -> bool {
     let wanted = model.trim();
     if wanted.is_empty() {
         return false;
     }
+    // A name with no tag means the `:latest` tag, which is how Ollama resolves it.
+    let latest_tag = if wanted.contains(':') {
+        wanted.to_string()
+    } else {
+        format!("{wanted}:latest")
+    };
+    let latest_tag = latest_tag.as_str();
 
     tags_response
         .get("models")
@@ -125,7 +160,7 @@ pub fn model_installed(tags_response: &serde_json::Value, model: &str) -> bool {
                 entry
                     .get("name")
                     .and_then(|n| n.as_str())
-                    .is_some_and(|name| name == wanted || name.split(':').next() == Some(wanted))
+                    .is_some_and(|name| name == wanted || name == latest_tag)
             })
         })
 }
@@ -156,10 +191,7 @@ pub async fn probe(base_url: &str, model: &str) -> AiStatus {
     if !response.status().is_success() {
         return AiStatus::unavailable(
             base_url,
-            format!(
-                "{base_url} answered with {}, which is not Ollama.",
-                response.status()
-            ),
+            not_ollama(base_url, &format!("returned {}", response.status())),
         );
     }
 
@@ -168,7 +200,7 @@ pub async fn probe(base_url: &str, model: &str) -> AiStatus {
         Err(_) => {
             return AiStatus::unavailable(
                 base_url,
-                format!("Something is running at {base_url}, but it is not Ollama."),
+                not_ollama(base_url, "its reply was not Ollama's model list"),
             )
         }
     };
@@ -193,18 +225,24 @@ pub fn ollama_target(config: &crate::types::AppConfig) -> Option<(String, String
     if config.ai_provider.as_deref() != Some("ollama") {
         return None;
     }
-    let base = config
-        .ollama_base_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|u| !u.is_empty())
-        .unwrap_or(DEFAULT_URL)
-        .to_string();
+    let base = resolve_base_url(config.ollama_base_url.as_deref()).to_string();
     Some((base, config.ai_model.clone()))
 }
 
 /// Ollama's address when the user has not set one, i.e. running on this machine.
 pub const DEFAULT_URL: &str = "http://localhost:11434";
+
+/// The address to talk to Ollama on, given whatever is in the settings.
+///
+/// Every caller must resolve through this. A blank or whitespace-only setting is the same
+/// as no setting, and if the probe and the request disagreed about that, the probe would
+/// report a healthy localhost while requests went to a malformed URL.
+pub fn resolve_base_url(configured: Option<&str>) -> &str {
+    configured
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .unwrap_or(DEFAULT_URL)
+}
 
 /// Watch the backend for as long as the app runs, announcing every change.
 ///
@@ -214,27 +252,29 @@ pub const DEFAULT_URL: &str = "http://localhost:11434";
 pub fn spawn_poller(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         loop {
-            let status = check_now(&app).await;
-            tokio::time::sleep(next_probe_interval(&status)).await;
+            let (status, tracking) = check_now(&app).await;
+            tokio::time::sleep(next_probe_interval(&status, tracking)).await;
         }
     });
 }
 
 /// Probe once, store the result, and announce it if it changed.
 ///
-/// Returns the new status so a caller can decide when to look again.
-pub async fn check_now(app: &tauri::AppHandle) -> AiStatus {
+/// Returns the new status and whether an Ollama backend is being tracked at all, so a
+/// caller can decide when to look again.
+pub async fn check_now(app: &tauri::AppHandle) -> (AiStatus, bool) {
     use tauri::{Emitter, Manager};
 
     let state = app.state::<crate::state::AppState>();
 
     let target = {
         let Ok(config) = state.config.lock() else {
-            return AiStatus::unknown();
+            return (AiStatus::unknown(), false);
         };
         ollama_target(&config)
     };
 
+    let tracking = target.is_some();
     let status = match target {
         Some((base, model)) => probe(&base, &model).await,
         // Not using Ollama: nothing is claimed either way.
@@ -243,7 +283,7 @@ pub async fn check_now(app: &tauri::AppHandle) -> AiStatus {
 
     let changed = {
         let Ok(mut current) = state.ai_status.lock() else {
-            return status;
+            return (status, tracking);
         };
         let changed =
             current.availability != status.availability || current.reason != status.reason;
@@ -257,7 +297,7 @@ pub async fn check_now(app: &tauri::AppHandle) -> AiStatus {
         let _ = app.emit("ai-status-changed", status.clone());
     }
 
-    status
+    (status, tracking)
 }
 
 #[cfg(test)]
@@ -291,17 +331,24 @@ mod tests {
     #[test]
     fn an_unavailable_backend_is_reprobed_sooner_than_an_available_one() {
         // The user is waiting to get features back, so check more eagerly when down.
-        let down = next_probe_interval(&AiStatus::unavailable("x", "y"));
-        let up = next_probe_interval(&AiStatus::available("x"));
+        let down = next_probe_interval(&AiStatus::unavailable("x", "y"), true);
+        let up = next_probe_interval(&AiStatus::available("x"), true);
         assert!(down < up, "expected {down:?} < {up:?}");
     }
 
     #[test]
     fn an_unknown_backend_is_probed_as_eagerly_as_a_down_one() {
         assert_eq!(
-            next_probe_interval(&AiStatus::unknown()),
-            next_probe_interval(&AiStatus::unavailable("x", "y"))
+            next_probe_interval(&AiStatus::unknown(), true),
+            next_probe_interval(&AiStatus::unavailable("x", "y"), true)
         );
+    }
+
+    #[test]
+    fn with_no_ollama_backend_to_watch_the_poller_idles() {
+        // Nothing to probe, so waking every few seconds would burn power to do nothing.
+        let idle = next_probe_interval(&AiStatus::unknown(), false);
+        assert!(idle > next_probe_interval(&AiStatus::unknown(), true));
     }
 
     #[test]
@@ -334,9 +381,12 @@ mod tests {
     }
 
     #[test]
-    fn a_different_tag_of_the_same_model_still_counts() {
+    fn a_bare_name_does_not_match_a_different_tag() {
+        // Ollama resolves "llama3" to "llama3:latest". Having only "llama3:8b" means a
+        // request for "llama3" fails, so reporting it present would be a false positive.
         let tags = json!({"models": [{"name": "llama3:8b"}]});
-        assert!(model_installed(&tags, "llama3"));
+        assert!(!model_installed(&tags, "llama3"));
+        assert!(model_installed(&tags, "llama3:8b"));
     }
 
     #[test]

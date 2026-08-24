@@ -7682,20 +7682,10 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="ai-menu-overlay" class:mobile={isMobile} onclick={(e) => closeFromOverlay(e, closeAiMenu)} onkeydown={(e) => closeOnEscape(e, closeAiMenu)}>
 		<div class="ai-menu" class:mobile={isMobile} style={isMobile ? '' : `left: ${aiMenu.x}px; top: ${aiMenu.y}px`}>
-			{#if !$aiUsable}
-				<!-- Say why up front rather than offering actions that cannot run. -->
-				<div class="ai-unavailable">
-					<strong>AI is unavailable</strong>
-					<p>{$aiStatus.reason ?? 'The AI backend cannot be reached.'}</p>
-					<p class="ai-unavailable-note">
-						Everything else keeps working. AI features return on their own once the
-						backend is reachable.
-					</p>
-					<button class="ai-result-close" onclick={closeAiMenu} aria-label="Close AI menu">
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-					</button>
-				</div>
-			{:else if aiResult !== null || aiLoading}
+			{#if aiResult !== null || aiLoading}
+				<!-- Checked before availability: a result already on screen must survive the
+				     backend going away mid-generation, or the user loses work they can see
+				     and cannot get back. -->
 				<!-- Result view -->
 				<div class="ai-result-header">
 					<span class="ai-result-title">
@@ -7727,6 +7717,20 @@
 						</button>
 					</div>
 				{/if}
+			{:else if !$aiUsable}
+				<!-- Offered only when nothing is on screen to lose: say why rather than listing
+				     actions that cannot run. -->
+				<div class="ai-unavailable">
+					<strong>AI is unavailable</strong>
+					<p>{$aiStatus.reason ?? 'The AI backend cannot be reached.'}</p>
+					<p class="ai-unavailable-note">
+						Everything else keeps working. AI features return on their own once the
+						backend is reachable.
+					</p>
+					<button class="ai-result-close" onclick={closeAiMenu} aria-label="Close AI menu">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+					</button>
+				</div>
 			{:else if aiShowCustom}
 				<!-- Custom prompt input -->
 				<div class="ai-custom-header">

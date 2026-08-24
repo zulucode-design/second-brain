@@ -748,7 +748,7 @@ pub fn get_ai_status(state: State<'_, AppState>) -> Result<crate::ai_health::AiS
 /// waiting out the poller would feel broken.
 #[tauri::command]
 pub async fn refresh_ai_status(app: AppHandle) -> Result<crate::ai_health::AiStatus, String> {
-    Ok(crate::ai_health::check_now(&app).await)
+    Ok(crate::ai_health::check_now(&app).await.0)
 }
 
 /// Notes that carry no category and so cannot be filed.
