@@ -1,3 +1,4 @@
+use crate::ai_health::AiStatus;
 use crate::search::SearchIndex;
 use crate::types::AppConfig;
 use crate::vault::watcher::VaultWatcher;
@@ -13,6 +14,9 @@ pub struct AppState {
     pub importing: AtomicBool,
     pub syncing: AtomicBool,
     pub pending_open_file: Mutex<Option<String>>,
+    /// Last known reachability of the AI backend, kept current by a background poller so
+    /// features can be shown as unavailable without each one having to find out itself.
+    pub ai_status: Mutex<AiStatus>,
 }
 
 impl AppState {
@@ -25,6 +29,7 @@ impl AppState {
             importing: AtomicBool::new(false),
             syncing: AtomicBool::new(false),
             pending_open_file: Mutex::new(None),
+            ai_status: Mutex::new(AiStatus::unknown()),
         }
     }
 }

@@ -729,6 +729,28 @@ pub fn create_note(
     Ok(entry)
 }
 
+/// The AI backend's last known reachability.
+///
+/// Read from stored state rather than probing, so asking is instant and the UI can call
+/// it freely while rendering.
+#[tauri::command]
+pub fn get_ai_status(state: State<'_, AppState>) -> Result<crate::ai_health::AiStatus, String> {
+    state
+        .ai_status
+        .lock()
+        .map(|status| status.clone())
+        .map_err(|e| e.to_string())
+}
+
+/// Probe the AI backend now instead of waiting for the next scheduled check.
+///
+/// For the moment after the user changes the endpoint or wakes the other machine, when
+/// waiting out the poller would feel broken.
+#[tauri::command]
+pub async fn refresh_ai_status(app: AppHandle) -> Result<crate::ai_health::AiStatus, String> {
+    Ok(crate::ai_health::check_now(&app).await)
+}
+
 /// Notes that carry no category and so cannot be filed.
 ///
 /// Non-empty means the user has something to resolve: until each one is given a
@@ -2618,6 +2640,23 @@ pub fn ai_ask(
         };
         (provider, key, model, style, base_url)
     };
+
+    // Refuse immediately when the backend is known to be down, with the reason the poller
+    // already worked out. Starting the request instead would leave the user waiting on a
+    // machine that is asleep.
+    if provider == "ollama" {
+        let status = app
+            .state::<AppState>()
+            .ai_status
+            .lock()
+            .map(|status| status.clone())
+            .map_err(|e| e.to_string())?;
+        if status.availability == crate::ai_health::Availability::Unavailable {
+            return Err(status
+                .reason
+                .unwrap_or_else(|| "The AI backend is unreachable.".to_string()));
+        }
+    }
 
     let mut system_prompt = "You are a helpful writing assistant inside a note-taking app called HelixNotes. \
         You help users improve, rewrite, summarize, and transform their text. \

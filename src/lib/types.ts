@@ -8,6 +8,22 @@ export const PARA_CATEGORIES = [
 
 export type ParaCategory = (typeof PARA_CATEGORIES)[number];
 
+/**
+ * Whether the AI backend can be reached.
+ *
+ * `unknown` is not `unavailable`: nothing has been established yet, so features are left
+ * alone rather than disabled on a guess.
+ */
+export type AiAvailability = "unknown" | "available" | "unavailable";
+
+export interface AiStatus {
+  availability: AiAvailability;
+  /** Why it is unavailable, phrased as something to do about it. */
+  reason: string | null;
+  /** The endpoint that was probed, so the user can see which machine was tried. */
+  endpoint: string | null;
+}
+
 export interface NoteMeta {
   id: string;
   title: string;

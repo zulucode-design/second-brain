@@ -2,6 +2,7 @@ import { writable, derived, get } from "svelte/store";
 import { isMobile } from "$lib/platform";
 import { compareNaturalNames } from "$lib/utils/natural-sort";
 import type {
+  AiStatus,
   AppConfig,
   CustomTheme,
   NoteEntry,
@@ -25,6 +26,31 @@ export function activeVaultConfig(c: AppConfig | null): VaultConfig | null {
   return c.vaults.find((v) => !v.bookmark_id && v.path === c.active_vault) ?? null;
 }
 export const vaultReady = writable(false);
+
+/**
+ * Whether the AI backend can be reached, kept current by a background poller in the
+ * backend rather than probed by each feature.
+ *
+ * Starts `unknown`, which is deliberately not `unavailable`: nothing is claimed until a
+ * probe has actually happened.
+ */
+export const aiStatus = writable<AiStatus>({
+  availability: "unknown",
+  reason: null,
+  endpoint: null,
+});
+
+/**
+ * Whether AI-dependent features should be offered.
+ *
+ * `unknown` counts as usable: the backend has not been checked yet, or a non-Ollama
+ * provider is configured, and disabling working features on a guess is worse than letting
+ * a call fail.
+ */
+export const aiUsable = derived(
+  aiStatus,
+  ($status) => $status.availability !== "unavailable",
+);
 
 /**
  * Notes carrying no category, which cannot be filed until the user gives them one.
