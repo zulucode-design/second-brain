@@ -41,7 +41,7 @@
 	import { readFile } from '@tauri-apps/plugin-fs';
 	import { openFile, openUrl, copyFileTo, copyImageToClipboard as copyImageToClipboardCmd, writeBytesTo, copyPngToClipboard, copyTextToClipboard } from '$lib/api';
 	import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, readOnly, quickAccessPaths, notes, navHistory, canGoBack, canGoForward, viewerNote, viewMode, notebooks, outlineWidth } from '$lib/stores/app';
+	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, readOnly, quickAccessPaths, notes, navHistory, canGoBack, canGoForward, viewerNote, viewMode, notebooks, outlineWidth, aiStatus, aiUsable } from '$lib/stores/app';
 	import { saveNote, saveImage, saveAttachment, readClipboardImage, addQuickAccess, removeQuickAccess, getQuickAccess, getNoteVersions, getNoteVersionContent, createVersion, aiAsk, getAllNoteTitles, readNote, renameNote } from '$lib/api';
 	import type { VersionEntry, AiStreamEvent, NoteTitleEntry, TaskItem as TaskRecord } from '$lib/types';
 	import { listen } from '@tauri-apps/api/event';
@@ -7682,7 +7682,20 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="ai-menu-overlay" class:mobile={isMobile} onclick={(e) => closeFromOverlay(e, closeAiMenu)} onkeydown={(e) => closeOnEscape(e, closeAiMenu)}>
 		<div class="ai-menu" class:mobile={isMobile} style={isMobile ? '' : `left: ${aiMenu.x}px; top: ${aiMenu.y}px`}>
-			{#if aiResult !== null || aiLoading}
+			{#if !$aiUsable}
+				<!-- Say why up front rather than offering actions that cannot run. -->
+				<div class="ai-unavailable">
+					<strong>AI is unavailable</strong>
+					<p>{$aiStatus.reason ?? 'The AI backend cannot be reached.'}</p>
+					<p class="ai-unavailable-note">
+						Everything else keeps working. AI features return on their own once the
+						backend is reachable.
+					</p>
+					<button class="ai-result-close" onclick={closeAiMenu} aria-label="Close AI menu">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+					</button>
+				</div>
+			{:else if aiResult !== null || aiLoading}
 				<!-- Result view -->
 				<div class="ai-result-header">
 					<span class="ai-result-title">
@@ -10942,6 +10955,38 @@
 		color: var(--text-tertiary);
 		display: flex;
 		align-items: center;
+	}
+
+	/* Shown in place of the AI actions when the backend cannot be reached, so the reason
+	   is read before anything is clicked rather than after something fails. */
+	.ai-unavailable {
+		position: relative;
+		padding: 14px 16px;
+		max-width: 320px;
+	}
+
+	.ai-unavailable strong {
+		display: block;
+		margin-bottom: 6px;
+		color: var(--text-primary);
+		font-size: 13px;
+	}
+
+	.ai-unavailable p {
+		margin: 0 0 8px;
+		color: var(--text-secondary);
+		font-size: 12px;
+		line-height: 1.5;
+	}
+
+	.ai-unavailable-note {
+		opacity: 0.8;
+	}
+
+	.ai-unavailable .ai-result-close {
+		position: absolute;
+		top: 10px;
+		right: 10px;
 	}
 
 	.ai-result-header {

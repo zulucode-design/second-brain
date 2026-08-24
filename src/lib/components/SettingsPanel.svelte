@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, activeVaultConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes } from '$lib/stores/app';
-	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments } from '$lib/api';
+	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, activeVaultConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus } from '$lib/stores/app';
+	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus } from '$lib/api';
 	import { darkThemes, isMobile, isAndroid } from '$lib/platform';
 	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
@@ -361,6 +361,25 @@
 			aiTestMessage = { type: 'error', text: String(e) };
 			aiTestLoading = false;
 			unlisten();
+		}
+	}
+
+	let aiStatusChecking = $state(false);
+
+	/**
+	 * Probe the backend now instead of waiting for the next scheduled check.
+	 *
+	 * The moment after changing the address or waking the other machine is exactly when
+	 * waiting out the poller would feel broken.
+	 */
+	async function checkAiStatus() {
+		aiStatusChecking = true;
+		try {
+			$aiStatus = await refreshAiStatus();
+		} catch (e) {
+			console.error('Failed to check the AI backend:', e);
+		} finally {
+			aiStatusChecking = false;
 		}
 	}
 
@@ -2186,6 +2205,37 @@
 											onblur={saveAiSettings}
 										/>
 										<p class="setting-hint">Ollama server address. Install from <a href="https://ollama.com" target="_blank" class="ai-link">ollama.com</a></p>
+										<p class="setting-hint">
+											To use models running on another machine, put that machine's private
+											network address here (for example its Tailscale address). Ollama has no
+											password of its own, so <strong>never expose it to the public internet</strong>
+											or forward its port on your router &mdash; anyone who can reach it can use
+											and delete your models. A private network such as Tailscale or WireGuard is
+											what keeps it reachable only to your own machines.
+										</p>
+									</div>
+
+									<div class="settings-section">
+										<h3>Status</h3>
+										<div class="ai-status" class:unavailable={$aiStatus.availability === 'unavailable'} class:available={$aiStatus.availability === 'available'}>
+											<span class="ai-status-dot"></span>
+											<span>
+												{#if $aiStatus.availability === 'available'}
+													Reachable{$aiStatus.endpoint ? ` at ${$aiStatus.endpoint}` : ''}
+												{:else if $aiStatus.availability === 'unavailable'}
+													{$aiStatus.reason ?? 'Unreachable'}
+												{:else}
+													Not checked yet
+												{/if}
+											</span>
+										</div>
+										<button class="btn-secondary" disabled={aiStatusChecking} onclick={checkAiStatus}>
+											{aiStatusChecking ? 'Checking…' : 'Check now'}
+										</button>
+										<p class="setting-hint">
+											Checked automatically in the background. AI features switch themselves back
+											on when the machine becomes reachable again &mdash; no restart needed.
+										</p>
 									</div>
 									<div class="settings-section">
 										<h3>API Key <span style="font-weight: 400; text-transform: none; font-size: 11px;">(optional)</span></h3>
@@ -2690,6 +2740,33 @@
 		letter-spacing: 0.05em;
 		color: var(--text-tertiary);
 		margin-bottom: 12px;
+	}
+
+	/* Reachability readout for the AI backend. Colour is paired with wording rather than
+	   carrying the meaning alone, so it still reads without colour vision. */
+	.ai-status {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-bottom: 8px;
+		font-size: 13px;
+		color: var(--text-secondary);
+	}
+
+	.ai-status-dot {
+		flex: none;
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--text-secondary);
+	}
+
+	.ai-status.available .ai-status-dot {
+		background: #16a34a;
+	}
+
+	.ai-status.unavailable .ai-status-dot {
+		background: #dc2626;
 	}
 
 	.setting-hint {

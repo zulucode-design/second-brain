@@ -1,4 +1,5 @@
 mod ai;
+mod ai_health;
 mod asset_scope;
 mod backup;
 mod commands;
@@ -82,6 +83,10 @@ pub fn run() {
         .setup(move |app| {
             #[cfg(target_os = "ios")]
             app.handle().plugin(tauri_plugin_ios_vault_access::init())?;
+
+            // Track the AI backend from launch, so features are shown as unavailable
+            // before the user tries one rather than after it fails.
+            ai_health::spawn_poller(app.handle().clone());
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -187,6 +192,8 @@ pub fn run() {
             commands::save_note,
             commands::create_note,
             commands::duplicate_note,
+            commands::get_ai_status,
+            commands::refresh_ai_status,
             commands::list_unfiled_notes,
             commands::file_unfiled_note,
             commands::rename_note,

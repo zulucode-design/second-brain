@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AiStatus,
   AppConfig,
   CustomTheme,
   NoteContent,
@@ -148,6 +149,16 @@ export async function createNote(
 
 export async function duplicateNote(path: string): Promise<NoteEntry> {
   return invoke("duplicate_note", { path });
+}
+
+/** The AI backend's last known reachability. Answered from stored state, so it is instant. */
+export async function getAiStatus(): Promise<AiStatus> {
+  return invoke("get_ai_status");
+}
+
+/** Probe the AI backend now rather than waiting for the next scheduled check. */
+export async function refreshAiStatus(): Promise<AiStatus> {
+  return invoke("refresh_ai_status");
 }
 
 /**

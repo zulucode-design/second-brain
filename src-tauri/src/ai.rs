@@ -6,7 +6,20 @@ use crate::types::AiStreamEvent;
 
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 const OPENAI_API_URL: &str = "https://api.openai.com/v1/chat/completions";
-const OLLAMA_DEFAULT_URL: &str = "http://localhost:11434";
+use crate::ai_health::DEFAULT_URL as OLLAMA_DEFAULT_URL;
+
+/// A client that gives up rather than waiting indefinitely.
+///
+/// The backend is often a machine that may be asleep or off the network. Without a bound
+/// on connection setup, a request to one can hang for the OS timeout, measured in minutes,
+/// with the user watching a spinner. Only connection setup is bounded, not the whole
+/// request: a real answer legitimately takes a while to stream.
+fn client() -> Client {
+    Client::builder()
+        .connect_timeout(crate::ai_health::PROBE_TIMEOUT)
+        .build()
+        .unwrap_or_else(|_| Client::new())
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn ai_request(
@@ -117,7 +130,7 @@ async fn stream_anthropic(
     user_message: &str,
     _request_id: &str,
 ) -> Result<(), String> {
-    let client = Client::new();
+    let client = client();
 
     let body = json!({
         "model": model,
@@ -246,7 +259,7 @@ async fn stream_openai(
     user_message: &str,
     _request_id: &str,
 ) -> Result<(), String> {
-    let client = Client::new();
+    let client = client();
 
     let is_gpt5 = model.starts_with("gpt-5");
     let token_key = if is_gpt5 {
@@ -411,7 +424,7 @@ pub async fn test_connection(
 }
 
 async fn test_anthropic(api_key: &str, model: &str) -> Result<String, String> {
-    let client = Client::new();
+    let client = client();
 
     let body = json!({
         "model": model,
@@ -444,7 +457,7 @@ async fn test_anthropic(api_key: &str, model: &str) -> Result<String, String> {
 }
 
 async fn test_openai(url: &str, api_key: Option<&str>, model: &str) -> Result<String, String> {
-    let client = Client::new();
+    let client = client();
     let is_gpt5 = model.starts_with("gpt-5");
     let token_key = if is_gpt5 {
         "max_completion_tokens"

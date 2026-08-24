@@ -58,19 +58,20 @@
 		platformIsMobile,
 		activeVaultConfig,
 		unfiledNotes,
+		aiStatus,
 	} from '$lib/stores/app';
 	import { keybindings, matchAction } from '$lib/keybindings';
 
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
 	const isMobile = $derived($platformIsMobile);
-	import { loadVaultState, saveVaultState, readNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, getAppConfig, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, getAppConfig, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus } from '$lib/api';
 	import { darkThemes, isAndroid } from '$lib/platform';
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow } from '$lib/utils/window';
 	import { normalizeStartupView, resolveStartupTarget } from '$lib/utils/startup-view';
 	import { get } from 'svelte/store';
-	import type { VaultState, FileEvent, NotebookEntry, TaskItem } from '$lib/types';
+	import type { VaultState, FileEvent, NotebookEntry, TaskItem, AiStatus } from '$lib/types';
 	import type { StartupTarget } from '$lib/utils/startup-view';
 
 	function findNotebookByPath(list: NotebookEntry[], relPath: string): NotebookEntry | null {
@@ -86,6 +87,7 @@
 	let noteList = $state<NoteList>();
 	let editor = $state<Editor>();
 	let unlistenFileChange: (() => void) | null = null;
+	let unlistenAiStatus: (() => void) | null = null;
 	async function applyStartupTarget(target: StartupTarget): Promise<boolean> {
 		if (target.mode === 'notebook') {
 			const vault = $appConfig?.active_vault;
@@ -767,6 +769,17 @@
 		}
 
 		// Listen for file open events (from single-instance or OS file associations)
+		// The backend polls for reachability and announces changes, so AI features come
+		// back on their own when the other machine wakes, with no restart.
+		unlistenAiStatus = await listen<AiStatus>('ai-status-changed', (event) => {
+			$aiStatus = event.payload;
+		});
+		try {
+			$aiStatus = await getAiStatus();
+		} catch (e) {
+			console.error('Failed to read AI status:', e);
+		}
+
 		unlistenOpenFile = await listen<string>('open-file', async (event) => {
 			await handleOpenFile(event.payload);
 		});
@@ -813,6 +826,7 @@
 
 	onDestroy(() => {
 		unlistenFileChange?.();
+		unlistenAiStatus?.();
 		unlistenOpenFile?.();
 		if (backupInterval) clearInterval(backupInterval);
 		if (syncInterval) clearInterval(syncInterval);
