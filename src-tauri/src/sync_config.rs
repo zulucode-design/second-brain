@@ -146,10 +146,15 @@ impl From<SyncSettingsWire> for SyncSettings {
 
 impl From<SyncSettings> for SyncSettingsWire {
     fn from(settings: SyncSettings) -> Self {
+        // Omit what holds nothing, so settings that were never configured add no keys to
+        // the file at all. `skip_serializing_if` can only fire on `None`, so wrapping
+        // unconditionally would write an empty blob for every vault and for the legacy
+        // global that no longer has anything to say.
         Self {
             sync_provider: settings.provider,
-            credentials: Some(settings.credentials),
-            schedule: Some(settings.schedule),
+            credentials: Some(settings.credentials)
+                .filter(|c| c != &ProviderCredentials::default()),
+            schedule: Some(settings.schedule).filter(|s| s != &SyncSchedule::default()),
             ..Default::default()
         }
     }
@@ -329,5 +334,30 @@ mod tests {
 
         let off = parse("{}");
         assert!(!off.uses("webdav"));
+    }
+
+    #[test]
+    fn settings_that_were_never_configured_write_nothing() {
+        let saved = serde_json::to_string(&SyncSettings::default()).unwrap();
+
+        assert_eq!(saved, "{}", "an empty blob should add no keys: {saved}");
+    }
+
+    #[test]
+    fn a_fresh_app_config_does_not_stamp_the_deprecated_global() {
+        // `legacy_sync` is flattened, so anything it writes lands at the top of the app
+        // config. It is only ever read, and a user who never synced globally should not
+        // find it appearing in their file.
+        let saved = serde_json::to_value(crate::types::AppConfig::default()).unwrap();
+        let top = saved.as_object().expect("config is an object");
+
+        assert!(
+            !top.contains_key("credentials"),
+            "deprecated global credentials should stay absent: {saved}"
+        );
+        assert!(
+            !top.contains_key("schedule"),
+            "deprecated global schedule should stay absent: {saved}"
+        );
     }
 }

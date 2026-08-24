@@ -10,6 +10,7 @@
 	import type { OrphanAttachment } from '$lib/api';
 	import type { ImportResult, BackupEntry, CustomTheme, CustomThemeColors, StartupView, VaultStats } from '$lib/types';
 	import { normalizeStartupView } from '$lib/utils/startup-view';
+	import { withSyncSettings } from '$lib/utils/sync-settings';
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
 
@@ -426,16 +427,15 @@
 			const active = activeVaultConfig(cur);
 			$appConfig = {
 				...cur,
-				vaults: cur.vaults.map((vault) => vault === active ? {
-					...vault,
-					sync_provider: syncProvider,
-					webdav_url: syncUrl || null,
-					webdav_username: syncUsername || null,
-					webdav_password: syncPassword || null,
-					sync_on_open: syncOnOpen,
-					sync_on_change: syncOnChange,
-					sync_interval_minutes: syncIntervalMinutes,
-				} : vault),
+				vaults: cur.vaults.map((vault) => vault === active ? withSyncSettings(vault, {
+					provider: syncProvider,
+					url: syncUrl || null,
+					username: syncUsername || null,
+					password: syncPassword || null,
+					onOpen: syncOnOpen,
+					onChange: syncOnChange,
+					intervalMinutes: syncIntervalMinutes,
+				}) : vault),
 			};
 		}
 	}

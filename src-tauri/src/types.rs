@@ -210,9 +210,12 @@ pub struct AppConfig {
     pub startup_view: StartupView,
     #[serde(default)]
     pub restore_last_session: bool,
-    // DEPRECATED: WebDAV sync moved to per-vault VaultConfig. Kept for one release to migrate old configs.
-    /// Sync settings from before they moved per-vault. Read once to migrate the active
-    /// vault, then left alone; nothing writes here.
+    /// DEPRECATED: sync moved to per-vault [`VaultConfig`]. Kept for one release so a
+    /// config written before that move still migrates.
+    ///
+    /// Read once by `migrate_global_sync_to_vault`; nothing in the app assigns to it. What
+    /// is already on disk does round-trip through a save, so an old config keeps its
+    /// fallback copy until the field is dropped for good.
     #[serde(default, flatten)]
     pub legacy_sync: crate::sync_config::SyncSettings,
     #[serde(default)]
