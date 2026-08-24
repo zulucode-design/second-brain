@@ -154,8 +154,16 @@ Requires OS-level global hotkey registration on both Windows and Linux.
 ### Runtime and topology
 
 - **Ollama** on the Windows desktop provides LLM + embedding inference.
-- **whisper.cpp**, bundled, provides audio transcription. (Ollama has no native
-  speech-to-text — verified; a separate engine is mandatory.)
+- **whisper.cpp on the Windows desktop** provides audio transcription. (Ollama has no
+  native speech-to-text — verified; a separate engine is mandatory.) It runs beside Ollama
+  as a second desktop-side service, reached the same way.
+
+  > **Corrected 2026-08-23.** An earlier draft said whisper.cpp was bundled and ran
+  > locally on whichever machine recorded. That contradicted this section: it would have
+  > run transcription on the GTX 1050 laptop, the exact hardware established as too weak.
+  > Transcription now runs on the desktop like every other AI feature. Voice memos
+  > recorded while the desktop is unreachable are stored as audio and **queued**, then
+  > transcribed automatically on reconnect.
 - The Linux laptop reaches the desktop's Ollama over **Tailscale**, a private WireGuard
   network joining only the two machines. Works from home or campus, requires no port
   forwarding, and exposes nothing to the public internet.
@@ -177,7 +185,8 @@ usable:
 | Capture, organize, browse | Semantic search |
 | Keyword/full-text search | AI prompt window / Q&A |
 | Editing, linking, graph view (explicit edges) | Related-note suggestions |
-| Notion sync | Transcription; AI-similarity edges |
+| Notion sync | AI-similarity edges |
+| Recording voice memos (queued for later transcription) | Transcribing them |
 
 Failures must degrade quietly, never block the core loop.
 
