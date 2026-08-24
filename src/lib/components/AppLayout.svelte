@@ -768,7 +768,7 @@
 			});
 		}
 
-		// Listen for file open events (from single-instance or OS file associations)
+
 		// The backend polls for reachability and announces changes, so AI features come
 		// back on their own when the other machine wakes, with no restart.
 		unlistenAiStatus = await listen<AiStatus>('ai-status-changed', (event) => {
