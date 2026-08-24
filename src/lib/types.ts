@@ -69,19 +69,34 @@ export interface NoteContent {
   raw: string;
 }
 
+export interface WebdavCredentials {
+  url?: string | null;
+  username?: string | null;
+  password?: string | null;
+}
+
+/** One field per provider, so one provider's settings cannot be mistaken for another's. */
+export interface ProviderCredentials {
+  webdav?: WebdavCredentials;
+}
+
+/** When syncing happens. Not tied to any provider. */
+export interface SyncSchedule {
+  on_open?: boolean;
+  on_change?: boolean;
+  interval_minutes?: number;
+  last_sync_time?: string | null;
+}
+
 export interface VaultConfig {
   path: string;
   name: string;
   bookmark_id?: string | null;
-  // Per-vault WebDAV sync (moved off the global AppConfig).
+  // Per-vault sync. Credentials are grouped per provider and the schedule is shared,
+  // so adding a provider does not mean more loose fields here.
   sync_provider?: string | null;
-  webdav_url?: string | null;
-  webdav_username?: string | null;
-  webdav_password?: string | null;
-  sync_on_open?: boolean;
-  sync_on_change?: boolean;
-  sync_interval_minutes?: number;
-  last_sync_time?: string | null;
+  credentials?: ProviderCredentials;
+  schedule?: SyncSchedule;
 }
 
 export interface ExternalVaultResult {
@@ -166,14 +181,8 @@ export interface AppConfig {
   enable_wiki_links: boolean;
   startup_view: StartupView;
   restore_last_session: boolean;
-  sync_provider: string | null;
-  webdav_url: string | null;
-  webdav_username: string | null;
-  webdav_password: string | null;
-  sync_on_open: boolean;
-  sync_on_change: boolean;
-  sync_interval_minutes: number;
-  last_sync_time: string | null;
+  // Sync settings live per-vault on VaultConfig. The backend still reads a pre-move
+  // global copy once to migrate it, but nothing here should use it.
   custom_themes: CustomTheme[];
 }
 
