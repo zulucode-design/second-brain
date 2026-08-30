@@ -1010,10 +1010,9 @@ pub fn move_note(vault_path: &str, note_path: &str, dest_notebook: &str) -> Resu
     let raw = fs::read_to_string(src).map_err(|error| error.to_string())?;
     let filename = src.file_name().unwrap_or_default();
     let filename_for_parse = filename.to_string_lossy();
-    let (mut meta, body) = frontmatter::parse_note(&raw, &filename_for_parse);
-    let title = meta.title.clone();
-    meta.category = Some(category);
-    let updated = frontmatter::merge_frontmatter(&raw, &meta, &body);
+    let title = frontmatter::extract_title(&raw)
+        .unwrap_or_else(|| frontmatter::filename_to_title(&filename_for_parse));
+    let updated = frontmatter::set_category(&raw, category)?;
     let old_path = src.to_string_lossy().to_string();
     let dest = crate::vault::relocation::relocate_file(
         src,
@@ -1177,13 +1176,10 @@ pub fn file_unfiled_note(
     let dest_dir = ensure_category_destination(vault_path, category)?;
 
     let raw = fs::read_to_string(&src).map_err(|e| e.to_string())?;
-    let filename = src.file_name().unwrap_or_default().to_string_lossy();
-    let (mut meta, body) = frontmatter::parse_note(&raw, &filename);
-    meta.category = Some(category);
-    fs::write(&src, frontmatter::merge_frontmatter(&raw, &meta, &body))
-        .map_err(|e| e.to_string())?;
-
-    para::relocate_note(&src, &dest_dir).map(|p| p.to_string_lossy().to_string())
+    let updated = frontmatter::set_category(&raw, category)?;
+    let filename = src.file_name().unwrap_or_default();
+    crate::vault::relocation::relocate_file(&src, &dest_dir, filename, Some(updated.as_bytes()))
+        .map(|p| p.to_string_lossy().to_string())
 }
 
 /// Refuse an operation that would rename, move, or delete one of the four category
@@ -1853,6 +1849,31 @@ mod tests {
         assert!(reference_after.contains("[[Archives/Target|the target]]"));
         assert!(!reference_after.contains("[[Projects/Target"));
         fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn moving_a_note_with_malformed_frontmatter_leaves_the_source_unchanged() {
+        let vault = scaffolded_vault("move-malformed-frontmatter");
+        let vault_str = vault.to_string_lossy().to_string();
+        let source = vault.join("Projects").join("Broken.md");
+        let original =
+            "---\nid: \"stable-id\"\ntitle: [broken\ncategory: Projects\n---\nvaluable body\n";
+        fs::write(&source, original).unwrap();
+
+        let resources = vault.join("Resources");
+        let result = move_note(
+            &vault_str,
+            &source.to_string_lossy(),
+            &resources.to_string_lossy(),
+        );
+        let source_after = fs::read_to_string(&source).ok();
+        let destination_exists = resources.join("Broken.md").exists();
+
+        fs::remove_dir_all(vault).unwrap();
+
+        assert!(result.is_err(), "malformed frontmatter must block the move");
+        assert_eq!(source_after.as_deref(), Some(original));
+        assert!(!destination_exists);
     }
 
     #[test]

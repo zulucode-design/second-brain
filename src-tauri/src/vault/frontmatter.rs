@@ -228,6 +228,29 @@ pub fn merge_frontmatter(original_raw: &str, meta: &NoteMeta, body: &str) -> Str
     format!("---\n{}---\n{}", yaml_str, body_with_heading)
 }
 
+/// Change only the category field while preserving every other YAML value.
+///
+/// Unlike `merge_frontmatter`, this is deliberately fallible: a move must not replace
+/// malformed metadata with generated defaults and then delete the only original copy.
+pub fn set_category(raw: &str, category: ParaCategory) -> Result<String, String> {
+    let matter = Matter::<YAML>::new();
+    let parsed = matter.parse(raw);
+    let mut mapping = if parsed.matter.trim().is_empty() {
+        serde_yaml::Mapping::new()
+    } else {
+        serde_yaml::from_str::<serde_yaml::Mapping>(&parsed.matter).map_err(|error| {
+            format!("Cannot update category because frontmatter is invalid: {error}")
+        })?
+    };
+    mapping.insert(
+        serde_yaml::Value::String("category".into()),
+        serde_yaml::Value::String(category.folder_name().to_string()),
+    );
+    let yaml = serde_yaml::to_string(&serde_yaml::Value::Mapping(mapping))
+        .map_err(|error| format!("Could not serialize updated category: {error}"))?;
+    Ok(format!("---\n{yaml}---\n{}", parsed.content))
+}
+
 pub fn filename_to_title(filename: &str) -> String {
     let stem = filename.trim_end_matches(".md");
     // Only replace dashes/underscores acting as word separators (between non-space chars).
@@ -253,11 +276,11 @@ pub fn filename_to_title(filename: &str) -> String {
 pub fn extract_title(raw: &str) -> Option<String> {
     let matter = Matter::<YAML>::new();
     let result = matter.parse(raw);
-    let fm: RawFrontmatter = result
-        .data
-        .and_then(|d| d.deserialize().ok())
-        .unwrap_or_default();
-    fm.title
+    let mapping: serde_yaml::Mapping = serde_yaml::from_str(&result.matter).ok()?;
+    mapping
+        .get(serde_yaml::Value::String("title".into()))
+        .and_then(serde_yaml::Value::as_str)
+        .map(str::to_owned)
 }
 
 pub fn extract_preview(content: &str, max_len: usize) -> String {
