@@ -27,6 +27,22 @@ fn remove_note_bg(state: &State<'_, AppState>, path: &str) {
     }
 }
 
+fn reindex_moved_note_bg(state: &State<'_, AppState>, old_path: &str, new_path: &str) {
+    let search = state.search_index.lock().ok().and_then(|g| g.clone());
+    if let Some(search) = search {
+        let old_path = old_path.to_string();
+        let new_path = new_path.to_string();
+        std::thread::spawn(move || {
+            if let Err(error) = search.remove_note(&old_path) {
+                log::warn!("Could not remove moved note's old search entry: {error}");
+            }
+            if let Err(error) = search.index_note(&new_path) {
+                log::warn!("Could not index moved note at its new path: {error}");
+            }
+        });
+    }
+}
+
 fn clear_vault_runtime(state: &State<'_, AppState>) -> Result<(), String> {
     *state.watcher.lock().map_err(|error| error.to_string())? = None;
     *state
@@ -840,6 +856,8 @@ pub fn move_note(
         }
     }
 
+    reindex_moved_note_bg(&state, &note_path, &new_full_path);
+
     Ok(new_full_path)
 }
 
@@ -1400,11 +1418,7 @@ pub fn get_trash(state: State<'_, AppState>) -> Result<TrashContents, String> {
 }
 
 #[tauri::command]
-pub fn restore_note(
-    state: State<'_, AppState>,
-    trash_path: String,
-    dest_notebook: Option<String>,
-) -> Result<String, String> {
+pub fn restore_note(state: State<'_, AppState>, trash_path: String) -> Result<String, String> {
     let vault_path = {
         let config = state.config.lock().map_err(|e| e.to_string())?;
         config
@@ -1413,7 +1427,9 @@ pub fn restore_note(
             .ok_or("No active vault")?
             .clone()
     };
-    operations::restore_note(&vault_path, &trash_path, dest_notebook.as_deref())
+    let restored = operations::restore_note(&vault_path, &trash_path)?;
+    index_note_bg(&state, &restored);
+    Ok(restored)
 }
 
 #[tauri::command]

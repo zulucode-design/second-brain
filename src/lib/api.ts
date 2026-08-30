@@ -228,11 +228,8 @@ export async function getTrash(): Promise<TrashContents> {
   return invoke("get_trash");
 }
 
-export async function restoreNote(
-  trashPath: string,
-  destNotebook: string | null,
-): Promise<string> {
-  return invoke("restore_note", { trashPath, destNotebook });
+export async function restoreNote(trashPath: string): Promise<string> {
+  return invoke("restore_note", { trashPath });
 }
 
 export async function restoreNotebook(trashPath: string): Promise<string> {

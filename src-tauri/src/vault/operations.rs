@@ -1002,53 +1002,50 @@ pub fn rename_notebook(vault_path: &str, path: &str, new_name: &str) -> Result<S
 pub fn move_note(vault_path: &str, note_path: &str, dest_notebook: &str) -> Result<String, String> {
     let validated = ensure_note_path(vault_path, Path::new(note_path))?;
     let src = validated.as_path();
-
-    let validated_dest = ensure_vault_content_dir(vault_path, Path::new(dest_notebook))?;
-    let dest_dir = validated_dest.as_path();
-    if !dest_dir.is_dir() {
-        return Err("Destination notebook does not exist".to_string());
+    let (dest_dir, category) = ensure_para_destination_dir(vault_path, Path::new(dest_notebook))?;
+    if src.parent() == Some(dest_dir.as_path()) {
+        return Err("Note is already in that location".to_string());
     }
 
+    let raw = fs::read_to_string(src).map_err(|error| error.to_string())?;
     let filename = src.file_name().unwrap_or_default();
-    let dest = dest_dir.join(filename);
-
-    fs::rename(src, &dest).map_err(|e| e.to_string())?;
-    sync_category_to_location(vault_path, &dest);
+    let filename_for_parse = filename.to_string_lossy();
+    let (mut meta, body) = frontmatter::parse_note(&raw, &filename_for_parse);
+    let title = meta.title.clone();
+    meta.category = Some(category);
+    let updated = frontmatter::merge_frontmatter(&raw, &meta, &body);
+    let old_path = src.to_string_lossy().to_string();
+    let dest = crate::vault::relocation::relocate_file(
+        src,
+        &dest_dir,
+        filename,
+        Some(updated.as_bytes()),
+    )?;
+    let new_path = dest.to_string_lossy().to_string();
+    update_wikilinks_after_rename(vault_path, &old_path, &new_path, &title, &title);
     Ok(dest.to_string_lossy().to_string())
 }
 
-/// Record the destination's category on a note the user just moved.
-///
-/// Moving a note into a category inside the app *is* how the user recategorises it, so
-/// the note's own category is updated to match what they asked for. This is the opposite
-/// of reconciliation, which moves the file to match the note; here the user's action
-/// speaks for the note.
-fn sync_category_to_location(vault_path: &str, note_path: &Path) {
-    let relative = match note_path.strip_prefix(Path::new(vault_path)) {
-        Ok(rel) => rel.to_string_lossy().to_string(),
-        Err(_) => return,
-    };
-    let category = para::category_for_relative_path(&relative);
-
-    let raw = match fs::read_to_string(note_path) {
-        Ok(raw) => raw,
-        Err(e) => {
-            log::warn!("Could not read moved note to update its category: {}", e);
-            return;
-        }
-    };
-
-    let filename = note_path.file_name().unwrap_or_default().to_string_lossy();
-    let (mut meta, body) = frontmatter::parse_note(&raw, &filename);
-    if meta.category == category {
-        return;
+fn ensure_para_destination_dir(
+    vault_path: &str,
+    requested_path: &Path,
+) -> Result<(PathBuf, ParaCategory), String> {
+    let metadata = fs::symlink_metadata(requested_path)
+        .map_err(|error| format!("Invalid PARA destination: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("PARA destination must be a real directory".to_string());
     }
-    meta.category = category;
 
-    let updated = frontmatter::merge_frontmatter(&raw, &meta, &body);
-    if let Err(e) = fs::write(note_path, updated) {
-        log::warn!("Could not record the new category on a moved note: {}", e);
-    }
+    let vault = canonicalize_path(Path::new(vault_path), "vault path")?;
+    let destination = canonicalize_path(requested_path, "PARA destination")?;
+    let relative = destination
+        .strip_prefix(&vault)
+        .map_err(|_| "PARA destination must stay inside the active vault".to_string())?;
+    let relative = relative.to_string_lossy();
+    let category = para::category_for_relative_path(&relative)
+        .ok_or_else(|| "Notes must stay inside one of the four PARA categories".to_string())?;
+
+    Ok((destination, category))
 }
 
 /// Where notes with no category wait for the user to file them.
@@ -1056,20 +1053,27 @@ pub fn unfiled_dir(vault_path: &str) -> PathBuf {
     helixnotes_dir(vault_path).join(para::UNFILED_DIR)
 }
 
-fn ensure_unfiled_note_path(vault_path: &str, requested_path: &Path) -> Result<PathBuf, String> {
+fn ensure_unfiled_directory(vault_path: &str, create: bool) -> Result<PathBuf, String> {
     let vault = canonicalize_path(Path::new(vault_path), "vault path")?;
     let app_data_path = helixnotes_dir(vault_path);
     let holding_path = unfiled_dir(vault_path);
 
-    for (path, label) in [
-        (&app_data_path, "vault app-data directory"),
-        (&holding_path, "Holding Area directory"),
-    ] {
-        let metadata =
-            fs::symlink_metadata(path).map_err(|error| format!("Invalid {label}: {error}"))?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            return Err(format!("{label} must be a real directory"));
+    let app_data_metadata = fs::symlink_metadata(&app_data_path)
+        .map_err(|error| format!("Invalid vault app-data directory: {error}"))?;
+    if app_data_metadata.file_type().is_symlink() || !app_data_metadata.is_dir() {
+        return Err("vault app-data directory must be a real directory".to_string());
+    }
+    if create {
+        match fs::create_dir(&holding_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(format!("Could not create Holding Area: {error}")),
         }
+    }
+    let holding_metadata = fs::symlink_metadata(&holding_path)
+        .map_err(|error| format!("Invalid Holding Area directory: {error}"))?;
+    if holding_metadata.file_type().is_symlink() || !holding_metadata.is_dir() {
+        return Err("Holding Area directory must be a real directory".to_string());
     }
 
     let app_data = canonicalize_path(&app_data_path, "vault app-data directory")?;
@@ -1082,6 +1086,12 @@ fn ensure_unfiled_note_path(vault_path: &str, requested_path: &Path) -> Result<P
             "Holding Area must stay inside the active vault app-data directory".to_string(),
         );
     }
+
+    Ok(holding)
+}
+
+fn ensure_unfiled_note_path(vault_path: &str, requested_path: &Path) -> Result<PathBuf, String> {
+    let holding = ensure_unfiled_directory(vault_path, false)?;
 
     let metadata = fs::symlink_metadata(requested_path)
         .map_err(|error| format!("Invalid Holding Area note path: {error}"))?;
@@ -1300,22 +1310,20 @@ pub fn get_trash_contents(vault_path: &str) -> Result<TrashContents, String> {
     Ok(TrashContents { notes, notebooks })
 }
 
-pub fn restore_note(
-    vault_path: &str,
-    trash_path: &str,
-    dest_notebook: Option<&str>,
-) -> Result<String, String> {
+pub fn restore_note(vault_path: &str, trash_path: &str) -> Result<String, String> {
     let validated = ensure_trash_entry(vault_path, Path::new(trash_path))?;
     let src = validated.as_path();
     if !src.is_file() {
         return Err("Trashed note does not exist".to_string());
     }
 
-    let requested_dest = match dest_notebook {
-        Some(nb) => PathBuf::from(nb),
-        None => PathBuf::from(vault_path),
+    let raw = fs::read_to_string(src).map_err(|error| error.to_string())?;
+    let source_filename = src.file_name().unwrap_or_default().to_string_lossy();
+    let category = frontmatter::parse_note(&raw, &source_filename).0.category;
+    let dest_dir = match category {
+        Some(category) => ensure_category_destination(vault_path, category)?,
+        None => ensure_unfiled_directory(vault_path, true)?,
     };
-    let dest_dir = ensure_vault_content_dir(vault_path, &requested_dest)?;
 
     // Strip timestamp prefix from trash filename (17-char with millis or 14-char legacy)
     let filename = src.file_name().unwrap_or_default().to_string_lossy();
@@ -1328,8 +1336,12 @@ pub fn restore_note(
     };
 
     let parent = src.parent().map(|p| p.to_path_buf());
-    let dest = dest_dir.join(original_name);
-    fs::rename(src, &dest).map_err(|e| e.to_string())?;
+    let dest = crate::vault::relocation::relocate_file(
+        src,
+        &dest_dir,
+        std::ffi::OsStr::new(original_name),
+        None,
+    )?;
 
     // Clean up empty parent directory (deleted notebook folder) in trash
     cleanup_empty_trash_dir(vault_path, parent.as_deref());
@@ -1759,6 +1771,144 @@ mod tests {
 
         let moved_raw = fs::read_to_string(&moved).unwrap();
         assert!(moved_raw.contains("important content worth keeping"));
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn moving_a_note_never_overwrites_a_same_named_destination() {
+        let vault = scaffolded_vault("move-collision");
+        let vault_str = vault.to_string_lossy().to_string();
+        let incoming = create_note(&vault_str, Some("Projects"), "Plan").unwrap();
+        let incoming_raw = fs::read_to_string(&incoming.path).unwrap();
+        fs::write(&incoming.path, format!("{incoming_raw}incoming body\n")).unwrap();
+        let existing = create_note(&vault_str, Some("Resources"), "Plan").unwrap();
+        let existing_raw = fs::read_to_string(&existing.path).unwrap();
+        fs::write(&existing.path, format!("{existing_raw}existing body\n")).unwrap();
+
+        let resources = vault.join("Resources");
+        let moved = move_note(&vault_str, &incoming.path, &resources.to_string_lossy()).unwrap();
+        let moved_path = std::path::Path::new(&moved);
+        let existing_after = fs::read_to_string(&existing.path).unwrap();
+        let moved_after = fs::read_to_string(moved_path).unwrap();
+
+        assert_eq!(moved_path.file_name().unwrap(), "Plan 1.md");
+        assert!(existing_after.contains("existing body"));
+        assert!(moved_after.contains("incoming body"));
+        assert_eq!(
+            category_recorded_in(moved_path),
+            Some(ParaCategory::Resources)
+        );
+        assert!(!std::path::Path::new(&incoming.path).exists());
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn moving_a_note_rejects_destinations_outside_para_categories() {
+        let vault = scaffolded_vault("move-destination-policy");
+        let vault_str = vault.to_string_lossy().to_string();
+        let root_note = create_note(&vault_str, Some("Projects"), "Root attempt").unwrap();
+        let legacy_note = create_note(&vault_str, Some("Projects"), "Legacy attempt").unwrap();
+        let legacy_dir = vault.join("Inbox");
+        fs::create_dir(&legacy_dir).unwrap();
+
+        let root_result = move_note(&vault_str, &root_note.path, &vault_str);
+        let legacy_result = move_note(&vault_str, &legacy_note.path, &legacy_dir.to_string_lossy());
+
+        assert!(root_result.is_err(), "the vault root is not a category");
+        assert!(
+            legacy_result.is_err(),
+            "a legacy top-level folder is not a category"
+        );
+        assert!(std::path::Path::new(&root_note.path).is_file());
+        assert!(std::path::Path::new(&legacy_note.path).is_file());
+        assert_eq!(
+            category_recorded_in(std::path::Path::new(&root_note.path)),
+            Some(ParaCategory::Projects)
+        );
+        assert_eq!(
+            category_recorded_in(std::path::Path::new(&legacy_note.path)),
+            Some(ParaCategory::Projects)
+        );
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn moving_a_note_updates_path_based_wikilinks() {
+        let vault = scaffolded_vault("move-wikilinks");
+        let vault_str = vault.to_string_lossy().to_string();
+        let target = create_note(&vault_str, Some("Projects"), "Target").unwrap();
+        let reference = create_note(&vault_str, Some("Resources"), "Reference").unwrap();
+        let reference_raw = fs::read_to_string(&reference.path).unwrap();
+        fs::write(
+            &reference.path,
+            format!("{reference_raw}See [[Projects/Target]] and [[Projects/Target|the target]].\n"),
+        )
+        .unwrap();
+
+        let archives = vault.join("Archives");
+        move_note(&vault_str, &target.path, &archives.to_string_lossy()).unwrap();
+        let reference_after = fs::read_to_string(&reference.path).unwrap();
+
+        assert!(reference_after.contains("[[Archives/Target]]"));
+        assert!(reference_after.contains("[[Archives/Target|the target]]"));
+        assert!(!reference_after.contains("[[Projects/Target"));
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn restoring_a_categorized_note_uses_its_category_without_overwriting() {
+        let vault = scaffolded_vault("restore-category");
+        let vault_str = vault.to_string_lossy().to_string();
+        let original = create_note(&vault_str, Some("Projects"), "Plan").unwrap();
+        let original_id = original.meta.id.clone();
+        super::delete_note(&vault_str, &original.path).unwrap();
+        let replacement = create_note(&vault_str, Some("Projects"), "Plan").unwrap();
+        let replacement_id = replacement.meta.id.clone();
+        let trash = super::get_trash_contents(&vault_str).unwrap();
+        let trash_path = trash.notes.first().unwrap().path.clone();
+
+        let restored = super::restore_note(&vault_str, &trash_path).unwrap();
+        let restored_path = std::path::Path::new(&restored);
+
+        assert_eq!(restored_path, vault.join("Projects").join("Plan 1.md"));
+        assert_eq!(
+            category_recorded_in(restored_path),
+            Some(ParaCategory::Projects)
+        );
+        let restored_raw = fs::read_to_string(restored_path).unwrap();
+        let restored_meta = frontmatter::parse_note(&restored_raw, "Plan 1.md").0;
+        assert_eq!(restored_meta.id, original_id);
+        assert_eq!(
+            category_recorded_in(std::path::Path::new(&replacement.path)),
+            Some(ParaCategory::Projects)
+        );
+        let replacement_raw = fs::read_to_string(&replacement.path).unwrap();
+        assert_eq!(
+            frontmatter::parse_note(&replacement_raw, "Plan.md").0.id,
+            replacement_id
+        );
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn restoring_an_uncategorized_legacy_note_uses_the_holding_area() {
+        let vault = scaffolded_vault("restore-uncategorized");
+        let vault_str = vault.to_string_lossy().to_string();
+        let trash = helixnotes_dir(&vault_str).join("trash");
+        let trashed = trash.join("20240101000000000_Legacy.md");
+        fs::write(
+            &trashed,
+            "---\nid: \"legacy-id\"\ntitle: \"Legacy\"\n---\nlegacy body\n",
+        )
+        .unwrap();
+
+        let restored = super::restore_note(&vault_str, &trashed.to_string_lossy()).unwrap();
+        let expected = super::unfiled_dir(&vault_str).join("Legacy.md");
+
+        assert_eq!(std::path::Path::new(&restored), expected);
+        assert!(expected.is_file());
+        assert!(!vault.join("Legacy.md").exists());
+        assert_eq!(category_recorded_in(&expected), None);
         fs::remove_dir_all(vault).unwrap();
     }
 

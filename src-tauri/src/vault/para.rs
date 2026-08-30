@@ -11,6 +11,7 @@
 //! cannot be filed at all, so it goes to a holding area for the user to resolve.
 
 use serde::{Deserialize, Serialize};
+use std::ffi::OsStr;
 use std::path::{Component, Path};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -207,22 +208,8 @@ fn relative_to(root: &Path, path: &Path) -> String {
 
 /// Move a file into a directory without overwriting anything already there.
 pub fn relocate_note(src: &Path, dest_dir: &Path) -> Result<std::path::PathBuf, String> {
-    std::fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
-
-    let stem = src
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("note")
-        .to_string();
-    let mut dest = dest_dir.join(format!("{}.md", stem));
-    let mut counter = 1;
-    while dest.exists() {
-        dest = dest_dir.join(format!("{} {}.md", stem, counter));
-        counter += 1;
-    }
-
-    std::fs::rename(src, &dest).map_err(|e| e.to_string())?;
-    Ok(dest)
+    let filename = src.file_name().unwrap_or_else(|| OsStr::new("note.md"));
+    crate::vault::relocation::relocate_file(src, dest_dir, filename, None)
 }
 
 #[cfg(test)]
