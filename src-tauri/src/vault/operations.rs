@@ -1056,6 +1056,53 @@ pub fn unfiled_dir(vault_path: &str) -> PathBuf {
     helixnotes_dir(vault_path).join(para::UNFILED_DIR)
 }
 
+fn ensure_unfiled_note_path(vault_path: &str, requested_path: &Path) -> Result<PathBuf, String> {
+    let vault = canonicalize_path(Path::new(vault_path), "vault path")?;
+    let app_data_path = helixnotes_dir(vault_path);
+    let holding_path = unfiled_dir(vault_path);
+
+    for (path, label) in [
+        (&app_data_path, "vault app-data directory"),
+        (&holding_path, "Holding Area directory"),
+    ] {
+        let metadata =
+            fs::symlink_metadata(path).map_err(|error| format!("Invalid {label}: {error}"))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(format!("{label} must be a real directory"));
+        }
+    }
+
+    let app_data = canonicalize_path(&app_data_path, "vault app-data directory")?;
+    let holding = canonicalize_path(&holding_path, "Holding Area directory")?;
+    if app_data.parent() != Some(vault.as_path())
+        || app_data.file_name().and_then(|name| name.to_str()) != Some(".helixnotes")
+        || holding.parent() != Some(app_data.as_path())
+    {
+        return Err(
+            "Holding Area must stay inside the active vault app-data directory".to_string(),
+        );
+    }
+
+    let metadata = fs::symlink_metadata(requested_path)
+        .map_err(|error| format!("Invalid Holding Area note path: {error}"))?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || requested_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            != Some("md")
+    {
+        return Err("Holding Area note must be a regular Markdown file".to_string());
+    }
+
+    let requested = canonicalize_path(requested_path, "Holding Area note path")?;
+    if requested.parent() != Some(holding.as_path()) {
+        return Err("That note is not waiting in the active vault Holding Area".to_string());
+    }
+
+    Ok(requested)
+}
+
 /// Put every note in the folder its own category calls for, and collect the ones that
 /// have no category and so cannot be filed.
 pub fn reconcile_categories(vault_path: &str) -> Result<para::ReconcileReport, String> {
@@ -1094,21 +1141,17 @@ pub fn file_unfiled_note(
     let category = ParaCategory::from_name(category)
         .ok_or_else(|| format!("Not a PARA category: {}", category))?;
 
-    let unfiled = unfiled_dir(vault_path);
-    let src = Path::new(note_path);
-    if !src.starts_with(&unfiled) {
-        return Err("That note is not waiting to be filed".to_string());
-    }
+    let src = ensure_unfiled_note_path(vault_path, Path::new(note_path))?;
 
-    let raw = fs::read_to_string(src).map_err(|e| e.to_string())?;
+    let raw = fs::read_to_string(&src).map_err(|e| e.to_string())?;
     let filename = src.file_name().unwrap_or_default().to_string_lossy();
     let (mut meta, body) = frontmatter::parse_note(&raw, &filename);
     meta.category = Some(category);
-    fs::write(src, frontmatter::merge_frontmatter(&raw, &meta, &body))
+    fs::write(&src, frontmatter::merge_frontmatter(&raw, &meta, &body))
         .map_err(|e| e.to_string())?;
 
     let dest_dir = Path::new(vault_path).join(category.folder_name());
-    para::relocate_note(src, &dest_dir).map(|p| p.to_string_lossy().to_string())
+    para::relocate_note(&src, &dest_dir).map(|p| p.to_string_lossy().to_string())
 }
 
 /// Refuse an operation that would rename, move, or delete one of the four category
@@ -1746,6 +1789,132 @@ mod tests {
 
         assert!(super::file_unfiled_note(&vault_str, &entry.path, "Archives").is_err());
         fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn filing_rejects_a_traversal_path_without_touching_the_outside_file() {
+        let vault = scaffolded_vault("filing-traversal");
+        let vault_str = vault.to_string_lossy().to_string();
+        let unfiled = super::unfiled_dir(&vault_str);
+        fs::create_dir_all(&unfiled).unwrap();
+
+        let outside = std::env::temp_dir().join(format!("outside-{}.md", Uuid::new_v4()));
+        let original = "---\nid: \"outside\"\ntitle: \"Outside\"\n---\nuntouched\n";
+        fs::write(&outside, original).unwrap();
+        let traversal = unfiled
+            .join("..")
+            .join("..")
+            .join("..")
+            .join(outside.file_name().unwrap());
+
+        let result =
+            super::file_unfiled_note(&vault_str, &traversal.to_string_lossy(), "Resources");
+        let outside_after = fs::read_to_string(&outside).ok();
+
+        fs::remove_dir_all(&vault).unwrap();
+        if outside.exists() {
+            fs::remove_file(&outside).unwrap();
+        }
+
+        assert!(result.is_err(), "path traversal must be rejected");
+        assert_eq!(
+            outside_after.as_deref(),
+            Some(original),
+            "a rejected path must not read-modify-write an outside file"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn filing_rejects_a_symlinked_note_without_touching_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let vault = scaffolded_vault("filing-note-symlink");
+        let vault_str = vault.to_string_lossy().to_string();
+        let unfiled = super::unfiled_dir(&vault_str);
+        fs::create_dir_all(&unfiled).unwrap();
+
+        let outside = std::env::temp_dir().join(format!("outside-{}.md", Uuid::new_v4()));
+        let original = "---\nid: \"outside\"\ntitle: \"Outside\"\n---\nuntouched\n";
+        fs::write(&outside, original).unwrap();
+        let linked_note = unfiled.join("linked.md");
+        symlink(&outside, &linked_note).unwrap();
+
+        let result =
+            super::file_unfiled_note(&vault_str, &linked_note.to_string_lossy(), "Resources");
+        let outside_after = fs::read_to_string(&outside).unwrap();
+
+        fs::remove_dir_all(&vault).unwrap();
+        fs::remove_file(&outside).unwrap();
+
+        assert!(result.is_err(), "symlinked notes must be rejected");
+        assert_eq!(
+            outside_after, original,
+            "a rejected symlink must not mutate its outside target"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn filing_rejects_a_symlinked_holding_directory() {
+        use std::os::unix::fs::symlink;
+
+        let vault = scaffolded_vault("filing-dir-symlink");
+        let vault_str = vault.to_string_lossy().to_string();
+        let unfiled = super::unfiled_dir(&vault_str);
+        let outside_dir = std::env::temp_dir().join(format!("outside-holding-{}", Uuid::new_v4()));
+        fs::create_dir_all(&outside_dir).unwrap();
+        symlink(&outside_dir, &unfiled).unwrap();
+        let outside_note = outside_dir.join("waiting.md");
+        fs::write(
+            &outside_note,
+            "---\nid: \"outside\"\ntitle: \"Outside\"\n---\nuntouched\n",
+        )
+        .unwrap();
+
+        let linked_note = unfiled.join("waiting.md");
+        let result =
+            super::file_unfiled_note(&vault_str, &linked_note.to_string_lossy(), "Resources");
+        let outside_still_exists = outside_note.exists();
+
+        fs::remove_dir_all(&vault).unwrap();
+        fs::remove_dir_all(&outside_dir).unwrap();
+
+        assert!(
+            result.is_err(),
+            "a symlinked holding directory must be rejected"
+        );
+        assert!(
+            outside_still_exists,
+            "a rejected holding directory must not move an outside note"
+        );
+    }
+
+    #[test]
+    fn filing_only_accepts_regular_markdown_files() {
+        let vault = scaffolded_vault("filing-kind");
+        let vault_str = vault.to_string_lossy().to_string();
+        let unfiled = super::unfiled_dir(&vault_str);
+        fs::create_dir_all(&unfiled).unwrap();
+        let text_file = unfiled.join("waiting.txt");
+        fs::write(&text_file, "not a note").unwrap();
+        let directory = unfiled.join("directory.md");
+        fs::create_dir(&directory).unwrap();
+
+        let text_result =
+            super::file_unfiled_note(&vault_str, &text_file.to_string_lossy(), "Resources");
+        let directory_result =
+            super::file_unfiled_note(&vault_str, &directory.to_string_lossy(), "Resources");
+        let text_still_exists = text_file.exists();
+
+        fs::remove_dir_all(&vault).unwrap();
+
+        assert!(text_result.is_err(), "non-Markdown files must be rejected");
+        assert!(directory_result.is_err(), "directories must be rejected");
+        assert!(
+            text_still_exists,
+            "a rejected non-Markdown file must not be moved"
+        );
     }
 
     #[test]
