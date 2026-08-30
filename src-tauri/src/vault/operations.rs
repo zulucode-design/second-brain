@@ -1866,16 +1866,13 @@ mod tests {
         fs::create_dir_all(&outside_dir).unwrap();
         symlink(&outside_dir, &unfiled).unwrap();
         let outside_note = outside_dir.join("waiting.md");
-        fs::write(
-            &outside_note,
-            "---\nid: \"outside\"\ntitle: \"Outside\"\n---\nuntouched\n",
-        )
-        .unwrap();
+        let original = "---\nid: \"outside\"\ntitle: \"Outside\"\n---\nuntouched\n";
+        fs::write(&outside_note, original).unwrap();
 
         let linked_note = unfiled.join("waiting.md");
         let result =
             super::file_unfiled_note(&vault_str, &linked_note.to_string_lossy(), "Resources");
-        let outside_still_exists = outside_note.exists();
+        let outside_after = fs::read_to_string(&outside_note).ok();
 
         fs::remove_dir_all(&vault).unwrap();
         fs::remove_dir_all(&outside_dir).unwrap();
@@ -1884,9 +1881,10 @@ mod tests {
             result.is_err(),
             "a symlinked holding directory must be rejected"
         );
-        assert!(
-            outside_still_exists,
-            "a rejected holding directory must not move an outside note"
+        assert_eq!(
+            outside_after.as_deref(),
+            Some(original),
+            "a rejected holding directory must not move or rewrite an outside note"
         );
     }
 
@@ -1897,7 +1895,8 @@ mod tests {
         let unfiled = super::unfiled_dir(&vault_str);
         fs::create_dir_all(&unfiled).unwrap();
         let text_file = unfiled.join("waiting.txt");
-        fs::write(&text_file, "not a note").unwrap();
+        let original = "not a note";
+        fs::write(&text_file, original).unwrap();
         let directory = unfiled.join("directory.md");
         fs::create_dir(&directory).unwrap();
 
@@ -1905,15 +1904,16 @@ mod tests {
             super::file_unfiled_note(&vault_str, &text_file.to_string_lossy(), "Resources");
         let directory_result =
             super::file_unfiled_note(&vault_str, &directory.to_string_lossy(), "Resources");
-        let text_still_exists = text_file.exists();
+        let text_after = fs::read_to_string(&text_file).ok();
 
         fs::remove_dir_all(&vault).unwrap();
 
         assert!(text_result.is_err(), "non-Markdown files must be rejected");
         assert!(directory_result.is_err(), "directories must be rejected");
-        assert!(
-            text_still_exists,
-            "a rejected non-Markdown file must not be moved"
+        assert_eq!(
+            text_after.as_deref(),
+            Some(original),
+            "a rejected non-Markdown file must not be moved or rewritten"
         );
     }
 
