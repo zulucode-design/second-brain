@@ -1103,6 +1103,28 @@ fn ensure_unfiled_note_path(vault_path: &str, requested_path: &Path) -> Result<P
     Ok(requested)
 }
 
+fn ensure_category_destination(
+    vault_path: &str,
+    category: ParaCategory,
+) -> Result<PathBuf, String> {
+    let vault = canonicalize_path(Path::new(vault_path), "vault path")?;
+    let destination_path = Path::new(vault_path).join(category.folder_name());
+    let metadata = fs::symlink_metadata(&destination_path)
+        .map_err(|error| format!("Invalid PARA category destination: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("PARA category destination must be a real directory".to_string());
+    }
+
+    let destination = canonicalize_path(&destination_path, "PARA category destination")?;
+    if destination.parent() != Some(vault.as_path())
+        || destination.file_name().and_then(|name| name.to_str()) != Some(category.folder_name())
+    {
+        return Err("PARA category destination must stay inside the active vault".to_string());
+    }
+
+    Ok(destination)
+}
+
 /// Put every note in the folder its own category calls for, and collect the ones that
 /// have no category and so cannot be filed.
 pub fn reconcile_categories(vault_path: &str) -> Result<para::ReconcileReport, String> {
@@ -1142,6 +1164,7 @@ pub fn file_unfiled_note(
         .ok_or_else(|| format!("Not a PARA category: {}", category))?;
 
     let src = ensure_unfiled_note_path(vault_path, Path::new(note_path))?;
+    let dest_dir = ensure_category_destination(vault_path, category)?;
 
     let raw = fs::read_to_string(&src).map_err(|e| e.to_string())?;
     let filename = src.file_name().unwrap_or_default().to_string_lossy();
@@ -1150,7 +1173,6 @@ pub fn file_unfiled_note(
     fs::write(&src, frontmatter::merge_frontmatter(&raw, &meta, &body))
         .map_err(|e| e.to_string())?;
 
-    let dest_dir = Path::new(vault_path).join(category.folder_name());
     para::relocate_note(&src, &dest_dir).map(|p| p.to_string_lossy().to_string())
 }
 
@@ -1885,6 +1907,44 @@ mod tests {
             outside_after.as_deref(),
             Some(original),
             "a rejected holding directory must not move or rewrite an outside note"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn filing_rejects_a_symlinked_category_destination_before_rewriting_the_note() {
+        use std::os::unix::fs::symlink;
+
+        let vault = scaffolded_vault("filing-destination-symlink");
+        let vault_str = vault.to_string_lossy().to_string();
+        let unfiled = super::unfiled_dir(&vault_str);
+        fs::create_dir_all(&unfiled).unwrap();
+        let waiting = unfiled.join("waiting.md");
+        let original = "---\nid: \"waiting\"\ntitle: \"Waiting\"\n---\nuntouched\n";
+        fs::write(&waiting, original).unwrap();
+
+        let resources = vault.join("Resources");
+        fs::remove_dir(&resources).unwrap();
+        let outside_dir = std::env::temp_dir().join(format!("outside-category-{}", Uuid::new_v4()));
+        fs::create_dir_all(&outside_dir).unwrap();
+        symlink(&outside_dir, &resources).unwrap();
+
+        let result = super::file_unfiled_note(&vault_str, &waiting.to_string_lossy(), "Resources");
+        let source_after = fs::read_to_string(&waiting).ok();
+        let outside_entries = fs::read_dir(&outside_dir).unwrap().count();
+
+        fs::remove_dir_all(&vault).unwrap();
+        fs::remove_dir_all(&outside_dir).unwrap();
+
+        assert!(result.is_err(), "symlinked category roots must be rejected");
+        assert_eq!(
+            source_after.as_deref(),
+            Some(original),
+            "destination validation must happen before the source is rewritten"
+        );
+        assert_eq!(
+            outside_entries, 0,
+            "a rejected category destination must not receive a note"
         );
     }
 
