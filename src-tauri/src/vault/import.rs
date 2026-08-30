@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use crate::types::{ImportResult, NoteMeta};
 use crate::vault::frontmatter;
+use crate::vault::para::ParaCategory;
 
 pub fn import(vault_path: &str) -> Result<ImportResult, String> {
     let vault = Path::new(vault_path);
@@ -334,8 +335,14 @@ fn normalize_frontmatter(raw: &str, path: &Path) -> (NoteMeta, String) {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    // Imported notes arrive uncategorised. Where they land in the vault decides their
-    // category, and the caller doing the filing is what records it.
+    let category = mapping
+        .get(serde_yaml::Value::String("category".into()))
+        .and_then(serde_yaml::Value::as_str)
+        .and_then(ParaCategory::from_name);
+
+    // Preserve a valid category already recorded by this app or another PARA-aware
+    // tool. Unknown and malformed values remain uncategorised for the normal filing
+    // workflow to resolve.
     let meta = NoteMeta {
         id,
         title,
@@ -343,7 +350,7 @@ fn normalize_frontmatter(raw: &str, path: &Path) -> (NoteMeta, String) {
         pinned,
         created,
         modified,
-        category: None,
+        category,
     };
     (meta, result.content)
 }
@@ -961,6 +968,56 @@ mod tests {
         let raw = "---\ntags: a, b, c\n---\n# Note\n\nBody";
         let (meta, _) = normalize_frontmatter(raw, Path::new("note.md"));
         assert_eq!(meta.tags, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn obsidian_import_preserves_category_and_survives_reconciliation() {
+        let vault = std::env::temp_dir().join(format!("categorized-import-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&vault).unwrap();
+        crate::vault::operations::ensure_vault_structure(&vault.to_string_lossy()).unwrap();
+
+        let note_path = vault.join("Projects").join("Launch").join("Plan.md");
+        std::fs::create_dir_all(note_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &note_path,
+            "---\n\
+             id: \"stable-import-id\"\n\
+             title: \"Launch plan\"\n\
+             tags: [launch, important]\n\
+             pinned: true\n\
+             created: \"2024-01-02T03:04:05Z\"\n\
+             modified: \"2024-02-03T04:05:06Z\"\n\
+             category: Projects\n\
+             obsidian-only: keep-me\n\
+             ---\n\
+             # Launch plan\n\nDo the work.\n",
+        )
+        .unwrap();
+
+        import(&vault.to_string_lossy()).unwrap();
+        let imported_raw = std::fs::read_to_string(&note_path).unwrap();
+        let (meta, body) = frontmatter::parse_note(&imported_raw, "Plan.md");
+        let report =
+            crate::vault::operations::reconcile_categories(&vault.to_string_lossy()).unwrap();
+        let original_path_survived = note_path.is_file();
+
+        std::fs::remove_dir_all(&vault).unwrap();
+
+        assert_eq!(
+            meta.category,
+            Some(crate::vault::para::ParaCategory::Projects)
+        );
+        assert_eq!(meta.id, "stable-import-id");
+        assert_eq!(meta.title, "Launch plan");
+        assert_eq!(meta.tags, ["launch", "important"]);
+        assert!(meta.pinned);
+        assert!(body.contains("Do the work."));
+        assert!(imported_raw.contains("obsidian-only: keep-me"));
+        assert!(
+            original_path_survived,
+            "reconciliation must not move a correctly categorized imported note"
+        );
+        assert!(report.unfiled.is_empty());
     }
 
     #[test]

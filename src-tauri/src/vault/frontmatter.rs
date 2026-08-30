@@ -3,7 +3,7 @@ use crate::vault::para::ParaCategory;
 use chrono::{NaiveDate, NaiveDateTime, Utc};
 use gray_matter::engine::YAML;
 use gray_matter::Matter;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct RawFrontmatter {
@@ -13,7 +13,16 @@ struct RawFrontmatter {
     pinned: Option<bool>,
     created: Option<String>,
     modified: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
     category: Option<String>,
+}
+
+fn deserialize_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_yaml::Value::deserialize(deserializer)?;
+    Ok(value.as_str().map(str::to_owned))
 }
 
 /// Try to parse a date string in multiple common formats.
@@ -472,6 +481,41 @@ mod tests {
         let (parsed, _) = parse_note(raw, "odd.md");
         assert_eq!(parsed.category, None);
         assert_eq!(parsed.title, "Odd");
+    }
+
+    #[test]
+    fn invalid_category_types_preserve_all_other_metadata() {
+        for invalid_category in ["42", "true", "[Projects]", "{ name: Projects }", "null"] {
+            let raw = format!(
+                "---\n\
+                 id: \"stable-id\"\n\
+                 title: \"Stable title\"\n\
+                 tags: [alpha, beta]\n\
+                 pinned: true\n\
+                 created: \"2024-01-02T03:04:05Z\"\n\
+                 modified: \"2024-02-03T04:05:06Z\"\n\
+                 category: {invalid_category}\n\
+                 ---\n\
+                 body stays readable\n"
+            );
+
+            let (parsed, body) = parse_note(&raw, "fallback-name.md");
+
+            assert_eq!(
+                parsed.id, "stable-id",
+                "invalid category {invalid_category} erased the ID"
+            );
+            assert_eq!(
+                parsed.title, "Stable title",
+                "invalid category {invalid_category} erased the title"
+            );
+            assert_eq!(parsed.tags, ["alpha", "beta"]);
+            assert!(parsed.pinned);
+            assert_eq!(parsed.created.to_rfc3339(), "2024-01-02T03:04:05+00:00");
+            assert_eq!(parsed.modified.to_rfc3339(), "2024-02-03T04:05:06+00:00");
+            assert_eq!(parsed.category, None);
+            assert_eq!(body.trim_end(), "body stays readable");
+        }
     }
 
     #[test]
