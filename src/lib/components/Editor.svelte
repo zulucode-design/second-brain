@@ -62,8 +62,9 @@
 	import { isMobile, isAndroid } from '$lib/platform';
 	import ResizeHandle from './ResizeHandle.svelte';
 
-	let { onMoveToTrash }: {
+	let { onMoveToTrash, onRequestCreateLinkedNote = (_title: string) => {} }: {
 		onMoveToTrash?: (path: string) => Promise<boolean>;
+		onRequestCreateLinkedNote?: (title: string) => void;
 	} = $props();
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
@@ -2867,26 +2868,9 @@
 				wikiLinkNavDisambigIndex = 0;
 				return;
 			} else {
-				// Create the note (use clean title, not the anchor ref)
+				// Let the shared creation flow confirm a PARA destination first.
 				const cleanTitle = noteTitle.includes('/') ? noteTitle.split('/').pop()! : noteTitle;
-				const notebookRel = $activeNotePath
-					? $activeNotePath.replace(/\\/g, '/').replace(($appConfig?.active_vault ?? '').replace(/\\/g, '/') + '/', '').split('/').slice(0, -1).join('/')
-					: null;
-				try {
-					// Save the current note before navigating away
-					await forceSave();
-					const { createNote } = await import('$lib/api');
-					const newNote = await createNote(notebookRel || null, cleanTitle);
-					// Refresh titles cache so the new note resolves on future clicks
-					refreshWikiLinkTitles();
-					// Navigate to the new note
-					const content = await readNote(newNote.path);
-					$activeNote = { ...content, content: content.content };
-					$activeNotePath = newNote.path;
-					$editorDirty = false;
-				} catch (e) {
-					console.error('Failed to create note from wiki-link:', e);
-				}
+				onRequestCreateLinkedNote(cleanTitle);
 				return;
 			}
 		}
@@ -2906,6 +2890,22 @@
 			// retry as unresolved so the user can recreate it from the link.
 			await refreshWikiLinkTitles();
 			await navigateToWikiLink('', title, clickEvent);
+		}
+	}
+
+	export async function createLinkedNoteAfterConfirmation(nbRelative: string, title: string) {
+		try {
+			await forceSave();
+			const { createNote } = await import('$lib/api');
+			const newNote = await createNote(nbRelative, title);
+			await refreshWikiLinkTitles();
+			const content = await readNote(newNote.path);
+			$activeNote = { ...content, content: content.content };
+			$activeNotePath = newNote.path;
+			$editorDirty = false;
+		} catch (error) {
+			console.error('Failed to create note from wiki-link:', error);
+			throw error;
 		}
 	}
 

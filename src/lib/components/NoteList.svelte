@@ -52,12 +52,13 @@
 	import TagSuggestInput from './TagSuggestInput.svelte';
 	import { isMobile, isAndroid } from '$lib/platform';
 
-	let { onNoteSelected = (_path: string, _content: string, _task?: TaskItem) => {}, onNoteMoved = () => {}, onBeforeNoteSwitch = () => {}, onBeforeNoteDuplicate = async () => true, onNoteCreated = () => {}, onToggleTask = async (_t: TaskItem) => {}, onSetTaskPriority = async (_t: TaskItem, _p: string | null) => {}, onSetTaskDue = async (_t: TaskItem, _d: string | null) => {} }: {
+	let { onNoteSelected = (_path: string, _content: string, _task?: TaskItem) => {}, onNoteMoved = () => {}, onBeforeNoteSwitch = () => {}, onBeforeNoteDuplicate = async () => true, onNoteCreated = () => {}, onRequestCreateNote = () => {}, onToggleTask = async (_t: TaskItem) => {}, onSetTaskPriority = async (_t: TaskItem, _p: string | null) => {}, onSetTaskDue = async (_t: TaskItem, _d: string | null) => {} }: {
 		onNoteSelected?: (path: string, content: string, task?: TaskItem) => void;
 		onNoteMoved?: () => void;
 		onBeforeNoteSwitch?: () => void;
 		onBeforeNoteDuplicate?: () => Promise<boolean>;
 		onNoteCreated?: () => void;
+		onRequestCreateNote?: () => void;
 		onToggleTask?: (t: TaskItem) => Promise<void>;
 		onSetTaskPriority?: (t: TaskItem, p: string | null) => Promise<void>;
 		onSetTaskDue?: (t: TaskItem, d: string | null) => Promise<void>;
@@ -393,23 +394,14 @@
 		}
 	}
 
-	export async function handleCreateNote() {
+	export function handleCreateNote() {
 		if ($viewMode === 'quickaccess' || $viewMode === 'trash') return;
 		// Unfiled is a queue to empty, not a place to add to.
 		if ($viewMode === 'unfiled') return;
-		// Target: active notebook, else the open note's folder, else root.
-		let nbRelative: string | null = null;
-		if ($viewMode === 'notebook' && $activeNotebook) {
-			nbRelative = $activeNotebook.relative_path || null;
-		} else if ($appConfig?.active_vault && $activeNotePath) {
-			const vaultN = $appConfig.active_vault.replace(/\\/g, '/');
-			const apN = $activeNotePath.replace(/\\/g, '/');
-			if (apN.startsWith(vaultN + '/')) {
-				const rel = apN.slice(vaultN.length + 1);
-				const slash = rel.lastIndexOf('/');
-				if (slash > 0) nbRelative = rel.slice(0, slash);
-			}
-		}
+		onRequestCreateNote();
+	}
+
+	export async function createNoteAfterConfirmation(nbRelative: string) {
 		try {
 			const entry = await createNote(nbRelative, 'Untitled');
 			if ($sortMode === 'custom') appendManualNoteOrder(entry.path);
@@ -423,13 +415,8 @@
 			onNoteCreated();
 		} catch (e) {
 			console.error('Failed to create note:', e);
-			// Most often this is a note with no PARA category to file it under. Saying so
-			// beats a button that appears to do nothing.
-			showToast(
-				nbRelative
-					? 'Could not create the note.'
-					: 'Pick a category first — notes are filed under Projects, Areas, Resources, or Archives.'
-			);
+			showToast('Could not create the note.');
+			throw e;
 		}
 	}
 

@@ -61,6 +61,8 @@
 		aiStatus,
 	} from '$lib/stores/app';
 	import { keybindings, matchAction } from '$lib/keybindings';
+	import { destinationForCategory, suggestedNotebookForCreation } from '$lib/utils/note-creation';
+	import { PARA_CATEGORIES } from '$lib/types';
 
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
@@ -71,7 +73,7 @@
 	import { openNoteWindow } from '$lib/utils/window';
 	import { normalizeStartupView, resolveStartupTarget } from '$lib/utils/startup-view';
 	import { get } from 'svelte/store';
-	import type { VaultState, FileEvent, NotebookEntry, TaskItem, AiStatus, RepairStatus } from '$lib/types';
+	import type { VaultState, FileEvent, NotebookEntry, TaskItem, AiStatus, RepairStatus, ParaCategory } from '$lib/types';
 	import type { StartupTarget } from '$lib/utils/startup-view';
 
 	function findNotebookByPath(list: NotebookEntry[], relPath: string): NotebookEntry | null {
@@ -92,6 +94,13 @@
 	let repairStatus = $state<RepairStatus>({ issues: [] });
 	let repairBusy = $state(false);
 	let repairError = $state('');
+	let noteCreationOpen = $state(false);
+	let noteCreationBusy = $state(false);
+	let suggestedCreationNotebook = $state<string | null>(null);
+	let creationDialog = $state<HTMLDivElement>();
+	let noteCreationTitle = $state('Untitled');
+	let noteCreationSource = $state<'list' | 'wiki-link'>('list');
+	let noteCreationError = $state('');
 
 	async function repairNow() {
 		repairBusy = true;
@@ -346,10 +355,54 @@
 		if (isMobile) $mobileView = 'notelist';
 	}
 
-	async function createAndFocusNote() {
-		await noteList?.handleCreateNote();
-		editor?.focusTitle();
-		if (isMobile) $mobileView = 'editor';
+	function requestNoteCreation() {
+		if ($viewMode === 'quickaccess' || $viewMode === 'trash' || $viewMode === 'unfiled') return;
+		if (!isMobile && $notelistCollapsed) $notelistCollapsed = false;
+		noteCreationTitle = 'Untitled';
+		noteCreationSource = 'list';
+		openNoteCreationDialog();
+	}
+
+	function requestLinkedNoteCreation(title: string) {
+		noteCreationTitle = title;
+		noteCreationSource = 'wiki-link';
+		openNoteCreationDialog();
+	}
+
+	function openNoteCreationDialog() {
+		suggestedCreationNotebook = suggestedNotebookForCreation(
+			$viewMode,
+			$activeNotebook?.relative_path
+		);
+		noteCreationError = '';
+		noteCreationOpen = true;
+		void tick().then(() => creationDialog?.focus());
+	}
+
+	function createAndFocusNote() {
+		requestNoteCreation();
+	}
+
+	async function confirmNoteCategory(category: ParaCategory) {
+		if (noteCreationBusy) return;
+		noteCreationBusy = true;
+		noteCreationError = '';
+		try {
+			const destination = destinationForCategory(category, suggestedCreationNotebook);
+			if (noteCreationSource === 'wiki-link') {
+				await editor?.createLinkedNoteAfterConfirmation(destination, noteCreationTitle);
+			} else {
+				await noteList?.createNoteAfterConfirmation(destination);
+			}
+			noteCreationOpen = false;
+			await tick();
+			editor?.focusTitle();
+			if (isMobile) $mobileView = 'editor';
+		} catch {
+			noteCreationError = 'Could not create the note. Choose a category to retry, or cancel.';
+		} finally {
+			noteCreationBusy = false;
+		}
 	}
 
 	// Toggle a task done from the Tasks view. If the task's note is open in the editor,
@@ -512,6 +565,13 @@
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
+		if (noteCreationOpen) {
+			if (e.code === 'Escape' && !noteCreationBusy) {
+				e.preventDefault();
+				noteCreationOpen = false;
+			}
+			return;
+		}
 		const mod = e.ctrlKey || e.metaKey;
 		const code = e.code;
 
@@ -864,6 +924,34 @@
 
 <svelte:window onkeydown={handleKeydown} onmousedown={isMobile ? undefined : handleMouseDown} />
 
+{#if noteCreationOpen}
+	<div class="creation-backdrop">
+		<button
+			class="creation-dismiss"
+			type="button"
+			aria-label="Cancel new note"
+			disabled={noteCreationBusy}
+			onclick={() => noteCreationOpen = false}
+		></button>
+		<div bind:this={creationDialog} class="creation-dialog" role="dialog" aria-modal="true" aria-labelledby="creation-title" tabindex="-1">
+			<h2 id="creation-title">Where should this note go?</h2>
+			<p>Choose a category before “{noteCreationTitle}” is created.</p>
+			{#if noteCreationError}<p class="creation-error" role="alert">{noteCreationError}</p>{/if}
+			<div class="creation-categories">
+				{#each PARA_CATEGORIES as category}
+					<button type="button" onclick={() => confirmNoteCategory(category)} disabled={noteCreationBusy}>
+						<strong>{category}</strong>
+						{#if suggestedCreationNotebook?.startsWith(`${category}/`)}
+							<span>{suggestedCreationNotebook.slice(category.length + 1)}</span>
+						{/if}
+					</button>
+				{/each}
+			</div>
+			<button class="creation-cancel" type="button" onclick={() => noteCreationOpen = false} disabled={noteCreationBusy}>Cancel</button>
+		</div>
+	</div>
+{/if}
+
 {#if repairStatus.issues.length > 0 || repairError}
 	<div class="repair-banner" role="alert">
 		<div>
@@ -1020,10 +1108,10 @@
 				<Sidebar bind:this={sidebar} onViewChanged={handleViewChanged} />
 			</div>
 			<div class="mobile-panel" class:active={$mobileView === 'notelist'}>
-				<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onBeforeNoteDuplicate={() => editor?.forceSave() ?? Promise.resolve(true)} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); }} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
+				<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onBeforeNoteDuplicate={() => editor?.forceSave() ?? Promise.resolve(true)} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); }} onRequestCreateNote={requestNoteCreation} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
 			</div>
 			<div class="mobile-panel" class:active={$mobileView === 'editor'}>
-				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} />
+				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} />
 			</div>
 		</div>
 
@@ -1081,7 +1169,7 @@
 
 				{#if !$notelistCollapsed}
 					<div class="notelist-panel" style="width: {$notelistWidth}px">
-						<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onBeforeNoteDuplicate={() => editor?.forceSave() ?? Promise.resolve(true)} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); }} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
+						<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onBeforeNoteDuplicate={() => editor?.forceSave() ?? Promise.resolve(true)} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); }} onRequestCreateNote={requestNoteCreation} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
 					</div>
 
 					<ResizeHandle onResize={handleNotelistResize} />
@@ -1100,7 +1188,7 @@
 			{/if}
 
 			<div class="editor-panel">
-				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} />
+				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} />
 				{#if $viewMode === 'tasks' && !taskNoteOpened}
 					<div class="tasks-editor-placeholder">
 						<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -1120,6 +1208,97 @@
 <InfoPanel />
 
 <style>
+	.creation-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 10030;
+		display: grid;
+		place-items: center;
+		padding: 20px;
+		background: rgba(0, 0, 0, 0.42);
+	}
+
+	.creation-dialog {
+		position: relative;
+		z-index: 1;
+		width: min(420px, 100%);
+		padding: 20px;
+		border: 1px solid var(--border-color);
+		border-radius: 12px;
+		background: var(--bg-primary);
+		box-shadow: 0 18px 60px rgba(0, 0, 0, 0.32);
+		color: var(--text-primary);
+	}
+
+	.creation-dismiss {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		cursor: default;
+	}
+
+	.creation-dialog h2 {
+		margin: 0 0 6px;
+		font-size: 18px;
+	}
+
+	.creation-dialog p {
+		margin: 0 0 16px;
+		color: var(--text-secondary);
+		font-size: 13px;
+	}
+
+	.creation-dialog .creation-error {
+		color: var(--danger-color, #c33);
+	}
+
+	.creation-categories {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 8px;
+	}
+
+	.creation-categories button {
+		display: flex;
+		min-height: 58px;
+		flex-direction: column;
+		align-items: flex-start;
+		justify-content: center;
+		padding: 10px 12px;
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		cursor: pointer;
+	}
+
+	.creation-categories button:hover:not(:disabled) {
+		border-color: var(--accent-color);
+		background: var(--bg-hover);
+	}
+
+	.creation-categories span {
+		overflow: hidden;
+		max-width: 100%;
+		color: var(--text-secondary);
+		font-size: 11px;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.creation-cancel {
+		margin-top: 14px;
+		padding: 6px 10px;
+		border: 0;
+		background: transparent;
+		color: var(--text-secondary);
+		cursor: pointer;
+	}
+
 	.repair-banner {
 		position: fixed;
 		top: 38px;
