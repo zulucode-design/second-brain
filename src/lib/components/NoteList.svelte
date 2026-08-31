@@ -1357,7 +1357,11 @@
 </div>
 
 {#if contextMenu && rowPolicy.contextMenu}
-	<div class="context-menu" class:mobile={isMobile} style="left: {contextMenu.x}px; top: {contextMenu.y}px" role="group" aria-label="Note actions">
+	<!-- Keep pointer events inside the menu from reaching the window-level dismiss handler.
+	     In particular, opening Move to... changes the menu contents during the click; on
+	     Windows this could otherwise let the bubbled event dismiss the newly-opened picker. -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="context-menu" class:mobile={isMobile} style="left: {contextMenu.x}px; top: {contextMenu.y}px" role="group" aria-label="Note actions" onmousedown={(e) => e.stopPropagation()}>
 		{#if selectedPaths.size > 1 && selectedPaths.has(contextMenu.note.path)}
 			<!-- Batch context menu -->
 			{#if $viewMode === 'trash'}
@@ -1527,7 +1531,7 @@
 				</svg>
 				Duplicate Note
 			</button>
-			<button onclick={() => { movePickerNote = contextMenu!.note; }}>
+			<button onclick={(e) => { e.stopPropagation(); movePickerNote = contextMenu!.note; }}>
 				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
 				</svg>
