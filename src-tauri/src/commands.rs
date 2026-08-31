@@ -7,40 +7,57 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager, Runtime, State};
 use tauri_plugin_fs::FsExt;
 
-fn index_note_bg(state: &State<'_, AppState>, path: &str) {
+fn index_note_now(state: &State<'_, AppState>, vault_path: &str, path: &str) -> Result<(), String> {
     let search = state.search_index.lock().ok().and_then(|g| g.clone());
     if let Some(search) = search {
-        let p = path.to_string();
-        std::thread::spawn(move || {
-            let _ = search.index_note(&p);
-        });
+        if let Err(incremental_error) = search.index_note(path) {
+            search.rebuild(vault_path).map_err(|rebuild_error| {
+                format!(
+                    "Search update failed ({incremental_error}); full rebuild also failed: {rebuild_error}"
+                )
+            })?;
+        }
     }
+    Ok(())
 }
 
-fn remove_note_bg(state: &State<'_, AppState>, path: &str) {
+fn remove_note_now(
+    state: &State<'_, AppState>,
+    vault_path: &str,
+    path: &str,
+) -> Result<(), String> {
     let search = state.search_index.lock().ok().and_then(|g| g.clone());
     if let Some(search) = search {
-        let p = path.to_string();
-        std::thread::spawn(move || {
-            let _ = search.remove_note(&p);
-        });
+        if let Err(incremental_error) = search.remove_note(path) {
+            search.rebuild(vault_path).map_err(|rebuild_error| {
+                format!(
+                    "Search removal failed ({incremental_error}); full rebuild also failed: {rebuild_error}"
+                )
+            })?;
+        }
     }
+    Ok(())
 }
 
-fn reindex_moved_note_bg(state: &State<'_, AppState>, old_path: &str, new_path: &str) {
+fn reindex_moved_note_now(
+    state: &State<'_, AppState>,
+    vault_path: &str,
+    old_path: &str,
+    new_path: &str,
+) -> Result<(), String> {
     let search = state.search_index.lock().ok().and_then(|g| g.clone());
     if let Some(search) = search {
-        let old_path = old_path.to_string();
-        let new_path = new_path.to_string();
-        std::thread::spawn(move || {
-            if let Err(error) = search.remove_note(&old_path) {
-                log::warn!("Could not remove moved note's old search entry: {error}");
-            }
-            if let Err(error) = search.index_note(&new_path) {
-                log::warn!("Could not index moved note at its new path: {error}");
-            }
-        });
+        if let Err(incremental_error) =
+            search.apply_note_changes(&[old_path.to_string()], &[new_path.to_string()])
+        {
+            search.rebuild(vault_path).map_err(|rebuild_error| {
+                format!(
+                    "Search move update failed ({incremental_error}); full rebuild also failed: {rebuild_error}"
+                )
+            })?;
+        }
     }
+    Ok(())
 }
 
 fn clear_vault_runtime(state: &State<'_, AppState>) -> Result<(), String> {
@@ -82,6 +99,10 @@ fn open_vault_path(
     path: String,
     external: Option<(String, String)>,
 ) -> Result<(), String> {
+    let _note_mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     operations::ensure_vault_structure(&path)?;
 
     // Put any note an external program misplaced back under its own category before the
@@ -687,6 +708,10 @@ pub fn save_note(
     meta: NoteMeta,
     body: String,
 ) -> Result<(), String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let config = state.config.lock().map_err(|error| error.to_string())?;
     let vault_path = config
         .active_vault
@@ -705,8 +730,7 @@ pub fn save_note(
 
     operations::save_note(&vault_path, &path, &meta, &body)?;
 
-    // Re-index note so search picks up changes (background to avoid blocking on FUSE fsync)
-    index_note_bg(&state, &path);
+    index_note_now(&state, &vault_path, &path)?;
 
     Ok(())
 }
@@ -716,6 +740,10 @@ pub fn duplicate_note(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<crate::types::NoteEntry, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault = config
         .active_vault
@@ -725,7 +753,7 @@ pub fn duplicate_note(
     drop(config);
 
     let entry = operations::duplicate_note(&path, &vault)?;
-    index_note_bg(&state, &entry.path);
+    index_note_now(&state, &vault, &entry.path)?;
     Ok(entry)
 }
 
@@ -735,12 +763,15 @@ pub fn create_note(
     notebook_relative: Option<String>,
     title: String,
 ) -> Result<NoteEntry, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
     let entry = operations::create_note(vault_path, notebook_relative.as_deref(), &title)?;
 
-    // Index new note (background to avoid blocking on FUSE fsync)
-    index_note_bg(&state, &entry.path);
+    index_note_now(&state, vault_path, &entry.path)?;
 
     Ok(entry)
 }
@@ -786,11 +817,15 @@ pub fn file_unfiled_note(
     note_path: String,
     category: String,
 ) -> Result<String, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
     let new_path = operations::file_unfiled_note(vault_path, &note_path, &category)?;
 
-    index_note_bg(&state, &new_path);
+    index_note_now(&state, vault_path, &new_path)?;
 
     Ok(new_path)
 }
@@ -801,6 +836,10 @@ pub fn rename_note(
     path: String,
     new_title: String,
 ) -> Result<String, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config
         .active_vault
@@ -808,17 +847,22 @@ pub fn rename_note(
         .ok_or("No active vault")?
         .clone();
     drop(config);
-    operations::rename_note(&path, &new_title, &vault_path)
+    let renamed = operations::rename_note(&path, &new_title, &vault_path)?;
+    reindex_moved_note_now(&state, &vault_path, &path, &renamed)?;
+    Ok(renamed)
 }
 
 #[tauri::command]
 pub fn delete_note(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
     operations::delete_note(vault_path, &path)?;
 
-    // Remove from index (background to avoid blocking on FUSE fsync)
-    remove_note_bg(&state, &path);
+    remove_note_now(&state, vault_path, &path)?;
 
     Ok(())
 }
@@ -829,6 +873,10 @@ pub fn move_note(
     note_path: String,
     dest_notebook: String,
 ) -> Result<String, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
 
@@ -856,7 +904,7 @@ pub fn move_note(
         }
     }
 
-    reindex_moved_note_bg(&state, &note_path, &new_full_path);
+    reindex_moved_note_now(&state, vault_path, &note_path, &new_full_path)?;
 
     Ok(new_full_path)
 }
@@ -1250,6 +1298,10 @@ pub fn set_task_done(
     raw_line: String,
     done: bool,
 ) -> Result<(), String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let (vault_path, meta, body) = read_task_note(&state, &note_path)?;
     let mut lines: Vec<String> = body.lines().map(|l| l.to_string()).collect();
     // Verify the expected line; if the note drifted, fall back to the first exact match.
@@ -1273,8 +1325,7 @@ pub fn set_task_done(
     }
     operations::save_note(&vault_path, &note_path, &meta, &new_body)?;
 
-    index_note_bg(&state, &note_path);
-    Ok(())
+    index_note_now(&state, &vault_path, &note_path)
 }
 
 fn set_priority_on_line(line: &str, priority: Option<&str>) -> String {
@@ -1295,6 +1346,10 @@ pub fn set_task_priority(
     raw_line: String,
     priority: Option<String>,
 ) -> Result<(), String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     // Normalize/validate priority ("medium" -> "med"); None clears it.
     let prio = match priority.as_deref() {
         None | Some("") | Some("none") => None,
@@ -1326,8 +1381,7 @@ pub fn set_task_priority(
     }
     operations::save_note(&vault_path, &note_path, &meta, &new_body)?;
 
-    index_note_bg(&state, &note_path);
-    Ok(())
+    index_note_now(&state, &vault_path, &note_path)
 }
 
 fn set_due_on_line(line: &str, due: Option<&str>) -> String {
@@ -1348,6 +1402,10 @@ pub fn set_task_due(
     raw_line: String,
     due: Option<String>,
 ) -> Result<(), String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     // Validate format (YYYY-MM-DD); None/empty clears the due date.
     let date_re = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap();
     let due_val: Option<&str> = match due.as_deref() {
@@ -1378,8 +1436,7 @@ pub fn set_task_due(
     }
     operations::save_note(&vault_path, &note_path, &meta, &new_body)?;
 
-    index_note_bg(&state, &note_path);
-    Ok(())
+    index_note_now(&state, &vault_path, &note_path)
 }
 
 // ── Search ──
@@ -1419,6 +1476,10 @@ pub fn get_trash(state: State<'_, AppState>) -> Result<TrashContents, String> {
 
 #[tauri::command]
 pub fn restore_note(state: State<'_, AppState>, trash_path: String) -> Result<String, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let vault_path = {
         let config = state.config.lock().map_err(|e| e.to_string())?;
         config
@@ -1428,7 +1489,7 @@ pub fn restore_note(state: State<'_, AppState>, trash_path: String) -> Result<St
             .clone()
     };
     let restored = operations::restore_note(&vault_path, &trash_path)?;
-    index_note_bg(&state, &restored);
+    index_note_now(&state, &vault_path, &restored)?;
     Ok(restored)
 }
 

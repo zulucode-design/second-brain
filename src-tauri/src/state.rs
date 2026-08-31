@@ -14,6 +14,9 @@ pub struct AppState {
     pub importing: AtomicBool,
     pub syncing: AtomicBool,
     pub pending_open_file: Mutex<Option<String>>,
+    /// Serializes note lifecycle mutations so an older search/index side effect cannot
+    /// land after a newer move, delete, restore, or save.
+    pub note_mutation: Mutex<()>,
     /// Last known reachability of the AI backend, kept current by a background poller so
     /// features can be shown as unavailable without each one having to find out itself.
     pub ai_status: Mutex<AiStatus>,
@@ -29,6 +32,7 @@ impl AppState {
             importing: AtomicBool::new(false),
             syncing: AtomicBool::new(false),
             pending_open_file: Mutex::new(None),
+            note_mutation: Mutex::new(()),
             ai_status: Mutex::new(AiStatus::unknown()),
         }
     }
