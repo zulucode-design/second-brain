@@ -44,11 +44,14 @@ fn reindex_moved_note_now(
     vault_path: &str,
     old_path: &str,
     new_path: &str,
+    rewritten_paths: &[String],
 ) -> Result<(), String> {
     let search = state.search_index.lock().ok().and_then(|g| g.clone());
     if let Some(search) = search {
-        if let Err(incremental_error) =
-            search.apply_note_changes(&[old_path.to_string()], &[new_path.to_string()])
+        let mut upserts = Vec::with_capacity(rewritten_paths.len() + 1);
+        upserts.push(new_path.to_string());
+        upserts.extend_from_slice(rewritten_paths);
+        if let Err(incremental_error) = search.apply_note_changes(&[old_path.to_string()], &upserts)
         {
             search.rebuild(vault_path).map_err(|rebuild_error| {
                 format!(
@@ -848,7 +851,7 @@ pub fn rename_note(
         .clone();
     drop(config);
     let renamed = operations::rename_note(&path, &new_title, &vault_path)?;
-    reindex_moved_note_now(&state, &vault_path, &path, &renamed)?;
+    reindex_moved_note_now(&state, &vault_path, &path, &renamed, &[])?;
     Ok(renamed)
 }
 
@@ -880,33 +883,17 @@ pub fn move_note(
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
 
-    // Compute old relative path before move
-    let old_relative = Path::new(&note_path)
-        .strip_prefix(vault_path)
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
+    let outcome = operations::move_note_with_outcome(vault_path, &note_path, &dest_notebook)?;
 
-    let new_full_path = operations::move_note(vault_path, &note_path, &dest_notebook)?;
+    reindex_moved_note_now(
+        &state,
+        vault_path,
+        &note_path,
+        &outcome.path,
+        &outcome.rewritten_paths,
+    )?;
 
-    // Update quick access if the moved note was in it
-    if !old_relative.is_empty() {
-        if let Ok(mut qa) = operations::load_quick_access(vault_path) {
-            if let Some(pos) = qa.iter().position(|p| *p == old_relative) {
-                let new_relative = Path::new(&new_full_path)
-                    .strip_prefix(vault_path)
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                if !new_relative.is_empty() {
-                    qa[pos] = new_relative;
-                    let _ = operations::save_quick_access(vault_path, &qa);
-                }
-            }
-        }
-    }
-
-    reindex_moved_note_now(&state, vault_path, &note_path, &new_full_path)?;
-
-    Ok(new_full_path)
+    Ok(outcome.path)
 }
 
 // ── Tags ──

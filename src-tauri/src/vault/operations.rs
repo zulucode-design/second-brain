@@ -861,7 +861,7 @@ pub fn rename_note(path: &str, new_title: &str, vault_path: &str) -> Result<Stri
         &new_path_str,
         &old_title,
         new_title,
-    );
+    )?;
 
     Ok(new_path_str)
 }
@@ -874,7 +874,7 @@ fn update_wikilinks_after_rename(
     new_path: &str,
     old_title: &str,
     new_title: &str,
-) {
+) -> Result<Vec<String>, String> {
     let vault = Path::new(vault_path);
     let hn_dir = helixnotes_dir(vault_path);
 
@@ -891,51 +891,37 @@ fn update_wikilinks_after_rename(
     let old_rel_ref = rel_ref(old_path);
     let new_rel_ref = rel_ref(new_path);
 
+    let mut note_paths = Vec::new();
+    for entry in WalkDir::new(vault)
+        .into_iter()
+        .filter_entry(|entry| !is_hidden(entry.path()) && !entry.path().starts_with(&hn_dir))
+    {
+        let entry = entry.map_err(|error| format!("Could not scan note links: {error}"))?;
+        let path = entry.path();
+        if path.is_file()
+            && path.extension().and_then(|extension| extension.to_str()) == Some("md")
+            && path.to_string_lossy().as_ref() != new_path
+        {
+            note_paths.push(path.to_path_buf());
+        }
+    }
+
     // Check if another note with the same old_title exists in the vault.
     // If so, title-based replacements (rules 1-3) are ambiguous and must be skipped,
     // because we can't tell which [[Old Title]] ref points to the renamed note
     // vs. the other note with the same title.
-    let title_is_unique = !WalkDir::new(vault)
-        .into_iter()
-        .filter_entry(|e| !is_hidden(e.path()) && !e.path().starts_with(&hn_dir))
-        .filter_map(|e| e.ok())
-        .any(|e| {
-            let p = e.path();
-            if !p.is_file() || p.to_string_lossy().as_ref() == new_path {
-                return false;
-            }
-            if p.extension().and_then(|ext| ext.to_str()) != Some("md") {
-                return false;
-            }
-            // Check if this note's filename (without .md) matches the old title
-            p.file_stem()
-                .and_then(|s| s.to_str())
-                .map(|s| s.eq_ignore_ascii_case(old_title))
-                .unwrap_or(false)
-        });
+    let title_is_unique = !note_paths.iter().any(|path| {
+        // Check if this note's filename (without .md) matches the old title
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.eq_ignore_ascii_case(old_title))
+            .unwrap_or(false)
+    });
 
-    for entry in WalkDir::new(vault)
-        .into_iter()
-        .filter_entry(|e| !is_hidden(e.path()) && !e.path().starts_with(&hn_dir))
-        .filter_map(|e| e.ok())
-    {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let path_str = path.to_string_lossy();
-        if path.extension().and_then(|e| e.to_str()) != Some("md") {
-            continue;
-        }
-        // Skip the renamed note itself
-        if *path_str == *new_path {
-            continue;
-        }
-
-        let content = match fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
+    let mut rewritten_paths = Vec::new();
+    for path in note_paths {
+        let content = fs::read_to_string(&path)
+            .map_err(|error| format!("Could not read links in {}: {error}", path.display()))?;
 
         let mut result = content.clone();
 
@@ -980,9 +966,34 @@ fn update_wikilinks_after_rename(
         }
 
         if result != content {
-            let _ = fs::write(path, &result);
+            fs::write(&path, &result).map_err(|error| {
+                format!("Could not update links in {}: {error}", path.display())
+            })?;
+            rewritten_paths.push(path.to_string_lossy().to_string());
         }
     }
+    Ok(rewritten_paths)
+}
+
+fn preflight_wikilink_reads(vault_path: &str, source_path: &Path) -> Result<(), String> {
+    let vault = Path::new(vault_path);
+    let helixnotes = helixnotes_dir(vault_path);
+    for entry in WalkDir::new(vault)
+        .into_iter()
+        .filter_entry(|entry| !is_hidden(entry.path()) && !entry.path().starts_with(&helixnotes))
+    {
+        let entry = entry.map_err(|error| format!("Could not scan note links: {error}"))?;
+        let path = entry.path();
+        if path == source_path
+            || !path.is_file()
+            || path.extension().and_then(|extension| extension.to_str()) != Some("md")
+        {
+            continue;
+        }
+        fs::read_to_string(path)
+            .map_err(|error| format!("Could not read links in {}: {error}", path.display()))?;
+    }
+    Ok(())
 }
 
 pub fn rename_notebook(vault_path: &str, path: &str, new_name: &str) -> Result<String, String> {
@@ -999,13 +1010,40 @@ pub fn rename_notebook(vault_path: &str, path: &str, new_name: &str) -> Result<S
     Ok(new_path.to_string_lossy().to_string())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteMoveOutcome {
+    pub path: String,
+    pub rewritten_paths: Vec<String>,
+}
+
+#[cfg(test)]
 pub fn move_note(vault_path: &str, note_path: &str, dest_notebook: &str) -> Result<String, String> {
+    move_note_with_outcome(vault_path, note_path, dest_notebook).map(|outcome| outcome.path)
+}
+
+pub fn move_note_with_outcome(
+    vault_path: &str,
+    note_path: &str,
+    dest_notebook: &str,
+) -> Result<NoteMoveOutcome, String> {
     let validated = ensure_note_path(vault_path, Path::new(note_path))?;
     let src = validated.as_path();
     let (dest_dir, category) = ensure_para_destination_dir(vault_path, Path::new(dest_notebook))?;
     if src.parent() == Some(dest_dir.as_path()) {
         return Err("Note is already in that location".to_string());
     }
+
+    // Quick Access is authoritative user state, so malformed data must stop the move
+    // before the source is changed. The exact replacement path is filled in after the
+    // relocation has chosen its collision-safe filename.
+    let mut quick_access = load_quick_access(vault_path)?;
+    let old_relative = src
+        .strip_prefix(vault_path)
+        .map_err(|_| "Note path must stay inside the active vault".to_string())?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let quick_access_position = quick_access.iter().position(|path| path == &old_relative);
+    preflight_wikilink_reads(vault_path, src)?;
 
     let filename = src.file_name().unwrap_or_default();
     let title = std::cell::RefCell::new(None);
@@ -1030,8 +1068,21 @@ pub fn move_note(vault_path: &str, note_path: &str, dest_notebook: &str) -> Resu
         .into_inner()
         .ok_or_else(|| "Could not determine moved note title".to_string())?;
     let new_path = dest.to_string_lossy().to_string();
-    update_wikilinks_after_rename(vault_path, &old_path, &new_path, &title, &title);
-    Ok(dest.to_string_lossy().to_string())
+    let rewritten_paths =
+        update_wikilinks_after_rename(vault_path, &old_path, &new_path, &title, &title)?;
+
+    if let Some(position) = quick_access_position {
+        quick_access[position] = dest
+            .strip_prefix(vault_path)
+            .map_err(|_| "Moved note escaped the active vault".to_string())?
+            .to_string_lossy()
+            .replace('\\', "/");
+        save_quick_access(vault_path, &quick_access)?;
+    }
+    Ok(NoteMoveOutcome {
+        path: dest.to_string_lossy().to_string(),
+        rewritten_paths,
+    })
 }
 
 fn ensure_para_destination_dir(
@@ -1669,9 +1720,10 @@ mod tests {
     use super::{
         compare_natural_names, create_note, create_notebook, duplicate_note,
         ensure_vault_structure, get_note_switcher_titles, helixnotes_dir, load_notebook_icons,
-        move_note, permanent_delete, read_note, restore_notebook, scan_notebooks,
-        set_notebook_icon, ParaCategory,
+        load_quick_access, move_note, move_note_with_outcome, permanent_delete, read_note,
+        restore_notebook, save_quick_access, scan_notebooks, set_notebook_icon, ParaCategory,
     };
+    use crate::search::SearchIndex;
     use crate::vault::frontmatter;
     use std::fs;
     use uuid::Uuid;
@@ -1866,6 +1918,116 @@ mod tests {
         assert!(reference_after.contains("[[Archives/Target]]"));
         assert!(reference_after.contains("[[Archives/Target|the target]]"));
         assert!(!reference_after.contains("[[Projects/Target"));
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn moving_a_note_updates_quick_access_to_the_collision_safe_destination() {
+        let vault = scaffolded_vault("move-quick-access");
+        let vault_str = vault.to_string_lossy().to_string();
+        let target = create_note(&vault_str, Some("Projects"), "Plan").unwrap();
+        let _collision = create_note(&vault_str, Some("Archives"), "Plan").unwrap();
+        save_quick_access(&vault_str, &["Projects/Plan.md".to_string()]).unwrap();
+
+        let moved = move_note(
+            &vault_str,
+            &target.path,
+            &vault.join("Archives").to_string_lossy(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            std::path::Path::new(&moved),
+            vault.join("Archives/Plan 1.md")
+        );
+        assert_eq!(
+            load_quick_access(&vault_str).unwrap(),
+            ["Archives/Plan 1.md"]
+        );
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn corrupt_quick_access_blocks_a_move_before_the_source_changes() {
+        let vault = scaffolded_vault("move-corrupt-quick-access");
+        let vault_str = vault.to_string_lossy().to_string();
+        let target = create_note(&vault_str, Some("Projects"), "Plan").unwrap();
+        let source_before = fs::read(&target.path).unwrap();
+        fs::write(helixnotes_dir(&vault_str).join("quick_access.json"), "{").unwrap();
+
+        let result = move_note(
+            &vault_str,
+            &target.path,
+            &vault.join("Archives").to_string_lossy(),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(&target.path).unwrap(), source_before);
+        assert!(!vault.join("Archives/Plan.md").exists());
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn unreadable_backlink_content_blocks_a_move_before_the_source_changes() {
+        let vault = scaffolded_vault("move-unreadable-backlink");
+        let vault_str = vault.to_string_lossy().to_string();
+        let target = create_note(&vault_str, Some("Projects"), "Plan").unwrap();
+        let source_before = fs::read(&target.path).unwrap();
+        fs::write(vault.join("Resources/Invalid.md"), [0xff, 0xfe, 0xfd]).unwrap();
+
+        let result = move_note(
+            &vault_str,
+            &target.path,
+            &vault.join("Archives").to_string_lossy(),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(&target.path).unwrap(), source_before);
+        assert!(!vault.join("Archives/Plan.md").exists());
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn moving_a_note_reindexes_the_target_and_every_rewritten_backlink() {
+        let vault = scaffolded_vault("move-search-consumers");
+        let vault_str = vault.to_string_lossy().to_string();
+        create_notebook(&vault_str, Some("Projects"), "OldUniqueFolder").unwrap();
+        create_notebook(&vault_str, Some("Archives"), "NewUniqueFolder").unwrap();
+        let target = create_note(&vault_str, Some("Projects/OldUniqueFolder"), "Target").unwrap();
+        let reference = create_note(&vault_str, Some("Resources"), "Reference").unwrap();
+        let reference_raw = fs::read_to_string(&reference.path).unwrap();
+        fs::write(
+            &reference.path,
+            format!("{reference_raw}See [[Projects/OldUniqueFolder/Target]].\n"),
+        )
+        .unwrap();
+        let search = SearchIndex::new_in_memory().unwrap();
+        search.index_note(&target.path).unwrap();
+        search.index_note(&reference.path).unwrap();
+
+        let outcome = move_note_with_outcome(
+            &vault_str,
+            &target.path,
+            &vault.join("Archives/NewUniqueFolder").to_string_lossy(),
+        )
+        .unwrap();
+        let mut upserts = vec![outcome.path.clone()];
+        upserts.extend(outcome.rewritten_paths.clone());
+        search
+            .apply_note_changes(std::slice::from_ref(&target.path), &upserts)
+            .unwrap();
+
+        assert!(search.search("OldUniqueFolder", 10).unwrap().is_empty());
+        let new_results = search.search("NewUniqueFolder", 10).unwrap();
+        assert_eq!(new_results.len(), 1);
+        assert_eq!(new_results[0].path, reference.path);
+        let target_results = search.search("Target", 10).unwrap();
+        assert!(target_results
+            .iter()
+            .any(|result| result.path == outcome.path));
+        assert!(target_results
+            .iter()
+            .all(|result| result.path != target.path));
         fs::remove_dir_all(vault).unwrap();
     }
 
