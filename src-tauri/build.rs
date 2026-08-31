@@ -31,6 +31,11 @@ fn link_windows_common_controls() {
 fn main() {
     tauri_build::build();
 
+    println!("cargo::rerun-if-env-changed=HELIX_WINDOWS_TEST_MANIFEST");
+
     #[cfg(target_os = "windows")]
-    link_windows_common_controls();
+    if std::env::var_os("HELIX_WINDOWS_TEST_MANIFEST").as_deref() == Some(std::ffi::OsStr::new("1"))
+    {
+        link_windows_common_controls();
+    }
 }
