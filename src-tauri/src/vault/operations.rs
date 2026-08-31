@@ -355,6 +355,22 @@ pub fn scan_notes(vault_path: &str, notebook_path: Option<&str>) -> Result<Vec<N
     let root = Path::new(scan_path);
     ensure_vault_content_dir(vault_path, root)?;
     let vault_root = Path::new(vault_path);
+    let category_filter = canonicalize_path(root, "notebook path")
+        .ok()
+        .and_then(|scan_root| {
+            canonicalize_path(vault_root, "vault path")
+                .ok()
+                .and_then(|vault| scan_root.strip_prefix(vault).ok().map(Path::to_path_buf))
+        })
+        .and_then(|relative| {
+            let mut components = relative.components();
+            let category = match (components.next(), components.next()) {
+                (Some(Component::Normal(name)), None) => name.to_str(),
+                _ => None,
+            }?;
+            ParaCategory::from_name(category)
+        });
+    let recursive_scan = notebook_path.is_none() || category_filter.is_some();
 
     log::info!(
         "scan_notes: vault={}, scan={}, exists={}",
@@ -374,7 +390,7 @@ pub fn scan_notes(vault_path: &str, notebook_path: Option<&str>) -> Result<Vec<N
         // Overlapping the per-file reads hides FUSE latency on Android (matches the
         // desktop path below). The previous version also did an extra read_dir purely
         // for debug logging, which doubled the directory I/O on the sandboxed FS.
-        let paths: Vec<PathBuf> = if notebook_path.is_some() {
+        let paths: Vec<PathBuf> = if !recursive_scan {
             match fs::read_dir(root) {
                 Ok(rd) => rd
                     .filter_map(|e| e.ok())
@@ -400,6 +416,10 @@ pub fn scan_notes(vault_path: &str, notebook_path: Option<&str>) -> Result<Vec<N
             .filter_map(|path| read_note_entry_metadata_only(path, vault_root).ok())
             .collect();
 
+        if let Some(category) = category_filter {
+            notes.retain(|note| note.meta.category == Some(category));
+        }
+
         log::info!("scan_notes: mobile scan found {} notes", notes.len());
         notes.sort_by_key(|note| std::cmp::Reverse(note.meta.modified));
         return Ok(notes);
@@ -407,7 +427,7 @@ pub fn scan_notes(vault_path: &str, notebook_path: Option<&str>) -> Result<Vec<N
 
     #[cfg(desktop)]
     {
-        let md_files: Vec<PathBuf> = if notebook_path.is_some() {
+        let md_files: Vec<PathBuf> = if !recursive_scan {
             fs::read_dir(root)
                 .map_err(|e| e.to_string())?
                 .filter_map(|e| e.ok())
@@ -430,6 +450,10 @@ pub fn scan_notes(vault_path: &str, notebook_path: Option<&str>) -> Result<Vec<N
             .par_iter()
             .filter_map(|path| read_note_entry_fast(path, vault_root).ok())
             .collect();
+
+        if let Some(category) = category_filter {
+            notes.retain(|note| note.meta.category == Some(category));
+        }
 
         notes.sort_by_key(|note| std::cmp::Reverse(note.meta.modified));
         Ok(notes)
@@ -747,11 +771,10 @@ pub fn create_notebook(
     parent_relative: Option<&str>,
     name: &str,
 ) -> Result<NotebookEntry, String> {
-    let requested_parent = match parent_relative {
-        Some(rel) => Path::new(vault_path).join(safe_relative_path(rel)?),
-        None => PathBuf::from(vault_path),
-    };
-    let parent = ensure_vault_content_dir(vault_path, &requested_parent)?;
+    let parent_relative = parent_relative
+        .ok_or_else(|| "Notebooks must be created beneath a PARA category".to_string())?;
+    let requested_parent = Path::new(vault_path).join(safe_relative_path(parent_relative)?);
+    let (parent, _) = ensure_para_destination_dir(vault_path, &requested_parent)?;
     let dir_path = parent.join(safe_child_name(name)?);
     if dir_path.exists() {
         return Err("Notebook already exists".to_string());
@@ -2317,7 +2340,7 @@ mod tests {
 
         // At the vault root, and in a folder that is not a PARA category.
         assert!(create_note(&vault_str, None, "Homeless").is_err());
-        create_notebook(&vault_str, None, "Inbox").unwrap();
+        fs::create_dir(vault.join("Inbox")).unwrap();
         assert!(create_note(&vault_str, Some("Inbox"), "Homeless").is_err());
 
         fs::remove_dir_all(vault).unwrap();
@@ -2332,6 +2355,38 @@ mod tests {
         let entry = create_note(&vault_str, Some("Areas/Health"), "Running").unwrap();
 
         assert_eq!(entry.meta.category, Some(ParaCategory::Areas));
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn category_scan_is_recursive_and_filters_by_recorded_category() {
+        let vault = scaffolded_vault("recursive-category-scan");
+        let vault_str = vault.to_string_lossy().to_string();
+        create_notebook(&vault_str, Some("Projects"), "Launch").unwrap();
+        create_notebook(&vault_str, Some("Projects/Launch"), "Research").unwrap();
+        let nested = create_note(
+            &vault_str,
+            Some("Projects/Launch/Research"),
+            "Nested project",
+        )
+        .unwrap();
+        let mismatched = create_note(&vault_str, Some("Areas"), "Wrong category").unwrap();
+        let mismatched_path = vault.join("Projects/Launch/Wrong category.md");
+        fs::rename(&mismatched.path, &mismatched_path).unwrap();
+
+        let projects = super::scan_notes(
+            &vault_str,
+            Some(vault.join("Projects").to_string_lossy().as_ref()),
+        )
+        .unwrap();
+
+        assert!(projects.iter().any(|note| note.path == nested.path));
+        assert!(
+            projects
+                .iter()
+                .all(|note| note.meta.category == Some(ParaCategory::Projects))
+        );
+        assert!(projects.iter().all(|note| note.path != mismatched_path.to_string_lossy()));
         fs::remove_dir_all(vault).unwrap();
     }
 
@@ -3022,6 +3077,7 @@ mod tests {
         assert!(super::delete_notebook(&vault_str, &projects).is_err());
         let areas = vault.join("Areas").to_string_lossy().to_string();
         assert!(super::move_notebook(&vault_str, &projects, &areas).is_err());
+        assert!(create_notebook(&vault_str, None, "Inbox").is_err());
 
         // Still there, and still a category.
         assert!(vault.join("Projects").is_dir());
