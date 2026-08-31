@@ -914,7 +914,7 @@ pub fn rename_note(path: &str, new_title: &str, vault_path: &str) -> Result<Stri
     let new_path_str = new_path.to_string_lossy().to_string();
 
     // Update wikilinks in other notes that reference this note
-    update_wikilinks_after_rename(
+    let _ = update_wikilinks_after_rename(
         vault_path,
         &old_path_str,
         &new_path_str,
@@ -927,13 +927,50 @@ pub fn rename_note(path: &str, new_title: &str, vault_path: &str) -> Result<Stri
 
 /// Walk all .md files in the vault and update wikilink references after a note rename.
 /// Updates both HTML data-attributes (data-path, data-title) and raw [[old_title]] references.
+struct WikilinkUpdate {
+    rewritten_paths: Vec<String>,
+    before_images: Vec<(PathBuf, String)>,
+}
+
+impl WikilinkUpdate {
+    fn rollback(&self) -> Result<(), String> {
+        let mut failures = Vec::new();
+        for (path, content) in self.before_images.iter().rev() {
+            if let Err(error) = fs::write(path, content) {
+                failures.push(format!("{}: {error}", path.display()));
+            }
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "Could not restore rewritten backlinks: {}",
+                failures.join("; ")
+            ))
+        }
+    }
+}
+
 fn update_wikilinks_after_rename(
     vault_path: &str,
     old_path: &str,
     new_path: &str,
     old_title: &str,
     new_title: &str,
-) -> Result<Vec<String>, String> {
+) -> Result<WikilinkUpdate, String> {
+    update_wikilinks_after_rename_with_fault(
+        vault_path, old_path, new_path, old_title, new_title, None,
+    )
+}
+
+fn update_wikilinks_after_rename_with_fault(
+    vault_path: &str,
+    old_path: &str,
+    new_path: &str,
+    old_title: &str,
+    new_title: &str,
+    fail_on_write: Option<usize>,
+) -> Result<WikilinkUpdate, String> {
     let vault = Path::new(vault_path);
     let hn_dir = helixnotes_dir(vault_path);
 
@@ -978,6 +1015,7 @@ fn update_wikilinks_after_rename(
     });
 
     let mut rewritten_paths = Vec::new();
+    let mut before_images = Vec::new();
     for path in note_paths {
         let content = fs::read_to_string(&path)
             .map_err(|error| format!("Could not read links in {}: {error}", path.display()))?;
@@ -1025,13 +1063,36 @@ fn update_wikilinks_after_rename(
         }
 
         if result != content {
-            fs::write(&path, &result).map_err(|error| {
-                format!("Could not update links in {}: {error}", path.display())
-            })?;
+            before_images.push((path.clone(), content));
+            let write_result = if fail_on_write == Some(rewritten_paths.len()) {
+                Err(std::io::Error::other("injected backlink write failure"))
+            } else {
+                fs::write(&path, &result)
+            };
+            if let Err(error) = write_result {
+                let rollback = WikilinkUpdate {
+                    rewritten_paths,
+                    before_images,
+                }
+                .rollback();
+                return match rollback {
+                    Ok(()) => Err(format!(
+                        "Could not update links in {}: {error}",
+                        path.display()
+                    )),
+                    Err(rollback_error) => Err(format!(
+                        "Could not update links in {} ({error}); {rollback_error}",
+                        path.display()
+                    )),
+                };
+            }
             rewritten_paths.push(path.to_string_lossy().to_string());
         }
     }
-    Ok(rewritten_paths)
+    Ok(WikilinkUpdate {
+        rewritten_paths,
+        before_images,
+    })
 }
 
 fn preflight_wikilink_reads(vault_path: &str, source_path: &Path) -> Result<(), String> {
@@ -1051,6 +1112,34 @@ fn preflight_wikilink_reads(vault_path: &str, source_path: &Path) -> Result<(), 
         }
         fs::read_to_string(path)
             .map_err(|error| format!("Could not read links in {}: {error}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn rollback_note_relocation(
+    vault_path: &str,
+    moved_path: &Path,
+    original_path: &Path,
+    original_bytes: &[u8],
+) -> Result<(), String> {
+    let original_parent = original_path
+        .parent()
+        .ok_or_else(|| "Original note has no parent directory".to_string())?;
+    let original_name = original_path
+        .file_name()
+        .ok_or_else(|| "Original note has no filename".to_string())?;
+    let restored = crate::vault::relocation::relocate_file(
+        Path::new(vault_path),
+        moved_path,
+        original_parent,
+        original_name,
+        |_| Ok(original_bytes.to_vec()),
+    )?;
+    if restored != original_path {
+        return Err(format!(
+            "The original path was occupied during rollback; the note was recovered at {}",
+            restored.display()
+        ));
     }
     Ok(())
 }
@@ -1085,6 +1174,15 @@ pub fn move_note_with_outcome(
     note_path: &str,
     dest_notebook: &str,
 ) -> Result<NoteMoveOutcome, String> {
+    move_note_with_outcome_inner(vault_path, note_path, dest_notebook, None)
+}
+
+fn move_note_with_outcome_inner(
+    vault_path: &str,
+    note_path: &str,
+    dest_notebook: &str,
+    fail_link_write: Option<usize>,
+) -> Result<NoteMoveOutcome, String> {
     let validated = ensure_note_path(vault_path, Path::new(note_path))?;
     let src = validated.as_path();
     let (dest_dir, category) = ensure_para_destination_dir(vault_path, Path::new(dest_notebook))?;
@@ -1095,17 +1193,21 @@ pub fn move_note_with_outcome(
     // Quick Access is authoritative user state, so malformed data must stop the move
     // before the source is changed. The exact replacement path is filled in after the
     // relocation has chosen its collision-safe filename.
-    let mut quick_access = load_quick_access(vault_path)?;
+    let mut quick_access = load_quick_access_entries(vault_path)?;
+    let original_quick_access = quick_access.clone();
     let old_relative = src
         .strip_prefix(vault_path)
         .map_err(|_| "Note path must stay inside the active vault".to_string())?
         .to_string_lossy()
         .replace('\\', "/");
-    let quick_access_position = quick_access.iter().position(|path| path == &old_relative);
+    let quick_access_position = quick_access
+        .iter()
+        .position(|entry| entry.relative_path == old_relative);
     preflight_wikilink_reads(vault_path, src)?;
 
     let filename = src.file_name().unwrap_or_default();
     let title = std::cell::RefCell::new(None);
+    let original_bytes = std::cell::RefCell::new(None);
     let old_path = src.to_string_lossy().to_string();
     let dest = crate::vault::relocation::relocate_file(
         Path::new(vault_path),
@@ -1113,6 +1215,7 @@ pub fn move_note_with_outcome(
         &dest_dir,
         filename,
         |raw| {
+            original_bytes.replace(Some(raw.to_vec()));
             let raw = std::str::from_utf8(raw)
                 .map_err(|error| format!("Note is not valid UTF-8: {error}"))?;
             let filename = filename.to_string_lossy();
@@ -1126,22 +1229,65 @@ pub fn move_note_with_outcome(
     let title = title
         .into_inner()
         .ok_or_else(|| "Could not determine moved note title".to_string())?;
+    let original_bytes = original_bytes
+        .into_inner()
+        .ok_or_else(|| "Could not retain the original note for rollback".to_string())?;
     let new_path = dest.to_string_lossy().to_string();
-    let rewritten_paths =
-        update_wikilinks_after_rename(vault_path, &old_path, &new_path, &title, &title)?;
+    let link_update = match update_wikilinks_after_rename_with_fault(
+        vault_path,
+        &old_path,
+        &new_path,
+        &title,
+        &title,
+        fail_link_write,
+    ) {
+        Ok(update) => update,
+        Err(error) => {
+            return match rollback_note_relocation(
+                vault_path,
+                &dest,
+                Path::new(&old_path),
+                &original_bytes,
+            ) {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(format!(
+                    "{error}; the note relocation could not be fully rolled back: {rollback_error}"
+                )),
+            };
+        }
+    };
 
     if let Some(position) = quick_access_position {
-        quick_access[position] = dest
+        quick_access[position].relative_path = dest
             .strip_prefix(vault_path)
             .map_err(|_| "Moved note escaped the active vault".to_string())?
             .to_string_lossy()
             .replace('\\', "/");
-        save_quick_access(vault_path, &quick_access)?;
+        if let Err(error) = save_quick_access_entries(vault_path, &quick_access) {
+            let link_rollback = link_update.rollback();
+            let note_rollback =
+                rollback_note_relocation(vault_path, &dest, Path::new(&old_path), &original_bytes);
+            let quick_access_rollback =
+                save_quick_access_entries(vault_path, &original_quick_access);
+            return Err(format!(
+                "Could not update Quick Access after moving the note: {error}. Backlink rollback: {}. Note rollback: {}. Quick Access rollback: {}",
+                rollback_result(&link_rollback),
+                rollback_result(&note_rollback),
+                rollback_result(&quick_access_rollback),
+            ));
+        }
     }
     Ok(NoteMoveOutcome {
         path: dest.to_string_lossy().to_string(),
-        rewritten_paths,
+        rewritten_paths: link_update.rewritten_paths,
     })
+}
+
+fn rollback_result(result: &Result<(), String>) -> &str {
+    match result {
+        Ok(()) => "completed",
+        Err(error) => error,
+    }
 }
 
 fn ensure_para_destination_dir(
@@ -1991,6 +2137,47 @@ mod tests {
     }
 
     #[test]
+    fn every_ordered_category_pair_preserves_note_identity_and_body() {
+        let vault = scaffolded_vault("move-category-matrix");
+        let vault_str = vault.to_string_lossy().to_string();
+
+        for source_category in ParaCategory::ALL {
+            for destination_category in ParaCategory::ALL {
+                if source_category == destination_category {
+                    continue;
+                }
+                let title = format!(
+                    "{} to {}",
+                    source_category.folder_name(),
+                    destination_category.folder_name()
+                );
+                let entry =
+                    create_note(&vault_str, Some(source_category.folder_name()), &title).unwrap();
+                let raw = fs::read_to_string(&entry.path).unwrap();
+                fs::write(&entry.path, format!("{raw}matrix-body-{title}\n")).unwrap();
+
+                let moved = move_note(
+                    &vault_str,
+                    &entry.path,
+                    &vault
+                        .join(destination_category.folder_name())
+                        .to_string_lossy(),
+                )
+                .unwrap();
+                let moved_raw = fs::read_to_string(&moved).unwrap();
+                let moved_meta = frontmatter::parse_note(&moved_raw, &format!("{title}.md")).0;
+
+                assert_eq!(moved_meta.id, entry.meta.id);
+                assert_eq!(moved_meta.category, Some(destination_category));
+                assert!(moved_raw.contains(&format!("matrix-body-{title}")));
+                assert!(!std::path::Path::new(&entry.path).exists());
+            }
+        }
+
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
     fn moving_a_note_preserves_its_body() {
         let vault = scaffolded_vault("move-body");
         let vault_str = vault.to_string_lossy().to_string();
@@ -2155,6 +2342,40 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(fs::read(&target.path).unwrap(), source_before);
         assert!(!vault.join("Archives/Plan.md").exists());
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn backlink_write_failure_rolls_back_the_note_links_and_quick_access() {
+        let vault = scaffolded_vault("move-backlink-rollback");
+        let vault_str = vault.to_string_lossy().to_string();
+        let target = create_note(&vault_str, Some("Projects"), "Target").unwrap();
+        let first = create_note(&vault_str, Some("Resources"), "First reference").unwrap();
+        let second = create_note(&vault_str, Some("Areas"), "Second reference").unwrap();
+        for reference in [&first, &second] {
+            let raw = fs::read_to_string(&reference.path).unwrap();
+            fs::write(&reference.path, format!("{raw}See [[Projects/Target]].\n")).unwrap();
+        }
+        super::add_quick_access(&vault_str, "Projects/Target.md").unwrap();
+        let source_before = fs::read(&target.path).unwrap();
+        let first_before = fs::read(&first.path).unwrap();
+        let second_before = fs::read(&second.path).unwrap();
+        let quick_access_path = helixnotes_dir(&vault_str).join("quick_access.json");
+        let quick_access_before = fs::read(&quick_access_path).unwrap();
+
+        let result = super::move_note_with_outcome_inner(
+            &vault_str,
+            &target.path,
+            &vault.join("Archives").to_string_lossy(),
+            Some(1),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(&target.path).unwrap(), source_before);
+        assert_eq!(fs::read(&first.path).unwrap(), first_before);
+        assert_eq!(fs::read(&second.path).unwrap(), second_before);
+        assert_eq!(fs::read(quick_access_path).unwrap(), quick_access_before);
+        assert!(!vault.join("Archives/Target.md").exists());
         fs::remove_dir_all(vault).unwrap();
     }
 
