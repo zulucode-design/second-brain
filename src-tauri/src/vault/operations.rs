@@ -1007,19 +1007,28 @@ pub fn move_note(vault_path: &str, note_path: &str, dest_notebook: &str) -> Resu
         return Err("Note is already in that location".to_string());
     }
 
-    let raw = fs::read_to_string(src).map_err(|error| error.to_string())?;
     let filename = src.file_name().unwrap_or_default();
-    let filename_for_parse = filename.to_string_lossy();
-    let title = frontmatter::extract_title(&raw)
-        .unwrap_or_else(|| frontmatter::filename_to_title(&filename_for_parse));
-    let updated = frontmatter::set_category(&raw, category)?;
+    let title = std::cell::RefCell::new(None);
     let old_path = src.to_string_lossy().to_string();
     let dest = crate::vault::relocation::relocate_file(
+        Path::new(vault_path),
         src,
         &dest_dir,
         filename,
-        Some(updated.as_bytes()),
+        |raw| {
+            let raw = std::str::from_utf8(raw)
+                .map_err(|error| format!("Note is not valid UTF-8: {error}"))?;
+            let filename = filename.to_string_lossy();
+            title.replace(Some(
+                frontmatter::extract_title(raw)
+                    .unwrap_or_else(|| frontmatter::filename_to_title(&filename)),
+            ));
+            frontmatter::set_category(raw, category).map(String::into_bytes)
+        },
     )?;
+    let title = title
+        .into_inner()
+        .ok_or_else(|| "Could not determine moved note title".to_string())?;
     let new_path = dest.to_string_lossy().to_string();
     update_wikilinks_after_rename(vault_path, &old_path, &new_path, &title, &title);
     Ok(dest.to_string_lossy().to_string())
@@ -1137,7 +1146,7 @@ fn ensure_category_destination(
 /// Put every note in the folder its own category calls for, and collect the ones that
 /// have no category and so cannot be filed.
 pub fn reconcile_categories(vault_path: &str) -> Result<para::ReconcileReport, String> {
-    para::reconcile_vault(vault_path, &unfiled_dir(vault_path))
+    para::reconcile_vault(vault_path)
 }
 
 /// Notes waiting in the holding area for the user to give them a category.
@@ -1175,11 +1184,19 @@ pub fn file_unfiled_note(
     let src = ensure_unfiled_note_path(vault_path, Path::new(note_path))?;
     let dest_dir = ensure_category_destination(vault_path, category)?;
 
-    let raw = fs::read_to_string(&src).map_err(|e| e.to_string())?;
-    let updated = frontmatter::set_category(&raw, category)?;
     let filename = src.file_name().unwrap_or_default();
-    crate::vault::relocation::relocate_file(&src, &dest_dir, filename, Some(updated.as_bytes()))
-        .map(|p| p.to_string_lossy().to_string())
+    crate::vault::relocation::relocate_file(
+        Path::new(vault_path),
+        &src,
+        &dest_dir,
+        filename,
+        |raw| {
+            let raw = std::str::from_utf8(raw)
+                .map_err(|error| format!("Note is not valid UTF-8: {error}"))?;
+            frontmatter::set_category(raw, category).map(String::into_bytes)
+        },
+    )
+    .map(|p| p.to_string_lossy().to_string())
 }
 
 /// Refuse an operation that would rename, move, or delete one of the four category
@@ -1333,10 +1350,11 @@ pub fn restore_note(vault_path: &str, trash_path: &str) -> Result<String, String
 
     let parent = src.parent().map(|p| p.to_path_buf());
     let dest = crate::vault::relocation::relocate_file(
+        Path::new(vault_path),
         src,
         &dest_dir,
         std::ffi::OsStr::new(original_name),
-        None,
+        |raw| Ok(raw.to_vec()),
     )?;
 
     // Clean up empty parent directory (deleted notebook folder) in trash
