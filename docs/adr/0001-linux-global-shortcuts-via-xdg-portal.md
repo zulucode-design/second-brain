@@ -78,8 +78,16 @@ string (`commands.rs`, `backup.rs`, `search/mod.rs`), not the bundle identifier.
 the identifier orphans nothing. Renaming that directory string *would*, and is out of
 scope.
 
-**Quick capture on Wayland therefore does not work from an uninstalled build.** A dev run
-has no matching desktop entry. This is a property of the platform, not a bug to fix.
+A dev build therefore needs a desktop entry before the portal will talk to it — but a
+**user-level** entry in `~/.local/share/applications/` is enough, so no packaged install is
+required to develop against this. Verified 2026-08-30: without an entry, `Register` fails
+with "App info not found" and `CreateSession` with "An app id is required"; with one, both
+succeed. `scripts/dev-desktop-entry.sh` installs it.
+
+Two ways to write an entry that GLib silently refuses to load, both reported by the portal
+only as "App info not found", and both passed as valid by `desktop-file-validate`: an `Exec`
+whose argv[0] does not name an existing program, and an unquoted `Exec` path containing a
+space, which truncates argv[0] to the same effect. This repo's own path contains a space.
 
 ### Denial is sticky and silent
 
