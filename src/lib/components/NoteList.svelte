@@ -48,6 +48,7 @@
 	import { openNoteWindow } from '$lib/utils/window';
 	import { encodeNoteDragPaths } from '$lib/utils/note-drag';
 	import { noteRowPolicy } from '$lib/utils/note-row-policy';
+	import { noteListWindow } from '$lib/utils/note-list-virtualization';
 	import { showToast } from '$lib/utils/toast';
 	import type { NoteEntry, TrashNotebookEntry, SortMode, TaskItem, ParaCategory } from '$lib/types';
 	import { PARA_CATEGORIES } from '$lib/types';
@@ -218,14 +219,18 @@
 	let scrollTop = $state(0);
 	let containerHeight = $state(600);
 	let itemHeight = $derived(compact ? 33 : 62);
-	const BUFFER = 10;
-
-	let totalHeight = $derived($sortedNotes.length * itemHeight);
-	let startIndex = $derived(Math.max(0, Math.floor(scrollTop / itemHeight) - BUFFER));
-	let endIndex = $derived(Math.min($sortedNotes.length, Math.ceil((scrollTop + containerHeight) / itemHeight) + BUFFER));
+	let virtualWindow = $derived(noteListWindow({
+		viewMode: $viewMode,
+		itemCount: $sortedNotes.length,
+		itemHeight,
+		scrollTop,
+		containerHeight
+	}));
+	let startIndex = $derived(virtualWindow.startIndex);
+	let endIndex = $derived(virtualWindow.endIndex);
 	let visibleNotes = $derived($sortedNotes.slice(startIndex, endIndex));
-	let topPad = $derived(startIndex * itemHeight);
-	let bottomPad = $derived(Math.max(0, ($sortedNotes.length - endIndex) * itemHeight));
+	let topPad = $derived(virtualWindow.topPad);
+	let bottomPad = $derived(virtualWindow.bottomPad);
 
 	function onListScroll(e: Event) {
 		const el = e.currentTarget as HTMLDivElement;

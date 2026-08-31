@@ -1,6 +1,6 @@
 import type { StartupView } from "../types";
 
-type RestorableListView = StartupView | "trash";
+type RestorableListView = StartupView | "trash" | "unfiled";
 
 export type StartupTarget =
   | { mode: RestorableListView }
@@ -32,6 +32,7 @@ function restorableListView(value: unknown): RestorableListView | null {
     case "quickaccess":
     case "tasks":
     case "trash":
+    case "unfiled":
       return value;
     default:
       return null;
@@ -45,6 +46,7 @@ export function resolveStartupTarget(state: StartupState): StartupTarget {
   if (!state.restoreLastSession) return fallback;
 
   if (state.lastViewMode === "notebook" && typeof state.lastNotebook === "string") {
+    if (state.lastNotebook === "") return { mode: "unfiled" };
     return { mode: "notebook", notebookPath: state.lastNotebook };
   }
   if (state.lastViewMode === "tag" && state.lastTag) {
