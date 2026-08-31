@@ -1231,8 +1231,14 @@ fn update_wikilinks_after_rename_with_fault(
     // Vault-relative path ref (without .md), normalized to forward slashes so it
     // matches [[folder/note]] wikilinks on Windows (OS paths use backslashes there).
     let rel_ref = |p: &str| -> String {
-        let rel = Path::new(p)
-            .strip_prefix(vault)
+        // Windows APIs may hand us a verbatim `\\?\` path for the renamed
+        // source while the vault root is a normal path. Strip that namespace
+        // lexically before comparing; the old source no longer exists, so it
+        // cannot be canonicalized after the rename.
+        let normalized_path = dunce::simplified(Path::new(p));
+        let normalized_vault = dunce::simplified(vault);
+        let rel = normalized_path
+            .strip_prefix(normalized_vault)
             .map(|r| r.to_string_lossy().into_owned())
             .unwrap_or_else(|_| p.to_string())
             .replace('\\', "/");
