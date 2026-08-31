@@ -2077,6 +2077,55 @@ pub fn reorder_quick_access(state: State<'_, AppState>, paths: Vec<String>) -> R
     operations::save_quick_access(vault_path, &paths)
 }
 
+fn is_counted_vault_file(vault: &Path, path: &Path) -> bool {
+    let relative = path.strip_prefix(vault).unwrap_or(path);
+    let components: Vec<_> = relative.components().map(|part| part.as_os_str()).collect();
+
+    if components
+        .iter()
+        .any(|part| *part == std::ffi::OsStr::new(".trash"))
+    {
+        return false;
+    }
+
+    match components
+        .iter()
+        .position(|part| *part == std::ffi::OsStr::new(".helixnotes"))
+    {
+        Some(0) => components.get(1) == Some(&std::ffi::OsStr::new("attachments")),
+        Some(_) => false,
+        None => true,
+    }
+}
+
+#[cfg(test)]
+mod vault_stats_path_tests {
+    use super::is_counted_vault_file;
+    use std::path::Path;
+
+    #[test]
+    fn stats_count_notes_and_attachments_but_not_private_or_trash_files() {
+        let vault = Path::new("vault");
+        assert!(is_counted_vault_file(
+            vault,
+            &vault.join("Projects/note.md")
+        ));
+        assert!(is_counted_vault_file(
+            vault,
+            &vault.join(".helixnotes/attachments/image.png")
+        ));
+        assert!(!is_counted_vault_file(
+            vault,
+            &vault.join(".helixnotes/state.json")
+        ));
+        assert!(!is_counted_vault_file(vault, &vault.join(".trash/note.md")));
+        assert!(!is_counted_vault_file(
+            vault,
+            &vault.join("Projects/.trash/note.md")
+        ));
+    }
+}
+
 #[tauri::command]
 pub fn get_vault_stats(state: State<'_, AppState>) -> Result<VaultStats, String> {
     use rayon::prelude::*;
@@ -2088,12 +2137,8 @@ pub fn get_vault_stats(state: State<'_, AppState>) -> Result<VaultStats, String>
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .map(|e| e.into_path())
-        .filter(|p| {
-            // attachments under .helixnotes count; nothing else in .helixnotes or .trash does
-            let s = p.to_string_lossy();
-            (!s.contains("/.helixnotes/") || s.contains("/.helixnotes/attachments/"))
-                && !s.contains("/.trash/")
-        })
+        // Attachments under .helixnotes count; no other private metadata or Trash does.
+        .filter(|path| is_counted_vault_file(Path::new(vault_path), path))
         .collect();
 
     // Stat files in parallel; each metadata() is a FUSE round-trip on Android.
