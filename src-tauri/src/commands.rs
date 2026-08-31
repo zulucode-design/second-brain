@@ -60,6 +60,29 @@ fn record_repair_issue(
     publish_repair_status(state, status)
 }
 
+fn record_transaction_repair_if_needed(
+    state: &State<'_, AppState>,
+    vault_path: &str,
+    operation: &str,
+    paths: Vec<String>,
+    error: &str,
+) {
+    if !error.starts_with("Repair required: ") {
+        return;
+    }
+    let affected = paths.join("|");
+    let _ = record_repair_issue(
+        state,
+        vault_path,
+        repair::RepairIssue {
+            key: format!("reconciliation:transaction:{operation}:{affected}"),
+            stage: repair::RepairStage::Reconciliation,
+            message: error.to_string(),
+            paths,
+        },
+    );
+}
+
 fn index_note_now(state: &State<'_, AppState>, vault_path: &str, path: &str) -> Result<(), String> {
     let search = state.search_index.lock().ok().and_then(|g| g.clone());
     if let Some(search) = search {
@@ -996,9 +1019,27 @@ pub fn rename_note(
         .ok_or("No active vault")?
         .clone();
     drop(config);
-    let renamed = operations::rename_note(&path, &new_title, &vault_path)?;
-    reindex_moved_note_now(&state, &vault_path, &path, &renamed, &[])?;
-    Ok(renamed)
+    let outcome = match operations::rename_note_with_outcome(&path, &new_title, &vault_path) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            record_transaction_repair_if_needed(
+                &state,
+                &vault_path,
+                "rename-note",
+                vec![path],
+                &error,
+            );
+            return Err(error);
+        }
+    };
+    reindex_moved_note_now(
+        &state,
+        &vault_path,
+        &path,
+        &outcome.path,
+        &outcome.rewritten_paths,
+    )?;
+    Ok(outcome.path)
 }
 
 #[tauri::command]
@@ -1009,7 +1050,16 @@ pub fn delete_note(state: State<'_, AppState>, path: String) -> Result<(), Strin
         .map_err(|error| error.to_string())?;
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
-    operations::delete_note(vault_path, &path)?;
+    if let Err(error) = operations::delete_note(vault_path, &path) {
+        record_transaction_repair_if_needed(
+            &state,
+            vault_path,
+            "delete-note",
+            vec![path.clone()],
+            &error,
+        );
+        return Err(error);
+    }
 
     remove_note_now(&state, vault_path, &path)?;
 
@@ -1703,7 +1753,19 @@ pub fn restore_note(state: State<'_, AppState>, trash_path: String) -> Result<St
             .ok_or("No active vault")?
             .clone()
     };
-    let restored = operations::restore_note(&vault_path, &trash_path)?;
+    let restored = match operations::restore_note(&vault_path, &trash_path) {
+        Ok(restored) => restored,
+        Err(error) => {
+            record_transaction_repair_if_needed(
+                &state,
+                &vault_path,
+                "restore-note",
+                vec![trash_path],
+                &error,
+            );
+            return Err(error);
+        }
+    };
     index_note_now(&state, &vault_path, &restored)?;
     Ok(restored)
 }

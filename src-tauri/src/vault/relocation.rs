@@ -30,6 +30,200 @@ where
     )
 }
 
+/// Durably rewrite one Markdown file without exposing a truncated or half-written note.
+///
+/// The replacement is synced before the source is claimed. The original is then kept in
+/// the relocation recovery area until the replacement occupies the original path, which
+/// also works on Windows where renaming over an existing file is not portable.
+pub fn rewrite_file<F>(vault_root: &Path, source: &Path, rewrite: F) -> Result<(), String>
+where
+    F: FnOnce(&[u8]) -> Result<Vec<u8>, String>,
+{
+    let vault = canonical_directory(vault_root, "vault path")?;
+    let source = validate_source(&vault, source)?;
+    let mut source_file =
+        File::open(&source).map_err(|error| format!("Could not open rewrite source: {error}"))?;
+    let source_identity = Handle::from_file(
+        source_file
+            .try_clone()
+            .map_err(|error| format!("Could not identify rewrite source: {error}"))?,
+    )
+    .map_err(|error| format!("Could not identify rewrite source: {error}"))?;
+    let source_metadata = source_file
+        .metadata()
+        .map_err(|error| format!("Could not inspect rewrite source: {error}"))?;
+    let mut source_bytes = Vec::new();
+    source_file
+        .read_to_end(&mut source_bytes)
+        .map_err(|error| format!("Could not read rewrite source: {error}"))?;
+    let source_hash = digest(&source_bytes);
+    let output = rewrite(&source_bytes)?;
+    let output_hash = digest(&output);
+
+    let transaction_dir = create_recovery_dir(&vault)?;
+    let replacement = transaction_dir.join("replacement.md");
+    let mut replacement_file = match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&replacement)
+    {
+        Ok(file) => file,
+        Err(error) => {
+            let _ = fs::remove_dir(&transaction_dir);
+            return Err(format!("Could not reserve rewrite replacement: {error}"));
+        }
+    };
+    let replacement_identity = match Handle::from_file(
+        replacement_file
+            .try_clone()
+            .map_err(|error| format!("Could not identify rewrite replacement: {error}"))?,
+    ) {
+        Ok(identity) => identity,
+        Err(error) => {
+            drop(replacement_file);
+            let _ = fs::remove_file(&replacement);
+            let _ = fs::remove_dir(&transaction_dir);
+            return Err(format!("Could not identify rewrite replacement: {error}"));
+        }
+    };
+    if let Err(error) = replacement_file
+        .write_all(&output)
+        .and_then(|_| replacement_file.set_permissions(source_metadata.permissions()))
+        .and_then(|_| replacement_file.sync_all())
+    {
+        drop(replacement_file);
+        return cleanup_before_claim_error(
+            &replacement,
+            &replacement_identity,
+            &transaction_dir,
+            format!("Could not publish rewritten note: {error}"),
+        );
+    }
+    drop(replacement_file);
+
+    let recovery_source = transaction_dir.join(
+        source
+            .file_name()
+            .unwrap_or_else(|| OsStr::new("recovery.md")),
+    );
+    if let Err(error) = fs::rename(&source, &recovery_source) {
+        return cleanup_before_claim_error(
+            &replacement,
+            &replacement_identity,
+            &transaction_dir,
+            format!("Could not claim rewrite source: {error}"),
+        );
+    }
+    if let Some(parent) = source.parent() {
+        if let Err(error) = sync_directory(parent) {
+            let restore = restore_recovery_source(&recovery_source, &source);
+            let cleanup = remove_owned_file(&replacement, &replacement_identity);
+            let _ = fs::remove_dir(&transaction_dir);
+            return Err(format!(
+                "Could not sync claimed rewrite source ({error}). Source recovery: {}. Replacement cleanup: {}",
+                result_summary(restore),
+                result_summary(cleanup)
+            ));
+        }
+    }
+    if let Err(error) = sync_directory(&transaction_dir) {
+        let restore = restore_recovery_source(&recovery_source, &source);
+        let cleanup = remove_owned_file(&replacement, &replacement_identity);
+        let _ = fs::remove_dir(&transaction_dir);
+        return Err(format!(
+            "Could not sync rewrite recovery ({error}). Source recovery: {}. Replacement cleanup: {}",
+            result_summary(restore),
+            result_summary(cleanup)
+        ));
+    }
+
+    let claimed_identity = match Handle::from_path(&recovery_source) {
+        Ok(identity) => identity,
+        Err(error) => {
+            let restore = restore_recovery_source(&recovery_source, &source);
+            let cleanup = remove_owned_file(&replacement, &replacement_identity);
+            let _ = fs::remove_dir(&transaction_dir);
+            return Err(format!(
+                "Could not identify claimed rewrite source ({error}). Source recovery: {}. Replacement cleanup: {}",
+                result_summary(restore),
+                result_summary(cleanup)
+            ));
+        }
+    };
+    let claimed_bytes = match fs::read(&recovery_source) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            let restore = restore_recovery_source(&recovery_source, &source);
+            let cleanup = remove_owned_file(&replacement, &replacement_identity);
+            let _ = fs::remove_dir(&transaction_dir);
+            return Err(format!(
+                "Could not verify claimed rewrite source ({error}). Source recovery: {}. Replacement cleanup: {}",
+                result_summary(restore),
+                result_summary(cleanup)
+            ));
+        }
+    };
+    if claimed_identity != source_identity || digest(&claimed_bytes) != source_hash {
+        let restore = restore_recovery_source(&recovery_source, &source);
+        let cleanup = remove_owned_file(&replacement, &replacement_identity);
+        let _ = fs::remove_dir(&transaction_dir);
+        return Err(format!(
+            "The note changed during rewrite. Source recovery: {}. Replacement cleanup: {}",
+            result_summary(restore),
+            result_summary(cleanup)
+        ));
+    }
+
+    if let Err(error) = fs::rename(&replacement, &source) {
+        let restore = restore_recovery_source(&recovery_source, &source);
+        let cleanup = remove_owned_file(&replacement, &replacement_identity);
+        let _ = fs::remove_dir(&transaction_dir);
+        return Err(format!(
+            "Could not install rewritten note ({error}). Source recovery: {}. Replacement cleanup: {}",
+            result_summary(restore),
+            result_summary(cleanup)
+        ));
+    }
+    if let Some(parent) = source.parent() {
+        sync_directory(parent)
+            .map_err(|error| format!("Repair required: could not sync rewritten note: {error}"))?;
+    }
+    sync_directory(&transaction_dir).map_err(|error| {
+        format!("Repair required: could not sync the rewrite recovery directory: {error}")
+    })?;
+    let mut installed = File::open(&source).map_err(|error| {
+        format!("Repair required: could not open the installed rewrite: {error}")
+    })?;
+    let installed_identity = Handle::from_file(installed.try_clone().map_err(|error| {
+        format!("Repair required: could not identify the installed rewrite: {error}")
+    })?)
+    .map_err(|error| {
+        format!("Repair required: could not identify the installed rewrite: {error}")
+    })?;
+    let mut installed_bytes = Vec::new();
+    installed
+        .read_to_end(&mut installed_bytes)
+        .map_err(|error| {
+            format!("Repair required: could not verify the installed rewrite: {error}")
+        })?;
+    if installed_identity != replacement_identity || digest(&installed_bytes) != output_hash {
+        return Err(
+            "Repair required: the installed rewrite was replaced or changed; the original recovery copy was preserved"
+                .to_string(),
+        );
+    }
+    remove_redundant_file(&recovery_source).map_err(|error| {
+        format!(
+            "Repair required: rewritten note is durable, but its recovery copy remains: {error}"
+        )
+    })?;
+    sync_directory(&transaction_dir).map_err(|error| {
+        format!("Repair required: could not sync recovery cleanup after rewrite: {error}")
+    })?;
+    let _ = fs::remove_dir(&transaction_dir);
+    Ok(())
+}
+
 fn relocate_file_with_hook<F, H>(
     vault_root: &Path,
     source: &Path,

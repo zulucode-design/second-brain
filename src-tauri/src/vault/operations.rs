@@ -6,10 +6,11 @@ use crate::vault::frontmatter;
 use crate::vault::para::{self, ParaCategory};
 use chrono::{DateTime, Utc};
 use rayon::prelude::*;
+use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::HashSet;
-use std::fs;
-use std::io::Read;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 use walkdir::WalkDir;
@@ -38,7 +39,7 @@ fn ensure_vault_content_path(
         return Err("Path must stay inside the active vault".to_string());
     }
 
-    Ok(requested_path.to_path_buf())
+    Ok(requested)
 }
 
 fn ensure_vault_content_dir(vault_path: &str, requested_path: &Path) -> Result<PathBuf, String> {
@@ -93,7 +94,7 @@ fn ensure_trash_entry(vault_path: &str, requested_path: &Path) -> Result<PathBuf
     if requested == trash || !requested.starts_with(&trash) {
         return Err("Path must be an item inside the active vault trash".to_string());
     }
-    Ok(requested_path.to_path_buf())
+    Ok(requested)
 }
 
 fn safe_relative_path(path: &str) -> Result<&Path, String> {
@@ -804,6 +805,9 @@ struct TrashedNoteManifest {
     original_relative_path: String,
     #[serde(default)]
     quick_access_index: Option<usize>,
+    /// Detects a file replaced after deletion even when legacy frontmatter has no ID.
+    #[serde(default)]
+    content_sha256: Option<String>,
 }
 
 fn trashed_note_manifest_path(trash_note: &Path) -> PathBuf {
@@ -811,15 +815,96 @@ fn trashed_note_manifest_path(trash_note: &Path) -> PathBuf {
     trash_note.with_file_name(format!("{filename}.restore.json"))
 }
 
+fn content_sha256(content: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(content))
+}
+
+fn write_new_file_durable(path: &Path, content: &[u8]) -> Result<(), String> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| error.to_string())?;
+    if let Err(error) = file.write_all(content).and_then(|_| file.sync_all()) {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(error.to_string());
+    }
+    drop(file);
+    sync_parent_directory(path).map_err(|error| error.to_string())
+}
+
+#[cfg(unix)]
+fn sync_parent_directory(path: &Path) -> std::io::Result<()> {
+    File::open(path.parent().unwrap_or_else(|| Path::new(".")))?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_parent_directory(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+fn ensure_file_identity(
+    path: &Path,
+    expected: &same_file::Handle,
+    label: &str,
+) -> Result<(), String> {
+    let current = same_file::Handle::from_path(path)
+        .map_err(|error| format!("Could not identify {label}: {error}"))?;
+    if &current != expected {
+        return Err(format!("{label} was replaced by another writer"));
+    }
+    Ok(())
+}
+
+fn read_file_snapshot(path: &Path, label: &str) -> Result<(same_file::Handle, Vec<u8>), String> {
+    let mut file = File::open(path).map_err(|error| format!("Could not open {label}: {error}"))?;
+    let identity = same_file::Handle::from_file(
+        file.try_clone()
+            .map_err(|error| format!("Could not identify {label}: {error}"))?,
+    )
+    .map_err(|error| format!("Could not identify {label}: {error}"))?;
+    let mut content = Vec::new();
+    file.read_to_end(&mut content)
+        .map_err(|error| format!("Could not read {label}: {error}"))?;
+    Ok((identity, content))
+}
+
+fn ensure_file_snapshot(
+    path: &Path,
+    expected_identity: &same_file::Handle,
+    expected_hash: &str,
+    label: &str,
+) -> Result<(), String> {
+    let (identity, content) = read_file_snapshot(path, label)?;
+    if &identity != expected_identity {
+        return Err(format!("{label} was replaced by another writer"));
+    }
+    if content_sha256(&content) != expected_hash {
+        return Err(format!("{label} was changed by another writer"));
+    }
+    Ok(())
+}
+
 pub fn delete_note(vault_path: &str, note_path: &str) -> Result<(), String> {
+    delete_note_inner(vault_path, note_path, false)
+}
+
+fn delete_note_inner(
+    vault_path: &str,
+    note_path: &str,
+    fail_manifest_write: bool,
+) -> Result<(), String> {
     let validated = ensure_note_path(vault_path, Path::new(note_path))?;
     let src = validated.as_path();
+    let vault_root = canonicalize_path(Path::new(vault_path), "vault path")?;
 
     let raw = fs::read_to_string(src).map_err(|error| error.to_string())?;
+    let source_hash = content_sha256(raw.as_bytes());
     let filename = src.file_name().unwrap_or_default().to_string_lossy();
     let note_id = frontmatter::parse_note(&raw, &filename).0.id;
     let original_relative_path = src
-        .strip_prefix(vault_path)
+        .strip_prefix(&vault_root)
         .map_err(|_| "Note path must stay inside the active vault".to_string())?
         .to_string_lossy()
         .replace('\\', "/");
@@ -829,13 +914,21 @@ pub fn delete_note(vault_path: &str, note_path: &str) -> Result<(), String> {
             || entry.relative_path == original_relative_path
     });
     let original_quick_access = quick_access.clone();
+
+    let trash_dir = helixnotes_dir(vault_path).join("trash");
+    fs::create_dir_all(&trash_dir).map_err(|e| e.to_string())?;
+    let manifest = TrashedNoteManifest {
+        note_id,
+        original_relative_path,
+        quick_access_index,
+        content_sha256: Some(source_hash),
+    };
+    let manifest_data = serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
+
     if let Some(index) = quick_access_index {
         quick_access.remove(index);
         save_quick_access_entries(vault_path, &quick_access)?;
     }
-
-    let trash_dir = helixnotes_dir(vault_path).join("trash");
-    fs::create_dir_all(&trash_dir).map_err(|e| e.to_string())?;
 
     let filename = src
         .file_name()
@@ -846,7 +939,7 @@ pub fn delete_note(vault_path: &str, note_path: &str) -> Result<(), String> {
     let timestamp = Utc::now().format("%Y%m%d%H%M%S%3f");
     let trash_name = format!("{}_{}", timestamp, filename);
     let dest = match crate::vault::relocation::relocate_file(
-        Path::new(vault_path),
+        &vault_root,
         src,
         &trash_dir,
         std::ffi::OsStr::new(&trash_name),
@@ -866,15 +959,67 @@ pub fn delete_note(vault_path: &str, note_path: &str) -> Result<(), String> {
             return Err(error);
         }
     };
-    let manifest = TrashedNoteManifest {
-        note_id,
-        original_relative_path,
-        quick_access_index,
+    let manifest_path = trashed_note_manifest_path(&dest);
+    let (destination_identity, destination_content) =
+        match read_file_snapshot(&dest, "the note in Trash") {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                return Err(format!(
+                "Repair required: the note reached Trash, but it could not be verified: {error}"
+            ));
+            }
+        };
+    let expected_hash = manifest.content_sha256.as_deref().unwrap_or_default();
+    if content_sha256(&destination_content) != expected_hash {
+        return Err(
+            "Repair required: the note in Trash was replaced before its restore metadata could be saved"
+                .to_string(),
+        );
+    }
+    let manifest_write = if fail_manifest_write {
+        Err("injected Trash manifest write failure".to_string())
+    } else {
+        ensure_file_snapshot(
+            &dest,
+            &destination_identity,
+            expected_hash,
+            "the note in Trash",
+        )
+        .and_then(|_| write_new_file_durable(&manifest_path, &manifest_data))
+        .and_then(|_| {
+            ensure_file_snapshot(
+                &dest,
+                &destination_identity,
+                expected_hash,
+                "the note in Trash",
+            )
+        })
     };
-    let manifest_data = serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
-    fs::write(trashed_note_manifest_path(&dest), manifest_data).map_err(|error| {
-        format!("Note reached Trash, but restore metadata could not be saved: {error}")
-    })?;
+    if let Err(error) = manifest_write {
+        let _ = fs::remove_file(&manifest_path);
+        let note_rollback = rollback_owned_note_relocation(
+            vault_path,
+            &dest,
+            &destination_identity,
+            src,
+            raw.as_bytes(),
+        );
+        let quick_access_rollback = if quick_access_index.is_some() {
+            save_quick_access_entries(vault_path, &original_quick_access)
+        } else {
+            Ok(())
+        };
+        let repair_prefix = if note_rollback.is_err() || quick_access_rollback.is_err() {
+            "Repair required: "
+        } else {
+            ""
+        };
+        return Err(format!(
+            "{repair_prefix}Could not save Trash restore metadata: {error}. Note rollback: {}. Quick Access rollback: {}",
+            rollback_result(&note_rollback),
+            rollback_result(&quick_access_rollback)
+        ));
+    }
     Ok(())
 }
 
@@ -909,11 +1054,30 @@ pub fn delete_notebook(vault_path: &str, notebook_path: &str) -> Result<(), Stri
     Ok(())
 }
 
+#[cfg(test)]
 pub fn rename_note(path: &str, new_title: &str, vault_path: &str) -> Result<String, String> {
+    rename_note_with_outcome(path, new_title, vault_path).map(|outcome| outcome.path)
+}
+
+pub fn rename_note_with_outcome(
+    path: &str,
+    new_title: &str,
+    vault_path: &str,
+) -> Result<NoteMoveOutcome, String> {
+    rename_note_with_outcome_inner(path, new_title, vault_path, None)
+}
+
+fn rename_note_with_outcome_inner(
+    path: &str,
+    new_title: &str,
+    vault_path: &str,
+    fail_link_write: Option<usize>,
+) -> Result<NoteMoveOutcome, String> {
     let validated = ensure_note_path(vault_path, Path::new(path))?;
     let src = validated.as_path();
+    let vault_root = canonicalize_path(Path::new(vault_path), "vault path")?;
+    let canonical_vault = vault_root.to_string_lossy();
 
-    // Read old title before renaming
     let raw = fs::read_to_string(src).map_err(|e| e.to_string())?;
     let filename = src
         .file_name()
@@ -932,27 +1096,97 @@ pub fn rename_note(path: &str, new_title: &str, vault_path: &str) -> Result<Stri
     }
     let updated = frontmatter::merge_frontmatter(&raw, &meta, &content);
 
-    // Rename file
     let new_filename = sanitize_filename(new_title);
+    if new_filename.is_empty() {
+        return Err("Note title must contain a valid filename character".to_string());
+    }
     let new_path = src.parent().unwrap().join(format!("{}.md", new_filename));
-    fs::write(src, &updated).map_err(|e| e.to_string())?;
+    let source_identity = same_file::Handle::from_path(src)
+        .map_err(|error| format!("Could not identify the note being renamed: {error}"))?;
+    let same_file_target = if new_path == src {
+        true
+    } else if new_path.exists() {
+        same_file::Handle::from_path(&new_path)
+            .map(|identity| identity == source_identity)
+            .map_err(|error| format!("Could not identify the rename destination: {error}"))?
+    } else {
+        false
+    };
+    if new_path.exists() && !same_file_target {
+        return Err("A note with that name already exists".to_string());
+    }
+    if same_file_target && new_title == old_title {
+        return Ok(NoteMoveOutcome {
+            path: old_path_str,
+            rewritten_paths: Vec::new(),
+        });
+    }
+    preflight_wikilink_reads(&canonical_vault, src)?;
 
-    if new_path != src {
-        fs::rename(src, &new_path).map_err(|e| e.to_string())?;
+    let published_path = if same_file_target {
+        crate::vault::relocation::rewrite_file(&vault_root, src, |_| {
+            Ok(updated.as_bytes().to_vec())
+        })?;
+        src.to_path_buf()
+    } else {
+        crate::vault::relocation::relocate_file(
+            &vault_root,
+            src,
+            src.parent()
+                .ok_or_else(|| "Note has no parent directory".to_string())?,
+            new_path.file_name().unwrap_or_default(),
+            |_| Ok(updated.as_bytes().to_vec()),
+        )?
+    };
+    if !same_file_target && published_path != new_path {
+        let rollback =
+            rollback_note_relocation(&canonical_vault, &published_path, src, raw.as_bytes());
+        let repair_prefix = if rollback.is_err() {
+            "Repair required: "
+        } else {
+            ""
+        };
+        return Err(format!(
+            "{repair_prefix}A note with that name appeared during the rename. Rename rollback: {}",
+            rollback_result(&rollback)
+        ));
     }
 
-    let new_path_str = new_path.to_string_lossy().to_string();
+    let new_path_str = published_path.to_string_lossy().to_string();
 
-    // Update wikilinks in other notes that reference this note
-    let _ = update_wikilinks_after_rename(
-        vault_path,
+    let link_update = match update_wikilinks_after_rename_with_fault(
+        &canonical_vault,
         &old_path_str,
         &new_path_str,
         &old_title,
         new_title,
-    )?;
+        fail_link_write,
+    ) {
+        Ok(update) => update,
+        Err(error) => {
+            let note_rollback = if same_file_target {
+                crate::vault::relocation::rewrite_file(&vault_root, src, |_| {
+                    Ok(raw.as_bytes().to_vec())
+                })
+            } else {
+                rollback_note_relocation(&canonical_vault, &published_path, src, raw.as_bytes())
+            };
+            let repair_prefix = if note_rollback.is_err() {
+                "Repair required: "
+            } else {
+                ""
+            };
+            return Err(format!(
+                "{repair_prefix}{error}. Note rollback: {}",
+                rollback_result(&note_rollback)
+            ));
+        }
+    };
 
-    Ok(new_path_str)
+    Ok(NoteMoveOutcome {
+        path: new_path_str,
+        rewritten_paths: link_update.rewritten_paths,
+    })
 }
 
 /// Walk all .md files in the vault and update wikilink references after a note rename.
@@ -1158,6 +1392,12 @@ fn rollback_note_relocation(
     let original_name = original_path
         .file_name()
         .ok_or_else(|| "Original note has no filename".to_string())?;
+    if original_path.exists() {
+        return Err(format!(
+            "the original path is occupied; the note remains at {}",
+            moved_path.display()
+        ));
+    }
     let restored = crate::vault::relocation::relocate_file(
         Path::new(vault_path),
         moved_path,
@@ -1166,12 +1406,37 @@ fn rollback_note_relocation(
         |_| Ok(original_bytes.to_vec()),
     )?;
     if restored != original_path {
+        let returned = crate::vault::relocation::relocate_file(
+            Path::new(vault_path),
+            &restored,
+            moved_path
+                .parent()
+                .ok_or_else(|| "Moved note has no parent directory".to_string())?,
+            moved_path
+                .file_name()
+                .ok_or_else(|| "Moved note has no filename".to_string())?,
+            |_| Ok(original_bytes.to_vec()),
+        );
         return Err(format!(
-            "The original path was occupied during rollback; the note was recovered at {}",
-            restored.display()
+            "the original path became occupied during rollback; returning the note to its prior location: {}",
+            match returned {
+                Ok(path) => path.display().to_string(),
+                Err(error) => error,
+            }
         ));
     }
     Ok(())
+}
+
+fn rollback_owned_note_relocation(
+    vault_path: &str,
+    moved_path: &Path,
+    expected_identity: &same_file::Handle,
+    original_path: &Path,
+    original_bytes: &[u8],
+) -> Result<(), String> {
+    ensure_file_identity(moved_path, expected_identity, "the relocated note")?;
+    rollback_note_relocation(vault_path, moved_path, original_path, original_bytes)
 }
 
 pub fn rename_notebook(vault_path: &str, path: &str, new_name: &str) -> Result<String, String> {
@@ -1215,6 +1480,8 @@ fn move_note_with_outcome_inner(
 ) -> Result<NoteMoveOutcome, String> {
     let validated = ensure_note_path(vault_path, Path::new(note_path))?;
     let src = validated.as_path();
+    let vault_root = canonicalize_path(Path::new(vault_path), "vault path")?;
+    let canonical_vault = vault_root.to_string_lossy();
     let (dest_dir, category) = ensure_para_destination_dir(vault_path, Path::new(dest_notebook))?;
     if src.parent() == Some(dest_dir.as_path()) {
         return Err("Note is already in that location".to_string());
@@ -1226,7 +1493,7 @@ fn move_note_with_outcome_inner(
     let mut quick_access = load_quick_access_entries(vault_path)?;
     let original_quick_access = quick_access.clone();
     let old_relative = src
-        .strip_prefix(vault_path)
+        .strip_prefix(&vault_root)
         .map_err(|_| "Note path must stay inside the active vault".to_string())?
         .to_string_lossy()
         .replace('\\', "/");
@@ -1237,18 +1504,14 @@ fn move_note_with_outcome_inner(
         (!source_id.is_empty() && entry.note_id.as_deref() == Some(source_id.as_str()))
             || entry.relative_path == old_relative
     });
-    preflight_wikilink_reads(vault_path, src)?;
+    preflight_wikilink_reads(&canonical_vault, src)?;
 
     let filename = src.file_name().unwrap_or_default();
     let title = std::cell::RefCell::new(None);
     let original_bytes = std::cell::RefCell::new(None);
     let old_path = src.to_string_lossy().to_string();
-    let dest = crate::vault::relocation::relocate_file(
-        Path::new(vault_path),
-        src,
-        &dest_dir,
-        filename,
-        |raw| {
+    let dest =
+        crate::vault::relocation::relocate_file(&vault_root, src, &dest_dir, filename, |raw| {
             original_bytes.replace(Some(raw.to_vec()));
             let raw = std::str::from_utf8(raw)
                 .map_err(|error| format!("Note is not valid UTF-8: {error}"))?;
@@ -1258,8 +1521,7 @@ fn move_note_with_outcome_inner(
                     .unwrap_or_else(|| frontmatter::filename_to_title(&filename)),
             ));
             frontmatter::set_category(raw, category).map(String::into_bytes)
-        },
-    )?;
+        })?;
     let title = title
         .into_inner()
         .ok_or_else(|| "Could not determine moved note title".to_string())?;
@@ -1268,7 +1530,7 @@ fn move_note_with_outcome_inner(
         .ok_or_else(|| "Could not retain the original note for rollback".to_string())?;
     let new_path = dest.to_string_lossy().to_string();
     let link_update = match update_wikilinks_after_rename_with_fault(
-        vault_path,
+        &canonical_vault,
         &old_path,
         &new_path,
         &title,
@@ -1278,7 +1540,7 @@ fn move_note_with_outcome_inner(
         Ok(update) => update,
         Err(error) => {
             return match rollback_note_relocation(
-                vault_path,
+                &canonical_vault,
                 &dest,
                 Path::new(&old_path),
                 &original_bytes,
@@ -1293,14 +1555,18 @@ fn move_note_with_outcome_inner(
 
     if let Some(position) = quick_access_position {
         quick_access[position].relative_path = dest
-            .strip_prefix(vault_path)
+            .strip_prefix(&vault_root)
             .map_err(|_| "Moved note escaped the active vault".to_string())?
             .to_string_lossy()
             .replace('\\', "/");
         if let Err(error) = save_quick_access_entries(vault_path, &quick_access) {
             let link_rollback = link_update.rollback();
-            let note_rollback =
-                rollback_note_relocation(vault_path, &dest, Path::new(&old_path), &original_bytes);
+            let note_rollback = rollback_note_relocation(
+                &canonical_vault,
+                &dest,
+                Path::new(&old_path),
+                &original_bytes,
+            );
             let quick_access_rollback =
                 save_quick_access_entries(vault_path, &original_quick_access);
             return Err(format!(
@@ -1810,13 +2076,24 @@ pub fn get_trash_contents(vault_path: &str) -> Result<TrashContents, String> {
 }
 
 pub fn restore_note(vault_path: &str, trash_path: &str) -> Result<String, String> {
+    restore_note_inner(vault_path, trash_path, false, false)
+}
+
+fn restore_note_inner(
+    vault_path: &str,
+    trash_path: &str,
+    fail_quick_access_save: bool,
+    fail_manifest_remove: bool,
+) -> Result<String, String> {
     let validated = ensure_trash_entry(vault_path, Path::new(trash_path))?;
     let src = validated.as_path();
+    let vault_root = canonicalize_path(Path::new(vault_path), "vault path")?;
     if !src.is_file() {
         return Err("Trashed note does not exist".to_string());
     }
 
     let raw = fs::read_to_string(src).map_err(|error| error.to_string())?;
+    let source_hash = content_sha256(raw.as_bytes());
     let source_filename = src.file_name().unwrap_or_default().to_string_lossy();
     let source_meta = frontmatter::parse_note(&raw, &source_filename).0;
     let manifest_path = trashed_note_manifest_path(src);
@@ -1826,6 +2103,13 @@ pub fn restore_note(vault_path: &str, trash_path: &str) -> Result<String, String
             serde_json::from_slice(&data).map_err(|error| error.to_string())?;
         if manifest.note_id != source_meta.id {
             return Err("Trash restore metadata does not match the note identity".to_string());
+        }
+        if manifest
+            .content_sha256
+            .as_ref()
+            .is_some_and(|expected| expected != &source_hash)
+        {
+            return Err("Trash restore metadata does not match the note content".to_string());
         }
         Some(manifest)
     } else {
@@ -1840,6 +2124,7 @@ pub fn restore_note(vault_path: &str, trash_path: &str) -> Result<String, String
     } else {
         None
     };
+    let original_quick_access = quick_access.clone();
     let category = source_meta.category;
     let dest_dir = match category {
         Some(category) => ensure_category_destination(vault_path, category)?,
@@ -1858,12 +2143,27 @@ pub fn restore_note(vault_path: &str, trash_path: &str) -> Result<String, String
 
     let parent = src.parent().map(|p| p.to_path_buf());
     let dest = crate::vault::relocation::relocate_file(
-        Path::new(vault_path),
+        &vault_root,
         src,
         &dest_dir,
         std::ffi::OsStr::new(original_name),
         |raw| Ok(raw.to_vec()),
     )?;
+    let (destination_identity, restored_content) =
+        match read_file_snapshot(&dest, "the restored note") {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                return Err(format!(
+                    "Repair required: the note left Trash, but it could not be verified: {error}"
+                ));
+            }
+        };
+    let restored_hash = content_sha256(&restored_content);
+    if restored_hash != source_hash {
+        return Err(
+            "Repair required: the restored path was replaced while the note left Trash".to_string(),
+        );
+    }
 
     if let (Some(manifest), Some(entries)) = (&manifest, quick_access.as_mut()) {
         entries.retain(|entry| entry.note_id.as_deref() != Some(manifest.note_id.as_str()));
@@ -1871,11 +2171,22 @@ pub fn restore_note(vault_path: &str, trash_path: &str) -> Result<String, String
             .quick_access_index
             .unwrap_or(entries.len())
             .min(entries.len());
-        let relative_path = dest
-            .strip_prefix(vault_path)
-            .map_err(|_| "Restored note escaped the active vault".to_string())?
-            .to_string_lossy()
-            .replace('\\', "/");
+        let relative_path = match dest.strip_prefix(&vault_root) {
+            Ok(relative) => relative.to_string_lossy().replace('\\', "/"),
+            Err(_) => {
+                let note_rollback = rollback_owned_note_relocation(
+                    vault_path,
+                    &dest,
+                    &destination_identity,
+                    src,
+                    raw.as_bytes(),
+                );
+                return Err(format!(
+                    "Restored note escaped the active vault. Note rollback: {}",
+                    rollback_result(&note_rollback)
+                ));
+            }
+        };
         entries.insert(
             insert_at,
             QuickAccessEntry {
@@ -1883,11 +2194,85 @@ pub fn restore_note(vault_path: &str, trash_path: &str) -> Result<String, String
                 relative_path,
             },
         );
-        save_quick_access_entries(vault_path, entries)?;
+        let quick_access_save = if fail_quick_access_save {
+            Err("injected Quick Access save failure".to_string())
+        } else {
+            ensure_file_snapshot(
+                &dest,
+                &destination_identity,
+                &source_hash,
+                "the restored note",
+            )
+            .and_then(|_| save_quick_access_entries(vault_path, entries))
+            .and_then(|_| {
+                ensure_file_snapshot(
+                    &dest,
+                    &destination_identity,
+                    &source_hash,
+                    "the restored note",
+                )
+            })
+        };
+        if let Err(error) = quick_access_save {
+            let note_rollback = rollback_owned_note_relocation(
+                vault_path,
+                &dest,
+                &destination_identity,
+                src,
+                raw.as_bytes(),
+            );
+            let quick_access_rollback = original_quick_access
+                .as_ref()
+                .map(|original| save_quick_access_entries(vault_path, original))
+                .unwrap_or(Ok(()));
+            let repair_prefix = if note_rollback.is_err() || quick_access_rollback.is_err() {
+                "Repair required: "
+            } else {
+                ""
+            };
+            return Err(format!(
+                "{repair_prefix}Could not restore Quick Access with the note: {error}. Note rollback: {}. Quick Access rollback: {}",
+                rollback_result(&note_rollback),
+                rollback_result(&quick_access_rollback)
+            ));
+        }
     }
     if manifest.is_some() {
-        fs::remove_file(&manifest_path)
-            .map_err(|error| format!("Note was restored, but Trash metadata remains: {error}"))?;
+        let manifest_remove = if fail_manifest_remove {
+            Err("injected Trash manifest removal failure".to_string())
+        } else {
+            ensure_file_snapshot(
+                &dest,
+                &destination_identity,
+                &source_hash,
+                "the restored note",
+            )
+            .and_then(|_| fs::remove_file(&manifest_path).map_err(|error| error.to_string()))
+            .and_then(|_| sync_parent_directory(&manifest_path).map_err(|error| error.to_string()))
+        };
+        if let Err(error) = manifest_remove {
+            let note_rollback = rollback_owned_note_relocation(
+                vault_path,
+                &dest,
+                &destination_identity,
+                src,
+                raw.as_bytes(),
+            );
+            let quick_access_rollback = original_quick_access
+                .as_ref()
+                .map(|original| save_quick_access_entries(vault_path, original))
+                .unwrap_or(Ok(()));
+            let repair_prefix = if note_rollback.is_err() || quick_access_rollback.is_err() {
+                "Repair required: "
+            } else {
+                ""
+            };
+            return Err(format!(
+                "{repair_prefix}Could not remove Trash restore metadata: {error}. Note rollback: {}. Quick Access rollback: {}",
+                rollback_result(&note_rollback),
+                rollback_result(&quick_access_rollback)
+            ));
+        }
     }
 
     // Clean up empty parent directory (deleted notebook folder) in trash
@@ -2359,6 +2744,106 @@ mod tests {
     }
 
     #[test]
+    fn renaming_a_note_never_overwrites_an_existing_note() {
+        let vault = scaffolded_vault("rename-collision");
+        let vault_str = vault.to_string_lossy().to_string();
+        let source = create_note(&vault_str, Some("Projects"), "Source").unwrap();
+        let existing = create_note(&vault_str, Some("Projects"), "Existing").unwrap();
+        let source_before = fs::read(&source.path).unwrap();
+        let existing_before = fs::read(&existing.path).unwrap();
+
+        let result = super::rename_note(&source.path, "Existing", &vault_str);
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(&source.path).unwrap(), source_before);
+        assert_eq!(fs::read(&existing.path).unwrap(), existing_before);
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn renaming_frontmatter_when_the_sanitized_filename_is_unchanged_is_supported() {
+        let vault = scaffolded_vault("rename-same-filename");
+        let vault_str = vault.to_string_lossy().to_string();
+        let note = create_note(&vault_str, Some("Projects"), "Plan-").unwrap();
+        let raw = fs::read_to_string(&note.path).unwrap();
+        fs::write(&note.path, format!("{raw}valuable body\n")).unwrap();
+
+        let renamed = super::rename_note(&note.path, "Plan?", &vault_str).unwrap();
+
+        assert_eq!(
+            std::path::Path::new(&renamed),
+            std::path::Path::new(&note.path)
+        );
+        let after = fs::read_to_string(&renamed).unwrap();
+        let metadata = frontmatter::parse_note(&after, "Plan-.md").0;
+        assert_eq!(metadata.title, "Plan?");
+        assert!(after.contains("valuable body"));
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn failed_backlink_rewrite_rolls_back_the_note_rename_and_prior_links() {
+        let vault = scaffolded_vault("rename-backlink-rollback");
+        let vault_str = vault.to_string_lossy().to_string();
+        let target = create_note(&vault_str, Some("Projects"), "Target").unwrap();
+        let first = create_note(&vault_str, Some("Areas"), "First reference").unwrap();
+        let second = create_note(&vault_str, Some("Resources"), "Second reference").unwrap();
+        for reference in [&first, &second] {
+            let raw = fs::read_to_string(&reference.path).unwrap();
+            fs::write(&reference.path, format!("{raw}See [[Target]].\n")).unwrap();
+        }
+        let target_before = fs::read(&target.path).unwrap();
+        let first_before = fs::read(&first.path).unwrap();
+        let second_before = fs::read(&second.path).unwrap();
+
+        let result = super::rename_note_with_outcome_inner(
+            &target.path,
+            "Renamed Target",
+            &vault_str,
+            Some(1),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(&target.path).unwrap(), target_before);
+        assert_eq!(fs::read(&first.path).unwrap(), first_before);
+        assert_eq!(fs::read(&second.path).unwrap(), second_before);
+        assert!(!vault.join("Projects/Renamed Target.md").exists());
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn renaming_a_note_reports_every_path_that_search_must_reindex() {
+        let vault = scaffolded_vault("rename-search-consumers");
+        let vault_str = vault.to_string_lossy().to_string();
+        let target = create_note(&vault_str, Some("Projects"), "Old Unique Target").unwrap();
+        let reference = create_note(&vault_str, Some("Resources"), "Reference").unwrap();
+        let reference_raw = fs::read_to_string(&reference.path).unwrap();
+        fs::write(
+            &reference.path,
+            format!("{reference_raw}See [[Old Unique Target]].\n"),
+        )
+        .unwrap();
+        let search = SearchIndex::new_in_memory().unwrap();
+        search.index_note(&target.path).unwrap();
+        search.index_note(&reference.path).unwrap();
+
+        let outcome =
+            super::rename_note_with_outcome(&target.path, "New Unique Target", &vault_str).unwrap();
+        let mut upserts = vec![outcome.path.clone()];
+        upserts.extend(outcome.rewritten_paths.clone());
+        search
+            .apply_note_changes(std::slice::from_ref(&target.path), &upserts)
+            .unwrap();
+
+        assert!(search.search("Old Unique Target", 10).unwrap().is_empty());
+        let updated = search.search("New Unique Target", 10).unwrap();
+        assert_eq!(updated.len(), 2);
+        assert!(updated.iter().any(|result| result.path == outcome.path));
+        assert!(updated.iter().any(|result| result.path == reference.path));
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
     fn category_scan_is_recursive_and_filters_by_recorded_category() {
         let vault = scaffolded_vault("recursive-category-scan");
         let vault_str = vault.to_string_lossy().to_string();
@@ -2822,6 +3307,132 @@ mod tests {
             frontmatter::parse_note(&restored_raw, "Plan 1.md").0.id,
             original.meta.id
         );
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn trash_manifest_failure_rolls_back_the_note_and_quick_access() {
+        let vault = scaffolded_vault("delete-manifest-rollback");
+        let vault_str = vault.to_string_lossy().to_string();
+        let note = create_note(&vault_str, Some("Projects"), "Plan").unwrap();
+        super::add_quick_access(&vault_str, "Projects/Plan.md").unwrap();
+        let note_before = fs::read(&note.path).unwrap();
+        let quick_access_path = helixnotes_dir(&vault_str).join("quick_access.json");
+        let quick_access_before = fs::read(&quick_access_path).unwrap();
+
+        let result = super::delete_note_inner(&vault_str, &note.path, true);
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(&note.path).unwrap(), note_before);
+        assert_eq!(fs::read(&quick_access_path).unwrap(), quick_access_before);
+        let trash = helixnotes_dir(&vault_str).join("trash");
+        assert!(fs::read_dir(trash).unwrap().next().is_none());
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn restore_quick_access_failure_rolls_the_note_back_into_trash() {
+        let vault = scaffolded_vault("restore-quick-access-rollback");
+        let vault_str = vault.to_string_lossy().to_string();
+        let note = create_note(&vault_str, Some("Projects"), "Plan").unwrap();
+        super::add_quick_access(&vault_str, "Projects/Plan.md").unwrap();
+        super::delete_note(&vault_str, &note.path).unwrap();
+        let trash_path = super::get_trash_contents(&vault_str).unwrap().notes[0]
+            .path
+            .clone();
+        let trash_before = fs::read(&trash_path).unwrap();
+        let quick_access_path = helixnotes_dir(&vault_str).join("quick_access.json");
+        let quick_access_before = fs::read(&quick_access_path).unwrap();
+        let manifest = super::trashed_note_manifest_path(std::path::Path::new(&trash_path));
+
+        let result = super::restore_note_inner(&vault_str, &trash_path, true, false);
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(&trash_path).unwrap(), trash_before);
+        assert_eq!(fs::read(&quick_access_path).unwrap(), quick_access_before);
+        assert!(manifest.is_file());
+        assert!(!vault.join("Projects/Plan.md").exists());
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn restore_manifest_cleanup_failure_rolls_back_note_and_quick_access() {
+        let vault = scaffolded_vault("restore-manifest-rollback");
+        let vault_str = vault.to_string_lossy().to_string();
+        let note = create_note(&vault_str, Some("Projects"), "Plan").unwrap();
+        super::add_quick_access(&vault_str, "Projects/Plan.md").unwrap();
+        super::delete_note(&vault_str, &note.path).unwrap();
+        let trash_path = super::get_trash_contents(&vault_str).unwrap().notes[0]
+            .path
+            .clone();
+        let trash_before = fs::read(&trash_path).unwrap();
+        let quick_access_path = helixnotes_dir(&vault_str).join("quick_access.json");
+        let quick_access_before = fs::read(&quick_access_path).unwrap();
+        let manifest = super::trashed_note_manifest_path(std::path::Path::new(&trash_path));
+
+        let result = super::restore_note_inner(&vault_str, &trash_path, false, true);
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(&trash_path).unwrap(), trash_before);
+        assert_eq!(fs::read(&quick_access_path).unwrap(), quick_access_before);
+        assert!(manifest.is_file());
+        assert!(!vault.join("Projects/Plan.md").exists());
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn restore_rejects_a_trash_note_replaced_after_manifest_creation() {
+        let vault = scaffolded_vault("restore-replaced-content");
+        let vault_str = vault.to_string_lossy().to_string();
+        let note = create_note(&vault_str, Some("Projects"), "Plan").unwrap();
+        super::delete_note(&vault_str, &note.path).unwrap();
+        let trash_path = super::get_trash_contents(&vault_str).unwrap().notes[0]
+            .path
+            .clone();
+        let raw = fs::read_to_string(&trash_path).unwrap();
+        fs::write(&trash_path, format!("{raw}\nreplacement body\n")).unwrap();
+
+        let result = super::restore_note(&vault_str, &trash_path);
+
+        assert!(result
+            .as_deref()
+            .unwrap_err()
+            .contains("does not match the note content"));
+        assert!(std::path::Path::new(&trash_path).is_file());
+        assert!(!vault.join("Projects/Plan.md").exists());
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn note_move_delete_and_restore_accept_a_symlinked_vault_path() {
+        use std::os::unix::fs::symlink;
+
+        let vault = scaffolded_vault("canonical-vault");
+        let alias =
+            vault.with_file_name(format!("para-ops-canonical-alias-{}", uuid::Uuid::new_v4()));
+        symlink(&vault, &alias).unwrap();
+        let alias_str = alias.to_string_lossy().to_string();
+        let note = create_note(&alias_str, Some("Projects"), "Plan").unwrap();
+
+        let moved = super::move_note(
+            &alias_str,
+            &note.path,
+            &alias.join("Archives").to_string_lossy(),
+        )
+        .unwrap();
+        super::delete_note(&alias_str, &moved).unwrap();
+        let trash_path = super::get_trash_contents(&alias_str).unwrap().notes[0]
+            .path
+            .clone();
+        let restored = super::restore_note(&alias_str, &trash_path).unwrap();
+
+        assert!(std::path::Path::new(&restored).starts_with(&vault));
+        assert_eq!(
+            category_recorded_in(std::path::Path::new(&restored)),
+            Some(ParaCategory::Archives)
+        );
+        fs::remove_file(alias).unwrap();
         fs::remove_dir_all(vault).unwrap();
     }
 
