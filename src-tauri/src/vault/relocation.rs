@@ -202,9 +202,11 @@ fn validate_destination(vault: &Path, destination: &Path) -> Result<PathBuf, Str
         _ => false,
     };
     let holding = relative == Path::new(".helixnotes").join(crate::vault::para::UNFILED_DIR);
-    if !category && !holding {
+    let trash = relative == Path::new(".helixnotes").join("trash");
+    if !category && !holding && !trash {
         return Err(
-            "Relocation destination must be inside a PARA category or the Holding Area".to_string(),
+            "Relocation destination must be inside a PARA category, the Holding Area, or Trash"
+                .to_string(),
         );
     }
     Ok(destination)

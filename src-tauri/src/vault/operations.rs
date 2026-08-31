@@ -768,9 +768,41 @@ pub fn create_notebook(
     })
 }
 
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct TrashedNoteManifest {
+    note_id: String,
+    original_relative_path: String,
+    #[serde(default)]
+    quick_access_index: Option<usize>,
+}
+
+fn trashed_note_manifest_path(trash_note: &Path) -> PathBuf {
+    let filename = trash_note.file_name().unwrap_or_default().to_string_lossy();
+    trash_note.with_file_name(format!("{filename}.restore.json"))
+}
+
 pub fn delete_note(vault_path: &str, note_path: &str) -> Result<(), String> {
     let validated = ensure_note_path(vault_path, Path::new(note_path))?;
     let src = validated.as_path();
+
+    let raw = fs::read_to_string(src).map_err(|error| error.to_string())?;
+    let filename = src.file_name().unwrap_or_default().to_string_lossy();
+    let note_id = frontmatter::parse_note(&raw, &filename).0.id;
+    let original_relative_path = src
+        .strip_prefix(vault_path)
+        .map_err(|_| "Note path must stay inside the active vault".to_string())?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let mut quick_access = load_quick_access_entries(vault_path)?;
+    let quick_access_index = quick_access.iter().position(|entry| {
+        (!note_id.is_empty() && entry.note_id.as_deref() == Some(note_id.as_str()))
+            || entry.relative_path == original_relative_path
+    });
+    let original_quick_access = quick_access.clone();
+    if let Some(index) = quick_access_index {
+        quick_access.remove(index);
+        save_quick_access_entries(vault_path, &quick_access)?;
+    }
 
     let trash_dir = helixnotes_dir(vault_path).join("trash");
     fs::create_dir_all(&trash_dir).map_err(|e| e.to_string())?;
@@ -783,9 +815,36 @@ pub fn delete_note(vault_path: &str, note_path: &str) -> Result<(), String> {
 
     let timestamp = Utc::now().format("%Y%m%d%H%M%S%3f");
     let trash_name = format!("{}_{}", timestamp, filename);
-    let dest = trash_dir.join(&trash_name);
-
-    fs::rename(src, dest).map_err(|e| e.to_string())?;
+    let dest = match crate::vault::relocation::relocate_file(
+        Path::new(vault_path),
+        src,
+        &trash_dir,
+        std::ffi::OsStr::new(&trash_name),
+        |bytes| Ok(bytes.to_vec()),
+    ) {
+        Ok(path) => path,
+        Err(error) => {
+            if quick_access_index.is_some() {
+                save_quick_access_entries(vault_path, &original_quick_access).map_err(
+                    |rollback_error| {
+                        format!(
+                            "Could not delete note ({error}); Quick Access rollback also failed: {rollback_error}"
+                        )
+                    },
+                )?;
+            }
+            return Err(error);
+        }
+    };
+    let manifest = TrashedNoteManifest {
+        note_id,
+        original_relative_path,
+        quick_access_index,
+    };
+    let manifest_data = serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?;
+    fs::write(trashed_note_manifest_path(&dest), manifest_data).map_err(|error| {
+        format!("Note reached Trash, but restore metadata could not be saved: {error}")
+    })?;
     Ok(())
 }
 
@@ -1383,7 +1442,29 @@ pub fn restore_note(vault_path: &str, trash_path: &str) -> Result<String, String
 
     let raw = fs::read_to_string(src).map_err(|error| error.to_string())?;
     let source_filename = src.file_name().unwrap_or_default().to_string_lossy();
-    let category = frontmatter::parse_note(&raw, &source_filename).0.category;
+    let source_meta = frontmatter::parse_note(&raw, &source_filename).0;
+    let manifest_path = trashed_note_manifest_path(src);
+    let manifest = if manifest_path.exists() {
+        let data = fs::read(&manifest_path).map_err(|error| error.to_string())?;
+        let manifest: TrashedNoteManifest =
+            serde_json::from_slice(&data).map_err(|error| error.to_string())?;
+        if manifest.note_id != source_meta.id {
+            return Err("Trash restore metadata does not match the note identity".to_string());
+        }
+        Some(manifest)
+    } else {
+        None
+    };
+    let mut quick_access = if manifest
+        .as_ref()
+        .and_then(|value| value.quick_access_index)
+        .is_some()
+    {
+        Some(load_quick_access_entries(vault_path)?)
+    } else {
+        None
+    };
+    let category = source_meta.category;
     let dest_dir = match category {
         Some(category) => ensure_category_destination(vault_path, category)?,
         None => ensure_unfiled_directory(vault_path, true)?,
@@ -1407,6 +1488,31 @@ pub fn restore_note(vault_path: &str, trash_path: &str) -> Result<String, String
         std::ffi::OsStr::new(original_name),
         |raw| Ok(raw.to_vec()),
     )?;
+
+    if let (Some(manifest), Some(entries)) = (&manifest, quick_access.as_mut()) {
+        entries.retain(|entry| entry.note_id.as_deref() != Some(manifest.note_id.as_str()));
+        let insert_at = manifest
+            .quick_access_index
+            .unwrap_or(entries.len())
+            .min(entries.len());
+        let relative_path = dest
+            .strip_prefix(vault_path)
+            .map_err(|_| "Restored note escaped the active vault".to_string())?
+            .to_string_lossy()
+            .replace('\\', "/");
+        entries.insert(
+            insert_at,
+            QuickAccessEntry {
+                note_id: (!manifest.note_id.is_empty()).then(|| manifest.note_id.clone()),
+                relative_path,
+            },
+        );
+        save_quick_access_entries(vault_path, entries)?;
+    }
+    if manifest.is_some() {
+        fs::remove_file(&manifest_path)
+            .map_err(|error| format!("Note was restored, but Trash metadata remains: {error}"))?;
+    }
 
     // Clean up empty parent directory (deleted notebook folder) in trash
     cleanup_empty_trash_dir(vault_path, parent.as_deref());
@@ -1601,21 +1707,86 @@ pub fn set_notebook_icon(
     Ok(())
 }
 
-pub fn load_quick_access(vault_path: &str) -> Result<Vec<String>, String> {
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct QuickAccessEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    note_id: Option<String>,
+    relative_path: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct QuickAccessFile {
+    version: u8,
+    entries: Vec<QuickAccessEntry>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(untagged)]
+enum StoredQuickAccess {
+    Current(QuickAccessFile),
+    Legacy(Vec<String>),
+}
+
+fn quick_access_note_id(vault_path: &str, relative_path: &str) -> Option<String> {
+    let path = Path::new(vault_path).join(relative_path);
+    let raw = fs::read_to_string(&path).ok()?;
+    let filename = path.file_name()?.to_string_lossy();
+    let id = frontmatter::parse_note(&raw, &filename).0.id;
+    (!id.is_empty()).then_some(id)
+}
+
+fn save_quick_access_entries(vault_path: &str, entries: &[QuickAccessEntry]) -> Result<(), String> {
     let qa_path = helixnotes_dir(vault_path).join("quick_access.json");
-    if qa_path.exists() {
-        let data = fs::read_to_string(&qa_path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&data).map_err(|e| e.to_string())
-    } else {
-        Ok(Vec::new())
+    let data = serde_json::to_string_pretty(&QuickAccessFile {
+        version: 1,
+        entries: entries.to_vec(),
+    })
+    .map_err(|error| error.to_string())?;
+    fs::write(&qa_path, data).map_err(|error| error.to_string())
+}
+
+fn load_quick_access_entries(vault_path: &str) -> Result<Vec<QuickAccessEntry>, String> {
+    let qa_path = helixnotes_dir(vault_path).join("quick_access.json");
+    if !qa_path.exists() {
+        return Ok(Vec::new());
+    }
+    let data = fs::read_to_string(&qa_path).map_err(|error| error.to_string())?;
+    match serde_json::from_str::<StoredQuickAccess>(&data).map_err(|error| error.to_string())? {
+        StoredQuickAccess::Current(file) if file.version == 1 => Ok(file.entries),
+        StoredQuickAccess::Current(file) => Err(format!(
+            "Unsupported Quick Access version: {}",
+            file.version
+        )),
+        StoredQuickAccess::Legacy(paths) => {
+            let entries = paths
+                .into_iter()
+                .map(|relative_path| QuickAccessEntry {
+                    note_id: quick_access_note_id(vault_path, &relative_path),
+                    relative_path,
+                })
+                .collect::<Vec<_>>();
+            save_quick_access_entries(vault_path, &entries)?;
+            Ok(entries)
+        }
     }
 }
 
+pub fn load_quick_access(vault_path: &str) -> Result<Vec<String>, String> {
+    Ok(load_quick_access_entries(vault_path)?
+        .into_iter()
+        .map(|entry| entry.relative_path)
+        .collect())
+}
+
 pub fn save_quick_access(vault_path: &str, paths: &[String]) -> Result<(), String> {
-    let qa_path = helixnotes_dir(vault_path).join("quick_access.json");
-    let data = serde_json::to_string_pretty(paths).map_err(|e| e.to_string())?;
-    fs::write(&qa_path, data).map_err(|e| e.to_string())?;
-    Ok(())
+    let entries = paths
+        .iter()
+        .map(|relative_path| QuickAccessEntry {
+            note_id: quick_access_note_id(vault_path, relative_path),
+            relative_path: relative_path.clone(),
+        })
+        .collect::<Vec<_>>();
+    save_quick_access_entries(vault_path, &entries)
 }
 
 pub fn add_quick_access(vault_path: &str, note_relative: &str) -> Result<(), String> {
@@ -2110,6 +2281,72 @@ mod tests {
         assert!(expected.is_file());
         assert!(!vault.join("Legacy.md").exists());
         assert_eq!(category_recorded_in(&expected), None);
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn delete_create_restore_preserves_quick_access_by_note_identity() {
+        let vault = scaffolded_vault("restore-quick-access-identity");
+        let vault_str = vault.to_string_lossy().to_string();
+        let original = create_note(&vault_str, Some("Projects"), "Plan").unwrap();
+        super::add_quick_access(&vault_str, "Projects/Plan.md").unwrap();
+
+        super::delete_note(&vault_str, &original.path).unwrap();
+        let replacement = create_note(&vault_str, Some("Projects"), "Plan").unwrap();
+        let trash_path = super::get_trash_contents(&vault_str).unwrap().notes[0]
+            .path
+            .clone();
+        let restored = super::restore_note(&vault_str, &trash_path).unwrap();
+
+        assert_eq!(
+            std::path::Path::new(&restored),
+            vault.join("Projects/Plan 1.md")
+        );
+        assert_eq!(
+            super::load_quick_access(&vault_str).unwrap(),
+            ["Projects/Plan 1.md"]
+        );
+        let stored = super::load_quick_access_entries(&vault_str).unwrap();
+        assert_eq!(
+            stored[0].note_id.as_deref(),
+            Some(original.meta.id.as_str())
+        );
+        assert_ne!(
+            stored[0].note_id.as_deref(),
+            Some(replacement.meta.id.as_str())
+        );
+        let restored_raw = fs::read_to_string(restored).unwrap();
+        assert_eq!(
+            frontmatter::parse_note(&restored_raw, "Plan 1.md").0.id,
+            original.meta.id
+        );
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn legacy_quick_access_migrates_to_note_ids_without_reordering() {
+        let vault = scaffolded_vault("quick-access-migration");
+        let vault_str = vault.to_string_lossy().to_string();
+        let first = create_note(&vault_str, Some("Projects"), "First").unwrap();
+        let second = create_note(&vault_str, Some("Resources"), "Second").unwrap();
+        let legacy = vec!["Resources/Second.md", "Projects/First.md"];
+        fs::write(
+            helixnotes_dir(&vault_str).join("quick_access.json"),
+            serde_json::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(super::load_quick_access(&vault_str).unwrap(), legacy);
+        let stored = super::load_quick_access_entries(&vault_str).unwrap();
+        assert_eq!(stored.len(), 2);
+        assert_eq!(stored[0].note_id.as_deref(), Some(second.meta.id.as_str()));
+        assert_eq!(stored[1].note_id.as_deref(), Some(first.meta.id.as_str()));
+        let disk: serde_json::Value = serde_json::from_slice(
+            &fs::read(helixnotes_dir(&vault_str).join("quick_access.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(disk["version"], 1);
+        assert!(disk["entries"].is_array());
         fs::remove_dir_all(vault).unwrap();
     }
 
