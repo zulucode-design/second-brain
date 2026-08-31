@@ -522,6 +522,9 @@ fn remove_owned_file(path: &Path, identity: &Handle) -> Result<(), String> {
     remove_redundant_file(path)
 }
 
+// Clearing the read-only attribute is the correct Windows operation. The Clippy lint
+// guards against Unix mode-bit widening, but this branch is not compiled on Unix.
+#[cfg_attr(windows, allow(clippy::permissions_set_readonly_false))]
 fn remove_redundant_file(path: &Path) -> Result<(), String> {
     #[cfg(windows)]
     {
