@@ -152,7 +152,6 @@ export interface AppConfig {
   show_note_switcher: boolean;
   time_format: string;
   week_start: string;
-  daily_title_format: string;
   gpu_acceleration: boolean;
   autostart: boolean;
   pdf_preview: boolean;
@@ -164,7 +163,6 @@ export interface AppConfig {
   show_all_notes: boolean;
   show_quick_access: boolean;
   show_tasks: boolean;
-  show_daily_notes: boolean;
   show_trash: boolean;
   backup_enabled: boolean;
   backup_frequency: string;

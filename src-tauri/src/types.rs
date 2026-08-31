@@ -93,10 +93,10 @@ pub struct CustomTheme {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StartupView {
-    Daily,
     QuickAccess,
     Tasks,
     #[default]
+    #[serde(alias = "daily")]
     #[serde(other)]
     All,
 }
@@ -136,8 +136,6 @@ pub struct AppConfig {
     pub time_format: String,
     #[serde(default = "default_week_start")]
     pub week_start: String,
-    #[serde(default = "default_daily_title_format")]
-    pub daily_title_format: String,
     #[serde(default)]
     pub gpu_acceleration: bool,
     #[serde(default)]
@@ -160,8 +158,6 @@ pub struct AppConfig {
     pub show_quick_access: bool,
     #[serde(default = "default_true")]
     pub show_tasks: bool,
-    #[serde(default = "default_true")]
-    pub show_daily_notes: bool,
     #[serde(default = "default_true")]
     pub show_trash: bool,
     #[serde(default)]
@@ -250,10 +246,6 @@ fn default_week_start() -> String {
     "monday".to_string()
 }
 
-fn default_daily_title_format() -> String {
-    "localized".to_string()
-}
-
 fn default_max_versions() -> u32 {
     20
 }
@@ -290,7 +282,6 @@ impl Default for AppConfig {
             show_note_switcher: false,
             time_format: "relative".to_string(),
             week_start: "monday".to_string(),
-            daily_title_format: "localized".to_string(),
             gpu_acceleration: true,
             autostart: false,
             pdf_preview: false,
@@ -302,7 +293,6 @@ impl Default for AppConfig {
             show_all_notes: true,
             show_quick_access: true,
             show_tasks: true,
-            show_daily_notes: true,
             show_trash: true,
             backup_enabled: false,
             backup_frequency: "24h".to_string(),
@@ -494,7 +484,6 @@ mod startup_view_tests {
             (StartupView::All, "\"all\""),
             (StartupView::QuickAccess, "\"quickaccess\""),
             (StartupView::Tasks, "\"tasks\""),
-            (StartupView::Daily, "\"daily\""),
         ] {
             assert_eq!(serde_json::to_string(&view).unwrap(), expected);
         }
@@ -506,6 +495,27 @@ mod startup_view_tests {
             serde_json::from_str::<StartupView>("\"future-view\"").unwrap(),
             StartupView::All
         );
+    }
+
+    #[test]
+    fn legacy_daily_config_loads_without_re_emitting_or_reactivating_daily_notes() {
+        let mut value = serde_json::to_value(AppConfig::default()).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.insert("startup_view".to_string(), serde_json::json!("daily"));
+        object.insert(
+            "daily_title_format".to_string(),
+            serde_json::json!("localized"),
+        );
+        object.insert("show_daily_notes".to_string(), serde_json::json!(true));
+
+        let config: AppConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(config.startup_view, StartupView::All);
+
+        let saved = serde_json::to_value(config).unwrap();
+        let saved = saved.as_object().unwrap();
+        assert_eq!(saved.get("startup_view"), Some(&serde_json::json!("all")));
+        assert!(!saved.contains_key("daily_title_format"));
+        assert!(!saved.contains_key("show_daily_notes"));
     }
 
     #[test]

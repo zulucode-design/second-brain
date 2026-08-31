@@ -840,7 +840,6 @@
 	let restoreLastSession = $state($appConfig?.restore_last_session ?? false);
 	let timeFormat = $state($appConfig?.time_format ?? 'relative');
 	let weekStart = $state($appConfig?.week_start ?? 'monday');
-	let dailyTitleFormat = $state($appConfig?.daily_title_format ?? 'localized');
 	let gpuAcceleration = $state($appConfig?.gpu_acceleration ?? true);
 	let autostart = $state($appConfig?.autostart ?? false);
 
@@ -861,7 +860,6 @@
 	let showAllNotes = $state($appConfig?.show_all_notes ?? true);
 	let showQuickAccess = $state($appConfig?.show_quick_access ?? true);
 	let showTasks = $state($appConfig?.show_tasks ?? true);
-	let showDailyNotes = $state($appConfig?.show_daily_notes ?? true);
 	let showTrash = $state($appConfig?.show_trash ?? true);
 
 	const pdfHeightPresets = [
@@ -916,7 +914,6 @@
 			$appConfig.restore_last_session = restoreLastSession;
 			$appConfig.time_format = timeFormat;
 			$appConfig.week_start = weekStart;
-			$appConfig.daily_title_format = dailyTitleFormat;
 			$appConfig.gpu_acceleration = gpuAcceleration;
 			$appConfig.autostart = autostart;
 			$appConfig.pdf_preview = pdfPreview;
@@ -933,10 +930,9 @@
 			$appConfig.show_all_notes = showAllNotes;
 			$appConfig.show_quick_access = showQuickAccess;
 			$appConfig.show_tasks = showTasks;
-			$appConfig.show_daily_notes = showDailyNotes;
 			$appConfig.show_trash = showTrash;
 			}
-			setGeneralSettings(compactNotes, timeFormat, weekStart, dailyTitleFormat, gpuAcceleration, autostart, pdfPreview, pdfHeight, titleMode, hideTitleInBody, showLineNumbers, showLinkArrows, defaultViewMode, newNotesInSourceMode, showTrayIcon, closeToTray, enableWikiLinks, showNoteDates, showNoteSwitcher, startupView, restoreLastSession, showAllNotes, showQuickAccess, showTasks, showDailyNotes, showTrash)
+			setGeneralSettings(compactNotes, timeFormat, weekStart, gpuAcceleration, autostart, pdfPreview, pdfHeight, titleMode, hideTitleInBody, showLineNumbers, showLinkArrows, defaultViewMode, newNotesInSourceMode, showTrayIcon, closeToTray, enableWikiLinks, showNoteDates, showNoteSwitcher, startupView, restoreLastSession, showAllNotes, showQuickAccess, showTasks, showTrash)
 			.catch((e) => console.error('Failed to save general settings:', e));
 	}
 
@@ -1131,7 +1127,6 @@
 			restoreLastSession = $appConfig.restore_last_session ?? false;
 			timeFormat = $appConfig.time_format ?? 'relative';
 			weekStart = $appConfig.week_start ?? 'monday';
-			dailyTitleFormat = $appConfig.daily_title_format ?? 'localized';
 			gpuAcceleration = $appConfig.gpu_acceleration ?? true;
 			autostart = $appConfig.autostart ?? false;
 			pdfPreview = $appConfig.pdf_preview ?? false;
@@ -1141,7 +1136,6 @@
 			showAllNotes = $appConfig.show_all_notes ?? true;
 			showQuickAccess = $appConfig.show_quick_access ?? true;
 			showTasks = $appConfig.show_tasks ?? true;
-			showDailyNotes = $appConfig.show_daily_notes ?? true;
 			showTrash = $appConfig.show_trash ?? true;
 		}
 	});
@@ -1355,17 +1349,6 @@
 								<div class="setting-options">
 									<button class="option-btn" class:active={weekStart === 'monday'} onclick={() => { weekStart = 'monday'; saveGeneralSettings(); }}>Monday</button>
 									<button class="option-btn" class:active={weekStart === 'sunday'} onclick={() => { weekStart = 'sunday'; saveGeneralSettings(); }}>Sunday</button>
-								</div>
-							</div>
-
-							<div class="settings-section">
-								<h3>Daily note title format</h3>
-								<div class="setting-options">
-									<button class="option-btn" class:active={dailyTitleFormat === 'localized'} onclick={() => { dailyTitleFormat = 'localized'; saveGeneralSettings(); }}>Localized</button>
-									<button class="option-btn" class:active={dailyTitleFormat === 'iso'} onclick={() => { dailyTitleFormat = 'iso'; saveGeneralSettings(); }}>2026-06-10</button>
-									<button class="option-btn" class:active={dailyTitleFormat === 'long'} onclick={() => { dailyTitleFormat = 'long'; saveGeneralSettings(); }}>June 10, 2026</button>
-									<button class="option-btn" class:active={dailyTitleFormat === 'us'} onclick={() => { dailyTitleFormat = 'us'; saveGeneralSettings(); }}>06/10/2026</button>
-									<button class="option-btn" class:active={dailyTitleFormat === 'eu'} onclick={() => { dailyTitleFormat = 'eu'; saveGeneralSettings(); }}>10/06/2026</button>
 								</div>
 							</div>
 

@@ -296,7 +296,6 @@ export async function setGeneralSettings(
   compactNotes: boolean,
   timeFormat: string,
   weekStart: string,
-  dailyTitleFormat: string,
   gpuAcceleration: boolean,
   autostart: boolean,
   pdfPreview: boolean,
@@ -317,14 +316,12 @@ export async function setGeneralSettings(
   showAllNotes: boolean,
   showQuickAccess: boolean,
   showTasks: boolean,
-  showDailyNotes: boolean,
   showTrash: boolean,
 ): Promise<void> {
   return invoke("set_general_settings", {
     compactNotes,
     timeFormat,
     weekStart,
-    dailyTitleFormat,
     gpuAcceleration,
     autostart,
     pdfPreview,
@@ -345,7 +342,6 @@ export async function setGeneralSettings(
     showAllNotes,
     showQuickAccess,
     showTasks,
-    showDailyNotes,
     showTrash,
   });
 }

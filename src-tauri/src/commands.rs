@@ -1923,7 +1923,6 @@ pub fn set_general_settings(
     compact_notes: bool,
     time_format: String,
     week_start: String,
-    daily_title_format: String,
     gpu_acceleration: bool,
     autostart: bool,
     pdf_preview: bool,
@@ -1944,7 +1943,6 @@ pub fn set_general_settings(
     show_all_notes: bool,
     show_quick_access: bool,
     show_tasks: bool,
-    show_daily_notes: bool,
     show_trash: bool,
 ) -> Result<(), String> {
     let mut config = state.config.lock().map_err(|e| e.to_string())?;
@@ -1956,11 +1954,9 @@ pub fn set_general_settings(
     config.show_all_notes = show_all_notes;
     config.show_quick_access = show_quick_access;
     config.show_tasks = show_tasks;
-    config.show_daily_notes = show_daily_notes;
     config.show_trash = show_trash;
     config.time_format = time_format;
     config.week_start = week_start;
-    config.daily_title_format = daily_title_format;
     config.gpu_acceleration = gpu_acceleration;
     config.autostart = autostart;
     config.pdf_preview = pdf_preview;
