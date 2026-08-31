@@ -18,8 +18,8 @@ fn link_windows_common_controls() {
 }
 
 fn main() {
+    tauri_build::build();
+
     #[cfg(target_os = "windows")]
     link_windows_common_controls();
-
-    tauri_build::build()
 }
