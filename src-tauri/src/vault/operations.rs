@@ -20,50 +20,7 @@ pub fn helixnotes_dir(vault_path: &str) -> PathBuf {
 }
 
 fn canonicalize_path(path: &Path, label: &str) -> Result<PathBuf, String> {
-    fs::canonicalize(path)
-        .map(normalize_canonical_path)
-        .map_err(|error| format!("Invalid {label}: {error}"))
-}
-
-#[cfg(not(windows))]
-fn normalize_canonical_path(path: PathBuf) -> PathBuf {
-    path
-}
-
-/// `std::fs::canonicalize` uses Windows' verbatim namespace (`\\?\`) even when the
-/// caller supplied an ordinary drive or UNC path. Keeping that prefix would make a
-/// canonical vault path lexically incompatible with the paths returned by the rest of
-/// the application, breaking `strip_prefix`/`starts_with` and leaking `\\?\` through
-/// the public API. Remove only the two verbatim forms that have ordinary equivalents.
-#[cfg(windows)]
-fn normalize_canonical_path(path: PathBuf) -> PathBuf {
-    use std::ffi::OsString;
-    use std::os::windows::ffi::{OsStrExt, OsStringExt};
-
-    const VERBATIM_PREFIX: &[u16] = &[b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
-    const VERBATIM_UNC_PREFIX: &[u16] = &[
-        b'\\' as u16,
-        b'\\' as u16,
-        b'?' as u16,
-        b'\\' as u16,
-        b'U' as u16,
-        b'N' as u16,
-        b'C' as u16,
-        b'\\' as u16,
-    ];
-
-    let encoded: Vec<u16> = path.as_os_str().encode_wide().collect();
-    let normalized = if encoded.starts_with(VERBATIM_UNC_PREFIX) {
-        let mut ordinary = vec![b'\\' as u16, b'\\' as u16];
-        ordinary.extend_from_slice(&encoded[VERBATIM_UNC_PREFIX.len()..]);
-        ordinary
-    } else if encoded.starts_with(VERBATIM_PREFIX) && encoded.get(5) == Some(&(b':' as u16)) {
-        encoded[VERBATIM_PREFIX.len()..].to_vec()
-    } else {
-        return path;
-    };
-
-    PathBuf::from(OsString::from_wide(&normalized))
+    crate::vault::path::canonicalize(path, label)
 }
 
 fn ensure_vault_content_path(
@@ -291,11 +248,8 @@ fn scan_dir_recursive(dir: &Path, vault_root: &str) -> Vec<NotebookEntry> {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
-            let relative = path
-                .strip_prefix(root)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .to_string();
+            let relative =
+                crate::vault::path::to_portable_string(path.strip_prefix(root).unwrap_or(path));
             let (children, child_note_count) = scan_dir_with_count(path, vault_root);
             NotebookEntry {
                 name,
@@ -346,11 +300,8 @@ fn scan_dir_with_count(dir: &Path, vault_root: &str) -> (Vec<NotebookEntry>, usi
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
-            let relative = path
-                .strip_prefix(root)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .to_string();
+            let relative =
+                crate::vault::path::to_portable_string(path.strip_prefix(root).unwrap_or(path));
             let (children, child_note_count) = scan_dir_with_count(path, vault_root);
             NotebookEntry {
                 name,
@@ -538,11 +489,8 @@ fn read_note_entry_metadata_only(path: &Path, vault_root: &Path) -> Result<NoteE
         }
     }
 
-    let relative = path
-        .strip_prefix(vault_root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .to_string();
+    let relative =
+        crate::vault::path::to_portable_string(path.strip_prefix(vault_root).unwrap_or(path));
 
     let preview = frontmatter::extract_preview(&content, 120);
 
@@ -593,11 +541,8 @@ fn read_note_entry_from_str(
         }
     }
 
-    let relative = path
-        .strip_prefix(vault_root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .to_string();
+    let relative =
+        crate::vault::path::to_portable_string(path.strip_prefix(vault_root).unwrap_or(path));
 
     let preview = frontmatter::extract_preview(&content, 120);
 
@@ -729,11 +674,9 @@ pub fn create_note(
     fs::write(&file_path, raw).map_err(|e| e.to_string())?;
 
     let vault_root = Path::new(vault_path);
-    let relative = file_path
-        .strip_prefix(vault_root)
-        .unwrap_or(&file_path)
-        .to_string_lossy()
-        .to_string();
+    let relative = crate::vault::path::to_portable_string(
+        file_path.strip_prefix(vault_root).unwrap_or(&file_path),
+    );
 
     Ok(NoteEntry {
         path: file_path.to_string_lossy().to_string(),
@@ -827,11 +770,9 @@ pub fn create_notebook(
     fs::create_dir_all(&dir_path).map_err(|e| e.to_string())?;
 
     let vault_root = Path::new(vault_path);
-    let relative = dir_path
-        .strip_prefix(vault_root)
-        .unwrap_or(&dir_path)
-        .to_string_lossy()
-        .to_string();
+    let relative = crate::vault::path::to_portable_string(
+        dir_path.strip_prefix(vault_root).unwrap_or(&dir_path),
+    );
 
     Ok(NotebookEntry {
         name: name.to_string(),

@@ -363,7 +363,7 @@ fn canonical_directory(path: &Path, label: &str) -> Result<PathBuf, String> {
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(format!("{label} must be a real directory"));
     }
-    fs::canonicalize(path).map_err(|error| format!("Invalid {label}: {error}"))
+    crate::vault::path::canonicalize(path, label)
 }
 
 fn validate_source(vault: &Path, source: &Path) -> Result<PathBuf, String> {
@@ -375,8 +375,7 @@ fn validate_source(vault: &Path, source: &Path) -> Result<PathBuf, String> {
     {
         return Err("Relocation source must be a real Markdown file".to_string());
     }
-    let source =
-        fs::canonicalize(source).map_err(|error| format!("Invalid relocation source: {error}"))?;
+    let source = crate::vault::path::canonicalize(source, "relocation source")?;
     if !source.starts_with(vault) || source == vault {
         return Err("Relocation source must stay inside the active vault".to_string());
     }

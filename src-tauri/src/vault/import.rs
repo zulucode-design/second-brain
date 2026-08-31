@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
 use std::path::Path;
 
 use chrono::Utc;
@@ -10,6 +11,16 @@ use uuid::Uuid;
 use crate::types::{ImportResult, NoteMeta};
 use crate::vault::frontmatter;
 use crate::vault::para::ParaCategory;
+
+fn has_excluded_component(path: &Path, root: &Path, names: &[&str]) -> bool {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .components()
+        .any(|component| {
+            let value = component.as_os_str();
+            names.iter().any(|name| value == OsStr::new(name))
+        })
+}
 
 pub fn import(vault_path: &str) -> Result<ImportResult, String> {
     let vault = Path::new(vault_path);
@@ -23,8 +34,7 @@ pub fn import(vault_path: &str) -> Result<ImportResult, String> {
             let p = e.path();
             p.is_file()
                 && p.extension().and_then(|x| x.to_str()) == Some("md")
-                && !p.to_string_lossy().contains("/.helixnotes/")
-                && !p.to_string_lossy().contains("/.trash/")
+                && !has_excluded_component(p, vault, &[".helixnotes", ".trash"])
         })
         .map(|e| e.path().to_path_buf())
         .collect();
@@ -590,12 +600,11 @@ fn move_attachments(vault: &Path) -> Result<HashMap<String, String>, String> {
             if p.extension().and_then(|x| x.to_str()) == Some("md") {
                 return false;
             }
-            let path_str = p.to_string_lossy();
-            !path_str.contains("/.helixnotes/")
-                && !path_str.contains("/.obsidian/")
-                && !path_str.contains("/.trash/")
-                && !path_str.contains("/.stfolder")
-                && !path_str.contains("/.claude/")
+            !has_excluded_component(
+                p,
+                vault,
+                &[".helixnotes", ".obsidian", ".trash", ".stfolder", ".claude"],
+            )
         })
         .map(|e| e.path().to_path_buf())
         .collect();
@@ -635,8 +644,7 @@ fn rewrite_attachment_refs(vault: &Path, moved: &HashMap<String, String>) -> Res
             let p = e.path();
             p.is_file()
                 && p.extension().and_then(|x| x.to_str()) == Some("md")
-                && !p.to_string_lossy().contains("/.helixnotes/")
-                && !p.to_string_lossy().contains("/.trash/")
+                && !has_excluded_component(p, vault, &[".helixnotes", ".trash"])
         })
         .map(|e| e.path().to_path_buf())
         .collect();
@@ -710,8 +718,7 @@ fn cleanup_empty_dirs(root: &Path) {
     dirs.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
 
     for dir in dirs {
-        let dir_str = dir.to_string_lossy();
-        if dir_str.contains("/.helixnotes") || dir_str.contains("/.obsidian") || dir == root {
+        if has_excluded_component(&dir, root, &[".helixnotes", ".obsidian"]) || dir == root {
             continue;
         }
         if let Ok(mut entries) = std::fs::read_dir(&dir) {
@@ -1025,6 +1032,37 @@ mod tests {
             "reconciliation must not move a correctly categorized imported note"
         );
         assert!(report.unfiled.is_empty());
+    }
+
+    #[test]
+    fn attachment_import_never_moves_internal_or_tool_state() {
+        let vault = std::env::temp_dir().join(format!("attachment-scope-{}", Uuid::new_v4()));
+        let internal = vault.join(".helixnotes").join("state.json");
+        let tool_state = vault.join(".obsidian").join("workspace.json");
+        let attachment = vault.join("images").join("diagram.png");
+        std::fs::create_dir_all(internal.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(tool_state.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(attachment.parent().unwrap()).unwrap();
+        std::fs::write(&internal, "internal").unwrap();
+        std::fs::write(&tool_state, "tool").unwrap();
+        std::fs::write(&attachment, "image").unwrap();
+
+        let moved = move_attachments(&vault).unwrap();
+        let moved_attachment = vault
+            .join(".helixnotes")
+            .join("attachments")
+            .join("images")
+            .join("diagram.png");
+
+        assert!(internal.is_file(), "app state must remain in place");
+        assert!(tool_state.is_file(), "tool state must remain in place");
+        assert!(
+            moved_attachment.is_file(),
+            "regular attachments should move"
+        );
+        assert_eq!(moved.len(), 1);
+
+        std::fs::remove_dir_all(&vault).unwrap();
     }
 
     #[test]

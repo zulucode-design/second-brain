@@ -1781,6 +1781,7 @@ dependencies = [
  "arboard",
  "chrono",
  "dirs",
+ "dunce",
  "futures",
  "gray_matter",
  "image",

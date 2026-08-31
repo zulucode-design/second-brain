@@ -217,7 +217,7 @@ pub fn reconcile_vault(vault_path: &str) -> Result<ReconcileReport, String> {
 }
 
 fn ensure_holding_area(root: &Path) -> Result<std::path::PathBuf, String> {
-    let root = std::fs::canonicalize(root).map_err(|error| error.to_string())?;
+    let root = crate::vault::path::canonicalize(root, "vault path")?;
     let app_data = root.join(".helixnotes");
     let metadata = std::fs::symlink_metadata(&app_data)
         .map_err(|error| format!("Invalid vault app-data directory: {error}"))?;
@@ -235,7 +235,7 @@ fn ensure_holding_area(root: &Path) -> Result<std::path::PathBuf, String> {
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err("Holding Area must be a real directory".to_string());
     }
-    let holding = std::fs::canonicalize(&holding).map_err(|error| error.to_string())?;
+    let holding = crate::vault::path::canonicalize(&holding, "Holding Area")?;
     if holding.parent() != Some(app_data.as_path()) {
         return Err("Holding Area escaped the active vault".to_string());
     }
