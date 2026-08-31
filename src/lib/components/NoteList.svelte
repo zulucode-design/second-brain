@@ -1106,7 +1106,7 @@
 		</div>
 	{/if}
 
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_no_static_element_interactions a11y_no_noninteractive_element_interactions -->
 	<div class="list-content" class:tasks-mode={$viewMode === 'tasks'} bind:this={listContainer} onscroll={onListScroll} ondblclick={handleListDoubleClick}>
 		{#if $viewMode === 'tasks'}
 			<TasksView onOpenTask={openTask} onToggleTask={onToggleTask} onSetTaskPriority={onSetTaskPriority} onSetTaskDue={onSetTaskDue} />
@@ -1360,7 +1360,7 @@
 	<!-- Keep pointer events inside the menu from reaching the window-level dismiss handler.
 	     In particular, opening Move to... changes the menu contents during the click; on
 	     Windows this could otherwise let the bubbled event dismiss the newly-opened picker. -->
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 	<div class="context-menu" class:mobile={isMobile} style="left: {contextMenu.x}px; top: {contextMenu.y}px" role="group" aria-label="Note actions" onmousedown={(e) => e.stopPropagation()}>
 		{#if selectedPaths.size > 1 && selectedPaths.has(contextMenu.note.path)}
 			<!-- Batch context menu -->
