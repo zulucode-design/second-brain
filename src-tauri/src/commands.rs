@@ -842,6 +842,14 @@ pub fn read_note(state: State<'_, AppState>, path: String) -> Result<NoteContent
     operations::read_note(vault_path, &path)
 }
 
+/// Read-only preview for a regular Markdown note directly inside the Holding Area.
+#[tauri::command]
+pub fn read_unfiled_note(state: State<'_, AppState>, path: String) -> Result<NoteContent, String> {
+    let config = state.config.lock().map_err(|error| error.to_string())?;
+    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    operations::read_unfiled_note(vault_path, &path)
+}
+
 #[tauri::command]
 pub fn save_note(
     state: State<'_, AppState>,

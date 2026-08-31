@@ -18,11 +18,13 @@
 		notebooks,
 		tags,
 		mobileView,
-		unfiledNotes
+		unfiledNotes,
+		holdingPreview
 	} from '$lib/stores/app';
 	import {
 		getNotes,
 		readNote,
+		readUnfiledNote,
 		createNote,
 		duplicateNote,
 		deleteNote,
@@ -45,6 +47,7 @@
 	import { formatRelativeTime, formatDate, dateBucketLabel } from '$lib/utils/time';
 	import { openNoteWindow } from '$lib/utils/window';
 	import { encodeNoteDragPaths } from '$lib/utils/note-drag';
+	import { noteRowPolicy } from '$lib/utils/note-row-policy';
 	import { showToast } from '$lib/utils/toast';
 	import type { NoteEntry, TrashNotebookEntry, SortMode, TaskItem, ParaCategory } from '$lib/types';
 	import { PARA_CATEGORIES } from '$lib/types';
@@ -52,8 +55,8 @@
 	import TagSuggestInput from './TagSuggestInput.svelte';
 	import { isMobile, isAndroid } from '$lib/platform';
 
-	let { onNoteSelected = (_path: string, _content: string, _task?: TaskItem) => {}, onNoteMoved = () => {}, onBeforeNoteSwitch = () => {}, onBeforeNoteDuplicate = async () => true, onNoteCreated = () => {}, onRequestCreateNote = () => {}, onToggleTask = async (_t: TaskItem) => {}, onSetTaskPriority = async (_t: TaskItem, _p: string | null) => {}, onSetTaskDue = async (_t: TaskItem, _d: string | null) => {} }: {
-		onNoteSelected?: (path: string, content: string, task?: TaskItem) => void;
+	let { onNoteSelected = (_path: string, _content: string, _task?: TaskItem, _holding?: boolean) => {}, onNoteMoved = () => {}, onBeforeNoteSwitch = () => {}, onBeforeNoteDuplicate = async () => true, onNoteCreated = () => {}, onRequestCreateNote = () => {}, onToggleTask = async (_t: TaskItem) => {}, onSetTaskPriority = async (_t: TaskItem, _p: string | null) => {}, onSetTaskDue = async (_t: TaskItem, _d: string | null) => {} }: {
+		onNoteSelected?: (path: string, content: string, task?: TaskItem, holding?: boolean) => void;
 		onNoteMoved?: () => void;
 		onBeforeNoteSwitch?: () => void;
 		onBeforeNoteDuplicate?: () => Promise<boolean>;
@@ -72,6 +75,7 @@
 
 	// The note currently being filed, so its buttons can be disabled while the move runs.
 	let filingPath = $state<string | null>(null);
+	let rowPolicy = $derived(noteRowPolicy($viewMode));
 
 	/**
 	 * Give an unfiled note a category, which moves it out of the holding area.
@@ -86,6 +90,7 @@
 			if ($activeNotePath === note.path) {
 				$activeNotePath = null;
 				$activeNote = null;
+				$holdingPreview = false;
 			}
 			noteCache.clear();
 			await refresh();
@@ -370,12 +375,15 @@
 			return;
 		}
 		try {
-			const content = await readNote(note.path);
+			const holding = rowPolicy.holdingPreview;
+			const content = holding
+				? await readUnfiledNote(note.path)
+				: await readNote(note.path);
 			onBeforeNoteSwitch();
 			$activeNote = content;
 			$activeNotePath = note.path;
 			$editorDirty = false;
-			onNoteSelected(note.path, content.content);
+			onNoteSelected(note.path, content.content, undefined, holding);
 		} catch (e) {
 			console.error('Failed to read note:', e);
 		}
@@ -783,6 +791,7 @@
 	}
 
 	async function startRename(note: NoteEntry) {
+		if (!rowPolicy.rename) return;
 		contextMenu = null;
 		editingNote = note.path;
 		editValue = note.meta.title;
@@ -802,6 +811,11 @@
 		if (isMobile && longPressTriggered) {
 			longPressTriggered = false;
 			e.preventDefault();
+			return;
+		}
+		if (rowPolicy.holdingPreview) {
+			clearSelection();
+			selectNote(note);
 			return;
 		}
 		// Mobile: if in selection mode (or Android multi-select mode), tap toggles selection
@@ -1167,17 +1181,18 @@
 					class:note-drag-below={canCustomReorder && noteDragOver === noteIndex && noteDragFrom !== null && noteDragHalf === 'bottom'}
 					onclick={(e) => handleNoteClick(e, note)}
 					onkeydown={(e) => {
-						if (e.key === 'F2') {
+						if (e.key === 'F2' && rowPolicy.rename) {
 							e.preventDefault();
 							startRename(note);
 						}
 					}}
-					ontouchstart={(e) => { if (isMobile && !isAndroid) handleTouchStart(e, note); }}
+					ontouchstart={(e) => { if (isMobile && !isAndroid && rowPolicy.contextMenu) handleTouchStart(e, note); }}
 					ontouchmove={(e) => { if (isMobile && !isAndroid) handleTouchMove(e); }}
 					ontouchend={() => { if (isMobile && !isAndroid) handleTouchEnd(); }}
 					ontouchcancel={() => { if (isMobile && !isAndroid) handleTouchEnd(); }}
 					oncontextmenu={(e) => {
 						e.preventDefault();
+						if (!rowPolicy.contextMenu) return;
 						const pos = clampMenu(e.clientX, e.clientY);
 						// If multi-selected and right-clicking a selected note, show batch menu
 						if (selectedPaths.size > 1 && selectedPaths.has(note.path)) {
@@ -1190,7 +1205,7 @@
 						}
 						contextMenu = { x: pos.x, y: pos.y, note };
 					}}
-					draggable="true"
+					draggable={rowPolicy.drag}
 					ondragstart={(e) => {
 						if ($viewMode === 'quickaccess') {
 							qaDragFrom = noteIndex;
@@ -1248,7 +1263,7 @@
 										<path d="M12 17v5"/><path d="M9 2h6l-1 7h4l-2 4H8l-2-4h4L9 2z"/>
 									</svg>
 								{/if}
-								{#if $viewMode !== 'quickaccess' && $quickAccessPaths.includes(note.relative_path)}
+								{#if $viewMode !== 'quickaccess' && rowPolicy.quickAccess && $quickAccessPaths.includes(note.relative_path)}
 									<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="quickaccess-icon">
 										<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
 									</svg>
@@ -1267,7 +1282,7 @@
 									<path d="M12 17v5"/><path d="M9 2h6l-1 7h4l-2 4H8l-2-4h4L9 2z"/>
 								</svg>
 							{/if}
-							{#if $viewMode !== 'quickaccess' && $quickAccessPaths.includes(note.relative_path)}
+							{#if $viewMode !== 'quickaccess' && rowPolicy.quickAccess && $quickAccessPaths.includes(note.relative_path)}
 								<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="quickaccess-icon">
 									<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
 								</svg>
@@ -1301,7 +1316,7 @@
 					</span>
 				{/if}
 			</button>
-			{#if $viewMode === 'unfiled'}
+			{#if rowPolicy.fileUnder}
 				<!-- A note here cannot be stored anywhere until it has a category, so the
 				     choice is offered inline rather than buried in a menu. -->
 				<div class="file-under" role="group" aria-label="File {note.meta.title} under">
@@ -1336,7 +1351,7 @@
 	</div>
 </div>
 
-{#if contextMenu}
+{#if contextMenu && rowPolicy.contextMenu}
 	<div class="context-menu" class:mobile={isMobile} style="left: {contextMenu.x}px; top: {contextMenu.y}px" role="group" aria-label="Note actions">
 		{#if selectedPaths.size > 1 && selectedPaths.has(contextMenu.note.path)}
 			<!-- Batch context menu -->

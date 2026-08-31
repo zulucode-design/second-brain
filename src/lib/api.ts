@@ -133,6 +133,11 @@ export async function readNote(path: string): Promise<NoteContent> {
   return invoke("read_note", { path });
 }
 
+/** Read-only preview of a validated note directly inside the Holding Area. */
+export async function readUnfiledNote(path: string): Promise<NoteContent> {
+  return invoke("read_unfiled_note", { path });
+}
+
 export async function saveNote(
   path: string,
   meta: NoteMeta,

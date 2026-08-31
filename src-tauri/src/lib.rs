@@ -193,6 +193,7 @@ pub fn run() {
             commands::move_notebook,
             commands::get_notes,
             commands::read_note,
+            commands::read_unfiled_note,
             commands::save_note,
             commands::create_note,
             commands::duplicate_note,

@@ -119,6 +119,8 @@ export const editorDirty = writable(false);
 export const sourceMode = writable(false);
 export const focusMode = writable(false);
 export const readOnly = writable(false);
+// A validated note in `.helixnotes/unfiled` is always preview-only.
+export const holdingPreview = writable(false);
 
 // Theme
 export const theme = writable<string>("system");

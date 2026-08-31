@@ -25,6 +25,7 @@
 		customThemes,
 		focusMode,
 		readOnly,
+		holdingPreview,
 		activeNote,
 		activeNotePath,
 		activeNotebook,
@@ -209,7 +210,7 @@
 	// Track note navigation in history stack
 	$effect(() => {
 		const path = $activeNotePath;
-		if (path) navHistory.push(path);
+		if (path && !$holdingPreview) navHistory.push(path);
 	});
 
 	function navigateHistory(direction: -1 | 1) {
@@ -316,11 +317,11 @@
 	// Tasks view: the editor pane shows a placeholder until a task is opened from the list.
 	let taskNoteOpened = $state(false);
 
-	function handleNoteSelected(path: string, content: string, task?: TaskItem) {
+	function handleNoteSelected(path: string, content: string, task?: TaskItem, holding = false) {
 		// Selecting a real vault note exits viewer mode
 		$viewerNote = null;
 		taskNoteOpened = true;
-		editor?.loadNote(path, content, task);
+		editor?.loadNote(path, content, task, holding);
 		if (isMobile) $mobileView = 'editor';
 	}
 
@@ -582,7 +583,7 @@
 		}
 
 		// Ctrl/Cmd+Shift+Delete: move the open note to the trash.
-		if (mod && e.shiftKey && code === 'Delete' && $activeNotePath) {
+		if (mod && e.shiftKey && code === 'Delete' && $activeNotePath && !$holdingPreview) {
 			e.preventDefault();
 			editor?.moveOpenNoteToTrash();
 			return;
@@ -626,10 +627,11 @@
 					editor?.forceSave();
 					return;
 				case 'toggle-source':
+					if ($holdingPreview) return;
 					$sourceMode = !$sourceMode;
 					return;
 				case 'open-new-window':
-					if ($activeNotePath && $activeNote) {
+					if ($activeNotePath && $activeNote && !$holdingPreview) {
 						openNoteWindow($activeNotePath, $activeNote.meta.title);
 					}
 					return;
@@ -640,10 +642,11 @@
 					toggleNoteList();
 					return;
 				case 'toggle-focus':
+					if ($holdingPreview) return;
 					$focusMode = !$focusMode;
 					return;
 				case 'toggle-readonly':
-					if ($viewerNote) return; // viewer mode is always read-only
+					if ($viewerNote || $holdingPreview) return; // preview modes are always read-only
 					$readOnly = !$readOnly;
 					return;
 				case 'fullscreen':
@@ -1008,7 +1011,7 @@
 				{/if}
 			{/if}
 			<div class="mobile-header-actions">
-				{#if $mobileView === 'editor'}
+				{#if $mobileView === 'editor' && !$holdingPreview}
 					<button class="mobile-header-btn" class:active={$readOnly} onclick={() => ($readOnly = !$readOnly)} title={$readOnly ? 'Edit' : 'View'}>
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							{#if $readOnly}
@@ -1129,7 +1132,7 @@
 							<path d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/>
 						</svg>
 					</button>
-					<button class="focus-btn" class:focus-active={$readOnly} onclick={() => ($readOnly = !$readOnly)} title={$readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}>
+					{#if !$holdingPreview}<button class="focus-btn" class:focus-active={$readOnly} onclick={() => ($readOnly = !$readOnly)} title={$readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}>
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							{#if $readOnly}
 								<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
@@ -1140,7 +1143,7 @@
 								<line x1="1" y1="1" x2="23" y2="23" />
 							{/if}
 						</svg>
-					</button>
+					</button>{/if}
 					{#if !isMac}
 					<button class="focus-btn" onmousedown={(e) => e.stopPropagation()} onclick={() => appWindow.minimize()} title="Minimize">
 						<svg width="10" height="10" viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>

@@ -551,6 +551,13 @@ pub fn read_vault_note(vault_path: &str, path: &str) -> Result<NoteContent, Stri
     read_note_content(&validated, path)
 }
 
+/// Read a note waiting for category assignment without opening access to the rest of
+/// `.helixnotes`. The same validator used by filing keeps preview and mutation aligned.
+pub fn read_unfiled_note(vault_path: &str, path: &str) -> Result<NoteContent, String> {
+    let validated = ensure_unfiled_note_path(vault_path, Path::new(path))?;
+    read_note_content(&validated, path)
+}
+
 fn read_note_content(validated: &Path, reported_path: &str) -> Result<NoteContent, String> {
     let p = validated;
     let raw = fs::read_to_string(p).map_err(|e| e.to_string())?;
@@ -1421,8 +1428,8 @@ pub fn list_unfiled_notes(vault_path: &str) -> Result<Vec<NoteEntry>, String> {
         .map_err(|e| e.to_string())?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md"))
-        .filter_map(|p| read_note_entry(&p, root).ok())
+        .filter_map(|path| ensure_unfiled_note_path(vault_path, &path).ok())
+        .filter_map(|path| read_note_entry(&path, root).ok())
         .collect();
 
     notes.sort_by(|a, b| compare_natural_names(&a.meta.title, &b.meta.title));
@@ -3296,6 +3303,46 @@ mod tests {
         assert!(read_note(&vault.to_string_lossy(), &outside.to_string_lossy()).is_err());
 
         fs::remove_dir_all(test_root).unwrap();
+    }
+
+    #[test]
+    fn holding_notes_are_readable_but_other_metadata_paths_are_not() {
+        let vault = scaffolded_vault("holding-read");
+        let vault_str = vault.to_string_lossy().to_string();
+        let holding = super::unfiled_dir(&vault_str);
+        let waiting = holding.join("waiting.md");
+        let metadata_note = helixnotes_dir(&vault_str).join("private.md");
+        let trash_note = helixnotes_dir(&vault_str).join("trash").join("deleted.md");
+        let outside = std::env::temp_dir().join(format!("outside-holding-{}.md", Uuid::new_v4()));
+        fs::create_dir(&holding).unwrap();
+        fs::write(&waiting, "---\ntitle: Waiting\n---\n\npreview me").unwrap();
+        fs::write(&metadata_note, "metadata").unwrap();
+        fs::write(&trash_note, "trash").unwrap();
+        fs::write(&outside, "outside").unwrap();
+
+        let preview = super::read_unfiled_note(&vault_str, &waiting.to_string_lossy()).unwrap();
+        assert_eq!(preview.content.trim(), "preview me");
+        assert!(super::read_unfiled_note(&vault_str, &metadata_note.to_string_lossy()).is_err());
+        assert!(super::read_unfiled_note(&vault_str, &trash_note.to_string_lossy()).is_err());
+        assert!(super::read_unfiled_note(&vault_str, &outside.to_string_lossy()).is_err());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let linked = holding.join("linked.md");
+            symlink(&outside, &linked).unwrap();
+            assert!(super::read_unfiled_note(&vault_str, &linked.to_string_lossy()).is_err());
+            assert!(
+                super::list_unfiled_notes(&vault_str)
+                    .unwrap()
+                    .iter()
+                    .all(|note| note.path != linked.to_string_lossy()),
+                "the holding list must not expose a symlink target's metadata or preview"
+            );
+        }
+
+        fs::remove_dir_all(vault).unwrap();
+        fs::remove_file(outside).unwrap();
     }
 
     #[test]
