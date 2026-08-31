@@ -788,7 +788,14 @@ fn pathdiff(target: &str, base: &str) -> Result<String, ()> {
     for component in &target_components[common..] {
         result.push(component);
     }
-    Ok(result.to_string_lossy().to_string())
+    // Relative paths produced here are written into Markdown link destinations.
+    // Render their components with URL-style separators instead of leaking the
+    // host platform's separator (`\\` on Windows) into the imported document.
+    Ok(result
+        .iter()
+        .map(|component| component.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/"))
 }
 
 fn percent_decode(s: &str) -> String {
@@ -1034,12 +1041,16 @@ mod tests {
 
     #[test]
     fn test_pathdiff_subdir() {
-        assert_eq!(pathdiff("/a/b/c.md", "/a").unwrap(), "b/c.md");
+        let relative_link = pathdiff("/a/b/c.md", "/a").unwrap();
+        assert_eq!(relative_link, "b/c.md");
+        assert!(!relative_link.contains('\\'));
     }
 
     #[test]
     fn test_pathdiff_parent_dir() {
-        assert_eq!(pathdiff("/a/c.md", "/a/b").unwrap(), "../c.md");
+        let relative_link = pathdiff("/a/c.md", "/a/b").unwrap();
+        assert_eq!(relative_link, "../c.md");
+        assert!(!relative_link.contains('\\'));
     }
 
     #[test]

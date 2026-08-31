@@ -20,7 +20,50 @@ pub fn helixnotes_dir(vault_path: &str) -> PathBuf {
 }
 
 fn canonicalize_path(path: &Path, label: &str) -> Result<PathBuf, String> {
-    fs::canonicalize(path).map_err(|error| format!("Invalid {label}: {error}"))
+    fs::canonicalize(path)
+        .map(normalize_canonical_path)
+        .map_err(|error| format!("Invalid {label}: {error}"))
+}
+
+#[cfg(not(windows))]
+fn normalize_canonical_path(path: PathBuf) -> PathBuf {
+    path
+}
+
+/// `std::fs::canonicalize` uses Windows' verbatim namespace (`\\?\`) even when the
+/// caller supplied an ordinary drive or UNC path. Keeping that prefix would make a
+/// canonical vault path lexically incompatible with the paths returned by the rest of
+/// the application, breaking `strip_prefix`/`starts_with` and leaking `\\?\` through
+/// the public API. Remove only the two verbatim forms that have ordinary equivalents.
+#[cfg(windows)]
+fn normalize_canonical_path(path: PathBuf) -> PathBuf {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+    const VERBATIM_PREFIX: &[u16] = &[b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+    const VERBATIM_UNC_PREFIX: &[u16] = &[
+        b'\\' as u16,
+        b'\\' as u16,
+        b'?' as u16,
+        b'\\' as u16,
+        b'U' as u16,
+        b'N' as u16,
+        b'C' as u16,
+        b'\\' as u16,
+    ];
+
+    let encoded: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let normalized = if encoded.starts_with(VERBATIM_UNC_PREFIX) {
+        let mut ordinary = vec![b'\\' as u16, b'\\' as u16];
+        ordinary.extend_from_slice(&encoded[VERBATIM_UNC_PREFIX.len()..]);
+        ordinary
+    } else if encoded.starts_with(VERBATIM_PREFIX) && encoded.get(5) == Some(&(b':' as u16)) {
+        encoded[VERBATIM_PREFIX.len()..].to_vec()
+    } else {
+        return path;
+    };
+
+    PathBuf::from(OsString::from_wide(&normalized))
 }
 
 fn ensure_vault_content_path(

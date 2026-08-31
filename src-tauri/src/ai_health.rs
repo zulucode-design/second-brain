@@ -645,10 +645,21 @@ mod tests {
         drop(listener);
         let refused_target = OllamaTarget::new(refused_endpoint, "gemma3:4b", None, 7);
         let refused = probe_with_timeout(&refused_target, Duration::from_millis(200)).await;
-        assert!(refused
+        let refused_reason = refused
             .reason
             .as_deref()
-            .is_some_and(|reason| reason.contains("Could not connect")));
+            .expect("a refused connection should explain why the probe failed");
+        let timed_out_prefix = format!("{} did not answer within ", refused_target.id().endpoint);
+        assert!(
+            refused_reason.starts_with("Could not connect to ")
+                || refused_reason.starts_with("Could not reach ")
+                || refused_reason.starts_with(&timed_out_prefix),
+            "unexpected refused-connection guidance: {refused_reason}"
+        );
+        assert!(
+            refused_reason.contains(refused_target.id().endpoint.as_str()),
+            "refused-connection guidance should identify the attempted endpoint: {refused_reason}"
+        );
 
         let (stalled_endpoint, _) = one_shot_server(
             "200 OK",
