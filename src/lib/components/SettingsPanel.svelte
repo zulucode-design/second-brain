@@ -2113,7 +2113,7 @@
 						<div class="tab-content">
 							<div class="settings-section">
 								<h3>Import from Obsidian</h3>
-								<p class="import-desc">Fully converts an Obsidian vault to HelixNotes format: normalizes frontmatter (tags, IDs, dates, title headings), converts <code>[[wiki-links]]</code> to standard markdown links, converts <code>==highlights==</code> and <code>%%comments%%</code>, and relocates attachments to <code>.helixnotes/attachments/</code>. Open the Obsidian vault directory as your HelixNotes vault first.</p>
+								<p class="import-desc">Converts an Obsidian vault to HelixNotes format, including note details, links, highlights, comments, and attachments. Open the Obsidian vault directory as your HelixNotes vault first. This changes files in place, so make a backup before importing.</p>
 								<div class="import-warn">
 									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
 									<span>This modifies files in place. Make a backup before running!</span>
@@ -3116,13 +3116,6 @@
 		color: var(--text-secondary);
 		line-height: 1.5;
 		margin-bottom: 8px;
-	}
-
-	.import-desc code {
-		background: var(--bg-secondary);
-		padding: 1px 5px;
-		border-radius: 4px;
-		font-size: 12px;
 	}
 
 	.import-warn {

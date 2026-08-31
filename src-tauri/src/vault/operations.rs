@@ -256,6 +256,8 @@ fn scan_dir_recursive(dir: &Path, vault_root: &str) -> Vec<NotebookEntry> {
                 path: path.to_string_lossy().to_string(),
                 relative_path: relative,
                 children,
+                // Parent notebook views display notes from the entire subtree,
+                // so their badge must include descendant notes as well.
                 note_count: child_note_count,
             }
         })
@@ -292,7 +294,7 @@ fn scan_dir_with_count(dir: &Path, vault_root: &str) -> (Vec<NotebookEntry>, usi
     });
 
     let paths: Vec<PathBuf> = subdirs.iter().map(|e| e.path()).collect();
-    let entries: Vec<NotebookEntry> = paths
+    let (entries, descendant_counts): (Vec<NotebookEntry>, Vec<usize>) = paths
         .par_iter()
         .map(|path| {
             let name = path
@@ -303,15 +305,19 @@ fn scan_dir_with_count(dir: &Path, vault_root: &str) -> (Vec<NotebookEntry>, usi
             let relative =
                 crate::vault::path::to_portable_string(path.strip_prefix(root).unwrap_or(path));
             let (children, child_note_count) = scan_dir_with_count(path, vault_root);
-            NotebookEntry {
-                name,
-                path: path.to_string_lossy().to_string(),
-                relative_path: relative,
-                children,
-                note_count: child_note_count,
-            }
+            (
+                NotebookEntry {
+                    name,
+                    path: path.to_string_lossy().to_string(),
+                    relative_path: relative,
+                    children,
+                    note_count: child_note_count,
+                },
+                child_note_count,
+            )
         })
-        .collect();
+        .unzip();
+    note_count += descendant_counts.into_iter().sum::<usize>();
 
     (entries, note_count)
 }
