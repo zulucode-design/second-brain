@@ -65,13 +65,13 @@
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
 	const isMobile = $derived($platformIsMobile);
-	import { loadVaultState, saveVaultState, readNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, getAppConfig, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, getAppConfig, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus, getRepairStatus, retryRepairs } from '$lib/api';
 	import { darkThemes, isAndroid } from '$lib/platform';
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow } from '$lib/utils/window';
 	import { normalizeStartupView, resolveStartupTarget } from '$lib/utils/startup-view';
 	import { get } from 'svelte/store';
-	import type { VaultState, FileEvent, NotebookEntry, TaskItem, AiStatus } from '$lib/types';
+	import type { VaultState, FileEvent, NotebookEntry, TaskItem, AiStatus, RepairStatus } from '$lib/types';
 	import type { StartupTarget } from '$lib/utils/startup-view';
 
 	function findNotebookByPath(list: NotebookEntry[], relPath: string): NotebookEntry | null {
@@ -88,6 +88,22 @@
 	let editor = $state<Editor>();
 	let unlistenFileChange: (() => void) | null = null;
 	let unlistenAiStatus: (() => void) | null = null;
+	let unlistenRepairStatus: (() => void) | null = null;
+	let repairStatus = $state<RepairStatus>({ issues: [] });
+	let repairBusy = $state(false);
+	let repairError = $state('');
+
+	async function repairNow() {
+		repairBusy = true;
+		repairError = '';
+		try {
+			repairStatus = await retryRepairs();
+		} catch (error) {
+			repairError = String(error);
+		} finally {
+			repairBusy = false;
+		}
+	}
 	async function applyStartupTarget(target: StartupTarget): Promise<boolean> {
 		if (target.mode === 'notebook') {
 			const vault = $appConfig?.active_vault;
@@ -661,6 +677,15 @@
 		// Opening the vault reconciles note locations against their categories, which may
 		// have set notes aside for want of one. Load them so the user is told.
 		await refreshUnfiled();
+		try {
+			repairStatus = await getRepairStatus();
+		} catch (error) {
+			repairError = String(error);
+		}
+		unlistenRepairStatus = await listen<RepairStatus>('repair-status-changed', (event) => {
+			repairStatus = event.payload;
+			repairError = '';
+		});
 
 		const restoreLastSession = $appConfig?.restore_last_session === true;
 
@@ -827,6 +852,7 @@
 	onDestroy(() => {
 		unlistenFileChange?.();
 		unlistenAiStatus?.();
+		unlistenRepairStatus?.();
 		unlistenOpenFile?.();
 		if (backupInterval) clearInterval(backupInterval);
 		if (syncInterval) clearInterval(syncInterval);
@@ -837,6 +863,25 @@
 </script>
 
 <svelte:window onkeydown={handleKeydown} onmousedown={isMobile ? undefined : handleMouseDown} />
+
+{#if repairStatus.issues.length > 0 || repairError}
+	<div class="repair-banner" role="alert">
+		<div>
+			<strong>Vault repair needed</strong>
+			<span>
+				{repairStatus.issues.length > 0
+					? `${repairStatus.issues.length} issue${repairStatus.issues.length === 1 ? '' : 's'} may leave filing or search results incomplete.`
+					: repairError}
+			</span>
+			{#if repairStatus.issues[0]?.paths[0]}
+				<code>{repairStatus.issues[0].paths[0]}</code>
+			{/if}
+		</div>
+		<button type="button" onclick={repairNow} disabled={repairBusy}>
+			{repairBusy ? 'Repairing…' : 'Repair now'}
+		</button>
+	</div>
+{/if}
 
 {#if isMobile}
 	<!-- ═══ MOBILE LAYOUT ═══ -->
@@ -1075,6 +1120,60 @@
 <InfoPanel />
 
 <style>
+	.repair-banner {
+		position: fixed;
+		top: 38px;
+		left: 50%;
+		z-index: 10020;
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		max-width: min(720px, calc(100vw - 24px));
+		padding: 10px 12px;
+		transform: translateX(-50%);
+		border: 1px solid color-mix(in srgb, #d97706 55%, var(--border-color));
+		border-radius: 8px;
+		background: var(--bg-secondary);
+		box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
+		color: var(--text-primary);
+		font-size: 12px;
+	}
+
+	.repair-banner > div {
+		display: flex;
+		min-width: 0;
+		flex: 1;
+		flex-wrap: wrap;
+		gap: 4px 8px;
+	}
+
+	.repair-banner span,
+	.repair-banner code {
+		color: var(--text-secondary);
+	}
+
+	.repair-banner code {
+		overflow: hidden;
+		max-width: 100%;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.repair-banner button {
+		flex-shrink: 0;
+		padding: 6px 10px;
+		border: 1px solid var(--border-color);
+		border-radius: 6px;
+		background: var(--bg-tertiary);
+		color: var(--text-primary);
+		cursor: pointer;
+	}
+
+	.repair-banner button:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
+
 	/* ═══ DESKTOP STYLES ═══ */
 	.app-shell {
 		display: flex;

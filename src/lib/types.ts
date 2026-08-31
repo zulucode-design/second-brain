@@ -220,6 +220,19 @@ export interface FileEvent {
   path: string;
 }
 
+export type RepairStage = "search" | "reconciliation";
+
+export interface RepairIssue {
+  key: string;
+  stage: RepairStage;
+  message: string;
+  paths: string[];
+}
+
+export interface RepairStatus {
+  issues: RepairIssue[];
+}
+
 export interface ImportResult {
   files_converted: number;
   links_converted: number;

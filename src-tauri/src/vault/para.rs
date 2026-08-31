@@ -115,11 +115,20 @@ pub struct ReconcileReport {
     /// Vault-relative paths of notes now sitting in the holding area, awaiting a
     /// category from the user. Non-empty means the user has something to resolve.
     pub unfiled: Vec<String>,
+    /// Notes or directories that could not be inspected or corrected. Startup must
+    /// surface these instead of presenting a partial pass as fully successful.
+    pub failures: Vec<ReconcileFailure>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReconcileFailure {
+    pub path: String,
+    pub message: String,
 }
 
 impl ReconcileReport {
     pub fn needs_attention(&self) -> bool {
-        !self.unfiled.is_empty()
+        !self.unfiled.is_empty() || !self.failures.is_empty()
     }
 }
 
@@ -136,16 +145,35 @@ pub fn reconcile_vault(vault_path: &str) -> Result<ReconcileReport, String> {
 
     for entry in walkdir::WalkDir::new(root)
         .into_iter()
-        .filter_entry(|e| !is_app_metadata(e.path()))
-        .filter_map(|e| e.ok())
+        .filter_entry(|entry| entry.depth() == 0 || !is_app_metadata(entry.path()))
     {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                report.failures.push(ReconcileFailure {
+                    path: error
+                        .path()
+                        .map(|path| relative_to(root, path))
+                        .unwrap_or_else(|| "<vault>".to_string()),
+                    message: error.to_string(),
+                });
+                continue;
+            }
+        };
         let path = entry.path();
         if !path.is_file() || path.extension().and_then(|x| x.to_str()) != Some("md") {
             continue;
         }
 
-        let Ok(raw) = std::fs::read_to_string(path) else {
-            continue;
+        let raw = match std::fs::read_to_string(path) {
+            Ok(raw) => raw,
+            Err(error) => {
+                report.failures.push(ReconcileFailure {
+                    path: relative_to(root, path),
+                    message: error.to_string(),
+                });
+                continue;
+            }
         };
         let filename = path.file_name().unwrap_or_default().to_string_lossy();
         let category = crate::vault::frontmatter::parse_note(&raw, &filename)
@@ -166,13 +194,22 @@ pub fn reconcile_vault(vault_path: &str) -> Result<ReconcileReport, String> {
         match relocate_note(root, path, &destination_dir) {
             Ok(_) if category.is_some() => report.relocated += 1,
             Ok(_) => {}
-            Err(e) => log::warn!("Could not move {} to its category: {}", path.display(), e),
+            Err(error) => report.failures.push(ReconcileFailure {
+                path: relative_to(root, path),
+                message: error,
+            }),
         }
     }
 
     // Read the holding area rather than counting only what this pass moved there: notes
     // left unresolved from an earlier open still need the user's attention.
-    report.unfiled = list_unfiled(root, &unfiled_dir);
+    match list_unfiled(root, &unfiled_dir) {
+        Ok(paths) => report.unfiled = paths,
+        Err(error) => report.failures.push(ReconcileFailure {
+            path: relative_to(root, &unfiled_dir),
+            message: error,
+        }),
+    }
 
     Ok(report)
 }
@@ -204,19 +241,19 @@ fn ensure_holding_area(root: &Path) -> Result<std::path::PathBuf, String> {
 }
 
 /// Vault-relative paths of every note waiting in the holding area.
-fn list_unfiled(root: &Path, unfiled_dir: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(unfiled_dir) else {
-        return Vec::new();
-    };
+fn list_unfiled(root: &Path, unfiled_dir: &Path) -> Result<Vec<String>, String> {
+    let entries = std::fs::read_dir(unfiled_dir).map_err(|error| error.to_string())?;
 
-    let mut paths: Vec<String> = entries
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md"))
-        .map(|p| relative_to(root, &p))
-        .collect();
+    let mut paths = Vec::new();
+    for entry in entries {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        if path.is_file() && path.extension().and_then(|extension| extension.to_str()) == Some("md")
+        {
+            paths.push(relative_to(root, &path));
+        }
+    }
     paths.sort();
-    paths
+    Ok(paths)
 }
 
 /// The app's own metadata folder, and any hidden folder, is not note storage.
@@ -511,5 +548,45 @@ mod tests {
             "content"
         );
         std::fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn reconciliation_reports_mixed_success_instead_of_hiding_failed_notes() {
+        let (vault, _unfiled) = reconcile_fixture("mixed-result");
+        write_note(
+            &vault.join("Archives/movable.md"),
+            Some("Projects"),
+            "body\n",
+        );
+        std::fs::write(vault.join("Areas/unreadable.md"), [0xff, 0xfe]).unwrap();
+
+        let report = reconcile_vault(&vault.to_string_lossy()).unwrap();
+
+        assert_eq!(report.relocated, 1);
+        assert!(vault.join("Projects/movable.md").is_file());
+        assert_eq!(report.failures.len(), 1);
+        assert_eq!(report.failures[0].path, "Areas/unreadable.md");
+        assert!(report.needs_attention());
+        std::fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn a_dot_prefixed_vault_root_is_still_reconciled() {
+        let parent =
+            std::env::temp_dir().join(format!("dot-vault-parent-{}", uuid::Uuid::new_v4()));
+        let vault = parent.join(".second-brain");
+        std::fs::create_dir_all(vault.join(".helixnotes")).unwrap();
+        ensure_scaffold(&vault.to_string_lossy()).unwrap();
+        write_note(
+            &vault.join("Archives/movable.md"),
+            Some("Projects"),
+            "body\n",
+        );
+
+        let report = reconcile_vault(&vault.to_string_lossy()).unwrap();
+
+        assert_eq!(report.relocated, 1);
+        assert!(vault.join("Projects/movable.md").is_file());
+        std::fs::remove_dir_all(parent).unwrap();
     }
 }

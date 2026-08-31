@@ -19,6 +19,7 @@ import type {
   TaskItem,
   ExternalVaultResult,
   StartupView,
+  RepairStatus,
 } from "./types";
 
 export async function openVault(path: string): Promise<void> {
@@ -561,4 +562,12 @@ export async function isMobilePlatform(): Promise<boolean> {
 
 export async function getPendingOpenFile(): Promise<string | null> {
   return invoke("get_pending_open_file");
+}
+
+export async function getRepairStatus(): Promise<RepairStatus> {
+  return invoke("get_repair_status");
+}
+
+export async function retryRepairs(): Promise<RepairStatus> {
+  return invoke("retry_repairs");
 }

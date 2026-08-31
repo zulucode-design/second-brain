@@ -2,20 +2,82 @@ use crate::asset_scope;
 use crate::search::SearchIndex;
 use crate::state::AppState;
 use crate::types::*;
-use crate::vault::{operations, watcher};
+use crate::vault::{operations, repair, watcher};
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager, Runtime, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tauri_plugin_fs::FsExt;
+
+fn publish_repair_status(
+    state: &State<'_, AppState>,
+    status: repair::RepairStatus,
+) -> Result<(), String> {
+    *state
+        .repair_status
+        .lock()
+        .map_err(|error| error.to_string())? = status.clone();
+    if let Some(app) = state
+        .app_handle
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone()
+    {
+        let _ = app.emit("repair-status-changed", status);
+    }
+    Ok(())
+}
+
+fn record_repair_issue(
+    state: &State<'_, AppState>,
+    vault_path: &str,
+    issue: repair::RepairIssue,
+) -> Result<(), String> {
+    let mut status = repair::load(vault_path).unwrap_or_else(|error| {
+        let mut status = state
+            .repair_status
+            .lock()
+            .map(|value| value.clone())
+            .unwrap_or_default();
+        status.record(repair::RepairIssue {
+            key: "reconciliation:ledger".to_string(),
+            stage: repair::RepairStage::Reconciliation,
+            message: format!("The repair ledger was unreadable and has been replaced: {error}"),
+            paths: vec![".helixnotes/repair_issues.json".to_string()],
+        });
+        status
+    });
+    status.record(issue);
+    if let Err(error) = repair::save(vault_path, &status) {
+        status.record(repair::RepairIssue {
+            key: "reconciliation:ledger-write".to_string(),
+            stage: repair::RepairStage::Reconciliation,
+            message: format!(
+                "The repair warning could not be saved to disk. Keep the app open and retry: {error}"
+            ),
+            paths: vec![".helixnotes/repair_issues.json".to_string()],
+        });
+        log::error!("Could not persist vault repair status: {error}");
+    }
+    publish_repair_status(state, status)
+}
 
 fn index_note_now(state: &State<'_, AppState>, vault_path: &str, path: &str) -> Result<(), String> {
     let search = state.search_index.lock().ok().and_then(|g| g.clone());
     if let Some(search) = search {
         if let Err(incremental_error) = search.index_note(path) {
-            search.rebuild(vault_path).map_err(|rebuild_error| {
-                format!(
-                    "Search update failed ({incremental_error}); full rebuild also failed: {rebuild_error}"
-                )
-            })?;
+            if let Err(rebuild_error) = search.rebuild(vault_path) {
+                record_repair_issue(
+                    state,
+                    vault_path,
+                    repair::RepairIssue {
+                        key: "search:index".to_string(),
+                        stage: repair::RepairStage::Search,
+                        message: format!(
+                            "Search update failed ({incremental_error}); full rebuild also failed: {rebuild_error}"
+                        ),
+                        paths: vec![path.to_string()],
+                    },
+                )?;
+            }
         }
     }
     Ok(())
@@ -29,11 +91,20 @@ fn remove_note_now(
     let search = state.search_index.lock().ok().and_then(|g| g.clone());
     if let Some(search) = search {
         if let Err(incremental_error) = search.remove_note(path) {
-            search.rebuild(vault_path).map_err(|rebuild_error| {
-                format!(
-                    "Search removal failed ({incremental_error}); full rebuild also failed: {rebuild_error}"
-                )
-            })?;
+            if let Err(rebuild_error) = search.rebuild(vault_path) {
+                record_repair_issue(
+                    state,
+                    vault_path,
+                    repair::RepairIssue {
+                        key: "search:index".to_string(),
+                        stage: repair::RepairStage::Search,
+                        message: format!(
+                            "Search removal failed ({incremental_error}); full rebuild also failed: {rebuild_error}"
+                        ),
+                        paths: vec![path.to_string()],
+                    },
+                )?;
+            }
         }
     }
     Ok(())
@@ -53,11 +124,22 @@ fn reindex_moved_note_now(
         upserts.extend_from_slice(rewritten_paths);
         if let Err(incremental_error) = search.apply_note_changes(&[old_path.to_string()], &upserts)
         {
-            search.rebuild(vault_path).map_err(|rebuild_error| {
-                format!(
-                    "Search move update failed ({incremental_error}); full rebuild also failed: {rebuild_error}"
-                )
-            })?;
+            if let Err(rebuild_error) = search.rebuild(vault_path) {
+                let mut paths = vec![old_path.to_string(), new_path.to_string()];
+                paths.extend_from_slice(rewritten_paths);
+                record_repair_issue(
+                    state,
+                    vault_path,
+                    repair::RepairIssue {
+                        key: "search:index".to_string(),
+                        stage: repair::RepairStage::Search,
+                        message: format!(
+                            "Search move update failed ({incremental_error}); full rebuild also failed: {rebuild_error}"
+                        ),
+                        paths,
+                    },
+                )?;
+            }
         }
     }
     Ok(())
@@ -107,6 +189,19 @@ fn open_vault_path(
         .lock()
         .map_err(|error| error.to_string())?;
     operations::ensure_vault_structure(&path)?;
+    let (mut repair_status, ledger_error) = match repair::load(&path) {
+        Ok(status) => (status, None),
+        Err(error) => (repair::RepairStatus::default(), Some(error)),
+    };
+    repair_status.clear_stage(repair::RepairStage::Reconciliation);
+    if let Some(error) = ledger_error {
+        repair_status.record(repair::RepairIssue {
+            key: "reconciliation:ledger".to_string(),
+            stage: repair::RepairStage::Reconciliation,
+            message: format!("The repair ledger was unreadable and has been replaced: {error}"),
+            paths: vec![".helixnotes/repair_issues.json".to_string()],
+        });
+    }
 
     // Put any note an external program misplaced back under its own category before the
     // search index is built, so the index never records a note at a path it is about to
@@ -117,10 +212,27 @@ fn open_vault_path(
                 log::info!("Moved {} notes back under their category", report.relocated);
             }
             if report.needs_attention() {
-                log::warn!("{} notes have no category", report.unfiled.len());
+                log::warn!(
+                    "Vault reconciliation needs attention: {} unfiled notes, {} failures",
+                    report.unfiled.len(),
+                    report.failures.len()
+                );
+            }
+            for failure in report.failures {
+                repair_status.record(repair::RepairIssue {
+                    key: format!("reconciliation:{}", failure.path),
+                    stage: repair::RepairStage::Reconciliation,
+                    message: failure.message,
+                    paths: vec![failure.path],
+                });
             }
         }
-        Err(e) => log::warn!("Could not reconcile note categories: {}", e),
+        Err(error) => repair_status.record(repair::RepairIssue {
+            key: "reconciliation:vault".to_string(),
+            stage: repair::RepairStage::Reconciliation,
+            message: format!("Could not reconcile note categories: {error}"),
+            paths: vec![path.clone()],
+        }),
     }
 
     // Stage the search index and watcher before replacing the active runtime.
@@ -148,7 +260,13 @@ fn open_vault_path(
         });
     }
     #[cfg(desktop)]
-    search.rebuild(&path)?;
+    {
+        search.rebuild(&path)?;
+        repair_status.clear_stage(repair::RepairStage::Search);
+    }
+
+    repair::save(&path, &repair_status)?;
+    publish_repair_status(state, repair_status)?;
 
     let new_watcher = watcher::start_watcher(app.clone(), path.clone())?;
     asset_scope::allow_vault_assets(&app, Path::new(&path))?;
@@ -1450,6 +1568,67 @@ pub fn reindex(state: State<'_, AppState>) -> Result<(), String> {
         .as_ref()
         .ok_or("Search index not initialized")?;
     search.rebuild(vault_path)
+}
+
+#[tauri::command]
+pub fn get_repair_status(state: State<'_, AppState>) -> Result<repair::RepairStatus, String> {
+    state
+        .repair_status
+        .lock()
+        .map(|status| status.clone())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn retry_repairs(state: State<'_, AppState>) -> Result<repair::RepairStatus, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let vault_path = state
+        .config
+        .lock()
+        .map_err(|error| error.to_string())?
+        .active_vault
+        .clone()
+        .ok_or("No active vault")?;
+    let mut status = repair::load(&vault_path)?;
+
+    if status.has_stage(repair::RepairStage::Search) {
+        let search = state
+            .search_index
+            .lock()
+            .map_err(|error| error.to_string())?
+            .clone()
+            .ok_or("Search index not initialized")?;
+        if search.rebuild(&vault_path).is_ok() {
+            status.clear_stage(repair::RepairStage::Search);
+        }
+    }
+
+    status.clear_stage(repair::RepairStage::Reconciliation);
+    match operations::reconcile_categories(&vault_path) {
+        Ok(report) => {
+            for failure in report.failures {
+                status.record(repair::RepairIssue {
+                    key: format!("reconciliation:{}", failure.path),
+                    stage: repair::RepairStage::Reconciliation,
+                    message: failure.message,
+                    paths: vec![failure.path],
+                });
+            }
+        }
+        Err(error) => status.record(repair::RepairIssue {
+            key: "reconciliation:vault".to_string(),
+            stage: repair::RepairStage::Reconciliation,
+            message: error,
+            paths: vec![vault_path.clone()],
+        }),
+    }
+
+    repair::save(&vault_path, &status)?;
+    publish_repair_status(&state, status.clone())?;
+    Ok(status)
 }
 
 // ── Trash ──
