@@ -38,6 +38,7 @@ export const aiStatus = writable<AiStatus>({
   availability: "unknown",
   reason: null,
   endpoint: null,
+  target: null,
 });
 
 /**

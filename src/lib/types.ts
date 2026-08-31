@@ -16,12 +16,20 @@ export type ParaCategory = (typeof PARA_CATEGORIES)[number];
  */
 export type AiAvailability = "unknown" | "available" | "unavailable";
 
+export interface AiTargetId {
+  endpoint: string;
+  model: string;
+  generation: number;
+}
+
 export interface AiStatus {
   availability: AiAvailability;
   /** Why it is unavailable, phrased as something to do about it. */
   reason: string | null;
   /** The endpoint that was probed, so the user can see which machine was tried. */
   endpoint: string | null;
+  /** Secret-free identity of the settings this result belongs to. */
+  target: AiTargetId | null;
 }
 
 export interface NoteMeta {

@@ -10,6 +10,7 @@
 //! background check instead of the user.
 
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 use std::time::Duration;
 
 /// How long to wait for the backend before calling it unreachable.
@@ -57,13 +58,63 @@ pub enum Availability {
 }
 
 /// The backend's reachability, and why, in terms the user can act on.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiTargetId {
+    pub endpoint: String,
+    pub model: String,
+    pub generation: u64,
+}
+
+/// Everything needed to probe Ollama. The credential is deliberately excluded from the
+/// serializable identity and this type does not implement `Debug`, preventing accidental
+/// logging while still letting credential changes advance the generation.
+#[derive(Clone, PartialEq, Eq)]
+pub struct OllamaTarget {
+    id: AiTargetId,
+    bearer_token: Option<String>,
+}
+
+impl OllamaTarget {
+    pub fn new(
+        endpoint: impl Into<String>,
+        model: impl Into<String>,
+        bearer_token: Option<String>,
+        generation: u64,
+    ) -> Self {
+        Self {
+            id: AiTargetId {
+                endpoint: endpoint.into(),
+                model: model.into(),
+                generation,
+            },
+            bearer_token: bearer_token.filter(|token| !token.trim().is_empty()),
+        }
+    }
+
+    pub fn id(&self) -> &AiTargetId {
+        &self.id
+    }
+
+    fn bearer_token(&self) -> Option<&str> {
+        self.bearer_token.as_deref()
+    }
+
+    pub fn same_settings(&self, other: &Self) -> bool {
+        self.id.endpoint == other.id.endpoint
+            && self.id.model == other.id.model
+            && self.bearer_token == other.bearer_token
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiStatus {
     pub availability: Availability,
     /// Why it is unavailable, phrased as something to do about it. `None` when available.
     pub reason: Option<String>,
     /// The endpoint probed, so the user can see which machine was tried.
     pub endpoint: Option<String>,
+    /// Secret-free identity of the settings this result belongs to.
+    pub target: Option<AiTargetId>,
 }
 
 impl AiStatus {
@@ -72,23 +123,59 @@ impl AiStatus {
             availability: Availability::Unknown,
             reason: None,
             endpoint: None,
+            target: None,
         }
     }
 
+    #[cfg(test)]
     pub fn available(endpoint: &str) -> Self {
         Self {
             availability: Availability::Available,
             reason: None,
             endpoint: Some(endpoint.to_string()),
+            target: None,
         }
     }
 
+    #[cfg(test)]
     pub fn unavailable(endpoint: &str, reason: impl Into<String>) -> Self {
         Self {
             availability: Availability::Unavailable,
             reason: Some(reason.into()),
             endpoint: Some(endpoint.to_string()),
+            target: None,
         }
+    }
+
+    pub fn unknown_for(target: &OllamaTarget) -> Self {
+        Self {
+            availability: Availability::Unknown,
+            reason: None,
+            endpoint: Some(target.id.endpoint.clone()),
+            target: Some(target.id.clone()),
+        }
+    }
+
+    fn available_for(target: &OllamaTarget) -> Self {
+        Self {
+            availability: Availability::Available,
+            reason: None,
+            endpoint: Some(target.id.endpoint.clone()),
+            target: Some(target.id.clone()),
+        }
+    }
+
+    fn unavailable_for(target: &OllamaTarget, reason: impl Into<String>) -> Self {
+        Self {
+            availability: Availability::Unavailable,
+            reason: Some(reason.into()),
+            endpoint: Some(target.id.endpoint.clone()),
+            target: Some(target.id.clone()),
+        }
+    }
+
+    pub fn belongs_to(&self, target: &AiTargetId) -> bool {
+        self.target.as_ref() == Some(target)
     }
 }
 
@@ -177,20 +264,34 @@ pub fn tags_url(base_url: &str) -> String {
 ///
 /// Every outcome is a status rather than an error, because an unreachable backend is an
 /// ordinary condition here, not a failure of the app.
-pub async fn probe(base_url: &str, model: &str) -> AiStatus {
-    let client = match reqwest::Client::builder().timeout(PROBE_TIMEOUT).build() {
+pub async fn probe(target: &OllamaTarget) -> AiStatus {
+    probe_with_timeout(target, PROBE_TIMEOUT).await
+}
+
+async fn probe_with_timeout(target: &OllamaTarget, timeout: Duration) -> AiStatus {
+    let base_url = target.id.endpoint.as_str();
+    let model = target.id.model.as_str();
+    let client = match reqwest::Client::builder().timeout(timeout).build() {
         Ok(client) => client,
-        Err(e) => return AiStatus::unavailable(base_url, format!("Could not start a check: {e}")),
+        Err(e) => {
+            return AiStatus::unavailable_for(target, format!("Could not start a check: {e}"))
+        }
     };
 
-    let response = match client.get(tags_url(base_url)).send().await {
+    let mut request = client.get(tags_url(base_url));
+    if let Some(token) = target.bearer_token() {
+        request = request.bearer_auth(token);
+    }
+    let response = match request.send().await {
         Ok(response) => response,
-        Err(e) => return AiStatus::unavailable(base_url, describe_failure(base_url, &e)),
+        Err(e) => {
+            return AiStatus::unavailable_for(target, describe_failure(base_url, &e));
+        }
     };
 
     if !response.status().is_success() {
-        return AiStatus::unavailable(
-            base_url,
+        return AiStatus::unavailable_for(
+            target,
             not_ollama(base_url, &format!("returned {}", response.status())),
         );
     }
@@ -198,8 +299,8 @@ pub async fn probe(base_url: &str, model: &str) -> AiStatus {
     let tags: serde_json::Value = match response.json().await {
         Ok(tags) => tags,
         Err(_) => {
-            return AiStatus::unavailable(
-                base_url,
+            return AiStatus::unavailable_for(
+                target,
                 not_ollama(base_url, "its reply was not Ollama's model list"),
             )
         }
@@ -207,13 +308,13 @@ pub async fn probe(base_url: &str, model: &str) -> AiStatus {
 
     // Reachable but missing the model is still unavailable, and the fix is specific.
     if !model.trim().is_empty() && !model_installed(&tags, model) {
-        return AiStatus::unavailable(
-            base_url,
+        return AiStatus::unavailable_for(
+            target,
             format!("Ollama is running at {base_url} but does not have \"{model}\". Install it on that machine with: ollama pull {model}"),
         );
     }
 
-    AiStatus::available(base_url)
+    AiStatus::available_for(target)
 }
 
 /// The endpoint and model to probe, or `None` when the configured provider is not Ollama.
@@ -221,12 +322,25 @@ pub async fn probe(base_url: &str, model: &str) -> AiStatus {
 /// Cloud providers are not tracked: their reachability is the user's internet connection,
 /// which the app cannot usefully report on, and a wrong claim would disable working
 /// features.
-pub fn ollama_target(config: &crate::types::AppConfig) -> Option<(String, String)> {
+pub fn ollama_target(config: &crate::types::AppConfig, generation: u64) -> Option<OllamaTarget> {
     if config.ai_provider.as_deref() != Some("ollama") {
         return None;
     }
     let base = resolve_base_url(config.ollama_base_url.as_deref()).to_string();
-    Some((base, config.ai_model.clone()))
+    Some(OllamaTarget::new(
+        base,
+        config.ai_model.clone(),
+        config.ollama_api_key.clone(),
+        generation,
+    ))
+}
+
+pub fn same_probe_settings(left: Option<&OllamaTarget>, right: Option<&OllamaTarget>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left.same_settings(right),
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 /// Ollama's address when the user has not set one, i.e. running on this machine.
@@ -267,43 +381,129 @@ pub async fn check_now(app: &tauri::AppHandle) -> (AiStatus, bool) {
 
     let state = app.state::<crate::state::AppState>();
 
-    let target = {
+    let (target, generation) = {
         let Ok(config) = state.config.lock() else {
             return (AiStatus::unknown(), false);
         };
-        ollama_target(&config)
+        let generation = state
+            .ai_health
+            .lock()
+            .map(|health| health.generation)
+            .unwrap_or(0);
+        (ollama_target(&config, generation), generation)
     };
 
     let tracking = target.is_some();
-    let status = match target {
-        Some((base, model)) => probe(&base, &model).await,
+    let status = match target.as_ref() {
+        Some(target) => probe(target).await,
         // Not using Ollama: nothing is claimed either way.
         None => AiStatus::unknown(),
     };
 
-    let changed = {
-        let Ok(mut current) = state.ai_status.lock() else {
-            return (status, tracking);
-        };
-        let changed =
-            current.availability != status.availability || current.reason != status.reason;
-        *current = status.clone();
-        changed
-    };
+    let changed = commit_probe_status(&state.ai_health, generation, status.clone());
+
+    if !changed.committed {
+        let current = state
+            .ai_health
+            .lock()
+            .map(|health| health.status.clone())
+            .unwrap_or_else(|_| AiStatus::unknown());
+        return (current, tracking);
+    }
 
     // Only announce transitions: a poller that emitted every probe would make the UI
     // churn on a status that did not move.
-    if changed {
+    if changed.changed {
         let _ = app.emit("ai-status-changed", status.clone());
     }
 
     (status, tracking)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CommitOutcome {
+    committed: bool,
+    changed: bool,
+}
+
+fn commit_probe_status(
+    current: &Mutex<crate::state::AiHealthState>,
+    expected_generation: u64,
+    status: AiStatus,
+) -> CommitOutcome {
+    let Ok(mut current) = current.lock() else {
+        return CommitOutcome {
+            committed: false,
+            changed: false,
+        };
+    };
+    if current.generation != expected_generation {
+        return CommitOutcome {
+            committed: false,
+            changed: false,
+        };
+    }
+    let changed = current.status != status;
+    current.status = status;
+    CommitOutcome {
+        committed: true,
+        changed,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc::{self, Receiver};
+
+    fn one_shot_server(
+        status: &str,
+        body: &str,
+        response_delay: Duration,
+    ) -> (String, Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("read test server address");
+        let status = status.to_string();
+        let body = body.to_string();
+        let (request_tx, request_rx) = mpsc::channel();
+
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept probe request");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .expect("bound request read");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            loop {
+                let read = stream.read(&mut buffer).unwrap_or(0);
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let _ = request_tx.send(String::from_utf8_lossy(&request).into_owned());
+            std::thread::sleep(response_delay);
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+
+        (format!("http://{address}"), request_rx)
+    }
+
+    async fn probe_response(status: &str, body: &str) -> AiStatus {
+        let (endpoint, _) = one_shot_server(status, body, Duration::ZERO);
+        let target = OllamaTarget::new(endpoint, "gemma3:4b", None, 7);
+        probe(&target).await
+    }
 
     #[test]
     fn an_unprobed_backend_is_unknown_rather_than_unavailable() {
@@ -405,5 +605,157 @@ mod tests {
             &json!({"models": [{"name": "llama3"}]}),
             ""
         ));
+    }
+
+    #[tokio::test]
+    async fn ollama_probe_socket_matrix_reports_actionable_results() {
+        let healthy = probe_response("200 OK", r#"{"models":[{"name":"gemma3:4b"}]}"#).await;
+        assert_eq!(healthy.availability, Availability::Available);
+
+        let missing = probe_response("200 OK", r#"{"models":[]}"#).await;
+        assert_eq!(missing.availability, Availability::Unavailable);
+        assert!(missing
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("ollama pull gemma3:4b")));
+
+        let malformed = probe_response("200 OK", "not-json").await;
+        assert!(malformed
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("not Ollama's model list")));
+
+        let server_error = probe_response("500 Internal Server Error", r#"{"error":"boom"}"#).await;
+        assert!(server_error
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("returned 500")));
+
+        let unauthorized = probe_response("401 Unauthorized", r#"{"error":"unauthorized"}"#).await;
+        assert!(unauthorized
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("returned 401")));
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("reserve refused port");
+        let refused_endpoint = format!(
+            "http://{}",
+            listener.local_addr().expect("read refused address")
+        );
+        drop(listener);
+        let refused_target = OllamaTarget::new(refused_endpoint, "gemma3:4b", None, 7);
+        let refused = probe_with_timeout(&refused_target, Duration::from_millis(200)).await;
+        assert!(refused
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("Could not connect")));
+
+        let (stalled_endpoint, _) = one_shot_server(
+            "200 OK",
+            r#"{"models":[{"name":"gemma3:4b"}]}"#,
+            Duration::from_millis(100),
+        );
+        let stalled_target = OllamaTarget::new(stalled_endpoint, "gemma3:4b", None, 7);
+        let stalled = probe_with_timeout(&stalled_target, Duration::from_millis(20)).await;
+        assert!(stalled
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("did not answer")));
+    }
+
+    #[tokio::test]
+    async fn authenticated_ollama_health_and_connection_checks_send_bearer_token() {
+        let body = r#"{"models":[{"name":"gemma3:4b"}]}"#;
+
+        let (health_endpoint, health_request) = one_shot_server("200 OK", body, Duration::ZERO);
+        let health_target = OllamaTarget::new(
+            health_endpoint,
+            "gemma3:4b",
+            Some("health-secret".to_string()),
+            1,
+        );
+        assert_eq!(
+            probe(&health_target).await.availability,
+            Availability::Available
+        );
+        assert!(health_request
+            .recv_timeout(Duration::from_secs(1))
+            .expect("health request")
+            .to_ascii_lowercase()
+            .contains("authorization: bearer health-secret"));
+
+        let (connection_endpoint, connection_request) =
+            one_shot_server("200 OK", body, Duration::ZERO);
+        crate::ai::test_connection(
+            "ollama",
+            "connection-secret",
+            "gemma3:4b",
+            Some(&connection_endpoint),
+        )
+        .await
+        .expect("connection check should succeed");
+        assert!(connection_request
+            .recv_timeout(Duration::from_secs(1))
+            .expect("connection request")
+            .to_ascii_lowercase()
+            .contains("authorization: bearer connection-secret"));
+
+        let (blank_endpoint, blank_request) = one_shot_server("200 OK", body, Duration::ZERO);
+        let blank_target =
+            OllamaTarget::new(blank_endpoint, "gemma3:4b", Some("   ".to_string()), 1);
+        assert_eq!(
+            probe(&blank_target).await.availability,
+            Availability::Available
+        );
+        assert!(!blank_request
+            .recv_timeout(Duration::from_secs(1))
+            .expect("blank-key request")
+            .to_ascii_lowercase()
+            .contains("authorization:"));
+    }
+
+    #[test]
+    fn ai_status_generation_rejects_stale_probe_results() {
+        let old_target = OllamaTarget::new("http://old", "old-model", None, 1);
+        let new_target = OllamaTarget::new("http://new", "new-model", None, 2);
+        let health = Mutex::new(crate::state::AiHealthState {
+            generation: 2,
+            status: AiStatus::unknown_for(&new_target),
+        });
+
+        let current = commit_probe_status(
+            &health,
+            2,
+            AiStatus::unavailable_for(&new_target, "new target is asleep"),
+        );
+        let stale = commit_probe_status(&health, 1, AiStatus::available_for(&old_target));
+
+        assert!(current.committed);
+        assert!(current.changed);
+        assert!(!stale.committed);
+        let final_health = health.lock().expect("read final health");
+        assert_eq!(final_health.generation, 2);
+        assert_eq!(final_health.status.availability, Availability::Unavailable);
+        assert!(final_health.status.belongs_to(new_target.id()));
+    }
+
+    #[test]
+    fn credential_changes_create_a_new_exact_health_target() {
+        let old_target = OllamaTarget::new(
+            "http://desktop:11434",
+            "gemma3:4b",
+            Some("old-secret".to_string()),
+            1,
+        );
+        let new_target = OllamaTarget::new(
+            "http://desktop:11434",
+            "gemma3:4b",
+            Some("new-secret".to_string()),
+            2,
+        );
+        let stale_status = AiStatus::unavailable_for(&old_target, "old target unavailable");
+
+        assert!(!old_target.same_settings(&new_target));
+        assert!(!stale_status.belongs_to(new_target.id()));
     }
 }

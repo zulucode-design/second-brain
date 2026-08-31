@@ -932,9 +932,9 @@ pub fn create_note(
 #[tauri::command]
 pub fn get_ai_status(state: State<'_, AppState>) -> Result<crate::ai_health::AiStatus, String> {
     state
-        .ai_status
+        .ai_health
         .lock()
-        .map(|status| status.clone())
+        .map(|health| health.status.clone())
         .map_err(|e| e.to_string())
 }
 
@@ -2624,7 +2624,7 @@ pub fn get_note_version_content(
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn set_ai_settings(
-    state: State<'_, AppState>,
+    app: AppHandle,
     provider: Option<String>,
     api_key: Option<String>,
     model: String,
@@ -2634,25 +2634,62 @@ pub fn set_ai_settings(
     openai_compatible_base_url: Option<String>,
     openai_compatible_api_key: Option<String>,
 ) -> Result<(), String> {
+    let state = app.state::<AppState>();
     let mut config = state.config.lock().map_err(|e| e.to_string())?;
-    let key = api_key.filter(|k| !k.is_empty());
+    let generation = state
+        .ai_health
+        .lock()
+        .map_err(|e| e.to_string())?
+        .generation;
+    let previous_target = crate::ai_health::ollama_target(&config, generation);
+    let mut candidate = config.clone();
+    let key = api_key.filter(|k| !k.trim().is_empty());
     match provider.as_deref() {
-        Some("openai") => config.openai_api_key = key,
+        Some("openai") => candidate.openai_api_key = key,
         Some("ollama") => {
-            config.ollama_base_url = base_url.filter(|u| !u.trim().is_empty());
-            config.ollama_api_key = ollama_api_key.filter(|k| !k.is_empty());
+            candidate.ollama_base_url = base_url.filter(|u| !u.trim().is_empty());
+            candidate.ollama_api_key = ollama_api_key.filter(|k| !k.trim().is_empty());
         }
         Some("openai_compatible") => {
-            config.openai_compatible_base_url =
+            candidate.openai_compatible_base_url =
                 openai_compatible_base_url.filter(|u| !u.trim().is_empty());
-            config.openai_compatible_api_key = openai_compatible_api_key.filter(|k| !k.is_empty());
+            candidate.openai_compatible_api_key =
+                openai_compatible_api_key.filter(|k| !k.trim().is_empty());
         }
-        _ => config.ai_api_key = key,
+        _ => candidate.ai_api_key = key,
     }
-    config.ai_provider = provider;
-    config.ai_model = model;
-    config.ai_writing_style = writing_style.filter(|s| !s.trim().is_empty());
-    save_app_config(&config)?;
+    candidate.ai_provider = provider;
+    candidate.ai_model = model;
+    candidate.ai_writing_style = writing_style.filter(|s| !s.trim().is_empty());
+    let next_target = crate::ai_health::ollama_target(&candidate, generation);
+    let health_settings_changed =
+        !crate::ai_health::same_probe_settings(previous_target.as_ref(), next_target.as_ref());
+    // Persist first: a failed settings save must not change the live provider or health
+    // identity for the rest of this process.
+    save_app_config(&candidate)?;
+    *config = candidate;
+    let invalidated_status = if health_settings_changed {
+        let mut health = state.ai_health.lock().map_err(|e| e.to_string())?;
+        health.generation += 1;
+        let target = crate::ai_health::ollama_target(&config, health.generation);
+        let status = target
+            .as_ref()
+            .map(crate::ai_health::AiStatus::unknown_for)
+            .unwrap_or_else(crate::ai_health::AiStatus::unknown);
+        health.status = status.clone();
+        Some(status)
+    } else {
+        None
+    };
+    drop(config);
+
+    if let Some(status) = invalidated_status {
+        let _ = app.emit("ai-status-changed", status);
+        let refresh_app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::ai_health::check_now(&refresh_app).await;
+        });
+    }
     Ok(())
 }
 
@@ -2909,7 +2946,7 @@ pub fn ai_ask(
     custom_prompt: Option<String>,
     request_id: String,
 ) -> Result<(), String> {
-    let (provider, api_key, model, writing_style, base_url) = {
+    let (provider, api_key, model, writing_style, base_url, ollama_target) = {
         let state = app.state::<AppState>();
         let config = state.config.lock().map_err(|e| e.to_string())?;
         let provider = config
@@ -2931,7 +2968,14 @@ pub fn ai_ask(
             "openai_compatible" => config.openai_compatible_base_url.clone(),
             _ => config.ollama_base_url.clone(),
         };
-        (provider, key, model, style, base_url)
+        let generation = state
+            .ai_health
+            .lock()
+            .map_err(|e| e.to_string())?
+            .generation;
+        let ollama_target =
+            crate::ai_health::ollama_target(&config, generation).map(|target| target.id().clone());
+        (provider, key, model, style, base_url, ollama_target)
     };
 
     // Refuse immediately when the backend is known to be down, with the reason the poller
@@ -2940,11 +2984,15 @@ pub fn ai_ask(
     if provider == "ollama" {
         let status = app
             .state::<AppState>()
-            .ai_status
+            .ai_health
             .lock()
-            .map(|status| status.clone())
+            .map(|health| health.status.clone())
             .map_err(|e| e.to_string())?;
-        if status.availability == crate::ai_health::Availability::Unavailable {
+        if status.availability == crate::ai_health::Availability::Unavailable
+            && ollama_target
+                .as_ref()
+                .is_some_and(|target| status.belongs_to(target))
+        {
             return Err(status
                 .reason
                 .unwrap_or_else(|| "The AI backend is unreachable.".to_string()));

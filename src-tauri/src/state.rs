@@ -7,6 +7,11 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+pub struct AiHealthState {
+    pub generation: u64,
+    pub status: AiStatus,
+}
+
 pub struct AppState {
     pub config: Mutex<AppConfig>,
     pub search_index: Mutex<Option<Arc<SearchIndex>>>,
@@ -22,7 +27,9 @@ pub struct AppState {
     pub app_handle: Mutex<Option<tauri::AppHandle>>,
     /// Last known reachability of the AI backend, kept current by a background poller so
     /// features can be shown as unavailable without each one having to find out itself.
-    pub ai_status: Mutex<AiStatus>,
+    /// Reachability and its settings generation change under one lock, so invalidation
+    /// cannot interleave with an obsolete probe commit.
+    pub ai_health: Mutex<AiHealthState>,
 }
 
 impl AppState {
@@ -38,7 +45,10 @@ impl AppState {
             note_mutation: Mutex::new(()),
             repair_status: Mutex::new(RepairStatus::default()),
             app_handle: Mutex::new(None),
-            ai_status: Mutex::new(AiStatus::unknown()),
+            ai_health: Mutex::new(AiHealthState {
+                generation: 0,
+                status: AiStatus::unknown(),
+            }),
         }
     }
 }

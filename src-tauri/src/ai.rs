@@ -36,7 +36,7 @@ pub fn ai_request(
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             // Handle all API keys as optional; ollama and v1 completions doesnt always require it.
-            let key_opt = if api_key.is_empty() {
+            let key_opt = if api_key.trim().is_empty() {
                 None
             } else {
                 Some(api_key.as_str())
@@ -399,7 +399,7 @@ pub async fn test_connection(
     model: &str,
     base_url: Option<&str>,
 ) -> Result<String, String> {
-    let key_opt = if api_key.is_empty() {
+    let key_opt = if api_key.trim().is_empty() {
         None
     } else {
         Some(api_key)
@@ -410,7 +410,9 @@ pub async fn test_connection(
             // Reuse the health probe so the button reports the same actionable reason the
             // status readout does, rather than a raw transport error.
             let url = crate::ai_health::resolve_base_url(base_url);
-            let status = crate::ai_health::probe(url, model).await;
+            let target =
+                crate::ai_health::OllamaTarget::new(url, model, key_opt.map(str::to_string), 0);
+            let status = crate::ai_health::probe(&target).await;
             match status.reason {
                 Some(reason) => Err(reason),
                 None => Ok(format!("Connected to Ollama at {url}")),

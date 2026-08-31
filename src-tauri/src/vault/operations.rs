@@ -2381,12 +2381,12 @@ mod tests {
         .unwrap();
 
         assert!(projects.iter().any(|note| note.path == nested.path));
-        assert!(
-            projects
-                .iter()
-                .all(|note| note.meta.category == Some(ParaCategory::Projects))
-        );
-        assert!(projects.iter().all(|note| note.path != mismatched_path.to_string_lossy()));
+        assert!(projects
+            .iter()
+            .all(|note| note.meta.category == Some(ParaCategory::Projects)));
+        assert!(projects
+            .iter()
+            .all(|note| note.path != mismatched_path.to_string_lossy()));
         fs::remove_dir_all(vault).unwrap();
     }
 
