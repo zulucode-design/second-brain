@@ -145,6 +145,33 @@ fn reindex_moved_note_now(
     Ok(())
 }
 
+fn rebuild_search_now(
+    state: &State<'_, AppState>,
+    vault_path: &str,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let search = state
+        .search_index
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
+    if let Some(search) = search {
+        if let Err(error) = search.rebuild(vault_path) {
+            record_repair_issue(
+                state,
+                vault_path,
+                repair::RepairIssue {
+                    key: "search:index".to_string(),
+                    stage: repair::RepairStage::Search,
+                    message: format!("Full search rebuild failed: {error}"),
+                    paths,
+                },
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn clear_vault_runtime(state: &State<'_, AppState>) -> Result<(), String> {
     *state.watcher.lock().map_err(|error| error.to_string())? = None;
     *state
@@ -240,13 +267,35 @@ fn open_vault_path(
     #[cfg(target_os = "ios")]
     {
         if external.is_some() {
-            search.rebuild(&path)?;
+            if let Err(error) = search.rebuild(&path) {
+                repair_status.record(repair::RepairIssue {
+                    key: "search:index".to_string(),
+                    stage: repair::RepairStage::Search,
+                    message: format!("Search rebuild while opening the vault failed: {error}"),
+                    paths: vec![path.clone()],
+                });
+            } else {
+                repair_status.clear_stage(repair::RepairStage::Search);
+            }
         } else {
             let search_bg = search.clone();
             let vault = path.clone();
-            std::thread::spawn(move || {
-                let _ = search_bg.rebuild(&vault);
-                log::info!("mobile: search index rebuild complete");
+            let app_handle = app.clone();
+            std::thread::spawn(move || match search_bg.rebuild(&vault) {
+                Ok(()) => log::info!("mobile: search index rebuild complete"),
+                Err(error) => {
+                    let state = app_handle.state::<AppState>();
+                    let _ = record_repair_issue(
+                        &state,
+                        &vault,
+                        repair::RepairIssue {
+                            key: "search:index".to_string(),
+                            stage: repair::RepairStage::Search,
+                            message: format!("Background search rebuild failed: {error}"),
+                            paths: vec![vault.clone()],
+                        },
+                    );
+                }
             });
         }
     }
@@ -254,15 +303,36 @@ fn open_vault_path(
     {
         let search_bg = search.clone();
         let vault = path.clone();
-        std::thread::spawn(move || {
-            let _ = search_bg.rebuild(&vault);
-            log::info!("mobile: search index rebuild complete");
+        let app_handle = app.clone();
+        std::thread::spawn(move || match search_bg.rebuild(&vault) {
+            Ok(()) => log::info!("mobile: search index rebuild complete"),
+            Err(error) => {
+                let state = app_handle.state::<AppState>();
+                let _ = record_repair_issue(
+                    &state,
+                    &vault,
+                    repair::RepairIssue {
+                        key: "search:index".to_string(),
+                        stage: repair::RepairStage::Search,
+                        message: format!("Background search rebuild failed: {error}"),
+                        paths: vec![vault.clone()],
+                    },
+                );
+            }
         });
     }
     #[cfg(desktop)]
     {
-        search.rebuild(&path)?;
-        repair_status.clear_stage(repair::RepairStage::Search);
+        if let Err(error) = search.rebuild(&path) {
+            repair_status.record(repair::RepairIssue {
+                key: "search:index".to_string(),
+                stage: repair::RepairStage::Search,
+                message: format!("Search rebuild while opening the vault failed: {error}"),
+                paths: vec![path.clone()],
+            });
+        } else {
+            repair_status.clear_stage(repair::RepairStage::Search);
+        }
     }
 
     repair::save(&path, &repair_status)?;
@@ -723,69 +793,19 @@ pub fn move_notebook(
     notebook_path: String,
     dest_parent: String,
 ) -> Result<String, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
 
-    let old_relative = Path::new(&notebook_path)
-        .strip_prefix(vault_path.as_str())
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-
     let new_full_path = operations::move_notebook(vault_path, &notebook_path, &dest_parent)?;
-
-    let new_relative = Path::new(&new_full_path)
-        .strip_prefix(vault_path.as_str())
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    // Update Quick Access paths for all notes inside the moved notebook
-    if let Ok(mut qa) = operations::load_quick_access(vault_path) {
-        let old_prefix = format!("{}/", old_relative);
-        let mut changed = false;
-        for path in qa.iter_mut() {
-            if path.starts_with(&old_prefix) {
-                *path = format!("{}/{}", new_relative, &path[old_prefix.len()..]);
-                changed = true;
-            }
-        }
-        if changed {
-            let _ = operations::save_quick_access(vault_path, &qa);
-        }
-    }
-
-    // Update notebook icon mappings
-    if let Ok(icons) = operations::load_notebook_icons(vault_path) {
-        let old_icon_key = operations::normalize_notebook_icon_key(&old_relative);
-        let new_icon_key = operations::normalize_notebook_icon_key(&new_relative);
-        let old_prefix = format!("{}/", old_icon_key);
-        let mut new_icons = std::collections::HashMap::new();
-        let mut changed = false;
-        for (key, value) in &icons {
-            if *key == old_icon_key {
-                new_icons.insert(new_icon_key.clone(), value.clone());
-                changed = true;
-            } else if key.starts_with(&old_prefix) {
-                let new_key = format!("{}/{}", new_icon_key, &key[old_prefix.len()..]);
-                new_icons.insert(new_key, value.clone());
-                changed = true;
-            } else {
-                new_icons.insert(key.clone(), value.clone());
-            }
-        }
-        if changed {
-            let icons_path = operations::helixnotes_dir(vault_path).join("notebook_icons.json");
-            if let Ok(data) = serde_json::to_string_pretty(&new_icons) {
-                let _ = std::fs::write(&icons_path, data);
-            }
-        }
-    }
-
-    // Rebuild search index (paths changed for all contained notes)
-    if let Ok(search_guard) = state.search_index.lock() {
-        if let Some(ref search) = *search_guard {
-            let _ = search.rebuild(vault_path);
-        }
-    }
+    rebuild_search_now(
+        &state,
+        vault_path,
+        vec![notebook_path, new_full_path.clone()],
+    )?;
 
     Ok(new_full_path)
 }
@@ -1607,8 +1627,10 @@ pub fn retry_repairs(state: State<'_, AppState>) -> Result<repair::RepairStatus,
     }
 
     status.clear_stage(repair::RepairStage::Reconciliation);
+    let mut reconciliation_moved_notes = false;
     match operations::reconcile_categories(&vault_path) {
         Ok(report) => {
+            reconciliation_moved_notes = report.relocated > 0 || report.moved_to_holding > 0;
             for failure in report.failures {
                 status.record(repair::RepairIssue {
                     key: format!("reconciliation:{}", failure.path),
@@ -1624,6 +1646,25 @@ pub fn retry_repairs(state: State<'_, AppState>) -> Result<repair::RepairStatus,
             message: error,
             paths: vec![vault_path.clone()],
         }),
+    }
+
+    if reconciliation_moved_notes {
+        let search = state
+            .search_index
+            .lock()
+            .map_err(|error| error.to_string())?
+            .clone()
+            .ok_or("Search index not initialized")?;
+        if let Err(error) = search.rebuild(&vault_path) {
+            status.record(repair::RepairIssue {
+                key: "search:index".to_string(),
+                stage: repair::RepairStage::Search,
+                message: format!("Search rebuild after reconciliation failed: {error}"),
+                paths: vec![vault_path.clone()],
+            });
+        } else {
+            status.clear_stage(repair::RepairStage::Search);
+        }
     }
 
     repair::save(&vault_path, &status)?;

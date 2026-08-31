@@ -115,6 +115,8 @@ pub struct ReconcileReport {
     /// Vault-relative paths of notes now sitting in the holding area, awaiting a
     /// category from the user. Non-empty means the user has something to resolve.
     pub unfiled: Vec<String>,
+    /// Uncategorized notes moved into the Holding Area during this pass.
+    pub moved_to_holding: usize,
     /// Notes or directories that could not be inspected or corrected. Startup must
     /// surface these instead of presenting a partial pass as fully successful.
     pub failures: Vec<ReconcileFailure>,
@@ -193,7 +195,7 @@ pub fn reconcile_vault(vault_path: &str) -> Result<ReconcileReport, String> {
 
         match relocate_note(root, path, &destination_dir) {
             Ok(_) if category.is_some() => report.relocated += 1,
-            Ok(_) => {}
+            Ok(_) => report.moved_to_holding += 1,
             Err(error) => report.failures.push(ReconcileFailure {
                 path: relative_to(root, path),
                 message: error,

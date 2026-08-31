@@ -1200,9 +1200,13 @@ fn move_note_with_outcome_inner(
         .map_err(|_| "Note path must stay inside the active vault".to_string())?
         .to_string_lossy()
         .replace('\\', "/");
-    let quick_access_position = quick_access
-        .iter()
-        .position(|entry| entry.relative_path == old_relative);
+    let source_raw = fs::read_to_string(src).map_err(|error| error.to_string())?;
+    let source_filename = src.file_name().unwrap_or_default().to_string_lossy();
+    let source_id = frontmatter::parse_note(&source_raw, &source_filename).0.id;
+    let quick_access_position = quick_access.iter().position(|entry| {
+        (!source_id.is_empty() && entry.note_id.as_deref() == Some(source_id.as_str()))
+            || entry.relative_path == old_relative
+    });
     preflight_wikilink_reads(vault_path, src)?;
 
     let filename = src.file_name().unwrap_or_default();
@@ -1479,16 +1483,13 @@ pub fn move_notebook(
 ) -> Result<String, String> {
     let validated = ensure_notebook_path(vault_path, Path::new(notebook_path))?;
     reject_category_root(vault_path, validated.as_path(), "moved")?;
-    let src = validated.as_path();
+    let src = validated.as_path().to_path_buf();
 
-    let validated_dest = ensure_vault_content_dir(vault_path, Path::new(dest_parent))?;
-    let dest_parent_path = validated_dest.as_path();
-    if !dest_parent_path.is_dir() {
-        return Err("Destination does not exist".to_string());
-    }
+    let (dest_parent_path, destination_category) =
+        ensure_para_destination_dir(vault_path, Path::new(dest_parent))?;
 
     // No-op if already in that parent
-    if src.parent() == Some(dest_parent_path) {
+    if src.parent() == Some(dest_parent_path.as_path()) {
         return Err("Notebook is already in that location".to_string());
     }
 
@@ -1496,7 +1497,7 @@ pub fn move_notebook(
     let dest = dest_parent_path.join(dir_name);
 
     // Prevent moving into itself or a descendant
-    if dest.starts_with(src) {
+    if dest.starts_with(&src) {
         return Err("Cannot move a notebook into itself or its descendants".to_string());
     }
 
@@ -1504,8 +1505,207 @@ pub fn move_notebook(
         return Err("A notebook with that name already exists in the destination".to_string());
     }
 
-    fs::rename(src, &dest).map_err(|e| e.to_string())?;
+    let mut notes = Vec::new();
+    for entry in WalkDir::new(&src) {
+        let entry = entry.map_err(|error| format!("Could not scan notebook: {error}"))?;
+        let path = entry.path();
+        if !path.is_file() || path.extension().and_then(|value| value.to_str()) != Some("md") {
+            continue;
+        }
+        let before = fs::read(path)
+            .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+        let raw = std::str::from_utf8(&before)
+            .map_err(|error| format!("{} is not valid UTF-8: {error}", path.display()))?;
+        let after = frontmatter::set_category(raw, destination_category)?.into_bytes();
+        let filename = path.file_name().unwrap_or_default().to_string_lossy();
+        let title = frontmatter::extract_title(raw)
+            .unwrap_or_else(|| frontmatter::filename_to_title(&filename));
+        let relative = path
+            .strip_prefix(&src)
+            .map_err(|error| error.to_string())?
+            .to_path_buf();
+        notes.push((path.to_path_buf(), relative, before, after, title));
+    }
+    preflight_wikilink_reads(vault_path, &src)?;
+
+    let mut quick_access = load_quick_access_entries(vault_path)?;
+    let original_quick_access = quick_access.clone();
+    let old_relative = src
+        .strip_prefix(vault_path)
+        .map_err(|_| "Notebook must stay inside the active vault".to_string())?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let new_relative = dest
+        .strip_prefix(vault_path)
+        .map_err(|_| "Notebook destination escaped the active vault".to_string())?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let old_prefix = format!("{old_relative}/");
+    let mut quick_access_changed = false;
+    for entry in &mut quick_access {
+        if entry.relative_path.starts_with(&old_prefix) {
+            entry.relative_path = format!(
+                "{new_relative}/{}",
+                &entry.relative_path[old_prefix.len()..]
+            );
+            quick_access_changed = true;
+        }
+    }
+
+    let original_icons = load_notebook_icons(vault_path)?;
+    let updated_icons = remap_notebook_icons(&original_icons, &old_relative, &new_relative);
+    let icons_changed = updated_icons != original_icons;
+
+    for (metadata_written, (path, _, _, after, _)) in notes.iter().enumerate() {
+        if let Err(error) = fs::write(path, after) {
+            for (rollback_path, _, before, _, _) in notes[..metadata_written].iter().rev() {
+                let _ = fs::write(rollback_path, before);
+            }
+            return Err(format!(
+                "Could not update category in {}: {error}",
+                path.display()
+            ));
+        }
+    }
+
+    if let Err(error) = fs::rename(&src, &dest) {
+        for (path, _, before, _, _) in notes.iter().rev() {
+            let _ = fs::write(path, before);
+        }
+        return Err(error.to_string());
+    }
+
+    let mut link_updates = Vec::new();
+    for (old_path, relative, _, _, title) in &notes {
+        let new_path = dest.join(relative);
+        match update_wikilinks_after_rename(
+            vault_path,
+            &old_path.to_string_lossy(),
+            &new_path.to_string_lossy(),
+            title,
+            title,
+        ) {
+            Ok(update) => link_updates.push(update),
+            Err(error) => {
+                let rollback = rollback_notebook_move(
+                    vault_path,
+                    &src,
+                    &dest,
+                    &notes,
+                    &link_updates,
+                    &original_quick_access,
+                    &original_icons,
+                );
+                return Err(format!("{error}. Notebook rollback: {rollback}"));
+            }
+        }
+    }
+
+    if quick_access_changed {
+        if let Err(error) = save_quick_access_entries(vault_path, &quick_access) {
+            let rollback = rollback_notebook_move(
+                vault_path,
+                &src,
+                &dest,
+                &notes,
+                &link_updates,
+                &original_quick_access,
+                &original_icons,
+            );
+            return Err(format!(
+                "Could not update Quick Access after moving the notebook: {error}. Notebook rollback: {rollback}"
+            ));
+        }
+    }
+    if icons_changed {
+        if let Err(error) = save_notebook_icons(vault_path, &updated_icons) {
+            let rollback = rollback_notebook_move(
+                vault_path,
+                &src,
+                &dest,
+                &notes,
+                &link_updates,
+                &original_quick_access,
+                &original_icons,
+            );
+            return Err(format!(
+                "Could not update notebook icons after the move: {error}. Notebook rollback: {rollback}"
+            ));
+        }
+    }
+
     Ok(dest.to_string_lossy().to_string())
+}
+
+type NotebookMoveNote = (PathBuf, PathBuf, Vec<u8>, Vec<u8>, String);
+
+fn remap_notebook_icons(
+    icons: &std::collections::HashMap<String, String>,
+    old_relative: &str,
+    new_relative: &str,
+) -> std::collections::HashMap<String, String> {
+    let old_key = normalize_notebook_icon_key(old_relative);
+    let new_key = normalize_notebook_icon_key(new_relative);
+    let old_prefix = format!("{old_key}/");
+    icons
+        .iter()
+        .map(|(key, value)| {
+            let key = if key == &old_key {
+                new_key.clone()
+            } else if key.starts_with(&old_prefix) {
+                format!("{new_key}/{}", &key[old_prefix.len()..])
+            } else {
+                key.clone()
+            };
+            (key, value.clone())
+        })
+        .collect()
+}
+
+fn save_notebook_icons(
+    vault_path: &str,
+    icons: &std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let data = serde_json::to_string_pretty(icons).map_err(|error| error.to_string())?;
+    fs::write(helixnotes_dir(vault_path).join("notebook_icons.json"), data)
+        .map_err(|error| error.to_string())
+}
+
+fn rollback_notebook_move(
+    vault_path: &str,
+    source: &Path,
+    destination: &Path,
+    notes: &[NotebookMoveNote],
+    link_updates: &[WikilinkUpdate],
+    quick_access: &[QuickAccessEntry],
+    icons: &std::collections::HashMap<String, String>,
+) -> String {
+    let mut failures = Vec::new();
+    for update in link_updates.iter().rev() {
+        if let Err(error) = update.rollback() {
+            failures.push(error);
+        }
+    }
+    if let Err(error) = fs::rename(destination, source) {
+        failures.push(format!("directory: {error}"));
+    } else {
+        for (path, _, before, _, _) in notes.iter().rev() {
+            if let Err(error) = fs::write(path, before) {
+                failures.push(format!("{}: {error}", path.display()));
+            }
+        }
+    }
+    if let Err(error) = save_quick_access_entries(vault_path, quick_access) {
+        failures.push(format!("Quick Access: {error}"));
+    }
+    if let Err(error) = save_notebook_icons(vault_path, icons) {
+        failures.push(format!("notebook icons: {error}"));
+    }
+    if failures.is_empty() {
+        "completed".to_string()
+    } else {
+        failures.join("; ")
+    }
 }
 
 /// Remove a directory inside trash if it's empty (after restoring/deleting its last note).
@@ -1711,10 +1911,29 @@ pub fn permanent_delete(vault_path: &str, path: &str) -> Result<(), String> {
     let validated = ensure_trash_entry(vault_path, Path::new(path))?;
     let p = validated.as_path();
     let parent = p.parent().map(|pp| pp.to_path_buf());
+    let sidecar = if p.is_dir() {
+        let name = p.file_name().unwrap_or_default().to_string_lossy();
+        Some(p.with_file_name(format!("{name}.meta")))
+    } else if p.extension().and_then(|extension| extension.to_str()) == Some("md") {
+        Some(trashed_note_manifest_path(p))
+    } else {
+        None
+    };
     if p.is_dir() {
         fs::remove_dir_all(p).map_err(|e| e.to_string())?;
     } else {
         fs::remove_file(p).map_err(|e| e.to_string())?;
+    }
+    if let Some(sidecar) = sidecar {
+        match fs::remove_file(sidecar) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "Trash item was deleted, but its metadata remains: {error}"
+                ))
+            }
+        }
     }
 
     // Clean up empty parent directory (deleted notebook folder) in trash
@@ -2818,6 +3037,80 @@ mod tests {
     }
 
     #[test]
+    fn moving_notebook_between_categories_updates_descendants_and_survives_reconciliation() {
+        let vault = scaffolded_vault("move-notebook-category");
+        let vault_str = vault.to_string_lossy().to_string();
+        create_notebook(&vault_str, Some("Projects"), "Launch").unwrap();
+        create_notebook(&vault_str, Some("Projects/Launch"), "Drafts").unwrap();
+        let plan = create_note(&vault_str, Some("Projects/Launch"), "Plan").unwrap();
+        let draft = create_note(&vault_str, Some("Projects/Launch/Drafts"), "Draft").unwrap();
+        let plan_raw = fs::read_to_string(&plan.path).unwrap();
+        fs::write(
+            &plan.path,
+            format!("{plan_raw}unique-folder-move-search-token\n"),
+        )
+        .unwrap();
+        let reference = create_note(&vault_str, Some("Resources"), "Reference").unwrap();
+        let reference_raw = fs::read_to_string(&reference.path).unwrap();
+        fs::write(
+            &reference.path,
+            format!("{reference_raw}[[Projects/Launch/Plan]] [[Projects/Launch/Drafts/Draft]]\n"),
+        )
+        .unwrap();
+        super::add_quick_access(&vault_str, "Projects/Launch/Drafts/Draft.md").unwrap();
+        let search = SearchIndex::new_in_memory().unwrap();
+        search.rebuild(&vault_str).unwrap();
+
+        let moved = super::move_notebook(
+            &vault_str,
+            &vault.join("Projects/Launch").to_string_lossy(),
+            &vault.join("Archives").to_string_lossy(),
+        )
+        .unwrap();
+        let moved_root = std::path::Path::new(&moved);
+        let moved_plan = moved_root.join("Plan.md");
+        let moved_draft = moved_root.join("Drafts/Draft.md");
+
+        assert_eq!(
+            category_recorded_in(&moved_plan),
+            Some(ParaCategory::Archives)
+        );
+        assert_eq!(
+            category_recorded_in(&moved_draft),
+            Some(ParaCategory::Archives)
+        );
+        for (path, original) in [(&moved_plan, &plan), (&moved_draft, &draft)] {
+            let raw = fs::read_to_string(path).unwrap();
+            let filename = path.file_name().unwrap().to_string_lossy();
+            assert_eq!(
+                frontmatter::parse_note(&raw, &filename).0.id,
+                original.meta.id
+            );
+        }
+        let reference_after = fs::read_to_string(&reference.path).unwrap();
+        assert!(reference_after.contains("[[Archives/Launch/Plan]]"));
+        assert!(reference_after.contains("[[Archives/Launch/Drafts/Draft]]"));
+        assert_eq!(
+            super::load_quick_access(&vault_str).unwrap(),
+            ["Archives/Launch/Drafts/Draft.md"]
+        );
+        let report = super::reconcile_categories(&vault_str).unwrap();
+        search.rebuild(&vault_str).unwrap();
+        let search_results = search
+            .search("unique-folder-move-search-token", 10)
+            .unwrap();
+        assert_eq!(report.relocated, 0);
+        assert_eq!(search_results.len(), 1);
+        assert_eq!(search_results[0].path, moved_plan.to_string_lossy());
+        assert!(search_results
+            .iter()
+            .all(|result| !result.path.contains("Projects/Launch")));
+        assert!(moved_plan.is_file());
+        assert!(moved_draft.is_file());
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
     fn a_pre_para_vault_keeps_its_notes_when_opened() {
         // Opening an existing vault must add structure without moving or losing notes.
         let vault = std::env::temp_dir().join(format!("para-legacy-{}", Uuid::new_v4()));
@@ -3019,6 +3312,25 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(fs::read_to_string(&outside).unwrap(), "must survive");
         fs::remove_dir_all(test_root).unwrap();
+    }
+
+    #[test]
+    fn permanent_deletion_removes_the_note_restore_manifest() {
+        let vault = scaffolded_vault("permanent-delete-manifest");
+        let vault_str = vault.to_string_lossy().to_string();
+        let note = create_note(&vault_str, Some("Projects"), "Disposable").unwrap();
+        super::delete_note(&vault_str, &note.path).unwrap();
+        let trash_path = super::get_trash_contents(&vault_str).unwrap().notes[0]
+            .path
+            .clone();
+        let manifest = super::trashed_note_manifest_path(std::path::Path::new(&trash_path));
+        assert!(manifest.is_file());
+
+        permanent_delete(&vault_str, &trash_path).unwrap();
+
+        assert!(!std::path::Path::new(&trash_path).exists());
+        assert!(!manifest.exists());
+        fs::remove_dir_all(vault).unwrap();
     }
 
     #[test]
