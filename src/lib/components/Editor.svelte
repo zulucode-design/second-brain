@@ -5961,17 +5961,16 @@
 							const newTitle = (e.target as HTMLInputElement).value.trim();
 							if (!newTitle) return;
 							const oldPath = $activeNotePath;
-							$activeNote.meta.title = newTitle;
-							// Update stripped title so restoreTitleH1 uses the new title
-							if (titleWasStripped) strippedTitle = newTitle;
-							$editorDirty = true;
-							// Force save current editor content before renaming so disk is up-to-date
-							await forceSave();
 							// Rename file on disk if filename doesn't match the new title
 							const filename = oldPath.split('/').pop() ?? '';
 							const stem = filename.replace(/\.md$/, '');
 							if (stem !== newTitle) {
 								try {
+									// Save the body before changing metadata. The backend uses the
+									// title currently on disk to update incoming wiki-links.
+									await forceSave();
+									$activeNote.meta.title = newTitle;
+									if (titleWasStripped) strippedTitle = newTitle;
 									const newPath = await renameNote(oldPath, newTitle);
 									loadedPath = newPath;
 									$activeNotePath = newPath;
@@ -5989,6 +5988,10 @@
 									));
 								}
 							} else {
+								$activeNote.meta.title = newTitle;
+								if (titleWasStripped) strippedTitle = newTitle;
+								$editorDirty = true;
+								await forceSave();
 								notes.update(list => list.map(n =>
 									n.path === oldPath ? { ...n, meta: { ...n.meta, title: newTitle } } : n
 								));
