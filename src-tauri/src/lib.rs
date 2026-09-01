@@ -4,6 +4,7 @@ mod asset_scope;
 mod backup;
 mod commands;
 mod history;
+pub mod hotkey;
 mod image_proxy;
 mod search;
 mod state;
