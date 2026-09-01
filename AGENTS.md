@@ -17,3 +17,10 @@ managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 Single-context: one `CONTEXT.md` at the repo root plus `docs/adr/`.
 See `docs/agents/domain.md`.
+
+### Work reports
+
+Review, remediation-plan, and ticket-recap HTML reports are committed project records.
+Store them under `docs/reports/` and update the relevant report in the same pull request
+when its findings, verification status, or remaining work changes. See
+`docs/reports/README.md`.

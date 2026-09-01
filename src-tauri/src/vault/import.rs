@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
 use std::path::Path;
 
 use chrono::Utc;
@@ -9,6 +10,17 @@ use uuid::Uuid;
 
 use crate::types::{ImportResult, NoteMeta};
 use crate::vault::frontmatter;
+use crate::vault::para::ParaCategory;
+
+fn has_excluded_component(path: &Path, root: &Path, names: &[&str]) -> bool {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .components()
+        .any(|component| {
+            let value = component.as_os_str();
+            names.iter().any(|name| value == OsStr::new(name))
+        })
+}
 
 pub fn import(vault_path: &str) -> Result<ImportResult, String> {
     let vault = Path::new(vault_path);
@@ -22,8 +34,7 @@ pub fn import(vault_path: &str) -> Result<ImportResult, String> {
             let p = e.path();
             p.is_file()
                 && p.extension().and_then(|x| x.to_str()) == Some("md")
-                && !p.to_string_lossy().contains("/.helixnotes/")
-                && !p.to_string_lossy().contains("/.trash/")
+                && !has_excluded_component(p, vault, &[".helixnotes", ".trash"])
         })
         .map(|e| e.path().to_path_buf())
         .collect();
@@ -334,8 +345,14 @@ fn normalize_frontmatter(raw: &str, path: &Path) -> (NoteMeta, String) {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    // Imported notes arrive uncategorised. Where they land in the vault decides their
-    // category, and the caller doing the filing is what records it.
+    let category = mapping
+        .get(serde_yaml::Value::String("category".into()))
+        .and_then(serde_yaml::Value::as_str)
+        .and_then(ParaCategory::from_name);
+
+    // Preserve a valid category already recorded by this app or another PARA-aware
+    // tool. Unknown and malformed values remain uncategorised for the normal filing
+    // workflow to resolve.
     let meta = NoteMeta {
         id,
         title,
@@ -343,7 +360,7 @@ fn normalize_frontmatter(raw: &str, path: &Path) -> (NoteMeta, String) {
         pinned,
         created,
         modified,
-        category: None,
+        category,
     };
     (meta, result.content)
 }
@@ -583,12 +600,11 @@ fn move_attachments(vault: &Path) -> Result<HashMap<String, String>, String> {
             if p.extension().and_then(|x| x.to_str()) == Some("md") {
                 return false;
             }
-            let path_str = p.to_string_lossy();
-            !path_str.contains("/.helixnotes/")
-                && !path_str.contains("/.obsidian/")
-                && !path_str.contains("/.trash/")
-                && !path_str.contains("/.stfolder")
-                && !path_str.contains("/.claude/")
+            !has_excluded_component(
+                p,
+                vault,
+                &[".helixnotes", ".obsidian", ".trash", ".stfolder", ".claude"],
+            )
         })
         .map(|e| e.path().to_path_buf())
         .collect();
@@ -628,8 +644,7 @@ fn rewrite_attachment_refs(vault: &Path, moved: &HashMap<String, String>) -> Res
             let p = e.path();
             p.is_file()
                 && p.extension().and_then(|x| x.to_str()) == Some("md")
-                && !p.to_string_lossy().contains("/.helixnotes/")
-                && !p.to_string_lossy().contains("/.trash/")
+                && !has_excluded_component(p, vault, &[".helixnotes", ".trash"])
         })
         .map(|e| e.path().to_path_buf())
         .collect();
@@ -703,8 +718,7 @@ fn cleanup_empty_dirs(root: &Path) {
     dirs.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
 
     for dir in dirs {
-        let dir_str = dir.to_string_lossy();
-        if dir_str.contains("/.helixnotes") || dir_str.contains("/.obsidian") || dir == root {
+        if has_excluded_component(&dir, root, &[".helixnotes", ".obsidian"]) || dir == root {
             continue;
         }
         if let Ok(mut entries) = std::fs::read_dir(&dir) {
@@ -781,7 +795,14 @@ fn pathdiff(target: &str, base: &str) -> Result<String, ()> {
     for component in &target_components[common..] {
         result.push(component);
     }
-    Ok(result.to_string_lossy().to_string())
+    // Relative paths produced here are written into Markdown link destinations.
+    // Render their components with URL-style separators instead of leaking the
+    // host platform's separator (`\\` on Windows) into the imported document.
+    Ok(result
+        .iter()
+        .map(|component| component.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/"))
 }
 
 fn percent_decode(s: &str) -> String {
@@ -964,6 +985,87 @@ mod tests {
     }
 
     #[test]
+    fn obsidian_import_preserves_category_and_survives_reconciliation() {
+        let vault = std::env::temp_dir().join(format!("categorized-import-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&vault).unwrap();
+        crate::vault::operations::ensure_vault_structure(&vault.to_string_lossy()).unwrap();
+
+        let note_path = vault.join("Projects").join("Launch").join("Plan.md");
+        std::fs::create_dir_all(note_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &note_path,
+            "---\n\
+             id: \"stable-import-id\"\n\
+             title: \"Launch plan\"\n\
+             tags: [launch, important]\n\
+             pinned: true\n\
+             created: \"2024-01-02T03:04:05Z\"\n\
+             modified: \"2024-02-03T04:05:06Z\"\n\
+             category: Projects\n\
+             obsidian-only: keep-me\n\
+             ---\n\
+             # Launch plan\n\nDo the work.\n",
+        )
+        .unwrap();
+
+        import(&vault.to_string_lossy()).unwrap();
+        let imported_raw = std::fs::read_to_string(&note_path).unwrap();
+        let (meta, body) = frontmatter::parse_note(&imported_raw, "Plan.md");
+        let report =
+            crate::vault::operations::reconcile_categories(&vault.to_string_lossy()).unwrap();
+        let original_path_survived = note_path.is_file();
+
+        std::fs::remove_dir_all(&vault).unwrap();
+
+        assert_eq!(
+            meta.category,
+            Some(crate::vault::para::ParaCategory::Projects)
+        );
+        assert_eq!(meta.id, "stable-import-id");
+        assert_eq!(meta.title, "Launch plan");
+        assert_eq!(meta.tags, ["launch", "important"]);
+        assert!(meta.pinned);
+        assert!(body.contains("Do the work."));
+        assert!(imported_raw.contains("obsidian-only: keep-me"));
+        assert!(
+            original_path_survived,
+            "reconciliation must not move a correctly categorized imported note"
+        );
+        assert!(report.unfiled.is_empty());
+    }
+
+    #[test]
+    fn attachment_import_never_moves_internal_or_tool_state() {
+        let vault = std::env::temp_dir().join(format!("attachment-scope-{}", Uuid::new_v4()));
+        let internal = vault.join(".helixnotes").join("state.json");
+        let tool_state = vault.join(".obsidian").join("workspace.json");
+        let attachment = vault.join("images").join("diagram.png");
+        std::fs::create_dir_all(internal.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(tool_state.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(attachment.parent().unwrap()).unwrap();
+        std::fs::write(&internal, "internal").unwrap();
+        std::fs::write(&tool_state, "tool").unwrap();
+        std::fs::write(&attachment, "image").unwrap();
+
+        let moved = move_attachments(&vault).unwrap();
+        let moved_attachment = vault
+            .join(".helixnotes")
+            .join("attachments")
+            .join("images")
+            .join("diagram.png");
+
+        assert!(internal.is_file(), "app state must remain in place");
+        assert!(tool_state.is_file(), "tool state must remain in place");
+        assert!(
+            moved_attachment.is_file(),
+            "regular attachments should move"
+        );
+        assert_eq!(moved.len(), 1);
+
+        std::fs::remove_dir_all(&vault).unwrap();
+    }
+
+    #[test]
     fn test_normalize_tags_strips_hash() {
         let mapping: serde_yaml::Mapping = serde_yaml::from_str("tags:\n  - \"#hashed\"").unwrap();
         let tags = normalize_tags(&mapping);
@@ -977,12 +1079,16 @@ mod tests {
 
     #[test]
     fn test_pathdiff_subdir() {
-        assert_eq!(pathdiff("/a/b/c.md", "/a").unwrap(), "b/c.md");
+        let relative_link = pathdiff("/a/b/c.md", "/a").unwrap();
+        assert_eq!(relative_link, "b/c.md");
+        assert!(!relative_link.contains('\\'));
     }
 
     #[test]
     fn test_pathdiff_parent_dir() {
-        assert_eq!(pathdiff("/a/c.md", "/a/b").unwrap(), "../c.md");
+        let relative_link = pathdiff("/a/c.md", "/a/b").unwrap();
+        assert_eq!(relative_link, "../c.md");
+        assert!(!relative_link.contains('\\'));
     }
 
     #[test]

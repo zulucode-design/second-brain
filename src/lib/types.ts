@@ -16,12 +16,20 @@ export type ParaCategory = (typeof PARA_CATEGORIES)[number];
  */
 export type AiAvailability = "unknown" | "available" | "unavailable";
 
+export interface AiTargetId {
+  endpoint: string;
+  model: string;
+  generation: number;
+}
+
 export interface AiStatus {
   availability: AiAvailability;
   /** Why it is unavailable, phrased as something to do about it. */
   reason: string | null;
   /** The endpoint that was probed, so the user can see which machine was tried. */
   endpoint: string | null;
+  /** Secret-free identity of the settings this result belongs to. */
+  target: AiTargetId | null;
 }
 
 export interface NoteMeta {
@@ -144,7 +152,6 @@ export interface AppConfig {
   show_note_switcher: boolean;
   time_format: string;
   week_start: string;
-  daily_title_format: string;
   gpu_acceleration: boolean;
   autostart: boolean;
   pdf_preview: boolean;
@@ -156,7 +163,6 @@ export interface AppConfig {
   show_all_notes: boolean;
   show_quick_access: boolean;
   show_tasks: boolean;
-  show_daily_notes: boolean;
   show_trash: boolean;
   backup_enabled: boolean;
   backup_frequency: string;
@@ -218,6 +224,19 @@ export interface SearchResult {
 export interface FileEvent {
   event_type: string;
   path: string;
+}
+
+export type RepairStage = "search" | "reconciliation";
+
+export interface RepairIssue {
+  key: string;
+  stage: RepairStage;
+  message: string;
+  paths: string[];
+}
+
+export interface RepairStatus {
+  issues: RepairIssue[];
 }
 
 export interface ImportResult {

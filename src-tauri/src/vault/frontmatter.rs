@@ -3,7 +3,7 @@ use crate::vault::para::ParaCategory;
 use chrono::{NaiveDate, NaiveDateTime, Utc};
 use gray_matter::engine::YAML;
 use gray_matter::Matter;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct RawFrontmatter {
@@ -13,7 +13,16 @@ struct RawFrontmatter {
     pinned: Option<bool>,
     created: Option<String>,
     modified: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
     category: Option<String>,
+}
+
+fn deserialize_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_yaml::Value::deserialize(deserializer)?;
+    Ok(value.as_str().map(str::to_owned))
 }
 
 /// Try to parse a date string in multiple common formats.
@@ -219,6 +228,29 @@ pub fn merge_frontmatter(original_raw: &str, meta: &NoteMeta, body: &str) -> Str
     format!("---\n{}---\n{}", yaml_str, body_with_heading)
 }
 
+/// Change only the category field while preserving every other YAML value.
+///
+/// Unlike `merge_frontmatter`, this is deliberately fallible: a move must not replace
+/// malformed metadata with generated defaults and then delete the only original copy.
+pub fn set_category(raw: &str, category: ParaCategory) -> Result<String, String> {
+    let matter = Matter::<YAML>::new();
+    let parsed = matter.parse(raw);
+    let mut mapping = if parsed.matter.trim().is_empty() {
+        serde_yaml::Mapping::new()
+    } else {
+        serde_yaml::from_str::<serde_yaml::Mapping>(&parsed.matter).map_err(|error| {
+            format!("Cannot update category because frontmatter is invalid: {error}")
+        })?
+    };
+    mapping.insert(
+        serde_yaml::Value::String("category".into()),
+        serde_yaml::Value::String(category.folder_name().to_string()),
+    );
+    let yaml = serde_yaml::to_string(&serde_yaml::Value::Mapping(mapping))
+        .map_err(|error| format!("Could not serialize updated category: {error}"))?;
+    Ok(format!("---\n{yaml}---\n{}", parsed.content))
+}
+
 pub fn filename_to_title(filename: &str) -> String {
     let stem = filename.trim_end_matches(".md");
     // Only replace dashes/underscores acting as word separators (between non-space chars).
@@ -244,11 +276,11 @@ pub fn filename_to_title(filename: &str) -> String {
 pub fn extract_title(raw: &str) -> Option<String> {
     let matter = Matter::<YAML>::new();
     let result = matter.parse(raw);
-    let fm: RawFrontmatter = result
-        .data
-        .and_then(|d| d.deserialize().ok())
-        .unwrap_or_default();
-    fm.title
+    let mapping: serde_yaml::Mapping = serde_yaml::from_str(&result.matter).ok()?;
+    mapping
+        .get(serde_yaml::Value::String("title".into()))
+        .and_then(serde_yaml::Value::as_str)
+        .map(str::to_owned)
 }
 
 pub fn extract_preview(content: &str, max_len: usize) -> String {
@@ -472,6 +504,41 @@ mod tests {
         let (parsed, _) = parse_note(raw, "odd.md");
         assert_eq!(parsed.category, None);
         assert_eq!(parsed.title, "Odd");
+    }
+
+    #[test]
+    fn invalid_category_types_preserve_all_other_metadata() {
+        for invalid_category in ["42", "true", "[Projects]", "{ name: Projects }", "null"] {
+            let raw = format!(
+                "---\n\
+                 id: \"stable-id\"\n\
+                 title: \"Stable title\"\n\
+                 tags: [alpha, beta]\n\
+                 pinned: true\n\
+                 created: \"2024-01-02T03:04:05Z\"\n\
+                 modified: \"2024-02-03T04:05:06Z\"\n\
+                 category: {invalid_category}\n\
+                 ---\n\
+                 body stays readable\n"
+            );
+
+            let (parsed, body) = parse_note(&raw, "fallback-name.md");
+
+            assert_eq!(
+                parsed.id, "stable-id",
+                "invalid category {invalid_category} erased the ID"
+            );
+            assert_eq!(
+                parsed.title, "Stable title",
+                "invalid category {invalid_category} erased the title"
+            );
+            assert_eq!(parsed.tags, ["alpha", "beta"]);
+            assert!(parsed.pinned);
+            assert_eq!(parsed.created.to_rfc3339(), "2024-01-02T03:04:05+00:00");
+            assert_eq!(parsed.modified.to_rfc3339(), "2024-02-03T04:05:06+00:00");
+            assert_eq!(parsed.category, None);
+            assert_eq!(body.trim_end(), "body stays readable");
+        }
     }
 
     #[test]

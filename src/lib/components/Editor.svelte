@@ -41,7 +41,7 @@
 	import { readFile } from '@tauri-apps/plugin-fs';
 	import { openFile, openUrl, copyFileTo, copyImageToClipboard as copyImageToClipboardCmd, writeBytesTo, copyPngToClipboard, copyTextToClipboard } from '$lib/api';
 	import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, readOnly, quickAccessPaths, notes, navHistory, canGoBack, canGoForward, viewerNote, viewMode, notebooks, outlineWidth, aiStatus, aiUsable } from '$lib/stores/app';
+	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, readOnly, holdingPreview, quickAccessPaths, notes, navHistory, canGoBack, canGoForward, viewerNote, viewMode, notebooks, outlineWidth, aiStatus, aiUsable } from '$lib/stores/app';
 	import { saveNote, saveImage, saveAttachment, readClipboardImage, addQuickAccess, removeQuickAccess, getQuickAccess, getNoteVersions, getNoteVersionContent, createVersion, aiAsk, getAllNoteTitles, readNote, renameNote } from '$lib/api';
 	import type { VersionEntry, AiStreamEvent, NoteTitleEntry, TaskItem as TaskRecord } from '$lib/types';
 	import { listen } from '@tauri-apps/api/event';
@@ -62,8 +62,9 @@
 	import { isMobile, isAndroid } from '$lib/platform';
 	import ResizeHandle from './ResizeHandle.svelte';
 
-	let { onMoveToTrash }: {
+	let { onMoveToTrash, onRequestCreateLinkedNote = (_title: string) => {} }: {
 		onMoveToTrash?: (path: string) => Promise<boolean>;
+		onRequestCreateLinkedNote?: (title: string) => void;
 	} = $props();
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
@@ -2826,6 +2827,7 @@
 	}
 
 	async function navigateToWikiLink(path: string, title: string, clickEvent?: MouseEvent) {
+		if ($holdingPreview) return;
 		// Normalize legacy absolute paths in data-path to vault-relative (issue: cross-device sync)
 		path = normalizeWikiPath(path);
 		// title may contain #heading or ^block anchors - strip for note lookup
@@ -2867,26 +2869,9 @@
 				wikiLinkNavDisambigIndex = 0;
 				return;
 			} else {
-				// Create the note (use clean title, not the anchor ref)
+				// Let the shared creation flow confirm a PARA destination first.
 				const cleanTitle = noteTitle.includes('/') ? noteTitle.split('/').pop()! : noteTitle;
-				const notebookRel = $activeNotePath
-					? $activeNotePath.replace(/\\/g, '/').replace(($appConfig?.active_vault ?? '').replace(/\\/g, '/') + '/', '').split('/').slice(0, -1).join('/')
-					: null;
-				try {
-					// Save the current note before navigating away
-					await forceSave();
-					const { createNote } = await import('$lib/api');
-					const newNote = await createNote(notebookRel || null, cleanTitle);
-					// Refresh titles cache so the new note resolves on future clicks
-					refreshWikiLinkTitles();
-					// Navigate to the new note
-					const content = await readNote(newNote.path);
-					$activeNote = { ...content, content: content.content };
-					$activeNotePath = newNote.path;
-					$editorDirty = false;
-				} catch (e) {
-					console.error('Failed to create note from wiki-link:', e);
-				}
+				onRequestCreateLinkedNote(cleanTitle);
 				return;
 			}
 		}
@@ -2906,6 +2891,22 @@
 			// retry as unresolved so the user can recreate it from the link.
 			await refreshWikiLinkTitles();
 			await navigateToWikiLink('', title, clickEvent);
+		}
+	}
+
+	export async function createLinkedNoteAfterConfirmation(nbRelative: string, title: string) {
+		try {
+			await forceSave();
+			const { createNote } = await import('$lib/api');
+			const newNote = await createNote(nbRelative, title);
+			await refreshWikiLinkTitles();
+			const content = await readNote(newNote.path);
+			$activeNote = { ...content, content: content.content };
+			$activeNotePath = newNote.path;
+			$editorDirty = false;
+		} catch (error) {
+			console.error('Failed to create note from wiki-link:', error);
+			throw error;
 		}
 	}
 
@@ -3073,7 +3074,7 @@
 
 	export async function moveOpenNoteToTrash(): Promise<boolean> {
 		const moveToTrash = onMoveToTrash;
-		if (trashingNote || !$activeNotePath || $viewerNote || !moveToTrash) return false;
+		if (trashingNote || !$activeNotePath || $viewerNote || $holdingPreview || !moveToTrash) return false;
 		const path = $activeNotePath;
 		const wasDirty = $editorDirty;
 		trashingNote = true;
@@ -3131,12 +3132,15 @@
 		});
 	});
 
-	// Belt-and-suspenders: viewer mode is always read-only, regardless of any other path
-	// that might toggle setEditable. Re-asserts every time the editor or viewer state changes.
+	// Preview modes are always read-only, regardless of any normal view-mode toggle.
 	$effect(() => {
 		const v = $viewerNote;
+		const holding = $holdingPreview;
 		untrack(() => {
-			if (editor && v) editor.setEditable(false);
+			if (editor && (v || holding)) {
+				$readOnly = true;
+				editor.setEditable(false);
+			}
 		});
 	});
 
@@ -3339,7 +3343,7 @@
 		requestAnimationFrame(apply);
 	}
 
-	export function loadNote(path: string, content: string, taskTarget?: TaskRecord) {
+	export function loadNote(path: string, content: string, taskTarget?: TaskRecord, holding = false) {
 		rememberLoadedNoteScroll();
 		const scrollPosition = taskTarget ? undefined : noteScrollPositions.get(path);
 		clearTaskReveal();
@@ -3351,12 +3355,13 @@
 		// Viewer mode (external file) always forces read-only. New notes stay editable and
 		// can opt into source mode without changing how existing notes choose their mode.
 		const isViewer = !!get(viewerNote);
+		$holdingPreview = holding;
 		const isNewNote = $activeNote?.meta.title === 'Untitled' && !content.replace(/^---[\s\S]*?---\s*/, '').trim();
 		if (isNewNote && ($appConfig?.new_notes_in_source_mode ?? false)) {
 			$sourceMode = true;
 		}
 		lastSourceMode = $sourceMode;
-		const shouldBeReadOnly = isViewer ? true : (isNewNote ? false : ($appConfig?.default_view_mode ?? false));
+		const shouldBeReadOnly = isViewer || holding ? true : (isNewNote ? false : ($appConfig?.default_view_mode ?? false));
 		$readOnly = shouldBeReadOnly;
 		if (editor) editor.setEditable(!shouldBeReadOnly);
 		const editorBody = editorElement?.closest('.editor-body') as HTMLElement | null;
@@ -4335,7 +4340,7 @@
 			return;
 		}
 		if (note && path !== loadedPath) {
-			loadNote(path, note.content);
+			loadNote(path, note.content, undefined, get(holdingPreview));
 		}
 	});
 
@@ -5927,6 +5932,12 @@
 				{/if}
 			</div>
 		{/if}
+		{#if $holdingPreview}
+			<div class="viewer-banner">
+				<span class="viewer-banner-label">Holding preview</span>
+				<span class="viewer-banner-path">Choose “File under…” in the note list to keep this note.</span>
+			</div>
+		{/if}
 		{#if !$viewerNote}
 		<div class="editor-toolbar" class:mobile={isMobile}>
 			<div class="editor-title">
@@ -5950,17 +5961,16 @@
 							const newTitle = (e.target as HTMLInputElement).value.trim();
 							if (!newTitle) return;
 							const oldPath = $activeNotePath;
-							$activeNote.meta.title = newTitle;
-							// Update stripped title so restoreTitleH1 uses the new title
-							if (titleWasStripped) strippedTitle = newTitle;
-							$editorDirty = true;
-							// Force save current editor content before renaming so disk is up-to-date
-							await forceSave();
 							// Rename file on disk if filename doesn't match the new title
 							const filename = oldPath.split('/').pop() ?? '';
 							const stem = filename.replace(/\.md$/, '');
 							if (stem !== newTitle) {
 								try {
+									// Save the body before changing metadata. The backend uses the
+									// title currently on disk to update incoming wiki-links.
+									await forceSave();
+									$activeNote.meta.title = newTitle;
+									if (titleWasStripped) strippedTitle = newTitle;
 									const newPath = await renameNote(oldPath, newTitle);
 									loadedPath = newPath;
 									$activeNotePath = newPath;
@@ -5978,6 +5988,10 @@
 									));
 								}
 							} else {
+								$activeNote.meta.title = newTitle;
+								if (titleWasStripped) strippedTitle = newTitle;
+								$editorDirty = true;
+								await forceSave();
 								notes.update(list => list.map(n =>
 									n.path === oldPath ? { ...n, meta: { ...n.meta, title: newTitle } } : n
 								));
@@ -5986,7 +6000,7 @@
 					}}
 				/>
 			</div>
-			{#if !isMobile}
+			{#if !isMobile && !$holdingPreview}
 			<div class="toolbar-actions">
 				{#if $canGoBack || $canGoForward}
 				<div class="nav-history-btns">
@@ -6138,7 +6152,7 @@
 		</div>
 		{/if}
 
-		{#if !$focusMode}
+		{#if !$focusMode && !$holdingPreview}
 		<div class="note-meta-bar">
 			<span class="note-folder" class:unfiled={!noteFolder}>
 				<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>

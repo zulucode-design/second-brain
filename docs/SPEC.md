@@ -1,7 +1,7 @@
 # Second Brain — Specification
 
-Status: **v1 design agreed, pre-implementation**
-Last updated: 2026-08-23
+Status: **v1 implementation in progress**
+Last updated: 2026-08-30
 
 A personal knowledge management desktop app implementing Tiago Forte's *Building a Second
 Brain* (BASB) methodology. Forked from [HelixNotes](https://gitlab.com/ArkHost/HelixNotes)
@@ -148,6 +148,18 @@ category it does not have. Those notes go to a holding area under the app's meta
 folder and are surfaced to the user, who must give each one a category. This covers notes
 from a vault predating PARA and any note arriving without one. A missing category is never
 guessed.
+
+The holding area is a narrow compatibility boundary, not a fifth category. Its queue can
+list and preview regular Markdown files directly inside that directory, but previews are
+read-only and holding notes cannot be renamed, dragged, linked from Quick Access, opened in
+a second window, edited, or trashed. The only mutating action is filing a note into an
+explicitly chosen PARA category.
+
+The four PARA roots are fixed: they cannot be created, renamed, moved, reordered, or
+deleted through the app. Folders below them remain ordinary user organisation. Moving a
+populated folder within or across categories moves the whole subtree; when the destination
+category changes, every descendant note is updated to that category and its identity,
+links, Quick Access entry, and search visibility follow the move.
 
 > An earlier draft had this the other way round, with the folder as the source of truth and
 > frontmatter as a mirror. That was rejected: it let any program that moved a file silently
@@ -340,15 +352,13 @@ or from Notion is unambiguous.
 
 Carried forward into ticket breakdown — these are unresolved, not settled:
 
-1. **Search index**: keep Tantivy + separate vector store, or consolidate onto SQLite?
-2. **Version history**: is inherited `history.rs` sufficient, or add git auto-commit?
-3. **Embedding model**: which model, and how are embeddings invalidated on note edit?
-4. **Global hotkey**: Linux support varies across X11/Wayland — needs verification.
-5. **Notion schema**: exact property mapping between frontmatter and Notion database
+1. **Embedding model**: which model, and how are embeddings invalidated on note edit?
+2. **Global hotkey**: Linux support varies across X11/Wayland — needs verification.
+3. **Notion schema**: exact property mapping between frontmatter and Notion database
    properties, including the identity/mapping table that links a local file to a Notion
    page ID.
-6. **Tailscale**: bundled guidance vs. assumed pre-installed by the user.
-7. **Multi-vault support**: inherited, kept, and unused. See §12.
+4. **Tailscale**: bundled guidance vs. assumed pre-installed by the user.
+5. **Multi-vault support**: inherited, kept, and unused. See §12.
 
 ---
 

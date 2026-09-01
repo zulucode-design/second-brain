@@ -25,6 +25,7 @@
 		customThemes,
 		focusMode,
 		readOnly,
+		holdingPreview,
 		activeNote,
 		activeNotePath,
 		activeNotebook,
@@ -61,17 +62,19 @@
 		aiStatus,
 	} from '$lib/stores/app';
 	import { keybindings, matchAction } from '$lib/keybindings';
+	import { destinationForCategory, suggestedNotebookForCreation } from '$lib/utils/note-creation';
+	import { PARA_CATEGORIES } from '$lib/types';
 
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
 	const isMobile = $derived($platformIsMobile);
-	import { loadVaultState, saveVaultState, readNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, getAppConfig, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, getAppConfig, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus, getRepairStatus, retryRepairs } from '$lib/api';
 	import { darkThemes, isAndroid } from '$lib/platform';
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow } from '$lib/utils/window';
 	import { normalizeStartupView, resolveStartupTarget } from '$lib/utils/startup-view';
 	import { get } from 'svelte/store';
-	import type { VaultState, FileEvent, NotebookEntry, TaskItem, AiStatus } from '$lib/types';
+	import type { VaultState, FileEvent, NotebookEntry, TaskItem, AiStatus, RepairStatus, ParaCategory } from '$lib/types';
 	import type { StartupTarget } from '$lib/utils/startup-view';
 
 	function findNotebookByPath(list: NotebookEntry[], relPath: string): NotebookEntry | null {
@@ -88,6 +91,29 @@
 	let editor = $state<Editor>();
 	let unlistenFileChange: (() => void) | null = null;
 	let unlistenAiStatus: (() => void) | null = null;
+	let unlistenRepairStatus: (() => void) | null = null;
+	let repairStatus = $state<RepairStatus>({ issues: [] });
+	let repairBusy = $state(false);
+	let repairError = $state('');
+	let noteCreationOpen = $state(false);
+	let noteCreationBusy = $state(false);
+	let suggestedCreationNotebook = $state<string | null>(null);
+	let creationDialog = $state<HTMLDivElement>();
+	let noteCreationTitle = $state('Untitled');
+	let noteCreationSource = $state<'list' | 'wiki-link'>('list');
+	let noteCreationError = $state('');
+
+	async function repairNow() {
+		repairBusy = true;
+		repairError = '';
+		try {
+			repairStatus = await retryRepairs();
+		} catch (error) {
+			repairError = String(error);
+		} finally {
+			repairBusy = false;
+		}
+	}
 	async function applyStartupTarget(target: StartupTarget): Promise<boolean> {
 		if (target.mode === 'notebook') {
 			const vault = $appConfig?.active_vault;
@@ -184,7 +210,7 @@
 	// Track note navigation in history stack
 	$effect(() => {
 		const path = $activeNotePath;
-		if (path) navHistory.push(path);
+		if (path && !$holdingPreview) navHistory.push(path);
 	});
 
 	function navigateHistory(direction: -1 | 1) {
@@ -291,11 +317,11 @@
 	// Tasks view: the editor pane shows a placeholder until a task is opened from the list.
 	let taskNoteOpened = $state(false);
 
-	function handleNoteSelected(path: string, content: string, task?: TaskItem) {
+	function handleNoteSelected(path: string, content: string, task?: TaskItem, holding = false) {
 		// Selecting a real vault note exits viewer mode
 		$viewerNote = null;
 		taskNoteOpened = true;
-		editor?.loadNote(path, content, task);
+		editor?.loadNote(path, content, task, holding);
 		if (isMobile) $mobileView = 'editor';
 	}
 
@@ -330,10 +356,54 @@
 		if (isMobile) $mobileView = 'notelist';
 	}
 
-	async function createAndFocusNote() {
-		await noteList?.handleCreateNote();
-		editor?.focusTitle();
-		if (isMobile) $mobileView = 'editor';
+	function requestNoteCreation() {
+		if ($viewMode === 'quickaccess' || $viewMode === 'trash' || $viewMode === 'unfiled') return;
+		if (!isMobile && $notelistCollapsed) $notelistCollapsed = false;
+		noteCreationTitle = 'Untitled';
+		noteCreationSource = 'list';
+		openNoteCreationDialog();
+	}
+
+	function requestLinkedNoteCreation(title: string) {
+		noteCreationTitle = title;
+		noteCreationSource = 'wiki-link';
+		openNoteCreationDialog();
+	}
+
+	function openNoteCreationDialog() {
+		suggestedCreationNotebook = suggestedNotebookForCreation(
+			$viewMode,
+			$activeNotebook?.relative_path
+		);
+		noteCreationError = '';
+		noteCreationOpen = true;
+		void tick().then(() => creationDialog?.focus());
+	}
+
+	function createAndFocusNote() {
+		requestNoteCreation();
+	}
+
+	async function confirmNoteCategory(category: ParaCategory) {
+		if (noteCreationBusy) return;
+		noteCreationBusy = true;
+		noteCreationError = '';
+		try {
+			const destination = destinationForCategory(category, suggestedCreationNotebook);
+			if (noteCreationSource === 'wiki-link') {
+				await editor?.createLinkedNoteAfterConfirmation(destination, noteCreationTitle);
+			} else {
+				await noteList?.createNoteAfterConfirmation(destination);
+			}
+			noteCreationOpen = false;
+			await tick();
+			editor?.focusTitle();
+			if (isMobile) $mobileView = 'editor';
+		} catch {
+			noteCreationError = 'Could not create the note. Choose a category to retry, or cancel.';
+		} finally {
+			noteCreationBusy = false;
+		}
 	}
 
 	// Toggle a task done from the Tasks view. If the task's note is open in the editor,
@@ -496,6 +566,13 @@
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
+		if (noteCreationOpen) {
+			if (e.code === 'Escape' && !noteCreationBusy) {
+				e.preventDefault();
+				noteCreationOpen = false;
+			}
+			return;
+		}
 		const mod = e.ctrlKey || e.metaKey;
 		const code = e.code;
 
@@ -506,7 +583,7 @@
 		}
 
 		// Ctrl/Cmd+Shift+Delete: move the open note to the trash.
-		if (mod && e.shiftKey && code === 'Delete' && $activeNotePath) {
+		if (mod && e.shiftKey && code === 'Delete' && $activeNotePath && !$holdingPreview) {
 			e.preventDefault();
 			editor?.moveOpenNoteToTrash();
 			return;
@@ -550,10 +627,11 @@
 					editor?.forceSave();
 					return;
 				case 'toggle-source':
+					if ($holdingPreview) return;
 					$sourceMode = !$sourceMode;
 					return;
 				case 'open-new-window':
-					if ($activeNotePath && $activeNote) {
+					if ($activeNotePath && $activeNote && !$holdingPreview) {
 						openNoteWindow($activeNotePath, $activeNote.meta.title);
 					}
 					return;
@@ -564,10 +642,11 @@
 					toggleNoteList();
 					return;
 				case 'toggle-focus':
+					if ($holdingPreview) return;
 					$focusMode = !$focusMode;
 					return;
 				case 'toggle-readonly':
-					if ($viewerNote) return; // viewer mode is always read-only
+					if ($viewerNote || $holdingPreview) return; // preview modes are always read-only
 					$readOnly = !$readOnly;
 					return;
 				case 'fullscreen':
@@ -661,6 +740,15 @@
 		// Opening the vault reconciles note locations against their categories, which may
 		// have set notes aside for want of one. Load them so the user is told.
 		await refreshUnfiled();
+		try {
+			repairStatus = await getRepairStatus();
+		} catch (error) {
+			repairError = String(error);
+		}
+		unlistenRepairStatus = await listen<RepairStatus>('repair-status-changed', (event) => {
+			repairStatus = event.payload;
+			repairError = '';
+		});
 
 		const restoreLastSession = $appConfig?.restore_last_session === true;
 
@@ -827,6 +915,7 @@
 	onDestroy(() => {
 		unlistenFileChange?.();
 		unlistenAiStatus?.();
+		unlistenRepairStatus?.();
 		unlistenOpenFile?.();
 		if (backupInterval) clearInterval(backupInterval);
 		if (syncInterval) clearInterval(syncInterval);
@@ -837,6 +926,53 @@
 </script>
 
 <svelte:window onkeydown={handleKeydown} onmousedown={isMobile ? undefined : handleMouseDown} />
+
+{#if noteCreationOpen}
+	<div class="creation-backdrop">
+		<button
+			class="creation-dismiss"
+			type="button"
+			aria-label="Cancel new note"
+			disabled={noteCreationBusy}
+			onclick={() => noteCreationOpen = false}
+		></button>
+		<div bind:this={creationDialog} class="creation-dialog" role="dialog" aria-modal="true" aria-labelledby="creation-title" tabindex="-1">
+			<h2 id="creation-title">Where should this note go?</h2>
+			<p>Choose a category before “{noteCreationTitle}” is created.</p>
+			{#if noteCreationError}<p class="creation-error" role="alert">{noteCreationError}</p>{/if}
+			<div class="creation-categories">
+				{#each PARA_CATEGORIES as category}
+					<button type="button" onclick={() => confirmNoteCategory(category)} disabled={noteCreationBusy}>
+						<strong>{category}</strong>
+						{#if suggestedCreationNotebook?.startsWith(`${category}/`)}
+							<span>{suggestedCreationNotebook.slice(category.length + 1)}</span>
+						{/if}
+					</button>
+				{/each}
+			</div>
+			<button class="creation-cancel" type="button" onclick={() => noteCreationOpen = false} disabled={noteCreationBusy}>Cancel</button>
+		</div>
+	</div>
+{/if}
+
+{#if repairStatus.issues.length > 0 || repairError}
+	<div class="repair-banner" role="alert">
+		<div>
+			<strong>Vault repair needed</strong>
+			<span>
+				{repairStatus.issues.length > 0
+					? `${repairStatus.issues.length} issue${repairStatus.issues.length === 1 ? '' : 's'} may leave filing or search results incomplete.`
+					: repairError}
+			</span>
+			{#if repairStatus.issues[0]?.paths[0]}
+				<code>{repairStatus.issues[0].paths[0]}</code>
+			{/if}
+		</div>
+		<button type="button" onclick={repairNow} disabled={repairBusy}>
+			{repairBusy ? 'Repairing…' : 'Repair now'}
+		</button>
+	</div>
+{/if}
 
 {#if isMobile}
 	<!-- ═══ MOBILE LAYOUT ═══ -->
@@ -875,7 +1011,7 @@
 				{/if}
 			{/if}
 			<div class="mobile-header-actions">
-				{#if $mobileView === 'editor'}
+				{#if $mobileView === 'editor' && !$holdingPreview}
 					<button class="mobile-header-btn" class:active={$readOnly} onclick={() => ($readOnly = !$readOnly)} title={$readOnly ? 'Edit' : 'View'}>
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							{#if $readOnly}
@@ -975,10 +1111,10 @@
 				<Sidebar bind:this={sidebar} onViewChanged={handleViewChanged} />
 			</div>
 			<div class="mobile-panel" class:active={$mobileView === 'notelist'}>
-				<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onBeforeNoteDuplicate={() => editor?.forceSave() ?? Promise.resolve(true)} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); }} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
+				<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onBeforeNoteDuplicate={() => editor?.forceSave() ?? Promise.resolve(true)} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); }} onRequestCreateNote={requestNoteCreation} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
 			</div>
 			<div class="mobile-panel" class:active={$mobileView === 'editor'}>
-				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} />
+				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} />
 			</div>
 		</div>
 
@@ -996,7 +1132,7 @@
 							<path d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/>
 						</svg>
 					</button>
-					<button class="focus-btn" class:focus-active={$readOnly} onclick={() => ($readOnly = !$readOnly)} title={$readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}>
+					{#if !$holdingPreview}<button class="focus-btn" class:focus-active={$readOnly} onclick={() => ($readOnly = !$readOnly)} title={$readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}>
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							{#if $readOnly}
 								<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
@@ -1007,7 +1143,7 @@
 								<line x1="1" y1="1" x2="23" y2="23" />
 							{/if}
 						</svg>
-					</button>
+					</button>{/if}
 					{#if !isMac}
 					<button class="focus-btn" onmousedown={(e) => e.stopPropagation()} onclick={() => appWindow.minimize()} title="Minimize">
 						<svg width="10" height="10" viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
@@ -1036,7 +1172,7 @@
 
 				{#if !$notelistCollapsed}
 					<div class="notelist-panel" style="width: {$notelistWidth}px">
-						<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onBeforeNoteDuplicate={() => editor?.forceSave() ?? Promise.resolve(true)} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); }} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
+						<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onBeforeNoteDuplicate={() => editor?.forceSave() ?? Promise.resolve(true)} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); }} onRequestCreateNote={requestNoteCreation} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
 					</div>
 
 					<ResizeHandle onResize={handleNotelistResize} />
@@ -1055,7 +1191,7 @@
 			{/if}
 
 			<div class="editor-panel">
-				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} />
+				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} />
 				{#if $viewMode === 'tasks' && !taskNoteOpened}
 					<div class="tasks-editor-placeholder">
 						<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -1075,6 +1211,151 @@
 <InfoPanel />
 
 <style>
+	.creation-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 10030;
+		display: grid;
+		place-items: center;
+		padding: 20px;
+		background: rgba(0, 0, 0, 0.42);
+	}
+
+	.creation-dialog {
+		position: relative;
+		z-index: 1;
+		width: min(420px, 100%);
+		padding: 20px;
+		border: 1px solid var(--border-color);
+		border-radius: 12px;
+		background: var(--bg-primary);
+		box-shadow: 0 18px 60px rgba(0, 0, 0, 0.32);
+		color: var(--text-primary);
+	}
+
+	.creation-dismiss {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		cursor: default;
+	}
+
+	.creation-dialog h2 {
+		margin: 0 0 6px;
+		font-size: 18px;
+	}
+
+	.creation-dialog p {
+		margin: 0 0 16px;
+		color: var(--text-secondary);
+		font-size: 13px;
+	}
+
+	.creation-dialog .creation-error {
+		color: var(--danger-color, #c33);
+	}
+
+	.creation-categories {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 8px;
+	}
+
+	.creation-categories button {
+		display: flex;
+		min-height: 58px;
+		flex-direction: column;
+		align-items: flex-start;
+		justify-content: center;
+		padding: 10px 12px;
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		cursor: pointer;
+	}
+
+	.creation-categories button:hover:not(:disabled) {
+		border-color: var(--accent-color);
+		background: var(--bg-hover);
+	}
+
+	.creation-categories span {
+		overflow: hidden;
+		max-width: 100%;
+		color: var(--text-secondary);
+		font-size: 11px;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.creation-cancel {
+		margin-top: 14px;
+		padding: 6px 10px;
+		border: 0;
+		background: transparent;
+		color: var(--text-secondary);
+		cursor: pointer;
+	}
+
+	.repair-banner {
+		position: fixed;
+		top: 38px;
+		left: 50%;
+		z-index: 10020;
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		max-width: min(720px, calc(100vw - 24px));
+		padding: 10px 12px;
+		transform: translateX(-50%);
+		border: 1px solid color-mix(in srgb, #d97706 55%, var(--border-color));
+		border-radius: 8px;
+		background: var(--bg-secondary);
+		box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
+		color: var(--text-primary);
+		font-size: 12px;
+	}
+
+	.repair-banner > div {
+		display: flex;
+		min-width: 0;
+		flex: 1;
+		flex-wrap: wrap;
+		gap: 4px 8px;
+	}
+
+	.repair-banner span,
+	.repair-banner code {
+		color: var(--text-secondary);
+	}
+
+	.repair-banner code {
+		overflow: hidden;
+		max-width: 100%;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.repair-banner button {
+		flex-shrink: 0;
+		padding: 6px 10px;
+		border: 1px solid var(--border-color);
+		border-radius: 6px;
+		background: var(--bg-tertiary);
+		color: var(--text-primary);
+		cursor: pointer;
+	}
+
+	.repair-banner button:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
+
 	/* ═══ DESKTOP STYLES ═══ */
 	.app-shell {
 		display: flex;

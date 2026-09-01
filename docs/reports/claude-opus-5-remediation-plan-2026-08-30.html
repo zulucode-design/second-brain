@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Second Brain review remediation plan</title>
+  <style>
+    :root {
+      --page: #f3f1eb;
+      --paper: #fffdf8;
+      --paper-2: #f7f4ec;
+      --ink: #20241f;
+      --muted: #626960;
+      --line: #d7d1c5;
+      --accent: #185f52;
+      --accent-soft: #dcece6;
+      --critical: #a42626;
+      --critical-soft: #f8dfdc;
+      --high: #a34b16;
+      --high-soft: #f8e5d7;
+      --medium: #776000;
+      --medium-soft: #f4ebbd;
+      --low: #4f6278;
+      --low-soft: #e3e9f0;
+      --good: #276c43;
+      --good-soft: #dcece2;
+      --shadow: 0 18px 48px rgba(31, 38, 32, 0.09);
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: Iowan Old Style, Palatino Linotype, Book Antiqua, Georgia, serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 8% -8%, rgba(24, 95, 82, 0.14), transparent 34rem), var(--page);
+      color: var(--ink);
+      font: 16px/1.62 var(--sans);
+    }
+    a { color: var(--accent); text-underline-offset: 0.16em; }
+    code { font-family: var(--mono); font-size: 0.87em; overflow-wrap: anywhere; }
+    .page { width: min(1180px, calc(100% - 30px)); margin: 26px auto 70px; }
+
+    .hero, section {
+      border: 1px solid var(--line);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+    .hero { padding: clamp(28px, 6vw, 66px); border-radius: 28px; }
+    .kicker { margin: 0 0 12px; color: var(--accent); font-size: 0.75rem; font-weight: 850; letter-spacing: 0.14em; text-transform: uppercase; }
+    h1, h2, h3, h4 { line-height: 1.18; }
+    h1 { max-width: 850px; margin: 0; font: 600 clamp(2.55rem, 7vw, 5rem)/1.03 var(--serif); letter-spacing: -0.045em; }
+    .intro { max-width: 820px; margin: 22px 0 0; color: var(--muted); font-size: clamp(1.03rem, 2vw, 1.25rem); }
+    .gate { margin-top: 27px; padding: 18px 20px; border: 1px solid #dfaaa6; border-radius: 15px; background: var(--critical-soft); }
+    .gate strong { color: var(--critical); }
+    .meta { display: flex; flex-wrap: wrap; gap: 7px 18px; margin-top: 22px; color: var(--muted); font-size: 0.86rem; }
+
+    .numbers { display: grid; grid-template-columns: repeat(5, 1fr); gap: 11px; margin-top: 16px; }
+    .number { min-height: 104px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); }
+    .number strong { display: block; font: 600 2.1rem/1 var(--serif); }
+    .number span { display: block; margin-top: 8px; color: var(--muted); font-size: 0.79rem; }
+    .number.critical strong { color: var(--critical); }
+    .number.high strong { color: var(--high); }
+    .number.medium strong { color: var(--medium); }
+    .number.low strong { color: var(--low); }
+    .number.good strong { color: var(--good); }
+
+    .layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 26px; margin-top: 31px; align-items: start; }
+    nav { position: sticky; top: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--paper) 94%, transparent); backdrop-filter: blur(10px); }
+    nav strong { display: block; margin: 0 7px 8px; color: var(--muted); font-size: 0.68rem; letter-spacing: 0.13em; text-transform: uppercase; }
+    nav a { display: block; padding: 6px 8px; border-radius: 8px; color: var(--ink); font-size: 0.86rem; text-decoration: none; }
+    nav a:hover { color: var(--accent); background: var(--accent-soft); }
+    main { min-width: 0; }
+    section { scroll-margin-top: 18px; margin-bottom: 27px; padding: clamp(22px, 4vw, 37px); border-radius: 22px; }
+    section > h2 { margin: 0 0 10px; font: 600 clamp(1.75rem, 4vw, 2.45rem)/1.12 var(--serif); letter-spacing: -0.025em; }
+    .section-intro { max-width: 780px; margin-top: 0; color: var(--muted); }
+
+    .callout { margin: 18px 0 0; padding: 16px 18px; border-left: 4px solid var(--accent); border-radius: 4px 12px 12px 4px; background: var(--accent-soft); }
+    .callout.warning { border-color: var(--high); background: var(--high-soft); }
+    .callout p { margin: 0; }
+    .decision-list { display: grid; gap: 11px; margin-top: 20px; }
+    .decision { padding: 16px 17px; border: 1px solid var(--line); border-radius: 13px; background: var(--paper-2); }
+    .decision h3 { margin: 0 0 5px; font-size: 1rem; }
+    .decision p { margin: 0; color: var(--muted); }
+    .decision .recommend { color: var(--ink); }
+
+    .loop { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; margin-top: 20px; counter-reset: loop; }
+    .loop div { padding: 15px; border: 1px solid var(--line); border-radius: 13px; background: var(--paper-2); counter-increment: loop; }
+    .loop div::before { content: counter(loop); display: grid; width: 28px; height: 28px; margin-bottom: 9px; place-items: center; border-radius: 50%; background: var(--accent); color: white; font-weight: 800; }
+    .loop strong { display: block; margin-bottom: 4px; }
+    .loop p { margin: 0; color: var(--muted); font-size: 0.89rem; }
+
+    .phase { margin-top: 30px; }
+    .phase > header { display: flex; align-items: baseline; justify-content: space-between; gap: 15px; margin-bottom: 11px; }
+    .phase > header h3 { margin: 0; font: 600 1.55rem/1.2 var(--serif); }
+    .phase > header span { color: var(--muted); font-size: 0.8rem; }
+    .work { margin-top: 12px; border: 1px solid var(--line); border-radius: 15px; background: var(--paper-2); overflow: hidden; }
+    .work-head { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; padding: 18px 18px 12px; }
+    .step { display: grid; width: 31px; height: 31px; place-items: center; border-radius: 50%; background: var(--accent); color: white; font-weight: 850; }
+    .work-head h4 { margin: 1px 0 3px; font-size: 1.08rem; }
+    .work-head p { margin: 0; color: var(--muted); font-size: 0.88rem; }
+    .badge { padding: 4px 9px; border-radius: 999px; font-size: 0.66rem; font-weight: 900; letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap; }
+    .badge.critical { color: var(--critical); background: var(--critical-soft); }
+    .badge.high { color: var(--high); background: var(--high-soft); }
+    .badge.medium { color: var(--medium); background: var(--medium-soft); }
+    .badge.low { color: var(--low); background: var(--low-soft); }
+    .work-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 0 18px 18px; }
+    .cell { padding: 13px 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper); }
+    .cell.wide { grid-column: 1 / -1; }
+    .cell strong { display: block; margin-bottom: 4px; color: var(--accent); font-size: 0.69rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    .cell p, .cell ul { margin: 0; }
+    .cell ul { padding-left: 19px; }
+    .cell li + li { margin-top: 4px; }
+    details { border-top: 1px dashed var(--line); padding: 12px 18px 15px; color: var(--muted); font-size: 0.85rem; }
+    summary { cursor: pointer; color: var(--accent); font-weight: 800; }
+    details p { margin: 8px 0 0; }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.89rem; }
+    th, td { padding: 11px 9px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 0.69rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    tbody tr:last-child td { border-bottom: 0; }
+    .status { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 0.7rem; font-weight: 850; white-space: nowrap; }
+    .status.open { color: var(--high); background: var(--high-soft); }
+    .status.later { color: var(--low); background: var(--low-soft); }
+    .status.gate { color: var(--critical); background: var(--critical-soft); }
+    .checklist { padding-left: 21px; }
+    .checklist li + li { margin-top: 8px; }
+    footer { padding: 10px 5px 0; color: var(--muted); font-size: 0.8rem; text-align: center; }
+
+    @media (max-width: 900px) {
+      .numbers { grid-template-columns: repeat(2, 1fr); }
+      .numbers .number:last-child { grid-column: 1 / -1; }
+      .layout { grid-template-columns: 1fr; }
+      nav { position: static; display: flex; flex-wrap: wrap; gap: 2px 6px; }
+      nav strong { width: 100%; }
+      nav a { display: inline-block; }
+      .loop { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 620px) {
+      .page { width: min(100% - 18px, 1180px); margin-top: 9px; }
+      .hero, section { border-radius: 17px; }
+      .hero { padding: 25px 20px; }
+      h1 { font-size: 2.55rem; }
+      .numbers, .loop, .work-body { grid-template-columns: 1fr; }
+      .numbers .number:last-child, .cell.wide { grid-column: auto; }
+      .work-head { grid-template-columns: auto 1fr; }
+      .work-head .badge { grid-column: 2; justify-self: start; }
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #141714; --paper: #1d211d; --paper-2: #242924; --ink: #e9ece5;
+        --muted: #adb6aa; --line: #3a4138; --accent: #8bcab4; --accent-soft: #233e35;
+        --critical: #ff9089; --critical-soft: #452524; --high: #f1a267; --high-soft: #482e1d;
+        --medium: #e3c65f; --medium-soft: #443d20; --low: #aec3d8; --low-soft: #2b3540;
+        --good: #7fd19c; --good-soft: #203b2a; --shadow: 0 18px 48px rgba(0, 0, 0, 0.25);
+      }
+    }
+    @media print {
+      :root { --page: white; --paper: white; --paper-2: #fafafa; --ink: #111; --muted: #555; --line: #ccc; }
+      body { background: white; font-size: 10.5pt; }
+      .page { width: 100%; margin: 0; }
+      .hero, section { box-shadow: none; }
+      .layout { display: block; }
+      nav { display: none; }
+      .work { break-inside: avoid; }
+      details, details > * { display: block; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <p class="kicker">Approval-ready remediation plan</p>
+      <h1>Fix the data risks first, then make every workflow trustworthy</h1>
+      <p class="intro">This plan covers every finding in the Claude Opus 5 review. It orders the work by harm and dependency, defines the red test for each slice, and keeps the missing platform and integration tests visible until evidence closes them.</p>
+      <div class="gate"><strong>Historical plan, now implemented.</strong> This section records the state at approval, when the reviewed branch was <code>753734b</code>. The remediation was subsequently implemented and verified; see the maintained review report for current evidence and remaining roadmap work.</div>
+      <div class="meta">
+        <span>Plan prepared: 30 August 2026</span>
+        <span>Reviewed range: <code>ce48d77..753734b</code></span>
+        <span>Current HEAD: <code>753734b</code></span>
+        <span>Source changes made: none</span>
+      </div>
+    </header>
+
+    <div class="numbers" aria-label="Scope summary">
+      <div class="number critical"><strong>1</strong><span>critical issue fixed first</span></div>
+      <div class="number high"><strong>9</strong><span>high-priority blockers</span></div>
+      <div class="number medium"><strong>6</strong><span>medium-priority defects</span></div>
+      <div class="number low"><strong>2</strong><span>low-priority cleanup items</span></div>
+      <div class="number good"><strong>18/18</strong><span>findings mapped to a work package</span></div>
+    </div>
+
+    <div class="layout">
+      <nav aria-label="Plan sections">
+        <strong>Jump to</strong>
+        <a href="#approval">Approval decisions</a>
+        <a href="#method">How each fix runs</a>
+        <a href="#roadmap">Ordered roadmap</a>
+        <a href="#traceability">18-finding map</a>
+        <a href="#seams">Proposed test seams</a>
+        <a href="#untested">Still untested</a>
+        <a href="#tracker">GitHub plan</a>
+        <a href="#done">Definition of done</a>
+      </nav>
+
+      <main>
+        <section id="approval">
+          <h2>Decisions to approve before coding</h2>
+          <p class="section-intro">These choices remove ambiguity from the fixes. Each recommendation follows the settled PARA rule that every normal note has one category and the note itself is the source of truth.</p>
+          <div class="decision-list">
+            <article class="decision"><h3>1. Filename collision policy</h3><p class="recommend"><strong>Recommendation:</strong> choose a deterministic free name such as <code>Plan 1.md</code>. Never overwrite, and never make background reconciliation wait for a prompt.</p></article>
+            <article class="decision"><h3>2. Remove “Unfile Note”</h3><p class="recommend"><strong>Recommendation:</strong> remove it. Restore categorized notes to their recorded category; send only genuinely uncategorized legacy notes to the holding area.</p></article>
+            <article class="decision"><h3>3. Holding-note behavior</h3><p class="recommend"><strong>Recommendation:</strong> allow a read-only preview and “File under…” actions. Keep normal editing, drag, duplicate, rename, Quick Access, and new-window actions outside <code>.helixnotes</code>.</p></article>
+            <article class="decision"><h3>4. Cross-category folder moves</h3><p class="recommend"><strong>Recommendation:</strong> support them. Preserve the full subfolder hierarchy and update every contained note’s category as one recoverable operation.</p></article>
+            <article class="decision"><h3>5. Partial reconciliation failure</h3><p class="recommend"><strong>Recommendation:</strong> open the vault, but show a persistent report containing every affected path and reason. Do not reduce the failure to a log line.</p></article>
+            <article class="decision"><h3>6. New Note category choice</h3><p class="recommend"><strong>Recommendation:</strong> always require confirmation in a four-category picker. The current category may be preselected, but it must never be copied silently.</p></article>
+          </div>
+        </section>
+
+        <section id="method">
+          <h2>How every implementation slice runs</h2>
+          <p class="section-intro">This is the same gate for a critical security fix and a low-priority cleanup. A slice is not finished because it compiles.</p>
+          <div class="loop">
+            <div><strong>Agree on the seam</strong><p>Confirm the public interface where behavior is observed. Do not add a private helper merely to make testing convenient.</p></div>
+            <div><strong>Write one red test</strong><p>Use a disposable vault or loopback server. The test must catch the exact reported symptom and leave real notes untouched.</p></div>
+            <div><strong>Make the smallest fix</strong><p>Implement only enough to turn that behavior green. Keep unrelated open issues and speculative abstractions out.</p></div>
+            <div><strong>Run focused verification</strong><p>Run the new test, its module suite, and any consumer-level check named in the work package.</p></div>
+            <div><strong>Review after green</strong><p>Run separate Standards and Spec review passes. Refactor only when the green behavior is protected, then rerun it.</p></div>
+            <div><strong>Run the full gate</strong><p><code>pnpm verify</code> must pass before the slice is committed and its finding is marked fixed.</p></div>
+          </div>
+          <div class="callout"><p><strong>Test principle:</strong> assert user-visible outcomes through public interfaces. Do not add tests that merely grep component source or require exact prose in <code>SPEC.md</code>.</p></div>
+        </section>
+
+        <section id="roadmap">
+          <h2>Ordered remediation roadmap</h2>
+          <p class="section-intro">Work top to bottom. Later packages depend on the safety and relocation interfaces established earlier.</p>
+
+          <div class="phase">
+            <header><h3>Phase 0: establish a safe baseline</h3><span>Approval gate</span></header>
+            <article class="work">
+              <div class="work-head"><span class="step">0</span><div><h4>Freeze the reviewed state and create disposable fixtures</h4><p>No finding is closed in this step.</p></div><span class="badge low">Preflight</span></div>
+              <div class="work-body">
+                <div class="cell"><strong>Actions</strong><ul><li>Create a remediation branch from <code>753734b</code>.</li><li>Record a clean <code>pnpm verify</code> baseline.</li><li>Build reusable temporary vault fixtures and pre/post SHA-256 manifests.</li><li>Keep the production vault out of every destructive-class test.</li></ul></div>
+                <div class="cell"><strong>Exit gate</strong><p>The six behavior decisions and four test seams in this document are approved. Baseline output is recorded, with secrets redacted.</p></div>
+              </div>
+            </article>
+          </div>
+
+          <div class="phase">
+            <header><h3>Phase 1: stop unsafe writes and data loss</h3><span>Critical and high priority</span></header>
+
+            <article class="work" id="wp1">
+              <div class="work-head"><span class="step">1</span><div><h4>Harden the holding-note path</h4><p>Fixes SB-01 and creates the validator required by SB-06.</p></div><span class="badge critical">Critical</span></div>
+              <div class="work-body">
+                <div class="cell"><strong>Red behavior</strong><p>Traversal, an outside-pointing file symlink, a symlinked holding directory, a directory, and a non-Markdown file are all rejected before any byte changes. A valid direct holding note still files normally.</p></div>
+                <div class="cell"><strong>Implementation</strong><p>Add one canonical holding-note validator. Resolve the holding root and requested file, prove containment, require a regular <code>.md</code> file, reject symlinks, and return the validated path used by subsequent reads and writes.</p></div>
+                <div class="cell wide"><strong>Focused command after the red test exists</strong><p><code>cargo test --manifest-path src-tauri/Cargo.toml vault::operations::tests::file_unfiled_note_rejects_traversal_symlinks_and_non_markdown_targets -- --exact</code></p></div>
+              </div>
+              <details><summary>Completion evidence</summary><p>The outside sentinel file has the same hash before and after every rejected request. Run on Linux and repeat the filesystem-sensitive test on Windows before final approval.</p></details>
+            </article>
+
+            <article class="work" id="wp2">
+              <div class="work-head"><span class="step">2</span><div><h4>Preserve metadata during parsing and import</h4><p>Fix SB-14 first, then SB-02 on top of trustworthy parsing.</p></div><span class="badge high">High</span></div>
+              <div class="work-body">
+                <div class="cell"><strong>Red behavior</strong><ul><li>Numeric, array, map, boolean, and null category values become uncategorized without erasing valid ID, title, tags, dates, pinned state, or body.</li><li>Obsidian import of an already-categorized vault preserves category, ID, unknown frontmatter, body, and path after reopen/reconciliation.</li></ul></div>
+                <div class="cell"><strong>Implementation</strong><p>Deserialize category independently from the rest of frontmatter. During import, preserve an existing valid category instead of rebuilding every note with <code>category: None</code>.</p></div>
+                <div class="cell wide"><strong>Focused commands</strong><p><code>cargo test --manifest-path src-tauri/Cargo.toml vault::frontmatter::tests::invalid_category_types_preserve_all_other_metadata -- --exact</code><br><code>cargo test --manifest-path src-tauri/Cargo.toml vault::import::tests::obsidian_import_preserves_category_and_survives_reconciliation -- --exact</code></p></div>
+              </div>
+              <details><summary>Completion evidence</summary><p>A synthetic categorized vault has an identical path/category manifest before and after import, except for intended Obsidian syntax normalization.</p></details>
+            </article>
+
+            <article class="work" id="wp3">
+              <div class="work-head"><span class="step">3</span><div><h4>Create one no-clobber relocation interface</h4><p>Foundation for SB-03, SB-05, SB-08, SB-09, and SB-15.</p></div><span class="badge high">High</span></div>
+              <div class="work-body">
+                <div class="cell"><strong>Red behavior</strong><p>Two concurrent moves that choose the same destination can never replace one another. Both notes survive with distinct names on Linux and Windows.</p></div>
+                <div class="cell"><strong>Implementation</strong><p>Replace scattered check-then-<code>rename</code> behavior with one deep relocation module. Its small interface owns destination validation, deterministic suffixing, no-clobber creation, explicit outcomes, and cleanup after failure.</p></div>
+                <div class="cell"><strong>Design constraint</strong><p>Use a real no-clobber operation or reserve/create-new strategy. A second <code>exists()</code> check does not fix the race.</p></div>
+                <div class="cell"><strong>Test surface</strong><p>Temporary filesystem fixtures through the relocation interface. Tests assert final files and contents, not internal helper calls.</p></div>
+              </div>
+            </article>
+
+            <article class="work" id="wp4">
+              <div class="work-head"><span class="step">4</span><div><h4>Make note move and restore complete and recoverable</h4><p>Fixes SB-03, SB-05, and SB-09 through the relocation interface.</p></div><span class="badge high">High</span></div>
+              <div class="work-body">
+                <div class="cell"><strong>Behavior</strong><ul><li>Only PARA destinations are accepted.</li><li>Moves and restores never overwrite.</li><li>“Unfile Note” is removed.</li><li>Restore follows recorded category; missing category goes to holding.</li><li>Metadata failure leaves the original note intact.</li></ul></div>
+                <div class="cell"><strong>Complete move</strong><p>Return old and new paths from the durable relocation, then update path-based wiki links, Quick Access, and the Tantivy entry. A stale derived index must be repaired or rebuilt and reported; source-note failures must roll back.</p></div>
+                <div class="cell"><strong>Red tests</strong><p>All category pairs, same-name move and restore, metadata failure, note ID/body/history identity, link rewrite, Quick Access path, and search returning only the new path.</p></div>
+                <div class="cell"><strong>Focused command family</strong><p><code>cargo test --manifest-path src-tauri/Cargo.toml vault::operations::tests::collision_never_overwrites_during_move_or_restore -- --exact</code><br><code>cargo test --manifest-path src-tauri/Cargo.toml commands::move_note_tests -- --exact</code></p></div>
+              </div>
+              <details><summary>Completion evidence</summary><p>A pre/post manifest proves both colliding notes remain, the moved note keeps its ID and body, links open it, Quick Access opens it, and keyword search contains no old path.</p></details>
+            </article>
+          </div>
+
+          <div class="phase">
+            <header><h3>Phase 2: make every PARA workflow consistent</h3><span>High and medium priority</span></header>
+
+            <article class="work" id="wp5">
+              <div class="work-head"><span class="step">5</span><div><h4>Make populated folder moves truthful</h4><p>Fixes SB-08.</p></div><span class="badge high">High</span></div>
+              <div class="work-body">
+                <div class="cell"><strong>Red behavior</strong><p>Move <code>Projects/Launch</code> with nested notes into Archives. Hierarchy, IDs, bodies, links, Quick Access, and search paths survive; every descendant records Archives; reconciliation does not reverse the move.</p></div>
+                <div class="cell"><strong>Implementation</strong><p>Preflight the entire tree and destination. When the top-level category changes, perform a recoverable batch update using the relocation interface. On failure, leave the original tree and metadata consistent.</p></div>
+                <div class="cell wide"><strong>Focused command</strong><p><code>cargo test --manifest-path src-tauri/Cargo.toml vault::operations::tests::moving_notebook_between_categories_updates_descendants_and_survives_reconciliation -- --exact</code></p></div>
+              </div>
+            </article>
+
+            <article class="work" id="wp6">
+              <div class="work-head"><span class="step">6</span><div><h4>Require an explicit category when creating a note</h4><p>Fixes SB-04.</p></div><span class="badge high">High</span></div>
+              <div class="work-body">
+                <div class="cell"><strong>Red behavior</strong><p>Title bar, keyboard shortcut, All Notes, and fresh-vault “Create your first note” all open the same four-choice flow. Nothing is created before confirmation, and the open note’s folder is never inherited silently.</p></div>
+                <div class="cell"><strong>Implementation</strong><p>Route every entry point through one note-creation workflow. It may preselect the active category/subfolder, but the user must confirm it. Keep the Rust backend rejection as the final invariant guard.</p></div>
+                <div class="cell wide"><strong>Focused verification</strong><p><code>node --test tests/note-creation.test.mjs</code>, then the packaged keyboard-only walkthrough. The Node test targets a real creation-flow policy used by the UI, not component source text.</p></div>
+              </div>
+            </article>
+
+            <article class="work" id="wp7">
+              <div class="work-head"><span class="step">7</span><div><h4>Make holding notes safely inspectable</h4><p>Fixes SB-06 and uses the SB-01 validator.</p></div><span class="badge high">High</span></div>
+              <div class="work-body">
+                <div class="cell"><strong>Red behavior</strong><p>A regular Markdown note directly in holding opens in read-only preview. Outside files, symlinks, trash entries, and every other <code>.helixnotes</code> file remain unreadable through this interface.</p></div>
+                <div class="cell"><strong>Implementation</strong><p>Add a dedicated holding-note read command. In that view, expose preview and “File under…” only; suppress unsupported normal-note actions.</p></div>
+                <div class="cell wide"><strong>Focused command</strong><p><code>cargo test --manifest-path src-tauri/Cargo.toml vault::operations::tests::holding_notes_are_readable_but_other_metadata_paths_are_not -- --exact</code></p></div>
+              </div>
+            </article>
+
+            <article class="work" id="wp8">
+              <div class="work-head"><span class="step">8</span><div><h4>Query categories recursively and lock sidebar rules</h4><p>Fixes SB-07 and SB-12.</p></div><span class="badge high">High</span></div>
+              <div class="work-body">
+                <div class="cell"><strong>Category query</strong><p>A category-root view recursively finds nested notes and filters by the category stored in each note. Ordinary subfolder browsing keeps its separately defined behavior.</p></div>
+                <div class="cell"><strong>Sidebar policy</strong><p>The four roots cannot rename, delete, move, or reorder. User folders can only be created or moved beneath a category. Backend checks remain authoritative.</p></div>
+                <div class="cell"><strong>Red tests</strong><p>Nested correct note included, wrong-category note excluded, metadata paths excluded, root actions disabled, user subfolder actions enabled, top-level creation rejected.</p></div>
+                <div class="cell"><strong>Focused commands</strong><p><code>cargo test --manifest-path src-tauri/Cargo.toml vault::operations::tests::category_scan_is_recursive_and_filters_by_recorded_category -- --exact</code><br><code>node --test tests/para-ui-policy.test.mjs</code></p></div>
+              </div>
+            </article>
+
+            <article class="work" id="wp9">
+              <div class="work-head"><span class="step">9</span><div><h4>Report every partial reconciliation failure</h4><p>Fixes SB-15.</p></div><span class="badge medium">Medium</span></div>
+              <div class="work-body">
+                <div class="cell"><strong>Red behavior</strong><p>A dot-named vault still scans. Invalid UTF-8 and an impossible destination produce structured per-path failures while successful repairs remain counted. Startup exposes the report visibly.</p></div>
+                <div class="cell"><strong>Implementation</strong><p>Extend <code>ReconcileReport</code> with failures and stages. Preserve walker/read/parse/relocation errors instead of dropping them. Exempt the walk root from hidden-directory filtering and show a persistent startup warning.</p></div>
+                <div class="cell wide"><strong>Focused commands</strong><p><code>cargo test --manifest-path src-tauri/Cargo.toml vault::para::tests::reconciliation_reports_partial_failures_and_handles_dot_named_vault_root -- --exact</code><br><code>cargo test --manifest-path src-tauri/Cargo.toml commands::vault_open_tests::partial_reconciliation_is_exposed_to_the_user -- --exact</code></p></div>
+              </div>
+            </article>
+
+            <article class="work" id="wp10">
+              <div class="work-head"><span class="step">10</span><div><h4>Make a large holding queue and old sessions navigable</h4><p>Fixes SB-13 and SB-17.</p></div><span class="badge medium">Medium</span></div>
+              <div class="work-body">
+                <div class="cell"><strong>Holding queue</strong><p>Disable fixed-height virtualization for holding rows. With 200 fixture notes, first, middle, and final entries remain reachable.</p></div>
+                <div class="cell"><strong>Session migration</strong><p>Map the legacy empty root-notebook session to “Needs a category,” never the obsolete root pseudo-folder.</p></div>
+                <div class="cell wide"><strong>Focused commands</strong><p><code>node --test tests/note-list-virtualization.test.mjs</code><br><code>node --test tests/startup-view.test.mjs</code>, followed by a native scroll and restart walkthrough.</p></div>
+              </div>
+            </article>
+          </div>
+
+          <div class="phase">
+            <header><h3>Phase 3: make AI health identify the current server</h3><span>High and medium priority</span></header>
+            <article class="work" id="wp11">
+              <div class="work-head"><span class="step">11</span><div><h4>Authenticate probes and reject stale results</h4><p>Fixes SB-10 and SB-11; completes the socket-test gap already tracked in GitHub issue #17.</p></div><span class="badge high">High</span></div>
+              <div class="work-body">
+                <div class="cell"><strong>Red socket matrix</strong><p>Healthy, missing model, malformed body, 500, 401, refused, stalled, authenticated, blank-key, and deliberately reordered overlapping responses, all on ephemeral loopback ports.</p></div>
+                <div class="cell"><strong>Implementation</strong><p>Send the same optional Bearer credential used by inference. Identify a probe by endpoint, model, and a secret-free settings generation. Saving relevant settings invalidates the old status, starts a refresh, and prevents an obsolete result from committing.</p></div>
+                <div class="cell"><strong>Fast-refusal rule</strong><p>Block an inference request only when the unavailable status belongs to the exact current target. Unknown or stale status must not disable a healthy new target.</p></div>
+                <div class="cell"><strong>Scope boundary</strong><p>Do not absorb the separate provider-enum work in GitHub issue #18 unless a red test proves it is required for these two findings.</p></div>
+                <div class="cell wide"><strong>Focused commands</strong><p><code>cargo test --manifest-path src-tauri/Cargo.toml ai_health::tests::authenticated_ollama_health_and_connection_checks_send_bearer_token -- --exact</code><br><code>cargo test --manifest-path src-tauri/Cargo.toml ai_health::tests::ai_status_generation_rejects_stale_probe_results -- --exact</code></p></div>
+              </div>
+            </article>
+          </div>
+
+          <div class="phase">
+            <header><h3>Phase 4: remove stale behavior and repair the source of truth</h3><span>Medium and low priority</span></header>
+            <article class="work" id="wp12">
+              <div class="work-head"><span class="step">12</span><div><h4>Remove the Daily Notes UI and reconcile the specification</h4><p>Fixes SB-16 and SB-18 after behavior is stable.</p></div><span class="badge medium">Medium</span></div>
+              <div class="work-body">
+                <div class="cell"><strong>Daily Notes</strong><p>Remove the visible setting and live command/type use. If legacy fields must remain for deserialization, isolate and document that compatibility path without re-emitting or reactivating it.</p></div>
+                <div class="cell"><strong>Specification</strong><p>Set the truthful implementation status, remove the settled search-index and version-history questions from “Open engineering decisions,” and record the approved holding and folder-move behavior.</p></div>
+                <div class="cell wide"><strong>Verification</strong><p>Load a legacy configuration fixture, run <code>pnpm check</code> and <code>pnpm verify</code>, then review <code>docs/SPEC.md</code> manually along the Spec axis. Do not add a brittle test that matches exact document wording.</p></div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section id="traceability">
+          <h2>Every finding has one owner</h2>
+          <p class="section-intro">This table is the completeness check. A finding remains open until its package has red-before-green evidence and the full gate passes.</p>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Finding</th><th>Severity</th><th>Work package</th><th>Closure evidence</th></tr></thead>
+            <tbody>
+              <tr><td>SB-01</td><td>Critical</td><td>1</td><td>Containment/symlink/type test; outside hash unchanged</td></tr>
+              <tr><td>SB-02</td><td>High</td><td>2</td><td>Categorized import plus reopen/reconciliation</td></tr>
+              <tr><td>SB-03</td><td>High</td><td>3–4</td><td>Concurrent no-clobber move and restore on Linux/Windows</td></tr>
+              <tr><td>SB-04</td><td>High</td><td>6</td><td>All entry points require confirmed category</td></tr>
+              <tr><td>SB-05</td><td>High</td><td>4</td><td>No root destination; restore by category; rollback on failure</td></tr>
+              <tr><td>SB-06</td><td>High</td><td>1, 7</td><td>Narrow read-only holding path; other metadata denied</td></tr>
+              <tr><td>SB-07</td><td>High</td><td>8</td><td>Recursive category query filtered by note metadata</td></tr>
+              <tr><td>SB-08</td><td>High</td><td>5</td><td>Populated folder survives move and reconciliation</td></tr>
+              <tr><td>SB-09</td><td>High</td><td>4</td><td>Links, Quick Access, and Tantivy use only new path</td></tr>
+              <tr><td>SB-10</td><td>High</td><td>11</td><td>Authenticated loopback probe and connection test</td></tr>
+              <tr><td>SB-11</td><td>Medium</td><td>11</td><td>Old overlapping result cannot replace current status</td></tr>
+              <tr><td>SB-12</td><td>Medium</td><td>8</td><td>Root action policy in UI and backend</td></tr>
+              <tr><td>SB-13</td><td>Medium</td><td>10</td><td>All entries reachable in 200-note holding queue</td></tr>
+              <tr><td>SB-14</td><td>Medium</td><td>2</td><td>Invalid category types preserve all other metadata</td></tr>
+              <tr><td>SB-15</td><td>Medium</td><td>9</td><td>Structured mixed-success report visible at startup</td></tr>
+              <tr><td>SB-16</td><td>Medium</td><td>12</td><td>No live Daily UI; legacy config still loads</td></tr>
+              <tr><td>SB-17</td><td>Low</td><td>10</td><td>Legacy empty root maps to current holding view</td></tr>
+              <tr><td>SB-18</td><td>Low</td><td>12</td><td>One internally consistent authoritative specification</td></tr>
+            </tbody>
+          </table></div>
+        </section>
+
+        <section id="seams">
+          <h2>Proposed public test seams</h2>
+          <p class="section-intro">TDD requires these seams to be agreed before tests are written.</p>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Seam</th><th>What it covers</th><th>Test adapter</th></tr></thead>
+            <tbody>
+              <tr><td>Vault operation interfaces</td><td>Validation, parsing, import, relocation, restore, category query, reconciliation</td><td>Disposable temporary vault and deterministic failure fixtures</td></tr>
+              <tr><td>Tauri command orchestration</td><td>Move consumers, startup warning, settings invalidation</td><td><code>tauri::test</code> with an isolated test-directory Tantivy index</td></tr>
+              <tr><td>User-facing workflow policies</td><td>Category picker, sidebar capabilities, startup migration, holding virtualization</td><td>Pure policy modules used by Svelte plus packaged native walkthrough; no source-string assertions</td></tr>
+              <tr><td>AI probe interface</td><td>Authentication, response classification, timeout, generation ordering</td><td>Tokio loopback server on an ephemeral port; no real network</td></tr>
+            </tbody>
+          </table></div>
+          <div class="callout warning"><p>The repository has no component/browser harness today. The plan does not introduce one speculatively. If a workflow cannot be observed through the policy seam plus packaged native app, stop and agree on a real UI seam before adding a new test dependency.</p></div>
+        </section>
+
+        <section id="untested">
+          <h2>Keep these tests open until evidence exists</h2>
+          <p class="section-intro">These were absent from the review. They are not silently converted into “passed” by adding unit tests nearby.</p>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Ledger item</th><th>Status</th><th>How to close it</th></tr></thead>
+            <tbody>
+              <tr><td>Packaged Tauri walkthrough</td><td><span class="status gate">Release gate</span></td><td>Run <code>pnpm tauri:build</code>, launch the artifact with a disposable vault, and walk every workflow named in SB-01–SB-17.</td></tr>
+              <tr><td>Windows execution</td><td><span class="status gate">Release gate</span></td><td>Run full verification, filesystem-focused tests, and packaged WebView2 walkthrough on the primary Windows 11 machine.</td></tr>
+              <tr><td>Destructive-class vault scenarios</td><td><span class="status gate">Release gate</span></td><td>Use a synthetic realistic vault and pre/post SHA-256 manifest for import, collision, failure, and reconciliation. Never use the production vault.</td></tr>
+              <tr><td>Live AI server matrix</td><td><span class="status open">Open</span></td><td>After deterministic loopback tests, run a real Ollama instance behind the intended authenticated/private-network setup: 401/200, missing model, refusal, stall, malformed response, endpoint switch, recovery.</td></tr>
+              <tr><td>Notion synchronization</td><td><span class="status open">Future issue gates</span></td><td>Implement and verify v1 one-way and two-way Notion synchronization under GitHub issues #12 and #13. WebDAV remains inherited compatibility rather than the v1 release gate.</td></tr>
+              <tr><td>Rust 1.88 minimum version</td><td><span class="status gate">Automated PR gate</span></td><td>Windows verification passed on Rust 1.88.0, and <code>.github/workflows/verify.yml</code> now pins Rust 1.88 for every pull request and push to main.</td></tr>
+              <tr><td>Large Vite bundle warning</td><td><span class="status later">Measure later</span></td><td>Record the production bundle baseline and set a budget. Split only after load-time measurement shows user impact; this was an observation, not one of the 18 correctness findings.</td></tr>
+              <tr><td>Main/doc suites contain no tests</td><td><span class="status later">Known</span></td><td>Keep behavior in library/command seams. Add doc tests only for real executable examples; do not create empty-count tests to improve a number.</td></tr>
+            </tbody>
+          </table></div>
+        </section>
+
+        <section id="tracker">
+          <h2>GitHub issue plan after approval</h2>
+          <p class="section-intro">No issue has been edited yet.</p>
+          <ul class="checklist">
+            <li>Create one remediation map containing the 12 work packages and the traceability table.</li>
+            <li>Reopen issue #1 for the incomplete PARA acceptance criteria and attach SB-01–SB-09 and SB-12–SB-15 as linked remediation work.</li>
+            <li>Reopen issue #2 for SB-10/SB-11. Use existing issue #17 for the mock-server matrix.</li>
+            <li>Leave issue #3 closed: the review found no specific grouped sync-settings defect.</li>
+            <li>Keep issue #18 separate unless a red test makes it a real prerequisite. Avoid expanding the remediation branch into a provider redesign.</li>
+            <li>One vertical slice per commit. Each commit message states the reproduced symptom and the cause that proved correct.</li>
+          </ul>
+        </section>
+
+        <section id="done">
+          <h2>Definition of done</h2>
+          <ul class="checklist">
+            <li>All 18 rows in the traceability table have red-before-green evidence.</li>
+            <li>Every work package passed focused tests, its module suite, Standards review, Spec review, and <code>pnpm verify</code>.</li>
+            <li><code>RUSTUP_TOOLCHAIN=1.88.0 pnpm verify</code> passes.</li>
+            <li>The packaged application passes the disposable-vault walkthrough on Linux and Windows.</li>
+            <li>The pre/post manifest proves no note disappeared or was overwritten in destructive-class scenarios.</li>
+            <li>All temporary debug instrumentation and fixtures outside the test suite are removed.</li>
+            <li><code>docs/SPEC.md</code> describes the implemented behavior without settled questions appearing as open.</li>
+            <li>Any environment-dependent item that cannot be run is still listed openly with an owner and exact closing evidence.</li>
+          </ul>
+          <div class="callout"><p><strong>Approval request:</strong> approve or amend the six behavior decisions and four test seams. Implementation should begin only after that response.</p></div>
+        </section>
+      </main>
+    </div>
+    <footer>Historical multi-agent remediation plan for <code>ce48d77..753734b</code>, maintained on 1 September 2026. Implementation status and remaining work are tracked in the companion review report and live GitHub issues.</footer>
+  </div>
+</body>
+</html>

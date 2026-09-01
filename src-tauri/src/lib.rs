@@ -82,6 +82,9 @@ pub fn run() {
             let _ = (webview, payload);
         })
         .setup(move |app| {
+            if let Ok(mut handle) = app.state::<AppState>().app_handle.lock() {
+                *handle = Some(app.handle().clone());
+            }
             #[cfg(target_os = "ios")]
             app.handle().plugin(tauri_plugin_ios_vault_access::init())?;
 
@@ -190,6 +193,7 @@ pub fn run() {
             commands::move_notebook,
             commands::get_notes,
             commands::read_note,
+            commands::read_unfiled_note,
             commands::save_note,
             commands::create_note,
             commands::duplicate_note,
@@ -210,6 +214,8 @@ pub fn run() {
             commands::set_task_due,
             commands::search_notes,
             commands::reindex,
+            commands::get_repair_status,
+            commands::retry_repairs,
             commands::get_trash,
             commands::restore_note,
             commands::restore_notebook,

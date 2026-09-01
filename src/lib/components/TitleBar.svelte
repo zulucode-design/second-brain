@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { vaultReady, focusMode, readOnly, updateAvailable, showSettings, settingsTab, appConfig, activeVaultConfig, syncState } from '$lib/stores/app';
+	import { vaultReady, focusMode, readOnly, holdingPreview, updateAvailable, showSettings, settingsTab, appConfig, activeVaultConfig, syncState } from '$lib/stores/app';
 	import { syncNow } from '$lib/api';
 	import NoteSwitcher from './NoteSwitcher.svelte';
 
@@ -96,12 +96,12 @@
 				<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
 			</svg>
 		</button>
-		<button class="switch-vault-btn" onclick={() => ($focusMode = true)} title="Focus mode">
+		{#if !$holdingPreview}<button class="switch-vault-btn" onclick={() => ($focusMode = true)} title="Focus mode">
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/>
 			</svg>
-		</button>
-		<button class="switch-vault-btn" class:active={$readOnly} onclick={() => ($readOnly = !$readOnly)} title={$readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}>
+		</button>{/if}
+		{#if !$holdingPreview}<button class="switch-vault-btn" class:active={$readOnly} onclick={() => ($readOnly = !$readOnly)} title={$readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}>
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				{#if $readOnly}
 					<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
@@ -112,7 +112,7 @@
 					<line x1="1" y1="1" x2="23" y2="23" />
 				{/if}
 			</svg>
-		</button>
+		</button>{/if}
 		{#if activeVaultConfig($appConfig)?.sync_provider === 'webdav'}
 		<button class="switch-vault-btn" class:active={$syncState.running} onclick={() => { if (!$syncState.running) syncNow().catch(() => {}); }} disabled={$syncState.running} title={$syncState.error ? `Sync error: ${$syncState.error}` : ($syncState.running ? 'Syncing vault...' : 'Sync vault now')}>
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class:sync-spin={$syncState.running}>

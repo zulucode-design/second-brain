@@ -1,0 +1,672 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Second Brain review, explained</title>
+  <style>
+    :root {
+      --page: #f5f2eb;
+      --paper: #fffdf8;
+      --paper-2: #f9f6ef;
+      --ink: #20241f;
+      --muted: #60685f;
+      --line: #d8d3c7;
+      --accent: #235f50;
+      --accent-soft: #dcece5;
+      --danger: #a62727;
+      --danger-soft: #f8dedb;
+      --high: #ad5017;
+      --high-soft: #f9e5d5;
+      --medium: #806500;
+      --medium-soft: #f3e9ba;
+      --low: #53657a;
+      --low-soft: #e3e9f0;
+      --pass: #267044;
+      --pass-soft: #dceee2;
+      --shadow: 0 18px 50px rgba(39, 41, 35, 0.09);
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: Iowan Old Style, Palatino Linotype, Book Antiqua, Georgia, serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 10% -5%, rgba(35, 95, 80, 0.13), transparent 33rem), var(--page);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.62;
+    }
+
+    a { color: var(--accent); text-underline-offset: 0.16em; }
+    code { font-family: var(--mono); font-size: 0.88em; overflow-wrap: anywhere; }
+    .page { width: min(1120px, calc(100% - 30px)); margin: 26px auto 70px; }
+
+    .hero {
+      overflow: hidden;
+      position: relative;
+      padding: clamp(28px, 6vw, 68px);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      top: -165px;
+      right: -135px;
+      width: 350px;
+      height: 350px;
+      border: 52px solid var(--accent-soft);
+      border-radius: 50%;
+      opacity: 0.78;
+      pointer-events: none;
+    }
+
+    .kicker {
+      margin: 0 0 12px;
+      color: var(--accent);
+      font-size: 0.76rem;
+      font-weight: 800;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3 { line-height: 1.17; }
+    h1 {
+      position: relative;
+      z-index: 1;
+      max-width: 780px;
+      margin: 0;
+      font-family: var(--serif);
+      font-size: clamp(2.6rem, 7vw, 5.1rem);
+      font-weight: 600;
+      letter-spacing: -0.045em;
+    }
+
+    .intro {
+      max-width: 760px;
+      margin: 22px 0 0;
+      color: var(--muted);
+      font-size: clamp(1.04rem, 2vw, 1.28rem);
+    }
+
+    .decision {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 14px;
+      max-width: 860px;
+      margin-top: 30px;
+      padding: 19px 21px;
+      border: 1px solid #e4a29d;
+      border-radius: 16px;
+      background: var(--danger-soft);
+    }
+
+    .decision-symbol {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--danger);
+      color: white;
+      font-weight: 900;
+    }
+
+    .decision h2 { margin: 1px 0 3px; color: var(--danger); font-family: var(--sans); font-size: 1.08rem; }
+    .decision p { margin: 0; }
+    .decision.remediated { border-color: #8bb69d; background: var(--pass-soft); }
+    .decision.remediated .decision-symbol { background: var(--pass); }
+    .decision.remediated h2 { color: var(--pass); }
+    .meta { display: flex; flex-wrap: wrap; gap: 7px 18px; margin-top: 24px; color: var(--muted); font-size: 0.86rem; }
+
+    .numbers { display: grid; grid-template-columns: repeat(5, 1fr); gap: 11px; margin-top: 16px; }
+    .number { min-height: 112px; padding: 17px; border: 1px solid var(--line); border-radius: 17px; background: var(--paper); }
+    .number strong { display: block; font-family: var(--serif); font-size: 2.2rem; line-height: 1; }
+    .number span { display: block; margin-top: 9px; color: var(--muted); font-size: 0.79rem; }
+    .number.critical strong { color: var(--danger); }
+    .number.high strong { color: var(--high); }
+    .number.medium strong { color: var(--medium); }
+    .number.low strong { color: var(--low); }
+    .number.pass strong { color: var(--pass); }
+
+    .report-grid { display: grid; grid-template-columns: 225px minmax(0, 1fr); gap: 26px; margin-top: 32px; align-items: start; }
+    nav { position: sticky; top: 18px; padding: 17px; border: 1px solid var(--line); border-radius: 17px; background: color-mix(in srgb, var(--paper) 94%, transparent); backdrop-filter: blur(10px); }
+    nav strong { display: block; margin: 0 7px 8px; color: var(--muted); font-size: 0.69rem; letter-spacing: 0.13em; text-transform: uppercase; }
+    nav a { display: block; padding: 6px 8px; border-radius: 8px; color: var(--ink); font-size: 0.87rem; text-decoration: none; }
+    nav a:hover { background: var(--accent-soft); color: var(--accent); }
+    main { min-width: 0; }
+
+    section { scroll-margin-top: 18px; margin-bottom: 28px; padding: clamp(22px, 4vw, 38px); border: 1px solid var(--line); border-radius: 22px; background: var(--paper); }
+    section > h2 { margin: 0 0 10px; font-family: var(--serif); font-size: clamp(1.75rem, 4vw, 2.5rem); font-weight: 600; letter-spacing: -0.025em; }
+    section > p:first-of-type { margin-top: 0; }
+    .section-intro { max-width: 720px; color: var(--muted); }
+
+    .plain-summary { display: grid; gap: 11px; margin-top: 21px; }
+    .summary-row { display: grid; grid-template-columns: 34px 1fr; gap: 13px; padding: 16px; border: 1px solid var(--line); border-radius: 13px; background: var(--paper-2); }
+    .summary-row span { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 50%; background: var(--danger); color: white; font-family: var(--serif); font-size: 1.2rem; font-weight: 700; }
+    .summary-row h3 { margin: 1px 0 4px; font-size: 1rem; }
+    .summary-row p { margin: 0; color: var(--muted); }
+
+    .callout { margin-top: 20px; padding: 16px 18px; border-left: 4px solid var(--accent); border-radius: 4px 12px 12px 4px; background: var(--accent-soft); }
+    .callout p { margin: 0; }
+
+    .glossary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 20px; }
+    .term { padding: 14px 15px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper-2); }
+    .term dt { font-weight: 800; }
+    .term dd { margin: 4px 0 0; color: var(--muted); }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.91rem; }
+    th, td { padding: 12px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    tbody tr:last-child td { border-bottom: 0; }
+
+    .status { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 0.73rem; font-weight: 800; white-space: nowrap; }
+    .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .status.pass { color: var(--pass); background: var(--pass-soft); }
+    .status.stop { color: var(--danger); background: var(--danger-soft); }
+    .status.review { color: var(--medium); background: var(--medium-soft); }
+    .status.pending { color: var(--high); background: var(--high-soft); }
+
+    .closure-note { margin: 18px 0 0; color: var(--muted); font-size: 0.9rem; }
+    .closure-table td:first-child { width: 76px; font-family: var(--mono); font-weight: 800; }
+    .closure-table td:nth-child(2) { width: 118px; }
+
+    .issue-group + .issue-group { margin-top: 36px; }
+    .issue-group > h3 { margin: 0 0 4px; color: var(--accent); font-family: var(--serif); font-size: 1.45rem; }
+    .issue-group > p { margin: 0 0 14px; color: var(--muted); }
+    .issue { scroll-margin-top: 18px; margin-top: 14px; border: 1px solid var(--line); border-radius: 15px; background: var(--paper-2); overflow: hidden; }
+    .issue-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 19px 19px 0; }
+    .issue-heading h4 { margin: 0; font-size: 1.08rem; line-height: 1.3; }
+    .severity { flex: 0 0 auto; padding: 4px 9px; border-radius: 999px; font-size: 0.67rem; font-weight: 900; letter-spacing: 0.07em; text-transform: uppercase; }
+    .severity.critical { color: var(--danger); background: var(--danger-soft); }
+    .severity.high { color: var(--high); background: var(--high-soft); }
+    .severity.medium { color: var(--medium); background: var(--medium-soft); }
+    .severity.low { color: var(--low); background: var(--low-soft); }
+    .issue-body { padding: 14px 19px 19px; }
+    .explanation { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .answer { min-width: 0; padding: 13px 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper); }
+    .answer.wide { grid-column: 1 / -1; }
+    .answer strong { display: block; margin-bottom: 4px; color: var(--accent); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    .answer p { margin: 0; }
+
+    details { margin-top: 12px; padding-top: 11px; border-top: 1px dashed var(--line); color: var(--muted); font-size: 0.83rem; }
+    summary { cursor: pointer; color: var(--accent); font-weight: 750; }
+    details p { margin: 8px 0 0; }
+
+    .tests-explain { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 19px 0; }
+    .tests-explain > div { padding: 16px; border: 1px solid var(--line); border-radius: 12px; }
+    .tests-explain h3 { margin: 0 0 7px; font-size: 1rem; }
+    .tests-explain p { margin: 0; color: var(--muted); }
+    .tests-explain .yes { background: var(--pass-soft); }
+    .tests-explain .no { background: var(--danger-soft); }
+
+    .limits { margin: 17px 0 0; padding-left: 21px; }
+    .limits li + li { margin-top: 8px; }
+    .fix-order { margin: 18px 0 0; padding: 0; list-style: none; counter-reset: fixes; }
+    .fix-order li { position: relative; padding: 15px 12px 15px 55px; border-bottom: 1px solid var(--line); counter-increment: fixes; }
+    .fix-order li:last-child { border-bottom: 0; }
+    .fix-order li::before { content: counter(fixes); position: absolute; top: 14px; left: 8px; display: grid; width: 31px; height: 31px; place-items: center; border-radius: 50%; background: var(--accent); color: white; font-weight: 800; }
+    footer { padding: 10px 5px 0; color: var(--muted); font-size: 0.8rem; text-align: center; }
+
+    @media (max-width: 850px) {
+      .numbers { grid-template-columns: repeat(2, 1fr); }
+      .numbers .number:last-child { grid-column: 1 / -1; }
+      .report-grid { grid-template-columns: 1fr; }
+      nav { position: static; display: flex; flex-wrap: wrap; gap: 2px 6px; }
+      nav strong { width: 100%; }
+      nav a { display: inline-block; }
+    }
+
+    @media (max-width: 580px) {
+      .page { width: min(100% - 18px, 1120px); margin-top: 9px; }
+      .hero, section { border-radius: 17px; }
+      .hero { padding: 25px 20px; }
+      h1 { font-size: 2.6rem; }
+      .decision { grid-template-columns: 1fr; }
+      .glossary, .explanation, .tests-explain { grid-template-columns: 1fr; }
+      .answer.wide { grid-column: auto; }
+      .issue-heading { display: block; }
+      .severity { display: inline-block; margin-top: 9px; }
+      th, td { padding: 10px 8px; }
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #141714;
+        --paper: #1d211d;
+        --paper-2: #242924;
+        --ink: #e9ece5;
+        --muted: #adb6aa;
+        --line: #3a4138;
+        --accent: #8bcab4;
+        --accent-soft: #233e35;
+        --danger: #ff9089;
+        --danger-soft: #452524;
+        --high: #f1a267;
+        --high-soft: #482e1d;
+        --medium: #e3c65f;
+        --medium-soft: #443d20;
+        --low: #aec3d8;
+        --low-soft: #2b3540;
+        --pass: #7fd19c;
+        --pass-soft: #203b2a;
+        --shadow: 0 18px 48px rgba(0, 0, 0, 0.25);
+      }
+      .decision { border-color: #73413d; }
+    }
+
+    @media print {
+      :root { --page: white; --paper: white; --paper-2: #fafafa; --ink: #111; --muted: #555; --line: #ccc; }
+      body { background: white; font-size: 10.5pt; }
+      .page { width: 100%; margin: 0; }
+      .hero, section { box-shadow: none; }
+      .report-grid { display: block; }
+      nav { display: none; }
+      .issue { break-inside: avoid; }
+      details, details > * { display: block; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <p class="kicker">Review and remediation status, in plain language</p>
+      <h1>What was wrong, what changed, and what still needs proof</h1>
+      <p class="intro">This report keeps the original 18 findings for context and records the approved remediation work and its Windows walkthrough. The reviewed foundation defects are fixed, but this is not a release-candidate report: the repository still has a substantial v1 feature backlog and later release-verification gates.</p>
+
+      <div class="decision remediated" role="note" aria-label="Current approval recommendation">
+        <span class="decision-symbol" aria-hidden="true">✓</span>
+        <div>
+          <h2>The reviewed remediation is ready for pull-request verification</h2>
+          <p>The unsafe path, overwrite, rollback, PARA consistency, AI health, stale UI, and specification findings are fixed in <code>fix/review-remediation</code>. Linux automation and the Windows disposable-vault walkthrough passed. The pull request and its pinned Rust 1.88 CI gate are the next checkpoint; unfinished GitHub feature tickets remain outside this remediation.</p>
+        </div>
+      </div>
+
+      <div class="meta">
+        <span>Review completed: 24 August 2026</span>
+        <span>Explanation rewritten: 30 August 2026</span>
+        <span>Remediation updated: 31 August 2026</span>
+        <span>Reviewed range: <code>ce48d77..753734b</code></span>
+        <span>Windows walkthrough head: <code>82634a5</code></span>
+      </div>
+    </header>
+
+    <div class="numbers" aria-label="Finding counts and test count">
+      <div class="number pass"><strong>22</strong><span>findings fixed, including Windows walkthrough defects</span></div>
+      <div class="number pass"><strong>31</strong><span>JavaScript tests passed</span></div>
+      <div class="number pass"><strong>181</strong><span>Linux Rust tests passed</span></div>
+      <div class="number pass"><strong>0</strong><span>Svelte errors or warnings</span></div>
+      <div class="number high"><strong>15</strong><span>open tickets remain after the three remediation tickets close</span></div>
+    </div>
+
+    <div class="report-grid">
+      <nav aria-label="Report sections">
+        <strong>Jump to</strong>
+        <a href="#start">Start here</a>
+        <a href="#closure">Closure map</a>
+        <a href="#words">Terms used</a>
+        <a href="#tests">What the tests tell us</a>
+        <a href="#windows">Windows walkthrough</a>
+        <a href="#features">Feature verdicts</a>
+        <a href="#issues">Issues, explained</a>
+        <a href="#limits">What was not tested</a>
+        <a href="#fixes">What happens next</a>
+      </nav>
+
+      <main>
+        <section id="start">
+          <h2>Start here</h2>
+          <p class="section-intro">The original review found 18 issues. These were the three highest-risk examples; all three now have tested local fixes.</p>
+          <div class="plain-summary">
+            <article class="summary-row"><span>✓</span><div><h3>Outside-vault writes are blocked</h3><p>Holding-note operations now canonicalize and validate the real path, require the expected file type, reject symlink and traversal escapes, and prove rejected inputs leave outside files unchanged.</p></div></article>
+            <article class="summary-row"><span>✓</span><div><h3>Import keeps existing PARA categories</h3><p>Metadata parsing now tolerates a malformed category without discarding valid fields, and Obsidian import preserves valid existing categories through reopen and reconciliation.</p></div></article>
+            <article class="summary-row"><span>✓</span><div><h3>Moves, renames, Trash, and restore do not clobber notes</h3><p>Relocation now uses collision-safe destinations, durable recovery state, file-identity and content checks, and rollback across the note, backlinks, Quick Access, and search consumers.</p></div></article>
+          </div>
+          <div class="callout"><p><strong>What is now proven:</strong> the remediation's automated suites pass on Linux and Windows, and the packaged Windows app completed a disposable-vault walkthrough at <code>82634a5</code>. The remaining items in <a href="#limits">What remains untested</a> belong to unfinished feature tickets, external-service gates, or final release engineering.</p></div>
+        </section>
+
+        <section id="closure">
+          <h2>Closure map for all 18 findings</h2>
+          <p class="section-intro">Each original finding is accounted for below. Severity describes the original risk; the current status is the result after remediation.</p>
+          <div class="table-wrap">
+            <table class="closure-table">
+              <thead><tr><th>Finding</th><th>Status</th><th>What now prevents the failure</th></tr></thead>
+              <tbody>
+                <tr><td>SB-01</td><td><span class="status pass">Fixed locally</span></td><td>Canonical containment, symlink and file-type guards, plus unchanged-content rejection tests.</td></tr>
+                <tr><td>SB-02</td><td><span class="status pass">Fixed locally</span></td><td>Import preserves valid category metadata and proves it survives reopening and reconciliation.</td></tr>
+                <tr><td>SB-03</td><td><span class="status pass">Fixed locally</span></td><td>No-clobber relocation and Trash restore, with durable manifests, identity checks, and race-aware rollback.</td></tr>
+                <tr><td>SB-04</td><td><span class="status pass">Fixed locally</span></td><td>Every New Note entry point requires an explicit, confirmed PARA category.</td></tr>
+                <tr><td>SB-05</td><td><span class="status pass">Fixed locally</span></td><td>Invalid root/unfile destinations are gone; restore follows stored category and rolls back incomplete work.</td></tr>
+                <tr><td>SB-06</td><td><span class="status pass">Fixed locally</span></td><td>A narrowly validated read-only path opens holding notes while other private metadata remains denied.</td></tr>
+                <tr><td>SB-07</td><td><span class="status pass">Fixed locally</span></td><td>Category queries recurse through subfolders and filter using each note's category metadata.</td></tr>
+                <tr><td>SB-08</td><td><span class="status pass">Fixed locally</span></td><td>Populated folder moves update contained note categories and survive reconciliation.</td></tr>
+                <tr><td>SB-09</td><td><span class="status pass">Fixed locally</span></td><td>Relocation updates backlinks, Quick Access, and serialized search-index paths, with rollback on source failure.</td></tr>
+                <tr><td>SB-10</td><td><span class="status pass">Fixed locally</span></td><td>Health and connection probes use the configured credential; authenticated loopback tests pass.</td></tr>
+                <tr><td>SB-11</td><td><span class="status pass">Fixed locally</span></td><td>Status is tied to current settings generation; stale overlapping responses cannot replace it.</td></tr>
+                <tr><td>SB-12</td><td><span class="status pass">Fixed locally</span></td><td>The UI and backend share a policy that protects PARA roots and keeps user folders under a category.</td></tr>
+                <tr><td>SB-13</td><td><span class="status pass">Fixed locally</span></td><td>The holding queue no longer applies incorrect fixed-row virtualization; large-list reachability is covered.</td></tr>
+                <tr><td>SB-14</td><td><span class="status pass">Fixed locally</span></td><td>Invalid category types no longer erase unrelated valid frontmatter in memory.</td></tr>
+                <tr><td>SB-15</td><td><span class="status pass">Fixed locally</span></td><td>Partial reconciliation and unrecoverable transaction failures are persisted and surfaced as repair work.</td></tr>
+                <tr><td>SB-16</td><td><span class="status pass">Fixed locally</span></td><td>The retired Daily Notes UI and compatibility state have been removed.</td></tr>
+                <tr><td>SB-17</td><td><span class="status pass">Fixed locally</span></td><td>Legacy saved sessions map to a current, navigable view instead of the obsolete empty root.</td></tr>
+                <tr><td>SB-18</td><td><span class="status pass">Fixed locally</span></td><td>The authoritative specification reflects implemented behavior and no longer repeats settled questions as open.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="closure-note">The final walkthrough repair is in <code>82634a5</code>. Earlier remediation commits are kept as focused vertical slices on <code>fix/review-remediation</code>.</p>
+        </section>
+
+        <section id="words">
+          <h2>A few terms used below</h2>
+          <p class="section-intro">These definitions make the rest of the report easier to follow.</p>
+          <dl class="glossary">
+            <div class="term"><dt>Vault</dt><dd>The folder that contains all notes and the app's private metadata.</dd></div>
+            <div class="term"><dt>PARA</dt><dd>The four fixed categories: Projects, Areas, Resources, and Archives.</dd></div>
+            <div class="term"><dt>Holding area</dt><dd>The private <code>.helixnotes/unfiled</code> folder where notes with no category wait to be filed.</dd></div>
+            <div class="term"><dt>Reconciliation</dt><dd>The startup process that moves each note to the folder named by the category stored inside that note.</dd></div>
+            <div class="term"><dt>Ollama</dt><dd>A server that runs AI models locally or on another machine.</dd></div>
+            <div class="term"><dt>Tantivy index</dt><dd>The app's keyword-search database. It stores a note's path separately from the note file.</dd></div>
+          </dl>
+        </section>
+
+        <section id="tests">
+          <h2>What the current green tests tell us</h2>
+          <div class="tests-explain">
+            <div class="yes"><h3>What passed</h3><p>The complete <code>pnpm verify</code> gate passed on Linux and Windows: Svelte checking, 31 JavaScript tests, Rust tests, formatting, strict Rust linting, and the production build. Windows also produced a native executable, MSI, and NSIS installer.</p></div>
+            <div class="no"><h3>What that does not prove</h3><p>These results do not implement or accept the remaining v1 tickets. They also cannot prove a real authenticated Ollama deployment, future Notion synchronization, signed release artifacts, or an acceptable startup-performance budget.</p></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Check</th><th>Result</th><th>Useful detail</th></tr></thead>
+              <tbody>
+                <tr><td>Full verification</td><td><span class="status pass">Passed</span></td><td><code>pnpm verify</code> completed successfully.</td></tr>
+                <tr><td>Svelte check</td><td><span class="status pass">Passed</span></td><td>0 errors and 0 warnings.</td></tr>
+                <tr><td>JavaScript tests</td><td><span class="status pass">Passed</span></td><td>31 of 31.</td></tr>
+                <tr><td>Rust tests</td><td><span class="status pass">Passed</span></td><td>181 of 181 on Linux; 169 of 169 at the Windows walkthrough head. Main and documentation suites contain no tests; this is known, not a failure.</td></tr>
+                <tr><td>Rust formatting and linting</td><td><span class="status pass">Passed</span></td><td>Clippy ran with all warnings treated as errors.</td></tr>
+                <tr><td>Production build</td><td><span class="status pass">Passed</span></td><td>Vite warned that some bundles exceed 500 kB. The largest client bundle is about 1.56 MB before gzip.</td></tr>
+                <tr><td>Linux native build</td><td><span class="status pass">Passed</span></td><td>The exact remediation head produced an unsigned native Tauri binary with <code>tauri build --no-sign --no-bundle --ci</code>. This proves compilation, not the still-open Linux UI walkthrough.</td></tr>
+                <tr><td>AI socket matrix</td><td><span class="status pass">Passed</span></td><td>Healthy, missing-model, malformed, HTTP 500, 401, refused, stalled, authenticated, blank-key, and stale-generation cases.</td></tr>
+                <tr><td>Transaction review</td><td><span class="status pass">Passed after final repair</span></td><td>Folder moves sync a batch manifest and ownership marker before relocating, verify ownership and note snapshots before every recovery write, and resume interrupted batches at startup. If recovery remains ambiguous, every affected path is persisted and ordinary PARA reconciliation is withheld so it cannot dismantle the protected tree.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="section-intro">The final Windows gate used the declared minimum Rust 1.88.0. Linux verification also passed with its installed Rust toolchain.</p>
+        </section>
+
+        <section id="windows">
+          <h2>Windows packaged-app walkthrough</h2>
+          <p class="section-intro">A disposable vault was used on the target Windows PC. No existing HelixNotes data was present before the walkthrough.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Workflow</th><th>Result</th><th>Evidence</th></tr></thead>
+              <tbody>
+                <tr><td>Filing and note creation</td><td><span class="status pass">Passed</span></td><td>An unfiled note moved into Projects; a newly created Areas note retained its ID, body, and category.</td></tr>
+                <tr><td>Move, Trash, and restore</td><td><span class="status pass">Passed</span></td><td>Drag move and the repaired Move to picker worked. Trash and both restore entry points preserved content and metadata.</td></tr>
+                <tr><td>Obsidian import</td><td><span class="status pass">Passed</span></td><td>Categories remained valid, syntax converted, the attachment moved under private attachments, and internal marker data stayed untouched.</td></tr>
+                <tr><td>Search, Quick Access, and reopen</td><td><span class="status pass">Passed</span></td><td>Search, Ctrl+P, Quick Access, and automatic vault restoration worked after restart.</td></tr>
+                <tr><td>Rename and incoming links</td><td><span class="status pass">Passed after repair</span></td><td>A fresh wiki link changed from <code>[[Link Target]]</code> to <code>[[Link Target Renamed]]</code> when the target was renamed, and opened the renamed note.</td></tr>
+                <tr><td>Notebook counts and import copy</td><td><span class="status pass">Passed after repair</span></td><td>Parent counts include descendant notes. The import description is plain language rather than code-styled implementation text.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="closure-note">The final unsigned verification executable was built from <code>82634a5</code> and had SHA-256 <code>517CF7653430EB0C02E5748C71625813B6353B217567EED8DF24E00B88F7CF70</code>.</p>
+        </section>
+
+        <section id="features">
+          <h2>The current verdict for each feature</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Work reviewed</th><th>Verdict</th><th>Plain-language reason</th></tr></thead>
+              <tbody>
+                <tr><td>PARA vault structure</td><td><span class="status pass">Fixed locally</span></td><td>Capture, import, move, rename, Trash, restore, browsing, holding queues, and repair reporting now enforce the category model with regression coverage.</td></tr>
+                <tr><td>Ollama health checks</td><td><span class="status pass">Fixed locally</span></td><td>Probes authenticate, model availability is checked, relevant settings trigger refresh, and stale generations are rejected.</td></tr>
+                <tr><td>Inherited grouped sync settings</td><td><span class="status pass">Regression covered</span></td><td>Migration and settings tests pass. WebDAV is inherited compatibility, not the v1 synchronization release gate; v1 Notion work remains in issues #12 and #13.</td></tr>
+                <tr><td>Project specification</td><td><span class="status pass">Reconciled</span></td><td>The project status, settled decisions, open questions, and retired Daily Notes behavior now agree.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="issues">
+          <h2>The original issues, explained</h2>
+          <p class="section-intro">These cards preserve the original failure descriptions so the reason for each fix remains understandable. Their file and line references point to the code as it existed during the review; use the closure map above for current status.</p>
+          <div class="callout"><p><strong>Historical section:</strong> every SB item below is fixed locally. The severity labels record the original risk, not an open defect.</p></div>
+
+          <div class="issue-group">
+            <h3>First, protect files and note data</h3>
+            <p>These problems can alter the wrong file, overwrite content, or damage the structure of an existing vault.</p>
+
+            <article class="issue" id="f01">
+              <div class="issue-heading"><h4>SB-01. A crafted path can make the app alter a file outside the vault</h4><span class="severity critical">Critical</span></div>
+              <div class="issue-body"><div class="explanation">
+                <div class="answer"><strong>What happens</strong><p>The command that files a holding note only checks how the supplied path starts. It does not verify where the path really ends after resolving <code>..</code> or a symlink.</p></div>
+                <div class="answer"><strong>Example</strong><p>A path that begins inside <code>.helixnotes/unfiled</code> can contain steps that lead back outside it. The command then adds note metadata to the outside file and tries to move it.</p></div>
+                <div class="answer"><strong>Why it matters</strong><p>A compromised app window or crafted symlink could corrupt or relocate a readable file that was never meant to be a note.</p></div>
+                <div class="answer"><strong>What should change</strong><p>Resolve the real source path, prove it remains inside the holding folder, require a regular Markdown file, and reject symlink and traversal escapes before reading or writing.</p></div>
+              </div><details><summary>Show code evidence</summary><p><code>src-tauri/src/vault/operations.rs:1097-1111</code>; IPC command at <code>src-tauri/src/commands.rs:768-775</code>. Compare the stronger path guards at <code>operations.rs:21-41</code> and <code>90-96</code>.</p></details></div>
+            </article>
+
+            <article class="issue" id="f02">
+              <div class="issue-heading"><h4>SB-02. Import from Obsidian can unfile every existing note</h4><span class="severity high">High</span></div>
+              <div class="issue-body"><div class="explanation">
+                <div class="answer"><strong>What happens</strong><p>The importer scans every Markdown file in the active vault, not only new imports. It rebuilds the metadata with no category and then removes the category already stored in each note.</p></div>
+                <div class="answer"><strong>Example</strong><p>A vault with 500 correctly filed notes is imported for Obsidian cleanup. All 500 notes lose Projects, Areas, Resources, or Archives in their frontmatter.</p></div>
+                <div class="answer"><strong>Why it matters</strong><p>At the next startup, reconciliation sees uncategorized notes and can move all of them to the holding area. Links and familiar paths may also change.</p></div>
+                <div class="answer"><strong>What should change</strong><p>Keep any valid existing category during import and add a regression test that imports and reopens an already-categorized note.</p></div>
+              </div><details><summary>Show code evidence</summary><p><code>src-tauri/src/vault/import.rs:18-29</code>, <code>64-69</code>, <code>337-347</code>; category removal at <code>src-tauri/src/vault/frontmatter.rs:198-209</code>.</p></details></div>
+            </article>
+
+            <article class="issue" id="f03">
+              <div class="issue-heading"><h4>SB-03. Moving or restoring a note can replace another note without warning</h4><span class="severity high">High</span></div>
+              <div class="issue-body"><div class="explanation">
+                <div class="answer"><strong>What happens</strong><p>The app moves a file directly onto its destination without first checking for a same-named note or choosing a safe alternate name.</p></div>
+                <div class="answer"><strong>Example</strong><p><code>Projects/Plan.md</code> is moved into Areas, where <code>Areas/Plan.md</code> already exists. On Linux, the existing Areas note can be replaced.</p></div>
+                <div class="answer"><strong>Why it matters</strong><p>This is silent content loss during an ordinary PARA action. The overwritten note is not sent to Trash first.</p></div>
+                <div class="answer"><strong>What should change</strong><p>Use the collision-safe naming logic for moves and restores, then test same-name moves between every category.</p></div>
+              </div><details><summary>Show code evidence</summary><p><code>src-tauri/src/vault/operations.rs:1002-1017</code> and <code>1238-1272</code>. The reconciliation helper also has a check-then-move race at <code>src-tauri/src/vault/para.rs:208-225</code>. The basic move/restore risk existed before PARA, but PARA makes it a common workflow.</p></details></div>
+            </article>
+
+            <article class="issue" id="f09">
+              <div class="issue-heading"><h4>SB-09. Links and search still point to a note's old location after a move</h4><span class="severity high">High</span></div>
+              <div class="issue-body"><div class="explanation">
+                <div class="answer"><strong>What happens</strong><p>The file moves and Quick Access is updated, but path-based wiki links and the keyword-search index are not.</p></div>
+                <div class="answer"><strong>Example</strong><p>A link to <code>[[Projects/Plan]]</code> stays unchanged after Plan moves to Archives. Search may return the missing Projects path and omit the new Archives path.</p></div>
+                <div class="answer"><strong>Why it matters</strong><p>The note appears moved in one part of the app but missing or broken in another until the index is rebuilt.</p></div>
+                <div class="answer"><strong>What should change</strong><p>Treat a move as one operation that updates the file, category, links, Quick Access, and search index together.</p></div>
+              </div><details><summary>Show code evidence</summary><p>Move: <code>src-tauri/src/vault/operations.rs:1002-1017</code>. Rename already updates links at <code>operations.rs:857-864</code>. Command and search index: <code>src-tauri/src/commands.rs:819-843</code> and <code>src-tauri/src/search/mod.rs:307-342</code>.</p></details></div>
+            </article>
+
+            <article class="issue" id="f14">
+              <div class="issue-heading"><h4>SB-14. One malformed category value can hide otherwise valid metadata</h4><span class="severity medium">Medium</span></div>
+              <div class="issue-body"><div class="explanation">
+                <div class="answer"><strong>What happens</strong><p>If an outside editor writes a category in the wrong YAML type, parsing can fall back to a blank metadata structure instead of rejecting only that field.</p></div>
+                <div class="answer"><strong>Example</strong><p><code>category: 123</code> can cause the parser to lose the note's parsed ID, title, tags, pinned state, and dates in memory.</p></div>
+                <div class="answer"><strong>Why it matters</strong><p>A single bad field should not make unrelated valid fields disappear.</p></div>
+                <div class="answer"><strong>What should change</strong><p>Parse category separately or tolerate invalid category types while keeping the remaining metadata.</p></div>
+              </div><details><summary>Show code evidence</summary><p><code>src-tauri/src/vault/frontmatter.rs:8-17</code> and <code>45-52</code>. Existing tests cover an unknown category string, not a category with the wrong YAML type.</p></details></div>
+            </article>
+
+            <article class="issue" id="f15">
+              <div class="issue-heading"><h4>SB-15. Vault startup can look successful even when filing work failed</h4><span class="severity medium">Medium</span></div>
+              <div class="issue-body"><div class="explanation">
+                <div class="answer"><strong>What happens</strong><p>Reconciliation skips or logs some unreadable notes, directory-walk failures, and failed moves. The app can continue opening the vault without telling the user that the job was partial.</p></div>
+                <div class="answer"><strong>Example</strong><p>Three notes cannot be moved because of permissions. The vault still opens, and the user receives no clear list of the three notes that remain inconsistent.</p></div>
+                <div class="answer"><strong>Why it matters</strong><p>The app's promise that note category is the source of truth is only reliable if failed repairs are visible.</p></div>
+                <div class="answer"><strong>What should change</strong><p>Return a visible partial-failure report and test permission errors. Also avoid filtering out a vault simply because its own folder name begins with a dot.</p></div>
+              </div><details><summary>Show code evidence</summary><p><code>src-tauri/src/vault/para.rs:135-168</code>, <code>194-199</code>; caller at <code>src-tauri/src/commands.rs:74-84</code>.</p></details></div>
+            </article>
+          </div>
+
+          <div class="issue-group">
+            <h3>Then, make the PARA workflow behave consistently</h3>
+            <p>These issues make the main note-taking flow fail, hide notes, or create a state that the design says must never exist.</p>
+
+            <article class="issue" id="f04">
+              <div class="issue-heading"><h4>SB-04. New Note fails unless the app can guess a category</h4><span class="severity high">High</span></div>
+              <div class="issue-body"><div class="explanation">
+                <div class="answer"><strong>What happens</strong><p>The global New Note action does not ask for Projects, Areas, Resources, or Archives. With no note open, it sends no category and the backend refuses to create the note.</p></div>
+                <div class="answer"><strong>Example</strong><p>Open a new vault in All Notes and press New Note. The user sees a message telling them to pick a category, but the button itself never offered that choice.</p></div>
+                <div class="answer"><strong>Why it matters</strong><p>The primary creation button fails at the first moment a new user is likely to try it. When another note is open, the app silently copies that note's folder instead of asking.</p></div>
+                <div class="answer"><strong>What should change</strong><p>Make the global action show the four-category choice before it creates the note.</p></div>
+              </div><details><summary>Show code evidence</summary><p><code>src/lib/components/NoteList.svelte:396-432</code>; <code>AppLayout.svelte:333-336</code>; <code>TitleBar.svelte:123-127</code>; rejection at <code>src-tauri/src/vault/operations.rs:614-628</code>; requirement at <code>docs/SPEC.md:129-130</code>.</p></details></div>
+            </article>
+
+            <article class="issue" id="f05">
+              <div class="issue-heading"><h4>SB-05. Unfile and Restore create states the PARA design forbids</h4><span class="severity high">High</span></div>
+              <div class="issue-body"><div class="explanation">
+                <div class="answer"><strong>What happens</strong><p>Unfile moves a note to the vault root and removes its category. Restore also uses the vault root by default, which can leave the note's stored category and its folder in disagreement.</p></div>
+                <div class="answer"><strong>Example</strong><p>Right-click a Project note and choose Unfile. It now has no category but sits in the normal vault, not in the private holding area reserved for that state.</p></div>
+                <div class="answer"><strong>Why it matters</strong><p>The specification says every normal note must have exactly one category. The UI itself creates the state reconciliation is supposed to repair.</p></div>
+                <div class="answer"><strong>What should change</strong><p>Remove or redefine Unfile, allow only PARA destinations, and restore a note to the category stored inside it. A failed metadata update must make the move fail or roll back.</p></div>
+              </div><details><summary>Show code evidence</summary><p><code>src/lib/components/NoteList.svelte:792-795</code>, <code>1542-1548</code>; <code>src-tauri/src/vault/operations.rs:1002-1051</code>, <code>1238-1272</code>; rule at <code>docs/SPEC.md:125-150</code>.</p></details></div>
+            </article>
+
+            <article class="issue" id="f06">
+              <div class="issue-heading"><h4>SB-06. Notes waiting for a category cannot be opened</h4><span class="severity high">High</span></div>
+              <div class="issue-body"><div class="explanation">
+                <div class="answer"><strong>What happens</strong><p>The holding queue shows clickable note rows, but the normal read command refuses to open files inside the app's metadata folder.</p></div>
+                <div class="answer"><strong>Example</strong><p>A migrated note has a vague title. The user clicks it to inspect the content before deciding its category. Nothing opens; the error is only written to the developer console.</p></div>
+                <div class="answer"><strong>Why it matters</strong><p>Users must file a note without being able to read what it says. Several context-menu actions on those rows fail for the same reason.</p></div>
+                <div class="answer"><strong>What should change</strong><p>Add a narrowly validated read path for holding notes and show only actions that work in that view.</p></div>
+              </div><details><summary>Show code evidence</summary><p>List command at <code>src-tauri/src/vault/operations.rs:1065-1082</code>; read guards at <code>operations.rs:25-79</code>; UI at <code>src/lib/components/NoteList.svelte:342-345</code>, <code>366-380</code>, <code>1184-1218</code>.</p></details></div>
+            </article>
+
+            <article class="issue" id="f07">
+              <div class="issue-heading"><h4>SB-07. A category view hides notes stored in its subfolders</h4><span class="severity high">High</span></div>
+              <div class="issue-body"><div class="explanation">
+                <div class="answer"><strong>What happens</strong><p>On desktop, a category view lists only Markdown files directly inside the category folder. It does not scan that category's subfolders.</p></div>
+                <div class="answer"><strong>Example</strong><p><code>Projects/Launch/plan.md</code> belongs to Projects, but it does not appear when the user clicks Projects.</p></div>
+                <div class="answer"><strong>Why it matters</strong><p>The Projects count and list can look incomplete even though the files are correctly categorized.</p></div>
+                <div class="answer"><strong>What should change</strong><p>Make category browsing recursive and select notes by the category stored in each note.</p></div>
+              </div><details><summary>Show code evidence</summary><p><code>src/lib/components/NoteList.svelte:357-359</code>; non-recursive scan at <code>src-tauri/src/vault/operations.rs:410-416</code>.</p></details></div>
+            </article>
+
+            <article class="issue" id="f08">
+              <div class="issue-heading"><h4>SB-08. Moving a folder to another category does not really move its notes</h4><span class="severity high">High</span></div>
+              <div class="issue-body"><div class="explanation">
+                <div class="answer"><strong>What happens</strong><p>The app moves the folder but does not change the category stored inside its notes. At the next startup, reconciliation follows the old categories and moves the notes back one by one.</p></div>
+                <div class="answer"><strong>Example</strong><p>Move <code>Projects/Launch</code> into Archives. On reopen, its notes can return to Projects while losing the Launch folder structure.</p></div>
+                <div class="answer"><strong>Why it matters</strong><p>The UI reports success, but startup later reverses the action and may flatten the user's organization.</p></div>
+                <div class="answer"><strong>What should change</strong><p>Define folder-move behavior and update every contained note's category as part of the same operation.</p></div>
+              </div><details><summary>Show code evidence</summary><p><code>src/lib/components/Sidebar.svelte:397-410</code>, <code>474-491</code>; backend rename-only path at <code>src-tauri/src/vault/operations.rs:1131-1164</code>.</p></details></div>
+            </article>
+
+            <article class="issue" id="f12">
+              <div class="issue-heading"><h4>SB-12. The sidebar offers actions that can never succeed</h4><span class="severity medium">Medium</span></div>
+              <div class="issue-body"><div class="explanation">
+                <div class="answer"><strong>What happens</strong><p>Projects, Areas, Resources, and Archives still show Rename, Delete, and drag actions even though the backend correctly rejects those operations.</p></div>
+                <div class="answer"><strong>Example</strong><p>A user chooses Rename on Projects. The menu implies the action is supported, but the backend refuses it. The sidebar can also create a top-level folder where New Note is then rejected.</p></div>
+                <div class="answer"><strong>Why it matters</strong><p>The interface leads users into dead ends and makes fixed PARA rules look unreliable.</p></div>
+                <div class="answer"><strong>What should change</strong><p>Hide invalid actions on the four roots and keep all user-created folders inside one of those categories.</p></div>
+              </div><details><summary>Show code evidence</summary><p><code>src/lib/components/Sidebar.svelte:252-283</code>, <code>955-976</code>, <code>1073-1135</code>; backend root protection at <code>src-tauri/src/vault/operations.rs:1114-1128</code>.</p></details></div>
+            </article>
+
+            <article class="issue" id="f13">
+              <div class="issue-heading"><h4>SB-13. A large holding queue can skip notes while scrolling</h4><span class="severity medium">Medium</span></div>
+              <div class="issue-body"><div class="explanation">
+                <div class="answer"><strong>What happens</strong><p>The scroll calculation assumes every note uses one fixed row height. Holding notes have a second row of category buttons that the calculation does not count.</p></div>
+                <div class="answer"><strong>Example</strong><p>After migrating many uncategorized notes, scrolling halfway through the queue can render the wrong slice of notes or hide later ones too early.</p></div>
+                <div class="answer"><strong>Why it matters</strong><p>The problem appears exactly when a user has a large cleanup job and needs to trust that every note is visible.</p></div>
+                <div class="answer"><strong>What should change</strong><p>Measure the complete row or turn off fixed-height virtualization for the holding queue.</p></div>
+              </div><details><summary>Show code evidence</summary><p>Virtual-row math at <code>src/lib/components/NoteList.svelte:210-222</code>; extra controls at <code>1330-1343</code> and <code>2394-2419</code>.</p></details></div>
+            </article>
+          </div>
+
+          <div class="issue-group">
+            <h3>Make AI status describe the server that will actually be used</h3>
+            <p>The inference code and the health-check code disagree about authentication and current server identity.</p>
+
+            <article class="issue" id="f10">
+              <div class="issue-heading"><h4>SB-10. Password-protected Ollama servers are reported as offline</h4><span class="severity high">High</span></div>
+              <div class="issue-body"><div class="explanation">
+                <div class="answer"><strong>What happens</strong><p>AI inference sends the optional Ollama API key, but the health check does not. An authenticated proxy rejects the check with 401.</p></div>
+                <div class="answer"><strong>Example</strong><p>The configured model server is working and the saved key is correct. The unauthenticated check fails, marks it offline, and blocks the authenticated inference request before it is sent.</p></div>
+                <div class="answer"><strong>Why it matters</strong><p>A configuration the Settings screen explicitly supports becomes unusable.</p></div>
+                <div class="answer"><strong>What should change</strong><p>Use the configured credential for health and connection-test requests, then test against an authenticated mock server.</p></div>
+              </div><details><summary>Show code evidence</summary><p>Settings at <code>src/lib/components/SettingsPanel.svelte:2240-2249</code>; authenticated inference at <code>src-tauri/src/ai.rs:57-69</code>, <code>396-417</code>; unauthenticated probe at <code>src-tauri/src/ai_health.rs:180-188</code>.</p></details></div>
+            </article>
+
+            <article class="issue" id="f11">
+              <div class="issue-heading"><h4>SB-11. The AI status can describe an old server</h4><span class="severity medium">Medium</span></div>
+              <div class="issue-body"><div class="explanation">
+                <div class="answer"><strong>What happens</strong><p>Saving new AI settings does not clear or refresh the current status. Two checks can overlap, and a slow result from the old endpoint can overwrite the newer result.</p></div>
+                <div class="answer"><strong>Example</strong><p>Server A is down, then the user switches to working server B and checks again. B reports available first. A times out later and changes the shared status back to unavailable.</p></div>
+                <div class="answer"><strong>Why it matters</strong><p>The app can block requests to a healthy current server because an older, unrelated check finished last.</p></div>
+                <div class="answer"><strong>What should change</strong><p>Attach status to the full endpoint and a settings generation. Discard obsolete responses and refresh immediately after a relevant settings change.</p></div>
+              </div><details><summary>Show code evidence</summary><p><code>src-tauri/src/ai_health.rs:252-300</code>; settings save at <code>src-tauri/src/commands.rs:2334-2364</code>; fast rejection at <code>commands.rs:2645-2660</code>.</p></details></div>
+            </article>
+          </div>
+
+          <div class="issue-group">
+            <h3>Clean up behavior left behind by the redesign</h3>
+            <p>These do not present the same immediate data risk, but they make the app and its specification harder to trust.</p>
+
+            <article class="issue" id="f16">
+              <div class="issue-heading"><h4>SB-16. A removed Daily Notes setting is still visible</h4><span class="severity medium">Medium</span></div>
+              <div class="issue-body"><div class="explanation">
+                <div class="answer"><strong>What happens</strong><p>The calendar and daily-note action are gone, but Settings still shows "Daily note title format," and the configuration still carries daily-note fields.</p></div>
+                <div class="answer"><strong>Why it matters</strong><p>The specification says Daily Notes were removed entirely. A visible setting suggests the feature still works.</p></div>
+                <div class="answer wide"><strong>What should change</strong><p>Remove the visible setting. If old fields must remain for backward-compatible loading, document that reason and keep them out of the UI.</p></div>
+              </div><details><summary>Show code evidence</summary><p><code>src/lib/components/SettingsPanel.svelte:1361-1370</code>; <code>src/lib/types.ts:147</code>, <code>159</code>; <code>src-tauri/src/types.rs:96</code>, <code>139-140</code>, <code>164</code>; decision at <code>docs/SPEC.md:156-161</code>.</p></details></div>
+            </article>
+
+            <article class="issue" id="f17">
+              <div class="issue-heading"><h4>SB-17. An old session can reopen an empty, obsolete view</h4><span class="severity low">Low</span></div>
+              <div class="issue-body"><div class="explanation">
+                <div class="answer"><strong>What happens</strong><p>An older saved root-notebook session reopens the legacy "Unfiled Notes" pseudo-folder instead of All Notes or the new holding queue.</p></div>
+                <div class="answer"><strong>Why it matters</strong><p>After reconciliation, that view is usually empty while the real uncategorized notes are somewhere else. The user can think the notes vanished.</p></div>
+                <div class="answer wide"><strong>What should change</strong><p>Map the legacy root value to All Notes or directly to the current "Needs a category" view.</p></div>
+              </div><details><summary>Show code evidence</summary><p><code>src/lib/utils/startup-view.ts:47-49</code>; <code>src/lib/components/AppLayout.svelte:91-103</code>.</p></details></div>
+            </article>
+
+            <article class="issue" id="f18">
+              <div class="issue-heading"><h4>SB-18. The authoritative specification disagrees with itself</h4><span class="severity low">Low</span></div>
+              <div class="issue-body"><div class="explanation">
+                <div class="answer"><strong>What happens</strong><p>The document still labels the project "pre-implementation." It describes search indexing and version history as settled, then lists them again as open decisions.</p></div>
+                <div class="answer"><strong>Why it matters</strong><p>Future agents are instructed to treat this file as authoritative. Contradictions can send them in different directions.</p></div>
+                <div class="answer wide"><strong>What should change</strong><p>Update the project status and remove resolved questions from the open-decision section.</p></div>
+              </div><details><summary>Show code evidence</summary><p><code>docs/SPEC.md:3</code>; settled sections at <code>76-112</code>; open-decision list at <code>339-345</code>.</p></details></div>
+            </article>
+          </div>
+        </section>
+
+        <section id="limits">
+          <h2>What remains untested</h2>
+          <ul class="limits">
+            <li><strong>Live Ollama deployment:</strong> the deterministic socket matrix is complete, including authentication and stale responses. A real private/authenticated Ollama server remains untested.</li>
+            <li><strong>Notion synchronization:</strong> v1 one-way and two-way synchronization are not implemented by this branch. Their implementation and live-service evidence belong to issues #12 and #13.</li>
+            <li><strong>Linux native walkthrough:</strong> automated Linux verification passes, but the packaged Linux UI has not completed the same disposable-vault walkthrough performed on Windows.</li>
+            <li><strong>Signed release pipeline:</strong> verification artifacts were deliberately built with <code>--no-sign</code>. The private updater key was not present, so signing and update installation were not exercised.</li>
+            <li><strong>Bundle-size budget:</strong> the production build passes, but the largest client chunk is about 1.56 MB before gzip. Measure startup impact and set a deliberate budget before treating the warning as accepted.</li>
+          </ul>
+          <div class="callout"><p><strong>Known test-suite fact:</strong> the Rust main and documentation targets currently contain zero tests. The 181 Linux tests and 169 Windows tests at the walkthrough head are green; the empty targets are recorded here so they are not mistaken for missing output.</p></div>
+        </section>
+
+        <section id="fixes">
+          <h2>What happens next</h2>
+          <p class="section-intro">The reviewed remediation is ready to integrate. It closes foundation defects; it does not replace the remaining GitHub roadmap.</p>
+          <ol class="fix-order">
+            <li><strong>Merge the remediation PR.</strong> Require the pinned Rust 1.88 verification workflow and close only the remediation tickets its evidence satisfies.</li>
+            <li><strong>Implement the remaining roadmap in dependency order.</strong> Treat live Ollama acceptance as issue #2 and Notion synchronization as issues #12 and #13.</li>
+            <li><strong>Run final release engineering after feature completion.</strong> Validate the signed Windows installer/updater, Linux packaged walkthrough, and an explicit startup/bundle budget; the umbrella gate is GitHub issue <code>#24</code>.</li>
+            <li><strong>Issue final release sign-off.</strong> Update this report only when those issue-owned gates have evidence.</li>
+          </ol>
+        </section>
+      </main>
+    </div>
+
+    <footer>Original multi-agent review of <code>upstream/main ce48d77..753734b</code>, maintained through the remediation PR preparation on 1 September 2026. Current status: reviewed foundation fixes ready for PR; broader v1 tickets and final release gates remain.</footer>
+  </div>
+</body>
+</html>

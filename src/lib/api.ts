@@ -19,6 +19,7 @@ import type {
   TaskItem,
   ExternalVaultResult,
   StartupView,
+  RepairStatus,
 } from "./types";
 
 export async function openVault(path: string): Promise<void> {
@@ -132,6 +133,11 @@ export async function readNote(path: string): Promise<NoteContent> {
   return invoke("read_note", { path });
 }
 
+/** Read-only preview of a validated note directly inside the Holding Area. */
+export async function readUnfiledNote(path: string): Promise<NoteContent> {
+  return invoke("read_unfiled_note", { path });
+}
+
 export async function saveNote(
   path: string,
   meta: NoteMeta,
@@ -228,11 +234,8 @@ export async function getTrash(): Promise<TrashContents> {
   return invoke("get_trash");
 }
 
-export async function restoreNote(
-  trashPath: string,
-  destNotebook: string | null,
-): Promise<string> {
-  return invoke("restore_note", { trashPath, destNotebook });
+export async function restoreNote(trashPath: string): Promise<string> {
+  return invoke("restore_note", { trashPath });
 }
 
 export async function restoreNotebook(trashPath: string): Promise<string> {
@@ -293,7 +296,6 @@ export async function setGeneralSettings(
   compactNotes: boolean,
   timeFormat: string,
   weekStart: string,
-  dailyTitleFormat: string,
   gpuAcceleration: boolean,
   autostart: boolean,
   pdfPreview: boolean,
@@ -314,14 +316,12 @@ export async function setGeneralSettings(
   showAllNotes: boolean,
   showQuickAccess: boolean,
   showTasks: boolean,
-  showDailyNotes: boolean,
   showTrash: boolean,
 ): Promise<void> {
   return invoke("set_general_settings", {
     compactNotes,
     timeFormat,
     weekStart,
-    dailyTitleFormat,
     gpuAcceleration,
     autostart,
     pdfPreview,
@@ -342,7 +342,6 @@ export async function setGeneralSettings(
     showAllNotes,
     showQuickAccess,
     showTasks,
-    showDailyNotes,
     showTrash,
   });
 }
@@ -564,4 +563,12 @@ export async function isMobilePlatform(): Promise<boolean> {
 
 export async function getPendingOpenFile(): Promise<string | null> {
   return invoke("get_pending_open_file");
+}
+
+export async function getRepairStatus(): Promise<RepairStatus> {
+  return invoke("get_repair_status");
+}
+
+export async function retryRepairs(): Promise<RepairStatus> {
+  return invoke("retry_repairs");
 }

@@ -29,6 +29,12 @@
 	import type { NotebookEntry } from '$lib/types';
 	import { isMobile } from '$lib/platform';
 	import { decodeNoteDragPaths } from '$lib/utils/note-drag';
+	import {
+		canCreateNotebookUnder,
+		canMoveNotebookTo,
+		canReorderNotebookBeside,
+		notebookUiPolicy
+	} from '$lib/utils/para-ui-policy';
 	import NotebookGlyph from './NotebookGlyph.svelte';
 	import {
 		NOTEBOOK_ICON_OPTIONS,
@@ -76,6 +82,14 @@
 	const baseOf = (p: string) => p.slice(lastSep(p) + 1);
 	const joinPath = (parent: string, name: string) => parent + (parent.includes('\\') ? '\\' : '/') + name;
 	const isDescendant = (child: string, anc: string) => child.startsWith(anc + '/') || child.startsWith(anc + '\\');
+	const relativeOf = (path: string) => {
+		const normalizedPath = norm(path);
+		const vault = norm($appConfig?.active_vault ?? '');
+		if (!vault || normalizedPath === vault) return '';
+		return normalizedPath.startsWith(vault + '/')
+			? normalizedPath.slice(vault.length + 1)
+			: normalizedPath;
+	};
 
 	// Apply manual ordering recursively when in 'manual' sort mode.
 	// In 'alphabetical' mode the Rust scanner already sorts, so we pass through unchanged.
@@ -227,6 +241,9 @@
 	}
 
 	let newNotebookParent = $state<NotebookEntry | null>(null);
+	let canCreateAtActiveNotebook = $derived(
+		canCreateNotebookUnder($activeNotebook?.relative_path)
+	);
 
 	function getNotebookNameSegments(name: string): string[] | null {
 		const segments = name.split('/').map((segment) => segment.trim());
@@ -248,9 +265,9 @@
 			newNotebookParent = null;
 			return;
 		}
+		if (!canCreateAtActiveNotebook || !$activeNotebook) return;
 
-		// Unfiled Notes is the root pseudo-notebook (empty relative_path); treat it as root.
-		newNotebookParent = ($viewMode === 'notebook' && $activeNotebook?.relative_path) ? $activeNotebook : null;
+		newNotebookParent = $activeNotebook;
 		showNewNotebook = true;
 		await focusNewNotebookInput();
 	}
@@ -259,19 +276,21 @@
 		const target = e.target as HTMLElement | null;
 		if (target?.closest('button, input, .context-menu, .delete-confirm-overlay')) return;
 
-		newNotebookParent = ($viewMode === 'notebook' && $activeNotebook?.relative_path) ? $activeNotebook : null;
+		if (!canCreateAtActiveNotebook || !$activeNotebook) return;
+		newNotebookParent = $activeNotebook;
 		newNotebookName = '';
 		showNewNotebook = true;
 		await focusNewNotebookInput();
 	}
 
 	async function handleCreateNotebook() {
-		if (!newNotebookName.trim()) return;
+		if (!newNotebookName.trim() || !canCreateNotebookUnder(newNotebookParent?.relative_path)) return;
 		try {
 			const trimmedName = newNotebookName.trim();
-			const parentRel = newNotebookParent?.relative_path ?? null;
-			const name = parentRel ? trimmedName : getNotebookNameSegments(trimmedName)?.join('/');
-			if (!name) return;
+			const parentRel = newNotebookParent!.relative_path;
+			const segments = getNotebookNameSegments(trimmedName);
+			if (!segments || segments.length !== 1) return;
+			const name = segments[0];
 
 			await createNotebook(parentRel, name);
 			newNotebookName = '';
@@ -294,13 +313,10 @@
 			newNotebookParent = null;
 			return;
 		}
-		if (e.key === 'Backspace' && newNotebookParent && newNotebookName.length === 0) {
-			e.preventDefault();
-			newNotebookParent = null;
-		}
 	}
 
 	async function startNewSubNotebook(nb: NotebookEntry) {
+		if (!notebookUiPolicy(nb.relative_path).createChild) return;
 		contextMenu = null;
 		newNotebookParent = nb;
 		newNotebookName = '';
@@ -313,6 +329,7 @@
 	}
 
 	async function handleRename(nb: NotebookEntry) {
+		if (!notebookUiPolicy(nb.relative_path).rename) return;
 		if (!editValue.trim() || editValue.trim() === nb.name) {
 			editingNotebook = null;
 			return;
@@ -326,13 +343,10 @@
 		}
 	}
 
-	function countNotesRecursive(nb: NotebookEntry): number {
-		return nb.note_count + nb.children.reduce((sum, c) => sum + countNotesRecursive(c), 0);
-	}
-
 	function handleDelete(nb: NotebookEntry) {
+		if (!notebookUiPolicy(nb.relative_path).delete) return;
 		contextMenu = null;
-		const total = countNotesRecursive(nb);
+		const total = nb.note_count;
 		if (total > 0) {
 			deleteConfirm = nb;
 		} else {
@@ -345,6 +359,7 @@
 	}
 
 	async function confirmDelete(nb: NotebookEntry) {
+		if (!notebookUiPolicy(nb.relative_path).delete) return;
 		deleteConfirm = null;
 		try {
 			await deleteNotebook(nb.path);
@@ -398,6 +413,7 @@
 		dropTargetPath = null;
 		dropPosition = null;
 		draggedNotebookPath = null;
+		if (!canMoveNotebookTo(relativeOf(srcPath), relativeOf(destPath))) return;
 		// Don't move onto self or descendant
 		if (destPath === srcPath || isDescendant(destPath, srcPath)) return;
 		// Don't move if already in that parent
@@ -437,6 +453,7 @@
 	}
 
 	function nbHandleDown(e: PointerEvent, nb: NotebookEntry) {
+		if (!notebookUiPolicy(nb.relative_path).move) return;
 		if (e.pointerType === 'mouse' && e.button !== 0) return;
 		e.stopPropagation();
 		e.preventDefault();
@@ -457,7 +474,6 @@
 		if (!nbPointer) return;
 		e.preventDefault();
 		const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
-		if (el?.closest('[data-nb-root]')) { dropTargetPath = '__root__'; dropPosition = null; return; }
 		const row = el?.closest('[data-nb-path]') as HTMLElement | null;
 		const path = row?.getAttribute('data-nb-path');
 		if (!path) { dropTargetPath = null; dropPosition = null; return; }
@@ -466,6 +482,10 @@
 		const rect = row!.getBoundingClientRect();
 		const relY = (e.clientY - rect.top) / rect.height;
 		const pos: 'above' | 'into' | 'below' = relY < 0.3 ? 'above' : relY > 0.7 ? 'below' : 'into';
+		const allowed = pos === 'into'
+			? canMoveNotebookTo(relativeOf(src), relativeOf(path))
+			: canReorderNotebookBeside(relativeOf(src), relativeOf(path));
+		if (!allowed) { dropTargetPath = null; dropPosition = null; return; }
 		if (pos === 'into' && src.substring(0, src.lastIndexOf('/')) === path) { dropTargetPath = null; dropPosition = null; return; }
 		dropTargetPath = path;
 		dropPosition = pos;
@@ -482,10 +502,7 @@
 		dropTargetPath = null;
 		dropPosition = null;
 		if (!target) return;
-		if (target === '__root__') {
-			const vaultRoot = $appConfig?.active_vault;
-			if (vaultRoot) nestNotebook(src, vaultRoot);
-		} else if (pos === 'above' || pos === 'below') {
+		if (pos === 'above' || pos === 'below') {
 			handleNotebookReorder(src, target, pos);
 		} else if (pos === 'into') {
 			nestNotebook(src, target);
@@ -511,6 +528,7 @@
 		draggedNotebookPath = null;
 		if (srcPath === targetPath) return;
 		if (isDescendant(targetPath, srcPath)) return; // can't move into descendant
+		if (!canReorderNotebookBeside(relativeOf(srcPath), relativeOf(targetPath))) return;
 		const vaultRoot = $appConfig?.active_vault;
 		if (!vaultRoot) return;
 
@@ -580,6 +598,7 @@
 	}
 
 	async function startRename(nb: NotebookEntry) {
+		if (!notebookUiPolicy(nb.relative_path).rename) return;
 		contextMenu = null;
 		editingNotebook = nb.path;
 		editValue = nb.name;
@@ -807,22 +826,6 @@
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div
 				class="section-header"
-				class:drop-target={dropTargetPath === '__root__'}
-				data-nb-root
-				ondragover={(e) => {
-					if (draggedNotebookPath) {
-						e.preventDefault();
-						e.dataTransfer!.dropEffect = 'move';
-						dropTargetPath = '__root__';
-					}
-				}}
-				ondragleave={() => { if (dropTargetPath === '__root__') dropTargetPath = null; }}
-				ondrop={(e) => {
-					if (draggedNotebookPath) {
-						const vaultRoot = $appConfig?.active_vault;
-						if (vaultRoot) handleNotebookDrop(e, vaultRoot);
-					}
-				}}
 			>
 				<span class="section-title">Notebooks</span>
 				<div class="section-actions">
@@ -837,7 +840,12 @@
 							</svg>
 						</button>
 					{/if}
-					<button class="icon-btn-sm" onclick={toggleNewNotebookInput} title={$viewMode === 'notebook' && $activeNotebook?.relative_path ? `New notebook inside ${$activeNotebook.name}` : 'New notebook'}>
+					<button
+						class="icon-btn-sm"
+						onclick={toggleNewNotebookInput}
+						disabled={!canCreateAtActiveNotebook}
+						title={canCreateAtActiveNotebook ? `New notebook inside ${$activeNotebook?.name}` : 'Select a PARA category or one of its folders first'}
+					>
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
 						</svg>
@@ -848,9 +856,7 @@
 			{#if showNewNotebook}
 				<div class="new-notebook-input">
 					{#if newNotebookParent}
-						<button class="new-notebook-parent" title="Click to create a top-level notebook instead" onmousedown={(e) => { e.preventDefault(); newNotebookParent = null; }}>
-							{newNotebookParent.name}/<span class="new-notebook-parent-x" aria-hidden="true">×</span>
-						</button>
+						<span class="new-notebook-parent">{newNotebookParent.name}/</span>
 					{/if}
 					<input
 						bind:this={newNotebookInput}
@@ -953,27 +959,28 @@
 </aside>
 
 {#if contextMenu}
+	{@const menuPolicy = notebookUiPolicy(contextMenu.notebook.relative_path)}
 	{#if isMobile}
 		<button type="button" class="context-menu-backdrop" aria-label="Close notebook actions" onclick={closeContextMenu}></button>
 	{/if}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="context-menu" class:mobile={isMobile} style="left: {contextMenu.x}px; top: {contextMenu.y}px" onmousedown={(e) => e.stopPropagation()}>
-		<button onclick={() => startNewSubNotebook(contextMenu!.notebook)}>
+		{#if menuPolicy.createChild}<button onclick={() => startNewSubNotebook(contextMenu!.notebook)}>
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" /><line x1="12" y1="11" x2="12" y2="17" /><line x1="9" y1="14" x2="15" y2="14" /></svg>
 			New Sub-notebook
-		</button>
-		<button onclick={() => startRename(contextMenu!.notebook)}>
+		</button>{/if}
+		{#if menuPolicy.rename}<button onclick={() => startRename(contextMenu!.notebook)}>
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
 			Rename
-		</button>
+		</button>{/if}
 		<button onclick={() => openIconPicker(contextMenu!.notebook)}>
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><path d="M8 14s1.5 2 4 2 4-2 4-2" /><line x1="9" y1="9" x2="9.01" y2="9" /><line x1="15" y1="9" x2="15.01" y2="9" /></svg>
 			{$notebookIcons[normalizeNotebookIconKey(contextMenu.notebook.relative_path)] ? 'Change Icon...' : 'Set Icon...'}
 		</button>
-		<button class="danger" onclick={() => handleDelete(contextMenu!.notebook)}>
+		{#if menuPolicy.delete}<button class="danger" onclick={() => handleDelete(contextMenu!.notebook)}>
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" /></svg>
 			Delete
-		</button>
+		</button>{/if}
 	</div>
 {/if}
 
@@ -1041,7 +1048,7 @@
 	<div class="delete-confirm-overlay" onclick={dismissDeleteConfirm} onkeydown={(e) => { if (e.key === 'Escape') deleteConfirm = null; }}>
 		<div class="delete-confirm" class:mobile={isMobile} role="alertdialog" aria-modal="true" aria-labelledby="delete-confirm-title" tabindex="-1">
 			<h4 id="delete-confirm-title">Delete "{deleteConfirm.name}"?</h4>
-			<p>This notebook contains {countNotesRecursive(deleteConfirm)} note{countNotesRecursive(deleteConfirm) === 1 ? '' : 's'} that will be permanently deleted.</p>
+			<p>This notebook contains {deleteConfirm.note_count} note{deleteConfirm.note_count === 1 ? '' : 's'} that will be permanently deleted.</p>
 			<div class="delete-confirm-actions">
 				<button class="delete-confirm-cancel" onclick={() => deleteConfirm = null}>Cancel</button>
 				<button class="delete-confirm-btn" onclick={() => confirmDelete(deleteConfirm!)}>Delete</button>
@@ -1055,6 +1062,7 @@
 	{@const isCollapsed = $collapsedNotebooks.includes(nb.path)}
 	{@const iconSrc = getNotebookIconSrc(nb)}
 	{@const builtinIcon = decodeBuiltinNotebookIcon($notebookIcons[normalizeNotebookIconKey(nb.relative_path)])}
+	{@const uiPolicy = notebookUiPolicy(nb.relative_path)}
 	{#if editingNotebook === nb.path}
 		<div class="notebook-item" style="padding-left: {4 + depth * 16}px">
 			<input
@@ -1083,14 +1091,13 @@
 				if (!(e.target as Element).closest('.nb-drag-handle')) selectNotebook(nb);
 			}}
 			onkeydown={(e) => {
-				if (e.key === 'F2') {
+				if (e.key === 'F2' && uiPolicy.rename) {
 					e.preventDefault();
 					startRename(nb);
 				}
 			}}
 			oncontextmenu={(e) => onContextMenu(e, nb)}
 			ondragover={(e) => {
-				e.preventDefault();
 				if (draggedNotebookPath) {
 					// Prevent drop on self or descendant
 					if (nb.path === draggedNotebookPath || nb.path.startsWith(draggedNotebookPath + '/')) {
@@ -1105,11 +1112,18 @@
 				if (draggedNotebookPath && relY < 0.3) pos = 'above';
 				else if (draggedNotebookPath && relY > 0.7) pos = 'below';
 				else pos = 'into';
+				if (draggedNotebookPath) {
+					const allowed = pos === 'into'
+						? canMoveNotebookTo(relativeOf(draggedNotebookPath), nb.relative_path)
+						: canReorderNotebookBeside(relativeOf(draggedNotebookPath), nb.relative_path);
+					if (!allowed) { e.dataTransfer!.dropEffect = 'none'; return; }
+				}
 				// For 'into', reject if already in that parent (no-op)
 				if (pos === 'into' && draggedNotebookPath) {
 					const parentDir = draggedNotebookPath.substring(0, draggedNotebookPath.lastIndexOf('/'));
 					if (parentDir === nb.path) { e.dataTransfer!.dropEffect = 'none'; return; }
 				}
+				e.preventDefault();
 				e.dataTransfer!.dropEffect = 'move';
 				dropTargetPath = nb.path;
 				dropPosition = pos;
@@ -1125,6 +1139,10 @@
 					const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 					const relY = (e.clientY - rect.top) / rect.height;
 					const pos = relY < 0.3 ? 'above' : relY > 0.7 ? 'below' : 'into';
+					const allowed = pos === 'into'
+						? canMoveNotebookTo(relativeOf(draggedNotebookPath), nb.relative_path)
+						: canReorderNotebookBeside(relativeOf(draggedNotebookPath), nb.relative_path);
+					if (!allowed) return;
 					if (pos === 'above' || pos === 'below') {
 						handleNotebookReorder(draggedNotebookPath, nb.path, pos);
 					} else {
@@ -1162,11 +1180,11 @@
 			</svg>
 		{/if}
 			<span class="notebook-name">{nb.name} <span class="notebook-count">{nb.note_count}</span></span>
-			{#if $notebookSortMode === 'manual'}
+			{#if uiPolicy.move}
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<span
 					class="nb-drag-handle"
-					title="Drag to reorder"
+					title="Drag to move or reorder"
 					onpointerdown={(e) => nbHandleDown(e, nb)}
 				>
 					<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="5" r="1.6"/><circle cx="15" cy="5" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="19" r="1.6"/><circle cx="15" cy="19" r="1.6"/></svg>
@@ -1401,18 +1419,6 @@
 		border: none;
 		border-radius: 4px;
 		background: var(--bg-hover);
-		cursor: pointer;
-	}
-
-	.new-notebook-parent:hover {
-		color: var(--text-primary);
-		background: var(--accent-light);
-	}
-
-	.new-notebook-parent-x {
-		font-size: 13px;
-		line-height: 1;
-		opacity: 0.7;
 	}
 
 	.new-notebook-input input {
@@ -1469,8 +1475,7 @@
 		color: var(--text-accent);
 	}
 
-	.notebook-item.drop-target,
-	.section-header.drop-target {
+	.notebook-item.drop-target {
 		background: color-mix(in srgb, var(--accent) 20%, transparent);
 		outline: 2px dashed var(--accent);
 		outline-offset: -2px;

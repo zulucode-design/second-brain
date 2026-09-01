@@ -2,29 +2,197 @@ use crate::asset_scope;
 use crate::search::SearchIndex;
 use crate::state::AppState;
 use crate::types::*;
-use crate::vault::{operations, watcher};
+use crate::vault::{operations, repair, watcher};
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager, Runtime, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tauri_plugin_fs::FsExt;
 
-fn index_note_bg(state: &State<'_, AppState>, path: &str) {
-    let search = state.search_index.lock().ok().and_then(|g| g.clone());
-    if let Some(search) = search {
-        let p = path.to_string();
-        std::thread::spawn(move || {
-            let _ = search.index_note(&p);
-        });
+fn publish_repair_status(
+    state: &State<'_, AppState>,
+    status: repair::RepairStatus,
+) -> Result<(), String> {
+    *state
+        .repair_status
+        .lock()
+        .map_err(|error| error.to_string())? = status.clone();
+    if let Some(app) = state
+        .app_handle
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone()
+    {
+        let _ = app.emit("repair-status-changed", status);
     }
+    Ok(())
 }
 
-fn remove_note_bg(state: &State<'_, AppState>, path: &str) {
+fn record_repair_issue(
+    state: &State<'_, AppState>,
+    vault_path: &str,
+    issue: repair::RepairIssue,
+) -> Result<(), String> {
+    let mut status = repair::load(vault_path).unwrap_or_else(|error| {
+        let mut status = state
+            .repair_status
+            .lock()
+            .map(|value| value.clone())
+            .unwrap_or_default();
+        status.record(repair::RepairIssue {
+            key: "reconciliation:ledger".to_string(),
+            stage: repair::RepairStage::Reconciliation,
+            message: format!("The repair ledger was unreadable and has been replaced: {error}"),
+            paths: vec![".helixnotes/repair_issues.json".to_string()],
+        });
+        status
+    });
+    status.record(issue);
+    if let Err(error) = repair::save(vault_path, &status) {
+        status.record(repair::RepairIssue {
+            key: "reconciliation:ledger-write".to_string(),
+            stage: repair::RepairStage::Reconciliation,
+            message: format!(
+                "The repair warning could not be saved to disk. Keep the app open and retry: {error}"
+            ),
+            paths: vec![".helixnotes/repair_issues.json".to_string()],
+        });
+        log::error!("Could not persist vault repair status: {error}");
+    }
+    publish_repair_status(state, status)
+}
+
+fn record_transaction_repair_if_needed(
+    state: &State<'_, AppState>,
+    vault_path: &str,
+    operation: &str,
+    paths: Vec<String>,
+    error: &str,
+) {
+    if !error.starts_with("Repair required: ") {
+        return;
+    }
+    let affected = paths.join("|");
+    let _ = record_repair_issue(
+        state,
+        vault_path,
+        repair::RepairIssue {
+            key: format!("reconciliation:transaction:{operation}:{affected}"),
+            stage: repair::RepairStage::Reconciliation,
+            message: error.to_string(),
+            paths,
+        },
+    );
+}
+
+fn index_note_now(state: &State<'_, AppState>, vault_path: &str, path: &str) -> Result<(), String> {
     let search = state.search_index.lock().ok().and_then(|g| g.clone());
     if let Some(search) = search {
-        let p = path.to_string();
-        std::thread::spawn(move || {
-            let _ = search.remove_note(&p);
-        });
+        if let Err(incremental_error) = search.index_note(path) {
+            if let Err(rebuild_error) = search.rebuild(vault_path) {
+                record_repair_issue(
+                    state,
+                    vault_path,
+                    repair::RepairIssue {
+                        key: "search:index".to_string(),
+                        stage: repair::RepairStage::Search,
+                        message: format!(
+                            "Search update failed ({incremental_error}); full rebuild also failed: {rebuild_error}"
+                        ),
+                        paths: vec![path.to_string()],
+                    },
+                )?;
+            }
+        }
     }
+    Ok(())
+}
+
+fn remove_note_now(
+    state: &State<'_, AppState>,
+    vault_path: &str,
+    path: &str,
+) -> Result<(), String> {
+    let search = state.search_index.lock().ok().and_then(|g| g.clone());
+    if let Some(search) = search {
+        if let Err(incremental_error) = search.remove_note(path) {
+            if let Err(rebuild_error) = search.rebuild(vault_path) {
+                record_repair_issue(
+                    state,
+                    vault_path,
+                    repair::RepairIssue {
+                        key: "search:index".to_string(),
+                        stage: repair::RepairStage::Search,
+                        message: format!(
+                            "Search removal failed ({incremental_error}); full rebuild also failed: {rebuild_error}"
+                        ),
+                        paths: vec![path.to_string()],
+                    },
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn reindex_moved_note_now(
+    state: &State<'_, AppState>,
+    vault_path: &str,
+    old_path: &str,
+    new_path: &str,
+    rewritten_paths: &[String],
+) -> Result<(), String> {
+    let search = state.search_index.lock().ok().and_then(|g| g.clone());
+    if let Some(search) = search {
+        let mut upserts = Vec::with_capacity(rewritten_paths.len() + 1);
+        upserts.push(new_path.to_string());
+        upserts.extend_from_slice(rewritten_paths);
+        if let Err(incremental_error) = search.apply_note_changes(&[old_path.to_string()], &upserts)
+        {
+            if let Err(rebuild_error) = search.rebuild(vault_path) {
+                let mut paths = vec![old_path.to_string(), new_path.to_string()];
+                paths.extend_from_slice(rewritten_paths);
+                record_repair_issue(
+                    state,
+                    vault_path,
+                    repair::RepairIssue {
+                        key: "search:index".to_string(),
+                        stage: repair::RepairStage::Search,
+                        message: format!(
+                            "Search move update failed ({incremental_error}); full rebuild also failed: {rebuild_error}"
+                        ),
+                        paths,
+                    },
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn rebuild_search_now(
+    state: &State<'_, AppState>,
+    vault_path: &str,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let search = state
+        .search_index
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
+    if let Some(search) = search {
+        if let Err(error) = search.rebuild(vault_path) {
+            record_repair_issue(
+                state,
+                vault_path,
+                repair::RepairIssue {
+                    key: "search:index".to_string(),
+                    stage: repair::RepairStage::Search,
+                    message: format!("Full search rebuild failed: {error}"),
+                    paths,
+                },
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn clear_vault_runtime(state: &State<'_, AppState>) -> Result<(), String> {
@@ -66,21 +234,76 @@ fn open_vault_path(
     path: String,
     external: Option<(String, String)>,
 ) -> Result<(), String> {
+    let _note_mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     operations::ensure_vault_structure(&path)?;
+    let (mut repair_status, ledger_error) = match repair::load(&path) {
+        Ok(status) => (status, None),
+        Err(error) => (repair::RepairStatus::default(), Some(error)),
+    };
+    repair_status.clear_stage(repair::RepairStage::Reconciliation);
+    if let Some(error) = ledger_error {
+        repair_status.record(repair::RepairIssue {
+            key: "reconciliation:ledger".to_string(),
+            stage: repair::RepairStage::Reconciliation,
+            message: format!("The repair ledger was unreadable and has been replaced: {error}"),
+            paths: vec![".helixnotes/repair_issues.json".to_string()],
+        });
+    }
+
+    let directory_recovery_failures =
+        crate::vault::relocation::recover_directory_relocations(Path::new(&path));
+    let directory_recovery_blocked = !directory_recovery_failures.is_empty();
+    for (index, failure) in directory_recovery_failures.into_iter().enumerate() {
+        repair_status.record(repair::RepairIssue {
+            key: format!("reconciliation:notebook-move:{index}"),
+            stage: repair::RepairStage::Reconciliation,
+            message: format!(
+                "Could not recover an interrupted notebook move: {}",
+                failure.message
+            ),
+            paths: failure.paths,
+        });
+    }
 
     // Put any note an external program misplaced back under its own category before the
     // search index is built, so the index never records a note at a path it is about to
     // move away from.
-    match operations::reconcile_categories(&path) {
-        Ok(report) => {
-            if report.relocated > 0 {
-                log::info!("Moved {} notes back under their category", report.relocated);
+    if directory_recovery_blocked {
+        log::warn!(
+            "Skipped category reconciliation because an interrupted notebook move needs repair"
+        );
+    } else {
+        match operations::reconcile_categories(&path) {
+            Ok(report) => {
+                if report.relocated > 0 {
+                    log::info!("Moved {} notes back under their category", report.relocated);
+                }
+                if report.needs_attention() {
+                    log::warn!(
+                        "Vault reconciliation needs attention: {} unfiled notes, {} failures",
+                        report.unfiled.len(),
+                        report.failures.len()
+                    );
+                }
+                for failure in report.failures {
+                    repair_status.record(repair::RepairIssue {
+                        key: format!("reconciliation:{}", failure.path),
+                        stage: repair::RepairStage::Reconciliation,
+                        message: failure.message,
+                        paths: vec![failure.path],
+                    });
+                }
             }
-            if report.needs_attention() {
-                log::warn!("{} notes have no category", report.unfiled.len());
-            }
+            Err(error) => repair_status.record(repair::RepairIssue {
+                key: "reconciliation:vault".to_string(),
+                stage: repair::RepairStage::Reconciliation,
+                message: format!("Could not reconcile note categories: {error}"),
+                paths: vec![path.clone()],
+            }),
         }
-        Err(e) => log::warn!("Could not reconcile note categories: {}", e),
     }
 
     // Stage the search index and watcher before replacing the active runtime.
@@ -88,13 +311,35 @@ fn open_vault_path(
     #[cfg(target_os = "ios")]
     {
         if external.is_some() {
-            search.rebuild(&path)?;
+            if let Err(error) = search.rebuild(&path) {
+                repair_status.record(repair::RepairIssue {
+                    key: "search:index".to_string(),
+                    stage: repair::RepairStage::Search,
+                    message: format!("Search rebuild while opening the vault failed: {error}"),
+                    paths: vec![path.clone()],
+                });
+            } else {
+                repair_status.clear_stage(repair::RepairStage::Search);
+            }
         } else {
             let search_bg = search.clone();
             let vault = path.clone();
-            std::thread::spawn(move || {
-                let _ = search_bg.rebuild(&vault);
-                log::info!("mobile: search index rebuild complete");
+            let app_handle = app.clone();
+            std::thread::spawn(move || match search_bg.rebuild(&vault) {
+                Ok(()) => log::info!("mobile: search index rebuild complete"),
+                Err(error) => {
+                    let state = app_handle.state::<AppState>();
+                    let _ = record_repair_issue(
+                        &state,
+                        &vault,
+                        repair::RepairIssue {
+                            key: "search:index".to_string(),
+                            stage: repair::RepairStage::Search,
+                            message: format!("Background search rebuild failed: {error}"),
+                            paths: vec![vault.clone()],
+                        },
+                    );
+                }
             });
         }
     }
@@ -102,13 +347,40 @@ fn open_vault_path(
     {
         let search_bg = search.clone();
         let vault = path.clone();
-        std::thread::spawn(move || {
-            let _ = search_bg.rebuild(&vault);
-            log::info!("mobile: search index rebuild complete");
+        let app_handle = app.clone();
+        std::thread::spawn(move || match search_bg.rebuild(&vault) {
+            Ok(()) => log::info!("mobile: search index rebuild complete"),
+            Err(error) => {
+                let state = app_handle.state::<AppState>();
+                let _ = record_repair_issue(
+                    &state,
+                    &vault,
+                    repair::RepairIssue {
+                        key: "search:index".to_string(),
+                        stage: repair::RepairStage::Search,
+                        message: format!("Background search rebuild failed: {error}"),
+                        paths: vec![vault.clone()],
+                    },
+                );
+            }
         });
     }
     #[cfg(desktop)]
-    search.rebuild(&path)?;
+    {
+        if let Err(error) = search.rebuild(&path) {
+            repair_status.record(repair::RepairIssue {
+                key: "search:index".to_string(),
+                stage: repair::RepairStage::Search,
+                message: format!("Search rebuild while opening the vault failed: {error}"),
+                paths: vec![path.clone()],
+            });
+        } else {
+            repair_status.clear_stage(repair::RepairStage::Search);
+        }
+    }
+
+    repair::save(&path, &repair_status)?;
+    publish_repair_status(state, repair_status)?;
 
     let new_watcher = watcher::start_watcher(app.clone(), path.clone())?;
     asset_scope::allow_vault_assets(&app, Path::new(&path))?;
@@ -565,69 +837,37 @@ pub fn move_notebook(
     notebook_path: String,
     dest_parent: String,
 ) -> Result<String, String> {
-    let config = state.config.lock().map_err(|e| e.to_string())?;
-    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let vault_path = {
+        let config = state.config.lock().map_err(|e| e.to_string())?;
+        config
+            .active_vault
+            .as_ref()
+            .ok_or("No active vault")?
+            .clone()
+    };
 
-    let old_relative = Path::new(&notebook_path)
-        .strip_prefix(vault_path.as_str())
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    let new_full_path = operations::move_notebook(vault_path, &notebook_path, &dest_parent)?;
-
-    let new_relative = Path::new(&new_full_path)
-        .strip_prefix(vault_path.as_str())
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    // Update Quick Access paths for all notes inside the moved notebook
-    if let Ok(mut qa) = operations::load_quick_access(vault_path) {
-        let old_prefix = format!("{}/", old_relative);
-        let mut changed = false;
-        for path in qa.iter_mut() {
-            if path.starts_with(&old_prefix) {
-                *path = format!("{}/{}", new_relative, &path[old_prefix.len()..]);
-                changed = true;
-            }
+    let new_full_path = match operations::move_notebook(&vault_path, &notebook_path, &dest_parent) {
+        Ok(path) => path,
+        Err(error) => {
+            record_transaction_repair_if_needed(
+                &state,
+                &vault_path,
+                "move-notebook",
+                vec![notebook_path, dest_parent],
+                &error,
+            );
+            return Err(error);
         }
-        if changed {
-            let _ = operations::save_quick_access(vault_path, &qa);
-        }
-    }
-
-    // Update notebook icon mappings
-    if let Ok(icons) = operations::load_notebook_icons(vault_path) {
-        let old_icon_key = operations::normalize_notebook_icon_key(&old_relative);
-        let new_icon_key = operations::normalize_notebook_icon_key(&new_relative);
-        let old_prefix = format!("{}/", old_icon_key);
-        let mut new_icons = std::collections::HashMap::new();
-        let mut changed = false;
-        for (key, value) in &icons {
-            if *key == old_icon_key {
-                new_icons.insert(new_icon_key.clone(), value.clone());
-                changed = true;
-            } else if key.starts_with(&old_prefix) {
-                let new_key = format!("{}/{}", new_icon_key, &key[old_prefix.len()..]);
-                new_icons.insert(new_key, value.clone());
-                changed = true;
-            } else {
-                new_icons.insert(key.clone(), value.clone());
-            }
-        }
-        if changed {
-            let icons_path = operations::helixnotes_dir(vault_path).join("notebook_icons.json");
-            if let Ok(data) = serde_json::to_string_pretty(&new_icons) {
-                let _ = std::fs::write(&icons_path, data);
-            }
-        }
-    }
-
-    // Rebuild search index (paths changed for all contained notes)
-    if let Ok(search_guard) = state.search_index.lock() {
-        if let Some(ref search) = *search_guard {
-            let _ = search.rebuild(vault_path);
-        }
-    }
+    };
+    rebuild_search_now(
+        &state,
+        &vault_path,
+        vec![notebook_path, new_full_path.clone()],
+    )?;
 
     Ok(new_full_path)
 }
@@ -664,6 +904,14 @@ pub fn read_note(state: State<'_, AppState>, path: String) -> Result<NoteContent
     operations::read_note(vault_path, &path)
 }
 
+/// Read-only preview for a regular Markdown note directly inside the Holding Area.
+#[tauri::command]
+pub fn read_unfiled_note(state: State<'_, AppState>, path: String) -> Result<NoteContent, String> {
+    let config = state.config.lock().map_err(|error| error.to_string())?;
+    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    operations::read_unfiled_note(vault_path, &path)
+}
+
 #[tauri::command]
 pub fn save_note(
     state: State<'_, AppState>,
@@ -671,6 +919,10 @@ pub fn save_note(
     meta: NoteMeta,
     body: String,
 ) -> Result<(), String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let config = state.config.lock().map_err(|error| error.to_string())?;
     let vault_path = config
         .active_vault
@@ -689,8 +941,7 @@ pub fn save_note(
 
     operations::save_note(&vault_path, &path, &meta, &body)?;
 
-    // Re-index note so search picks up changes (background to avoid blocking on FUSE fsync)
-    index_note_bg(&state, &path);
+    index_note_now(&state, &vault_path, &path)?;
 
     Ok(())
 }
@@ -700,6 +951,10 @@ pub fn duplicate_note(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<crate::types::NoteEntry, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault = config
         .active_vault
@@ -709,7 +964,7 @@ pub fn duplicate_note(
     drop(config);
 
     let entry = operations::duplicate_note(&path, &vault)?;
-    index_note_bg(&state, &entry.path);
+    index_note_now(&state, &vault, &entry.path)?;
     Ok(entry)
 }
 
@@ -719,12 +974,15 @@ pub fn create_note(
     notebook_relative: Option<String>,
     title: String,
 ) -> Result<NoteEntry, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
     let entry = operations::create_note(vault_path, notebook_relative.as_deref(), &title)?;
 
-    // Index new note (background to avoid blocking on FUSE fsync)
-    index_note_bg(&state, &entry.path);
+    index_note_now(&state, vault_path, &entry.path)?;
 
     Ok(entry)
 }
@@ -736,9 +994,9 @@ pub fn create_note(
 #[tauri::command]
 pub fn get_ai_status(state: State<'_, AppState>) -> Result<crate::ai_health::AiStatus, String> {
     state
-        .ai_status
+        .ai_health
         .lock()
-        .map(|status| status.clone())
+        .map(|health| health.status.clone())
         .map_err(|e| e.to_string())
 }
 
@@ -770,11 +1028,15 @@ pub fn file_unfiled_note(
     note_path: String,
     category: String,
 ) -> Result<String, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
     let new_path = operations::file_unfiled_note(vault_path, &note_path, &category)?;
 
-    index_note_bg(&state, &new_path);
+    index_note_now(&state, vault_path, &new_path)?;
 
     Ok(new_path)
 }
@@ -785,6 +1047,10 @@ pub fn rename_note(
     path: String,
     new_title: String,
 ) -> Result<String, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config
         .active_vault
@@ -792,17 +1058,49 @@ pub fn rename_note(
         .ok_or("No active vault")?
         .clone();
     drop(config);
-    operations::rename_note(&path, &new_title, &vault_path)
+    let outcome = match operations::rename_note_with_outcome(&path, &new_title, &vault_path) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            record_transaction_repair_if_needed(
+                &state,
+                &vault_path,
+                "rename-note",
+                vec![path],
+                &error,
+            );
+            return Err(error);
+        }
+    };
+    reindex_moved_note_now(
+        &state,
+        &vault_path,
+        &path,
+        &outcome.path,
+        &outcome.rewritten_paths,
+    )?;
+    Ok(outcome.path)
 }
 
 #[tauri::command]
 pub fn delete_note(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
-    operations::delete_note(vault_path, &path)?;
+    if let Err(error) = operations::delete_note(vault_path, &path) {
+        record_transaction_repair_if_needed(
+            &state,
+            vault_path,
+            "delete-note",
+            vec![path.clone()],
+            &error,
+        );
+        return Err(error);
+    }
 
-    // Remove from index (background to avoid blocking on FUSE fsync)
-    remove_note_bg(&state, &path);
+    remove_note_now(&state, vault_path, &path)?;
 
     Ok(())
 }
@@ -813,34 +1111,24 @@ pub fn move_note(
     note_path: String,
     dest_notebook: String,
 ) -> Result<String, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
 
-    // Compute old relative path before move
-    let old_relative = Path::new(&note_path)
-        .strip_prefix(vault_path)
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
+    let outcome = operations::move_note_with_outcome(vault_path, &note_path, &dest_notebook)?;
 
-    let new_full_path = operations::move_note(vault_path, &note_path, &dest_notebook)?;
+    reindex_moved_note_now(
+        &state,
+        vault_path,
+        &note_path,
+        &outcome.path,
+        &outcome.rewritten_paths,
+    )?;
 
-    // Update quick access if the moved note was in it
-    if !old_relative.is_empty() {
-        if let Ok(mut qa) = operations::load_quick_access(vault_path) {
-            if let Some(pos) = qa.iter().position(|p| *p == old_relative) {
-                let new_relative = Path::new(&new_full_path)
-                    .strip_prefix(vault_path)
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                if !new_relative.is_empty() {
-                    qa[pos] = new_relative;
-                    let _ = operations::save_quick_access(vault_path, &qa);
-                }
-            }
-        }
-    }
-
-    Ok(new_full_path)
+    Ok(outcome.path)
 }
 
 // ── Tags ──
@@ -1232,6 +1520,10 @@ pub fn set_task_done(
     raw_line: String,
     done: bool,
 ) -> Result<(), String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let (vault_path, meta, body) = read_task_note(&state, &note_path)?;
     let mut lines: Vec<String> = body.lines().map(|l| l.to_string()).collect();
     // Verify the expected line; if the note drifted, fall back to the first exact match.
@@ -1255,8 +1547,7 @@ pub fn set_task_done(
     }
     operations::save_note(&vault_path, &note_path, &meta, &new_body)?;
 
-    index_note_bg(&state, &note_path);
-    Ok(())
+    index_note_now(&state, &vault_path, &note_path)
 }
 
 fn set_priority_on_line(line: &str, priority: Option<&str>) -> String {
@@ -1277,6 +1568,10 @@ pub fn set_task_priority(
     raw_line: String,
     priority: Option<String>,
 ) -> Result<(), String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     // Normalize/validate priority ("medium" -> "med"); None clears it.
     let prio = match priority.as_deref() {
         None | Some("") | Some("none") => None,
@@ -1308,8 +1603,7 @@ pub fn set_task_priority(
     }
     operations::save_note(&vault_path, &note_path, &meta, &new_body)?;
 
-    index_note_bg(&state, &note_path);
-    Ok(())
+    index_note_now(&state, &vault_path, &note_path)
 }
 
 fn set_due_on_line(line: &str, due: Option<&str>) -> String {
@@ -1330,6 +1624,10 @@ pub fn set_task_due(
     raw_line: String,
     due: Option<String>,
 ) -> Result<(), String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     // Validate format (YYYY-MM-DD); None/empty clears the due date.
     let date_re = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap();
     let due_val: Option<&str> = match due.as_deref() {
@@ -1360,8 +1658,7 @@ pub fn set_task_due(
     }
     operations::save_note(&vault_path, &note_path, &meta, &new_body)?;
 
-    index_note_bg(&state, &note_path);
-    Ok(())
+    index_note_now(&state, &vault_path, &note_path)
 }
 
 // ── Search ──
@@ -1390,6 +1687,88 @@ pub fn reindex(state: State<'_, AppState>) -> Result<(), String> {
     search.rebuild(vault_path)
 }
 
+#[tauri::command]
+pub fn get_repair_status(state: State<'_, AppState>) -> Result<repair::RepairStatus, String> {
+    state
+        .repair_status
+        .lock()
+        .map(|status| status.clone())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn retry_repairs(state: State<'_, AppState>) -> Result<repair::RepairStatus, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let vault_path = state
+        .config
+        .lock()
+        .map_err(|error| error.to_string())?
+        .active_vault
+        .clone()
+        .ok_or("No active vault")?;
+    let mut status = repair::load(&vault_path)?;
+
+    if status.has_stage(repair::RepairStage::Search) {
+        let search = state
+            .search_index
+            .lock()
+            .map_err(|error| error.to_string())?
+            .clone()
+            .ok_or("Search index not initialized")?;
+        if search.rebuild(&vault_path).is_ok() {
+            status.clear_stage(repair::RepairStage::Search);
+        }
+    }
+
+    status.clear_stage(repair::RepairStage::Reconciliation);
+    let mut reconciliation_moved_notes = false;
+    match operations::reconcile_categories(&vault_path) {
+        Ok(report) => {
+            reconciliation_moved_notes = report.relocated > 0 || report.moved_to_holding > 0;
+            for failure in report.failures {
+                status.record(repair::RepairIssue {
+                    key: format!("reconciliation:{}", failure.path),
+                    stage: repair::RepairStage::Reconciliation,
+                    message: failure.message,
+                    paths: vec![failure.path],
+                });
+            }
+        }
+        Err(error) => status.record(repair::RepairIssue {
+            key: "reconciliation:vault".to_string(),
+            stage: repair::RepairStage::Reconciliation,
+            message: error,
+            paths: vec![vault_path.clone()],
+        }),
+    }
+
+    if reconciliation_moved_notes {
+        let search = state
+            .search_index
+            .lock()
+            .map_err(|error| error.to_string())?
+            .clone()
+            .ok_or("Search index not initialized")?;
+        if let Err(error) = search.rebuild(&vault_path) {
+            status.record(repair::RepairIssue {
+                key: "search:index".to_string(),
+                stage: repair::RepairStage::Search,
+                message: format!("Search rebuild after reconciliation failed: {error}"),
+                paths: vec![vault_path.clone()],
+            });
+        } else {
+            status.clear_stage(repair::RepairStage::Search);
+        }
+    }
+
+    repair::save(&vault_path, &status)?;
+    publish_repair_status(&state, status.clone())?;
+    Ok(status)
+}
+
 // ── Trash ──
 
 #[tauri::command]
@@ -1400,11 +1779,11 @@ pub fn get_trash(state: State<'_, AppState>) -> Result<TrashContents, String> {
 }
 
 #[tauri::command]
-pub fn restore_note(
-    state: State<'_, AppState>,
-    trash_path: String,
-    dest_notebook: Option<String>,
-) -> Result<String, String> {
+pub fn restore_note(state: State<'_, AppState>, trash_path: String) -> Result<String, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let vault_path = {
         let config = state.config.lock().map_err(|e| e.to_string())?;
         config
@@ -1413,7 +1792,21 @@ pub fn restore_note(
             .ok_or("No active vault")?
             .clone()
     };
-    operations::restore_note(&vault_path, &trash_path, dest_notebook.as_deref())
+    let restored = match operations::restore_note(&vault_path, &trash_path) {
+        Ok(restored) => restored,
+        Err(error) => {
+            record_transaction_repair_if_needed(
+                &state,
+                &vault_path,
+                "restore-note",
+                vec![trash_path],
+                &error,
+            );
+            return Err(error);
+        }
+    };
+    index_note_now(&state, &vault_path, &restored)?;
+    Ok(restored)
 }
 
 #[tauri::command]
@@ -1631,7 +2024,6 @@ pub fn set_general_settings(
     compact_notes: bool,
     time_format: String,
     week_start: String,
-    daily_title_format: String,
     gpu_acceleration: bool,
     autostart: bool,
     pdf_preview: bool,
@@ -1652,7 +2044,6 @@ pub fn set_general_settings(
     show_all_notes: bool,
     show_quick_access: bool,
     show_tasks: bool,
-    show_daily_notes: bool,
     show_trash: bool,
 ) -> Result<(), String> {
     let mut config = state.config.lock().map_err(|e| e.to_string())?;
@@ -1664,11 +2055,9 @@ pub fn set_general_settings(
     config.show_all_notes = show_all_notes;
     config.show_quick_access = show_quick_access;
     config.show_tasks = show_tasks;
-    config.show_daily_notes = show_daily_notes;
     config.show_trash = show_trash;
     config.time_format = time_format;
     config.week_start = week_start;
-    config.daily_title_format = daily_title_format;
     config.gpu_acceleration = gpu_acceleration;
     config.autostart = autostart;
     config.pdf_preview = pdf_preview;
@@ -1727,6 +2116,55 @@ pub fn reorder_quick_access(state: State<'_, AppState>, paths: Vec<String>) -> R
     operations::save_quick_access(vault_path, &paths)
 }
 
+fn is_counted_vault_file(vault: &Path, path: &Path) -> bool {
+    let relative = path.strip_prefix(vault).unwrap_or(path);
+    let components: Vec<_> = relative.components().map(|part| part.as_os_str()).collect();
+
+    if components
+        .iter()
+        .any(|part| *part == std::ffi::OsStr::new(".trash"))
+    {
+        return false;
+    }
+
+    match components
+        .iter()
+        .position(|part| *part == std::ffi::OsStr::new(".helixnotes"))
+    {
+        Some(0) => components.get(1) == Some(&std::ffi::OsStr::new("attachments")),
+        Some(_) => false,
+        None => true,
+    }
+}
+
+#[cfg(test)]
+mod vault_stats_path_tests {
+    use super::is_counted_vault_file;
+    use std::path::Path;
+
+    #[test]
+    fn stats_count_notes_and_attachments_but_not_private_or_trash_files() {
+        let vault = Path::new("vault");
+        assert!(is_counted_vault_file(
+            vault,
+            &vault.join("Projects/note.md")
+        ));
+        assert!(is_counted_vault_file(
+            vault,
+            &vault.join(".helixnotes/attachments/image.png")
+        ));
+        assert!(!is_counted_vault_file(
+            vault,
+            &vault.join(".helixnotes/state.json")
+        ));
+        assert!(!is_counted_vault_file(vault, &vault.join(".trash/note.md")));
+        assert!(!is_counted_vault_file(
+            vault,
+            &vault.join("Projects/.trash/note.md")
+        ));
+    }
+}
+
 #[tauri::command]
 pub fn get_vault_stats(state: State<'_, AppState>) -> Result<VaultStats, String> {
     use rayon::prelude::*;
@@ -1738,12 +2176,8 @@ pub fn get_vault_stats(state: State<'_, AppState>) -> Result<VaultStats, String>
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .map(|e| e.into_path())
-        .filter(|p| {
-            // attachments under .helixnotes count; nothing else in .helixnotes or .trash does
-            let s = p.to_string_lossy();
-            (!s.contains("/.helixnotes/") || s.contains("/.helixnotes/attachments/"))
-                && !s.contains("/.trash/")
-        })
+        // Attachments under .helixnotes count; no other private metadata or Trash does.
+        .filter(|path| is_counted_vault_file(Path::new(vault_path), path))
         .collect();
 
     // Stat files in parallel; each metadata() is a FUSE round-trip on Android.
@@ -2332,7 +2766,7 @@ pub fn get_note_version_content(
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn set_ai_settings(
-    state: State<'_, AppState>,
+    app: AppHandle,
     provider: Option<String>,
     api_key: Option<String>,
     model: String,
@@ -2342,25 +2776,62 @@ pub fn set_ai_settings(
     openai_compatible_base_url: Option<String>,
     openai_compatible_api_key: Option<String>,
 ) -> Result<(), String> {
+    let state = app.state::<AppState>();
     let mut config = state.config.lock().map_err(|e| e.to_string())?;
-    let key = api_key.filter(|k| !k.is_empty());
+    let generation = state
+        .ai_health
+        .lock()
+        .map_err(|e| e.to_string())?
+        .generation;
+    let previous_target = crate::ai_health::ollama_target(&config, generation);
+    let mut candidate = config.clone();
+    let key = api_key.filter(|k| !k.trim().is_empty());
     match provider.as_deref() {
-        Some("openai") => config.openai_api_key = key,
+        Some("openai") => candidate.openai_api_key = key,
         Some("ollama") => {
-            config.ollama_base_url = base_url.filter(|u| !u.trim().is_empty());
-            config.ollama_api_key = ollama_api_key.filter(|k| !k.is_empty());
+            candidate.ollama_base_url = base_url.filter(|u| !u.trim().is_empty());
+            candidate.ollama_api_key = ollama_api_key.filter(|k| !k.trim().is_empty());
         }
         Some("openai_compatible") => {
-            config.openai_compatible_base_url =
+            candidate.openai_compatible_base_url =
                 openai_compatible_base_url.filter(|u| !u.trim().is_empty());
-            config.openai_compatible_api_key = openai_compatible_api_key.filter(|k| !k.is_empty());
+            candidate.openai_compatible_api_key =
+                openai_compatible_api_key.filter(|k| !k.trim().is_empty());
         }
-        _ => config.ai_api_key = key,
+        _ => candidate.ai_api_key = key,
     }
-    config.ai_provider = provider;
-    config.ai_model = model;
-    config.ai_writing_style = writing_style.filter(|s| !s.trim().is_empty());
-    save_app_config(&config)?;
+    candidate.ai_provider = provider;
+    candidate.ai_model = model;
+    candidate.ai_writing_style = writing_style.filter(|s| !s.trim().is_empty());
+    let next_target = crate::ai_health::ollama_target(&candidate, generation);
+    let health_settings_changed =
+        !crate::ai_health::same_probe_settings(previous_target.as_ref(), next_target.as_ref());
+    // Persist first: a failed settings save must not change the live provider or health
+    // identity for the rest of this process.
+    save_app_config(&candidate)?;
+    *config = candidate;
+    let invalidated_status = if health_settings_changed {
+        let mut health = state.ai_health.lock().map_err(|e| e.to_string())?;
+        health.generation += 1;
+        let target = crate::ai_health::ollama_target(&config, health.generation);
+        let status = target
+            .as_ref()
+            .map(crate::ai_health::AiStatus::unknown_for)
+            .unwrap_or_else(crate::ai_health::AiStatus::unknown);
+        health.status = status.clone();
+        Some(status)
+    } else {
+        None
+    };
+    drop(config);
+
+    if let Some(status) = invalidated_status {
+        let _ = app.emit("ai-status-changed", status);
+        let refresh_app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::ai_health::check_now(&refresh_app).await;
+        });
+    }
     Ok(())
 }
 
@@ -2617,7 +3088,7 @@ pub fn ai_ask(
     custom_prompt: Option<String>,
     request_id: String,
 ) -> Result<(), String> {
-    let (provider, api_key, model, writing_style, base_url) = {
+    let (provider, api_key, model, writing_style, base_url, ollama_target) = {
         let state = app.state::<AppState>();
         let config = state.config.lock().map_err(|e| e.to_string())?;
         let provider = config
@@ -2639,7 +3110,14 @@ pub fn ai_ask(
             "openai_compatible" => config.openai_compatible_base_url.clone(),
             _ => config.ollama_base_url.clone(),
         };
-        (provider, key, model, style, base_url)
+        let generation = state
+            .ai_health
+            .lock()
+            .map_err(|e| e.to_string())?
+            .generation;
+        let ollama_target =
+            crate::ai_health::ollama_target(&config, generation).map(|target| target.id().clone());
+        (provider, key, model, style, base_url, ollama_target)
     };
 
     // Refuse immediately when the backend is known to be down, with the reason the poller
@@ -2648,11 +3126,15 @@ pub fn ai_ask(
     if provider == "ollama" {
         let status = app
             .state::<AppState>()
-            .ai_status
+            .ai_health
             .lock()
-            .map(|status| status.clone())
+            .map(|health| health.status.clone())
             .map_err(|e| e.to_string())?;
-        if status.availability == crate::ai_health::Availability::Unavailable {
+        if status.availability == crate::ai_health::Availability::Unavailable
+            && ollama_target
+                .as_ref()
+                .is_some_and(|target| status.belongs_to(target))
+        {
             return Err(status
                 .reason
                 .unwrap_or_else(|| "The AI backend is unreachable.".to_string()));

@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use tantivy::collector::TopDocs;
 #[cfg(desktop)]
 use tantivy::directory::MmapDirectory;
-#[cfg(mobile)]
+#[cfg(any(mobile, test))]
 use tantivy::directory::RamDirectory;
 use tantivy::query::{BooleanQuery, FuzzyTermQuery, Occur, PhrasePrefixQuery, Query, TermQuery};
 use tantivy::schema::*;
@@ -176,21 +176,39 @@ pub struct SearchIndex {
     tags_field: Field,
 }
 
+struct SearchSchema {
+    schema: Schema,
+    path_field: Field,
+    title_field: Field,
+    body_field: Field,
+    tags_field: Field,
+}
+
+fn build_search_schema() -> SearchSchema {
+    let mut schema_builder = Schema::builder();
+    let path_field = schema_builder.add_text_field("path", STRING | STORED);
+    let cjk_indexing = TextFieldIndexing::default()
+        .set_tokenizer("cjk")
+        .set_index_option(IndexRecordOption::WithFreqsAndPositions);
+    let cjk_text = TextOptions::default().set_indexing_options(cjk_indexing.clone());
+    let cjk_text_stored = cjk_text.clone().set_stored();
+    let title_field = schema_builder.add_text_field("title", cjk_text_stored.clone());
+    let body_field = schema_builder.add_text_field("body", cjk_text);
+    let tags_field = schema_builder.add_text_field("tags", cjk_text_stored);
+
+    SearchSchema {
+        schema: schema_builder.build(),
+        path_field,
+        title_field,
+        body_field,
+        tags_field,
+    }
+}
+
 impl SearchIndex {
     pub fn new(vault_path: &str) -> Result<Self, String> {
-        let mut schema_builder = Schema::builder();
-        let path_field = schema_builder.add_text_field("path", STRING | STORED);
-        // CJK-aware tokenizer for the indexed text fields (keeps Latin/English
-        // behaviour identical; adds substring matching for Chinese/Japanese/Korean).
-        let cjk_indexing = TextFieldIndexing::default()
-            .set_tokenizer("cjk")
-            .set_index_option(IndexRecordOption::WithFreqsAndPositions);
-        let cjk_text = TextOptions::default().set_indexing_options(cjk_indexing.clone());
-        let cjk_text_stored = cjk_text.clone().set_stored();
-        let title_field = schema_builder.add_text_field("title", cjk_text_stored.clone());
-        let body_field = schema_builder.add_text_field("body", cjk_text);
-        let tags_field = schema_builder.add_text_field("tags", cjk_text_stored);
-        let schema = schema_builder.build();
+        let fields = build_search_schema();
+        let schema = fields.schema.clone();
 
         // Mobile: use in-memory index (flock is unreliable on the sandboxed/FUSE filesystem)
         // Desktop: use mmap directory for persistent index on disk
@@ -234,8 +252,10 @@ impl SearchIndex {
             idx
         };
 
-        // Register the CJK-aware tokenizer (in-memory; must be done on every open,
-        // before the writer is created, so both indexing and querying use it).
+        Self::from_index(index, fields)
+    }
+
+    fn from_index(index: Index, fields: SearchSchema) -> Result<Self, String> {
         index.tokenizers().register(
             "cjk",
             TextAnalyzer::builder(CjkTokenizer)
@@ -253,12 +273,20 @@ impl SearchIndex {
         Ok(Self {
             index,
             writer: Mutex::new(Some(writer)),
-            schema,
-            path_field,
-            title_field,
-            body_field,
-            tags_field,
+            schema: fields.schema,
+            path_field: fields.path_field,
+            title_field: fields.title_field,
+            body_field: fields.body_field,
+            tags_field: fields.tags_field,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_in_memory() -> Result<Self, String> {
+        let fields = build_search_schema();
+        let index = Index::open_or_create(RamDirectory::create(), fields.schema.clone())
+            .map_err(|error| error.to_string())?;
+        Self::from_index(index, fields)
     }
 
     pub fn rebuild(&self, vault_path: &str) -> Result<(), String> {
@@ -339,6 +367,46 @@ impl SearchIndex {
         let term = tantivy::Term::from_field_text(self.path_field, path);
         writer.delete_term(term);
         writer.commit().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Apply a complete path mutation in one Tantivy commit.
+    ///
+    /// Upserts are read before the writer is touched, so a filesystem/read error leaves
+    /// the existing index unchanged. Each upsert path is deleted before its replacement
+    /// document is added, and all removals/additions become visible together.
+    pub fn apply_note_changes(
+        &self,
+        remove_paths: &[String],
+        upsert_paths: &[String],
+    ) -> Result<(), String> {
+        let mut documents = Vec::with_capacity(upsert_paths.len());
+        for path in upsert_paths {
+            let raw = fs::read_to_string(path).map_err(|error| error.to_string())?;
+            let filename = Path::new(path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
+            let (meta, content) = frontmatter::parse_note(&raw, &filename);
+            let mut document = TantivyDocument::new();
+            document.add_text(self.path_field, path);
+            document.add_text(self.title_field, &meta.title);
+            document.add_text(self.body_field, &content);
+            document.add_text(self.tags_field, meta.tags.join(" "));
+            documents.push((path, document));
+        }
+
+        let mut writer_guard = self.writer.lock().map_err(|error| error.to_string())?;
+        let writer = writer_guard.as_mut().ok_or("Writer not available")?;
+        for path in remove_paths.iter().chain(upsert_paths) {
+            writer.delete_term(Term::from_field_text(self.path_field, path));
+        }
+        for (_, document) in documents {
+            writer
+                .add_document(document)
+                .map_err(|error| error.to_string())?;
+        }
+        writer.commit().map_err(|error| error.to_string())?;
         Ok(())
     }
 
@@ -430,5 +498,57 @@ impl SearchIndex {
         }
 
         Ok(results)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn a_path_change_is_visible_as_one_index_batch() {
+        let root = std::env::temp_dir().join(format!("search-move-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let old_path = root.join("Old.md");
+        let new_path = root.join("New.md");
+        fs::write(&old_path, "---\ntitle: Target\n---\nunique-search-token\n").unwrap();
+        let index = SearchIndex::new_in_memory().unwrap();
+        index.index_note(&old_path.to_string_lossy()).unwrap();
+        fs::rename(&old_path, &new_path).unwrap();
+
+        index
+            .apply_note_changes(
+                &[old_path.to_string_lossy().to_string()],
+                &[new_path.to_string_lossy().to_string()],
+            )
+            .unwrap();
+        let results = index.search("unique-search-token", 10).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].path, new_path.to_string_lossy());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_upsert_leaves_the_existing_index_unchanged() {
+        let root = std::env::temp_dir().join(format!("search-preflight-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let existing = root.join("Existing.md");
+        let missing = root.join("Missing.md");
+        fs::write(&existing, "---\ntitle: Existing\n---\nstable-index-token\n").unwrap();
+        let index = SearchIndex::new_in_memory().unwrap();
+        index.index_note(&existing.to_string_lossy()).unwrap();
+
+        let result = index.apply_note_changes(
+            &[existing.to_string_lossy().to_string()],
+            &[missing.to_string_lossy().to_string()],
+        );
+
+        assert!(result.is_err());
+        let results = index.search("stable-index-token", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].path, existing.to_string_lossy());
+        fs::remove_dir_all(root).unwrap();
     }
 }
