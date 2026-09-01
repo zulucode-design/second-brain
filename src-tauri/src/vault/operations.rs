@@ -1816,7 +1816,13 @@ pub fn move_notebook(
             .strip_prefix(&src)
             .map_err(|error| error.to_string())?
             .to_path_buf();
-        notes.push((path.to_path_buf(), relative, before, after, title));
+        notes.push(NotebookMoveNote {
+            source_path: path.to_path_buf(),
+            relative_path: relative,
+            before,
+            after,
+            title,
+        });
     }
     preflight_wikilink_reads(vault_path, &src)?;
 
@@ -1848,47 +1854,37 @@ pub fn move_notebook(
     let updated_icons = remap_notebook_icons(&original_icons, &old_relative, &new_relative);
     let icons_changed = updated_icons != original_icons;
 
-    for (metadata_written, (path, _, _, after, _)) in notes.iter().enumerate() {
-        if let Err(error) = fs::write(path, after) {
-            for (rollback_path, _, before, _, _) in notes[..metadata_written].iter().rev() {
-                let _ = fs::write(rollback_path, before);
-            }
-            return Err(format!(
-                "Could not update category in {}: {error}",
-                path.display()
-            ));
-        }
-    }
-
-    if let Err(error) = fs::rename(&src, &dest) {
-        for (path, _, before, _, _) in notes.iter().rev() {
-            let _ = fs::write(path, before);
-        }
-        return Err(error.to_string());
-    }
+    let rewrites = notes
+        .iter()
+        .map(|note| crate::vault::relocation::DirectoryRewrite {
+            relative_path: note.relative_path.clone(),
+            before: note.before.clone(),
+            after: note.after.clone(),
+        })
+        .collect();
+    let transaction =
+        crate::vault::relocation::relocate_directory(Path::new(vault_path), &src, &dest, rewrites)?;
 
     let mut link_updates = Vec::new();
-    for (old_path, relative, _, _, title) in &notes {
-        let new_path = dest.join(relative);
+    for note in &notes {
+        let new_path = dest.join(&note.relative_path);
         match update_wikilinks_after_rename(
             vault_path,
-            &old_path.to_string_lossy(),
+            &note.source_path.to_string_lossy(),
             &new_path.to_string_lossy(),
-            title,
-            title,
+            &note.title,
+            &note.title,
         ) {
             Ok(update) => link_updates.push(update),
             Err(error) => {
                 let rollback = rollback_notebook_move(
                     vault_path,
-                    &src,
-                    &dest,
-                    &notes,
+                    transaction,
                     &link_updates,
                     &original_quick_access,
                     &original_icons,
                 );
-                return Err(format!("{error}. Notebook rollback: {rollback}"));
+                return Err(notebook_move_failure(error, rollback, false));
             }
         }
     }
@@ -1897,15 +1893,15 @@ pub fn move_notebook(
         if let Err(error) = save_quick_access_entries(vault_path, &quick_access) {
             let rollback = rollback_notebook_move(
                 vault_path,
-                &src,
-                &dest,
-                &notes,
+                transaction,
                 &link_updates,
                 &original_quick_access,
                 &original_icons,
             );
-            return Err(format!(
-                "Could not update Quick Access after moving the notebook: {error}. Notebook rollback: {rollback}"
+            return Err(notebook_move_failure(
+                format!("Could not update Quick Access after moving the notebook: {error}"),
+                rollback,
+                false,
             ));
         }
     }
@@ -1913,23 +1909,47 @@ pub fn move_notebook(
         if let Err(error) = save_notebook_icons(vault_path, &updated_icons) {
             let rollback = rollback_notebook_move(
                 vault_path,
-                &src,
-                &dest,
-                &notes,
+                transaction,
                 &link_updates,
                 &original_quick_access,
                 &original_icons,
             );
-            return Err(format!(
-                "Could not update notebook icons after the move: {error}. Notebook rollback: {rollback}"
+            return Err(notebook_move_failure(
+                format!("Could not update notebook icons after the move: {error}"),
+                rollback,
+                false,
             ));
         }
     }
 
-    Ok(dest.to_string_lossy().to_string())
+    transaction
+        .commit()
+        .map(|path| path.to_string_lossy().to_string())
 }
 
-type NotebookMoveNote = (PathBuf, PathBuf, Vec<u8>, Vec<u8>, String);
+struct NotebookMoveNote {
+    source_path: PathBuf,
+    relative_path: PathBuf,
+    before: Vec<u8>,
+    after: Vec<u8>,
+    title: String,
+}
+
+fn notebook_move_failure(
+    error: String,
+    rollback_failures: Vec<String>,
+    repair_already_required: bool,
+) -> String {
+    if rollback_failures.is_empty() && !repair_already_required {
+        return format!("{error}. Notebook rollback completed");
+    }
+    let rollback = if rollback_failures.is_empty() {
+        "rollback completed, but durable recovery still requires reconciliation".to_string()
+    } else {
+        format!("rollback incomplete: {}", rollback_failures.join("; "))
+    };
+    format!("Repair required: {error}. Notebook {rollback}")
+}
 
 fn remap_notebook_icons(
     icons: &std::collections::HashMap<String, String>,
@@ -1965,27 +1985,19 @@ fn save_notebook_icons(
 
 fn rollback_notebook_move(
     vault_path: &str,
-    source: &Path,
-    destination: &Path,
-    notes: &[NotebookMoveNote],
+    transaction: crate::vault::relocation::DirectoryRelocation,
     link_updates: &[WikilinkUpdate],
     quick_access: &[QuickAccessEntry],
     icons: &std::collections::HashMap<String, String>,
-) -> String {
+) -> Vec<String> {
     let mut failures = Vec::new();
     for update in link_updates.iter().rev() {
         if let Err(error) = update.rollback() {
             failures.push(error);
         }
     }
-    if let Err(error) = fs::rename(destination, source) {
-        failures.push(format!("directory: {error}"));
-    } else {
-        for (path, _, before, _, _) in notes.iter().rev() {
-            if let Err(error) = fs::write(path, before) {
-                failures.push(format!("{}: {error}", path.display()));
-            }
-        }
+    if let Err(error) = transaction.rollback() {
+        failures.push(error);
     }
     if let Err(error) = save_quick_access_entries(vault_path, quick_access) {
         failures.push(format!("Quick Access: {error}"));
@@ -1993,11 +2005,7 @@ fn rollback_notebook_move(
     if let Err(error) = save_notebook_icons(vault_path, icons) {
         failures.push(format!("notebook icons: {error}"));
     }
-    if failures.is_empty() {
-        "completed".to_string()
-    } else {
-        failures.join("; ")
-    }
+    failures
 }
 
 /// Remove a directory inside trash if it's empty (after restoring/deleting its last note).

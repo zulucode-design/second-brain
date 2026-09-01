@@ -1,9 +1,345 @@
 use same_file::Handle;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
+
+#[derive(Clone)]
+pub struct DirectoryRewrite {
+    pub relative_path: PathBuf,
+    pub before: Vec<u8>,
+    pub after: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DirectoryMoveManifest {
+    source: PathBuf,
+    destination: PathBuf,
+    ownership_marker: String,
+    ownership_token: String,
+    rewrites: Vec<DirectoryMoveManifestRewrite>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DirectoryMoveManifestRewrite {
+    relative_path: PathBuf,
+    before: Vec<u8>,
+    after: Vec<u8>,
+}
+
+pub struct DirectoryRelocation {
+    vault: PathBuf,
+    source: PathBuf,
+    destination: PathBuf,
+    source_identity: Handle,
+    rewrites: Vec<DirectoryRewrite>,
+    transaction_dir: PathBuf,
+    ownership_marker: String,
+    ownership_token: String,
+}
+
+#[derive(Debug)]
+pub struct DirectoryRecoveryFailure {
+    pub message: String,
+    pub paths: Vec<String>,
+}
+
+impl DirectoryRelocation {
+    pub fn commit(self) -> Result<PathBuf, String> {
+        remove_ownership_marker(
+            &self.destination,
+            &self.ownership_marker,
+            &self.ownership_token,
+        )
+        .map_err(|error| {
+            format!(
+                "Repair required: notebook move completed, but ownership cleanup failed: {error}"
+            )
+        })?;
+        cleanup_directory_manifest(&self.transaction_dir).map_err(|error| {
+            format!(
+                "Repair required: notebook move completed, but its recovery manifest remains: {error}"
+            )
+        })?;
+        Ok(self.destination)
+    }
+
+    pub fn rollback(self) -> Result<(), String> {
+        if let Err(error) = verify_directory_owner(
+            &self.destination,
+            &self.source_identity,
+            &self.ownership_marker,
+            &self.ownership_token,
+        ) {
+            return Err(format!(
+                "Repair required: notebook move rollback preserved an unowned destination: {error}"
+            ));
+        }
+        let mut failures = rollback_directory_rewrites(
+            &self.vault,
+            &self.destination,
+            &self.source_identity,
+            &self.ownership_marker,
+            &self.ownership_token,
+            self.rewrites.iter().rev(),
+        );
+        if let Err(error) = fs::rename(&self.destination, &self.source) {
+            failures.push(format!("could not restore notebook directory: {error}"));
+        }
+        if failures.is_empty() {
+            remove_ownership_marker(&self.source, &self.ownership_marker, &self.ownership_token)?;
+            cleanup_directory_manifest(&self.transaction_dir)
+        } else {
+            Err(format!(
+                "Repair required: notebook move rollback incomplete: {}",
+                failures.join("; ")
+            ))
+        }
+    }
+}
+
+/// Move a directory as one recoverable operation and durably rewrite its Markdown files.
+///
+/// A manifest is synced before the directory changes location. Until `commit` succeeds,
+/// startup recovery can finish the destination rewrites without guessing which notes were
+/// updated. Rollback only touches the directory whose identity was captured here.
+pub fn relocate_directory(
+    vault_root: &Path,
+    source: &Path,
+    destination: &Path,
+    rewrites: Vec<DirectoryRewrite>,
+) -> Result<DirectoryRelocation, String> {
+    let vault = canonical_directory(vault_root, "vault path")?;
+    let source = canonical_directory(source, "directory relocation source")?;
+    if !source.starts_with(&vault) || source == vault {
+        return Err("Directory relocation source must stay inside the active vault".to_string());
+    }
+    let destination_parent = destination
+        .parent()
+        .ok_or("Directory relocation destination must have a parent")?;
+    let destination_parent = canonical_directory(
+        destination_parent,
+        "directory relocation destination parent",
+    )?;
+    if !destination_parent.starts_with(&vault) || destination_parent == vault {
+        return Err(
+            "Directory relocation destination must stay inside the active vault".to_string(),
+        );
+    }
+    let destination_name = destination
+        .file_name()
+        .ok_or("Directory relocation destination must have a name")?;
+    let destination = destination_parent.join(destination_name);
+    if destination.exists() {
+        return Err("Directory relocation destination already exists".to_string());
+    }
+
+    for rewrite in &rewrites {
+        validate_directory_rewrite(&source, rewrite)?;
+    }
+
+    let source_identity = Handle::from_path(&source)
+        .map_err(|error| format!("Could not identify directory relocation source: {error}"))?;
+    let transaction_dir = create_recovery_dir(&vault)?;
+    let ownership_token = transaction_dir
+        .file_name()
+        .and_then(OsStr::to_str)
+        .ok_or("Directory relocation transaction has no identity")?
+        .to_string();
+    let ownership_marker = format!(".helixnotes-directory-move-{ownership_token}");
+    if let Err(error) = create_ownership_marker(&source, &ownership_marker, &ownership_token) {
+        let _ = remove_ownership_marker(&source, &ownership_marker, &ownership_token);
+        let _ = fs::remove_dir(&transaction_dir);
+        return Err(error);
+    }
+    let manifest = DirectoryMoveManifest {
+        source: source
+            .strip_prefix(&vault)
+            .map_err(|error| error.to_string())?
+            .to_path_buf(),
+        destination: destination
+            .strip_prefix(&vault)
+            .map_err(|error| error.to_string())?
+            .to_path_buf(),
+        ownership_marker: ownership_marker.clone(),
+        ownership_token: ownership_token.clone(),
+        rewrites: rewrites
+            .iter()
+            .map(|rewrite| DirectoryMoveManifestRewrite {
+                relative_path: rewrite.relative_path.clone(),
+                before: rewrite.before.clone(),
+                after: rewrite.after.clone(),
+            })
+            .collect(),
+    };
+    if let Err(error) = write_directory_manifest(&transaction_dir, &manifest) {
+        let _ = remove_ownership_marker(&source, &ownership_marker, &ownership_token);
+        let _ = fs::remove_dir(&transaction_dir);
+        return Err(error);
+    }
+
+    if let Err(error) = fs::rename(&source, &destination) {
+        let _ = remove_ownership_marker(&source, &ownership_marker, &ownership_token);
+        let _ = cleanup_directory_manifest(&transaction_dir);
+        return Err(format!("Could not move notebook directory: {error}"));
+    }
+    let destination_identity = Handle::from_path(&destination).map_err(|error| {
+        format!("Repair required: could not identify moved notebook directory: {error}")
+    })?;
+    if destination_identity != source_identity {
+        return Err(
+            "Repair required: the directory relocation destination is not the source directory"
+                .to_string(),
+        );
+    }
+    verify_directory_owner(
+        &destination,
+        &source_identity,
+        &ownership_marker,
+        &ownership_token,
+    )?;
+
+    let transaction = DirectoryRelocation {
+        vault,
+        source,
+        destination,
+        source_identity,
+        rewrites,
+        transaction_dir,
+        ownership_marker,
+        ownership_token,
+    };
+    for rewrite in &transaction.rewrites {
+        let path = transaction.destination.join(&rewrite.relative_path);
+        if let Err(error) = rewrite_file(&transaction.vault, &path, |current| {
+            if current == rewrite.before || current == rewrite.after {
+                Ok(rewrite.after.clone())
+            } else {
+                Err("The note changed while its notebook was moving".to_string())
+            }
+        }) {
+            return match transaction.rollback() {
+                Ok(()) => Err(format!("Could not rewrite moved notebook metadata: {error}")),
+                Err(rollback) => Err(format!(
+                    "Repair required: could not rewrite moved notebook metadata: {error}. {rollback}"
+                )),
+            };
+        }
+    }
+    Ok(transaction)
+}
+
+/// Complete directory moves that were interrupted after their durable manifest was written.
+pub fn recover_directory_relocations(vault_root: &Path) -> Vec<DirectoryRecoveryFailure> {
+    let Ok(vault) = canonical_directory(vault_root, "vault path") else {
+        return vec![DirectoryRecoveryFailure {
+            message: "Could not open the vault for directory-move recovery".to_string(),
+            paths: vec![vault_root.to_string_lossy().to_string()],
+        }];
+    };
+    let recovery_root = vault.join(".helixnotes/relocation-recovery");
+    let Ok(entries) = fs::read_dir(&recovery_root) else {
+        return Vec::new();
+    };
+    let mut failures = Vec::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                failures.push(DirectoryRecoveryFailure {
+                    message: format!("could not read a recovery directory entry: {error}"),
+                    paths: vec![recovery_root.to_string_lossy().to_string()],
+                });
+                continue;
+            }
+        };
+        let transaction_dir = entry.path();
+        let manifest_path = transaction_dir.join("directory-move.json");
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let mut affected_paths = vec![manifest_path.to_string_lossy().to_string()];
+        let result = (|| {
+            let bytes = fs::read(&manifest_path)
+                .map_err(|error| format!("could not read move manifest: {error}"))?;
+            let manifest: DirectoryMoveManifest = serde_json::from_slice(&bytes)
+                .map_err(|error| format!("could not parse move manifest: {error}"))?;
+            validate_relative_path(&manifest.source)?;
+            validate_relative_path(&manifest.destination)?;
+            let source = vault.join(&manifest.source);
+            let destination = vault.join(&manifest.destination);
+            affected_paths.push(source.to_string_lossy().to_string());
+            affected_paths.push(destination.to_string_lossy().to_string());
+            for rewrite in &manifest.rewrites {
+                affected_paths.push(
+                    source
+                        .join(&rewrite.relative_path)
+                        .to_string_lossy()
+                        .to_string(),
+                );
+                affected_paths.push(
+                    destination
+                        .join(&rewrite.relative_path)
+                        .to_string_lossy()
+                        .to_string(),
+                );
+            }
+            let (root, use_after) = match (source.is_dir(), destination.is_dir()) {
+                (true, false) => (source, false),
+                (false, true) => (destination, true),
+                _ => {
+                    return Err(
+                        "source and destination state is ambiguous; both were preserved"
+                            .to_string(),
+                    )
+                }
+            };
+            let identity = Handle::from_path(&root)
+                .map_err(|error| format!("could not identify recovery directory: {error}"))?;
+            verify_directory_owner(
+                &root,
+                &identity,
+                &manifest.ownership_marker,
+                &manifest.ownership_token,
+            )?;
+            for rewrite in &manifest.rewrites {
+                verify_directory_owner(
+                    &root,
+                    &identity,
+                    &manifest.ownership_marker,
+                    &manifest.ownership_token,
+                )?;
+                validate_relative_path(&rewrite.relative_path)?;
+                let path = root.join(&rewrite.relative_path);
+                rewrite_file(&vault, &path, |current| {
+                    let target = if use_after {
+                        &rewrite.after
+                    } else {
+                        &rewrite.before
+                    };
+                    if current == rewrite.before || current == rewrite.after {
+                        Ok(target.clone())
+                    } else {
+                        Err("note changed after the recorded notebook move".to_string())
+                    }
+                })?;
+            }
+            remove_ownership_marker(&root, &manifest.ownership_marker, &manifest.ownership_token)?;
+            cleanup_directory_manifest(&transaction_dir)
+        })();
+        if let Err(error) = result {
+            affected_paths.sort();
+            affected_paths.dedup();
+            failures.push(DirectoryRecoveryFailure {
+                message: format!("{}: {error}", manifest_path.display()),
+                paths: affected_paths,
+            });
+        }
+    }
+    failures
+}
 
 /// The destructive filesystem seam for moving a Markdown note inside one vault.
 ///
@@ -477,6 +813,151 @@ fn create_recovery_dir(vault: &Path) -> Result<PathBuf, String> {
     }
 }
 
+fn validate_directory_rewrite(source: &Path, rewrite: &DirectoryRewrite) -> Result<(), String> {
+    validate_relative_path(&rewrite.relative_path)?;
+    if rewrite.relative_path.extension().and_then(OsStr::to_str) != Some("md") {
+        return Err("Directory rewrites must target Markdown files".to_string());
+    }
+    let path = source.join(&rewrite.relative_path);
+    let metadata = fs::symlink_metadata(&path)
+        .map_err(|error| format!("Invalid directory rewrite source: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("Directory rewrite source must be a real file".to_string());
+    }
+    Ok(())
+}
+
+fn create_ownership_marker(root: &Path, name: &str, token: &str) -> Result<(), String> {
+    let path = root.join(name);
+    let mut marker = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| format!("Could not reserve directory ownership marker: {error}"))?;
+    marker
+        .write_all(token.as_bytes())
+        .and_then(|_| marker.sync_all())
+        .map_err(|error| format!("Could not persist directory ownership marker: {error}"))?;
+    sync_directory(root)
+        .map_err(|error| format!("Could not sync directory ownership marker: {error}"))
+}
+
+fn verify_directory_owner(
+    root: &Path,
+    expected_identity: &Handle,
+    marker_name: &str,
+    token: &str,
+) -> Result<(), String> {
+    let identity = Handle::from_path(root)
+        .map_err(|error| format!("could not identify directory owner: {error}"))?;
+    if &identity != expected_identity {
+        return Err("directory identity changed".to_string());
+    }
+    let marker = root.join(marker_name);
+    let metadata = fs::symlink_metadata(&marker)
+        .map_err(|error| format!("ownership marker is unavailable: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("ownership marker is not a real file".to_string());
+    }
+    let stored = fs::read_to_string(&marker)
+        .map_err(|error| format!("could not read ownership marker: {error}"))?;
+    if stored != token {
+        return Err("ownership marker does not match the transaction".to_string());
+    }
+    Ok(())
+}
+
+fn remove_ownership_marker(root: &Path, name: &str, token: &str) -> Result<(), String> {
+    let marker = root.join(name);
+    let stored = fs::read_to_string(&marker)
+        .map_err(|error| format!("could not read ownership marker for cleanup: {error}"))?;
+    if stored != token {
+        return Err("ownership marker was replaced; it was preserved".to_string());
+    }
+    remove_redundant_file(&marker)?;
+    sync_directory(root).map_err(|error| format!("Could not sync ownership cleanup: {error}"))
+}
+
+fn validate_relative_path(path: &Path) -> Result<(), String> {
+    if path.as_os_str().is_empty()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err("Recovery paths must be relative and traversal-free".to_string());
+    }
+    Ok(())
+}
+
+fn write_directory_manifest(
+    transaction_dir: &Path,
+    manifest: &DirectoryMoveManifest,
+) -> Result<(), String> {
+    let path = transaction_dir.join("directory-move.json");
+    let bytes = serde_json::to_vec(manifest).map_err(|error| error.to_string())?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| format!("Could not reserve directory-move manifest: {error}"))?;
+    file.write_all(&bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|error| format!("Could not persist directory-move manifest: {error}"))?;
+    sync_directory(transaction_dir)
+        .map_err(|error| format!("Could not sync directory-move manifest: {error}"))
+}
+
+fn cleanup_directory_manifest(transaction_dir: &Path) -> Result<(), String> {
+    let path = transaction_dir.join("directory-move.json");
+    match fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("Could not remove directory-move manifest: {error}")),
+    }
+    fs::remove_dir(transaction_dir)
+        .map_err(|error| format!("Could not remove directory-move recovery directory: {error}"))?;
+    if let Some(parent) = transaction_dir.parent() {
+        sync_directory(parent)
+            .map_err(|error| format!("Could not sync directory-move cleanup: {error}"))?;
+    }
+    Ok(())
+}
+
+fn rollback_directory_rewrites<'a>(
+    vault: &Path,
+    destination: &Path,
+    destination_identity: &Handle,
+    ownership_marker: &str,
+    ownership_token: &str,
+    rewrites: impl Iterator<Item = &'a DirectoryRewrite>,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    for rewrite in rewrites {
+        if let Err(error) = verify_directory_owner(
+            destination,
+            destination_identity,
+            ownership_marker,
+            ownership_token,
+        ) {
+            failures.push(format!("destination ownership changed: {error}"));
+            break;
+        }
+        let path = destination.join(&rewrite.relative_path);
+        if let Err(error) = rewrite_file(vault, &path, |current| {
+            if current == rewrite.after {
+                Ok(rewrite.before.clone())
+            } else if current == rewrite.before {
+                Ok(current.to_vec())
+            } else {
+                Err("note changed during notebook-move rollback; it was preserved".to_string())
+            }
+        }) {
+            failures.push(format!("{}: {error}", path.display()));
+        }
+    }
+    failures
+}
+
 fn restore_recovery_source(recovery: &Path, source: &Path) -> Result<(), String> {
     fs::hard_link(recovery, source).map_err(|error| {
         format!("could not restore without overwriting another writer ({error})")
@@ -576,6 +1057,176 @@ mod tests {
             fs::create_dir(root.join(category.folder_name())).unwrap();
         }
         root
+    }
+
+    fn directory_rewrite(path: &str, before: &str, after: &str) -> DirectoryRewrite {
+        DirectoryRewrite {
+            relative_path: PathBuf::from(path),
+            before: before.as_bytes().to_vec(),
+            after: after.as_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn directory_move_rollback_never_rewrites_a_recreated_source_file() {
+        let root = vault("directory-rollback-ownership");
+        let source = root.join("Projects/Launch");
+        let destination = root.join("Archives/Launch");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("Plan.md"), "project").unwrap();
+
+        let transaction = relocate_directory(
+            &root,
+            &source,
+            &destination,
+            vec![directory_rewrite("Plan.md", "project", "archive")],
+        )
+        .unwrap();
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("Plan.md"), "unowned replacement").unwrap();
+
+        let result = transaction.rollback();
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_to_string(source.join("Plan.md")).unwrap(),
+            "unowned replacement"
+        );
+        assert_eq!(
+            fs::read_to_string(destination.join("Plan.md")).unwrap(),
+            "project"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn directory_move_rollback_never_rewrites_a_replacement_destination() {
+        let root = vault("directory-rollback-destination-ownership");
+        let source = root.join("Projects/Launch");
+        let destination = root.join("Archives/Launch");
+        let displaced = root.join("Archives/MovedByAnotherWriter");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("Plan.md"), "project").unwrap();
+        let transaction = relocate_directory(
+            &root,
+            &source,
+            &destination,
+            vec![directory_rewrite("Plan.md", "project", "archive")],
+        )
+        .unwrap();
+        fs::rename(&destination, &displaced).unwrap();
+        fs::create_dir(&destination).unwrap();
+        fs::write(destination.join("Plan.md"), "archive").unwrap();
+
+        let result = transaction.rollback();
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_to_string(destination.join("Plan.md")).unwrap(),
+            "archive"
+        );
+        assert_eq!(
+            fs::read_to_string(displaced.join("Plan.md")).unwrap(),
+            "archive"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn directory_move_preserves_a_note_changed_after_preflight() {
+        let root = vault("directory-concurrent-edit");
+        let source = root.join("Projects/Launch");
+        let destination = root.join("Archives/Launch");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("Plan.md"), "project").unwrap();
+        let rewrites = vec![directory_rewrite("Plan.md", "project", "archive")];
+        fs::write(source.join("Plan.md"), "concurrent edit").unwrap();
+
+        let result = relocate_directory(&root, &source, &destination, rewrites);
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_to_string(source.join("Plan.md")).unwrap(),
+            "concurrent edit"
+        );
+        assert!(!destination.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn startup_recovery_completes_every_rewrite_in_an_interrupted_directory_move() {
+        let root = vault("directory-crash-recovery");
+        let source = root.join("Projects/Launch");
+        let destination = root.join("Archives/Launch");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("Plan.md"), "project plan").unwrap();
+        fs::write(source.join("Draft.md"), "project draft").unwrap();
+        let transaction = relocate_directory(
+            &root,
+            &source,
+            &destination,
+            vec![
+                directory_rewrite("Plan.md", "project plan", "archive plan"),
+                directory_rewrite("Draft.md", "project draft", "archive draft"),
+            ],
+        )
+        .unwrap();
+        fs::write(destination.join("Draft.md"), "project draft").unwrap();
+        drop(transaction);
+
+        let failures = recover_directory_relocations(&root);
+
+        assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(
+            fs::read_to_string(destination.join("Plan.md")).unwrap(),
+            "archive plan"
+        );
+        assert_eq!(
+            fs::read_to_string(destination.join("Draft.md")).unwrap(),
+            "archive draft"
+        );
+        assert!(fs::read_dir(root.join(".helixnotes/relocation-recovery"))
+            .unwrap()
+            .next()
+            .is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_startup_recovery_reports_every_path_and_preserves_the_notebook_tree() {
+        let root = vault("directory-recovery-report");
+        let source = root.join("Projects/Launch");
+        let destination = root.join("Archives/Launch");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("Plan.md"), "project").unwrap();
+        let transaction = relocate_directory(
+            &root,
+            &source,
+            &destination,
+            vec![directory_rewrite("Plan.md", "project", "archive")],
+        )
+        .unwrap();
+        fs::write(destination.join("Plan.md"), "concurrent edit").unwrap();
+        drop(transaction);
+
+        let failures = recover_directory_relocations(&root);
+
+        assert_eq!(failures.len(), 1);
+        let paths = &failures[0].paths;
+        for expected in [
+            source.clone(),
+            destination.clone(),
+            source.join("Plan.md"),
+            destination.join("Plan.md"),
+        ] {
+            assert!(paths.contains(&expected.to_string_lossy().to_string()));
+        }
+        assert!(!source.exists());
+        assert_eq!(
+            fs::read_to_string(destination.join("Plan.md")).unwrap(),
+            "concurrent edit"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

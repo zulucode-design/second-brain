@@ -253,36 +253,57 @@ fn open_vault_path(
         });
     }
 
+    let directory_recovery_failures =
+        crate::vault::relocation::recover_directory_relocations(Path::new(&path));
+    let directory_recovery_blocked = !directory_recovery_failures.is_empty();
+    for (index, failure) in directory_recovery_failures.into_iter().enumerate() {
+        repair_status.record(repair::RepairIssue {
+            key: format!("reconciliation:notebook-move:{index}"),
+            stage: repair::RepairStage::Reconciliation,
+            message: format!(
+                "Could not recover an interrupted notebook move: {}",
+                failure.message
+            ),
+            paths: failure.paths,
+        });
+    }
+
     // Put any note an external program misplaced back under its own category before the
     // search index is built, so the index never records a note at a path it is about to
     // move away from.
-    match operations::reconcile_categories(&path) {
-        Ok(report) => {
-            if report.relocated > 0 {
-                log::info!("Moved {} notes back under their category", report.relocated);
+    if directory_recovery_blocked {
+        log::warn!(
+            "Skipped category reconciliation because an interrupted notebook move needs repair"
+        );
+    } else {
+        match operations::reconcile_categories(&path) {
+            Ok(report) => {
+                if report.relocated > 0 {
+                    log::info!("Moved {} notes back under their category", report.relocated);
+                }
+                if report.needs_attention() {
+                    log::warn!(
+                        "Vault reconciliation needs attention: {} unfiled notes, {} failures",
+                        report.unfiled.len(),
+                        report.failures.len()
+                    );
+                }
+                for failure in report.failures {
+                    repair_status.record(repair::RepairIssue {
+                        key: format!("reconciliation:{}", failure.path),
+                        stage: repair::RepairStage::Reconciliation,
+                        message: failure.message,
+                        paths: vec![failure.path],
+                    });
+                }
             }
-            if report.needs_attention() {
-                log::warn!(
-                    "Vault reconciliation needs attention: {} unfiled notes, {} failures",
-                    report.unfiled.len(),
-                    report.failures.len()
-                );
-            }
-            for failure in report.failures {
-                repair_status.record(repair::RepairIssue {
-                    key: format!("reconciliation:{}", failure.path),
-                    stage: repair::RepairStage::Reconciliation,
-                    message: failure.message,
-                    paths: vec![failure.path],
-                });
-            }
+            Err(error) => repair_status.record(repair::RepairIssue {
+                key: "reconciliation:vault".to_string(),
+                stage: repair::RepairStage::Reconciliation,
+                message: format!("Could not reconcile note categories: {error}"),
+                paths: vec![path.clone()],
+            }),
         }
-        Err(error) => repair_status.record(repair::RepairIssue {
-            key: "reconciliation:vault".to_string(),
-            stage: repair::RepairStage::Reconciliation,
-            message: format!("Could not reconcile note categories: {error}"),
-            paths: vec![path.clone()],
-        }),
     }
 
     // Stage the search index and watcher before replacing the active runtime.
@@ -820,13 +841,31 @@ pub fn move_notebook(
         .note_mutation
         .lock()
         .map_err(|error| error.to_string())?;
-    let config = state.config.lock().map_err(|e| e.to_string())?;
-    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let vault_path = {
+        let config = state.config.lock().map_err(|e| e.to_string())?;
+        config
+            .active_vault
+            .as_ref()
+            .ok_or("No active vault")?
+            .clone()
+    };
 
-    let new_full_path = operations::move_notebook(vault_path, &notebook_path, &dest_parent)?;
+    let new_full_path = match operations::move_notebook(&vault_path, &notebook_path, &dest_parent) {
+        Ok(path) => path,
+        Err(error) => {
+            record_transaction_repair_if_needed(
+                &state,
+                &vault_path,
+                "move-notebook",
+                vec![notebook_path, dest_parent],
+                &error,
+            );
+            return Err(error);
+        }
+    };
     rebuild_search_now(
         &state,
-        vault_path,
+        &vault_path,
         vec![notebook_path, new_full_path.clone()],
     )?;
 

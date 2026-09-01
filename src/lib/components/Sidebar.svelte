@@ -343,14 +343,10 @@
 		}
 	}
 
-	function countNotesRecursive(nb: NotebookEntry): number {
-		return nb.note_count + nb.children.reduce((sum, c) => sum + countNotesRecursive(c), 0);
-	}
-
 	function handleDelete(nb: NotebookEntry) {
 		if (!notebookUiPolicy(nb.relative_path).delete) return;
 		contextMenu = null;
-		const total = countNotesRecursive(nb);
+		const total = nb.note_count;
 		if (total > 0) {
 			deleteConfirm = nb;
 		} else {
@@ -1052,7 +1048,7 @@
 	<div class="delete-confirm-overlay" onclick={dismissDeleteConfirm} onkeydown={(e) => { if (e.key === 'Escape') deleteConfirm = null; }}>
 		<div class="delete-confirm" class:mobile={isMobile} role="alertdialog" aria-modal="true" aria-labelledby="delete-confirm-title" tabindex="-1">
 			<h4 id="delete-confirm-title">Delete "{deleteConfirm.name}"?</h4>
-			<p>This notebook contains {countNotesRecursive(deleteConfirm)} note{countNotesRecursive(deleteConfirm) === 1 ? '' : 's'} that will be permanently deleted.</p>
+			<p>This notebook contains {deleteConfirm.note_count} note{deleteConfirm.note_count === 1 ? '' : 's'} that will be permanently deleted.</p>
 			<div class="delete-confirm-actions">
 				<button class="delete-confirm-cancel" onclick={() => deleteConfirm = null}>Cancel</button>
 				<button class="delete-confirm-btn" onclick={() => confirmDelete(deleteConfirm!)}>Delete</button>

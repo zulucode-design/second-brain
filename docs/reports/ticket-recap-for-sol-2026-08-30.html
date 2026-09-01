@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Second Brain — Open Ticket Recap for Sol</title>
+<style>
+  :root {
+    --page: #f5f2eb;
+    --paper: #fffdf8;
+    --paper-2: #f9f6ef;
+    --ink: #20241f;
+    --muted: #60685f;
+    --line: #d8d3c7;
+    --accent: #235f50;
+    --accent-soft: #dcece5;
+    --high: #ad5017;
+    --high-soft: #f9e5d5;
+    --medium: #806500;
+    --medium-soft: #f3e9ba;
+    --low: #53657a;
+    --low-soft: #e3e9f0;
+    --shadow: 0 18px 50px rgba(39, 41, 35, 0.09);
+    --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --serif: Iowan Old Style, Palatino Linotype, Book Antiqua, Georgia, serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: radial-gradient(circle at 10% -5%, rgba(35, 95, 80, 0.13), transparent 33rem), var(--page);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.62;
+  }
+  a { color: var(--accent); text-underline-offset: 0.16em; }
+  code { font-family: var(--mono); font-size: 0.88em; background: var(--paper-2); padding: 0.1em 0.4em; border-radius: 5px; border: 1px solid var(--line); }
+  .page { width: min(880px, calc(100% - 30px)); margin: 26px auto 70px; }
+
+  .hero {
+    padding: clamp(24px, 5vw, 48px);
+    border: 1px solid var(--line);
+    border-radius: 24px;
+    background: var(--paper);
+    box-shadow: var(--shadow);
+    margin-bottom: 22px;
+  }
+  .kicker { margin: 0 0 10px; color: var(--accent); font-size: 0.74rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
+  h1 { font-family: var(--serif); font-size: clamp(2rem, 5vw, 2.9rem); font-weight: 600; letter-spacing: -0.03em; margin: 0; }
+  .intro { max-width: 680px; margin: 16px 0 0; color: var(--muted); font-size: 1.06rem; }
+
+  .card { background: var(--paper); border: 1px solid var(--line); border-radius: 20px; padding: clamp(20px, 4vw, 34px); box-shadow: var(--shadow); margin-bottom: 20px; }
+  h2 { font-family: var(--serif); font-size: 1.5rem; margin: 0 0 6px; }
+  h2 .num { color: var(--muted); font-weight: 400; font-size: 0.95rem; }
+  .sub { color: var(--muted); font-size: 0.95rem; margin: 0 0 16px; }
+  p { margin: 0 0 12px; }
+
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 4px; font-size: 0.95rem; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  tr:last-child td { border-bottom: none; }
+
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.76rem; font-weight: 700; letter-spacing: 0.02em; }
+  .tag-blocked { background: var(--high-soft); color: var(--high); }
+  .tag-sequence { background: var(--medium-soft); color: var(--medium); }
+  .tag-free { background: var(--accent-soft); color: var(--accent); }
+  .tag-mine { background: var(--low-soft); color: var(--low); }
+
+  .callout { background: var(--paper-2); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 12px; padding: 16px 20px; margin: 14px 0; font-size: 0.97rem; }
+  .callout.warn { border-left-color: var(--high); }
+
+  ul { margin: 8px 0 12px; padding-left: 22px; }
+  li { margin-bottom: 6px; }
+
+  footer { text-align: center; color: var(--muted); font-size: 0.85rem; margin-top: 30px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="hero">
+    <p class="kicker">Second Brain — for Sol</p>
+    <h1>What is still open, and why it waits</h1>
+    <p class="intro">
+      A short note, not a full report. Words come from <code>docs/SPEC.md</code>: <b>vault</b>,
+      <b>note</b>, <b>PARA category</b>, <b>quick capture</b>. Numbers are GitHub issue numbers.
+      This file is a snapshot from 2026-08-30. GitHub is the live source; check there for
+      the current state.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>The one ticket that gates the rest <span class="num">#20</span></h2>
+    <p class="sub">Review remediation — SB-01 through SB-18</p>
+    <p>
+      You hold this ticket. It has twelve work packages. Each work package fixes one group
+      of findings from the review. The findings touch the <b>PARA category</b> system at its
+      core: how a note gets a category, how a note moves between categories, how a note
+      waits in the holding area, how search stays correct after a move.
+    </p>
+    <p>
+      Two older tickets reopened because of this work: <b>#1</b> (PARA vault structure) and
+      <b>#2</b> (Ollama backend config). The review found both incomplete. Work package 11
+      covers the deterministic health-check defects, while #2 retains its live-deployment acceptance.
+    </p>
+    <p><b>1 September update:</b> the remediation branch is ready for a pull request after final review. That PR can close #20, #1, and the deterministic probe ticket #17. Issue #2 stays open for its real Ollama acceptance and setup guidance. The other feature tickets remain the roadmap; this branch is foundation work, not a release candidate.</p>
+  </div>
+
+  <div class="card">
+    <h2>Tickets that wait on #20</h2>
+    <table>
+      <tr><th>Ticket</th><th>Name</th><th>Why it waits</th></tr>
+      <tr>
+        <td><span class="tag tag-blocked">#4</span></td>
+        <td>Global hotkey quick capture</td>
+        <td>
+          Step 1 is done on its own branch: an app id, a dev entry, a proven connection to
+          the system's shortcut service. Step 2 needs <code>create_note</code>, the holding
+          area, and post-move search indexing. Your work packages 4 through 9 change all
+          three. Building step 2 now means building it twice.
+        </td>
+      </tr>
+      <tr>
+        <td><span class="tag tag-blocked">#7</span></td>
+        <td>Note embeddings, semantic search</td>
+        <td>Needs #2. #2 waits on your WP11.</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Tickets I would sequence behind #20</h2>
+    <p class="sub">GitHub does not mark these as blocked. They touch the same files you are changing.</p>
+    <table>
+      <tr><th>Ticket</th><th>Name</th><th>Overlap</th></tr>
+      <tr>
+        <td><span class="tag tag-sequence">#9</span></td>
+        <td>Capture-time similarity check</td>
+        <td>Also needs #1, which is reopened</td>
+      </tr>
+      <tr>
+        <td><span class="tag tag-sequence">#6</span></td>
+        <td>Attachment device tags</td>
+        <td>Touches note metadata, next to your WP2 field-by-field parsing</td>
+      </tr>
+      <tr>
+        <td><span class="tag tag-sequence">#10</span></td>
+        <td>Graph similarity edges</td>
+        <td>Needs #7, which needs #2</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Tickets free to start now</h2>
+    <table>
+      <tr><th>Ticket</th><th>Name</th><th>Note</th></tr>
+      <tr><td><span class="tag tag-free">#5</span></td><td>Web clipping from a URL</td><td>—</td></tr>
+      <tr><td><span class="tag tag-free">#12</span></td><td>Notion sync — one-way push</td><td>—</td></tr>
+      <tr><td><span class="tag tag-free">#13</span></td><td>Notion sync — two-way poll</td><td>—</td></tr>
+      <tr><td><span class="tag tag-free">#18</span></td><td>AI provider — real identity, not a bare string</td><td>—</td></tr>
+      <tr>
+        <td><span class="tag tag-free">#14</span></td>
+        <td>Force a vault backup before bulk operations</td>
+        <td>Not linked to #20 in GitHub, but it is a data-loss safeguard. Worth landing near your work, by choice, not by rule.</td>
+      </tr>
+      <tr><td><span class="tag tag-free">#8</span></td><td>AI prompt window</td><td>Needs #7, so not fully free</td></tr>
+      <tr><td><span class="tag tag-free">#11</span></td><td>Voice memo capture</td><td>Needs #4, so not fully free</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>My side — Windows hotkey and dev access</h2>
+    <table>
+      <tr><th>Ticket</th><th>Name</th><th>State</th></tr>
+      <tr><td><span class="tag tag-mine">#21</span></td><td>Windows hotkey backend</td><td>Waits on #4, which waits on #20</td></tr>
+      <tr><td><span class="tag tag-mine">#22</span></td><td>SSH access to the Windows host</td><td>Waits on nothing. Not started yet.</td></tr>
+    </table>
+    <p>
+      I run in a separate <b>git worktree</b>, not the shared folder. My step 1 branch and
+      your remediation branch do not touch the same files at the same time.
+    </p>
+  </div>
+
+  <div class="callout">
+    <b>Net:</b> #20 is ready to close through the remediation pull request. After that,
+    <b>#4</b> can resume. <b>#2</b> remains open until a live Ollama deployment and its setup guidance satisfy that issue; downstream AI tickets stay gated by that evidence.
+  </div>
+
+  <footer>
+    Second Brain — recap for Sol — 2026-08-30 — see live state at
+    github.com/zulucode-design/second-brain/issues
+  </footer>
+
+</div>
+</body>
+</html>
