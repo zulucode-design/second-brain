@@ -1,4 +1,5 @@
 use crate::asset_scope;
+use crate::hotkey;
 use crate::search::SearchIndex;
 use crate::state::AppState;
 use crate::types::*;
@@ -985,6 +986,47 @@ pub fn create_note(
     index_note_now(&state, vault_path, &entry.path)?;
 
     Ok(entry)
+}
+
+/// File a quick capture as a note under the chosen PARA category.
+///
+/// Deliberately built on `create_note` and `save_note` rather than writing a file directly:
+/// those already refuse an uncategorised note, snapshot history, and index synchronously, so
+/// a captured note is findable the moment the overlay closes. A private path here would be a
+/// second way to create a note, and the two would drift.
+#[tauri::command]
+pub fn quick_capture_note(
+    state: State<'_, AppState>,
+    category: String,
+    text: String,
+) -> Result<NoteEntry, String> {
+    let capture = hotkey::capture::split(&text).map_err(|error| error.message().to_string())?;
+    let category = crate::vault::para::ParaCategory::from_name(&category)
+        .ok_or("Choose a category: Projects, Areas, Resources, or Archives")?;
+
+    let entry = create_note(
+        state.clone(),
+        Some(category.folder_name().to_string()),
+        capture.title,
+    )?;
+
+    // A title-only capture is already complete; writing an empty body would take a second
+    // lock and a second index pass to change nothing.
+    if capture.body.is_empty() {
+        return Ok(entry);
+    }
+
+    save_note(
+        state,
+        entry.path.clone(),
+        entry.meta.clone(),
+        capture.body.clone(),
+    )?;
+
+    Ok(NoteEntry {
+        preview: capture.body,
+        ..entry
+    })
 }
 
 /// The AI backend's last known reachability.

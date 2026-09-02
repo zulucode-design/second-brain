@@ -146,6 +146,14 @@ export async function saveNote(
   return invoke("save_note", { path, meta, body });
 }
 
+/// File a quick capture. The first line of `text` becomes the title, the rest the body.
+export async function quickCaptureNote(
+  category: string,
+  text: string,
+): Promise<NoteEntry> {
+  return invoke("quick_capture_note", { category, text });
+}
+
 export async function createNote(
   notebookRelative: string | null,
   title: string,

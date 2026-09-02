@@ -43,8 +43,6 @@ const APPIMAGE_ENV: &str = "APPIMAGE";
 /// What was done, so the caller can say something true about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Integration {
-    /// Not running from an AppImage. A packaged install ships its own entry.
-    NotNeeded,
     /// An entry naming this app id already points at this exact AppImage.
     AlreadyCurrent,
     /// An entry was written, because none existed or it pointed somewhere else.
@@ -134,21 +132,23 @@ pub fn ensure_appimage_entry(
     result
 }
 
-fn desktop_field<'a>(entry: &'a str, field: &str) -> Option<&'a str> {
-    entry
-        .lines()
-        .find_map(|line| line.strip_prefix(&format!("{field}=")))
-        .map(|value| {
-            value
-                .strip_prefix('"')
-                .and_then(|v| v.strip_suffix('"'))
-                .unwrap_or(value)
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Read one field out of a desktop entry, unquoting it. Test-only: production code
+    /// writes these files, and never reads them back.
+    fn desktop_field<'a>(entry: &'a str, field: &str) -> Option<&'a str> {
+        entry
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{field}=")))
+            .map(|value| {
+                value
+                    .strip_prefix('"')
+                    .and_then(|v| v.strip_suffix('"'))
+                    .unwrap_or(value)
+            })
+    }
 
     fn configured_id() -> ApplicationId {
         configured_application_id().expect("configured app id is valid")

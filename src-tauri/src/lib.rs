@@ -4,10 +4,6 @@ mod asset_scope;
 mod backup;
 mod commands;
 mod history;
-// Kept private, and unused until the capture window (step 3 of #4) calls it. The `allow` is
-// the honest form of that: `pub` would silence the same warning by pretending the module has
-// consumers outside the crate, which it does not.
-#[allow(dead_code)]
 mod hotkey;
 mod image_proxy;
 mod search;
@@ -96,6 +92,12 @@ pub fn run() {
             // Track the AI backend from launch, so features are shown as unavailable
             // before the user tries one rather than after it fails.
             ai_health::spawn_poller(app.handle().clone());
+
+            // Claim the global capture hotkey. Linux only for now: on Windows the app owns
+            // the keybinding rather than the compositor, which is #21 and a different
+            // mechanism entirely (ADR-0001).
+            #[cfg(target_os = "linux")]
+            hotkey::startup::spawn(app.handle().clone());
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -201,6 +203,7 @@ pub fn run() {
             commands::read_unfiled_note,
             commands::save_note,
             commands::create_note,
+            commands::quick_capture_note,
             commands::duplicate_note,
             commands::get_ai_status,
             commands::refresh_ai_status,

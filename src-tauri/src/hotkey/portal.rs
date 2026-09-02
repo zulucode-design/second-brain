@@ -42,7 +42,9 @@ use super::{
 /// is what keeps [`Registration::activations`] producing.
 pub struct Registration {
     proxy: GlobalShortcuts,
-    session: Session<GlobalShortcuts>,
+    /// Held, never read. The portal ends the session when this value drops, and with it the
+    /// binding and the `Activated` stream, so its lifetime *is* the hotkey's lifetime.
+    _session: Session<GlobalShortcuts>,
     trigger: Option<String>,
 }
 
@@ -115,7 +117,7 @@ pub async fn register(app_id: &ApplicationId) -> Result<Registration, Unavailabl
     Ok(Registration {
         trigger: trigger_of(&bound),
         proxy,
-        session,
+        _session: session,
     })
 }
 

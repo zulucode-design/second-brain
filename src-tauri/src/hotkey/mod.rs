@@ -13,10 +13,13 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+pub mod capture;
 #[cfg(target_os = "linux")]
 pub mod desktop_entry;
 #[cfg(target_os = "linux")]
 pub mod portal;
+#[cfg(target_os = "linux")]
+pub mod startup;
 
 /// The shortcut's identity with the portal. Stable: the compositor remembers bindings against
 /// it, so changing it would silently orphan whatever the user has already assigned.
@@ -29,6 +32,17 @@ pub const SHORTCUT_DESCRIPTION: &str = "Quick capture a note";
 /// in a dialog. Never display this as though it were the active binding — display the
 /// `trigger` the portal returns.
 pub const PREFERRED_TRIGGER: &str = "CTRL+ALT+n";
+
+/// The capture window's label, as declared in `tauri.conf.json`. Created hidden at startup so
+/// the hotkey shows an existing window rather than waiting on a WebView to load.
+pub const WINDOW_LABEL: &str = "capture";
+
+/// Emitted to the capture window when it is shown, so the field can take the caret. The
+/// window cannot infer this: it is shown and hidden repeatedly without ever being reloaded.
+pub const SHOWN_EVENT: &str = "quick-capture-shown";
+
+/// Emitted when the hotkey's registration state changes, so settings never shows a stale one.
+pub const STATUS_EVENT: &str = "hotkey-status-changed";
 
 /// A reverse-DNS application identifier accepted by both Tauri's bundler and the portal.
 ///
