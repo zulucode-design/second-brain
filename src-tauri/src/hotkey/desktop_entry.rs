@@ -28,7 +28,13 @@
 //! and an unquoted path containing a space. An AppImage lives wherever the user dropped it,
 //! which is very often a path with a space in it, so the quoting here is not optional.
 
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+
+#[cfg(test)]
+use super::configured_application_id;
+use super::ApplicationId;
 
 /// Where an AppImage learns its own location. Set by the AppImage runtime, absent otherwise,
 /// which is also how we tell we are running as one.
@@ -53,7 +59,7 @@ pub fn running_as_appimage() -> Option<PathBuf> {
 }
 
 /// Where the entry belongs. Basename must be the app id, or the portal will not match it.
-pub fn entry_path(data_home: &Path, app_id: &str) -> PathBuf {
+pub fn entry_path(data_home: &Path, app_id: &ApplicationId) -> PathBuf {
     data_home
         .join("applications")
         .join(format!("{app_id}.desktop"))
@@ -69,11 +75,13 @@ pub fn entry_contents(name: &str, exec: &Path, wm_class: &str) -> String {
          Type=Application\n\
          Name={name}\n\
          Exec=\"{exec}\"\n\
+         Icon={icon}\n\
          Terminal=false\n\
          Categories=Office;\n\
          StartupWMClass={wm_class}\n\
          NoDisplay=true\n",
-        exec = exec.display()
+        exec = exec.display(),
+        icon = env!("CARGO_PKG_NAME")
     )
 }
 
@@ -90,13 +98,118 @@ pub fn is_current(existing: Option<&str>, exec: &Path) -> bool {
     existing.lines().any(|line| line.trim_end() == wanted)
 }
 
+/// Ensure an AppImage has the user-level desktop entry the portal uses to resolve its app id.
+///
+/// The caller supplies the AppImage path so this operation is deterministic and testable. The
+/// startup path will pass [`running_as_appimage`] when step 3 wires registration into the app.
+pub fn ensure_appimage_entry(
+    data_home: &Path,
+    app_id: &ApplicationId,
+    appimage: &Path,
+) -> io::Result<Integration> {
+    let path = entry_path(data_home, app_id);
+    let existing = fs::read_to_string(&path).ok();
+    if is_current(existing.as_deref(), appimage) {
+        return Ok(Integration::AlreadyCurrent);
+    }
+
+    let parent = path
+        .parent()
+        .expect("an application desktop entry always has a parent");
+    fs::create_dir_all(parent)?;
+    let temporary = parent.join(format!(".{app_id}.desktop.tmp-{}", uuid::Uuid::new_v4()));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)?;
+        file.write_all(entry_contents("HelixNotes", appimage, env!("CARGO_PKG_NAME")).as_bytes())?;
+        file.sync_all()?;
+        fs::rename(&temporary, &path)?;
+        Ok(Integration::Written { path })
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn desktop_field<'a>(entry: &'a str, field: &str) -> Option<&'a str> {
+    entry
+        .lines()
+        .find_map(|line| line.strip_prefix(&format!("{field}=")))
+        .map(|value| {
+            value
+                .strip_prefix('"')
+                .and_then(|v| v.strip_suffix('"'))
+                .unwrap_or(value)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn configured_id() -> ApplicationId {
+        configured_application_id().expect("configured app id is valid")
+    }
+
+    #[test]
+    fn packaged_entry_is_named_for_and_agrees_with_the_configured_app_id() {
+        let id = configured_id();
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../../tauri.conf.json")).expect("config parses");
+        let expected_destination = format!("/usr/share/applications/{id}.desktop");
+        let expected_source = format!("linux/{id}.desktop");
+
+        for package in ["deb", "rpm"] {
+            assert_eq!(
+                config["bundle"]["linux"][package]["files"][&expected_destination],
+                expected_source
+            );
+        }
+
+        let packaged_entry =
+            include_str!("../../linux/io.github.zulucode-design.SecondBrain.desktop");
+        let generated = entry_contents("HelixNotes", Path::new("helixnotes"), "helixnotes");
+        for field in ["Exec", "Icon", "Categories", "StartupWMClass"] {
+            assert_eq!(
+                desktop_field(packaged_entry, field),
+                desktop_field(&generated, field)
+            );
+        }
+    }
+
+    #[test]
+    fn appimage_integration_writes_and_refreshes_the_portal_entry() {
+        let data_home = std::env::temp_dir().join(format!(
+            "second-brain-appimage-entry-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let first = Path::new("/home/u/Downloads/Second Brain.AppImage");
+        let moved = Path::new("/home/u/Apps/Second Brain.AppImage");
+
+        let written = ensure_appimage_entry(&data_home, &configured_id(), first)
+            .expect("first entry is written");
+        assert!(matches!(written, Integration::Written { .. }));
+        assert_eq!(
+            ensure_appimage_entry(&data_home, &configured_id(), first)
+                .expect("current entry is accepted"),
+            Integration::AlreadyCurrent
+        );
+        assert!(matches!(
+            ensure_appimage_entry(&data_home, &configured_id(), moved)
+                .expect("moved AppImage refreshes the entry"),
+            Integration::Written { .. }
+        ));
+
+        std::fs::remove_dir_all(&data_home).expect("test directory cleans up");
+    }
+
     #[test]
     fn the_entry_is_named_for_the_app_id_because_the_portal_matches_on_that() {
-        let path = entry_path(Path::new("/home/u/.local/share"), "io.github.example.App");
+        let id = ApplicationId::parse("io.github.example.App").expect("example id is valid");
+        let path = entry_path(Path::new("/home/u/.local/share"), &id);
         assert_eq!(
             path,
             PathBuf::from("/home/u/.local/share/applications/io.github.example.App.desktop")

@@ -31,8 +31,8 @@ use ashpd::{AppID, Error as PortalError};
 use futures::{Stream, StreamExt};
 
 use super::{
-    classify_portal_error, needs_binding, Unavailable, PREFERRED_TRIGGER, SHORTCUT_DESCRIPTION,
-    SHORTCUT_ID,
+    classify_portal_error, needs_binding, ApplicationId, Unavailable, PREFERRED_TRIGGER,
+    SHORTCUT_DESCRIPTION, SHORTCUT_ID,
 };
 
 /// A live registration: the session that holds the binding, plus what the compositor bound.
@@ -70,11 +70,14 @@ impl Registration {
 /// already bound.
 ///
 /// The `Err` side is always something the user can be told, never a raw protocol error.
-pub async fn register(app_id: &str) -> Result<Registration, Unavailable> {
-    let parsed: AppID = app_id.try_into().map_err(|_| Unavailable::AppIdRejected {
-        app_id: app_id.to_string(),
-        detail: "not a valid application id".to_string(),
-    })?;
+pub async fn register(app_id: &ApplicationId) -> Result<Registration, Unavailable> {
+    let parsed: AppID = app_id
+        .as_str()
+        .try_into()
+        .map_err(|_| Unavailable::AppIdRejected {
+            app_id: app_id.to_string(),
+            detail: "not a valid application id".to_string(),
+        })?;
 
     // Harmless and skipped inside a sandbox, where the app id is already known to the portal.
     ashpd::register_host_app(parsed)
@@ -135,7 +138,7 @@ fn trigger_of(shortcuts: &[Shortcut]) -> Option<String> {
 /// no `GlobalShortcuts` implementation at all, and a cancelled request. A cancelled request
 /// is the permission dialog being dismissed, which the desktop remembers — the case that
 /// otherwise looks like the hotkey silently not working.
-fn classify(app_id: &str, err: &PortalError) -> Unavailable {
+fn classify(app_id: &ApplicationId, err: &PortalError) -> Unavailable {
     match err {
         PortalError::PortalNotFound(_) => Unavailable::NoPortal,
         PortalError::Response(ResponseError::Cancelled) => Unavailable::PermissionDenied {
@@ -183,13 +186,8 @@ mod tests {
 
     /// The app id the app will actually ship with, read from the config rather than repeated
     /// here. A test that registers a different id from the product proves nothing.
-    fn configured_app_id() -> String {
-        let config: serde_json::Value =
-            serde_json::from_str(include_str!("../../tauri.conf.json")).expect("config parses");
-        config["identifier"]
-            .as_str()
-            .expect("config names an identifier")
-            .to_string()
+    fn configured_app_id() -> ApplicationId {
+        super::super::configured_application_id().expect("configured app id is valid")
     }
 
     /// The whole handshake against the real portal. Not run by default, and it cannot be:
@@ -217,7 +215,10 @@ mod tests {
                 .into(),
         );
         assert_eq!(
-            classify("io.github.example.App", &missing),
+            classify(
+                &ApplicationId::parse("io.github.example.App").expect("example id is valid"),
+                &missing
+            ),
             Unavailable::NoPortal
         );
     }
@@ -228,7 +229,10 @@ mod tests {
         // so anything less specific here leaves the user with a hotkey that never works.
         let cancelled = PortalError::Response(ResponseError::Cancelled);
         assert_eq!(
-            classify("io.github.example.App", &cancelled),
+            classify(
+                &ApplicationId::parse("io.github.example.App").expect("example id is valid"),
+                &cancelled
+            ),
             Unavailable::PermissionDenied {
                 app_id: "io.github.example.App".to_string()
             }

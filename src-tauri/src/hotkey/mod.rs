@@ -11,6 +11,7 @@
 //! shortcut that is bound or is not, and a reason the user can act on.
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[cfg(target_os = "linux")]
 pub mod desktop_entry;
@@ -28,6 +29,62 @@ pub const SHORTCUT_DESCRIPTION: &str = "Quick capture a note";
 /// in a dialog. Never display this as though it were the active binding — display the
 /// `trigger` the portal returns.
 pub const PREFERRED_TRIGGER: &str = "CTRL+ALT+n";
+
+/// A reverse-DNS application identifier accepted by both Tauri's bundler and the portal.
+///
+/// Keeping this distinct from an arbitrary string means portal and desktop-entry APIs cannot
+/// accidentally receive an empty identifier, a display name, or the underscore form that Tauri
+/// refuses to package.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplicationId(String);
+
+impl ApplicationId {
+    pub fn parse(value: impl Into<String>) -> Result<Self, String> {
+        let value = value.into();
+        let segments: Vec<&str> = value.split('.').collect();
+        let valid_segment = |segment: &&str| {
+            !segment.is_empty()
+                && segment
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '-')
+                && segment
+                    .chars()
+                    .next()
+                    .is_some_and(|character| character.is_ascii_alphanumeric())
+                && segment
+                    .chars()
+                    .last()
+                    .is_some_and(|character| character.is_ascii_alphanumeric())
+        };
+
+        if segments.len() < 3 || !segments.iter().all(valid_segment) {
+            return Err(format!(
+                "{value:?} is not a Tauri-compatible reverse-DNS application identifier"
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ApplicationId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+/// The single configured source of truth for this build's application identifier.
+pub fn configured_application_id() -> Result<ApplicationId, String> {
+    let config: serde_json::Value = serde_json::from_str(include_str!("../../tauri.conf.json"))
+        .map_err(|error| format!("tauri.conf.json is invalid: {error}"))?;
+    let identifier = config["identifier"]
+        .as_str()
+        .ok_or_else(|| "tauri.conf.json has no string identifier".to_string())?;
+    ApplicationId::parse(identifier)
+}
 
 /// Reused from `ai_health`, not redeclared. The two surfaces answer the same question — can
 /// this thing be used, and if not, why — so the front end gets one discriminator to switch on
@@ -131,7 +188,7 @@ pub fn needs_binding<'a>(already_bound: impl IntoIterator<Item = &'a str>) -> bo
 ///
 /// The portal reports a missing desktop entry and a rejected app id with the same
 /// `NotAllowed`/`Failed` shapes, so the text is what distinguishes them.
-pub fn classify_portal_error(app_id: &str, message: &str) -> Unavailable {
+pub fn classify_portal_error(app_id: &ApplicationId, message: &str) -> Unavailable {
     let lowered = message.to_ascii_lowercase();
     if lowered.contains("app info not found") || lowered.contains("an app id is required") {
         Unavailable::AppIdRejected {
@@ -154,6 +211,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn application_ids_accept_the_packaged_reverse_dns_identifier() {
+        let id = ApplicationId::parse("io.github.zulucode-design.SecondBrain")
+            .expect("the shipped identifier is valid");
+        assert_eq!(id.as_str(), "io.github.zulucode-design.SecondBrain");
+    }
+
+    #[test]
+    fn application_ids_reject_values_tauri_or_the_portal_cannot_use() {
+        for invalid in [
+            "",
+            "Second Brain",
+            "io.github.zulucode_design.SecondBrain",
+            "single-label",
+            ".io.github.App",
+            "io..App",
+        ] {
+            assert!(
+                ApplicationId::parse(invalid).is_err(),
+                "accepted {invalid:?}"
+            );
+        }
+    }
+
+    fn example_app_id() -> ApplicationId {
+        ApplicationId::parse("io.github.example.App").expect("example id is valid")
+    }
+
+    #[test]
     fn a_shortcut_already_bound_is_not_bound_again() {
         // Binding again would re-prompt, and the dialog is the thing users remember.
         assert!(!needs_binding(vec![SHORTCUT_ID]));
@@ -174,7 +259,7 @@ mod tests {
             "Could not register app ID: App info not found for 'io.github.example.App'",
             "An app id is required",
         ] {
-            let cause = classify_portal_error("io.github.example.App", message);
+            let cause = classify_portal_error(&example_app_id(), message);
             assert!(
                 matches!(cause, Unavailable::AppIdRejected { .. }),
                 "{message}"
@@ -198,7 +283,7 @@ mod tests {
 
     #[test]
     fn an_unrecognised_portal_error_is_passed_through_rather_than_guessed_at() {
-        let cause = classify_portal_error("io.github.example.App", "Something new went wrong");
+        let cause = classify_portal_error(&example_app_id(), "Something new went wrong");
         assert_eq!(
             cause,
             Unavailable::PortalError {

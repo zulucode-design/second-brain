@@ -47,3 +47,11 @@ jobs:
 
       - name: Run project verification
         run: pnpm verify
+
+      - name: Build unsigned Debian package
+        run: >-
+          pnpm exec tauri build --bundles deb --ci --no-sign
+          --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Verify portal desktop entry in Debian package
+        run: scripts/verify-linux-package.sh "$(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -print -quit)"
