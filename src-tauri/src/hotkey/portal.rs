@@ -13,6 +13,12 @@
 //! 4. `BindShortcuts`, **only if not already bound** — this is the call that shows the
 //!    permission dialog, and a dialog shown on every launch is the thing users remember.
 //!
+//! Verified against xdg-desktop-portal on GNOME/Wayland, 2026-09-01: the first run prompts
+//! and binds (18.8s, nearly all of it the dialog); the second run finds the shortcut already
+//! bound, skips `BindShortcuts`, and completes in 0.03s without prompting. GNOME honoured the
+//! preferred trigger and described it as "Press <Control><Alt>n" — a sentence, not an
+//! accelerator, which is what the settings UI has to render.
+//!
 //! The session must outlive registration: closing it drops the binding and ends the
 //! `Activated` signal stream. So [`Registration`] owns it, and dropping a `Registration`
 //! is how the hotkey is given up.
