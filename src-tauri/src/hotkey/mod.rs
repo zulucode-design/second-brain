@@ -12,6 +12,9 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(target_os = "linux")]
+pub mod portal;
+
 /// The shortcut's identity with the portal. Stable: the compositor remembers bindings against
 /// it, so changing it would silently orphan whatever the user has already assigned.
 pub const SHORTCUT_ID: &str = "quick-capture";
@@ -154,10 +157,6 @@ pub fn classify_portal_error(app_id: &str, message: &str) -> Unavailable {
         }
     }
 }
-
-// NOTE: the portal driver (session, ListShortcuts, conditional BindShortcuts, Activated
-// stream) is the remaining half of step 2 and is not written yet. Everything above is the
-// decision logic it will use, kept separate so it is testable without a desktop session.
 
 #[cfg(test)]
 mod tests {
