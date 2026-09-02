@@ -125,6 +125,10 @@ pub use crate::ai_health::Availability;
 /// genuinely different actions, and because the portal reports several of them identically.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unavailable {
+    /// The shortcut cannot be useful because its capture surface could not be prepared.
+    CaptureWindow { detail: String },
+    /// An AppImage could not create the user-level desktop entry the portal requires.
+    AppImageIntegration { detail: String },
     /// No `GlobalShortcuts` implementation on this desktop.
     NoPortal,
     /// The portal will not accept our app id, which in practice means it cannot find an
@@ -141,6 +145,14 @@ impl Unavailable {
     /// The message shown to the user. Each one ends with the thing to actually do.
     pub fn reason(&self) -> String {
         match self {
+            Self::CaptureWindow { detail } => format!(
+                "Quick capture could not prepare its capture window ({detail}). Restart the app; \
+                 if this continues, report this error."
+            ),
+            Self::AppImageIntegration { detail } => format!(
+                "Quick capture could not prepare the AppImage desktop entry ({detail}). Check \
+                 that your user data directory is writable, then restart the app."
+            ),
             Self::NoPortal => "This desktop has no global shortcuts portal, so a system-wide \
                  hotkey cannot be registered. Quick capture still works from inside the app."
                 .to_string(),
@@ -309,6 +321,18 @@ mod tests {
         };
         let reason = cause.reason();
         assert!(reason.contains("flatpak permission-reset io.github.example.App"));
+    }
+
+    #[test]
+    fn an_appimage_integration_failure_names_the_failed_local_setup() {
+        let cause = Unavailable::AppImageIntegration {
+            detail: "permission denied while writing the desktop entry".to_string(),
+        };
+        let reason = cause.reason();
+
+        assert!(reason.contains("AppImage desktop entry"));
+        assert!(reason.contains("permission denied"));
+        assert!(!reason.contains("dev-desktop-entry.sh"));
     }
 
     #[test]

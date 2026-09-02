@@ -14,6 +14,41 @@ use super::{
 };
 use crate::state::AppState;
 
+type ActivationListener = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
+
+struct RegistrationAttempt {
+    status: HotkeyStatus,
+    listener: Option<ActivationListener>,
+}
+
+impl RegistrationAttempt {
+    fn inactive(status: HotkeyStatus) -> Self {
+        Self {
+            status,
+            listener: None,
+        }
+    }
+
+    fn active(status: HotkeyStatus, listener: ActivationListener) -> Self {
+        Self {
+            status,
+            listener: Some(listener),
+        }
+    }
+
+    /// Publish the initial truth before the listener can replace it with a later status.
+    fn launch<Publish, Start>(self, publish_initial: Publish, start_listener: Start)
+    where
+        Publish: FnOnce(HotkeyStatus),
+        Start: FnOnce(ActivationListener),
+    {
+        publish_initial(self.status);
+        if let Some(listener) = self.listener {
+            start_listener(listener);
+        }
+    }
+}
+
 /// Make sure the capture window exists, building it if Tauri did not.
 ///
 /// **Not called from `setup`.** Building a window synchronously there deadlocks on Linux: the
@@ -23,7 +58,7 @@ use crate::state::AppState;
 /// errors — the builder simply never comes back.
 ///
 /// So this runs on the async runtime, after the loop is up.
-async fn ensure_window(app: &AppHandle) -> tauri::Result<()> {
+async fn ensure_window(app: &AppHandle) -> Result<(), Unavailable> {
     if app.get_webview_window(WINDOW_LABEL).is_some() {
         return Ok(());
     }
@@ -35,10 +70,15 @@ async fn ensure_window(app: &AppHandle) -> tauri::Result<()> {
         .find(|window| window.label == WINDOW_LABEL)
         .cloned()
     else {
-        log::error!("tauri.conf.json declares no {WINDOW_LABEL:?} window");
-        return Ok(());
+        return Err(Unavailable::CaptureWindow {
+            detail: format!("the application configuration declares no {WINDOW_LABEL:?} window"),
+        });
     };
-    tauri::WebviewWindowBuilder::from_config(app, &config)?.build()?;
+    tauri::WebviewWindowBuilder::from_config(app, &config)
+        .and_then(|builder| builder.build())
+        .map_err(|error| Unavailable::CaptureWindow {
+            detail: error.to_string(),
+        })?;
     log::debug!("Capture window ready");
     Ok(())
 }
@@ -52,55 +92,84 @@ pub fn spawn(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         // The window has to exist before the hotkey can be answered, and it is cheap: it is
         // created hidden and never loaded again, so the first press is a show, not a load.
-        if let Err(error) = ensure_window(&app).await {
-            log::error!("Could not create the capture window: {error}");
-        }
-        let status = register(&app).await;
+        let readiness = ensure_window(&app).await;
+        let attempt =
+            match register_when_ready(readiness, || async { Ok(register(&app).await) }).await {
+                Ok(attempt) => attempt,
+                Err(cause) => RegistrationAttempt::inactive(HotkeyStatus::unavailable(&cause)),
+            };
         // Logged, not only stored. An unregistered hotkey is invisible by nature — nothing
         // happens when the key is pressed — so the reason has to be somewhere a person can
         // read it without attaching a debugger.
-        match (&status.availability, &status.reason) {
+        match (&attempt.status.availability, &attempt.status.reason) {
             (Availability::Available, _) => log::info!(
                 "Quick capture hotkey registered: {}",
-                status.trigger.as_deref().unwrap_or("trigger not described")
+                attempt
+                    .status
+                    .trigger
+                    .as_deref()
+                    .unwrap_or("trigger not described")
             ),
             (_, Some(reason)) => log::warn!("Quick capture hotkey unavailable: {reason}"),
             (_, None) => {
                 log::info!("Quick capture hotkey not registered: no vault is configured yet")
             }
         }
-        publish(&app, status);
+        attempt.launch(
+            |status| publish(&app, status),
+            |listener| {
+                tauri::async_runtime::spawn(listener);
+            },
+        );
     });
 }
 
-async fn register(app: &AppHandle) -> HotkeyStatus {
+/// Run portal registration only after every local prerequisite can answer the shortcut.
+async fn register_when_ready<T, Register, Future>(
+    readiness: Result<(), Unavailable>,
+    register: Register,
+) -> Result<T, Unavailable>
+where
+    Register: FnOnce() -> Future,
+    Future: std::future::Future<Output = Result<T, Unavailable>>,
+{
+    readiness?;
+    register().await
+}
+
+async fn register(app: &AppHandle) -> RegistrationAttempt {
     // No vault was ever configured: this is first run, the user has not set the app up yet,
     // and a permission dialog before they have chosen a vault is a prompt about a feature
     // they have not met. Say nothing and leave the hotkey unregistered.
     if !a_vault_was_configured(app) {
-        return HotkeyStatus::unknown();
+        return RegistrationAttempt::inactive(HotkeyStatus::unknown());
     }
 
     let app_id = match super::configured_application_id() {
         Ok(app_id) => app_id,
         Err(detail) => {
-            return HotkeyStatus::unavailable(&Unavailable::AppIdRejected {
-                app_id: "<invalid>".to_string(),
-                detail,
-            })
+            return RegistrationAttempt::inactive(HotkeyStatus::unavailable(
+                &Unavailable::AppIdRejected {
+                    app_id: "<invalid>".to_string(),
+                    detail,
+                },
+            ))
         }
     };
 
     // An AppImage installs no desktop entry, so the portal cannot resolve its app id until it
-    // writes one for itself. Failing here is not fatal: registration then reports
-    // AppIdRejected, which names the cause.
-    if let Some(appimage) = super::desktop_entry::running_as_appimage() {
-        if let Some(data_home) = data_home() {
-            match super::desktop_entry::ensure_appimage_entry(&data_home, &app_id, &appimage) {
-                Ok(outcome) => log::info!("AppImage desktop entry: {outcome:?}"),
-                Err(error) => log::warn!("Could not write the AppImage desktop entry: {error}"),
-            }
-        }
+    // writes one for itself. This is a registration prerequisite, not a best-effort side effect:
+    // proceeding after it fails would misreport the later portal rejection as an app-id problem.
+    let appimage = super::desktop_entry::running_as_appimage();
+    let data_home = data_home();
+    if let Err(cause) = prepare_appimage_entry(
+        appimage.as_deref(),
+        data_home.as_deref(),
+        |data_home, appimage| {
+            super::desktop_entry::ensure_appimage_entry(data_home, &app_id, appimage)
+        },
+    ) {
+        return RegistrationAttempt::inactive(HotkeyStatus::unavailable(&cause));
     }
 
     match portal::register(&app_id).await {
@@ -109,13 +178,21 @@ async fn register(app: &AppHandle) -> HotkeyStatus {
             match registration.activations().await {
                 Ok(activations) => {
                     let app = app.clone();
-                    // The registration owns the portal session, so the task that listens has
-                    // to own the registration: dropping it here would end the binding.
-                    tauri::async_runtime::spawn(async move {
+                    // The registration owns the portal session, so the listener has to own it:
+                    // dropping it here would end the binding. Return the listener unspawned so
+                    // startup can publish Available before any later status can replace it.
+                    let listener: ActivationListener = Box::pin(async move {
                         use futures::StreamExt;
                         let mut activations = Box::pin(activations);
                         while activations.next().await.is_some() {
-                            show_capture_window(&app);
+                            match activation_outcome(show_capture_window(&app)) {
+                                ActivationOutcome::Continue => {}
+                                ActivationOutcome::EndSession(status) => {
+                                    publish(&app, status);
+                                    drop(registration);
+                                    return;
+                                }
+                            }
                         }
                         // The stream ending means the session is gone, and with it the
                         // binding. Say so rather than leaving a stale "registered".
@@ -128,36 +205,84 @@ async fn register(app: &AppHandle) -> HotkeyStatus {
                         );
                         drop(registration);
                     });
-                    status
+                    RegistrationAttempt::active(status, listener)
                 }
-                Err(error) => HotkeyStatus::unavailable(&Unavailable::PortalError {
-                    detail: error.to_string(),
-                }),
+                Err(error) => RegistrationAttempt::inactive(HotkeyStatus::unavailable(
+                    &Unavailable::PortalError {
+                        detail: error.to_string(),
+                    },
+                )),
             }
         }
-        Err(cause) => HotkeyStatus::unavailable(&cause),
+        Err(cause) => RegistrationAttempt::inactive(HotkeyStatus::unavailable(&cause)),
     }
+}
+
+fn prepare_appimage_entry<Ensure, Error>(
+    appimage: Option<&std::path::Path>,
+    data_home: Option<&std::path::Path>,
+    ensure: Ensure,
+) -> Result<(), Unavailable>
+where
+    Ensure: FnOnce(
+        &std::path::Path,
+        &std::path::Path,
+    ) -> Result<super::desktop_entry::Integration, Error>,
+    Error: std::fmt::Display,
+{
+    let Some(appimage) = appimage else {
+        return Ok(());
+    };
+    let data_home = data_home.ok_or_else(|| Unavailable::AppImageIntegration {
+        detail: "no user data directory is available".to_string(),
+    })?;
+    let outcome =
+        ensure(data_home, appimage).map_err(|error| Unavailable::AppImageIntegration {
+            detail: error.to_string(),
+        })?;
+    log::info!("AppImage desktop entry: {outcome:?}");
+    Ok(())
 }
 
 /// Bring the overlay up and put the caret in it.
 ///
 /// The window already exists, hidden, created at startup: showing it is a compositor
 /// operation, where creating it would be a WebView load with the user waiting on it.
-fn show_capture_window(app: &AppHandle) {
+fn show_capture_window(app: &AppHandle) -> Result<(), Unavailable> {
     let Some(window) = app.get_webview_window(WINDOW_LABEL) else {
-        log::error!(
-            "The capture window is missing, so the hotkey has nothing to show. Windows: {:?}",
-            app.webview_windows().keys().collect::<Vec<_>>()
-        );
-        return;
+        return Err(Unavailable::CaptureWindow {
+            detail: format!(
+                "the capture window is missing; available windows: {:?}",
+                app.webview_windows().keys().collect::<Vec<_>>()
+            ),
+        });
     };
-    if let Err(error) = window.show().and_then(|()| window.set_focus()) {
-        log::warn!("Could not show the capture window: {error}");
-        return;
-    }
+    window
+        .show()
+        .and_then(|()| window.set_focus())
+        .map_err(|error| Unavailable::CaptureWindow {
+            detail: error.to_string(),
+        })?;
     // The field decides its own focus: the window may have been shown while the webview was
     // still mounting, and only it knows when the textarea exists.
-    let _ = window.emit(SHOWN_EVENT, ());
+    window
+        .emit(SHOWN_EVENT, ())
+        .map_err(|error| Unavailable::CaptureWindow {
+            detail: error.to_string(),
+        })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ActivationOutcome {
+    Continue,
+    EndSession(HotkeyStatus),
+}
+
+fn activation_outcome(result: Result<(), Unavailable>) -> ActivationOutcome {
+    match result {
+        Ok(()) => ActivationOutcome::Continue,
+        Err(cause) => ActivationOutcome::EndSession(HotkeyStatus::unavailable(&cause)),
+    }
 }
 
 fn publish(app: &AppHandle, status: HotkeyStatus) {
@@ -180,4 +305,89 @@ fn data_home() -> Option<std::path::PathBuf> {
         .map(std::path::PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
         .or_else(dirs::data_dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
+    #[test]
+    fn a_failed_startup_prerequisite_prevents_portal_registration() {
+        let registration_attempted = Arc::new(AtomicBool::new(false));
+        let observed = registration_attempted.clone();
+        let runtime = tokio::runtime::Runtime::new().expect("runtime starts");
+        let result = runtime.block_on(register_when_ready::<(), _, _>(
+            Err(Unavailable::CaptureWindow {
+                detail: "capture window config is missing".to_string(),
+            }),
+            move || async move {
+                observed.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+        ));
+
+        assert!(matches!(result, Err(Unavailable::CaptureWindow { .. })));
+        assert!(!registration_attempted.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn an_appimage_without_a_user_data_directory_is_not_ready_to_register() {
+        let result = prepare_appimage_entry(
+            Some(std::path::Path::new("/home/u/SecondBrain.AppImage")),
+            None,
+            |_, _| {
+                Ok::<_, std::io::Error>(super::super::desktop_entry::Integration::AlreadyCurrent)
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(Unavailable::AppImageIntegration { ref detail })
+                if detail.contains("user data directory")
+        ));
+    }
+
+    #[test]
+    fn a_failed_activation_ends_the_registered_session_with_an_unavailable_status() {
+        let outcome = activation_outcome(Err(Unavailable::CaptureWindow {
+            detail: "the compositor refused to focus the capture window".to_string(),
+        }));
+
+        let ActivationOutcome::EndSession(status) = outcome else {
+            panic!("an unusable capture window must end the portal session");
+        };
+        assert_eq!(status.availability, Availability::Unavailable);
+        assert!(status
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("refused to focus")));
+    }
+
+    #[test]
+    fn available_is_published_before_the_activation_listener_can_run() {
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let listener_events = events.clone();
+        let attempt = RegistrationAttempt {
+            status: HotkeyStatus::registered(Some("Ctrl+Alt+N".to_string())),
+            listener: Some(Box::pin(async move {
+                listener_events.lock().unwrap().push("listener");
+            })),
+        };
+
+        let publish_events = events.clone();
+        attempt.launch(
+            move |_| publish_events.lock().unwrap().push("available"),
+            |listener| {
+                tokio::runtime::Runtime::new()
+                    .expect("runtime starts")
+                    .block_on(listener)
+            },
+        );
+
+        assert_eq!(*events.lock().unwrap(), ["available", "listener"]);
+    }
 }
