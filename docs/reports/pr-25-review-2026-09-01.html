@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Second Brain — Review of pull request 25</title>
+<style>
+  :root {
+    --page: #f5f2eb;
+    --paper: #fffdf8;
+    --paper-2: #f9f6ef;
+    --ink: #20241f;
+    --muted: #60685f;
+    --line: #d8d3c7;
+    --accent: #235f50;
+    --accent-soft: #dcece5;
+    --high: #ad5017;
+    --high-soft: #f9e5d5;
+    --medium: #806500;
+    --medium-soft: #f3e9ba;
+    --low: #53657a;
+    --low-soft: #e3e9f0;
+    --shadow: 0 18px 50px rgba(39, 41, 35, 0.09);
+    --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --serif: Iowan Old Style, Palatino Linotype, Book Antiqua, Georgia, serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: radial-gradient(circle at 10% -5%, rgba(35, 95, 80, 0.13), transparent 33rem), var(--page);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.62;
+  }
+  a { color: var(--accent); text-underline-offset: 0.16em; }
+  code { font-family: var(--mono); font-size: 0.88em; background: var(--paper-2); padding: 0.1em 0.4em; border-radius: 5px; border: 1px solid var(--line); }
+  .page { width: min(880px, calc(100% - 30px)); margin: 26px auto 70px; }
+
+  .hero {
+    padding: clamp(24px, 5vw, 48px);
+    border: 1px solid var(--line);
+    border-radius: 24px;
+    background: var(--paper);
+    box-shadow: var(--shadow);
+    margin-bottom: 22px;
+  }
+  .kicker { margin: 0 0 10px; color: var(--accent); font-size: 0.74rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
+  h1 { font-family: var(--serif); font-size: clamp(2rem, 5vw, 2.9rem); font-weight: 600; letter-spacing: -0.03em; margin: 0; }
+  .intro { max-width: 680px; margin: 16px 0 0; color: var(--muted); font-size: 1.06rem; }
+
+  .card { background: var(--paper); border: 1px solid var(--line); border-radius: 20px; padding: clamp(20px, 4vw, 34px); box-shadow: var(--shadow); margin-bottom: 20px; }
+  h2 { font-family: var(--serif); font-size: 1.5rem; margin: 0 0 6px; }
+  h2 .num { color: var(--muted); font-weight: 400; font-size: 0.95rem; }
+  .sub { color: var(--muted); font-size: 0.95rem; margin: 0 0 16px; }
+  p { margin: 0 0 12px; }
+
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 4px; font-size: 0.95rem; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  tr:last-child td { border-bottom: none; }
+
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.76rem; font-weight: 700; letter-spacing: 0.02em; }
+  .tag-blocked { background: var(--high-soft); color: var(--high); }
+  .tag-sequence { background: var(--medium-soft); color: var(--medium); }
+  .tag-free { background: var(--accent-soft); color: var(--accent); }
+  .tag-mine { background: var(--low-soft); color: var(--low); }
+
+  .callout { background: var(--paper-2); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 12px; padding: 16px 20px; margin: 14px 0; font-size: 0.97rem; }
+  .callout.warn { border-left-color: var(--high); }
+
+  ul { margin: 8px 0 12px; padding-left: 22px; }
+  li { margin-bottom: 6px; }
+
+  footer { text-align: center; color: var(--muted); font-size: 0.85rem; margin-top: 30px; }
+</style>
+</head>
+
+<body>
+<div class="page">
+
+  <div class="hero">
+    <p class="kicker">Second Brain &mdash; code review</p>
+    <h1>Pull request 25: the quick-capture hotkey</h1>
+    <p class="intro">
+      This is a review of pull request 25. The pull request does step 1 and step 2 of
+      ticket 4. It does not do step 3 to step 7. Two reviews were made at the same time.
+      One review examined the repo standards. One review examined the ticket. The two
+      reviews are kept apart, because code can obey the standards and do the wrong task.
+      Date: 1 September 2026.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>What this pull request does</h2>
+    <p class="sub">Context, in short</p>
+    <p>
+      <b>Quick capture</b> lets the user write a <b>note</b> without first finding the app.
+      The user pushes a <b>hotkey</b>. A small <b>capture overlay</b> opens above the other
+      windows. The user types the text, selects a <b>PARA category</b>, and the app files
+      the note in the <b>vault</b>.
+    </p>
+    <p>
+      On Linux, the app cannot take the hotkey by itself. The desktop keeps control of the
+      hotkey. The app speaks to the desktop through the <b>portal</b>, an interface named
+      <code>org.freedesktop.portal.GlobalShortcuts</code>. The app sends a preferred
+      <b>trigger</b> as a proposal only. The desktop makes the decision. ADR-0001 gives the
+      reason for this design.
+    </p>
+    <p>
+      The portal identifies the app by its <b>app id</b>. The portal accepts an app id only
+      when it can find an installed desktop entry with the same name. A desktop entry is a
+      <code>.desktop</code> file.
+    </p>
+    <p>
+      This pull request contains three parts. First, it claims the app id
+      <code>io.github.zulucode_design.SecondBrain</code>. Second, it decides the
+      registration state and the message for each failure. Third, it speaks to the portal.
+      There is no capture overlay yet. That is step 3.
+    </p>
+    <div class="callout">
+      <b>Test on the true portal.</b> The registration was tested on GNOME and Wayland on
+      1 September 2026. The first run showed the permission dialog and made the binding. It
+      took 18.8 seconds. Almost all of that time was the dialog. The second run found the
+      binding again. It did not show a dialog. It took 0.03 seconds. This proves that the
+      app asks for permission one time only.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Review 1 &mdash; the repo standards</h2>
+    <p class="sub">5 findings. No hard violation.</p>
+    <p>
+      The repo has no <code>CONTRIBUTING.md</code> file and no
+      <code>CODING_STANDARDS.md</code> file. Thus this review used
+      <code>AGENTS.md</code>, ADR-0001, and a fixed list of code smells. The code obeys the
+      rules that the repo writes down. The ADR is present and has the correct format. The
+      comment style, the test names, and the meaning of <code>Unknown</code> agree with the
+      file <code>ai_health.rs</code>.
+    </p>
+    <table>
+      <tr><th>Finding</th><th>Where</th><th>Type</th></tr>
+      <tr>
+        <td>The status types are a copy of the types in <code>ai_health.rs</code>. The enum
+        <code>Availability</code>, the field <code>reason</code>, and the constructor
+        functions have the same shape. Two different enums with one name reach the user
+        interface.</td>
+        <td><code>hotkey/mod.rs</code></td>
+        <td><span class="tag tag-sequence">Duplicated code</span></td>
+      </tr>
+      <tr>
+        <td>Nothing calls this code yet. The constants <code>ACTIVATED_EVENT</code> and
+        <code>STATUS_EVENT</code>, the type <code>HotkeyStatus</code>, and the function
+        <code>configure()</code> have no caller. The file <code>lib.rs</code> only declares
+        the module.</td>
+        <td><code>hotkey/mod.rs</code>, <code>hotkey/portal.rs</code></td>
+        <td><span class="tag tag-sequence">Unproved surface</span></td>
+      </tr>
+      <tr>
+        <td>The app id is written in three places that have no link to each other. Only the
+        script <code>dev-desktop-entry.sh</code> reads the app id from the configuration
+        file. The other places will become wrong after the next change of name.</td>
+        <td><code>tauri.conf.json</code>, <code>portal-probe.py</code>,
+        <code>portal.rs</code></td>
+        <td><span class="tag tag-sequence">Duplicated value</span></td>
+      </tr>
+      <tr>
+        <td>The script writes the name <code>helixnotes</code> in two places. A change of
+        the product name will stop the desktop entry, and the script gives the only warning.</td>
+        <td><code>dev-desktop-entry.sh</code></td>
+        <td><span class="tag tag-mine">Scattered change</span></td>
+      </tr>
+      <tr>
+        <td>The module is public, but all the other modules in <code>lib.rs</code> are
+        private. No code outside the crate uses this module.</td>
+        <td><code>lib.rs</code></td>
+        <td><span class="tag tag-mine">Minor</span></td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Review 2 &mdash; the ticket</h2>
+    <p class="sub">4 findings. One is important.</p>
+
+    <div class="callout warn">
+      <p style="margin:0 0 8px"><b>Finding 1. The installed app will not register the hotkey.</b></p>
+      <p style="margin:0 0 8px">
+        Ticket 4 says: &ldquo;with an installed <code>.desktop</code> whose basename
+        matches&rdquo;. The pull request changes the app id in
+        <code>tauri.conf.json</code>. But it does not set a name for the desktop entry in
+        the <code>bundle.linux</code> section. Thus the build tool makes the name from the
+        product name. The result is <code>HelixNotes.desktop</code>. The portal looks for
+        <code>io.github.zulucode_design.SecondBrain.desktop</code>. The two names are
+        different.
+      </p>
+      <p style="margin:0">
+        The development build operates correctly, because the script writes the correct
+        name. The installed build will fail. It will fail with the message
+        &ldquo;App info not found&rdquo;. This is the same silent failure that ticket 4
+        must prevent.
+      </p>
+    </div>
+
+    <p><b>Finding 2. The status type does not obey the instruction.</b> Ticket 4 says:
+    &ldquo;Status surface reuses the <code>Availability</code> + <code>reason</code> shape
+    from <code>ai_health.rs</code>&rdquo;. The file <code>ai_health.rs</code> has the values
+    <code>Unknown</code>, <code>Available</code>, and <code>Unavailable</code>. The new code
+    makes a second enum. It uses <code>Registered</code> in the place of
+    <code>Available</code>. Thus the user interface cannot use one type for both. The rest
+    of the shape is correct.</p>
+
+    <p><b>Finding 3. Some code belongs to a later step.</b> The constants
+    <code>ACTIVATED_EVENT</code> and <code>STATUS_EVENT</code> belong to step 3 and step 7.
+    The function <code>configure()</code> is the settings button of step 7.</p>
+
+    <p><b>Finding 4. Two comments disagree.</b> The comment at the top of
+    <code>portal.rs</code> says that a drop of the <code>Registration</code> gives up the
+    hotkey. The comment on the type says that a drop closes nothing. There is no
+    <code>Drop</code> code and no call to <code>session.close()</code>.</p>
+
+    <p class="sub" style="margin-top:18px">These decisions from the ticket are correct in the code:</p>
+    <ul>
+      <li>The code uses the portal only. There is no X11 grab.</li>
+      <li>The code asks the portal for the list of shortcuts first. It makes a binding only
+      when a binding does not exist.</li>
+      <li>The code sends the trigger as a proposal. It shows the description from the portal
+      and does not read it as a key name.</li>
+      <li>The code reports a refused permission as its own state. The message contains the
+      command <code>flatpak permission-reset</code>.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Result</h2>
+    <table>
+      <tr><th>Review</th><th>Findings</th><th>Most important</th></tr>
+      <tr>
+        <td>Standards</td>
+        <td>5, no hard violation</td>
+        <td>The status types are a copy of <code>ai_health.rs</code>.</td>
+      </tr>
+      <tr>
+        <td>Ticket</td>
+        <td>4</td>
+        <td>The desktop entry name of the installed build does not agree with the app id.</td>
+      </tr>
+    </table>
+    <p>
+      The two reviews found the same problem in the status types. They started from
+      different directions. This agreement usually shows that the problem is true.
+    </p>
+    <p>
+      Correct finding 1 before you merge this pull request. It is an error, not a decision
+      about the size of the work. The commit message says that the app id is claimed. That
+      statement is too strong for an installed build.
+    </p>
+    <div class="callout">
+      <b>Not tested.</b> Linux with X11. The refused-permission path: a test of that path
+      spends a permission decision, and only the command
+      <code>flatpak permission-reset</code> can undo it. The signal stream for a key press:
+      no window listens to it before step 3.
+    </div>
+  </div>
+
+  <footer>
+    Second Brain &mdash; review of pull request 25 &mdash; 1 September 2026.
+    GitHub holds the live state of the pull request.
+  </footer>
+
+</div>
+</body>
+</html>
