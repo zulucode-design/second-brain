@@ -101,9 +101,26 @@ the generated entry after the product, giving `HelixNotes.desktop`, which the po
 match to the app id — so an installed build would fail exactly where a dev build succeeds.
 `bundle.linux.{deb,rpm}.files` therefore installs an entry named for the app id, and
 `desktopTemplate` marks the generated one `NoDisplay=true` so the app appears once in the
-launcher rather than twice. AppImage has no such hook and no installed entry; the hotkey is
-expected to report itself unavailable there, which is the designed behaviour rather than a
-silent failure.
+launcher rather than twice.
+
+**AppImage installs nothing at all** — it is one file the user runs from wherever they put
+it — so it gets no entry from either mechanism, and the hotkey would be permanently
+unavailable there. The AppImage therefore writes its own user-level entry on demand,
+pointing `Exec` at `$APPIMAGE`, which the AppImage runtime sets to the file's absolute path
+(measured on the built AppImage, 2026-09-01). Measured 2026-09-01, in this order: with no entry `Register`
+fails with "App info not found"; with a user-level entry naming the app id it returns `OK`
+and `CreateSession` succeeds.
+
+That entry is `NoDisplay=true`. It exists to make the app id resolvable, not to launch
+anything, and a user running AppImageLauncher or `appimaged` already has a visible entry
+from that — under a mangled basename (`appimagekit_<hash>_HelixNotes.desktop`) which cannot
+match the app id, so it does not remove the need for ours. Measured: the portal accepts an
+app id whose only entry is hidden, so `NoDisplay` costs nothing and avoids a duplicate menu
+item.
+
+An AppImage is also moved, renamed, and replaced by a newer download. When that happens the
+old entry names a path that no longer exists, GLib drops it, and the hotkey stops working
+with no visible cause — so a stale `Exec` is rewritten rather than left alone.
 
 Two ways to write an entry that GLib silently refuses to load, both reported by the portal
 only as "App info not found", and both passed as valid by `desktop-file-validate`: an `Exec`

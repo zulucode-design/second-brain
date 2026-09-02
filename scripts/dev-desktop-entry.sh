@@ -11,7 +11,10 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-app_id="$(python3 -c "import json;print(json.load(open('$repo/src-tauri/tauri.conf.json'))['identifier'])")"
+# /usr/bin/python3 explicitly, not whatever python3 is on PATH: the check below needs GLib's
+# gi bindings, which live in the system interpreter. A conda or venv python3 fails on
+# "import gi" and the entry then goes unverified.
+app_id="$(/usr/bin/python3 -c "import json;print(json.load(open('$repo/src-tauri/tauri.conf.json'))['identifier'])")"
 
 # The binary name is the Cargo package name, and the WM class follows it. Both are read
 # rather than repeated: hardcoding them here means a rename breaks the entry silently, and
@@ -57,7 +60,7 @@ echo "wrote $dest"
 echo "app id: $app_id"
 
 # Prove the entry resolves. A written file is not necessarily a found file.
-if python3 -c "
+if /usr/bin/python3 -c "
 import gi, sys
 gi.require_version('Gio', '2.0')
 from gi.repository import Gio

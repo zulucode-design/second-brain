@@ -13,6 +13,8 @@
 use serde::{Deserialize, Serialize};
 
 #[cfg(target_os = "linux")]
+pub mod desktop_entry;
+#[cfg(target_os = "linux")]
 pub mod portal;
 
 /// The shortcut's identity with the portal. Stable: the compositor remembers bindings against
