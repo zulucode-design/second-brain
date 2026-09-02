@@ -39,49 +39,62 @@
     <p class="kicker">Second Brain · maintained code-review record</p>
     <h1>PR #25: Linux quick-capture foundation</h1>
     <p class="intro">
-      Current through 2 September 2026. This report replaces the contradictory historical
-      presentation in the first version: resolved findings are now clearly separated from
-      remaining ticket work and newly added regression safeguards.
+      Current through the corrective review of <code>dd12836</code> on 2 September 2026.
+      Historical findings remain recorded below; each is labelled with its present status
+      so the report shows both what was found and what changed afterward.
     </p>
   </section>
 
   <section class="card">
     <h2>Scope and current result</h2>
-    <p class="sub">Steps 1–2 of ticket #4, not the completed quick-capture feature</p>
+    <p class="sub">Steps 1–4 of ticket #4, not the completed quick-capture feature</p>
     <p>
       PR #25 claims the packageable app id
-      <code>io.github.zulucode-design.SecondBrain</code>, provides Linux desktop entries,
-      models registration status, and implements the XDG GlobalShortcuts portal handshake.
-      It deliberately does not yet connect registration to application startup or implement
-      the capture window, category picker, note creation, notifications, autostart, or settings UI.
+      <code>io.github.zulucodedesign.SecondBrain</code>, provides Linux desktop entries,
+      registers through the XDG GlobalShortcuts portal at startup, opens a dedicated capture
+      window, and files captured text. Ticket steps 5–7 and the remaining acceptance criteria
+      are still outside the reviewed work.
     </p>
     <table>
       <tr><th>Axis</th><th>Status</th><th>Meaning</th></tr>
-      <tr><td>Repository standards</td><td><span class="tag pass">Pass</span></td><td>No documented hard violations.</td></tr>
-      <tr><td>Scoped PR work</td><td><span class="tag pass">Pass</span></td><td>The app-id and portal foundation is implemented and guarded.</td></tr>
-      <tr><td>Ticket #4 overall</td><td><span class="tag open">Incomplete</span></td><td>Steps 3–7 and end-to-end acceptance remain.</td></tr>
+      <tr><td>Repository standards</td><td><span class="tag fixed">Corrected</span></td><td>The stale report and contradictory ADR found in the <code>dd12836</code> review are corrected by the follow-up.</td></tr>
+      <tr><td>Scoped PR work</td><td><span class="tag fixed">Corrected</span></td><td>Window and AppImage readiness now gate registration; activation failure ends the portal session.</td></tr>
+      <tr><td>Ticket #4 overall</td><td><span class="tag open">Incomplete</span></td><td>Steps 5–7 and end-to-end acceptance remain.</td></tr>
     </table>
   </section>
 
   <section class="card">
-    <h2>Current review findings</h2>
-    <p class="sub">What remains true after the 2 September follow-up</p>
-    <div class="callout warn">
-      <b>The hotkey is not yet active in the product.</b> <code>lib.rs</code> declares the
-      module with <code>#[allow(dead_code)]</code>, but application startup does not yet call
-      <code>portal::register</code> or consume its activation stream. This is expected for
-      the stated steps 1–2 scope, but PR #25 must not be described as completing or closing
-      ticket #4.
+    <h2>Historical snapshots</h2>
+    <p class="sub">Superseded evidence is retained so later work does not erase what earlier reviews established</p>
+    <div class="callout">
+      <b>Before <code>35f754a</code> and <code>dd12836</code>:</b> the report correctly found that
+      the hotkey was not active in the product: startup did not call portal registration or
+      consume its activation stream. That finding was resolved when steps 3–4 wired startup,
+      the activation listener, capture window, and note path.
     </div>
-    <p><b>Low-confidence design observations:</b></p>
     <ul>
-      <li>Two desktop entries remain intentional: Tauri's product-named generated entry is
-        hidden, while the app-id-named entry lets the portal resolve the application.</li>
-      <li>The shared fields could drift, so source and finished-package checks now enforce
-        their relationship.</li>
-      <li>The earlier primitive-string concern is resolved by the validated
-        <code>ApplicationId</code> type.</li>
+      <li>The 2 September identifier-guard verification passed 21 hotkey tests and 202 Rust tests
+        with one live-portal test ignored; frontend remained at 31 passing tests.</li>
+      <li>That earlier package run verified
+        <code>usr/share/applications/io.github.zulucode-design.SecondBrain.desktop</code>.
+        It is retained as historical evidence only: the identifier was later rejected by
+        <code>ashpd</code> and replaced by the separator-free form.</li>
     </ul>
+  </section>
+
+  <section class="card">
+    <h2>Review of <code>dd12836</code></h2>
+    <p class="sub">Findings and disposition in the corrective follow-up</p>
+    <table>
+      <tr><th>Finding</th><th>Severity</th><th>Current disposition</th></tr>
+      <tr><td>A capture-window construction failure was logged but registration continued, allowing a falsely <code>Available</code> shortcut.</td><td>High</td><td><span class="tag fixed">Fixed</span> Window readiness is now a prerequisite; failure skips portal registration and publishes an actionable unavailable status.</td></tr>
+      <tr><td>Show or focus failure left the portal session alive and its stored status available.</td><td>High</td><td><span class="tag fixed">Fixed</span> Activation failure publishes unavailable, drops the registration, and ends the listener.</td></tr>
+      <tr><td>The activation listener could run before startup published <code>Available</code>, allowing a fast listener failure to be overwritten by stale availability.</td><td>High</td><td><span class="tag fixed">Fixed</span> Registration returns an unspawned listener; startup publishes the initial status before scheduling it.</td></tr>
+      <tr><td>AppImage entry failures were swallowed and later appeared to be application-id rejection.</td><td>Medium</td><td><span class="tag fixed">Fixed</span> Missing data location and write failures have a distinct cause and prevent portal registration.</td></tr>
+      <tr><td>The maintained PR report still described steps 1–2 and the rejected hyphenated identifier.</td><td>Standards</td><td><span class="tag fixed">Fixed</span> This record now reflects commits <code>35f754a</code>, <code>dd12836</code>, and their corrective follow-up without deleting earlier history.</td></tr>
+      <tr><td>ADR-0001 named the separator-free identifier but retained the contradictory “Hyphen wins” rationale.</td><td>Standards</td><td><span class="tag fixed">Fixed</span> The ADR now records why underscore and mid-segment hyphen forms both failed and why the separator-free form is required.</td></tr>
+      <tr><td>Ticket #4 named the rejected hyphenated identifier and grouped completed steps 3–4 with future work.</td><td>Tracking</td><td><span class="tag fixed">Fixed</span> The issue now names the separator-free identifier and separates completed steps 3–4 from remaining steps 5–7.</td></tr>
+    </table>
   </section>
 
   <section class="card">
@@ -89,7 +102,7 @@
     <p class="sub">Corrections already present in PR #25</p>
     <table>
       <tr><th>Earlier finding</th><th>Resolution</th></tr>
-      <tr><td>Unpackageable underscore app id</td><td><span class="tag fixed">Fixed</span> Hyphenated identifier accepted by Tauri; ADR-0001 records the tradeoff.</td></tr>
+      <tr><td>Unpackageable underscore app id, followed by an <code>ashpd</code>-rejected mid-segment hyphen</td><td><span class="tag fixed">Fixed</span> The separator-free identifier is accepted by Tauri and <code>ashpd</code>; ADR-0001 records the measured sequence.</td></tr>
       <tr><td>Installed entry did not match app id</td><td><span class="tag fixed">Fixed</span> Debian and RPM mappings install the exact app-id-named entry.</td></tr>
       <tr><td>Duplicate availability enum</td><td><span class="tag fixed">Fixed</span> Hotkey status reuses <code>ai_health::Availability</code>.</td></tr>
       <tr><td>App id repeated across code</td><td><span class="tag fixed">Fixed</span> Runtime code and tests read the canonical value from <code>tauri.conf.json</code>.</td></tr>
@@ -106,7 +119,9 @@
       <tr><td>Validated <code>ApplicationId</code></td><td>Rejects empty, spaced, underscore, non-reverse-DNS, and empty-segment identifiers before portal use.</td></tr>
       <tr><td>Canonical configured identifier</td><td>Portal and desktop-entry APIs cannot silently use an unrelated string literal.</td></tr>
       <tr><td>Source consistency test</td><td>Checks Debian/RPM destination names and shared desktop fields against the configured id.</td></tr>
-      <tr><td>AppImage writer test</td><td>Proves first write, no-op for a current entry, and refresh after an AppImage move. Startup invocation remains step 3.</td></tr>
+      <tr><td>AppImage writer and startup-gate tests</td><td>Proves first write, no-op for a current entry, refresh after a move, and refusal to register when required integration cannot be prepared.</td></tr>
+      <tr><td>Activation lifecycle test</td><td>Proves a capture-window failure becomes an unavailable status that tells the listener to end the portal session.</td></tr>
+      <tr><td>Status ordering test</td><td>Proves <code>Available</code> is published before the activation listener becomes runnable, preventing a truthful failure from being overwritten.</td></tr>
       <tr><td>Finished-package CI check</td><td>Builds an unsigned Debian package, extracts it, and byte-compares the installed app-id entry with the reviewed source entry.</td></tr>
     </table>
   </section>
@@ -114,22 +129,20 @@
   <section class="card">
     <h2>Verification evidence</h2>
     <ul>
-      <li>21 hotkey tests passed; one live-portal test remains intentionally ignored.</li>
-      <li>Full Rust suite: 202 passed, 1 ignored; binary and documentation targets contain no tests.</li>
+      <li>33 hotkey tests passed; one live-portal test remains intentionally ignored.</li>
+      <li>Full Rust suite: 213 passed, 1 ignored; binary and documentation targets contain no tests.</li>
       <li>Frontend: 31 tests passed; Svelte check reported 0 errors and 0 warnings.</li>
-      <li>Rust formatting and strict Clippy (<code>-D warnings</code>) passed after correcting one test-only import.</li>
+      <li>Rust formatting and strict Clippy (<code>-D warnings</code>) passed.</li>
       <li>Production frontend build passed with the existing large-chunk warning.</li>
-      <li>Unsigned Debian package built successfully and the artifact check verified
-        <code>usr/share/applications/io.github.zulucode-design.SecondBrain.desktop</code>.</li>
       <li>GNOME/Wayland portal evidence from 1 September remains valid for the handshake tested then:
         first binding prompted (18.8 s); repeat registration skipped binding (0.03 s).</li>
     </ul>
     <div class="callout">
-      <b>Still not tested:</b> the complete activation stream opening a capture window;
-      category selection and note persistence; focus restoration; unavailable-vault notification;
-      autostart and settings UI; Linux/X11; sticky-denial recovery against the live portal;
-      installed RPM behavior; and AppImage startup integration. These belong to the remaining
-      ticket #4 work and its release gates.
+      <b>Still not tested by automation:</b> a real compositor activation after these corrective
+      changes; focus restoration to the previously active application; unavailable-vault
+      notification; autostart and settings UI; Linux/X11; sticky-denial recovery against the
+      live portal; installed RPM behavior; and execution from a built AppImage. Ticket steps
+      5–7 and their acceptance tests remain future work rather than regressions in this follow-up.
     </div>
   </section>
 

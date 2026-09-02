@@ -70,7 +70,9 @@ non-reverse-DNS identifiers and validates against installed desktop entries.
 
 The bundle identifier therefore changes from `com.helixnotes.app` — upstream's domain,
 which would collide with a real HelixNotes install in the shared portal permission store —
-to **`io.github.zulucodedesign.SecondBrain`**, matching the GitHub organisation exactly.
+to **`io.github.zulucodedesign.SecondBrain`**. The owner segment is derived from the GitHub
+organisation but deliberately omits its separator so the same identifier passes every
+enforcer in the shipping path.
 
 The separator was settled twice, because two conventions disagree. Flatpak and D-Bus prefer
 `_` over `-`, since a D-Bus well-known name may not contain a hyphen. So the id was first
@@ -80,10 +82,17 @@ a-z, and 0-9), hyphens (-), and periods (.)" — so that id could not be package
 A dev build never runs the bundler, which is why the portal handshake was verified working
 before this was found.
 
-Hyphen wins because packaging is a hard requirement and the D-Bus objection is conditional:
-this app owns no well-known bus name. **If one is ever needed** — MPRIS, notification
-actions, a D-Bus single-instance guard — the name will have to differ from the app id rather
-than be derived from it. That is the accepted cost.
+The hyphenated follow-up, `io.github.zulucode-design.SecondBrain`, packages successfully but
+is rejected by `ashpd`: Flatpak application-id rules allow a hyphen only in the final segment.
+The portal daemon itself accepted that form when called directly on 2026-09-02, but the app
+uses `ashpd`, so bypassing its validation is not a supported path. Removing the separator is
+the intersection of the two enforced rule sets: Tauri accepts it, `ashpd` accepts it, and the
+portal resolves it against the matching desktop entry. The `ApplicationId` type encodes that
+intersection so neither rejected identifier can be reintroduced accidentally.
+
+If the app later owns a D-Bus well-known name — for MPRIS, notification actions, or a D-Bus
+single-instance guard — that name can be derived from this separator-free identifier without
+special casing.
 
 This is safe: config, backups, and the search index all key off a hardcoded `"helixnotes"`
 string (`commands.rs`, `backup.rs`, `search/mod.rs`), not the bundle identifier. Renaming
