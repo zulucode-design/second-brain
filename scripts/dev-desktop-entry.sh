@@ -12,7 +12,12 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 app_id="$(python3 -c "import json;print(json.load(open('$repo/src-tauri/tauri.conf.json'))['identifier'])")"
-binary="$repo/src-tauri/target/debug/helixnotes"
+
+# The binary name is the Cargo package name, and the WM class follows it. Both are read
+# rather than repeated: hardcoding them here means a rename breaks the entry silently, and
+# the portal's only report of that is "App info not found".
+binary_name="$(sed -n 's/^name = "\(.*\)"/\1/p' "$repo/src-tauri/Cargo.toml" | head -1)"
+binary="$repo/src-tauri/target/debug/$binary_name"
 dest="${XDG_DATA_HOME:-$HOME/.local/share}/applications/$app_id.desktop"
 
 # GLib parses Exec with shell rules and then requires argv[0] to name a program that
@@ -42,7 +47,7 @@ Exec="$binary"
 Icon=$repo/src-tauri/icons/128x128.png
 Terminal=false
 Categories=Office;
-StartupWMClass=helixnotes
+StartupWMClass=$binary_name
 EOF
 
 chmod 644 "$dest"
@@ -52,7 +57,7 @@ echo "wrote $dest"
 echo "app id: $app_id"
 
 # Prove the entry resolves. A written file is not necessarily a found file.
-if /usr/bin/python3 -c "
+if python3 -c "
 import gi, sys
 gi.require_version('Gio', '2.0')
 from gi.repository import Gio

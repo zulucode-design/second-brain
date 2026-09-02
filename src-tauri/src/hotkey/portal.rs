@@ -20,12 +20,11 @@
 //! accelerator, which is what the settings UI has to render.
 //!
 //! The session must outlive registration: closing it drops the binding and ends the
-//! `Activated` signal stream. So [`Registration`] owns it, and dropping a `Registration`
-//! is how the hotkey is given up.
+//! `Activated` signal stream. So [`Registration`] owns it, and the hotkey lasts exactly as
+//! long as the value is held.
 
 use ashpd::desktop::global_shortcuts::{
-    Activated, BindShortcutsOptions, ConfigureShortcutsOptions, GlobalShortcuts,
-    ListShortcutsOptions, NewShortcut, Shortcut,
+    Activated, BindShortcutsOptions, GlobalShortcuts, ListShortcutsOptions, NewShortcut, Shortcut,
 };
 use ashpd::desktop::{CreateSessionOptions, ResponseError, Session};
 use ashpd::{AppID, Error as PortalError};
@@ -38,9 +37,9 @@ use super::{
 
 /// A live registration: the session that holds the binding, plus what the compositor bound.
 ///
-/// Dropping this closes nothing explicitly — the portal drops the session when our bus
-/// connection goes — but keeping it alive is what keeps [`Registration::activations`]
-/// producing.
+/// There is no explicit teardown, and no `Drop` impl: the portal ends the session when our
+/// bus connection goes, which for a desktop app is when the process exits. Holding this value
+/// is what keeps [`Registration::activations`] producing.
 pub struct Registration {
     proxy: GlobalShortcuts,
     session: Session<GlobalShortcuts>,
@@ -64,16 +63,6 @@ impl Registration {
         Ok(stream.filter_map(|activated: Activated| async move {
             (activated.shortcut_id() == SHORTCUT_ID).then_some(())
         }))
-    }
-
-    /// Open the desktop's own shortcut configuration UI.
-    ///
-    /// The app cannot change the binding itself, so this is the whole of "change the
-    /// hotkey": hand the user to the compositor that owns it.
-    pub async fn configure(&self) -> Result<(), PortalError> {
-        self.proxy
-            .configure_shortcuts(&self.session, None, ConfigureShortcutsOptions::default())
-            .await
     }
 }
 
@@ -192,18 +181,29 @@ mod tests {
         assert_eq!(trigger_of(&[shortcut(SHORTCUT_ID, "")]), None);
     }
 
+    /// The app id the app will actually ship with, read from the config rather than repeated
+    /// here. A test that registers a different id from the product proves nothing.
+    fn configured_app_id() -> String {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../../tauri.conf.json")).expect("config parses");
+        config["identifier"]
+            .as_str()
+            .expect("config names an identifier")
+            .to_string()
+    }
+
     /// The whole handshake against the real portal. Not run by default, and it cannot be:
     /// it needs a desktop session, an installed desktop entry matching the app id
     /// (`scripts/dev-desktop-entry.sh`), and a person to answer the permission dialog. The
     /// dialog's answer is remembered per app id, so a dismissal here is undone only with
-    /// `flatpak permission-reset io.github.zulucode_design.SecondBrain`.
+    /// `flatpak permission-reset $(the id below)`.
     ///
     ///     cargo test --lib -- --ignored registers_against_the_real_portal --nocapture
     #[test]
     #[ignore = "needs a desktop session and a person to answer the permission dialog"]
     fn registers_against_the_real_portal() {
         let runtime = tokio::runtime::Runtime::new().expect("runtime starts");
-        match runtime.block_on(register("io.github.zulucode_design.SecondBrain")) {
+        match runtime.block_on(register(&configured_app_id())) {
             Ok(registration) => println!("registered; trigger: {:?}", registration.trigger()),
             Err(cause) => panic!("{}", cause.reason()),
         }

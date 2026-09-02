@@ -27,21 +27,10 @@ pub const SHORTCUT_DESCRIPTION: &str = "Quick capture a note";
 /// `trigger` the portal returns.
 pub const PREFERRED_TRIGGER: &str = "CTRL+ALT+n";
 
-/// The Tauri event emitted when the shortcut fires.
-pub const ACTIVATED_EVENT: &str = "quick-capture-activated";
-
-/// The Tauri event emitted when registration state changes.
-pub const STATUS_EVENT: &str = "hotkey-status-changed";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Availability {
-    /// Startup has not finished deciding yet. Deliberately not `Unavailable`: nothing has been
-    /// established, so nothing is claimed.
-    Unknown,
-    Registered,
-    Unavailable,
-}
+/// Reused from `ai_health`, not redeclared. The two surfaces answer the same question — can
+/// this thing be used, and if not, why — so the front end gets one discriminator to switch on
+/// rather than two enums that happen to share a name.
+pub use crate::ai_health::Availability;
 
 /// Why the hotkey is not registered, in terms that map to something the user can do.
 ///
@@ -107,7 +96,7 @@ impl HotkeyStatus {
 
     pub fn registered(trigger: Option<String>) -> Self {
         Self {
-            availability: Availability::Registered,
+            availability: Availability::Available,
             reason: None,
             trigger,
         }
@@ -219,7 +208,7 @@ mod tests {
     #[test]
     fn a_registered_hotkey_offers_no_reason() {
         let status = HotkeyStatus::registered(Some("Ctrl+Alt+N".to_string()));
-        assert_eq!(status.availability, Availability::Registered);
+        assert_eq!(status.availability, Availability::Available);
         assert!(status.reason.is_none());
     }
 

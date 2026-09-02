@@ -264,6 +264,86 @@
     </div>
   </div>
 
+  <div class="card">
+    <h2>Status update &mdash; 1 September 2026, later the same day</h2>
+    <p class="sub">All findings corrected. The record above is unchanged.</p>
+
+    <div class="callout warn">
+      <p style="margin:0 0 8px"><b>A larger defect was found during the correction.</b></p>
+      <p style="margin:0 0 8px">
+        The correction of finding 1 needed a test. The test was a true
+        <code>.deb</code> build. The build stopped immediately with this message:
+        &ldquo;The bundle identifier &hellip; must contain only alphanumeric characters
+        (A-Z, a-z, and 0-9), hyphens (-), and periods (.)&rdquo;.
+      </p>
+      <p style="margin:0">
+        Thus the app id <code>io.github.zulucode_design.SecondBrain</code> cannot make a
+        package of any type. The underscore was not an accident: Flatpak and D-Bus prefer
+        the underscore, because a D-Bus name cannot contain a hyphen. Tauri demands the
+        opposite. A development build does not use the bundler. This is why the portal test
+        gave a good result before this defect was found.
+      </p>
+    </div>
+
+    <p>
+      The app id is now <code>io.github.zulucode-design.SecondBrain</code>. It agrees with
+      the GitHub organisation name. The app has no D-Bus name, thus the hyphen causes no
+      loss today. If the app needs a D-Bus name later, that name must be different from the
+      app id. ADR-0001 records this cost.
+    </p>
+
+    <table>
+      <tr><th>Finding</th><th>Correction</th></tr>
+      <tr>
+        <td>Installed build will not register the hotkey</td>
+        <td>The section <code>bundle.linux.{deb,rpm}.files</code> installs an entry with the
+        app id as its name. The template <code>desktopTemplate</code> sets
+        <code>NoDisplay=true</code> on the generated entry, thus the app shows one time only
+        in the menu. <b>Tested:</b> the <code>.deb</code> contains both entries, with the
+        correct names and contents.</td>
+      </tr>
+      <tr>
+        <td>Status types copy <code>ai_health.rs</code></td>
+        <td>The module <code>hotkey</code> now uses the enum from <code>ai_health</code>.
+        There is one enum, thus the user interface has one type to read.</td>
+      </tr>
+      <tr>
+        <td>The app id in three places</td>
+        <td>The test and the probe script read the app id from
+        <code>tauri.conf.json</code>. The configuration file is the only source.</td>
+      </tr>
+      <tr>
+        <td>The script writes <code>helixnotes</code></td>
+        <td>The script reads the binary name from <code>Cargo.toml</code>. The script also
+        uses one Python command, not two.</td>
+      </tr>
+      <tr>
+        <td>The module is public</td>
+        <td>The module is private. This showed a defect: no code calls the module, thus the
+        compiler gives warnings, and the continuous integration uses
+        <code>-D warnings</code>. The public keyword hid this. A comment and a permitted
+        exception now record the true condition until step 3.</td>
+      </tr>
+      <tr>
+        <td>Code for later steps</td>
+        <td>The two event constants and the function <code>configure()</code> are removed.
+        Step 3 and step 7 add them together with the code that calls them.</td>
+      </tr>
+      <tr>
+        <td>Two comments disagree</td>
+        <td>The comments now give the same statement: there is no explicit close, and the
+        portal ends the session when the process ends.</td>
+      </tr>
+    </table>
+
+    <div class="callout">
+      <b>Still not tested.</b> The portal registration with the new app id. The new app id
+      needs a new permission dialog, and a person must answer it. Also AppImage: it has no
+      installed entry, thus the hotkey must report that it is not available. That behaviour
+      is the design, but no test has proved it.
+    </div>
+  </div>
+
   <footer>
     Second Brain &mdash; review of pull request 25 &mdash; 1 September 2026.
     GitHub holds the live state of the pull request.

@@ -4,12 +4,18 @@
 Stops before BindShortcuts on purpose: that is the call that shows a dialog, and a
 dismissed dialog is remembered permanently for the app id.
 """
+import json
+import pathlib
 import sys
+
 import gi
 gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib
 
-APP_ID = sys.argv[1] if len(sys.argv) > 1 else "io.github.zulucode_design.SecondBrain"
+CONFIG = pathlib.Path(__file__).resolve().parent.parent / "src-tauri" / "tauri.conf.json"
+
+# Read the id rather than repeat it: probing an id the app does not ship proves nothing.
+APP_ID = sys.argv[1] if len(sys.argv) > 1 else json.loads(CONFIG.read_text())["identifier"]
 BUS = "org.freedesktop.portal.Desktop"
 PATH = "/org/freedesktop/portal/desktop"
 

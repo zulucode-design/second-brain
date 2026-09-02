@@ -70,8 +70,20 @@ non-reverse-DNS identifiers and validates against installed desktop entries.
 
 The bundle identifier therefore changes from `com.helixnotes.app` — upstream's domain,
 which would collide with a real HelixNotes install in the shared portal permission store —
-to **`io.github.zulucode_design.SecondBrain`**. Four components, lowercase, hyphen
-converted to underscore, per Flatpak naming rules for a GitHub-hosted project.
+to **`io.github.zulucode-design.SecondBrain`**, matching the GitHub organisation exactly.
+
+The separator was settled twice, because two conventions disagree. Flatpak and D-Bus prefer
+`_` over `-`, since a D-Bus well-known name may not contain a hyphen. So the id was first
+claimed as `io.github.zulucode_design.SecondBrain`. **Tauri's bundler rejects underscores
+outright** — "the bundle identifier string must contain only alphanumeric characters (A-Z,
+a-z, and 0-9), hyphens (-), and periods (.)" — so that id could not be packaged at all.
+A dev build never runs the bundler, which is why the portal handshake was verified working
+before this was found.
+
+Hyphen wins because packaging is a hard requirement and the D-Bus objection is conditional:
+this app owns no well-known bus name. **If one is ever needed** — MPRIS, notification
+actions, a D-Bus single-instance guard — the name will have to differ from the app id rather
+than be derived from it. That is the accepted cost.
 
 This is safe: config, backups, and the search index all key off a hardcoded `"helixnotes"`
 string (`commands.rs`, `backup.rs`, `search/mod.rs`), not the bundle identifier. Renaming
@@ -83,6 +95,15 @@ A dev build therefore needs a desktop entry before the portal will talk to it �
 required to develop against this. Verified 2026-08-30: without an entry, `Register` fails
 with "App info not found" and `CreateSession` with "An app id is required"; with one, both
 succeed. `scripts/dev-desktop-entry.sh` installs it.
+
+A **packaged** build needs the same thing, and does not get it for free. The bundler names
+the generated entry after the product, giving `HelixNotes.desktop`, which the portal cannot
+match to the app id — so an installed build would fail exactly where a dev build succeeds.
+`bundle.linux.{deb,rpm}.files` therefore installs an entry named for the app id, and
+`desktopTemplate` marks the generated one `NoDisplay=true` so the app appears once in the
+launcher rather than twice. AppImage has no such hook and no installed entry; the hotkey is
+expected to report itself unavailable there, which is the designed behaviour rather than a
+silent failure.
 
 Two ways to write an entry that GLib silently refuses to load, both reported by the portal
 only as "App info not found", and both passed as valid by `desktop-file-validate`: an `Exec`

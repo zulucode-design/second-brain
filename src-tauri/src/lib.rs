@@ -4,7 +4,11 @@ mod asset_scope;
 mod backup;
 mod commands;
 mod history;
-pub mod hotkey;
+// Kept private, and unused until the capture window (step 3 of #4) calls it. The `allow` is
+// the honest form of that: `pub` would silence the same warning by pretending the module has
+// consumers outside the crate, which it does not.
+#[allow(dead_code)]
+mod hotkey;
 mod image_proxy;
 mod search;
 mod state;
