@@ -9,8 +9,39 @@
 
 use tauri::{AppHandle, Emitter, Manager};
 
-use super::{portal, HotkeyStatus, Unavailable, SHOWN_EVENT, STATUS_EVENT, WINDOW_LABEL};
+use super::{
+    portal, Availability, HotkeyStatus, Unavailable, SHOWN_EVENT, STATUS_EVENT, WINDOW_LABEL,
+};
 use crate::state::AppState;
+
+/// Make sure the capture window exists, building it if Tauri did not.
+///
+/// **Not called from `setup`.** Building a window synchronously there deadlocks on Linux: the
+/// call waits on a GTK event loop that has not started yet, `setup` never returns, and the app
+/// runs on looking healthy because the main window already exists and background tasks are on
+/// their own threads. Observed 2026-09-02, and it costs an afternoon to find, because nothing
+/// errors — the builder simply never comes back.
+///
+/// So this runs on the async runtime, after the loop is up.
+async fn ensure_window(app: &AppHandle) -> tauri::Result<()> {
+    if app.get_webview_window(WINDOW_LABEL).is_some() {
+        return Ok(());
+    }
+    let Some(config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|window| window.label == WINDOW_LABEL)
+        .cloned()
+    else {
+        log::error!("tauri.conf.json declares no {WINDOW_LABEL:?} window");
+        return Ok(());
+    };
+    tauri::WebviewWindowBuilder::from_config(app, &config)?.build()?;
+    log::debug!("Capture window ready");
+    Ok(())
+}
 
 /// Register the hotkey and keep answering it for as long as the app runs.
 ///
@@ -19,7 +50,25 @@ use crate::state::AppState;
 /// every outcome is stored and announced, so the settings UI can say which one happened.
 pub fn spawn(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
+        // The window has to exist before the hotkey can be answered, and it is cheap: it is
+        // created hidden and never loaded again, so the first press is a show, not a load.
+        if let Err(error) = ensure_window(&app).await {
+            log::error!("Could not create the capture window: {error}");
+        }
         let status = register(&app).await;
+        // Logged, not only stored. An unregistered hotkey is invisible by nature — nothing
+        // happens when the key is pressed — so the reason has to be somewhere a person can
+        // read it without attaching a debugger.
+        match (&status.availability, &status.reason) {
+            (Availability::Available, _) => log::info!(
+                "Quick capture hotkey registered: {}",
+                status.trigger.as_deref().unwrap_or("trigger not described")
+            ),
+            (_, Some(reason)) => log::warn!("Quick capture hotkey unavailable: {reason}"),
+            (_, None) => {
+                log::info!("Quick capture hotkey not registered: no vault is configured yet")
+            }
+        }
         publish(&app, status);
     });
 }
@@ -96,7 +145,10 @@ async fn register(app: &AppHandle) -> HotkeyStatus {
 /// operation, where creating it would be a WebView load with the user waiting on it.
 fn show_capture_window(app: &AppHandle) {
     let Some(window) = app.get_webview_window(WINDOW_LABEL) else {
-        log::error!("The capture window is missing, so the hotkey has nothing to show");
+        log::error!(
+            "The capture window is missing, so the hotkey has nothing to show. Windows: {:?}",
+            app.webview_windows().keys().collect::<Vec<_>>()
+        );
         return;
     };
     if let Err(error) = window.show().and_then(|()| window.set_focus()) {

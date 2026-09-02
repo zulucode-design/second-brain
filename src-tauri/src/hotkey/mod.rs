@@ -44,11 +44,22 @@ pub const SHOWN_EVENT: &str = "quick-capture-shown";
 /// Emitted when the hotkey's registration state changes, so settings never shows a stale one.
 pub const STATUS_EVENT: &str = "hotkey-status-changed";
 
-/// A reverse-DNS application identifier accepted by both Tauri's bundler and the portal.
+/// A reverse-DNS application identifier accepted by Tauri's bundler *and* the portal.
 ///
-/// Keeping this distinct from an arbitrary string means portal and desktop-entry APIs cannot
-/// accidentally receive an empty identifier, a display name, or the underscore form that Tauri
-/// refuses to package.
+/// Three sets of rules apply at once, and they contradict each other, so the intersection is
+/// narrower than any one of them. Measured, each against the thing that enforces it:
+///
+/// - **Tauri's bundler** rejects `_` outright: "must contain only alphanumeric characters
+///   (A-Z, a-z, and 0-9), hyphens (-), and periods (.)". A `.deb` build fails before it starts.
+/// - **The Flatpak app-id rules**, which `ashpd` enforces client-side, allow `_` anywhere but
+///   permit `-` **only in the final segment**. `ashpd` refuses to send anything else, so the
+///   portal never sees it.
+/// - **The portal daemon itself** is more lenient than `ashpd` — it accepted a mid-segment
+///   hyphen when probed directly on 2026-09-02 — but that is not something to depend on.
+///
+/// So a middle segment may hold letters and digits only. `io.github.zulucode_design.X` cannot
+/// be packaged; `io.github.zulucode-design.X` cannot be registered; both were shipped and both
+/// failed. The check below is what stops a third attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApplicationId(String);
 
@@ -56,11 +67,14 @@ impl ApplicationId {
     pub fn parse(value: impl Into<String>) -> Result<Self, String> {
         let value = value.into();
         let segments: Vec<&str> = value.split('.').collect();
-        let valid_segment = |segment: &&str| {
+        let last = segments.len().saturating_sub(1);
+        // A hyphen is allowed only in the final segment, and only between alphanumerics.
+        let valid_segment = |(index, segment): (usize, &&str)| {
+            let hyphens_allowed = index == last;
             !segment.is_empty()
-                && segment
-                    .chars()
-                    .all(|character| character.is_ascii_alphanumeric() || character == '-')
+                && segment.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || (hyphens_allowed && character == '-')
+                })
                 && segment
                     .chars()
                     .next()
@@ -71,7 +85,7 @@ impl ApplicationId {
                     .is_some_and(|character| character.is_ascii_alphanumeric())
         };
 
-        if segments.len() < 3 || !segments.iter().all(valid_segment) {
+        if segments.len() < 3 || !segments.iter().enumerate().all(valid_segment) {
             return Err(format!(
                 "{value:?} is not a Tauri-compatible reverse-DNS application identifier"
             ));
@@ -226,9 +240,9 @@ mod tests {
 
     #[test]
     fn application_ids_accept_the_packaged_reverse_dns_identifier() {
-        let id = ApplicationId::parse("io.github.zulucode-design.SecondBrain")
+        let id = ApplicationId::parse("io.github.zulucodedesign.SecondBrain")
             .expect("the shipped identifier is valid");
-        assert_eq!(id.as_str(), "io.github.zulucode-design.SecondBrain");
+        assert_eq!(id.as_str(), "io.github.zulucodedesign.SecondBrain");
     }
 
     #[test]
@@ -237,6 +251,8 @@ mod tests {
             "",
             "Second Brain",
             "io.github.zulucode_design.SecondBrain",
+            // Shipped once and rejected by ashpd: a hyphen outside the final segment.
+            "io.github.zulucode-design.SecondBrain",
             "single-label",
             ".io.github.App",
             "io..App",

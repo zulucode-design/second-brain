@@ -93,12 +93,6 @@ pub fn run() {
             // before the user tries one rather than after it fails.
             ai_health::spawn_poller(app.handle().clone());
 
-            // Claim the global capture hotkey. Linux only for now: on Windows the app owns
-            // the keybinding rather than the compositor, which is #21 and a different
-            // mechanism entirely (ADR-0001).
-            #[cfg(target_os = "linux")]
-            hotkey::startup::spawn(app.handle().clone());
-
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -106,6 +100,16 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            // Claim the global capture hotkey. Linux only for now: on Windows the app owns
+            // the keybinding rather than the compositor, which is #21 and a different
+            // mechanism entirely (ADR-0001).
+            //
+            // After the log plugin, deliberately. This runs on a task that reports the one
+            // thing nothing else can show — why a hotkey is not registered — and anything it
+            // logs before the plugin exists is dropped.
+            #[cfg(target_os = "linux")]
+            hotkey::startup::spawn(app.handle().clone());
 
             // On mobile, set config dir from Tauri's path resolver, then reload config
             #[cfg(mobile)]

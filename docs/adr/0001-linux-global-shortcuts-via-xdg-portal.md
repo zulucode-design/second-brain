@@ -70,7 +70,7 @@ non-reverse-DNS identifiers and validates against installed desktop entries.
 
 The bundle identifier therefore changes from `com.helixnotes.app` — upstream's domain,
 which would collide with a real HelixNotes install in the shared portal permission store —
-to **`io.github.zulucode-design.SecondBrain`**, matching the GitHub organisation exactly.
+to **`io.github.zulucodedesign.SecondBrain`**, matching the GitHub organisation exactly.
 
 The separator was settled twice, because two conventions disagree. Flatpak and D-Bus prefer
 `_` over `-`, since a D-Bus well-known name may not contain a hyphen. So the id was first

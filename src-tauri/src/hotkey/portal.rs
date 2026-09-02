@@ -81,11 +81,13 @@ pub async fn register(app_id: &ApplicationId) -> Result<Registration, Unavailabl
             detail: "not a valid application id".to_string(),
         })?;
 
+    log::debug!("portal: registering host app id {app_id}");
     // Harmless and skipped inside a sandbox, where the app id is already known to the portal.
     ashpd::register_host_app(parsed)
         .await
         .map_err(|err| classify(app_id, &err))?;
 
+    log::debug!("portal: opening the GlobalShortcuts proxy");
     let proxy = GlobalShortcuts::new()
         .await
         .map_err(|err| classify(app_id, &err))?;
@@ -94,12 +96,17 @@ pub async fn register(app_id: &ApplicationId) -> Result<Registration, Unavailabl
         .await
         .map_err(|err| classify(app_id, &err))?;
 
+    log::debug!("portal: session created, listing shortcuts");
     let listed = proxy
         .list_shortcuts(&session, ListShortcutsOptions::default())
         .await
         .and_then(|request| request.response())
         .map_err(|err| classify(app_id, &err))?;
 
+    log::debug!(
+        "portal: {} shortcut(s) already bound",
+        listed.shortcuts().len()
+    );
     let bound: Vec<Shortcut> = if needs_binding(listed.shortcuts().iter().map(Shortcut::id)) {
         let shortcut = NewShortcut::new(SHORTCUT_ID, SHORTCUT_DESCRIPTION)
             .preferred_trigger(PREFERRED_TRIGGER);

@@ -40,6 +40,10 @@ use super::ApplicationId;
 /// which is also how we tell we are running as one.
 const APPIMAGE_ENV: &str = "APPIMAGE";
 
+/// The mounted AppImage root. Present alongside `$APPIMAGE`, and what distinguishes running
+/// as an AppImage from merely being launched by one.
+const APPDIR_ENV: &str = "APPDIR";
+
 /// What was done, so the caller can say something true about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Integration {
@@ -49,11 +53,22 @@ pub enum Integration {
     Written { path: PathBuf },
 }
 
-/// The AppImage's own path, if this process is running from one.
+/// The AppImage's own path, if *this* process is running from one.
+///
+/// `$APPIMAGE` alone is not enough. It is exported into the environment of everything an
+/// AppImage launches, so a terminal opened from one hands it to every command run there, and
+/// a normally-installed build started that way claims to be an AppImage and writes a desktop
+/// entry pointing at somebody else's binary. Observed exactly that on 2026-09-02.
+///
+/// So the variable is corroborated: an AppImage runs from a mounted `$APPDIR`, and our own
+/// executable has to actually live inside it.
 pub fn running_as_appimage() -> Option<PathBuf> {
-    std::env::var_os(APPIMAGE_ENV)
+    let appimage = std::env::var_os(APPIMAGE_ENV)
         .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
+        .filter(|path| !path.as_os_str().is_empty())?;
+    let appdir = std::env::var_os(APPDIR_ENV).map(PathBuf::from)?;
+    let executable = std::env::current_exe().ok()?;
+    executable.starts_with(&appdir).then_some(appimage)
 }
 
 /// Where the entry belongs. Basename must be the app id, or the portal will not match it.
@@ -170,7 +185,7 @@ mod tests {
         }
 
         let packaged_entry =
-            include_str!("../../linux/io.github.zulucode-design.SecondBrain.desktop");
+            include_str!("../../linux/io.github.zulucodedesign.SecondBrain.desktop");
         let generated = entry_contents("HelixNotes", Path::new("helixnotes"), "helixnotes");
         for field in ["Exec", "Icon", "Categories", "StartupWMClass"] {
             assert_eq!(
