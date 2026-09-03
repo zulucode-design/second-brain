@@ -179,12 +179,30 @@ only as "App info not found", and both passed as valid by `desktop-file-validate
 whose argv[0] does not name an existing program, and an unquoted `Exec` path containing a
 space, which truncates argv[0] to the same effect. This repo's own path contains a space.
 
-### Denial is sticky and silent
+### A denial must be named, whether or not it sticks
 
-If the user dismisses the one-time permission dialog, the decision persists in the portal
-permission store and later attempts fail silently. Recovery requires
-`flatpak permission-reset <app-id>`. The status surface must detect this case specifically
-and name the command; a generic "unavailable" strands the user.
+If the user dismisses the permission dialog, the shortcut is not bound and nothing else in
+the app can say why. The status surface must detect this case specifically; a generic
+"the portal refused the global shortcut" strands the user with a dead key and no next step.
+
+**This ADR previously claimed the denial persists in the portal permission store, and that
+recovery therefore requires `flatpak permission-reset <app-id>`. That was taken from portal
+documentation and is not true on the target machine.** Measured 2026-09-02 on GNOME 50 /
+xdg-desktop-portal-gnome 50.0: dismissing the dialog twice recorded nothing in the permission
+store (`flatpak permission-show` returns empty) and nothing in
+`/org/gnome/settings-daemon/global-shortcuts/`, and the next launch simply asked again. The
+message said "asking again does nothing" while the app was, in fact, asking again.
+
+So the advice is now ordered by what actually happens: restart to be asked again, and use
+`flatpak permission-reset` only if a desktop does remember the refusal. The command stays
+because portals that persist a denial exist and leave no other way back — it is the
+conditional half of the advice, not the headline.
+
+Finding it required dismissing a real dialog, and dismissing it required clearing the
+**binding** as well as the permission: GNOME stores bindings in dconf under
+`/org/gnome/settings-daemon/global-shortcuts/<app-id>`, separately from the permission store,
+and `ListShortcuts` finding one there means `BindShortcuts` is skipped and no dialog ever
+appears. `flatpak permission-reset` alone will not reproduce the prompt.
 
 Bindings persist per app id across restarts while sessions do not, so startup calls
 `CreateSession`, then `ListShortcuts`, and only calls `BindShortcuts` for a shortcut that

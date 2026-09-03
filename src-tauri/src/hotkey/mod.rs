@@ -136,8 +136,16 @@ pub enum Unavailable {
     /// The portal will not accept our app id, which in practice means it cannot find an
     /// installed desktop entry matching it.
     AppIdRejected { app_id: String, detail: String },
-    /// The user dismissed or denied the permission dialog. This decision persists, and every
-    /// later attempt fails without prompting again, so it needs naming explicitly.
+    /// The user dismissed or denied the permission dialog.
+    ///
+    /// Named as its own case because the generic message ("the portal refused the global
+    /// shortcut") tells the user nothing they can act on, and this is the one refusal they
+    /// caused and can undo.
+    ///
+    /// Whether it *persists* varies by desktop. GNOME 50 records nothing and asks again on the
+    /// next launch — measured 2026-09-02, dismissing the real dialog twice and finding no entry
+    /// in either the permission store or dconf. Portals that do persist a refusal need
+    /// `flatpak permission-reset`, so the message covers both without claiming either.
     PermissionDenied { app_id: String },
     /// Anything else the portal reported.
     PortalError { detail: String },
@@ -166,9 +174,9 @@ impl Unavailable {
                  scripts/dev-desktop-entry.sh. ({detail})"
             ),
             Self::PermissionDenied { app_id } => format!(
-                "Permission for the global shortcut was declined, and the desktop remembers that \
-                 decision, so asking again does nothing. To be asked once more, run: \
-                 flatpak permission-reset {app_id}"
+                "Permission for the global shortcut was declined, so quick capture has no \
+                 hotkey. Restart Second Brain to be asked again. If your desktop remembers the \
+                 refusal and stops asking, clear it with: flatpak permission-reset {app_id}"
             ),
             Self::PortalError { detail } => {
                 format!("The desktop portal refused the global shortcut: {detail}")
@@ -337,12 +345,26 @@ mod tests {
     }
 
     #[test]
-    fn a_declined_permission_names_the_reset_command() {
-        // The decision persists, so without the command the user has no way back.
+    fn a_declined_permission_says_how_to_be_asked_again() {
+        // Two desktops, two behaviours, and the message has to be true on both.
+        //
+        // Measured on GNOME 50 / xdg-desktop-portal-gnome 50.0, 2026-09-02: a dismissed
+        // dialog is recorded nowhere — not in the permission store, not in dconf — and the
+        // next launch simply asks again. An earlier version of this message asserted the
+        // opposite ("the desktop remembers that decision, so asking again does nothing"),
+        // taken from portal documentation rather than from this machine, and was therefore
+        // telling users to run a recovery command for a state they were not in.
+        //
+        // The reset command stays, because portals that *do* persist a refusal exist and
+        // leave no other way back — but it is now the conditional half of the advice.
         let cause = Unavailable::PermissionDenied {
             app_id: "io.github.example.App".to_string(),
         };
         let reason = cause.reason();
+        assert!(
+            reason.contains("Restart"),
+            "the common case is simply being asked again"
+        );
         assert!(reason.contains("flatpak permission-reset io.github.example.App"));
     }
 
