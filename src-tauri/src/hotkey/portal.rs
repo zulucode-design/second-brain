@@ -160,7 +160,7 @@ pub async fn register(app_id: &ApplicationId) -> Result<Registration, Unavailabl
             .bind_shortcuts(&session, &[shortcut], None, BindShortcutsOptions::default())
             .await
             .and_then(|request| request.response())
-            .map_err(|err| classify(app_id, &err))?
+            .map_err(|err| classify_bind(app_id, &err))?
             .shortcuts()
             .to_vec()
     } else {
@@ -214,6 +214,28 @@ fn is_already_registered(error: &PortalError) -> bool {
         .to_string()
         .to_ascii_lowercase()
         .contains("already associated with an application id")
+}
+
+/// Classify a failure of `BindShortcuts` specifically.
+///
+/// `BindShortcuts` is the only call in the handshake that shows a dialog, so **any**
+/// unsuccessful response to it is the user declining that dialog. That matters because the
+/// decision is remembered: every later attempt then fails without prompting, and a message
+/// that does not name `flatpak permission-reset` leaves the user with a hotkey that can never
+/// come back and no way to find out why.
+///
+/// The general classifier is not enough here. It maps `Cancelled` to a denial, which is what
+/// the response type was assumed to be — but GNOME answers a dismissed dialog with
+/// `Other` (response type 2), not `Cancelled` (1). Measured on 2026-09-02 by dismissing the
+/// real dialog: the reason shown was the generic "Portal request didn't succeed with no
+/// information", precisely the vague message ADR-0001 exists to prevent.
+fn classify_bind(app_id: &ApplicationId, err: &PortalError) -> Unavailable {
+    match err {
+        PortalError::Response(_) => Unavailable::PermissionDenied {
+            app_id: app_id.to_string(),
+        },
+        other => classify(app_id, other),
+    }
 }
 
 /// Turn a portal error into something the user can act on.
@@ -325,6 +347,46 @@ mod tests {
             "Could not register app ID: App info not found for 'io.github.example.App'".to_string(),
         ));
         assert!(!is_already_registered(&missing_entry));
+    }
+
+    #[test]
+    fn every_unsuccessful_bind_response_is_a_denial_naming_the_reset_command() {
+        // BindShortcuts is the only call that shows a dialog, so any unsuccessful response to
+        // it is the user declining. Both variants, because the assumption that a dismissal
+        // arrives as Cancelled was wrong: GNOME answers with Other, and that fell through to
+        // "Portal request didn't succeed with no information" — measured 2026-09-02 against
+        // the real dialog, and exactly the vague message this case exists to avoid.
+        for response in [ResponseError::Cancelled, ResponseError::Other] {
+            let cause = classify_bind(
+                &ApplicationId::parse("io.github.example.App").expect("example id is valid"),
+                &PortalError::Response(response),
+            );
+            assert_eq!(
+                cause,
+                Unavailable::PermissionDenied {
+                    app_id: "io.github.example.App".to_string()
+                },
+                "{response:?} must be reported as a denial"
+            );
+            assert!(cause.reason().contains("flatpak permission-reset"));
+        }
+    }
+
+    #[test]
+    fn a_bind_failure_that_is_not_a_response_keeps_its_own_cause() {
+        // A missing portal during bind is still a missing portal, not a denial.
+        let missing = PortalError::PortalNotFound(
+            ashpd::zbus::names::InterfaceName::try_from("org.freedesktop.portal.GlobalShortcuts")
+                .unwrap()
+                .into(),
+        );
+        assert_eq!(
+            classify_bind(
+                &ApplicationId::parse("io.github.example.App").expect("example id is valid"),
+                &missing
+            ),
+            Unavailable::NoPortal
+        );
     }
 
     #[test]

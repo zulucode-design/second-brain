@@ -159,9 +159,11 @@ impl Unavailable {
                  hotkey cannot be registered. Quick capture still works from inside the app."
                 .to_string(),
             Self::AppIdRejected { app_id, detail } => format!(
-                "The desktop portal would not accept the application id \"{app_id}\" ({detail}). \
-                 This usually means no installed desktop entry matches it. For a development \
-                 build, run scripts/dev-desktop-entry.sh."
+                "The desktop portal would not accept the application id \"{app_id}\", so the \
+                 global hotkey could not be registered. This means no installed desktop entry \
+                 matches that id: if you installed Second Brain from a package, reinstalling it \
+                 should restore the entry; if you are running a development build, run \
+                 scripts/dev-desktop-entry.sh. ({detail})"
             ),
             Self::PermissionDenied { app_id } => format!(
                 "Permission for the global shortcut was declined, and the desktop remembers that \
@@ -319,8 +321,16 @@ mod tests {
                 matches!(cause, Unavailable::AppIdRejected { .. }),
                 "{message}"
             );
+            let reason = cause.reason();
+            // Both audiences, because both hit this. A packaged user has no repo to run a
+            // script from, and telling them to is worse than saying nothing: it sounds like
+            // an answer while pointing at a file they do not have.
             assert!(
-                cause.reason().contains("dev-desktop-entry.sh"),
+                reason.contains("reinstalling it"),
+                "should tell a packaged user what to do"
+            );
+            assert!(
+                reason.contains("dev-desktop-entry.sh"),
                 "should say how to fix it"
             );
         }

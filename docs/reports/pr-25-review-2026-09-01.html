@@ -291,10 +291,13 @@
       report called it an untracked gap, which was wrong.
     </div>
 
-    <p class="sub">On tooling: the dev server is an artefact of running a <em>debug</em> build,
-      which loads its frontend from <code>localhost:5173</code>. A release build embeds the
-      frontend and needs no server &mdash; and is closer to what users get, so the remaining
-      checks are better run against one. The throwaway vault and config are still worth keeping
+    <p class="sub">On tooling: the dev server is an artefact of the frontend being loaded from
+      <code>localhost:5173</code> rather than embedded. <b>Profile alone does not decide that.</b>
+      A binary from plain <code>cargo build --release</code> still carries
+      <code>"devUrl": "http://localhost:5173"</code> and still fails with "Could not connect to
+      localhost" &mdash; measured 2026-09-02, by building one and running it. Only
+      <code>tauri build</code> sets the production flag, so any check that claims to exercise
+      "what users get" has to go through the Tauri CLI, not cargo. The throwaway vault and config are still worth keeping
       so tests never touch a real vault, but not under <code>/tmp</code>, which is reaped and
       took the sandbox with it mid-session on 2 September.</p>
   </section>
