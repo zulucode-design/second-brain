@@ -290,10 +290,49 @@
       <code>flatpak permission-reset</code> alone will not bring the prompt back.
     </div>
 
-    <p class="sub">Still outstanding, and deliberately so: installed RPM behaviour and execution
-      from a built AppImage &mdash; both need a package install rather than a dev run. Linux/X11
-      and Windows (#21) are excluded by the ticket's own text. Spec &sect;5's capture-time
-      similarity check is <b>issue #9</b>, blocked by #4 and #7.</p>
+    <p class="sub">Linux/X11 and Windows (#21) are excluded by the ticket's own text. Spec
+      &sect;5's capture-time similarity check is <b>issue #9</b>, blocked by #4 and #7.</p>
+  </section>
+
+  <section>
+    <h2>Packaging verified &middot; 3 September 2026</h2>
+    <p class="sub">The last two items. Both shipping formats exercised as installed software,
+      not simulated.</p>
+
+    <table>
+      <tr><th>Format</th><th>What was proven</th></tr>
+      <tr>
+        <td>RPM</td>
+        <td>Installed with <code>dnf</code> (package name <code>helix-notes</code>). The
+            user-level dev entry was moved aside first, since it shadows the packaged one by
+            basename and would otherwise have been what the portal resolved &mdash; testing
+            nothing. GLib then resolved
+            <code>/usr/share/applications/io.github.zulucodedesign.SecondBrain.desktop</code>,
+            and a note was captured from <code>/usr/bin/helixnotes</code>.</td>
+      </tr>
+      <tr>
+        <td>AppImage</td>
+        <td>Built with <code>NO_STRIP=true</code> and placed at a path <b>containing a
+            space</b>, with no entry installed. It wrote its own, with <code>Exec</code>
+            correctly quoted; GLib resolved it and a note was captured. The self-integration
+            and its quoting had until now only been unit-tested &mdash; this is the first time
+            either ran against a real AppImage.</td>
+      </tr>
+    </table>
+
+    <div class="callout warn">
+      <b>Gap found and closed: CI guarded only the deb.</b> The RPM mapping is configured
+      separately in <code>tauri.conf.json</code> and had no check at all &mdash; on the format
+      most likely to be installed on this project's own Linux machine. Both are now built and
+      byte-compared against the reviewed source entry, and <code>rpm</code>/<code>cpio</code>
+      joined the CI dependencies, since <code>ubuntu-22.04</code> guarantees neither.
+    </div>
+
+    <p class="sub">The <code>.deb</code> sitting in <code>target/</code> was two days stale and
+      still carried <code>io.github.zulucode-design</code>, the identifier <code>ashpd</code>
+      rejects. The extended check refused it &mdash; the check working, not failing. It has been
+      removed and rebuilt, and the fresh one verifies clean, confirming the deb path survived
+      the refactor that added RPM support.</p>
 
     <p class="sub">Suite: 230 Rust tests passing, 1 ignored (the live-portal test); 41 frontend
       tests; <code>pnpm verify</code> green.</p>
