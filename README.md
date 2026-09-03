@@ -27,8 +27,9 @@ made; dashed edges are AI-detected semantic similarity, which you can promote to
 
 **Local AI, no cloud** — Ollama and whisper.cpp run on your own hardware for semantic
 search, note Q&A, transcription, and similarity detection. A weaker second machine reaches
-the stronger one over a private Tailscale network. When AI is unreachable, everything else
-keeps working.
+the stronger one over a private Tailscale network. Ollama has no authentication of its own,
+so the endpoint must never be bound to a public interface or forwarded on a router —
+Tailscale is the security boundary. When AI is unreachable, everything else keeps working.
 
 **Notion sync** — optional two-way sync so notes are reachable from anywhere, with
 conflicts surfaced for you to resolve rather than silently overwritten.
