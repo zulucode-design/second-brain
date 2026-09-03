@@ -338,7 +338,43 @@
       tests; <code>pnpm verify</code> green.</p>
   </section>
 
-  <footer>Second Brain · PR #25 review · originally 1 September, updated 2 September 2026 (steps 5–7)</footer>
+  <section>
+    <h2>CI's own RPM check, failing on a correct package &middot; 3 September 2026</h2>
+    <p class="sub">The check added above to close the RPM gap failed on every run since &mdash;
+      including the one behind the &ldquo;verification complete&rdquo; comment posted the same
+      day. Not a flake: reran the identical commit and it failed identically.</p>
+
+    <p>
+      <code>bash -x</code> traced the failure to a single line in
+      <code>verify-linux-package.sh</code>: <code>rpm2cpio "$package" | cpio -idm --quiet</code>,
+      dying under <code>pipefail</code> with no output from either tool. Splitting the pipe
+      apart in a temporary CI step named the half &mdash; <code>rpm2cpio</code> exits
+      <code>1</code> on this runner (<code>ubuntu-22.04</code>, <code>rpm
+      4.17.0+dfsg1-4build1</code>) even after writing a complete, valid cpio stream. Extracted
+      by hand from that split step, the stream held all six expected files, byte-identical,
+      including the app-id-named desktop entry the check exists to verify. <strong>The RPM was
+      correct throughout</strong>; only the check's trust in <code>rpm2cpio</code>'s exit code
+      was wrong.
+    </p>
+
+    <div class="callout warn">
+      <b>Fixed by trusting the tool that actually does the work.</b>
+      <code>cpio</code>'s own exit status &mdash; captured via <code>PIPESTATUS</code> before
+      <code>set -e</code> can act on the pipeline's combined result &mdash; now decides whether
+      extraction succeeded, since <code>cpio</code> is what parses the stream and writes the
+      files the checks below read. Verified both directions: the fixed script still passes
+      against a real RPM, and still fails &mdash; loudly, <code>cpio: premature end of
+      archive</code> &mdash; against one truncated by hand.
+    </div>
+
+    <p class="sub">Eighteenth defect on this ticket, and a different shape from the other
+      seventeen: the first found by a check rather than by running the feature, and the first
+      where the fix was to the review's own tooling rather than the product. The three commits
+      that trace this failure to its cause were kept rather than squashed &mdash; each ruled out
+      a possibility the next one narrowed.</p>
+  </section>
+
+  <footer>Second Brain · PR #25 review · originally 1 September, updated 3 September 2026 (CI's RPM check)</footer>
 </div>
 </body>
 </html>
