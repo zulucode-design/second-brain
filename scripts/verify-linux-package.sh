@@ -50,7 +50,22 @@ case "$package" in
   *.rpm)
     # rpm2cpio and cpio rather than `rpm -i --root`: no root, no rpmdb, no install scripts,
     # and the payload is all this needs to see.
-    ( cd "$extract_dir" && rpm2cpio "$package" | cpio -idm --quiet )
+    #
+    # rpm2cpio's own exit status is not trusted: Ubuntu 22.04's build (rpm 4.17.0+dfsg1-4build1,
+    # the CI runner's) returns 1 even after writing a complete, valid cpio stream — measured by
+    # extracting its output by hand and finding every expected file, byte-identical, with
+    # rpm2cpio still reporting failure. `pipefail` would otherwise fail this on every RPM build,
+    # which is what happened. `cpio`'s own exit status, captured via `PIPESTATUS` before `set -e`
+    # can act on it, is the real signal: it is what parses the stream and writes the files the
+    # checks below depend on, so a truncated or corrupt input still fails here.
+    (
+      cd "$extract_dir"
+      set +e
+      rpm2cpio "$package" | cpio -idm --quiet
+      cpio_status="${PIPESTATUS[1]}"
+      set -e
+      exit "$cpio_status"
+    )
     ;;
   *)
     echo "unsupported package type: $package (expected .deb or .rpm)" >&2
