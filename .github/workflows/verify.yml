@@ -70,6 +70,29 @@ jobs:
           find src-tauri/target/release/bundle/rpm -maxdepth 1 -name '*.rpm' -print
           echo "find exit: $?"
 
+      - name: DEBUG rpm payload (temporary)
+        run: |
+          set +e
+          rpm_path="$(readlink -f "$(find src-tauri/target/release/bundle/rpm -maxdepth 1 -name '*.rpm' -print -quit)")"
+          echo "rpm path: $rpm_path"
+          echo "--- payload info ---"
+          rpm -qp --queryformat '%{PAYLOADCOMPRESSOR} %{PAYLOADFLAGS} %{PAYLOADFORMAT}\n' "$rpm_path"
+          echo "rpm -qp exit: $?"
+          echo "--- tool versions ---"
+          rpm2cpio --version 2>&1
+          cpio --version 2>&1 | head -1
+          rpm --version
+          echo "--- split extraction ---"
+          mkdir -p /tmp/rpmdebug && cd /tmp/rpmdebug
+          rpm2cpio "$rpm_path" > payload.cpio
+          echo "rpm2cpio exit: $?"
+          ls -la payload.cpio
+          file payload.cpio
+          cpio -idmv < payload.cpio
+          echo "cpio exit: $?"
+          find . -maxdepth 6 -type f
+          exit 0
+
       - name: Verify portal desktop entry in Debian package
         run: scripts/verify-linux-package.sh "$(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -print -quit)"
 
