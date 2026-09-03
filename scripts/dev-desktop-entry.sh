@@ -20,7 +20,16 @@ app_id="$(/usr/bin/python3 -c "import json;print(json.load(open('$repo/src-tauri
 # rather than repeated: hardcoding them here means a rename breaks the entry silently, and
 # the portal's only report of that is "App info not found".
 binary_name="$(sed -n 's/^name = "\(.*\)"/\1/p' "$repo/src-tauri/Cargo.toml" | head -1)"
-binary="$repo/src-tauri/target/debug/$binary_name"
+
+# Which build to point Exec at. Defaults to debug, the everyday dev loop; pass "release" when
+# verifying against a release build, which is the one that embeds the frontend and so behaves
+# like what users get rather than needing a dev server alongside it.
+profile="${1:-debug}"
+case "$profile" in
+  debug|release) ;;
+  *) echo "usage: $0 [debug|release]" >&2; exit 2 ;;
+esac
+binary="$repo/src-tauri/target/$profile/$binary_name"
 dest="${XDG_DATA_HOME:-$HOME/.local/share}/applications/$app_id.desktop"
 
 # GLib parses Exec with shell rules and then requires argv[0] to name a program that
@@ -58,6 +67,7 @@ command -v update-desktop-database >/dev/null && update-desktop-database "$(dirn
 
 echo "wrote $dest"
 echo "app id: $app_id"
+echo "profile: $profile"
 
 # Prove the entry resolves. A written file is not necessarily a found file.
 if /usr/bin/python3 -c "

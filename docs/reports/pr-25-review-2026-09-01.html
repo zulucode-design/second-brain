@@ -284,10 +284,11 @@
 
     <div class="callout">
       <b>Out of scope for closing #4, by the ticket's own text:</b> Linux/X11 is marked untested
-      and explicitly "not promised", and Windows moved to #21. Separately, spec &sect;5 describes an
-      AI similarity check at capture time that #4 never took into scope &mdash; a real gap between
-      the spec's capture flow and what ships here, and worth its own ticket rather than a silent
-      omission.
+      and explicitly "not promised", and Windows moved to #21. Spec &sect;5's fourth step, the
+      AI similarity check at capture time, is deliberately not in #4 either: it is
+      <b>issue #9</b>, already blocked by #4 and by #7 (note embeddings). So the capture flow
+      shipping without it is sequencing, not an omission &mdash; an earlier revision of this
+      report called it an untracked gap, which was wrong.
     </div>
 
     <p class="sub">On tooling: the dev server is an artefact of running a <em>debug</em> build,
