@@ -58,6 +58,18 @@ jobs:
           pnpm exec tauri build --bundles deb,rpm --ci --no-sign
           --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
+      - name: DEBUG bundle output (temporary)
+        run: |
+          echo "--- df -h ---"
+          df -h .
+          echo "--- bundle tree ---"
+          find src-tauri/target/release/bundle -maxdepth 3 -exec ls -ld {} \;
+          echo "--- rpm dir stat ---"
+          stat src-tauri/target/release/bundle/rpm || echo "rpm dir stat failed: $?"
+          echo "--- find rpm ---"
+          find src-tauri/target/release/bundle/rpm -maxdepth 1 -name '*.rpm' -print
+          echo "find exit: $?"
+
       - name: Verify portal desktop entry in Debian package
         run: scripts/verify-linux-package.sh "$(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -print -quit)"
 
