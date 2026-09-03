@@ -2,7 +2,7 @@
 // window.__HELIX_PLATFORM__ before app scripts run (see src-tauri/src/lib.rs). The UA is only a
 // fallback when that global is absent (SSR/prerender, plain-browser dev): some desktop WebKitGTK
 // builds report a mobile-looking user-agent. (#63)
-type HelixPlatform = { mobile: boolean; android: boolean; ios: boolean };
+type HelixPlatform = { mobile: boolean; android: boolean; ios: boolean; linux: boolean };
 
 const injected: HelixPlatform | undefined =
 	typeof window !== 'undefined'
@@ -14,6 +14,11 @@ const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
 export const isAndroid = injected ? injected.android : /android/i.test(ua);
 export const isIOS = injected ? injected.ios : /iphone|ipad|ipod/i.test(ua);
 export const isMobile = injected ? injected.mobile : isAndroid || isIOS;
+
+// No UA fallback: unlike the mobile flags above, nothing about the user agent distinguishes
+// Linux reliably, and the one place this is used (quick-capture hotkey settings) has no
+// meaning to show for without it, so it is simply false until the backend has injected it.
+export const isLinux = injected ? injected.linux : false;
 
 // Themes that use the dark color scheme. Used by applyTheme() to toggle the
 // `dark` class on the root element. Keep this in sync when adding new themes.

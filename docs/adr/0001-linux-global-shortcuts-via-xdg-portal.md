@@ -36,8 +36,15 @@ implemented on the target machine on 2026-08-30:
 | `org.freedesktop.portal.GlobalShortcuts` | interface version 1 |
 
 The GNOME backend implements `org.freedesktop.impl.portal.GlobalShortcuts`, and the
-frontend exposes `CreateSession`, `BindShortcuts`, `ListShortcuts`, `ConfigureShortcuts`,
-and the `Activated` / `Deactivated` signals. `ashpd` wraps this from Rust.
+frontend exposes `CreateSession`, `BindShortcuts`, `ListShortcuts`, and the
+`Activated` / `Deactivated` signals. `ashpd` wraps this from Rust.
+
+**`ConfigureShortcuts` is not among them at version 1.** It arrived in interface version 2,
+and this machine publishes version 1 — as the table above always said, though an earlier
+revision of this ADR listed the method anyway and built a settings button on it. Corrected
+2026-09-02, when the button returned "This interface requires version 2, but 1 is available"
+on its first real click. Version support is now read from the proxy at registration and
+carried in the hotkey's status, so the UI offers the button only where it can work.
 
 ## Decision
 
@@ -53,13 +60,49 @@ implementation detail.
 `preferred_trigger` is a hint. The portal "typically result[s] in the portal presenting a
 dialog showing the shortcuts and allowing users to configure the shortcuts", and returns a
 `trigger_description` string for the app to display. After binding, the app cannot change
-the key programmatically; it can only call `ConfigureShortcuts` to open the system UI.
+the key programmatically; at best it can call `ConfigureShortcuts` to open the system UI,
+and only where the portal is version 2 or newer. Where it is not — GNOME 50 included — the
+app cannot open anything, and the honest answer is to say where the desktop's own keyboard
+settings are.
 
 This is why the settings UI is deliberately platform-divergent: on Linux it shows a
-read-only trigger and a button into system settings, on Windows a key-capture field. A
+read-only trigger and, at most, a button into system settings, on Windows a key-capture
+field. A
 uniform in-app capture field was rejected because on Linux it would display a key the
 compositor may not have assigned — reintroducing the same "appears to work" failure this
 ADR exists to avoid.
+
+The settings button does not hold onto the live `Registration` to call `configure()` on. It
+runs [`portal::register`] again, fresh, and calls `configure()` on that temporary session, then
+closes it. This is not a shortcut taken for convenience: `needs_binding` means the shortcut is
+already bound by the time the button is reachable, so the repeat handshake only reaches
+`ListShortcuts` and skips `BindShortcuts` — the one call that prompts — matching the 0.03s
+"already bound" path measured on 2026-09-01. The alternative (sharing the long-lived
+`Registration` between the activation-listening task and a settings command) means either
+`Registration`'s portal types are `Sync` and shareable across threads, which is unverified, or
+building a message-passing channel between the two — both more moving parts than reusing
+already-tested code for what is, at most, an occasional button press.
+
+That repeat handshake has one wrinkle, found by clicking it: `Registry.Register` is **once per
+bus connection**, and `ashpd` hands every caller in a process the same session connection. The
+second handshake therefore always fails that step with "Connection already associated with an
+application ID". It means "already done", so it is treated as success — but it is reported as a
+generic `Failed`, indistinguishable by type from a genuinely fatal registration error, so the
+check is on the message text and covered by a test carrying the portal's exact wording.
+
+### A vault can vanish after the hotkey is bound
+
+Registration only requires that a vault was *configured* at startup
+(`config.active_vault.is_some()`), decided once. Whether that vault is still *present* — not
+unmounted, not renamed, not deleted — is a different and far more volatile fact, so it is
+checked again on every activation rather than assumed to still hold from registration time.
+
+When it does not hold, the overlay does not open. Opening it anyway would let the user type
+into a capture that can only fail once they try to save, discovering the problem at the worst
+possible moment — after they have already put the thought down. Instead a desktop notification
+names the vault path and says what to do, and the hotkey stays registered: an unreachable vault
+is not a reason to report the hotkey itself as unavailable, and the next press should try
+again, not require a restart.
 
 ### The app id must be reverse-DNS and backed by an installed `.desktop`
 
@@ -157,6 +200,13 @@ is not already bound. Binding unconditionally would prompt on every launch.
   so an unregistered hotkey reports a specific cause rather than silence.
 - The `.desktop` file and app id become a shipping requirement of the feature, not
   packaging polish that can follow later.
+- "The hotkey is registered" and "there is somewhere to file into" are checked separately,
+  at different times, because they can change independently: the first is decided once at
+  startup, the second on every press.
+- The settings UI's "Change shortcut…" button re-runs the registration handshake rather than
+  holding a long-lived session open for it; this is safe only because `BindShortcuts` is
+  already skipped for an already-bound shortcut, which is the same guarantee the rest of this
+  ADR depends on.
 
 ## Rejected
 

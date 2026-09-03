@@ -140,15 +140,87 @@
         first binding prompted (18.8 s); repeat registration skipped binding (0.03 s).</li>
     </ul>
     <div class="callout">
-      <b>Still not tested by automation:</b> a real compositor activation after these corrective
-      changes; focus restoration to the previously active application; unavailable-vault
-      notification; autostart and settings UI; Linux/X11; sticky-denial recovery against the
-      live portal; installed RPM behavior; and execution from a built AppImage. Ticket steps
-      5–7 and their acceptance tests remain future work rather than regressions in this follow-up.
+      <b>Still not tested by automation:</b> focus restoration to the previously active
+      application; Linux/X11; sticky-denial recovery against the live portal; installed RPM
+      behavior; and execution from a built AppImage.
     </div>
   </section>
 
-  <footer>Second Brain · PR #25 review · originally 1 September, updated 2 September 2026</footer>
+  <section>
+    <h2>Steps 5&ndash;7 &middot; 2 September 2026</h2>
+    <p class="sub">Unavailable-vault notification, opt-in autostart, Linux hotkey settings &mdash;
+      all three verified live on GNOME/Wayland after the defects below.</p>
+
+    <p>Every defect in this round was invisible to the test suite and to review. Each was found
+      by running the feature and watching it fail, and each is recorded here because the class of
+      mistake is more useful than the instance.</p>
+
+    <table>
+      <tr><th>Defect</th><th>How it presented</th><th>Resolution</th></tr>
+      <tr>
+        <td><code>tauri-plugin-notification</code> cannot be called from this app at all</td>
+        <td>Every hotkey press panicked with "Cannot start a runtime from within a runtime";
+            the user saw nothing. The plugin schedules <code>notify-rust</code>'s blocking call
+            onto the tokio runtime <em>itself</em>, so moving the call site to a blocking-pool
+            thread and then to a plain OS thread changed nothing &mdash; three attempts, identical
+            panic, resolved only by reading the backtrace.</td>
+        <td>Plugin removed entirely. Notifications now go through <code>ashpd</code>'s
+            notification portal, which is async to begin with and shares the bus connection the
+            shortcut already uses. Net effect: one fewer dependency than before the step began.</td>
+      </tr>
+      <tr>
+        <td><code>Registry.Register</code> is once per bus connection</td>
+        <td>The settings button ran a second handshake and the portal answered
+            "Connection already associated with an application ID", so the UI reported the
+            shortcut as refused while it was working perfectly.</td>
+        <td>Treated as success, since that is what it means. Matched on message text because the
+            portal reports it as a generic <code>Failed</code>, and covered by a test carrying the
+            portal's exact wording.</td>
+      </tr>
+      <tr>
+        <td><code>ConfigureShortcuts</code> does not exist on this desktop</td>
+        <td>"This interface requires version 2, but 1 is available". The method arrived in
+            <code>GlobalShortcuts</code> version 2; GNOME 50 publishes version 1 &mdash; which
+            ADR-0001's own verification table had recorded since 30 August, while the prose
+            beside it listed the method as available and a settings button was built on it.</td>
+        <td>Version is read from the proxy at registration and carried in the hotkey status. The
+            UI offers the button only where it can work, and otherwise says to use the desktop's
+            own Keyboard settings. ADR-0001 corrected.</td>
+      </tr>
+    </table>
+
+    <p class="sub">Also found, and worth knowing before designing around it: the app
+      <b>recreates a missing vault directory on open</b> (<code>ensure_vault_structure</code>
+      scaffolds idempotently). A vault that vanishes between launches is therefore silently
+      re-made rather than reported, so the unavailable-vault path only applies to a vault that
+      disappears while the app is already running. That is the case that was tested.</p>
+
+    <table>
+      <tr><th>Verified live</th><th>Evidence</th></tr>
+      <tr>
+        <td>Unavailable vault notifies instead of opening a doomed overlay</td>
+        <td>Vault moved away mid-session; hotkey pressed; desktop notification appeared naming
+            the path, no overlay, and zero panics in the log.</td>
+      </tr>
+      <tr>
+        <td>Autostart writes and removes a real XDG entry</td>
+        <td>Enabled: entry written to <code>$XDG_CONFIG_HOME/autostart/</code>, app-id basename,
+            quoted absolute <code>Exec</code>; parses under GLib and passes
+            <code>desktop-file-validate</code>. Disabled: removed. Verified both through the
+            startup resync and through the settings toggle.</td>
+      </tr>
+      <tr>
+        <td>Settings shows a read-only trigger and no dead button</td>
+        <td>"Bound to Press &lt;Control&gt;&lt;Alt&gt;n", with guidance to the desktop's Keyboard
+            settings in place of the unavailable <code>ConfigureShortcuts</code> button.</td>
+      </tr>
+    </table>
+
+    <p class="sub">Suite after this round: 228 Rust tests passing, 1 ignored (the live-portal
+      test); 41 frontend tests; <code>pnpm verify</code> green end to end.</p>
+  </section>
+
+  <footer>Second Brain · PR #25 review · originally 1 September, updated 2 September 2026 (steps 5–7)</footer>
 </div>
 </body>
 </html>

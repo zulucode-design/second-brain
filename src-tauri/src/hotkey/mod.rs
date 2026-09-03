@@ -20,6 +20,8 @@ pub mod desktop_entry;
 pub mod portal;
 #[cfg(target_os = "linux")]
 pub mod startup;
+#[cfg(target_os = "linux")]
+pub mod vault_status;
 
 /// The shortcut's identity with the portal. Stable: the compositor remembers bindings against
 /// it, so changing it would silently orphan whatever the user has already assigned.
@@ -182,6 +184,14 @@ pub struct HotkeyStatus {
     /// What the compositor actually bound, as it described it — for display only. `None` until
     /// a binding exists.
     pub trigger: Option<String>,
+    /// Whether this desktop can open its own shortcut editor on request.
+    ///
+    /// False on `GlobalShortcuts` portals older than version 2, which have no
+    /// `ConfigureShortcuts` at all — including GNOME 50, the target machine. The settings UI
+    /// reads this to decide between offering a button and explaining where to go instead:
+    /// a button that can only fail is the same "appears to work" failure ADR-0001 exists to
+    /// prevent, one layer up.
+    pub can_configure: bool,
 }
 
 impl HotkeyStatus {
@@ -190,14 +200,16 @@ impl HotkeyStatus {
             availability: Availability::Unknown,
             reason: None,
             trigger: None,
+            can_configure: false,
         }
     }
 
-    pub fn registered(trigger: Option<String>) -> Self {
+    pub fn registered(trigger: Option<String>, can_configure: bool) -> Self {
         Self {
             availability: Availability::Available,
             reason: None,
             trigger,
+            can_configure,
         }
     }
 
@@ -206,6 +218,7 @@ impl HotkeyStatus {
             availability: Availability::Unavailable,
             reason: Some(cause.reason()),
             trigger: None,
+            can_configure: false,
         }
     }
 }
@@ -348,7 +361,7 @@ mod tests {
 
     #[test]
     fn a_registered_hotkey_offers_no_reason() {
-        let status = HotkeyStatus::registered(Some("Ctrl+Alt+N".to_string()));
+        let status = HotkeyStatus::registered(Some("Ctrl+Alt+N".to_string()), true);
         assert_eq!(status.availability, Availability::Available);
         assert!(status.reason.is_none());
     }

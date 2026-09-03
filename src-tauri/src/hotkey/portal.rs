@@ -24,7 +24,8 @@
 //! long as the value is held.
 
 use ashpd::desktop::global_shortcuts::{
-    Activated, BindShortcutsOptions, GlobalShortcuts, ListShortcutsOptions, NewShortcut, Shortcut,
+    Activated, BindShortcutsOptions, ConfigureShortcutsOptions, GlobalShortcuts,
+    ListShortcutsOptions, NewShortcut, Shortcut,
 };
 use ashpd::desktop::{CreateSessionOptions, ResponseError, Session};
 use ashpd::{AppID, Error as PortalError};
@@ -42,11 +43,21 @@ use super::{
 /// is what keeps [`Registration::activations`] producing.
 pub struct Registration {
     proxy: GlobalShortcuts,
-    /// Held, never read. The portal ends the session when this value drops, and with it the
-    /// binding and the `Activated` stream, so its lifetime *is* the hotkey's lifetime.
-    _session: Session<GlobalShortcuts>,
+    /// Doubles as a liveness guard: the portal ends the session when this value drops, and
+    /// with it the binding and the `Activated` stream, so its lifetime *is* the hotkey's
+    /// lifetime. Also read directly by [`Registration::configure`].
+    session: Session<GlobalShortcuts>,
     trigger: Option<String>,
+    supports_configuration: bool,
 }
+
+/// The `GlobalShortcuts` interface version that first offered `ConfigureShortcuts`.
+///
+/// Below this, there is no way for an app to open the desktop's shortcut editor, and the
+/// settings UI must not offer a button that can only fail. GNOME 50 / xdg-desktop-portal-gnome
+/// 50.0 publishes version 1 — measured on the target machine, 2026-09-02, by clicking the
+/// button and getting "This interface requires version 2, but 1 is available".
+const CONFIGURE_SHORTCUTS_VERSION: u32 = 2;
 
 impl Registration {
     /// What the compositor bound, as it described it. For display only, never parsed: the
@@ -66,6 +77,36 @@ impl Registration {
             (activated.shortcut_id() == SHORTCUT_ID).then_some(())
         }))
     }
+
+    /// Whether this desktop can open its own shortcut editor on request.
+    ///
+    /// False on portals older than `ConfigureShortcuts`, where the user has to reach the
+    /// desktop's keyboard settings themselves. Asked once, at registration, so the settings
+    /// UI can decide what to offer instead of finding out when a button fails.
+    pub fn supports_configuration(&self) -> bool {
+        self.supports_configuration
+    }
+
+    /// Open the desktop's own shortcut-configuration UI for this session.
+    ///
+    /// The app cannot change the binding itself — ADR-0001 — so this is the entirety of
+    /// "change the hotkey": hand the user to the compositor that actually owns it. The call
+    /// blocks until the dialog closes, which is what lets a caller safely close a temporary
+    /// session right after this returns without cutting the dialog off.
+    pub async fn configure(&self) -> Result<(), PortalError> {
+        self.proxy
+            .configure_shortcuts(&self.session, None, ConfigureShortcutsOptions::default())
+            .await
+    }
+
+    /// End this session on the portal side, rather than leaving it to be cleaned up only when
+    /// the process exits. For the long-lived registration that holds the `Activated` stream,
+    /// letting it live for the process is correct and this is never called. For a temporary
+    /// session created solely to call [`Registration::configure`], leaving it dangling for
+    /// the rest of the run would accumulate one dead session per settings-button press.
+    pub async fn close(&self) -> Result<(), PortalError> {
+        self.session.close().await
+    }
 }
 
 /// Run the handshake described in the module docs, binding the shortcut if it is not
@@ -83,9 +124,14 @@ pub async fn register(app_id: &ApplicationId) -> Result<Registration, Unavailabl
 
     log::debug!("portal: registering host app id {app_id}");
     // Harmless and skipped inside a sandbox, where the app id is already known to the portal.
-    ashpd::register_host_app(parsed)
-        .await
-        .map_err(|err| classify(app_id, &err))?;
+    match ashpd::register_host_app(parsed).await {
+        Ok(()) => {}
+        // Already done, on this same connection, by an earlier handshake in this process.
+        Err(err) if is_already_registered(&err) => {
+            log::debug!("portal: app id already registered on this connection");
+        }
+        Err(err) => return Err(classify(app_id, &err)),
+    }
 
     log::debug!("portal: opening the GlobalShortcuts proxy");
     let proxy = GlobalShortcuts::new()
@@ -121,10 +167,22 @@ pub async fn register(app_id: &ApplicationId) -> Result<Registration, Unavailabl
         listed.shortcuts().to_vec()
     };
 
+    let supports_configuration = proxy.version() >= CONFIGURE_SHORTCUTS_VERSION;
+    log::debug!(
+        "portal: GlobalShortcuts version {}, configuration UI {}",
+        proxy.version(),
+        if supports_configuration {
+            "available"
+        } else {
+            "unavailable"
+        }
+    );
+
     Ok(Registration {
         trigger: trigger_of(&bound),
         proxy,
-        _session: session,
+        session,
+        supports_configuration,
     })
 }
 
@@ -139,6 +197,23 @@ fn trigger_of(shortcuts: &[Shortcut]) -> Option<String> {
         .find(|shortcut| shortcut.id() == SHORTCUT_ID)
         .map(|shortcut| shortcut.trigger_description().to_string())
         .filter(|description| !description.is_empty())
+}
+
+/// Whether this connection has already claimed an app id.
+///
+/// `Registry.Register` is once per bus connection, and `ashpd` hands every caller in a process
+/// the same session connection. So the second handshake — the one the settings button runs to
+/// reach `ConfigureShortcuts` — always hits this, and it means "already done", not "failed".
+/// Treating it as an error made the button report the shortcut as refused while the shortcut
+/// was working perfectly. Observed 2026-09-02, on the first click.
+///
+/// Matched on text because the portal reports it as a generic `Failed`, the same shape as
+/// genuinely fatal registration problems.
+fn is_already_registered(error: &PortalError) -> bool {
+    error
+        .to_string()
+        .to_ascii_lowercase()
+        .contains("already associated with an application id")
 }
 
 /// Turn a portal error into something the user can act on.
@@ -230,6 +305,26 @@ mod tests {
             ),
             Unavailable::NoPortal
         );
+    }
+
+    #[test]
+    fn a_second_handshake_on_the_same_connection_is_not_a_failure() {
+        // Verbatim from the portal on 2026-09-02, when the settings button ran a second
+        // handshake to reach ConfigureShortcuts. Reporting this as an error told the user the
+        // shortcut had been refused while it was working.
+        let already = PortalError::Portal(ashpd::PortalError::Failed(
+            "Could not register app ID: Connection already associated with an application ID"
+                .to_string(),
+        ));
+        assert!(is_already_registered(&already));
+    }
+
+    #[test]
+    fn a_genuine_registration_failure_is_still_a_failure() {
+        let missing_entry = PortalError::Portal(ashpd::PortalError::Failed(
+            "Could not register app ID: App info not found for 'io.github.example.App'".to_string(),
+        ));
+        assert!(!is_already_registered(&missing_entry));
     }
 
     #[test]

@@ -90,6 +90,10 @@ async fn ensure_window(app: &AppHandle) -> Result<(), Unavailable> {
 /// every outcome is stored and announced, so the settings UI can say which one happened.
 pub fn spawn(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
+        // Independent of the hotkey itself, but piggybacks on this task rather than spawning
+        // a second one for what is a handful of file operations at startup.
+        resync_autostart(&app);
+
         // The window has to exist before the hotkey can be answered, and it is cheap: it is
         // created hidden and never loaded again, so the first press is a show, not a load.
         let readiness = ensure_window(&app).await;
@@ -174,7 +178,10 @@ async fn register(app: &AppHandle) -> RegistrationAttempt {
 
     match portal::register(&app_id).await {
         Ok(registration) => {
-            let status = HotkeyStatus::registered(registration.trigger().map(str::to_string));
+            let status = HotkeyStatus::registered(
+                registration.trigger().map(str::to_string),
+                registration.supports_configuration(),
+            );
             match registration.activations().await {
                 Ok(activations) => {
                     let app = app.clone();
@@ -185,7 +192,7 @@ async fn register(app: &AppHandle) -> RegistrationAttempt {
                         use futures::StreamExt;
                         let mut activations = Box::pin(activations);
                         while activations.next().await.is_some() {
-                            match activation_outcome(show_capture_window(&app)) {
+                            match on_activation(&app).await {
                                 ActivationOutcome::Continue => {}
                                 ActivationOutcome::EndSession(status) => {
                                     publish(&app, status);
@@ -272,6 +279,84 @@ fn show_capture_window(app: &AppHandle) -> Result<(), Unavailable> {
         })
 }
 
+/// The notification's id with the portal. Stable, so repeated presses against a vault that is
+/// still missing replace one notification rather than stacking identical copies.
+const VAULT_UNAVAILABLE_NOTIFICATION_ID: &str = "quick-capture-vault-unavailable";
+
+/// Decide what a single press of the hotkey should do, and do it.
+///
+/// A vault becoming unreachable is not a hotkey failure — the shortcut is still bound and
+/// still worth having — so unlike [`show_capture_window`]'s errors, this branch never ends
+/// the session. It only ever asks the question fresh and says what it found.
+async fn on_activation(app: &AppHandle) -> ActivationOutcome {
+    match super::vault_status::activation_plan(
+        configured_vault_path(app),
+        super::vault_status::vault_is_reachable,
+    ) {
+        super::vault_status::ActivationPlan::ShowCaptureWindow => {
+            activation_outcome(show_capture_window(app))
+        }
+        super::vault_status::ActivationPlan::NotifyVaultUnavailable { path } => {
+            notify_vault_unavailable(&path).await;
+            ActivationOutcome::Continue
+        }
+        super::vault_status::ActivationPlan::Nothing => ActivationOutcome::Continue,
+    }
+}
+
+/// The vault path a capture would file into right now, if one was ever configured.
+///
+/// Read fresh on every activation rather than cached: this is a different question from "was
+/// a vault ever configured", which only gates whether registration happens at all.
+fn configured_vault_path(app: &AppHandle) -> Option<String> {
+    app.state::<AppState>()
+        .config
+        .lock()
+        .ok()
+        .and_then(|config| config.active_vault.clone())
+}
+
+/// Tell the user why the hotkey did not open the overlay, rather than nothing happening.
+///
+/// Sent through the **portal**, like the shortcut itself, rather than through
+/// `tauri-plugin-notification`.
+///
+/// That plugin was tried first and cannot work here. Its desktop path wraps `notify-rust`,
+/// which drives a runtime of its own, and the plugin schedules that onto the tokio runtime
+/// before calling it — so every press panicked with "Cannot start a runtime from within a
+/// runtime" and the user saw nothing. Moving the *call site* to a blocking pool thread, and
+/// then to a plain OS thread, changed nothing, because the hop onto the runtime happens
+/// inside the plugin. Measured on 2026-09-02 across all three attempts; the backtrace names
+/// `tauri_plugin_notification::desktop::imp::Notification::show` polled as a tokio task.
+///
+/// `ashpd`'s notification portal is async to begin with, so it composes with the runtime
+/// instead of fighting it, and it is the same dependency and the same bus connection the
+/// shortcut already uses.
+///
+/// The id is stable, so leaning on the hotkey repeatedly replaces one notification rather
+/// than stacking up identical copies.
+async fn notify_vault_unavailable(path: &str) {
+    let notice = super::vault_status::vault_unavailable_notice(path);
+    let sent = async {
+        ashpd::desktop::notification::NotificationProxy::new()
+            .await?
+            .add_notification(
+                VAULT_UNAVAILABLE_NOTIFICATION_ID,
+                ashpd::desktop::notification::Notification::new(&notice.title)
+                    .body(notice.body.as_str())
+                    .priority(ashpd::desktop::notification::Priority::Normal),
+            )
+            .await
+    }
+    .await;
+
+    // Logged and swallowed, not escalated: a notification that did not get through does not
+    // mean the hotkey is broken, only that this one explanation was missed.
+    if let Err(error) = sent {
+        log::warn!("Could not show the vault-unavailable notification: {error}");
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ActivationOutcome {
     Continue,
@@ -290,6 +375,35 @@ fn publish(app: &AppHandle, status: HotkeyStatus) {
         *stored = status.clone();
     }
     let _ = app.emit(STATUS_EVENT, status);
+}
+
+/// Make the on-disk autostart entry match the stored preference.
+///
+/// Run once per launch, unconditionally of whether the hotkey itself registers: the two are
+/// unrelated features that happen to share a settings panel. Failure is logged and swallowed
+/// — a missing autostart entry is an inconvenience the user can retoggle, not a reason to
+/// affect anything else the app is doing at startup.
+fn resync_autostart(app: &AppHandle) {
+    let Some(config_home) = dirs::config_dir() else {
+        return;
+    };
+    let Some(exec) = super::desktop_entry::current_executable() else {
+        log::warn!("Could not resolve this app's own executable path for autostart");
+        return;
+    };
+    let Ok(app_id) = super::configured_application_id() else {
+        return;
+    };
+    let enabled = app
+        .state::<AppState>()
+        .config
+        .lock()
+        .map(|config| config.autostart)
+        .unwrap_or(false);
+
+    if let Err(error) = crate::autostart::sync(enabled, &config_home, &app_id, &exec) {
+        log::warn!("Could not update the autostart entry: {error}");
+    }
 }
 
 fn a_vault_was_configured(app: &AppHandle) -> bool {
@@ -372,7 +486,7 @@ mod tests {
         let events = Arc::new(std::sync::Mutex::new(Vec::new()));
         let listener_events = events.clone();
         let attempt = RegistrationAttempt {
-            status: HotkeyStatus::registered(Some("Ctrl+Alt+N".to_string())),
+            status: HotkeyStatus::registered(Some("Ctrl+Alt+N".to_string()), true),
             listener: Some(Box::pin(async move {
                 listener_events.lock().unwrap().push("listener");
             })),

@@ -4,6 +4,7 @@ import { compareNaturalNames } from "$lib/utils/natural-sort";
 import type {
   AiStatus,
   AppConfig,
+  HotkeyStatus,
   CustomTheme,
   NoteEntry,
   NoteContent,
@@ -39,6 +40,20 @@ export const aiStatus = writable<AiStatus>({
   reason: null,
   endpoint: null,
   target: null,
+});
+
+/**
+ * Whether the global quick-capture hotkey is registered, kept current by the backend's
+ * `hotkey-status-changed` event rather than polled.
+ *
+ * Starts `unknown` for the same reason `aiStatus` does: nothing is claimed until the
+ * startup handshake has actually run.
+ */
+export const hotkeyStatus = writable<HotkeyStatus>({
+  availability: "unknown",
+  reason: null,
+  trigger: null,
+  can_configure: false,
 });
 
 /**

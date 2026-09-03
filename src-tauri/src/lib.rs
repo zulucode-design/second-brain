@@ -1,6 +1,8 @@
 mod ai;
 mod ai_health;
 mod asset_scope;
+#[cfg(target_os = "linux")]
+mod autostart;
 mod backup;
 mod commands;
 mod history;
@@ -47,10 +49,11 @@ pub fn run() {
     // Inject the compile-time platform so the frontend never sniffs the (sometimes
     // mobile-looking) WebKitGTK user-agent. (#63)
     let platform_init = format!(
-        "window.__HELIX_PLATFORM__={{mobile:{},android:{},ios:{}}};",
+        "window.__HELIX_PLATFORM__={{mobile:{},android:{},ios:{},linux:{}}};",
         cfg!(mobile),
         cfg!(target_os = "android"),
         cfg!(target_os = "ios"),
+        cfg!(target_os = "linux"),
     );
 
     let mut builder = tauri::Builder::default()
@@ -211,6 +214,8 @@ pub fn run() {
             commands::duplicate_note,
             commands::get_ai_status,
             commands::refresh_ai_status,
+            commands::get_hotkey_status,
+            commands::open_hotkey_settings,
             commands::list_unfiled_notes,
             commands::file_unfiled_note,
             commands::rename_note,

@@ -71,6 +71,16 @@ pub fn running_as_appimage() -> Option<PathBuf> {
     executable.starts_with(&appdir).then_some(appimage)
 }
 
+/// What any entry pointing at this running app — the hotkey's own, or the autostart one —
+/// should put in `Exec`.
+///
+/// The AppImage file itself when running as one, not `std::env::current_exe()`: that would
+/// resolve to the mounted copy under `$APPDIR`, which stops existing the moment this process
+/// exits. Otherwise this process's own binary.
+pub fn current_executable() -> Option<PathBuf> {
+    running_as_appimage().or_else(|| std::env::current_exe().ok())
+}
+
 /// Where the entry belongs. Basename must be the app id, or the portal will not match it.
 pub fn entry_path(data_home: &Path, app_id: &ApplicationId) -> PathBuf {
     data_home
