@@ -24,7 +24,9 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            rpm \
+            cpio
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -48,10 +50,16 @@ jobs:
       - name: Run project verification
         run: pnpm verify
 
-      - name: Build unsigned Debian package
+      # Both formats: deb and rpm are configured separately in tauri.conf.json, and rpm is
+      # the shipping path for this project's own Linux machine. Checking only one leaves the
+      # other free to break into a silent "App info not found" on install.
+      - name: Build unsigned Linux packages
         run: >-
-          pnpm exec tauri build --bundles deb --ci --no-sign
+          pnpm exec tauri build --bundles deb,rpm --ci --no-sign
           --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Verify portal desktop entry in Debian package
         run: scripts/verify-linux-package.sh "$(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -print -quit)"
+
+      - name: Verify portal desktop entry in RPM package
+        run: scripts/verify-linux-package.sh "$(find src-tauri/target/release/bundle/rpm -maxdepth 1 -name '*.rpm' -print -quit)"
