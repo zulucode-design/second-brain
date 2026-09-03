@@ -74,4 +74,6 @@ jobs:
         run: scripts/verify-linux-package.sh "$(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -print -quit)"
 
       - name: Verify portal desktop entry in RPM package
-        run: scripts/verify-linux-package.sh "$(find src-tauri/target/release/bundle/rpm -maxdepth 1 -name '*.rpm' -print -quit)"
+        run: |
+          set -x
+          bash -x scripts/verify-linux-package.sh "$(find src-tauri/target/release/bundle/rpm -maxdepth 1 -name '*.rpm' -print -quit)"
