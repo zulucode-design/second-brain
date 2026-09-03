@@ -221,85 +221,82 @@
   </section>
 
   <section>
-    <h2>Before #4 can close</h2>
-    <p class="sub">All seven steps are built. What remains is verification, not construction &mdash;
-      and the pattern of this ticket is that verification is where the defects were.</p>
-
-    <p>Nine defects have been found in this feature so far. <b>Every one of them was found by
-      running it, not by testing or reviewing it</b> &mdash; the suite was green before each.
-      That is the argument for finishing the list below rather than closing on a green build.</p>
+    <h2>Verification pass &middot; 2 September 2026</h2>
+    <p class="sub">All nine acceptance criteria on #4 now verified against a
+      <b>production</b> build. Four more defects found in the process &mdash; bringing the
+      total to thirteen, every one found by running the feature rather than by testing or
+      reviewing it.</p>
 
     <table>
-      <tr><th>Outstanding</th><th>What it needs</th><th>Cost</th></tr>
+      <tr><th>Criterion</th><th>Result</th></tr>
+      <tr><td>Hotkey opens the overlay from another application</td><td>Verified</td></tr>
+      <tr><td>Overlay is fully keyboard-driven</td><td>Verified</td></tr>
+      <tr><td>Note filed under the chosen category and immediately findable</td>
+          <td>Verified &mdash; captured, then found by search in the same session</td></tr>
+      <tr><td>Focus returns to the previously active application</td><td>Verified</td></tr>
+      <tr><td>Capture works whether or not the main window is open</td>
+          <td>Verified with the main window minimised</td></tr>
+      <tr><td>Portal unavailable reports a stated reason</td>
+          <td>Verified with the desktop entry removed; Settings named the rejected app id</td></tr>
+      <tr><td>Dismissed permission dialog reported as such</td>
+          <td>Verified by dismissing the real dialog &mdash; after two defects, below</td></tr>
+      <tr><td>Autostart opt-in, off by default</td><td>Verified both directions</td></tr>
+      <tr><td>Working on Linux/Wayland (GNOME)</td><td>Verified</td></tr>
+    </table>
+
+    <table>
+      <tr><th>Defect found while verifying</th><th>Resolution</th></tr>
       <tr>
-        <td>Focus returns to the previously active application after capture</td>
-        <td>Press the hotkey from another window, file a note, confirm focus returns there.</td>
-        <td>A running app. Minutes.</td>
+        <td><b>A dismissed dialog was not recognised as a denial.</b> The classifier expected
+            <code>ResponseError::Cancelled</code>; GNOME answers with <code>Other</code>, so the
+            one case ADR-0001 insists must be named specifically fell through to
+            "Portal request didn't succeed with no information" &mdash; the exact vague message
+            it exists to prevent.</td>
+        <td>Any unsuccessful response to <code>BindShortcuts</code> is a denial, sound because
+            it is the only call that shows a dialog. Both variants tested, plus one proving a
+            non-response failure keeps its own cause.</td>
       </tr>
       <tr>
-        <td>Capture works whether or not the main window is open</td>
-        <td>Close/hide the main window, then press the hotkey.</td>
-        <td>A running app. Minutes.</td>
+        <td><b>The denial message claimed a stickiness that does not exist here.</b> It said the
+            desktop remembers the refusal and stops asking. GNOME 50 records nothing &mdash; no
+            permission-store entry, no dconf binding &mdash; and asks again next launch. The app
+            was telling the user it had stopped asking while it was asking.</td>
+        <td>Advice reordered by what happens: restart to be asked again;
+            <code>flatpak permission-reset</code> only where a desktop does persist a refusal.
+            ADR-0001 corrected, the claim having come from documentation rather than this
+            machine.</td>
       </tr>
       <tr>
-        <td>A captured note is <em>immediately findable</em></td>
-        <td>Capture a note, then search for it in the app. Rests on <code>index_note_now</code>
-            being synchronous and error-checked; that reasoning has not been confirmed against
-            the search UI.</td>
-        <td>A running app. Minutes.</td>
+        <td><b>The app-id failure told every user to run a repo script.</b> Fine in dev,
+            meaningless in a packaged install, where the same failure means the shipped desktop
+            entry is missing.</td>
+        <td>Message covers both audiences; a test asserts both halves.</td>
       </tr>
       <tr>
-        <td>The hotkey reports a stated reason wherever the portal cannot serve it</td>
-        <td>Partly seen already: an app id the portal rejected surfaced its reason live. The
-            remaining check is removing the dev desktop entry and relaunching, which should
-            report <code>AppIdRejected</code> naming <code>scripts/dev-desktop-entry.sh</code>.</td>
-        <td>A running app. Cheap and reversible.</td>
-      </tr>
-      <tr>
-        <td>A dismissed permission dialog is reported as such, with the reset command</td>
-        <td><code>flatpak permission-reset io.github.zulucodedesign.SecondBrain</code>, relaunch,
-            dismiss the dialog deliberately, confirm the message names the reset command, then
-            reset once more and re-grant.</td>
-        <td><b>Spends a sticky decision.</b> The portal remembers a dismissal per app id, and
-            the permission store is per user &mdash; a sandboxed <code>XDG_CONFIG_HOME</code>
-            does not isolate it. Deliberate, and needs a person at the keyboard.</td>
-      </tr>
-      <tr>
-        <td>Installed <code>.deb</code> / RPM behaviour</td>
-        <td>Install a built package and confirm the portal resolves the app-id-named entry that
-            CI already byte-compares. The <code>.deb</code> cannot be installed on this Fedora
-            machine; the RPM is the realistic one.</td>
-        <td>A package install, not a dev run.</td>
-      </tr>
-      <tr>
-        <td>Execution from a built AppImage</td>
-        <td>Build with <code>NO_STRIP=true</code> (linuxdeploy's bundled <code>strip</code>
-            cannot read this toolchain's <code>.relr.dyn</code> sections) and run it, so the
-            self-written desktop entry is exercised for real rather than simulated.</td>
-        <td>A packaged build. Note it writes into the real
-            <code>~/.local/share/applications/</code> unless <code>XDG_DATA_HOME</code> is
-            pointed elsewhere.</td>
+        <td><b><code>cargo build --release</code> does not produce a shippable binary.</b> It
+            still embeds <code>devUrl</code> and fails with "Could not connect to localhost" &mdash;
+            which is why the first "production" run showed no window at all.</td>
+        <td>Only <code>tauri build</code> sets the production flag. Any check claiming to
+            exercise what users get must go through the Tauri CLI.</td>
       </tr>
     </table>
 
     <div class="callout">
-      <b>Out of scope for closing #4, by the ticket's own text:</b> Linux/X11 is marked untested
-      and explicitly "not promised", and Windows moved to #21. Spec &sect;5's fourth step, the
-      AI similarity check at capture time, is deliberately not in #4 either: it is
-      <b>issue #9</b>, already blocked by #4 and by #7 (note embeddings). So the capture flow
-      shipping without it is sequencing, not an omission &mdash; an earlier revision of this
-      report called it an untracked gap, which was wrong.
+      <b>Worth keeping for the next person:</b> reproducing a denial needs the <em>binding</em>
+      cleared as well as the permission. GNOME keeps bindings in dconf under
+      <code>/org/gnome/settings-daemon/global-shortcuts/&lt;app-id&gt;</code>, separate from the
+      permission store; <code>ListShortcuts</code> finding one there means
+      <code>BindShortcuts</code> never runs and no dialog appears.
+      <code>flatpak permission-reset</code> alone will not bring the prompt back.
     </div>
 
-    <p class="sub">On tooling: the dev server is an artefact of the frontend being loaded from
-      <code>localhost:5173</code> rather than embedded. <b>Profile alone does not decide that.</b>
-      A binary from plain <code>cargo build --release</code> still carries
-      <code>"devUrl": "http://localhost:5173"</code> and still fails with "Could not connect to
-      localhost" &mdash; measured 2026-09-02, by building one and running it. Only
-      <code>tauri build</code> sets the production flag, so any check that claims to exercise
-      "what users get" has to go through the Tauri CLI, not cargo. The throwaway vault and config are still worth keeping
-      so tests never touch a real vault, but not under <code>/tmp</code>, which is reaped and
-      took the sandbox with it mid-session on 2 September.</p>
+    <p class="sub">Still outstanding, and deliberately so: installed RPM behaviour and execution
+      from a built AppImage &mdash; both need a package install rather than a dev run. Linux/X11
+      and Windows (#21) are excluded by the ticket's own text. Spec &sect;5's capture-time
+      similarity check is <b>issue #9</b>, blocked by #4 and #7.</p>
+
+    <p class="sub">Suite: 230 Rust tests passing, 1 ignored (the live-portal test); 41 frontend
+      tests; <code>pnpm verify</code> green.</p>
   </section>
 
   <footer>Second Brain · PR #25 review · originally 1 September, updated 2 September 2026 (steps 5–7)</footer>
