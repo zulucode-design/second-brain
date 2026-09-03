@@ -9,12 +9,14 @@ export const PARA_CATEGORIES = [
 export type ParaCategory = (typeof PARA_CATEGORIES)[number];
 
 /**
- * Whether the AI backend can be reached.
+ * Whether something can be used right now, and why not when it can't.
  *
  * `unknown` is not `unavailable`: nothing has been established yet, so features are left
- * alone rather than disabled on a guess.
+ * alone rather than disabled on a guess. Shared by the AI backend and the quick-capture
+ * hotkey, which answer the same question about different things — see `ai_health::Availability`
+ * and `hotkey::Availability` in the Rust backend, which are one type for the same reason.
  */
-export type AiAvailability = "unknown" | "available" | "unavailable";
+export type Availability = "unknown" | "available" | "unavailable";
 
 export interface AiTargetId {
   endpoint: string;
@@ -23,13 +25,32 @@ export interface AiTargetId {
 }
 
 export interface AiStatus {
-  availability: AiAvailability;
+  availability: Availability;
   /** Why it is unavailable, phrased as something to do about it. */
   reason: string | null;
   /** The endpoint that was probed, so the user can see which machine was tried. */
   endpoint: string | null;
   /** Secret-free identity of the settings this result belongs to. */
   target: AiTargetId | null;
+}
+
+/** Whether the global quick-capture hotkey is registered, and why not when it is not. */
+export interface HotkeyStatus {
+  availability: Availability;
+  /** Why it is unavailable, phrased as something to do about it. `null` when registered. */
+  reason: string | null;
+  /**
+   * What the compositor bound, as it described it — e.g. "Press <Control><Alt>n". A sentence,
+   * not an accelerator: display it as-is, never parse it. `null` until a binding exists.
+   */
+  trigger: string | null;
+  /**
+   * Whether this desktop can open its own shortcut editor on request.
+   *
+   * False on GlobalShortcuts portals below version 2, which have no `ConfigureShortcuts` —
+   * GNOME 50 among them. Offer the button only when this is true; otherwise it can only fail.
+   */
+  can_configure: boolean;
 }
 
 export interface NoteMeta {

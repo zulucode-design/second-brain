@@ -1,9 +1,12 @@
 mod ai;
 mod ai_health;
 mod asset_scope;
+#[cfg(target_os = "linux")]
+mod autostart;
 mod backup;
 mod commands;
 mod history;
+mod hotkey;
 mod image_proxy;
 mod search;
 mod state;
@@ -46,10 +49,11 @@ pub fn run() {
     // Inject the compile-time platform so the frontend never sniffs the (sometimes
     // mobile-looking) WebKitGTK user-agent. (#63)
     let platform_init = format!(
-        "window.__HELIX_PLATFORM__={{mobile:{},android:{},ios:{}}};",
+        "window.__HELIX_PLATFORM__={{mobile:{},android:{},ios:{},linux:{}}};",
         cfg!(mobile),
         cfg!(target_os = "android"),
         cfg!(target_os = "ios"),
+        cfg!(target_os = "linux"),
     );
 
     let mut builder = tauri::Builder::default()
@@ -99,6 +103,16 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            // Claim the global capture hotkey. Linux only for now: on Windows the app owns
+            // the keybinding rather than the compositor, which is #21 and a different
+            // mechanism entirely (ADR-0001).
+            //
+            // After the log plugin, deliberately. This runs on a task that reports the one
+            // thing nothing else can show — why a hotkey is not registered — and anything it
+            // logs before the plugin exists is dropped.
+            #[cfg(target_os = "linux")]
+            hotkey::startup::spawn(app.handle().clone());
 
             // On mobile, set config dir from Tauri's path resolver, then reload config
             #[cfg(mobile)]
@@ -196,9 +210,12 @@ pub fn run() {
             commands::read_unfiled_note,
             commands::save_note,
             commands::create_note,
+            commands::quick_capture_note,
             commands::duplicate_note,
             commands::get_ai_status,
             commands::refresh_ai_status,
+            commands::get_hotkey_status,
+            commands::open_hotkey_settings,
             commands::list_unfiled_notes,
             commands::file_unfiled_note,
             commands::rename_note,

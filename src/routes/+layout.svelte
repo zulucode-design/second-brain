@@ -11,6 +11,12 @@
 
 	let { children } = $props();
 
+	// The quick-capture overlay is its own window on the same bundle. It gets the theme, but
+	// none of the main window's furniture: it is not resizable, and running the update check
+	// again from a second window would double every launch's network call.
+	const isCaptureWindow =
+		typeof window !== 'undefined' && window.location.pathname.startsWith('/capture');
+
 	// Reactively apply theme class to <html> whenever the resolved theme or custom themes change.
 	// $resolvedTheme already maps "system" onto the configured light/dark pair, so flipping the OS
 	// appearance re-runs this effect.
@@ -109,6 +115,7 @@
 
 	// Detect install type and check for updates on startup
 	onMount(() => {
+		if (isCaptureWindow) return;
 		// Authoritative platform from the backend (compile-time), overriding the UA guess. (#63)
 		isMobilePlatform().then((m) => platformIsMobile.set(m)).catch(() => {});
 		if (isMobile) {
@@ -221,4 +228,6 @@
 
 {@render children()}
 
-<ResizeHandles />
+{#if !isCaptureWindow}
+	<ResizeHandles />
+{/if}

@@ -60,6 +60,7 @@
 		activeVaultConfig,
 		unfiledNotes,
 		aiStatus,
+		hotkeyStatus,
 	} from '$lib/stores/app';
 	import { keybindings, matchAction } from '$lib/keybindings';
 	import { destinationForCategory, suggestedNotebookForCreation } from '$lib/utils/note-creation';
@@ -68,13 +69,13 @@
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
 	const isMobile = $derived($platformIsMobile);
-	import { loadVaultState, saveVaultState, readNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, getAppConfig, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus, getRepairStatus, retryRepairs } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, getAppConfig, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus, getHotkeyStatus, getRepairStatus, retryRepairs } from '$lib/api';
 	import { darkThemes, isAndroid } from '$lib/platform';
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow } from '$lib/utils/window';
 	import { normalizeStartupView, resolveStartupTarget } from '$lib/utils/startup-view';
 	import { get } from 'svelte/store';
-	import type { VaultState, FileEvent, NotebookEntry, TaskItem, AiStatus, RepairStatus, ParaCategory } from '$lib/types';
+	import type { VaultState, FileEvent, NotebookEntry, TaskItem, AiStatus, HotkeyStatus, RepairStatus, ParaCategory } from '$lib/types';
 	import type { StartupTarget } from '$lib/utils/startup-view';
 
 	function findNotebookByPath(list: NotebookEntry[], relPath: string): NotebookEntry | null {
@@ -91,6 +92,7 @@
 	let editor = $state<Editor>();
 	let unlistenFileChange: (() => void) | null = null;
 	let unlistenAiStatus: (() => void) | null = null;
+	let unlistenHotkeyStatus: (() => void) | null = null;
 	let unlistenRepairStatus: (() => void) | null = null;
 	let repairStatus = $state<RepairStatus>({ issues: [] });
 	let repairBusy = $state(false);
@@ -868,6 +870,17 @@
 			console.error('Failed to read AI status:', e);
 		}
 
+		// Registration happens once at startup and can take a moment (the very first launch
+		// may prompt), so the panel needs to hear about it rather than poll for it.
+		unlistenHotkeyStatus = await listen<HotkeyStatus>('hotkey-status-changed', (event) => {
+			$hotkeyStatus = event.payload;
+		});
+		try {
+			$hotkeyStatus = await getHotkeyStatus();
+		} catch (e) {
+			console.error('Failed to read hotkey status:', e);
+		}
+
 		unlistenOpenFile = await listen<string>('open-file', async (event) => {
 			await handleOpenFile(event.payload);
 		});
@@ -915,6 +928,7 @@
 	onDestroy(() => {
 		unlistenFileChange?.();
 		unlistenAiStatus?.();
+		unlistenHotkeyStatus?.();
 		unlistenRepairStatus?.();
 		unlistenOpenFile?.();
 		if (backupInterval) clearInterval(backupInterval);

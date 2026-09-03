@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AiStatus,
+  HotkeyStatus,
   AppConfig,
   CustomTheme,
   NoteContent,
@@ -146,6 +147,14 @@ export async function saveNote(
   return invoke("save_note", { path, meta, body });
 }
 
+/// File a quick capture. The first line of `text` becomes the title, the rest the body.
+export async function quickCaptureNote(
+  category: string,
+  text: string,
+): Promise<NoteEntry> {
+  return invoke("quick_capture_note", { category, text });
+}
+
 export async function createNote(
   notebookRelative: string | null,
   title: string,
@@ -165,6 +174,21 @@ export async function getAiStatus(): Promise<AiStatus> {
 /** Probe the AI backend now rather than waiting for the next scheduled check. */
 export async function refreshAiStatus(): Promise<AiStatus> {
   return invoke("refresh_ai_status");
+}
+
+/** Whether the global quick-capture hotkey is registered. Answered from stored state. */
+export async function getHotkeyStatus(): Promise<HotkeyStatus> {
+  return invoke("get_hotkey_status");
+}
+
+/**
+ * Open the desktop's own shortcut-configuration UI for the quick-capture hotkey.
+ *
+ * The app cannot change the binding itself, so this is the entirety of "change the
+ * hotkey" on Linux (ADR-0001): hand the user to the compositor that owns it.
+ */
+export async function openHotkeySettings(): Promise<void> {
+  return invoke("open_hotkey_settings");
 }
 
 /**

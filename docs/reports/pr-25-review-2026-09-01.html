@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Second Brain — PR #25 review</title>
+<style>
+  :root {
+    --page:#f5f2eb; --paper:#fffdf8; --ink:#20241f; --muted:#60685f;
+    --line:#d8d3c7; --accent:#235f50; --accent-soft:#dcece5;
+    --warn:#9a4a16; --warn-soft:#f9e5d5; --pending:#806500; --pending-soft:#f3e9ba;
+    --shadow:0 18px 50px rgba(39,41,35,.09);
+    --sans:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    --serif:Iowan Old Style,Palatino Linotype,Georgia,serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box} body{margin:0;background:var(--page);color:var(--ink);
+    font-family:var(--sans);line-height:1.6} .page{width:min(920px,calc(100% - 30px));margin:26px auto 70px}
+  .hero,.card{background:var(--paper);border:1px solid var(--line);box-shadow:var(--shadow)}
+  .hero{padding:clamp(24px,5vw,48px);border-radius:24px;margin-bottom:22px}
+  .card{padding:clamp(20px,4vw,34px);border-radius:20px;margin-bottom:20px}
+  .kicker{margin:0 0 10px;color:var(--accent);font-size:.74rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase}
+  h1,h2{font-family:var(--serif);font-weight:600} h1{font-size:clamp(2rem,5vw,2.9rem);margin:0;letter-spacing:-.03em}
+  h2{font-size:1.5rem;margin:0 0 6px}.intro,.sub{color:var(--muted)} .intro{max-width:720px;font-size:1.06rem}
+  .sub{margin:0 0 16px;font-size:.95rem} p{margin:0 0 12px} code{font-family:var(--mono);font-size:.88em;
+    background:#f9f6ef;padding:.1em .4em;border:1px solid var(--line);border-radius:5px}
+  table{width:100%;border-collapse:collapse;font-size:.94rem} th,td{text-align:left;padding:10px 12px;
+    border-bottom:1px solid var(--line);vertical-align:top} th{color:var(--muted);font-size:.78rem;text-transform:uppercase}
+  tr:last-child td{border-bottom:0}.tag{display:inline-block;padding:2px 10px;border-radius:999px;font-size:.76rem;font-weight:700}
+  .pass{background:var(--accent-soft);color:var(--accent)}.open{background:var(--pending-soft);color:var(--pending)}
+  .fixed{background:var(--accent-soft);color:var(--accent)}.callout{border:1px solid var(--line);border-left:4px solid var(--accent);
+    border-radius:12px;padding:16px 20px;margin:14px 0;background:#f9f6ef}.warn{border-left-color:var(--warn);background:var(--warn-soft)}
+  ul{padding-left:22px}li{margin-bottom:6px}footer{text-align:center;color:var(--muted);font-size:.85rem;margin-top:30px}
+</style>
+</head>
+<body>
+<div class="page">
+  <section class="hero">
+    <p class="kicker">Second Brain · maintained code-review record</p>
+    <h1>PR #25: Linux quick-capture foundation</h1>
+    <p class="intro">
+      Current through the corrective review of <code>dd12836</code> and
+      <a href="https://github.com/zulucode-design/second-brain/pull/26">follow-up PR #26</a>
+      on 2 September 2026.
+      Historical findings remain recorded below; each is labelled with its present status
+      so the report shows both what was found and what changed afterward.
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>Scope and current result</h2>
+    <p class="sub">Steps 1–4 of ticket #4, not the completed quick-capture feature</p>
+    <p>
+      PR #25 claims the packageable app id
+      <code>io.github.zulucodedesign.SecondBrain</code>, provides Linux desktop entries,
+      registers through the XDG GlobalShortcuts portal at startup, opens a dedicated capture
+      window, and files captured text. Ticket steps 5–7 and the remaining acceptance criteria
+      are still outside the reviewed work.
+    </p>
+    <table>
+      <tr><th>Axis</th><th>Status</th><th>Meaning</th></tr>
+      <tr><td>Repository standards</td><td><span class="tag fixed">Corrected</span></td><td>The stale report and contradictory ADR found in the <code>dd12836</code> review are corrected by the follow-up.</td></tr>
+      <tr><td>Scoped PR work</td><td><span class="tag fixed">Corrected</span></td><td>Window and AppImage readiness now gate registration; activation failure ends the portal session.</td></tr>
+      <tr><td>Ticket #4 overall</td><td><span class="tag open">Incomplete</span></td><td>Steps 5–7 and end-to-end acceptance remain.</td></tr>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Historical snapshots</h2>
+    <p class="sub">Superseded evidence is retained so later work does not erase what earlier reviews established</p>
+    <div class="callout">
+      <b>Before <code>35f754a</code> and <code>dd12836</code>:</b> the report correctly found that
+      the hotkey was not active in the product: startup did not call portal registration or
+      consume its activation stream. That finding was resolved when steps 3–4 wired startup,
+      the activation listener, capture window, and note path.
+    </div>
+    <ul>
+      <li>The 2 September identifier-guard verification passed 21 hotkey tests and 202 Rust tests
+        with one live-portal test ignored; frontend remained at 31 passing tests.</li>
+      <li>That earlier package run verified
+        <code>usr/share/applications/io.github.zulucode-design.SecondBrain.desktop</code>.
+        It is retained as historical evidence only: the identifier was later rejected by
+        <code>ashpd</code> and replaced by the separator-free form.</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>Review of <code>dd12836</code></h2>
+    <p class="sub">Findings and disposition in the corrective follow-up</p>
+    <table>
+      <tr><th>Finding</th><th>Severity</th><th>Current disposition</th></tr>
+      <tr><td>A capture-window construction failure was logged but registration continued, allowing a falsely <code>Available</code> shortcut.</td><td>High</td><td><span class="tag fixed">Fixed</span> Window readiness is now a prerequisite; failure skips portal registration and publishes an actionable unavailable status.</td></tr>
+      <tr><td>Show or focus failure left the portal session alive and its stored status available.</td><td>High</td><td><span class="tag fixed">Fixed</span> Activation failure publishes unavailable, drops the registration, and ends the listener.</td></tr>
+      <tr><td>The activation listener could run before startup published <code>Available</code>, allowing a fast listener failure to be overwritten by stale availability.</td><td>High</td><td><span class="tag fixed">Fixed</span> Registration returns an unspawned listener; startup publishes the initial status before scheduling it.</td></tr>
+      <tr><td>AppImage entry failures were swallowed and later appeared to be application-id rejection.</td><td>Medium</td><td><span class="tag fixed">Fixed</span> Missing data location and write failures have a distinct cause and prevent portal registration.</td></tr>
+      <tr><td>The maintained PR report still described steps 1–2 and the rejected hyphenated identifier.</td><td>Standards</td><td><span class="tag fixed">Fixed</span> This record now reflects commits <code>35f754a</code>, <code>dd12836</code>, and their corrective follow-up without deleting earlier history.</td></tr>
+      <tr><td>ADR-0001 named the separator-free identifier but retained the contradictory “Hyphen wins” rationale.</td><td>Standards</td><td><span class="tag fixed">Fixed</span> The ADR now records why underscore and mid-segment hyphen forms both failed and why the separator-free form is required.</td></tr>
+      <tr><td>Ticket #4 named the rejected hyphenated identifier and grouped completed steps 3–4 with future work.</td><td>Tracking</td><td><span class="tag fixed">Fixed</span> The issue now names the separator-free identifier and separates completed steps 3–4 from remaining steps 5–7.</td></tr>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Resolved findings</h2>
+    <p class="sub">Corrections already present in PR #25</p>
+    <table>
+      <tr><th>Earlier finding</th><th>Resolution</th></tr>
+      <tr><td>Unpackageable underscore app id, followed by an <code>ashpd</code>-rejected mid-segment hyphen</td><td><span class="tag fixed">Fixed</span> The separator-free identifier is accepted by Tauri and <code>ashpd</code>; ADR-0001 records the measured sequence.</td></tr>
+      <tr><td>Installed entry did not match app id</td><td><span class="tag fixed">Fixed</span> Debian and RPM mappings install the exact app-id-named entry.</td></tr>
+      <tr><td>Duplicate availability enum</td><td><span class="tag fixed">Fixed</span> Hotkey status reuses <code>ai_health::Availability</code>.</td></tr>
+      <tr><td>App id repeated across code</td><td><span class="tag fixed">Fixed</span> Runtime code and tests read the canonical value from <code>tauri.conf.json</code>.</td></tr>
+      <tr><td>Unused later-step events/settings API</td><td><span class="tag fixed">Fixed</span> Deferred until their consumers exist.</td></tr>
+      <tr><td>Conflicting session-lifetime comments</td><td><span class="tag fixed">Fixed</span> Documentation now states the portal owns teardown when the process exits.</td></tr>
+      <tr><td>Stale review presentation</td><td><span class="tag fixed">Fixed</span> This report now separates historical fixes from current findings.</td></tr>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>New regression safeguards · 2 September</h2>
+    <table>
+      <tr><th>Safeguard</th><th>What it prevents</th></tr>
+      <tr><td>Validated <code>ApplicationId</code></td><td>Rejects empty, spaced, underscore, non-reverse-DNS, and empty-segment identifiers before portal use.</td></tr>
+      <tr><td>Canonical configured identifier</td><td>Portal and desktop-entry APIs cannot silently use an unrelated string literal.</td></tr>
+      <tr><td>Source consistency test</td><td>Checks Debian/RPM destination names and shared desktop fields against the configured id.</td></tr>
+      <tr><td>AppImage writer and startup-gate tests</td><td>Proves first write, no-op for a current entry, refresh after a move, and refusal to register when required integration cannot be prepared.</td></tr>
+      <tr><td>Activation lifecycle test</td><td>Proves a capture-window failure becomes an unavailable status that tells the listener to end the portal session.</td></tr>
+      <tr><td>Status ordering test</td><td>Proves <code>Available</code> is published before the activation listener becomes runnable, preventing a truthful failure from being overwritten.</td></tr>
+      <tr><td>Finished-package CI check</td><td>Builds an unsigned Debian package, extracts it, and byte-compares the installed app-id entry with the reviewed source entry.</td></tr>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Verification evidence</h2>
+    <ul>
+      <li>33 hotkey tests passed; one live-portal test remains intentionally ignored.</li>
+      <li>Full Rust suite: 213 passed, 1 ignored; binary and documentation targets contain no tests.</li>
+      <li>Frontend: 31 tests passed; Svelte check reported 0 errors and 0 warnings.</li>
+      <li>Rust formatting and strict Clippy (<code>-D warnings</code>) passed.</li>
+      <li>Production frontend build passed with the existing large-chunk warning.</li>
+      <li>GNOME/Wayland portal evidence from 1 September remains valid for the handshake tested then:
+        first binding prompted (18.8 s); repeat registration skipped binding (0.03 s).</li>
+    </ul>
+    <div class="callout">
+      <b>Still not tested by automation:</b> focus restoration to the previously active
+      application; Linux/X11; sticky-denial recovery against the live portal; installed RPM
+      behavior; and execution from a built AppImage.
+    </div>
+  </section>
+
+  <section>
+    <h2>Steps 5&ndash;7 &middot; 2 September 2026</h2>
+    <p class="sub">Unavailable-vault notification, opt-in autostart, Linux hotkey settings &mdash;
+      all three verified live on GNOME/Wayland after the defects below.</p>
+
+    <p>Every defect in this round was invisible to the test suite and to review. Each was found
+      by running the feature and watching it fail, and each is recorded here because the class of
+      mistake is more useful than the instance.</p>
+
+    <table>
+      <tr><th>Defect</th><th>How it presented</th><th>Resolution</th></tr>
+      <tr>
+        <td><code>tauri-plugin-notification</code> cannot be called from this app at all</td>
+        <td>Every hotkey press panicked with "Cannot start a runtime from within a runtime";
+            the user saw nothing. The plugin schedules <code>notify-rust</code>'s blocking call
+            onto the tokio runtime <em>itself</em>, so moving the call site to a blocking-pool
+            thread and then to a plain OS thread changed nothing &mdash; three attempts, identical
+            panic, resolved only by reading the backtrace.</td>
+        <td>Plugin removed entirely. Notifications now go through <code>ashpd</code>'s
+            notification portal, which is async to begin with and shares the bus connection the
+            shortcut already uses. Net effect: one fewer dependency than before the step began.</td>
+      </tr>
+      <tr>
+        <td><code>Registry.Register</code> is once per bus connection</td>
+        <td>The settings button ran a second handshake and the portal answered
+            "Connection already associated with an application ID", so the UI reported the
+            shortcut as refused while it was working perfectly.</td>
+        <td>Treated as success, since that is what it means. Matched on message text because the
+            portal reports it as a generic <code>Failed</code>, and covered by a test carrying the
+            portal's exact wording.</td>
+      </tr>
+      <tr>
+        <td><code>ConfigureShortcuts</code> does not exist on this desktop</td>
+        <td>"This interface requires version 2, but 1 is available". The method arrived in
+            <code>GlobalShortcuts</code> version 2; GNOME 50 publishes version 1 &mdash; which
+            ADR-0001's own verification table had recorded since 30 August, while the prose
+            beside it listed the method as available and a settings button was built on it.</td>
+        <td>Version is read from the proxy at registration and carried in the hotkey status. The
+            UI offers the button only where it can work, and otherwise says to use the desktop's
+            own Keyboard settings. ADR-0001 corrected.</td>
+      </tr>
+    </table>
+
+    <p class="sub">Also found, and worth knowing before designing around it: the app
+      <b>recreates a missing vault directory on open</b> (<code>ensure_vault_structure</code>
+      scaffolds idempotently). A vault that vanishes between launches is therefore silently
+      re-made rather than reported, so the unavailable-vault path only applies to a vault that
+      disappears while the app is already running. That is the case that was tested.</p>
+
+    <table>
+      <tr><th>Verified live</th><th>Evidence</th></tr>
+      <tr>
+        <td>Unavailable vault notifies instead of opening a doomed overlay</td>
+        <td>Vault moved away mid-session; hotkey pressed; desktop notification appeared naming
+            the path, no overlay, and zero panics in the log.</td>
+      </tr>
+      <tr>
+        <td>Autostart writes and removes a real XDG entry</td>
+        <td>Enabled: entry written to <code>$XDG_CONFIG_HOME/autostart/</code>, app-id basename,
+            quoted absolute <code>Exec</code>; parses under GLib and passes
+            <code>desktop-file-validate</code>. Disabled: removed. Verified both through the
+            startup resync and through the settings toggle.</td>
+      </tr>
+      <tr>
+        <td>Settings shows a read-only trigger and no dead button</td>
+        <td>"Bound to Press &lt;Control&gt;&lt;Alt&gt;n", with guidance to the desktop's Keyboard
+            settings in place of the unavailable <code>ConfigureShortcuts</code> button.</td>
+      </tr>
+    </table>
+
+    <p class="sub">Suite after this round: 228 Rust tests passing, 1 ignored (the live-portal
+      test); 41 frontend tests; <code>pnpm verify</code> green end to end.</p>
+  </section>
+
+  <section>
+    <h2>Verification pass &middot; 2 September 2026</h2>
+    <p class="sub">All nine acceptance criteria on #4 now verified against a
+      <b>production</b> build. Four more defects found in the process &mdash; bringing the
+      total to thirteen, every one found by running the feature rather than by testing or
+      reviewing it.</p>
+
+    <table>
+      <tr><th>Criterion</th><th>Result</th></tr>
+      <tr><td>Hotkey opens the overlay from another application</td><td>Verified</td></tr>
+      <tr><td>Overlay is fully keyboard-driven</td><td>Verified</td></tr>
+      <tr><td>Note filed under the chosen category and immediately findable</td>
+          <td>Verified &mdash; captured, then found by search in the same session</td></tr>
+      <tr><td>Focus returns to the previously active application</td><td>Verified</td></tr>
+      <tr><td>Capture works whether or not the main window is open</td>
+          <td>Verified with the main window minimised</td></tr>
+      <tr><td>Portal unavailable reports a stated reason</td>
+          <td>Verified with the desktop entry removed; Settings named the rejected app id</td></tr>
+      <tr><td>Dismissed permission dialog reported as such</td>
+          <td>Verified by dismissing the real dialog &mdash; after two defects, below</td></tr>
+      <tr><td>Autostart opt-in, off by default</td><td>Verified both directions</td></tr>
+      <tr><td>Working on Linux/Wayland (GNOME)</td><td>Verified</td></tr>
+    </table>
+
+    <table>
+      <tr><th>Defect found while verifying</th><th>Resolution</th></tr>
+      <tr>
+        <td><b>A dismissed dialog was not recognised as a denial.</b> The classifier expected
+            <code>ResponseError::Cancelled</code>; GNOME answers with <code>Other</code>, so the
+            one case ADR-0001 insists must be named specifically fell through to
+            "Portal request didn't succeed with no information" &mdash; the exact vague message
+            it exists to prevent.</td>
+        <td>Any unsuccessful response to <code>BindShortcuts</code> is a denial, sound because
+            it is the only call that shows a dialog. Both variants tested, plus one proving a
+            non-response failure keeps its own cause.</td>
+      </tr>
+      <tr>
+        <td><b>The denial message claimed a stickiness that does not exist here.</b> It said the
+            desktop remembers the refusal and stops asking. GNOME 50 records nothing &mdash; no
+            permission-store entry, no dconf binding &mdash; and asks again next launch. The app
+            was telling the user it had stopped asking while it was asking.</td>
+        <td>Advice reordered by what happens: restart to be asked again;
+            <code>flatpak permission-reset</code> only where a desktop does persist a refusal.
+            ADR-0001 corrected, the claim having come from documentation rather than this
+            machine.</td>
+      </tr>
+      <tr>
+        <td><b>The app-id failure told every user to run a repo script.</b> Fine in dev,
+            meaningless in a packaged install, where the same failure means the shipped desktop
+            entry is missing.</td>
+        <td>Message covers both audiences; a test asserts both halves.</td>
+      </tr>
+      <tr>
+        <td><b><code>cargo build --release</code> does not produce a shippable binary.</b> It
+            still embeds <code>devUrl</code> and fails with "Could not connect to localhost" &mdash;
+            which is why the first "production" run showed no window at all.</td>
+        <td>Only <code>tauri build</code> sets the production flag. Any check claiming to
+            exercise what users get must go through the Tauri CLI.</td>
+      </tr>
+    </table>
+
+    <div class="callout">
+      <b>Worth keeping for the next person:</b> reproducing a denial needs the <em>binding</em>
+      cleared as well as the permission. GNOME keeps bindings in dconf under
+      <code>/org/gnome/settings-daemon/global-shortcuts/&lt;app-id&gt;</code>, separate from the
+      permission store; <code>ListShortcuts</code> finding one there means
+      <code>BindShortcuts</code> never runs and no dialog appears.
+      <code>flatpak permission-reset</code> alone will not bring the prompt back.
+    </div>
+
+    <p class="sub">Linux/X11 and Windows (#21) are excluded by the ticket's own text. Spec
+      &sect;5's capture-time similarity check is <b>issue #9</b>, blocked by #4 and #7.</p>
+  </section>
+
+  <section>
+    <h2>Packaging verified &middot; 3 September 2026</h2>
+    <p class="sub">The last two items. Both shipping formats exercised as installed software,
+      not simulated.</p>
+
+    <table>
+      <tr><th>Format</th><th>What was proven</th></tr>
+      <tr>
+        <td>RPM</td>
+        <td>Installed with <code>dnf</code> (package name <code>helix-notes</code>). The
+            user-level dev entry was moved aside first, since it shadows the packaged one by
+            basename and would otherwise have been what the portal resolved &mdash; testing
+            nothing. GLib then resolved
+            <code>/usr/share/applications/io.github.zulucodedesign.SecondBrain.desktop</code>,
+            and a note was captured from <code>/usr/bin/helixnotes</code>.</td>
+      </tr>
+      <tr>
+        <td>AppImage</td>
+        <td>Built with <code>NO_STRIP=true</code> and placed at a path <b>containing a
+            space</b>, with no entry installed. It wrote its own, with <code>Exec</code>
+            correctly quoted; GLib resolved it and a note was captured. The self-integration
+            and its quoting had until now only been unit-tested &mdash; this is the first time
+            either ran against a real AppImage.</td>
+      </tr>
+    </table>
+
+    <div class="callout warn">
+      <b>Gap found and closed: CI guarded only the deb.</b> The RPM mapping is configured
+      separately in <code>tauri.conf.json</code> and had no check at all &mdash; on the format
+      most likely to be installed on this project's own Linux machine. Both are now built and
+      byte-compared against the reviewed source entry, and <code>rpm</code>/<code>cpio</code>
+      joined the CI dependencies, since <code>ubuntu-22.04</code> guarantees neither.
+    </div>
+
+    <p class="sub">The <code>.deb</code> sitting in <code>target/</code> was two days stale and
+      still carried <code>io.github.zulucode-design</code>, the identifier <code>ashpd</code>
+      rejects. The extended check refused it &mdash; the check working, not failing. It has been
+      removed and rebuilt, and the fresh one verifies clean, confirming the deb path survived
+      the refactor that added RPM support.</p>
+
+    <p class="sub">Suite: 230 Rust tests passing, 1 ignored (the live-portal test); 41 frontend
+      tests; <code>pnpm verify</code> green.</p>
+  </section>
+
+  <section>
+    <h2>CI's own RPM check, failing on a correct package &middot; 3 September 2026</h2>
+    <p class="sub">The check added above to close the RPM gap failed on every run since &mdash;
+      including the one behind the &ldquo;verification complete&rdquo; comment posted the same
+      day. Not a flake: reran the identical commit and it failed identically.</p>
+
+    <p>
+      <code>bash -x</code> traced the failure to a single line in
+      <code>verify-linux-package.sh</code>: <code>rpm2cpio "$package" | cpio -idm --quiet</code>,
+      dying under <code>pipefail</code> with no output from either tool. Splitting the pipe
+      apart in a temporary CI step named the half &mdash; <code>rpm2cpio</code> exits
+      <code>1</code> on this runner (<code>ubuntu-22.04</code>, <code>rpm
+      4.17.0+dfsg1-4build1</code>) even after writing a complete, valid cpio stream. Extracted
+      by hand from that split step, the stream held all six expected files, byte-identical,
+      including the app-id-named desktop entry the check exists to verify. <strong>The RPM was
+      correct throughout</strong>; only the check's trust in <code>rpm2cpio</code>'s exit code
+      was wrong.
+    </p>
+
+    <div class="callout warn">
+      <b>Fixed by trusting the tool that actually does the work.</b>
+      <code>cpio</code>'s own exit status &mdash; captured via <code>PIPESTATUS</code> before
+      <code>set -e</code> can act on the pipeline's combined result &mdash; now decides whether
+      extraction succeeded, since <code>cpio</code> is what parses the stream and writes the
+      files the checks below read. Verified both directions: the fixed script still passes
+      against a real RPM, and still fails &mdash; loudly, <code>cpio: premature end of
+      archive</code> &mdash; against one truncated by hand.
+    </div>
+
+    <p class="sub">Eighteenth defect on this ticket, and a different shape from the other
+      seventeen: the first found by a check rather than by running the feature, and the first
+      where the fix was to the review's own tooling rather than the product. The three commits
+      that trace this failure to its cause were kept rather than squashed &mdash; each ruled out
+      a possibility the next one narrowed.</p>
+  </section>
+
+  <footer>Second Brain · PR #25 review · originally 1 September, updated 3 September 2026 (CI's RPM check)</footer>
+</div>
+</body>
+</html>

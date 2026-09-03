@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, activeVaultConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus } from '$lib/stores/app';
-	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus } from '$lib/api';
-	import { darkThemes, isMobile, isAndroid } from '$lib/platform';
+	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, activeVaultConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
+	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings } from '$lib/api';
+	import { darkThemes, isMobile, isAndroid, isLinux } from '$lib/platform';
 	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
 	import { getVersion } from '@tauri-apps/api/app';
@@ -842,6 +842,16 @@
 	let weekStart = $state($appConfig?.week_start ?? 'monday');
 	let gpuAcceleration = $state($appConfig?.gpu_acceleration ?? true);
 	let autostart = $state($appConfig?.autostart ?? false);
+	let hotkeyConfigureError = $state<string | null>(null);
+
+	async function handleOpenHotkeySettings() {
+		hotkeyConfigureError = null;
+		try {
+			await openHotkeySettings();
+		} catch (e) {
+			hotkeyConfigureError = String(e);
+		}
+	}
 
 	// Editor settings
 	let pdfPreview = $state($appConfig?.pdf_preview ?? false);
@@ -1412,6 +1422,34 @@
 								</label>
 								{/if}
 							</div>
+
+							{#if isLinux}
+							<div class="settings-section">
+								<h3>Quick capture hotkey</h3>
+								{#if $hotkeyStatus.availability === 'available'}
+									<p class="setting-desc" style="margin-bottom: 12px;">
+										Bound to <strong style="color: var(--text-primary);">{$hotkeyStatus.trigger ?? 'a shortcut GNOME has not described yet'}</strong>.
+										The app cannot change this itself — it is set by your desktop.
+									</p>
+									{#if $hotkeyStatus.can_configure}
+										<button class="import-btn" onclick={handleOpenHotkeySettings}>Change shortcut…</button>
+									{:else}
+										<p class="setting-desc">
+											Your desktop's shortcuts portal is too old to open its editor from here, so
+											change it the same way you would any system shortcut — in your desktop's
+											own Keyboard settings, under the app's name.
+										</p>
+									{/if}
+								{:else if $hotkeyStatus.availability === 'unavailable'}
+									<p class="setting-desc" style="color: var(--text-primary);">{$hotkeyStatus.reason}</p>
+								{:else}
+									<p class="setting-desc">Not registered yet — open a vault to enable quick capture.</p>
+								{/if}
+								{#if hotkeyConfigureError}
+									<p class="setting-desc" style="color: var(--danger); margin-top: 8px;">{hotkeyConfigureError}</p>
+								{/if}
+							</div>
+							{/if}
 						{/if}
 						</div>
 					{:else if activeTab === 'maintenance'}

@@ -30,12 +30,19 @@ pub struct AppState {
     /// Reachability and its settings generation change under one lock, so invalidation
     /// cannot interleave with an obsolete probe commit.
     pub ai_health: Mutex<AiHealthState>,
+    /// Whether the global capture hotkey is registered, and why not when it is not.
+    ///
+    /// Stored rather than asked for on demand: the answer is decided once at startup by a
+    /// portal handshake that can prompt, so the settings UI reads the outcome instead of
+    /// re-running it every time the panel opens.
+    pub hotkey_status: Mutex<crate::hotkey::HotkeyStatus>,
 }
 
 impl AppState {
     pub fn new(config: AppConfig) -> Self {
         Self {
             config: Mutex::new(config),
+            hotkey_status: Mutex::new(crate::hotkey::HotkeyStatus::unknown()),
             search_index: Mutex::new(None),
             watcher: Mutex::new(None),
             vault_transition: tokio::sync::Mutex::new(()),

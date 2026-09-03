@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=HelixNotes
+Comment=Local markdown note-taking app
+Exec=helixnotes
+Icon=helixnotes
+Terminal=false
+Categories=Office;
+StartupWMClass=helixnotes

@@ -1,0 +1,247 @@
+# ADR-0001: Linux global shortcuts go through the XDG portal, not an X11 grab
+
+- **Status**: Accepted
+- **Date**: 2026-08-30
+- **Context**: Ticket #4 (global hotkey quick-capture)
+
+## Context
+
+Spec §5 makes a system-wide hotkey the entry point to capture, and §11 carried
+"Linux support varies across X11/Wayland" forward as an unresolved decision. This ADR
+resolves it.
+
+The obvious route is `tauri-plugin-global-shortcut`. It wraps the `global-hotkey` crate,
+which documents its Linux support as **X11 only**. The Wayland issue upstream
+(tauri-apps/global-hotkey#28) has been open since March 2022 and is unresolved, because
+Wayland deliberately has no protocol letting a client grab keys globally — only the
+compositor can.
+
+The primary Linux machine for this project runs **GNOME on Wayland** (Fedora 44). So the
+plugin's one supported Linux path is the one path that machine does not use.
+
+Running the X11 grab anyway, under XWayland, is worse than not shipping it. An X11 grab
+"will only intercept keys sent to XWayland clients, not the whole desktop". Under a
+Wayland session the hotkey would fire when an X11 window happened to hold focus and do
+nothing otherwise, with no error either way. Ticket #4 explicitly forbids this: "fail
+loudly with an explanation rather than appearing to work."
+
+The alternative is `org.freedesktop.portal.GlobalShortcuts`. Verified present and
+implemented on the target machine on 2026-08-30:
+
+| Component | Version |
+| --- | --- |
+| xdg-desktop-portal | 1.22.1 |
+| xdg-desktop-portal-gnome | 50.0 |
+| GNOME Shell | 50.4 |
+| `org.freedesktop.portal.GlobalShortcuts` | interface version 1 |
+
+The GNOME backend implements `org.freedesktop.impl.portal.GlobalShortcuts`, and the
+frontend exposes `CreateSession`, `BindShortcuts`, `ListShortcuts`, and the
+`Activated` / `Deactivated` signals. `ashpd` wraps this from Rust.
+
+**`ConfigureShortcuts` is not among them at version 1.** It arrived in interface version 2,
+and this machine publishes version 1 — as the table above always said, though an earlier
+revision of this ADR listed the method anyway and built a settings button on it. Corrected
+2026-09-02, when the button returned "This interface requires version 2, but 1 is available"
+on its first real click. Version support is now read from the proxy at registration and
+carried in the hotkey's status, so the UI offers the button only where it can work.
+
+## Decision
+
+**On Linux, register global shortcuts only through the XDG GlobalShortcuts portal.**
+Never fall back to an X11 grab. Where the portal is unavailable, register nothing and
+report why.
+
+Three consequences are load-bearing and are part of this decision rather than
+implementation detail.
+
+### The app does not own the keybinding
+
+`preferred_trigger` is a hint. The portal "typically result[s] in the portal presenting a
+dialog showing the shortcuts and allowing users to configure the shortcuts", and returns a
+`trigger_description` string for the app to display. After binding, the app cannot change
+the key programmatically; at best it can call `ConfigureShortcuts` to open the system UI,
+and only where the portal is version 2 or newer. Where it is not — GNOME 50 included — the
+app cannot open anything, and the honest answer is to say where the desktop's own keyboard
+settings are.
+
+This is why the settings UI is deliberately platform-divergent: on Linux it shows a
+read-only trigger and, at most, a button into system settings, on Windows a key-capture
+field. A
+uniform in-app capture field was rejected because on Linux it would display a key the
+compositor may not have assigned — reintroducing the same "appears to work" failure this
+ADR exists to avoid.
+
+The settings button does not hold onto the live `Registration` to call `configure()` on. It
+runs [`portal::register`] again, fresh, and calls `configure()` on that temporary session, then
+closes it. This is not a shortcut taken for convenience: `needs_binding` means the shortcut is
+already bound by the time the button is reachable, so the repeat handshake only reaches
+`ListShortcuts` and skips `BindShortcuts` — the one call that prompts — matching the 0.03s
+"already bound" path measured on 2026-09-01. The alternative (sharing the long-lived
+`Registration` between the activation-listening task and a settings command) means either
+`Registration`'s portal types are `Sync` and shareable across threads, which is unverified, or
+building a message-passing channel between the two — both more moving parts than reusing
+already-tested code for what is, at most, an occasional button press.
+
+That repeat handshake has one wrinkle, found by clicking it: `Registry.Register` is **once per
+bus connection**, and `ashpd` hands every caller in a process the same session connection. The
+second handshake therefore always fails that step with "Connection already associated with an
+application ID". It means "already done", so it is treated as success — but it is reported as a
+generic `Failed`, indistinguishable by type from a genuinely fatal registration error, so the
+check is on the message text and covered by a test carrying the portal's exact wording.
+
+### A vault can vanish after the hotkey is bound
+
+Registration only requires that a vault was *configured* at startup
+(`config.active_vault.is_some()`), decided once. Whether that vault is still *present* — not
+unmounted, not renamed, not deleted — is a different and far more volatile fact, so it is
+checked again on every activation rather than assumed to still hold from registration time.
+
+When it does not hold, the overlay does not open. Opening it anyway would let the user type
+into a capture that can only fail once they try to save, discovering the problem at the worst
+possible moment — after they have already put the thought down. Instead a desktop notification
+names the vault path and says what to do, and the hotkey stays registered: an unreachable vault
+is not a reason to report the hotkey itself as unavailable, and the next press should try
+again, not require a restart.
+
+### The app id must be reverse-DNS and backed by an installed `.desktop`
+
+Since xdg-desktop-portal 1.20 a non-sandboxed app must call
+`org.freedesktop.host.portal.Registry.Register(app_id)` **before any other portal call**,
+and since 1.21 `CreateSession` rejects an empty app id. GNOME's backend rejects
+non-reverse-DNS identifiers and validates against installed desktop entries.
+
+The bundle identifier therefore changes from `com.helixnotes.app` — upstream's domain,
+which would collide with a real HelixNotes install in the shared portal permission store —
+to **`io.github.zulucodedesign.SecondBrain`**. The owner segment is derived from the GitHub
+organisation but deliberately omits its separator so the same identifier passes every
+enforcer in the shipping path.
+
+The separator was settled twice, because two conventions disagree. Flatpak and D-Bus prefer
+`_` over `-`, since a D-Bus well-known name may not contain a hyphen. So the id was first
+claimed as `io.github.zulucode_design.SecondBrain`. **Tauri's bundler rejects underscores
+outright** — "the bundle identifier string must contain only alphanumeric characters (A-Z,
+a-z, and 0-9), hyphens (-), and periods (.)" — so that id could not be packaged at all.
+A dev build never runs the bundler, which is why the portal handshake was verified working
+before this was found.
+
+The hyphenated follow-up, `io.github.zulucode-design.SecondBrain`, packages successfully but
+is rejected by `ashpd`: Flatpak application-id rules allow a hyphen only in the final segment.
+The portal daemon itself accepted that form when called directly on 2026-09-02, but the app
+uses `ashpd`, so bypassing its validation is not a supported path. Removing the separator is
+the intersection of the two enforced rule sets: Tauri accepts it, `ashpd` accepts it, and the
+portal resolves it against the matching desktop entry. The `ApplicationId` type encodes that
+intersection so neither rejected identifier can be reintroduced accidentally.
+
+If the app later owns a D-Bus well-known name — for MPRIS, notification actions, or a D-Bus
+single-instance guard — that name can be derived from this separator-free identifier without
+special casing.
+
+This is safe: config, backups, and the search index all key off a hardcoded `"helixnotes"`
+string (`commands.rs`, `backup.rs`, `search/mod.rs`), not the bundle identifier. Renaming
+the identifier orphans nothing. Renaming that directory string *would*, and is out of
+scope.
+
+A dev build therefore needs a desktop entry before the portal will talk to it — but a
+**user-level** entry in `~/.local/share/applications/` is enough, so no packaged install is
+required to develop against this. Verified 2026-08-30: without an entry, `Register` fails
+with "App info not found" and `CreateSession` with "An app id is required"; with one, both
+succeed. `scripts/dev-desktop-entry.sh` installs it.
+
+A **packaged** build needs the same thing, and does not get it for free. The bundler names
+the generated entry after the product, giving `HelixNotes.desktop`, which the portal cannot
+match to the app id — so an installed build would fail exactly where a dev build succeeds.
+`bundle.linux.{deb,rpm}.files` therefore installs an entry named for the app id, and
+`desktopTemplate` marks the generated one `NoDisplay=true` so the app appears once in the
+launcher rather than twice.
+
+**AppImage installs nothing at all** — it is one file the user runs from wherever they put
+it — so it gets no entry from either mechanism, and the hotkey would be permanently
+unavailable there. The AppImage therefore writes its own user-level entry on demand,
+pointing `Exec` at `$APPIMAGE`, which the AppImage runtime sets to the file's absolute path
+(measured on the built AppImage, 2026-09-01). Measured 2026-09-01, in this order: with no entry `Register`
+fails with "App info not found"; with a user-level entry naming the app id it returns `OK`
+and `CreateSession` succeeds.
+
+That entry is `NoDisplay=true`. It exists to make the app id resolvable, not to launch
+anything, and a user running AppImageLauncher or `appimaged` already has a visible entry
+from that — under a mangled basename (`appimagekit_<hash>_HelixNotes.desktop`) which cannot
+match the app id, so it does not remove the need for ours. Measured: the portal accepts an
+app id whose only entry is hidden, so `NoDisplay` costs nothing and avoids a duplicate menu
+item.
+
+An AppImage is also moved, renamed, and replaced by a newer download. When that happens the
+old entry names a path that no longer exists, GLib drops it, and the hotkey stops working
+with no visible cause — so a stale `Exec` is rewritten rather than left alone.
+
+Two ways to write an entry that GLib silently refuses to load, both reported by the portal
+only as "App info not found", and both passed as valid by `desktop-file-validate`: an `Exec`
+whose argv[0] does not name an existing program, and an unquoted `Exec` path containing a
+space, which truncates argv[0] to the same effect. This repo's own path contains a space.
+
+### A denial must be named, whether or not it sticks
+
+If the user dismisses the permission dialog, the shortcut is not bound and nothing else in
+the app can say why. The status surface must detect this case specifically; a generic
+"the portal refused the global shortcut" strands the user with a dead key and no next step.
+
+**This ADR previously claimed the denial persists in the portal permission store, and that
+recovery therefore requires `flatpak permission-reset <app-id>`. That was taken from portal
+documentation and is not true on the target machine.** Measured 2026-09-02 on GNOME 50 /
+xdg-desktop-portal-gnome 50.0: dismissing the dialog twice recorded nothing in the permission
+store (`flatpak permission-show` returns empty) and nothing in
+`/org/gnome/settings-daemon/global-shortcuts/`, and the next launch simply asked again. The
+message said "asking again does nothing" while the app was, in fact, asking again.
+
+So the advice is now ordered by what actually happens: restart to be asked again, and use
+`flatpak permission-reset` only if a desktop does remember the refusal. The command stays
+because portals that persist a denial exist and leave no other way back — it is the
+conditional half of the advice, not the headline.
+
+Finding it required dismissing a real dialog, and dismissing it required clearing the
+**binding** as well as the permission: GNOME stores bindings in dconf under
+`/org/gnome/settings-daemon/global-shortcuts/<app-id>`, separately from the permission store,
+and `ListShortcuts` finding one there means `BindShortcuts` is skipped and no dialog ever
+appears. `flatpak permission-reset` alone will not reproduce the prompt.
+
+Bindings persist per app id across restarts while sessions do not, so startup calls
+`CreateSession`, then `ListShortcuts`, and only calls `BindShortcuts` for a shortcut that
+is not already bound. Binding unconditionally would prompt on every launch.
+
+## Consequences
+
+- Linux support is defined by portal availability, not session type. An X11 session gets
+  it too when the portal answers — a side effect, not a promise. X11 is marked untested.
+- Windows keeps `tauri-plugin-global-shortcut`, where the app does own the key and a real
+  registration conflict exists to report. That is a separate backend and a separate ticket.
+- Failure reporting reuses the `Availability` + `reason` shape established by `ai_health.rs`,
+  so an unregistered hotkey reports a specific cause rather than silence.
+- The `.desktop` file and app id become a shipping requirement of the feature, not
+  packaging polish that can follow later.
+- "The hotkey is registered" and "there is somewhere to file into" are checked separately,
+  at different times, because they can change independently: the first is decided once at
+  startup, the second on every press.
+- The settings UI's "Change shortcut…" button re-runs the registration handshake rather than
+  holding a long-lived session open for it; this is safe only because `BindShortcuts` is
+  already skipped for an already-bound shortcut, which is the same guarantee the rest of this
+  ADR depends on.
+
+## Rejected
+
+| Option | Why rejected |
+| --- | --- |
+| `tauri-plugin-global-shortcut` on Linux | X11 only; the primary Linux machine is Wayland |
+| X11 grab under XWayland as a fallback | Fires only when an X11 window has focus, silently otherwise — the exact failure #4 forbids |
+| Portal on Wayland, X11 grab on X11 sessions | Two Linux paths to maintain for a session type this project does not use |
+| Uniform in-app key capture on both platforms | On Linux the field would report a binding the compositor never made |
+| Keeping `com.helixnotes.app` as the app id | Not a domain this project controls; shares a permission store with upstream |
+
+## References
+
+- `global-hotkey` platform support: https://docs.rs/global-hotkey/latest/global_hotkey/
+- Upstream Wayland issue: https://github.com/tauri-apps/global-hotkey/issues/28
+- GlobalShortcuts portal: https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html
+- `ashpd`: https://docs.rs/ashpd/latest/ashpd/desktop/global_shortcuts/index.html
+- XWayland grab limitation: https://wayland.freedesktop.org/docs/book/Xwayland.html
+- Portal Registry handshake in practice: https://github.com/electron/electron/issues/51875
+- App id naming rules: https://docs.flatpak.org/en/latest/conventions.html

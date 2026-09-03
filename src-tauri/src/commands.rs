@@ -1,4 +1,5 @@
 use crate::asset_scope;
+use crate::hotkey;
 use crate::search::SearchIndex;
 use crate::state::AppState;
 use crate::types::*;
@@ -987,6 +988,47 @@ pub fn create_note(
     Ok(entry)
 }
 
+/// File a quick capture as a note under the chosen PARA category.
+///
+/// Deliberately built on `create_note` and `save_note` rather than writing a file directly:
+/// those already refuse an uncategorised note, snapshot history, and index synchronously, so
+/// a captured note is findable the moment the overlay closes. A private path here would be a
+/// second way to create a note, and the two would drift.
+#[tauri::command]
+pub fn quick_capture_note(
+    state: State<'_, AppState>,
+    category: String,
+    text: String,
+) -> Result<NoteEntry, String> {
+    let capture = hotkey::capture::split(&text).map_err(|error| error.message().to_string())?;
+    let category = crate::vault::para::ParaCategory::from_name(&category)
+        .ok_or("Choose a category: Projects, Areas, Resources, or Archives")?;
+
+    let entry = create_note(
+        state.clone(),
+        Some(category.folder_name().to_string()),
+        capture.title,
+    )?;
+
+    // A title-only capture is already complete; writing an empty body would take a second
+    // lock and a second index pass to change nothing.
+    if capture.body.is_empty() {
+        return Ok(entry);
+    }
+
+    save_note(
+        state,
+        entry.path.clone(),
+        entry.meta.clone(),
+        capture.body.clone(),
+    )?;
+
+    Ok(NoteEntry {
+        preview: capture.body,
+        ..entry
+    })
+}
+
 /// The AI backend's last known reachability.
 ///
 /// Read from stored state rather than probing, so asking is instant and the UI can call
@@ -1007,6 +1049,58 @@ pub fn get_ai_status(state: State<'_, AppState>) -> Result<crate::ai_health::AiS
 #[tauri::command]
 pub async fn refresh_ai_status(app: AppHandle) -> Result<crate::ai_health::AiStatus, String> {
     Ok(crate::ai_health::check_now(&app).await.0)
+}
+
+/// Whether the global capture hotkey is registered right now, and why not when it is not.
+///
+/// Read from stored state rather than re-run: the answer was decided once at startup by a
+/// portal handshake that can prompt, so this can be polled freely without spending that again.
+#[tauri::command]
+pub fn get_hotkey_status(state: State<'_, AppState>) -> Result<hotkey::HotkeyStatus, String> {
+    state
+        .hotkey_status
+        .lock()
+        .map(|status| status.clone())
+        .map_err(|error| error.to_string())
+}
+
+/// Open the desktop's own shortcut-configuration UI for the quick-capture hotkey.
+///
+/// The app cannot change the binding itself (ADR-0001), so this is the entirety of "change
+/// the hotkey": hand the user to the compositor. A fresh, short-lived handshake gets the
+/// session `ConfigureShortcuts` needs — the shortcut is already bound, so this only reaches
+/// `ListShortcuts` and skips `BindShortcuts`, the call that would otherwise prompt.
+#[tauri::command]
+pub async fn open_hotkey_settings() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let app_id = hotkey::configured_application_id()?;
+        let registration = hotkey::portal::register(&app_id)
+            .await
+            .map_err(|cause| cause.reason())?;
+        let result = registration.configure().await.map_err(|error| match error {
+            // Below GlobalShortcuts version 2 there is no ConfigureShortcuts at all. The UI
+            // hides the button in that case, so reaching here means something offered it
+            // anyway — say what to do rather than surfacing "requires version 2".
+            ashpd::Error::RequiresVersion(_, _) => {
+                "Your desktop's shortcuts portal cannot open its editor from an app. Change the \
+                 shortcut in your desktop's own Keyboard settings instead."
+                    .to_string()
+            }
+            other => other.to_string(),
+        });
+        // Tidy the temporary session rather than leaving it for the process lifetime; the
+        // portal only cleans these up on bus disconnect otherwise. Best-effort: a failure to
+        // close costs nothing the user can act on, so it is logged, not surfaced.
+        if let Err(error) = registration.close().await {
+            log::warn!("Could not close the temporary configuration session: {error}");
+        }
+        result
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err("Hotkey settings are only available on Linux right now.".to_string())
+    }
 }
 
 /// Notes that carry no category and so cannot be filed.
@@ -2072,6 +2166,20 @@ pub fn set_general_settings(
     config.close_to_tray = close_to_tray;
     config.enable_wiki_links = enable_wiki_links;
     save_app_config(&config)?;
+
+    // The stored preference is the source of truth; the OS-level entry is a projection of
+    // it, kept in sync every time it could have changed rather than left to drift.
+    #[cfg(target_os = "linux")]
+    if let (Some(config_home), Some(exec), Ok(app_id)) = (
+        dirs::config_dir(),
+        hotkey::desktop_entry::current_executable(),
+        hotkey::configured_application_id(),
+    ) {
+        if let Err(error) = crate::autostart::sync(config.autostart, &config_home, &app_id, &exec) {
+            log::warn!("Could not update the autostart entry: {error}");
+        }
+    }
+
     Ok(())
 }
 
