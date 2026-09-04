@@ -4,9 +4,11 @@ use std::sync::mpsc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::search::{external, SearchIndex};
 use crate::state::AppState;
 use crate::types::FileEvent;
 use crate::vault::operations::helixnotes_dir;
+use std::sync::Arc;
 
 const IOS_POLL_INTERVAL: Duration = Duration::from_secs(10);
 const NATIVE_POLL_INTERVAL: Duration = Duration::from_secs(1);
@@ -46,7 +48,11 @@ impl VaultWatcher {
     }
 }
 
-pub fn start_watcher(app: AppHandle, vault_path: String) -> Result<VaultWatcher, String> {
+pub fn start_watcher(
+    app: AppHandle,
+    vault_path: String,
+    search: Arc<SearchIndex>,
+) -> Result<VaultWatcher, String> {
     let (tx, rx) = mpsc::channel();
 
     let backend = watcher_backend_for_target(cfg!(target_os = "ios"));
@@ -65,16 +71,12 @@ pub fn start_watcher(app: AppHandle, vault_path: String) -> Result<VaultWatcher,
         .map_err(|e| e.to_string())?;
 
     let hn_dir = helixnotes_dir(&vault_path);
+    let changes = external::start(app.clone(), vault_path.clone(), search);
 
     std::thread::spawn(move || {
         while let Ok(result) = rx.recv() {
             match result {
                 Ok(event) => {
-                    // Skip all file events while importing
-                    let state = app.state::<AppState>();
-                    if state.importing.load(std::sync::atomic::Ordering::Relaxed) {
-                        continue;
-                    }
                     // Skip .helixnotes directory events
                     let dominated_by_hn = event.paths.iter().all(|p| p.starts_with(&hn_dir));
                     if dominated_by_hn {
@@ -96,6 +98,20 @@ pub fn start_watcher(app: AppHandle, vault_path: String) -> Result<VaultWatcher,
                         EventKind::Remove(_) => "remove",
                         _ => continue,
                     };
+
+                    // Always tell the indexer, even mid-import. It defers the work
+                    // rather than doing it now; dropping the path here instead would
+                    // leave search silently missing whatever the import wrote.
+                    for path in &event.paths {
+                        changes.touch(path.clone());
+                    }
+
+                    // The UI event is what floods the IPC channel during a bulk write, so
+                    // that is what the importing flag suppresses.
+                    let state = app.state::<AppState>();
+                    if state.importing.load(std::sync::atomic::Ordering::Relaxed) {
+                        continue;
+                    }
 
                     for path in &event.paths {
                         let fe = FileEvent {

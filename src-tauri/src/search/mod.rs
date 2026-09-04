@@ -1,3 +1,5 @@
+pub mod external;
+
 use crate::types::SearchResult;
 use crate::vault::frontmatter;
 use crate::vault::operations::helixnotes_dir;
@@ -415,6 +417,40 @@ impl SearchIndex {
         }
         writer.commit().map_err(|error| error.to_string())?;
         Ok(())
+    }
+
+    /// Every indexed path that sits inside `directory`.
+    ///
+    /// Deleting a folder outside the app reports only the folder itself, so the notes
+    /// underneath it would otherwise stay in the index forever, findable but gone from
+    /// disk. `path` is a `STRING` field, so there is no prefix term to delete by; the
+    /// stored values are scanned instead. This runs only when a directory disappears.
+    pub fn indexed_paths_under(&self, directory: &str) -> Result<Vec<String>, String> {
+        let mut prefix = directory.to_string();
+        if !prefix.ends_with(std::path::MAIN_SEPARATOR) {
+            prefix.push(std::path::MAIN_SEPARATOR);
+        }
+        let reader = self.index.reader().map_err(|error| error.to_string())?;
+        let searcher = reader.searcher();
+        let mut paths = Vec::new();
+        for segment in searcher.segment_readers() {
+            let store = segment
+                .get_store_reader(1)
+                .map_err(|error| error.to_string())?;
+            for doc_id in segment.doc_ids_alive() {
+                let document: TantivyDocument =
+                    store.get(doc_id).map_err(|error| error.to_string())?;
+                if let Some(value) = document
+                    .get_first(self.path_field)
+                    .and_then(|value| value.as_str())
+                {
+                    if value.starts_with(&prefix) {
+                        paths.push(value.to_string());
+                    }
+                }
+            }
+        }
+        Ok(paths)
     }
 
     pub fn search(&self, query_str: &str, limit: usize) -> Result<Vec<SearchResult>, String> {

@@ -84,6 +84,26 @@ fn record_transaction_repair_if_needed(
     );
 }
 
+/// Record a search-stage repair issue. Shared with the external-change indexer, which
+/// runs on its own thread and so cannot reach the private helpers above.
+pub(crate) fn record_search_repair_issue(
+    state: &State<'_, AppState>,
+    vault_path: &str,
+    message: String,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    record_repair_issue(
+        state,
+        vault_path,
+        repair::RepairIssue {
+            key: "search:index".to_string(),
+            stage: repair::RepairStage::Search,
+            message,
+            paths,
+        },
+    )
+}
+
 fn index_note_now(state: &State<'_, AppState>, vault_path: &str, path: &str) -> Result<(), String> {
     let search = state.search_index.lock().ok().and_then(|g| g.clone());
     if let Some(search) = search {
@@ -390,7 +410,7 @@ fn open_vault_path(
     repair::save(&path, &repair_status)?;
     publish_repair_status(state, repair_status)?;
 
-    let new_watcher = watcher::start_watcher(app.clone(), path.clone())?;
+    let new_watcher = watcher::start_watcher(app.clone(), path.clone(), search.clone())?;
     asset_scope::allow_vault_assets(&app, Path::new(&path))?;
 
     // Update config. External vaults use the bookmark as their stable identity;
