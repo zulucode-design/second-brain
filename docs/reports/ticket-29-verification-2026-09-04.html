@@ -202,7 +202,7 @@
       <div class="meta">
         <span>Branch <code>feat/29-index-external-changes</code></span>
         <span>Linux / Wayland</span>
-        <span><code>pnpm verify</code> green &mdash; 252 Rust tests</span>
+        <span><code>pnpm verify</code> green &mdash; 254 Rust tests</span>
       </div>
     </header>
 
@@ -243,7 +243,7 @@
               <td>Met by the pre-existing full rebuild on vault open. Its cost is filed as
                   <a href="https://github.com/zulucode-design/second-brain/issues/33">#33</a>.</td></tr>
           <tr><td><code>pnpm verify</code> green</td><td><span class="pill good">Pass</span></td>
-              <td>252 Rust tests, svelte-check and clippy clean.</td></tr>
+              <td>254 Rust tests, svelte-check and clippy clean.</td></tr>
         </tbody>
       </table></div>
     </section>
@@ -288,6 +288,49 @@ if !has_md { continue; }</code></pre>
         The lesson is the one #27 already recorded twice: a test that exercises the unit but skips the
         seam it depends on will pass while the feature is broken. <code>should_index</code> was
         extracted out of the watcher closure specifically so this filter is now testable on its own.
+      </p>
+    </section>
+
+    <section id="rereview">
+      <h2>Second spec review &mdash; two more findings</h2>
+      <p>
+        The first spec-axis review died on a rate limit and was done by hand instead. It was
+        re-run properly against the fixed commit, and found two things the manual pass missed.
+        Both are recorded here because both were real.
+      </p>
+      <h3>The watcher and the rebuild disagreed about what a note is</h3>
+      <p class="quote">
+        &ldquo;Index updates survive an app restart &mdash; no stale entries left behind by
+        changes made while the app was closed.&rdquo;
+      </p>
+      <p>
+        <code>rebuild()</code> prunes every dot-prefixed entry; the watcher's filter excluded only
+        <code>.helixnotes</code>. So a hidden note such as <code>Projects/.draft.md</code> created
+        outside the app became searchable immediately and then <em>silently disappeared</em> at the
+        next open &mdash; the index depending on which route last touched it. Not a stale entry, so
+        it read as a partial rather than a failure, which is precisely why it was easy to miss.
+      </p>
+      <p>
+        Fixed at the root rather than by patching one side: both now consult one
+        <code>is_ignored_by_index</code>, so they cannot drift again. Measured against the running
+        app with a hidden note and an ordinary one created together: <strong>1 indexed before
+        restart, 1 after</strong> &mdash; nothing appearing or vanishing.
+      </p>
+      <h3>Removals scanned the index once per path</h3>
+      <p class="quote">
+        &ldquo;A burst of many external changes coalesces rather than reindexing per event&rdquo;
+      </p>
+      <p>
+        Resolving a vanished path meant a full scan of the stored index values, and that ran once
+        <em>per removed path</em>. A sync burst deleting a thousand files would have done a thousand
+        full scans inside a single flush. The batch was still one commit and the work sat on the
+        indexer thread, so the UI stayed responsive &mdash; but the scan was per path, not per batch.
+        Now one pass matches every removed directory in the batch. Verified with three notebooks
+        deleted at once: 5 notes left on disk, 5 in the index.
+      </p>
+      <p class="note">
+        Worth stating plainly: the manual spec pass found the folder bug but missed both of these.
+        Re-running the agent was the user's call, and it was the right one.
       </p>
     </section>
 

@@ -187,6 +187,24 @@ struct SearchSchema {
     tags_field: Field,
 }
 
+/// Whether `path` sits in a part of the vault the index ignores.
+///
+/// Hidden entries are not notes: `.helixnotes` is machine-local state, and a dot-prefixed
+/// name is a scratch file, an editor lock, or a folder the user hid on purpose. Both the
+/// full rebuild and the watcher consult this, because if they disagreed a note indexed
+/// live would silently vanish at the next open — the index would depend on which route
+/// last touched it.
+pub(crate) fn is_ignored_by_index(path: &Path, vault_path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(vault_path) else {
+        // Outside the vault entirely; nothing in the index can describe it.
+        return true;
+    };
+    relative.components().any(|component| {
+        matches!(component, std::path::Component::Normal(name)
+            if name.to_string_lossy().starts_with('.'))
+    })
+}
+
 fn build_search_schema() -> SearchSchema {
     let mut schema_builder = Schema::builder();
     let path_field = schema_builder.add_text_field("path", STRING | STORED);
@@ -304,19 +322,11 @@ impl SearchIndex {
 
         writer.delete_all_documents().map_err(|e| e.to_string())?;
 
-        let hn_dir = helixnotes_dir(vault_path);
+        let vault_root = Path::new(vault_path);
 
         for entry in WalkDir::new(vault_path)
             .into_iter()
-            .filter_entry(|e| {
-                let p = e.path();
-                !p.starts_with(&hn_dir)
-                    && !p
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .map(|n| n.starts_with('.'))
-                        .unwrap_or(false)
-            })
+            .filter_entry(|e| !is_ignored_by_index(e.path(), vault_root))
             .filter_map(|e| e.ok())
             .filter(|e| {
                 e.file_type().is_file()
@@ -419,18 +429,26 @@ impl SearchIndex {
         Ok(())
     }
 
-    /// Every indexed path that sits inside `directory`.
+    /// Every indexed path that sits inside any of `directories`.
     ///
     /// `path` is a `STRING` field, so there is no prefix term to delete by and the stored
-    /// values are scanned instead. That makes this O(index), suitable for the rare event
-    /// it exists for — a directory vanishing, which the filesystem reports as one path
-    /// while leaving every note beneath it indexed, findable but gone from disk — and
-    /// unsuitable for anything on a hot path.
-    pub fn indexed_paths_under(&self, directory: &str) -> Result<Vec<String>, String> {
-        let mut prefix = directory.to_string();
-        if !prefix.ends_with(std::path::MAIN_SEPARATOR) {
-            prefix.push(std::path::MAIN_SEPARATOR);
+    /// values are scanned instead. Every directory in a batch is matched in that single
+    /// pass: a sync burst can delete thousands of paths at once, and scanning the index
+    /// once per path would turn one flush into thousands of full scans.
+    pub fn indexed_paths_under_any(&self, directories: &[String]) -> Result<Vec<String>, String> {
+        if directories.is_empty() {
+            return Ok(Vec::new());
         }
+        let prefixes: Vec<String> = directories
+            .iter()
+            .map(|directory| {
+                let mut prefix = directory.clone();
+                if !prefix.ends_with(std::path::MAIN_SEPARATOR) {
+                    prefix.push(std::path::MAIN_SEPARATOR);
+                }
+                prefix
+            })
+            .collect();
         let reader = self.index.reader().map_err(|error| error.to_string())?;
         let searcher = reader.searcher();
         let mut paths = Vec::new();
@@ -447,7 +465,7 @@ impl SearchIndex {
                     .get_first(self.path_field)
                     .and_then(|value| value.as_str())
                 {
-                    if value.starts_with(&prefix) {
+                    if prefixes.iter().any(|prefix| value.starts_with(prefix)) {
                         paths.push(value.to_string());
                     }
                 }

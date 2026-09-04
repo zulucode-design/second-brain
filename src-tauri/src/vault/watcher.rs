@@ -50,6 +50,9 @@ impl VaultWatcher {
 
 /// Whether the indexer should be told about `path`.
 ///
+/// Hidden paths and `.helixnotes` are excluded through the same predicate the full rebuild
+/// uses, so a note indexed live can never be one a rebuild would drop.
+///
 /// Notes are forwarded so they can be read; anything that no longer exists is forwarded so
 /// it can be removed, because a vanished path may be a note *or* a folder full of them and
 /// the event cannot tell us which. An existing non-note is deliberately not forwarded:
@@ -58,8 +61,8 @@ impl VaultWatcher {
 /// The indexer is told about paths even mid-import. It defers the work rather than doing it
 /// then; dropping the path here instead would leave search silently missing whatever the
 /// import wrote.
-fn should_index(path: &Path, helixnotes_dir: &Path) -> bool {
-    if path.starts_with(helixnotes_dir) {
+fn should_index(path: &Path, vault_root: &Path) -> bool {
+    if crate::search::is_ignored_by_index(path, vault_root) {
         return false;
     }
     path.extension().and_then(|value| value.to_str()) == Some("md") || !path.exists()
@@ -88,6 +91,7 @@ pub fn start_watcher(
         .map_err(|e| e.to_string())?;
 
     let hn_dir = helixnotes_dir(&vault_path);
+    let vault_root = std::path::PathBuf::from(&vault_path);
     let changes = external::start(app.clone(), vault_path.clone(), search);
 
     std::thread::spawn(move || {
@@ -106,7 +110,7 @@ pub fn start_watcher(
                     // extension, so the UI gate discards it — leaving every note that was
                     // inside it in the index, findable but gone from disk.
                     for path in &event.paths {
-                        if should_index(path, &hn_dir) {
+                        if should_index(path, &vault_root) {
                             changes.touch(path.clone());
                         }
                     }
@@ -177,11 +181,10 @@ mod tests {
     #[test]
     fn a_vanished_folder_reaches_the_indexer() {
         let vault = scratch("vanished-folder");
-        let hn = vault.join(".helixnotes");
         let notebook = vault.join("Projects").join("Launch");
 
         assert!(
-            should_index(&notebook, &hn),
+            should_index(&notebook, &vault),
             "a folder that no longer exists must reach the indexer"
         );
         std::fs::remove_dir_all(vault).unwrap();
@@ -197,15 +200,40 @@ mod tests {
         std::fs::write(&note, "body").unwrap();
         std::fs::write(&image, [0x89, 0x50, 0x4e, 0x47]).unwrap();
 
-        assert!(should_index(&note, &hn));
+        assert!(should_index(&note, &vault));
         assert!(
-            !should_index(&image, &hn),
+            !should_index(&image, &vault),
             "indexing reads files as text, so an existing binary must not be forwarded"
         );
         assert!(
-            !should_index(&hn.join("state.json"), &hn),
+            !should_index(&hn.join("state.json"), &vault),
             "machine-local state is never indexed"
         );
+        std::fs::remove_dir_all(vault).unwrap();
+    }
+
+    /// The watcher and a full rebuild must agree on what counts as a note. If the watcher
+    /// were laxer, a hidden file would be searchable until the next open and then vanish.
+    #[test]
+    fn hidden_paths_are_withheld_because_a_rebuild_would_drop_them() {
+        let vault = scratch("hidden");
+        std::fs::create_dir_all(vault.join("Projects")).unwrap();
+        let hidden_note = vault.join("Projects").join(".draft.md");
+        std::fs::write(&hidden_note, "scratch").unwrap();
+        let in_hidden_folder = vault.join(".backup").join("Note.md");
+
+        assert!(
+            !should_index(&hidden_note, &vault),
+            "a dot-prefixed note is not something a rebuild would index"
+        );
+        assert!(
+            !should_index(&in_hidden_folder, &vault),
+            "nor is a note inside a hidden folder"
+        );
+        // The ordinary note beside it still is.
+        let real = vault.join("Projects").join("Real.md");
+        std::fs::write(&real, "body").unwrap();
+        assert!(should_index(&real, &vault));
         std::fs::remove_dir_all(vault).unwrap();
     }
 

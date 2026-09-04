@@ -165,22 +165,29 @@ fn take_settled(pending: &mut HashMap<PathBuf, Seen>, now: Instant) -> Vec<PathB
 /// never consulted, only whether the path is a file right now.
 fn apply(search: &SearchIndex, settled: Vec<PathBuf>) -> Result<(), ApplyFailure> {
     let mut upserts = Vec::new();
-    let mut removals = HashSet::new();
+    let mut gone = Vec::new();
 
     for path in settled {
         let text = path.to_string_lossy().to_string();
         if path.is_file() {
             upserts.push(text);
         } else {
-            // Gone, or turned into something that is not a note. A directory reports only
-            // itself, so take everything indexed beneath it too.
-            match search.indexed_paths_under(&text) {
-                Ok(descendants) => removals.extend(descendants),
-                Err(error) => log::warn!("Could not list indexed notes under {text}: {error}"),
-            }
-            removals.insert(text);
+            gone.push(text);
         }
     }
+
+    // A vanished path may be a folder, which the filesystem reports as one event while
+    // leaving every note beneath it indexed. Resolve the whole batch in a single pass:
+    // a sync burst can remove thousands of paths, and scanning per path would make one
+    // flush thousands of full index scans.
+    let mut removals: HashSet<String> = match search.indexed_paths_under_any(&gone) {
+        Ok(descendants) => descendants.into_iter().collect(),
+        Err(error) => {
+            log::warn!("Could not list indexed notes under removed paths: {error}");
+            HashSet::new()
+        }
+    };
+    removals.extend(gone);
 
     if upserts.is_empty() && removals.is_empty() {
         return Ok(());
@@ -380,6 +387,36 @@ mod tests {
 
     /// The coalescing claim: many events for one note become one indexed document, and a
     /// whole burst is a single commit rather than one per event.
+    /// Several folders removed in one burst are resolved together, not one scan each.
+    #[test]
+    fn several_folders_removed_at_once_are_all_swept() {
+        let (vault, index) = indexed_vault("many-folders");
+        let mut removed = Vec::new();
+        for name in ["Alpha", "Beta", "Gamma"] {
+            let notebook = vault.join("Projects").join(name);
+            std::fs::create_dir_all(&notebook).unwrap();
+            note(&notebook, "Note.md", "zylophonic inside");
+            removed.push(notebook);
+        }
+        let keeper = note(&vault.join("Projects"), "Keep.md", "zylophonic keeper");
+        let mut everything: Vec<PathBuf> = removed.iter().map(|dir| dir.join("Note.md")).collect();
+        everything.push(keeper.clone());
+        apply(&index, everything).unwrap();
+        assert_eq!(hits(&index, "zylophonic").len(), 4);
+
+        for notebook in &removed {
+            std::fs::remove_dir_all(notebook).unwrap();
+        }
+        apply(&index, removed).unwrap();
+
+        assert_eq!(
+            hits(&index, "zylophonic"),
+            vec![keeper.to_string_lossy()],
+            "every removed folder should be swept in the one pass"
+        );
+        std::fs::remove_dir_all(vault).unwrap();
+    }
+
     #[test]
     fn a_burst_of_changes_collapses_into_one_batch() {
         let (vault, index) = indexed_vault("burst");
