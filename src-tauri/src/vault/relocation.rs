@@ -1606,8 +1606,11 @@ mod tests {
     #[test]
     fn failed_startup_recovery_reports_every_path_and_preserves_the_notebook_tree() {
         let root = vault("directory-recovery-report");
-        let source = root.join("Projects/Launch");
-        let destination = root.join("Archives/Launch");
+        // Built component by component rather than from a "Projects/Launch" literal: the
+        // reported paths are compared as strings, and `join` keeps a forward slash
+        // verbatim on Windows while the recovery code produces backslashes.
+        let source = root.join("Projects").join("Launch");
+        let destination = root.join("Archives").join("Launch");
         fs::create_dir(&source).unwrap();
         fs::write(source.join("Plan.md"), "project").unwrap();
         let transaction = relocate_directory(
