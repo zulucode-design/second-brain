@@ -31,8 +31,14 @@ the stronger one over a private Tailscale network. Ollama has no authentication 
 so the endpoint must never be bound to a public interface or forwarded on a router —
 Tailscale is the security boundary. When AI is unreachable, everything else keeps working.
 
-**Notion sync** — optional two-way sync so notes are reachable from anywhere, with
-conflicts surfaced for you to resolve rather than silently overwritten.
+**Sync between your machines** — your devices sync directly to each other over the same
+private Tailscale network, carrying notes and attachments both ways. No account, no cloud
+service, and no internet required. When the same note changes in two places, both versions
+are surfaced for you to choose rather than silently overwritten.
+
+**Notion for reading anywhere** — optionally publish your notes to Notion so they are
+readable from a phone or browser when neither machine is to hand. This is a read-only view:
+notes flow out, nothing flows back.
 
 ## Development
 

@@ -1,7 +1,7 @@
 # Second Brain — Specification
 
 Status: **v1 implementation in progress**
-Last updated: 2026-08-30
+Last updated: 2026-09-03
 
 A personal knowledge management desktop app implementing Tiago Forte's *Building a Second
 Brain* (BASB) methodology. Forked from [HelixNotes](https://gitlab.com/ArkHost/HelixNotes)
@@ -105,11 +105,18 @@ protections:
 
 **Remaining gap to handle.** All three are bounded/pruned, and backup restore is
 all-or-nothing — it rolls back good changes along with bad. Vanilla HelixNotes never writes
-to many notes at once, but this app adds Notion sync and AI operations that can modify
-dozens of notes in a single run.
+to many notes at once, but this app adds sync and AI operations that can modify dozens of
+notes in a single run.
 
-Mitigation (no new dependencies): **force a vault backup immediately before each Notion
-sync run and before any bulk AI operation**, reusing the existing `create_backup` path.
+Mitigation (no new dependencies): **force a vault backup immediately before any bulk AI
+operation, and before a machine-to-machine sync applies a batch of incoming changes**,
+reusing the existing `create_backup` path.
+
+> Revised by [ADR-0002](adr/0002-machine-to-machine-sync-notion-becomes-read-only.md): this
+> previously named the Notion sync run. Notion is now a read-only push and cannot modify
+> local notes — the incoming writes come from the other machine instead. Note that
+> `history/` is itself synced (§8), so it is no longer an independent local record of what a
+> note used to say; the pre-batch backup carries more weight than it did.
 
 ---
 
@@ -228,7 +235,7 @@ usable:
 | Capture, organize, browse | Semantic search |
 | Keyword/full-text search | AI prompt window / Q&A |
 | Editing, linking, graph view (explicit edges) | Related-note suggestions |
-| Notion sync | AI-similarity edges |
+| Sync (between machines, and the Notion push) | AI-similarity edges |
 | Recording voice memos (queued for later transcription) | Transcribing them |
 
 Failures must degrade quietly, never block the core loop.
@@ -269,50 +276,126 @@ related notes.
 
 ## 8. Sync
 
+> **Revised 2026-09-03 by [ADR-0002](adr/0002-machine-to-machine-sync-notion-becomes-read-only.md).**
+> Notion was previously the sync hub (**Desktop ⟷ Notion ⟷ Laptop**). It no longer is.
+> That topology made attachments single-machine — Notion is text-only and free-tier caps
+> uploads at 5MB — which is the limitation ticket #6 existed to explain to the user.
+> Removing the limitation was cheaper than explaining it.
+
 ### Topology
 
-Notion is the sync hub: **Desktop ⟷ Notion ⟷ Laptop**. Not peer-to-peer. This deliberately
-offloads most of the distributed-sync problem onto Notion rather than building CRDT-based
-multi-writer merging.
+**The two machines sync directly to each other: Desktop ⟷ Laptop.** This is the real sync —
+full fidelity, including attachments — and it runs over the private Tailscale network the
+machines already share. It needs no Notion account, no API token, and no internet.
+
+**Notion is a read-only published view**, kept for the one thing it was actually chosen for:
+notes reachable from anywhere, on a phone or in a browser, when neither machine is awake or
+to hand.
+
+### The sync engine is bundled, not written here
+
+Sync is provided by a **bundled engine run as an app-managed sidecar** (Tauri `externalBin`).
+The app owns its lifecycle, configuration, and folder scoping. To the user, sync is a toggle
+in Settings: nothing to install, no second application.
+
+This project does not author the sync engine. Deletion-versus-absence and move detection are
+where file syncers go wrong, and this vault relocates notes between category folders as an
+ordinary operation (§4 reconciliation) — the case a naive syncer handles worst is the one
+this app performs most.
+
+The accepted trade is **conflict semantics inherited rather than chosen**: a conflicting edit
+produces a conflict copy on disk. See Conflicts below.
+
+### Pairing
+
+Two devices exchange identities **once, explicitly** — one machine shows an identifier, the
+other accepts it. Auto-pairing every device on the Tailnet is rejected: it would make network
+membership the only protection on the vault.
+
+### What syncs, and what must not
+
+The boundary is **physical, not a configured ignore list**. Machine-local state lives outside
+the vault entirely, so "sync the vault folder" is correct by construction.
+
+| Path | Synced |
+| --- | --- |
+| Notes tree | yes |
+| `.helixnotes/attachments/` | yes — the reason for this revision |
+| `.helixnotes/trash/` | yes — a deletion that does not propagate is a resurrected note |
+| `.helixnotes/history/` | yes |
+| Search index (Tantivy) | **no** — machine-local, each machine builds its own |
+| Relocation/recovery manifests | **no** — sharing in-flight transaction state is a data-loss bug |
+| Per-machine bookkeeping (sync state, repair issues) | **no** |
+
+### Settings: machine-local by default
+
+Settings are **machine-local unless both machines must agree for correctness.** The decisive
+case: the AI endpoint differs per machine — the Desktop reaches Ollama at `localhost`, the
+Laptop at the Desktop's Tailscale address (§6). Syncing that value would silently cost the
+Laptop its AI. Backup paths differ per OS for the same reason.
+
+Shared settings live in an in-vault settings file. The first is snapshot retention, which
+must be shared or two machines pruning `history/` to different limits delete each other's
+snapshots.
 
 ### Notion mapping
 
 **Four separate Notion databases**, one per PARA category. A note moving between categories
-means moving between databases — the sync layer must handle this.
+means moving between databases — the push layer must handle this.
 
-### Transport
+- **Read-only.** Notes are pushed for reading. Nothing flows back: not edits, not new pages.
+- **Polling** for push; Notion's API rate limit is ~3 requests/second, so pushes are queued
+  and metered.
 
-- **Polling every ~10 minutes** for v1. Notion webhooks require a public HTTPS endpoint,
-  which is unavailable (no hosting).
-- Notion API rate limit is ~3 requests/second — sync must be queued and metered.
-- Two-way: a note started locally can be continued in Notion and vice versa.
+**Notion write-back is deferred, not rejected.** A note created in Notion has no PARA
+category, and this vault refuses uncategorised notes by construction (§4). Importing one
+would mean guessing a category — which §4 forbids — or prompting for content that arrived
+while the user was elsewhere. The holding area (§4) is the likely home when this is
+revisited.
 
-> **Required future milestone (not optional polish)**: real-time sync via Notion webhooks
-> plus a tunnel/relay (e.g. Cloudflare Tunnel). Explicitly logged as a must-have for a
-> later version.
+> **Future milestone**: Notion write-back, and real-time push via webhooks plus a
+> tunnel/relay. Neither is v1.
 
 ### Offline-first
 
-The app is fully usable with zero internet. Local storage is the working copy; sync is
-opportunistic background reconciliation when connectivity returns.
+The app is fully usable with zero internet. Local storage is the working copy; sync between
+machines is opportunistic reconciliation when both are reachable, and the Notion push is
+opportunistic when online.
 
 ### Conflicts
 
-When a note is edited both locally and in Notion before either side observed the other's
-change, the app **surfaces both versions and lets the user choose**. No silent
-last-write-wins overwrite.
+When a note is edited on both machines before either observed the other's change, the app
+**surfaces both versions and lets the user choose**. No silent last-write-wins overwrite.
+
+Concretely, the bundled engine writes a conflict copy beside the original
+(`note.sync-conflict-<timestamp>-<device>.md`). The app **detects that pattern and pairs the
+copy with its original**, presenting the choice above. A conflict copy is never surfaced as
+an ordinary note — left alone it would be indexed under a machine-generated title and pollute
+search, the graph, and PARA counts.
+
+### Externally-arrived notes
+
+A note arriving from the other machine is, to this app, an external filesystem change. The
+vault watcher drives search-index updates for such changes, through the same path the app's
+own writes use — otherwise a synced-in note would appear in the tree but be invisible to
+search. This also covers editing a note in another editor or restoring one by hand.
+
+Sync introduces a state the app has not had before: a file that is **correctly absent and
+will arrive later**. This is never presented as broken or missing.
 
 ### Attachments
 
-Binary attachments (PDFs, images, audio) are **local-only** and never uploaded to Notion.
-Notion receives text content, metadata, and transcripts only.
+Binary attachments (PDFs, images, audio) sync between the machines like any other file. They
+are still **never uploaded to Notion** — Notion receives text content, metadata, and
+transcripts only, so a note read in Notion references attachments it cannot display.
 
-Each attachment carries a **device tag** indicating which machine physically holds the file
-("stored on: Desktop" / "stored on: Laptop"), so a reference viewed from the other machine
-or from Notion is unambiguous.
+> Current Notion plan is **free tier** (5MB/file upload cap). The local-only rule for Notion
+> holds regardless of plan.
 
-> Current Notion plan is **free tier** (5MB/file upload cap). The local-only attachment rule
-> holds regardless of plan. Revisit if upgrading to Notion Plus.
+**Superseded:** attachments previously carried a **device tag** ("stored on: Desktop") because
+they could only ever exist on one machine. With direct sync they exist on both, and the tag
+answers a question that no longer arises. Ticket #6 is closed as superseded; what survives is
+that an attachment which has not yet arrived reads as *not synced yet*, never as broken.
 
 ---
 
@@ -339,8 +422,10 @@ or from Notion is unambiguous.
 | Logseq / Joplin / AFFiNE | Electron-based, undermining the Tauri rationale |
 | SiYuan | Block-database model, not plain-markdown-per-note |
 | Foam | VS Code extension, not a standalone app |
-| Peer-to-peer CRDT sync | Far larger than the rest of v1 combined |
-| External sync tool (Syncthing) | Superseded by the Notion-hub decision |
+| Peer-to-peer CRDT sync | Far larger than the rest of v1 combined. **Still rejected** — file-level sync is not CRDT sync (ADR-0002) |
+| ~~External sync tool (Syncthing)~~ | ~~Superseded by the Notion-hub decision~~ — **reversed by ADR-0002.** The rejection was downstream of the Notion-hub choice, not independent of it. A sync engine is now bundled as an app-managed sidecar; the user still installs nothing |
+| Writing the sync engine in this project | Tombstones, version vectors, and move detection, against a vault that relocates notes as routine — the reasoning that killed CRDTs (ADR-0002) |
+| Notion as a third writer | Reintroduces three-way conflicts; Notion-created notes have no PARA category (ADR-0002) |
 | AI auto-filing / auto-tagging | User wants manual control of organization |
 | Passive related-notes sidebar | Superseded by prompt window + capture-time check |
 | Browser extension for clipping | Doubles packaging/maintenance surface |
@@ -353,21 +438,36 @@ or from Notion is unambiguous.
 Carried forward into ticket breakdown — these are unresolved, not settled:
 
 1. **Embedding model**: which model, and how are embeddings invalidated on note edit?
-2. **Global hotkey**: Linux support varies across X11/Wayland — needs verification.
+2. ~~**Global hotkey**: Linux support varies across X11/Wayland~~ — **resolved** by
+   [ADR-0001](adr/0001-linux-global-shortcuts-via-xdg-portal.md) and ticket #4: Linux
+   registers through the XDG GlobalShortcuts portal only, never an X11 grab. X11 is
+   untested, not promised.
 3. **Notion schema**: exact property mapping between frontmatter and Notion database
    properties, including the identity/mapping table that links a local file to a Notion
-   page ID.
-4. **Tailscale**: bundled guidance vs. assumed pre-installed by the user.
+   page ID. Narrower since ADR-0002 — the mapping is needed to *update* pushed pages, not
+   to reconcile edits made in Notion.
+4. **Tailscale**: bundled guidance vs. assumed pre-installed by the user. **Load-bearing
+   since ADR-0002** — it is now the transport for sync between machines, not only the route
+   to the AI backend. Sync between machines is unavailable without it.
 5. **Multi-vault support**: inherited, kept, and unused. See §12.
+6. **Conflict-copy UX**: the bundled engine's conflict semantics are inherited (§8). How the
+   paired versions are presented, and whether a merge is ever offered rather than a choice,
+   is unresolved.
 
 ---
 
 ## 12. Vaults, and why they are not categories
 
 A **vault** is the whole second brain: the root folder holding the entire note collection,
-plus a `.helixnotes/` folder carrying that collection's search index, trash, attachments,
-version history, holding area, and sync settings. The four categories live *inside* one
-vault. The hierarchy is **one vault → four categories → notes**.
+plus a `.helixnotes/` folder carrying that collection's trash, attachments, version history,
+holding area, and shared settings. The four categories live *inside* one vault. The
+hierarchy is **one vault → four categories → notes**.
+
+Since [ADR-0002](adr/0002-machine-to-machine-sync-notion-becomes-read-only.md), `.helixnotes/`
+holds **only what is safe to sync**. Machine-local state — the search index, relocation and
+recovery manifests, sync bookkeeping, and machine-local settings — lives outside the vault, in
+the per-machine config directory. That boundary is what lets the whole vault folder sync
+without an ignore list (§8).
 
 Only one vault is open at a time: `active_vault` is a single value, and opening a vault
 replaces the active search index.
