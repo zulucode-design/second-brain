@@ -48,6 +48,23 @@ impl VaultWatcher {
     }
 }
 
+/// Whether the indexer should be told about `path`.
+///
+/// Notes are forwarded so they can be read; anything that no longer exists is forwarded so
+/// it can be removed, because a vanished path may be a note *or* a folder full of them and
+/// the event cannot tell us which. An existing non-note is deliberately not forwarded:
+/// indexing reads files as text, so handing it an image would fail the whole batch.
+///
+/// The indexer is told about paths even mid-import. It defers the work rather than doing it
+/// then; dropping the path here instead would leave search silently missing whatever the
+/// import wrote.
+fn should_index(path: &Path, helixnotes_dir: &Path) -> bool {
+    if path.starts_with(helixnotes_dir) {
+        return false;
+    }
+    path.extension().and_then(|value| value.to_str()) == Some("md") || !path.exists()
+}
+
 pub fn start_watcher(
     app: AppHandle,
     vault_path: String,
@@ -83,6 +100,17 @@ pub fn start_watcher(
                         continue;
                     }
 
+                    // The indexer needs a laxer rule than the UI, and needs it before the
+                    // UI gate below drops anything. A folder deleted or moved out of the
+                    // vault no longer reports as a directory and never had a `.md`
+                    // extension, so the UI gate discards it — leaving every note that was
+                    // inside it in the index, findable but gone from disk.
+                    for path in &event.paths {
+                        if should_index(path, &hn_dir) {
+                            changes.touch(path.clone());
+                        }
+                    }
+
                     // Only care about .md file events
                     let has_md = event.paths.iter().any(|p| {
                         p.extension().and_then(|x| x.to_str()) == Some("md") || p.is_dir()
@@ -98,13 +126,6 @@ pub fn start_watcher(
                         EventKind::Remove(_) => "remove",
                         _ => continue,
                     };
-
-                    // Always tell the indexer, even mid-import. It defers the work
-                    // rather than doing it now; dropping the path here instead would
-                    // leave search silently missing whatever the import wrote.
-                    for path in &event.paths {
-                        changes.touch(path.clone());
-                    }
 
                     // The UI event is what floods the IPC channel during a bulk write, so
                     // that is what the importing flag suppresses.
@@ -143,6 +164,50 @@ pub fn start_watcher(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scratch(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("watcher-{label}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The case a `.md`-only filter gets wrong: the folder is gone, so it no longer reports
+    /// as a directory and never had a note's extension, yet every note it held is still
+    /// indexed and must be swept.
+    #[test]
+    fn a_vanished_folder_reaches_the_indexer() {
+        let vault = scratch("vanished-folder");
+        let hn = vault.join(".helixnotes");
+        let notebook = vault.join("Projects").join("Launch");
+
+        assert!(
+            should_index(&notebook, &hn),
+            "a folder that no longer exists must reach the indexer"
+        );
+        std::fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn notes_reach_the_indexer_and_other_existing_files_do_not() {
+        let vault = scratch("filter");
+        let hn = vault.join(".helixnotes");
+        std::fs::create_dir_all(&hn).unwrap();
+        let note = vault.join("Note.md");
+        let image = vault.join("photo.png");
+        std::fs::write(&note, "body").unwrap();
+        std::fs::write(&image, [0x89, 0x50, 0x4e, 0x47]).unwrap();
+
+        assert!(should_index(&note, &hn));
+        assert!(
+            !should_index(&image, &hn),
+            "indexing reads files as text, so an existing binary must not be forwarded"
+        );
+        assert!(
+            !should_index(&hn.join("state.json"), &hn),
+            "machine-local state is never indexed"
+        );
+        std::fs::remove_dir_all(vault).unwrap();
+    }
 
     #[test]
     fn ios_uses_polling_backend() {

@@ -98,7 +98,14 @@ pub fn start(app: AppHandle, vault_path: String, search: Arc<SearchIndex>) -> Ex
     std::thread::spawn(move || {
         let mut pending: HashMap<PathBuf, Seen> = HashMap::new();
         loop {
-            match rx.recv_timeout(TICK) {
+            // Only poll while something is waiting to settle; otherwise block, so an idle
+            // vault costs nothing.
+            let received = if pending.is_empty() {
+                rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
+            } else {
+                rx.recv_timeout(TICK)
+            };
+            match received {
                 Ok(path) => {
                     pending.insert(path.clone(), Seen::now(&path));
                     // Take whatever else is already queued before doing any work, so a
@@ -137,25 +144,18 @@ pub fn start(app: AppHandle, vault_path: String, search: Arc<SearchIndex>) -> Ex
 /// half-finished.
 fn take_settled(pending: &mut HashMap<PathBuf, Seen>, now: Instant) -> Vec<PathBuf> {
     let mut settled = Vec::new();
-    let mut still_writing: Vec<(PathBuf, Seen)> = Vec::new();
-
     pending.retain(|path, seen| {
         if now.duration_since(seen.at) < SETTLE {
             return true;
         }
-        let current = Fingerprint::of(path);
-        if current == seen.fingerprint {
+        if Fingerprint::of(path) == seen.fingerprint {
             settled.push(path.clone());
-            false
-        } else {
-            still_writing.push((path.clone(), Seen::now(path)));
-            false
+            return false;
         }
+        // Still moving, so give it a fresh window rather than reading it half-written.
+        *seen = Seen::now(path);
+        true
     });
-
-    for (path, seen) in still_writing {
-        pending.insert(path, seen);
-    }
     settled
 }
 
@@ -192,6 +192,7 @@ fn apply(search: &SearchIndex, settled: Vec<PathBuf>) -> Result<(), ApplyFailure
 }
 
 /// A failed batch, carrying the paths involved so a repair issue can name them.
+#[derive(Debug)]
 struct ApplyFailure {
     error: String,
     paths: Vec<String>,
@@ -218,20 +219,16 @@ fn flush(app: &AppHandle, vault_path: &str, search: &Arc<SearchIndex>, settled: 
         return;
     };
 
-    // Same fallback the app's own write paths use: a failed incremental update is
-    // recoverable by rebuilding, and only a failed rebuild is worth telling the user about.
-    if let Err(rebuild_error) = search.rebuild(vault_path) {
-        let state = app.state::<AppState>();
-        let _ = crate::commands::record_search_repair_issue(
-            &state,
-            vault_path,
-            format!(
-                "Indexing changes made outside the app failed ({incremental_error}); \
-                 full rebuild also failed: {rebuild_error}"
-            ),
-            paths,
-        );
-    }
+    // Same recovery policy the app's own write paths use.
+    let state = app.state::<AppState>();
+    let _ = crate::commands::rebuild_after_failed_index_update(
+        &state,
+        vault_path,
+        search,
+        "Indexing changes made outside the app",
+        &incremental_error,
+        paths,
+    );
 }
 
 #[cfg(test)]
@@ -289,7 +286,7 @@ mod tests {
         );
         assert!(hits(&index, "zylophonic").is_empty());
 
-        apply(&index, vec![path.clone()]).ok().unwrap();
+        apply(&index, vec![path.clone()]).unwrap();
 
         assert_eq!(hits(&index, "zylophonic"), vec![path.to_string_lossy()]);
         std::fs::remove_dir_all(vault).unwrap();
@@ -303,11 +300,11 @@ mod tests {
             "Edit.md",
             "the original quixotrope text",
         );
-        apply(&index, vec![path.clone()]).ok().unwrap();
+        apply(&index, vec![path.clone()]).unwrap();
         assert_eq!(hits(&index, "quixotrope").len(), 1);
 
         std::fs::write(&path, "replaced with zylophonic text").unwrap();
-        apply(&index, vec![path.clone()]).ok().unwrap();
+        apply(&index, vec![path.clone()]).unwrap();
 
         assert_eq!(
             hits(&index, "zylophonic").len(),
@@ -325,11 +322,11 @@ mod tests {
     fn a_note_deleted_outside_the_app_disappears_from_search() {
         let (vault, index) = indexed_vault("deleted");
         let path = note(&vault.join("Projects"), "Doomed.md", "zylophonic");
-        apply(&index, vec![path.clone()]).ok().unwrap();
+        apply(&index, vec![path.clone()]).unwrap();
         assert_eq!(hits(&index, "zylophonic").len(), 1);
 
         std::fs::remove_file(&path).unwrap();
-        apply(&index, vec![path]).ok().unwrap();
+        apply(&index, vec![path]).unwrap();
 
         assert!(hits(&index, "zylophonic").is_empty());
         std::fs::remove_dir_all(vault).unwrap();
@@ -341,13 +338,11 @@ mod tests {
     fn a_note_moved_between_categories_is_found_once_at_its_new_home() {
         let (vault, index) = indexed_vault("moved");
         let source = note(&vault.join("Projects"), "Move.md", "zylophonic content");
-        apply(&index, vec![source.clone()]).ok().unwrap();
+        apply(&index, vec![source.clone()]).unwrap();
 
         let destination = vault.join("Archives").join("Move.md");
         std::fs::rename(&source, &destination).unwrap();
-        apply(&index, vec![destination.clone(), source.clone()])
-            .ok()
-            .unwrap();
+        apply(&index, vec![destination.clone(), source.clone()]).unwrap();
 
         assert_eq!(
             hits(&index, "zylophonic"),
@@ -369,13 +364,11 @@ mod tests {
             note(&notebook, "Two.md", "zylophonic two"),
         ];
         let outside = note(&vault.join("Projects"), "Keep.md", "zylophonic keeper");
-        apply(&index, [inside.clone(), vec![outside.clone()]].concat())
-            .ok()
-            .unwrap();
+        apply(&index, [inside.clone(), vec![outside.clone()]].concat()).unwrap();
         assert_eq!(hits(&index, "zylophonic").len(), 3);
 
         std::fs::remove_dir_all(&notebook).unwrap();
-        apply(&index, vec![notebook]).ok().unwrap();
+        apply(&index, vec![notebook]).unwrap();
 
         assert_eq!(
             hits(&index, "zylophonic"),
@@ -405,7 +398,7 @@ mod tests {
 
         let settled = take_settled(&mut pending, Instant::now());
         assert_eq!(settled.len(), 50);
-        apply(&index, settled).ok().unwrap();
+        apply(&index, settled).unwrap();
 
         let mut found = hits(&index, "zylophonic");
         found.sort();

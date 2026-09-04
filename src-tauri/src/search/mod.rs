@@ -421,10 +421,11 @@ impl SearchIndex {
 
     /// Every indexed path that sits inside `directory`.
     ///
-    /// Deleting a folder outside the app reports only the folder itself, so the notes
-    /// underneath it would otherwise stay in the index forever, findable but gone from
-    /// disk. `path` is a `STRING` field, so there is no prefix term to delete by; the
-    /// stored values are scanned instead. This runs only when a directory disappears.
+    /// `path` is a `STRING` field, so there is no prefix term to delete by and the stored
+    /// values are scanned instead. That makes this O(index), suitable for the rare event
+    /// it exists for — a directory vanishing, which the filesystem reports as one path
+    /// while leaving every note beneath it indexed, findable but gone from disk — and
+    /// unsuitable for anything on a hot path.
     pub fn indexed_paths_under(&self, directory: &str) -> Result<Vec<String>, String> {
         let mut prefix = directory.to_string();
         if !prefix.ends_with(std::path::MAIN_SEPARATOR) {
@@ -434,6 +435,8 @@ impl SearchIndex {
         let searcher = reader.searcher();
         let mut paths = Vec::new();
         for segment in searcher.segment_readers() {
+            // One cached block: this walks each document once in order, so a larger
+            // cache would hold blocks that are never read again.
             let store = segment
                 .get_store_reader(1)
                 .map_err(|error| error.to_string())?;
