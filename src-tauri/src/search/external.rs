@@ -28,6 +28,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use tauri::{AppHandle, Manager};
+use walkdir::WalkDir;
 
 use crate::search::SearchIndex;
 use crate::state::AppState;
@@ -171,6 +172,12 @@ fn apply(search: &SearchIndex, settled: Vec<PathBuf>) -> Result<(), ApplyFailure
         let text = path.to_string_lossy().to_string();
         if path.is_file() {
             upserts.push(text);
+        } else if path.is_dir() {
+            // A folder that still exists means it arrived — renamed or moved into place.
+            // Linux reports a child event per note and this would be redundant, but
+            // Windows reports only the folder, so without walking it the notes inside
+            // would leave the index at their old path and never return at the new one.
+            upserts.extend(notes_within(&path));
         } else {
             gone.push(text);
         }
@@ -196,6 +203,23 @@ fn apply(search: &SearchIndex, settled: Vec<PathBuf>) -> Result<(), ApplyFailure
     search
         .apply_note_changes(&removals, &upserts)
         .map_err(|error| ApplyFailure::new(error, removals, upserts))
+}
+
+/// Every note inside `directory`, for when the filesystem reports the folder rather than
+/// its contents.
+///
+/// Bounded by the folder that moved rather than the vault, and only reached on a directory
+/// event, so this does not run during ordinary note edits.
+fn notes_within(directory: &Path) -> Vec<String> {
+    WalkDir::new(directory)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry.file_type().is_file()
+                && entry.path().extension().and_then(|value| value.to_str()) == Some("md")
+        })
+        .map(|entry| entry.path().to_string_lossy().to_string())
+        .collect()
 }
 
 /// A failed batch, carrying the paths involved so a repair issue can name them.
@@ -387,6 +411,41 @@ mod tests {
 
     /// The coalescing claim: many events for one note become one indexed document, and a
     /// whole burst is a single commit rather than one per event.
+    /// Windows reports a folder rename as a single directory event with no per-note events
+    /// to follow, so the batch below contains only the two directory paths. Linux happens to
+    /// send child events as well, which is why this only failed on Windows.
+    #[test]
+    fn a_folder_renamed_with_no_child_events_reindexes_the_notes_inside() {
+        let (vault, index) = indexed_vault("folder-renamed");
+        let source = vault.join("Projects").join("Launch");
+        std::fs::create_dir_all(&source).unwrap();
+        let names = ["One.md", "Two.md"];
+        for name in names {
+            note(&source, name, "zylophonic inside");
+        }
+        apply(&index, names.iter().map(|n| source.join(n)).collect()).unwrap();
+        assert_eq!(hits(&index, "zylophonic").len(), 2);
+
+        let destination = vault.join("Archives").join("Launch");
+        std::fs::rename(&source, &destination).unwrap();
+
+        // Only the directories, exactly what Windows reports.
+        apply(&index, vec![destination.clone(), source.clone()]).unwrap();
+
+        let mut found = hits(&index, "zylophonic");
+        found.sort();
+        let mut expected: Vec<String> = names
+            .iter()
+            .map(|n| destination.join(n).to_string_lossy().to_string())
+            .collect();
+        expected.sort();
+        assert_eq!(
+            found, expected,
+            "the notes must be indexed at the folder's new location, not lost with the old"
+        );
+        std::fs::remove_dir_all(vault).unwrap();
+    }
+
     /// Several folders removed in one burst are resolved together, not one scan each.
     #[test]
     fn several_folders_removed_at_once_are_all_swept() {

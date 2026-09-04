@@ -65,7 +65,11 @@ fn should_index(path: &Path, vault_root: &Path) -> bool {
     if crate::search::is_ignored_by_index(path, vault_root) {
         return false;
     }
-    path.extension().and_then(|value| value.to_str()) == Some("md") || !path.exists()
+    // An existing directory is forwarded too: a folder renamed into place is reported as
+    // one event on Windows, with no per-note events to follow it.
+    path.extension().and_then(|value| value.to_str()) == Some("md")
+        || !path.exists()
+        || path.is_dir()
 }
 
 pub fn start_watcher(
