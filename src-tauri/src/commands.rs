@@ -84,27 +84,52 @@ fn record_transaction_repair_if_needed(
     );
 }
 
+/// The recovery policy every incremental index update shares: a failed incremental update
+/// is recoverable by rebuilding, so only a failed *rebuild* is worth telling the user
+/// about. `attempt` names the operation that failed, for the repair message.
+///
+/// Shared with the external-change indexer, which runs on its own thread and holds its own
+/// handle to the index rather than reading it back out of `AppState`.
+pub(crate) fn rebuild_after_failed_index_update(
+    state: &State<'_, AppState>,
+    vault_path: &str,
+    search: &SearchIndex,
+    attempt: &str,
+    incremental_error: &str,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let Err(rebuild_error) = search.rebuild(vault_path) else {
+        return Ok(());
+    };
+    record_repair_issue(
+        state,
+        vault_path,
+        repair::RepairIssue {
+            key: "search:index".to_string(),
+            stage: repair::RepairStage::Search,
+            message: format!(
+                "{attempt} failed ({incremental_error}); full rebuild also failed: {rebuild_error}"
+            ),
+            paths,
+        },
+    )
+}
+
 fn index_note_now(state: &State<'_, AppState>, vault_path: &str, path: &str) -> Result<(), String> {
-    let search = state.search_index.lock().ok().and_then(|g| g.clone());
-    if let Some(search) = search {
-        if let Err(incremental_error) = search.index_note(path) {
-            if let Err(rebuild_error) = search.rebuild(vault_path) {
-                record_repair_issue(
-                    state,
-                    vault_path,
-                    repair::RepairIssue {
-                        key: "search:index".to_string(),
-                        stage: repair::RepairStage::Search,
-                        message: format!(
-                            "Search update failed ({incremental_error}); full rebuild also failed: {rebuild_error}"
-                        ),
-                        paths: vec![path.to_string()],
-                    },
-                )?;
-            }
-        }
-    }
-    Ok(())
+    let Some(search) = state.search_index.lock().ok().and_then(|g| g.clone()) else {
+        return Ok(());
+    };
+    let Err(incremental_error) = search.index_note(path) else {
+        return Ok(());
+    };
+    rebuild_after_failed_index_update(
+        state,
+        vault_path,
+        &search,
+        "Search update",
+        &incremental_error,
+        vec![path.to_string()],
+    )
 }
 
 fn remove_note_now(
@@ -112,26 +137,20 @@ fn remove_note_now(
     vault_path: &str,
     path: &str,
 ) -> Result<(), String> {
-    let search = state.search_index.lock().ok().and_then(|g| g.clone());
-    if let Some(search) = search {
-        if let Err(incremental_error) = search.remove_note(path) {
-            if let Err(rebuild_error) = search.rebuild(vault_path) {
-                record_repair_issue(
-                    state,
-                    vault_path,
-                    repair::RepairIssue {
-                        key: "search:index".to_string(),
-                        stage: repair::RepairStage::Search,
-                        message: format!(
-                            "Search removal failed ({incremental_error}); full rebuild also failed: {rebuild_error}"
-                        ),
-                        paths: vec![path.to_string()],
-                    },
-                )?;
-            }
-        }
-    }
-    Ok(())
+    let Some(search) = state.search_index.lock().ok().and_then(|g| g.clone()) else {
+        return Ok(());
+    };
+    let Err(incremental_error) = search.remove_note(path) else {
+        return Ok(());
+    };
+    rebuild_after_failed_index_update(
+        state,
+        vault_path,
+        &search,
+        "Search removal",
+        &incremental_error,
+        vec![path.to_string()],
+    )
 }
 
 fn reindex_moved_note_now(
@@ -141,32 +160,26 @@ fn reindex_moved_note_now(
     new_path: &str,
     rewritten_paths: &[String],
 ) -> Result<(), String> {
-    let search = state.search_index.lock().ok().and_then(|g| g.clone());
-    if let Some(search) = search {
-        let mut upserts = Vec::with_capacity(rewritten_paths.len() + 1);
-        upserts.push(new_path.to_string());
-        upserts.extend_from_slice(rewritten_paths);
-        if let Err(incremental_error) = search.apply_note_changes(&[old_path.to_string()], &upserts)
-        {
-            if let Err(rebuild_error) = search.rebuild(vault_path) {
-                let mut paths = vec![old_path.to_string(), new_path.to_string()];
-                paths.extend_from_slice(rewritten_paths);
-                record_repair_issue(
-                    state,
-                    vault_path,
-                    repair::RepairIssue {
-                        key: "search:index".to_string(),
-                        stage: repair::RepairStage::Search,
-                        message: format!(
-                            "Search move update failed ({incremental_error}); full rebuild also failed: {rebuild_error}"
-                        ),
-                        paths,
-                    },
-                )?;
-            }
-        }
-    }
-    Ok(())
+    let Some(search) = state.search_index.lock().ok().and_then(|g| g.clone()) else {
+        return Ok(());
+    };
+    let mut upserts = Vec::with_capacity(rewritten_paths.len() + 1);
+    upserts.push(new_path.to_string());
+    upserts.extend_from_slice(rewritten_paths);
+    let Err(incremental_error) = search.apply_note_changes(&[old_path.to_string()], &upserts)
+    else {
+        return Ok(());
+    };
+    let mut paths = vec![old_path.to_string(), new_path.to_string()];
+    paths.extend_from_slice(rewritten_paths);
+    rebuild_after_failed_index_update(
+        state,
+        vault_path,
+        &search,
+        "Search move update",
+        &incremental_error,
+        paths,
+    )
 }
 
 fn rebuild_search_now(
@@ -390,7 +403,7 @@ fn open_vault_path(
     repair::save(&path, &repair_status)?;
     publish_repair_status(state, repair_status)?;
 
-    let new_watcher = watcher::start_watcher(app.clone(), path.clone())?;
+    let new_watcher = watcher::start_watcher(app.clone(), path.clone(), search.clone())?;
     asset_scope::allow_vault_assets(&app, Path::new(&path))?;
 
     // Update config. External vaults use the bookmark as their stable identity;

@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Ticket #29 — verification record</title>
+  <style>
+    :root {
+      --page: #f3f1eb;
+      --paper: #fffdf8;
+      --paper-2: #f7f4ec;
+      --ink: #20241f;
+      --muted: #626960;
+      --line: #d7d1c5;
+      --accent: #185f52;
+      --accent-soft: #dcece6;
+      --critical: #a42626;
+      --critical-soft: #f8dfdc;
+      --high: #a34b16;
+      --high-soft: #f8e5d7;
+      --medium: #776000;
+      --medium-soft: #f4ebbd;
+      --low: #4f6278;
+      --low-soft: #e3e9f0;
+      --good: #276c43;
+      --good-soft: #dcece2;
+      --shadow: 0 18px 48px rgba(31, 38, 32, 0.09);
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: Iowan Old Style, Palatino Linotype, Book Antiqua, Georgia, serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 8% -8%, rgba(24, 95, 82, 0.14), transparent 34rem), var(--page);
+      color: var(--ink);
+      font: 16px/1.62 var(--sans);
+    }
+    a { color: var(--accent); text-underline-offset: 0.16em; }
+    code { font-family: var(--mono); font-size: 0.87em; overflow-wrap: anywhere; }
+    .page { width: min(1180px, calc(100% - 30px)); margin: 26px auto 70px; }
+
+    .hero, section {
+      border: 1px solid var(--line);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+    .hero { padding: clamp(28px, 6vw, 66px); border-radius: 28px; }
+    .kicker { margin: 0 0 12px; color: var(--accent); font-size: 0.75rem; font-weight: 850; letter-spacing: 0.14em; text-transform: uppercase; }
+    h1, h2, h3, h4 { line-height: 1.18; }
+    h1 { max-width: 850px; margin: 0; font: 600 clamp(2.55rem, 7vw, 5rem)/1.03 var(--serif); letter-spacing: -0.045em; }
+    .intro { max-width: 820px; margin: 22px 0 0; color: var(--muted); font-size: clamp(1.03rem, 2vw, 1.25rem); }
+    .gate { margin-top: 27px; padding: 18px 20px; border: 1px solid #dfaaa6; border-radius: 15px; background: var(--critical-soft); }
+    .gate strong { color: var(--critical); }
+    .meta { display: flex; flex-wrap: wrap; gap: 7px 18px; margin-top: 22px; color: var(--muted); font-size: 0.86rem; }
+
+    .numbers { display: grid; grid-template-columns: repeat(5, 1fr); gap: 11px; margin-top: 16px; }
+    .number { min-height: 104px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); }
+    .number strong { display: block; font: 600 2.1rem/1 var(--serif); }
+    .number span { display: block; margin-top: 8px; color: var(--muted); font-size: 0.79rem; }
+    .number.critical strong { color: var(--critical); }
+    .number.high strong { color: var(--high); }
+    .number.medium strong { color: var(--medium); }
+    .number.low strong { color: var(--low); }
+    .number.good strong { color: var(--good); }
+
+    .layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 26px; margin-top: 31px; align-items: start; }
+    nav { position: sticky; top: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--paper) 94%, transparent); backdrop-filter: blur(10px); }
+    nav strong { display: block; margin: 0 7px 8px; color: var(--muted); font-size: 0.68rem; letter-spacing: 0.13em; text-transform: uppercase; }
+    nav a { display: block; padding: 6px 8px; border-radius: 8px; color: var(--ink); font-size: 0.86rem; text-decoration: none; }
+    nav a:hover { color: var(--accent); background: var(--accent-soft); }
+    main { min-width: 0; }
+    section { scroll-margin-top: 18px; margin-bottom: 27px; padding: clamp(22px, 4vw, 37px); border-radius: 22px; }
+    section > h2 { margin: 0 0 10px; font: 600 clamp(1.75rem, 4vw, 2.45rem)/1.12 var(--serif); letter-spacing: -0.025em; }
+    .section-intro { max-width: 780px; margin-top: 0; color: var(--muted); }
+
+    .callout { margin: 18px 0 0; padding: 16px 18px; border-left: 4px solid var(--accent); border-radius: 4px 12px 12px 4px; background: var(--accent-soft); }
+    .callout.warning { border-color: var(--high); background: var(--high-soft); }
+    .callout p { margin: 0; }
+    .decision-list { display: grid; gap: 11px; margin-top: 20px; }
+    .decision { padding: 16px 17px; border: 1px solid var(--line); border-radius: 13px; background: var(--paper-2); }
+    .decision h3 { margin: 0 0 5px; font-size: 1rem; }
+    .decision p { margin: 0; color: var(--muted); }
+    .decision .recommend { color: var(--ink); }
+
+    .loop { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; margin-top: 20px; counter-reset: loop; }
+    .loop div { padding: 15px; border: 1px solid var(--line); border-radius: 13px; background: var(--paper-2); counter-increment: loop; }
+    .loop div::before { content: counter(loop); display: grid; width: 28px; height: 28px; margin-bottom: 9px; place-items: center; border-radius: 50%; background: var(--accent); color: white; font-weight: 800; }
+    .loop strong { display: block; margin-bottom: 4px; }
+    .loop p { margin: 0; color: var(--muted); font-size: 0.89rem; }
+
+    .phase { margin-top: 30px; }
+    .phase > header { display: flex; align-items: baseline; justify-content: space-between; gap: 15px; margin-bottom: 11px; }
+    .phase > header h3 { margin: 0; font: 600 1.55rem/1.2 var(--serif); }
+    .phase > header span { color: var(--muted); font-size: 0.8rem; }
+    .work { margin-top: 12px; border: 1px solid var(--line); border-radius: 15px; background: var(--paper-2); overflow: hidden; }
+    .work-head { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; padding: 18px 18px 12px; }
+    .step { display: grid; width: 31px; height: 31px; place-items: center; border-radius: 50%; background: var(--accent); color: white; font-weight: 850; }
+    .work-head h4 { margin: 1px 0 3px; font-size: 1.08rem; }
+    .work-head p { margin: 0; color: var(--muted); font-size: 0.88rem; }
+    .badge { padding: 4px 9px; border-radius: 999px; font-size: 0.66rem; font-weight: 900; letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap; }
+    .badge.critical { color: var(--critical); background: var(--critical-soft); }
+    .badge.high { color: var(--high); background: var(--high-soft); }
+    .badge.medium { color: var(--medium); background: var(--medium-soft); }
+    .badge.low { color: var(--low); background: var(--low-soft); }
+    .work-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 0 18px 18px; }
+    .cell { padding: 13px 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper); }
+    .cell.wide { grid-column: 1 / -1; }
+    .cell strong { display: block; margin-bottom: 4px; color: var(--accent); font-size: 0.69rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    .cell p, .cell ul { margin: 0; }
+    .cell ul { padding-left: 19px; }
+    .cell li + li { margin-top: 4px; }
+    details { border-top: 1px dashed var(--line); padding: 12px 18px 15px; color: var(--muted); font-size: 0.85rem; }
+    summary { cursor: pointer; color: var(--accent); font-weight: 800; }
+    details p { margin: 8px 0 0; }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.89rem; }
+    th, td { padding: 11px 9px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 0.69rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    tbody tr:last-child td { border-bottom: 0; }
+    .status { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 0.7rem; font-weight: 850; white-space: nowrap; }
+    .status.open { color: var(--high); background: var(--high-soft); }
+    .status.later { color: var(--low); background: var(--low-soft); }
+    .status.gate { color: var(--critical); background: var(--critical-soft); }
+    .checklist { padding-left: 21px; }
+    .checklist li + li { margin-top: 8px; }
+    footer { padding: 10px 5px 0; color: var(--muted); font-size: 0.8rem; text-align: center; }
+
+    @media (max-width: 900px) {
+      .numbers { grid-template-columns: repeat(2, 1fr); }
+      .numbers .number:last-child { grid-column: 1 / -1; }
+      .layout { grid-template-columns: 1fr; }
+      nav { position: static; display: flex; flex-wrap: wrap; gap: 2px 6px; }
+      nav strong { width: 100%; }
+      nav a { display: inline-block; }
+      .loop { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 620px) {
+      .page { width: min(100% - 18px, 1180px); margin-top: 9px; }
+      .hero, section { border-radius: 17px; }
+      .hero { padding: 25px 20px; }
+      h1 { font-size: 2.55rem; }
+      .numbers, .loop, .work-body { grid-template-columns: 1fr; }
+      .numbers .number:last-child, .cell.wide { grid-column: auto; }
+      .work-head { grid-template-columns: auto 1fr; }
+      .work-head .badge { grid-column: 2; justify-self: start; }
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #141714; --paper: #1d211d; --paper-2: #242924; --ink: #e9ece5;
+        --muted: #adb6aa; --line: #3a4138; --accent: #8bcab4; --accent-soft: #233e35;
+        --critical: #ff9089; --critical-soft: #452524; --high: #f1a267; --high-soft: #482e1d;
+        --medium: #e3c65f; --medium-soft: #443d20; --low: #aec3d8; --low-soft: #2b3540;
+        --good: #7fd19c; --good-soft: #203b2a; --shadow: 0 18px 48px rgba(0, 0, 0, 0.25);
+      }
+    }
+    @media print {
+      :root { --page: white; --paper: white; --paper-2: #fafafa; --ink: #111; --muted: #555; --line: #ccc; }
+      body { background: white; font-size: 10.5pt; }
+      .page { width: 100%; margin: 0; }
+      .hero, section { box-shadow: none; }
+      .layout { display: block; }
+      nav { display: none; }
+      .work { break-inside: avoid; }
+      details, details > * { display: block; }
+    }
+
+    .quote { margin: 0 0 18px; padding: 14px 18px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 12px 12px 0; }
+    .note { margin-top: 16px; padding: 13px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper-2); color: var(--muted); }
+    .pill { display: inline-block; margin-left: 8px; padding: 3px 10px; border-radius: 999px; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; vertical-align: middle; }
+    .pill.good { background: var(--good-soft); color: var(--good); }
+    .pill.critical { background: var(--critical-soft); color: var(--critical); }
+    .pill.medium { background: var(--medium-soft); color: var(--medium); }
+    section { margin-top: 20px; padding: clamp(22px, 4vw, 40px); border-radius: 22px; }
+    section h2 { margin: 0 0 16px; font: 600 clamp(1.5rem, 3vw, 2.1rem)/1.15 var(--serif); letter-spacing: -0.02em; }
+    section h3 { margin: 22px 0 8px; font-size: 0.78rem; font-weight: 850; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+    section ol, section ul { margin: 0; padding-left: 1.25rem; }
+    section li { margin: 6px 0; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <p class="kicker">Verification record</p>
+      <h1>Indexing changes made outside the app</h1>
+      <p class="intro">
+        #29's acceptance criteria are all about behaviour in the <em>running</em> application:
+        a note edited by another program, a folder deleted behind the app's back, a sync burst.
+        A unit test can call the indexing code directly and pass while the real path is broken
+        &mdash; which is exactly what happened here once. Every criterion below was therefore
+        also driven against the built release binary.
+      </p>
+      <div class="gate" style="border-color:#9ec7ac;background:var(--good-soft)">
+        <strong style="color:var(--good)">All acceptance criteria pass</strong> against
+        <code>target/release/helixnotes</code>. One real defect was found by doing this rather
+        than trusting the suite; see <a href="#defect">the defect the unit tests missed</a>.
+      </div>
+      <div class="meta">
+        <span>Branch <code>feat/29-index-external-changes</code></span>
+        <span>Linux / Wayland</span>
+        <span><code>pnpm verify</code> green &mdash; 256 Rust tests</span>
+      </div>
+    </header>
+
+    <section id="method">
+      <h2>Method</h2>
+      <p>
+        The app cannot be queried from a script, so each run: seeds a vault and points the app's
+        config at it; starts the release binary and lets it finish its startup rebuild; makes the
+        changes <strong>entirely from the shell</strong>, never through the UI; waits past the
+        400&nbsp;ms settle window; SIGKILLs the app so nothing is flushed on a clean exit; then
+        opens the index the watcher left behind from a separate process and queries it.
+      </p>
+      <p class="note">
+        The kill matters. The app rebuilds the whole index when a vault opens, so a run that ended
+        cleanly and reopened would show a correct index no matter what the watcher did. Reading the
+        index the killed app left is what makes the result evidence about the watcher.
+      </p>
+    </section>
+
+    <section id="results">
+      <h2>Results</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Criterion</th><th></th><th>Observed</th></tr></thead>
+        <tbody>
+          <tr><td>A note created outside the app becomes findable</td><td><span class="pill good">Pass</span></td>
+              <td><code>Created.md</code> returned for its token.</td></tr>
+          <tr><td>An edit outside the app is searchable; old content no longer matches</td><td><span class="pill good">Pass</span></td>
+              <td>New term returns the note; the replaced term returns <strong>0</strong>.</td></tr>
+          <tr><td>A note deleted outside the app disappears from search</td><td><span class="pill good">Pass</span></td>
+              <td><code>Doomed.md</code> absent despite having contained the token.</td></tr>
+          <tr><td>A note moved between categories is searchable at its new location, not duplicated</td><td><span class="pill good">Pass</span></td>
+              <td><code>Archives/Mover.md</code> present once; 3 hits total, no stale path.</td></tr>
+          <tr><td>A burst coalesces rather than reindexing per event</td><td><span class="pill good">Pass</span></td>
+              <td>2000 notes written at once &rarr; <strong>2000/2000</strong> indexed, app alive throughout.</td></tr>
+          <tr><td>A file still being written is indexed once it settles, never mid-write</td><td><span class="pill good">Pass</span></td>
+              <td>Note dribbled out in 8 chunks over 2&nbsp;s; the token written <em>last</em> is present, so it was read whole.</td></tr>
+          <tr><td>Index updates survive an app restart</td><td><span class="pill good">Pass</span></td>
+              <td>Met by the pre-existing full rebuild on vault open. Its cost is filed as
+                  <a href="https://github.com/zulucode-design/second-brain/issues/33">#33</a>.</td></tr>
+          <tr><td><code>pnpm verify</code> green</td><td><span class="pill good">Pass</span></td>
+              <td>256 Rust tests, svelte-check and clippy clean.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="defect">
+      <h2>The defect the unit tests missed</h2>
+      <p class="quote">
+        &ldquo;A note deleted outside the app disappears from search results&rdquo;
+      </p>
+      <p>
+        A unit test covered deleting a folder and passed. It called the indexing function directly,
+        so it never went through the watcher &mdash; and the watcher was discarding the event before
+        the indexer could see it:
+      </p>
+      <pre><code>let has_md = event.paths.iter().any(|p| {
+    p.extension().and_then(|x| x.to_str()) == Some("md") || p.is_dir()
+});
+if !has_md { continue; }</code></pre>
+      <p>
+        Once a folder is gone it no longer reports as a directory, and a folder never had a
+        <code>.md</code> extension. So a notebook moved out of the vault matched neither test and was
+        dropped. Measured against the real app before the fix: <strong>0 notes on disk, 5 still in
+        the index</strong> &mdash; results pointing at files that no longer existed.
+      </p>
+      <p>
+        The fix gives the indexer its own, laxer rule (<code>should_index</code>): forward notes so
+        they can be read, and forward anything that no longer exists so it can be removed, because a
+        vanished path may be a note <em>or</em> a folder full of them and the event cannot say which.
+        An existing non-note is still withheld, since indexing reads files as text and an image would
+        fail the whole batch.
+      </p>
+      <h3>After the fix, measured the same way</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Case</th><th>Notes on disk</th><th>Notes in index</th></tr></thead>
+        <tbody>
+          <tr><td>Notebook moved out of the vault</td><td>0</td><td>0</td></tr>
+          <tr><td>Notebook deleted outright</td><td>0</td><td>0</td></tr>
+          <tr><td>Notebook renamed inside the vault</td><td>5</td><td>5</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note">
+        The lesson is the one #27 already recorded twice: a test that exercises the unit but skips the
+        seam it depends on will pass while the feature is broken. <code>should_index</code> was
+        extracted out of the watcher closure specifically so this filter is now testable on its own.
+      </p>
+    </section>
+
+    <section id="rereview">
+      <h2>Second spec review &mdash; two more findings</h2>
+      <p>
+        The first spec-axis review died on a rate limit and was done by hand instead. It was
+        re-run properly against the fixed commit, and found two things the manual pass missed.
+        Both are recorded here because both were real.
+      </p>
+      <h3>The watcher and the rebuild disagreed about what a note is</h3>
+      <p class="quote">
+        &ldquo;Index updates survive an app restart &mdash; no stale entries left behind by
+        changes made while the app was closed.&rdquo;
+      </p>
+      <p>
+        <code>rebuild()</code> prunes every dot-prefixed entry; the watcher's filter excluded only
+        <code>.helixnotes</code>. So a hidden note such as <code>Projects/.draft.md</code> created
+        outside the app became searchable immediately and then <em>silently disappeared</em> at the
+        next open &mdash; the index depending on which route last touched it. Not a stale entry, so
+        it read as a partial rather than a failure, which is precisely why it was easy to miss.
+      </p>
+      <p>
+        Fixed at the root rather than by patching one side: both now consult one
+        <code>is_ignored_by_index</code>, so they cannot drift again. Measured against the running
+        app with a hidden note and an ordinary one created together: <strong>1 indexed before
+        restart, 1 after</strong> &mdash; nothing appearing or vanishing.
+      </p>
+      <h3>Removals scanned the index once per path</h3>
+      <p class="quote">
+        &ldquo;A burst of many external changes coalesces rather than reindexing per event&rdquo;
+      </p>
+      <p>
+        Resolving a vanished path meant a full scan of the stored index values, and that ran once
+        <em>per removed path</em>. A sync burst deleting a thousand files would have done a thousand
+        full scans inside a single flush. The batch was still one commit and the work sat on the
+        indexer thread, so the UI stayed responsive &mdash; but the scan was per path, not per batch.
+        Now one pass matches every removed directory in the batch. Verified with three notebooks
+        deleted at once: 5 notes left on disk, 5 in the index.
+      </p>
+      <p class="note">
+        Worth stating plainly: the manual spec pass found the folder bug but missed both of these.
+        Re-running the agent was the user's call, and it was the right one.
+      </p>
+    </section>
+
+    <section id="windows">
+      <h2>Windows &mdash; three bugs the Linux run could not have found</h2>
+      <p>
+        Run 2026-09-04 over the dev SSH link from #22, the first time this project's tests had
+        ever run on Windows. The folder cases were flagged as the risk because
+        <code>notify</code> reports renames differently there, and that is exactly where it broke
+        &mdash; three times, each failure hidden behind the previous one.
+      </p>
+      <p class="note">
+        A GUI launched over SSH lands in Windows' non-interactive session, so the webview never
+        loads and the vault never opens &mdash; the limitation #22 predicted. Working around it
+        with a scheduled task marked <code>/it</code> puts the app in the console session, which
+        made the whole verification remote after all. A control case that changes nothing was run
+        first every time; without it the first round of results looked like three passes when
+        indexing was simply not running.
+      </p>
+      <h3>1 &mdash; A renamed folder's notes left search entirely</h3>
+      <p>
+        <strong>5 notes on disk at the new path, 0 in the index.</strong> Linux
+        <code>inotify</code> emits a per-note event when a folder is renamed, so each note's new
+        path was touched and reindexed as a side effect. Windows
+        <code>ReadDirectoryChangesW</code> reports only the directory, and
+        <code>should_index</code> withheld it &mdash; an existing folder is neither a
+        <code>.md</code> file nor a vanished path. The old paths were swept and the new ones never
+        arrived. An existing directory is now forwarded, and <code>apply</code> walks it.
+      </p>
+      <h3>2 &mdash; Then each note appeared twice, at two different paths</h3>
+      <p>
+        <strong>10 hits for 5 notes</strong>, half pointing at files that no longer existed.
+        Windows reports the folder's new path and <em>never</em> the old one, so nothing in the
+        batch identified what to retire. Rather than guess the old location, a folder event now
+        sweeps the index for entries the filesystem no longer backs &mdash; which also makes the
+        index self-healing against any removal the watcher misses.
+      </p>
+      <h3>3 &mdash; Then each note appeared twice at the <em>same</em> path</h3>
+      <p>
+        Still <strong>10 hits</strong>, but now only 5 unique paths, all correct. Not stale data:
+        each note genuinely had two documents. A folder event contributes every note inside it,
+        and Windows also sends those notes as their own events, so one path reached a single batch
+        twice. <code>apply_note_changes</code> issues all deletes before all adds, so a repeated
+        path is deleted once and added twice. Upserts are now deduplicated.
+      </p>
+      <h3>Final result</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Case</th><th>On disk</th><th>Search hits</th><th>Unique paths</th></tr></thead>
+        <tbody>
+          <tr><td>control &mdash; nothing changed</td><td>5</td><td>5</td><td>5</td></tr>
+          <tr><td>notebook moved out of the vault</td><td>0</td><td>0</td><td>0</td></tr>
+          <tr><td>notebook deleted</td><td>0</td><td>0</td><td>0</td></tr>
+          <tr><td>notebook renamed inside the vault</td><td>5</td><td>5</td><td>5</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note">
+        Two measurement traps caught along the way, both of which would have produced a false
+        pass. Tantivy's <code>max_doc</code> counts deleted-but-unmerged documents, so it reported
+        10 for a correct 5-note index; only real search hits are trustworthy. And an earlier probe
+        capped results at 50, which made 2000 indexed notes look like 50. Each of the three bugs
+        above was hidden behind the one before it, so every fix needed a fresh Windows run rather
+        than a re-read of the previous output.
+      </p>
+    </section>
+
+    <section id="limits">
+      <h2>What this does not cover</h2>
+      <ul>
+        <li><strong>Windows is now covered</strong> &mdash; see above. The remaining Windows gap
+          is #27's V5 crash-recovery check, which is a separate ticket's criterion.</li>
+        <li><strong>&ldquo;The UI stays responsive throughout.&rdquo;</strong> Verified only as
+          &ldquo;the process survived and indexed all 2000 notes&rdquo;. Frame timing during a burst
+          was not measured.</li>
+        <li><strong>A file appended to forever</strong> (a log-like file that never stops changing)
+          is held back indefinitely by design and so is never indexed. Correct for notes; recorded
+          here because it is a deliberate consequence rather than an oversight.</li>
+      </ul>
+    </section>
+  </div>
+</body>
+</html>
