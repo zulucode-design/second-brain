@@ -202,7 +202,7 @@
       <div class="meta">
         <span>Branch <code>feat/29-index-external-changes</code></span>
         <span>Linux / Wayland</span>
-        <span><code>pnpm verify</code> green &mdash; 254 Rust tests</span>
+        <span><code>pnpm verify</code> green &mdash; 256 Rust tests</span>
       </div>
     </header>
 
@@ -243,7 +243,7 @@
               <td>Met by the pre-existing full rebuild on vault open. Its cost is filed as
                   <a href="https://github.com/zulucode-design/second-brain/issues/33">#33</a>.</td></tr>
           <tr><td><code>pnpm verify</code> green</td><td><span class="pill good">Pass</span></td>
-              <td>254 Rust tests, svelte-check and clippy clean.</td></tr>
+              <td>256 Rust tests, svelte-check and clippy clean.</td></tr>
         </tbody>
       </table></div>
     </section>
@@ -334,12 +334,73 @@ if !has_md { continue; }</code></pre>
       </p>
     </section>
 
+    <section id="windows">
+      <h2>Windows &mdash; three bugs the Linux run could not have found</h2>
+      <p>
+        Run 2026-09-04 over the dev SSH link from #22, the first time this project's tests had
+        ever run on Windows. The folder cases were flagged as the risk because
+        <code>notify</code> reports renames differently there, and that is exactly where it broke
+        &mdash; three times, each failure hidden behind the previous one.
+      </p>
+      <p class="note">
+        A GUI launched over SSH lands in Windows' non-interactive session, so the webview never
+        loads and the vault never opens &mdash; the limitation #22 predicted. Working around it
+        with a scheduled task marked <code>/it</code> puts the app in the console session, which
+        made the whole verification remote after all. A control case that changes nothing was run
+        first every time; without it the first round of results looked like three passes when
+        indexing was simply not running.
+      </p>
+      <h3>1 &mdash; A renamed folder's notes left search entirely</h3>
+      <p>
+        <strong>5 notes on disk at the new path, 0 in the index.</strong> Linux
+        <code>inotify</code> emits a per-note event when a folder is renamed, so each note's new
+        path was touched and reindexed as a side effect. Windows
+        <code>ReadDirectoryChangesW</code> reports only the directory, and
+        <code>should_index</code> withheld it &mdash; an existing folder is neither a
+        <code>.md</code> file nor a vanished path. The old paths were swept and the new ones never
+        arrived. An existing directory is now forwarded, and <code>apply</code> walks it.
+      </p>
+      <h3>2 &mdash; Then each note appeared twice, at two different paths</h3>
+      <p>
+        <strong>10 hits for 5 notes</strong>, half pointing at files that no longer existed.
+        Windows reports the folder's new path and <em>never</em> the old one, so nothing in the
+        batch identified what to retire. Rather than guess the old location, a folder event now
+        sweeps the index for entries the filesystem no longer backs &mdash; which also makes the
+        index self-healing against any removal the watcher misses.
+      </p>
+      <h3>3 &mdash; Then each note appeared twice at the <em>same</em> path</h3>
+      <p>
+        Still <strong>10 hits</strong>, but now only 5 unique paths, all correct. Not stale data:
+        each note genuinely had two documents. A folder event contributes every note inside it,
+        and Windows also sends those notes as their own events, so one path reached a single batch
+        twice. <code>apply_note_changes</code> issues all deletes before all adds, so a repeated
+        path is deleted once and added twice. Upserts are now deduplicated.
+      </p>
+      <h3>Final result</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Case</th><th>On disk</th><th>Search hits</th><th>Unique paths</th></tr></thead>
+        <tbody>
+          <tr><td>control &mdash; nothing changed</td><td>5</td><td>5</td><td>5</td></tr>
+          <tr><td>notebook moved out of the vault</td><td>0</td><td>0</td><td>0</td></tr>
+          <tr><td>notebook deleted</td><td>0</td><td>0</td><td>0</td></tr>
+          <tr><td>notebook renamed inside the vault</td><td>5</td><td>5</td><td>5</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note">
+        Two measurement traps caught along the way, both of which would have produced a false
+        pass. Tantivy's <code>max_doc</code> counts deleted-but-unmerged documents, so it reported
+        10 for a correct 5-note index; only real search hits are trustworthy. And an earlier probe
+        capped results at 50, which made 2000 indexed notes look like 50. Each of the three bugs
+        above was hidden behind the one before it, so every fix needed a fresh Windows run rather
+        than a re-read of the previous output.
+      </p>
+    </section>
+
     <section id="limits">
       <h2>What this does not cover</h2>
       <ul>
-        <li><strong>Windows.</strong> Not run &mdash; no machine available, same gate as #27's V5.
-          <code>notify</code> reports renames differently there, which is precisely the area this
-          ticket depends on, so the folder cases above are worth repeating on Windows.</li>
+        <li><strong>Windows is now covered</strong> &mdash; see above. The remaining Windows gap
+          is #27's V5 crash-recovery check, which is a separate ticket's criterion.</li>
         <li><strong>&ldquo;The UI stays responsive throughout.&rdquo;</strong> Verified only as
           &ldquo;the process survived and indexed all 2000 notes&rdquo;. Frame timing during a burst
           was not measured.</li>
