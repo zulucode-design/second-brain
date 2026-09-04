@@ -47,21 +47,33 @@ impl RepairStatus {
     }
 }
 
-fn ledger_path(vault_path: &str) -> PathBuf {
-    Path::new(vault_path).join(".helixnotes/repair_issues.json")
+/// The ledger records what went wrong on *this* machine, so it lives outside the vault
+/// alongside the rest of the machine-local state. All three paths share a parent, which
+/// is what keeps the rename dance below atomic.
+fn ledger_path(vault_path: &str) -> Result<PathBuf, String> {
+    crate::machine_local::repair_ledger_path(Path::new(vault_path))
 }
 
-fn backup_path(vault_path: &str) -> PathBuf {
-    Path::new(vault_path).join(".helixnotes/repair_issues.json.backup")
+fn backup_path(vault_path: &str) -> Result<PathBuf, String> {
+    ledger_path(vault_path).map(|path| path.with_extension("json.backup"))
 }
 
-fn temporary_path(vault_path: &str) -> PathBuf {
-    Path::new(vault_path).join(".helixnotes/repair_issues.json.tmp")
+fn temporary_path(vault_path: &str) -> Result<PathBuf, String> {
+    ledger_path(vault_path).map(|path| path.with_extension("json.tmp"))
+}
+
+/// Where the ledger lives, for showing the user in a repair warning. Falls back to the
+/// bare filename when the machine-local directory cannot be resolved — the message is
+/// more useful with an approximate location than with none.
+pub fn ledger_location(vault_path: &str) -> String {
+    ledger_path(vault_path)
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "repair_issues.json".to_string())
 }
 
 pub fn load(vault_path: &str) -> Result<RepairStatus, String> {
-    let path = ledger_path(vault_path);
-    let backup = backup_path(vault_path);
+    let path = ledger_path(vault_path)?;
+    let backup = backup_path(vault_path)?;
     if !path.exists() && backup.exists() {
         fs::rename(&backup, &path).map_err(|error| error.to_string())?;
     }
@@ -75,7 +87,7 @@ pub fn load(vault_path: &str) -> Result<RepairStatus, String> {
 }
 
 pub fn save(vault_path: &str, status: &RepairStatus) -> Result<(), String> {
-    let path = ledger_path(vault_path);
+    let path = ledger_path(vault_path)?;
     if status.issues.is_empty() {
         match fs::remove_file(path) {
             Ok(()) => return Ok(()),
@@ -84,8 +96,8 @@ pub fn save(vault_path: &str, status: &RepairStatus) -> Result<(), String> {
         }
     }
     let data = serde_json::to_vec_pretty(status).map_err(|error| error.to_string())?;
-    let temporary = temporary_path(vault_path);
-    let backup = backup_path(vault_path);
+    let temporary = temporary_path(vault_path)?;
+    let backup = backup_path(vault_path)?;
     let _ = fs::remove_file(&temporary);
     let mut file = OpenOptions::new()
         .write(true)
@@ -192,13 +204,13 @@ mod tests {
             }],
         };
         fs::write(
-            backup_path(&vault),
+            backup_path(&vault).unwrap(),
             serde_json::to_vec_pretty(&expected).unwrap(),
         )
         .unwrap();
 
         assert_eq!(load(&vault).unwrap(), expected);
-        assert!(ledger_path(&vault).is_file());
+        assert!(ledger_path(&vault).unwrap().is_file());
         fs::remove_dir_all(vault).unwrap();
     }
 }

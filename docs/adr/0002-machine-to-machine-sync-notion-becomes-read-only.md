@@ -135,6 +135,44 @@ config directory. The boundary becomes a fact of where files live rather than a 
 configures correctly. "Sync the vault folder" is then correct by construction, with no ignore
 list to mistype.
 
+#### Amendment (#27): what "relocation" means splits in two
+
+Implementing this turned up a constraint the table above hides. `relocation/` was not one
+thing but two, and only one of them can leave the vault:
+
+- **Directory-move manifests** — the state that is ever *replayed*. These move out, and they
+  are the whole point: nothing outside a manifest authorizes recovery, so a machine can no
+  longer act on another machine's interrupted move.
+- **Note staging** — bytes waiting to be published into the vault. Publishing is
+  `rename(staged, note)`, which requires one filesystem. Moving staging to the per-machine
+  directory breaks every note rewrite with `EXDEV` whenever the vault sits on an external
+  drive, a separate partition, or a NAS mount — and replacing the rename with a copy would
+  give back the atomicity PR #23 exists to provide. Staging stays at `.helixnotes/staging/`.
+
+So the synced set gains two members the issue's table does not list: `.helixnotes/staging/`
+and `.helixnotes/vault_id`. Both are safe, but for different reasons, and the first needed a
+correction found in review.
+
+`vault_id` names the vault rather than a machine, so every machine agreeing on it is the
+point; the per-machine state is already separated by living on a different machine.
+
+Staging is inert as *replay* — recovery acts only on a manifest, and manifests are machine
+local. But the sweep that clears staging at open is itself a second reader of that state, and
+the first version of it trusted an absolute path recorded on whichever machine did the write.
+A vault carrying another machine's interrupted transaction would have restored those bytes to
+a path outside the receiving vault entirely. The rule that fell out, and that any future
+reader of in-vault state must follow: **state that travels with the vault is named relative
+to the vault root, re-resolved against the local root, and re-contained after resolution —
+never trusted as written.** Containment has to outlast symlink resolution, not just reject
+`..`: the notebook a path names may itself be a symlink out of the vault on the machine
+that receives it. With
+that, a crash-stranded note is restored to its own path when those bytes are its only copy,
+and discarded when they are a stale duplicate.
+
+The keying also changed. Machine-local state is filed under a `vault_id` written to
+`.helixnotes/vault_id` rather than under a hash of the vault's path, so moving or renaming
+the vault folder no longer orphans a machine's sync manifest and recovery state.
+
 ### Settings are machine-local by default, shared only where correctness demands
 
 Sync forces every setting to be classified, and sharing them wholesale is wrong. The

@@ -6,6 +6,18 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 
+/// In-vault staging area for note bytes awaiting an atomic rename into place.
+const STAGING_DIR: &str = "staging";
+
+/// Marker naming the vault-relative path a staged file was claimed from. See `sweep_staging`.
+const ORIGIN_MARKER: &str = "origin";
+
+/// The rewritten copy a `rewrite_file` transaction stages before publishing it.
+pub(crate) const STAGED_REPLACEMENT: &str = "replacement.md";
+
+/// The manifest whose presence is what authorizes replaying a directory move.
+pub(crate) const DIRECTORY_MANIFEST: &str = "directory-move.json";
+
 #[derive(Clone)]
 pub struct DirectoryRewrite {
     pub relative_path: PathBuf,
@@ -142,7 +154,7 @@ pub fn relocate_directory(
 
     let source_identity = Handle::from_path(&source)
         .map_err(|error| format!("Could not identify directory relocation source: {error}"))?;
-    let transaction_dir = create_recovery_dir(&vault)?;
+    let transaction_dir = create_manifest_dir(&vault)?;
     let ownership_token = transaction_dir
         .file_name()
         .and_then(OsStr::to_str)
@@ -239,7 +251,15 @@ pub fn recover_directory_relocations(vault_root: &Path) -> Vec<DirectoryRecovery
             paths: vec![vault_root.to_string_lossy().to_string()],
         }];
     };
-    let recovery_root = vault.join(".helixnotes/relocation-recovery");
+    let recovery_root = match crate::machine_local::relocation_dir(&vault) {
+        Ok(root) => root,
+        Err(message) => {
+            return vec![DirectoryRecoveryFailure {
+                message,
+                paths: vec![vault.to_string_lossy().to_string()],
+            }]
+        }
+    };
     let Ok(entries) = fs::read_dir(&recovery_root) else {
         return Vec::new();
     };
@@ -256,8 +276,14 @@ pub fn recover_directory_relocations(vault_root: &Path) -> Vec<DirectoryRecovery
             }
         };
         let transaction_dir = entry.path();
-        let manifest_path = transaction_dir.join("directory-move.json");
+        let manifest_path = transaction_dir.join(DIRECTORY_MANIFEST);
         if !manifest_path.is_file() {
+            // Killed after reserving the directory but before the manifest became durable,
+            // so no move was ever authorized and there is nothing to replay. Discard it,
+            // or these accumulate for the life of the vault. `remove_dir` refuses to touch
+            // a non-empty directory, so a half-written transaction is left for inspection
+            // rather than deleted.
+            let _ = fs::remove_dir(&transaction_dir);
             continue;
         }
         let mut affected_paths = vec![manifest_path.to_string_lossy().to_string()];
@@ -396,8 +422,8 @@ where
     let output = rewrite(&source_bytes)?;
     let output_hash = digest(&output);
 
-    let transaction_dir = create_recovery_dir(&vault)?;
-    let replacement = transaction_dir.join("replacement.md");
+    let transaction_dir = create_staging_dir(&vault)?;
+    let replacement = transaction_dir.join(STAGED_REPLACEMENT);
     let mut replacement_file = match OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -442,6 +468,18 @@ where
             .file_name()
             .unwrap_or_else(|| OsStr::new("recovery.md")),
     );
+    // Record where the original came from *before* claiming it. Between the claim below
+    // and the publish further down, these bytes exist nowhere else in the vault; if the
+    // process dies in that window, this note is what lets `sweep_staging` put them back
+    // rather than discard them.
+    if let Err(error) = write_origin_marker(&transaction_dir, &vault, &source) {
+        return cleanup_before_claim_error(
+            &replacement,
+            &replacement_identity,
+            &transaction_dir,
+            error,
+        );
+    }
     if let Err(error) = fs::rename(&source, &recovery_source) {
         return cleanup_before_claim_error(
             &replacement,
@@ -595,7 +633,7 @@ where
     let source_hash = digest(&source_bytes);
     let output = rewrite(&source_bytes)?;
 
-    let transaction_dir = create_recovery_dir(&vault)?;
+    let transaction_dir = create_staging_dir(&vault)?;
     let (destination, mut destination_file) =
         match reserve_destination(&destination_dir, preferred_name) {
             Ok(reservation) => reservation,
@@ -752,6 +790,19 @@ fn validate_preferred_name(name: &OsStr) -> Result<(), String> {
     Ok(())
 }
 
+/// Claim a free name in the vault's holding area, returning the path to rename onto.
+///
+/// Shares `reserve_destination`'s policy so a rescued note collides the same way any other
+/// note does, and claims the name by creating it rather than by testing and hoping.
+pub(crate) fn reserve_holding_slot(holding: &Path, name: &OsStr) -> Result<PathBuf, String> {
+    reserve_destination(holding, name).map(|(path, _file)| path)
+}
+
+/// Whether this transaction directory carries the manifest that authorizes replaying it.
+pub(crate) fn is_manifest_transaction(transaction_dir: &Path) -> bool {
+    transaction_dir.join(DIRECTORY_MANIFEST).is_file()
+}
+
 fn reserve_destination(
     destination_dir: &Path,
     preferred_name: &OsStr,
@@ -785,22 +836,43 @@ fn reserve_destination(
     unreachable!("the filename suffix space is effectively unbounded")
 }
 
-fn create_recovery_dir(vault: &Path) -> Result<PathBuf, String> {
+/// Staging area for note bytes on their way into the vault. Stays *inside* the vault
+/// because publishing a rewritten note is `fs::rename(staged, note)`, which requires both
+/// paths on one filesystem; a machine-local staging area would fail with `EXDEV` for any
+/// vault on a separate partition or mount.
+///
+/// Leaving these bytes in a synced folder is safe because nothing replays them: recovery
+/// acts only on a `directory-move.json` manifest, and those are machine-local. Whatever a
+/// crash leaves behind here is inert, and `sweep_staging` clears it on the next open.
+fn create_staging_dir(vault: &Path) -> Result<PathBuf, String> {
     let app_data = vault.join(".helixnotes");
     let metadata = fs::symlink_metadata(&app_data)
         .map_err(|error| format!("Invalid vault app-data directory: {error}"))?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err("Vault app-data directory must be a real directory".to_string());
     }
-    let recovery_root = app_data.join("relocation-recovery");
-    fs::create_dir_all(&recovery_root)
-        .map_err(|error| format!("Could not create relocation recovery directory: {error}"))?;
-    let recovery_root = canonical_directory(&recovery_root, "relocation recovery directory")?;
-    if !recovery_root.starts_with(vault) {
-        return Err("Relocation recovery directory escaped the active vault".to_string());
+    let staging_root = app_data.join(STAGING_DIR);
+    fs::create_dir_all(&staging_root)
+        .map_err(|error| format!("Could not create note staging directory: {error}"))?;
+    let staging_root = canonical_directory(&staging_root, "note staging directory")?;
+    if !staging_root.starts_with(vault) {
+        return Err("Note staging directory escaped the active vault".to_string());
     }
+    reserve_transaction(&staging_root)
+}
+
+/// Directory for a single directory-move manifest, on this machine only.
+///
+/// Manifests are the one piece of relocation state that is ever *replayed*, which is
+/// precisely why they must not travel with the vault: replaying another machine's
+/// in-flight move is the data loss this machinery exists to prevent.
+fn create_manifest_dir(vault: &Path) -> Result<PathBuf, String> {
+    reserve_transaction(&crate::machine_local::relocation_dir(vault)?)
+}
+
+fn reserve_transaction(root: &Path) -> Result<PathBuf, String> {
     loop {
-        let transaction = recovery_root.join(uuid::Uuid::new_v4().to_string());
+        let transaction = root.join(uuid::Uuid::new_v4().to_string());
         match fs::create_dir(&transaction) {
             Ok(()) => return Ok(transaction),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
@@ -811,6 +883,112 @@ fn create_recovery_dir(vault: &Path) -> Result<PathBuf, String> {
             }
         }
     }
+}
+
+/// Records the claimed note's location *relative to the vault root*.
+///
+/// Relative, not absolute, because staging sits inside the vault and therefore travels
+/// with it: an absolute path recorded on one machine names nothing on another, and
+/// restoring to it would write outside that machine's vault entirely.
+fn write_origin_marker(transaction_dir: &Path, vault: &Path, source: &Path) -> Result<(), String> {
+    let relative = source
+        .strip_prefix(vault)
+        .map_err(|_| "The rewrite source escaped the active vault".to_string())?;
+    validate_relative_path(relative)?;
+    let path = transaction_dir.join(ORIGIN_MARKER);
+    let mut file = File::create(&path)
+        .map_err(|error| format!("Could not record the rewrite source location: {error}"))?;
+    let recorded = relative
+        .to_str()
+        .ok_or("Vault paths must be valid UTF-8 to be recoverable")?;
+    file.write_all(recorded.as_bytes())
+        .and_then(|_| file.sync_all())
+        .map_err(|error| format!("Could not record the rewrite source location: {error}"))?;
+    sync_directory(transaction_dir)
+        .map_err(|error| format!("Could not sync the rewrite source location: {error}"))
+}
+
+/// Clear the staging area left behind by an interrupted note rewrite, restoring any note
+/// whose only copy is the staged one.
+///
+/// Runs at vault open, before recovery, so directory-move recovery finds a complete tree.
+///
+/// A staged file is never replayed — only a `directory-move.json` manifest authorizes
+/// that, and those are machine-local — but it may still be the sole copy of a note. The
+/// `origin` marker says where it came from, and the origin path being *absent* is what
+/// distinguishes the two cases: absent means the rewrite died between claiming the
+/// original and publishing its replacement, so the staged bytes are the note; present
+/// means the replacement was published and the staged copy is a stale duplicate.
+pub fn sweep_staging(vault_root: &Path) -> usize {
+    let mut restored = 0;
+    let staging = vault_root.join(".helixnotes").join(STAGING_DIR);
+    // Resolve the vault once so the per-transaction containment check below compares two
+    // canonical paths; a relative or symlinked vault root would defeat it otherwise.
+    let Ok(vault) = canonical_directory(vault_root, "vault path") else {
+        return 0;
+    };
+    let Ok(entries) = fs::read_dir(&staging) else {
+        return 0;
+    };
+    for entry in entries.flatten() {
+        let transaction_dir = entry.path();
+        match restore_staged_note(&vault, &transaction_dir) {
+            Ok(true) => restored += 1,
+            Ok(false) => {}
+            Err(error) => {
+                // Leave the whole transaction alone: the bytes may still be the only copy,
+                // and deleting them to tidy up is the one unacceptable outcome.
+                log::error!("Could not restore a staged note from {transaction_dir:?}: {error}");
+                continue;
+            }
+        }
+        let _ = fs::remove_dir_all(&transaction_dir);
+    }
+    let _ = fs::remove_dir(&staging);
+    restored
+}
+
+/// Put a staged note back if these bytes are its only copy. Returns whether it restored one.
+///
+/// The origin is resolved against *this* vault rather than trusted as written, so a
+/// transaction that arrived from another machine can only ever write inside this vault.
+fn restore_staged_note(vault_root: &Path, transaction_dir: &Path) -> Result<bool, String> {
+    let Ok(recorded) = fs::read_to_string(transaction_dir.join(ORIGIN_MARKER)) else {
+        return Ok(false);
+    };
+    let relative = PathBuf::from(recorded);
+    validate_relative_path(&relative)?;
+    let origin = vault_root.join(&relative);
+    let Some(name) = relative.file_name() else {
+        return Ok(false);
+    };
+    let staged = transaction_dir.join(name);
+    // Origin present means the replacement was published and the staged copy is stale;
+    // origin absent means the rewrite died holding the note's only copy.
+    if origin.exists() || !staged.is_file() {
+        return Ok(false);
+    }
+    let Some(parent) = origin.parent() else {
+        return Ok(false);
+    };
+    if !parent.is_dir() {
+        return Err(format!("{parent:?} no longer exists"));
+    }
+    // Rejecting `..` is not enough. Staging travels with the vault, so the notebook the
+    // origin names may itself be a symlink pointing out of the vault on this machine, and
+    // `join` would follow it. Resolve the parent and require it to land inside the vault,
+    // the same check `create_staging_dir` makes for the staging root.
+    let parent = canonical_directory(parent, "restored note directory")?;
+    if !parent.starts_with(vault_root) {
+        return Err(format!("{parent:?} is outside the vault"));
+    }
+    let origin = parent.join(name);
+    if origin.exists() {
+        return Ok(false);
+    }
+    fs::rename(&staged, &origin).map_err(|error| error.to_string())?;
+    let _ = sync_directory(&parent);
+    Ok(true)
 }
 
 fn validate_directory_rewrite(source: &Path, rewrite: &DirectoryRewrite) -> Result<(), String> {
@@ -893,7 +1071,7 @@ fn write_directory_manifest(
     transaction_dir: &Path,
     manifest: &DirectoryMoveManifest,
 ) -> Result<(), String> {
-    let path = transaction_dir.join("directory-move.json");
+    let path = transaction_dir.join(DIRECTORY_MANIFEST);
     let bytes = serde_json::to_vec(manifest).map_err(|error| error.to_string())?;
     let mut file = OpenOptions::new()
         .write(true)
@@ -908,7 +1086,7 @@ fn write_directory_manifest(
 }
 
 fn cleanup_directory_manifest(transaction_dir: &Path) -> Result<(), String> {
-    let path = transaction_dir.join("directory-move.json");
+    let path = transaction_dir.join(DIRECTORY_MANIFEST);
     match fs::remove_file(&path) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -1067,6 +1245,241 @@ mod tests {
         }
     }
 
+    fn staged_transaction(root: &Path, origin: &str, name: &str, body: &str) -> PathBuf {
+        let transaction = root
+            .join(".helixnotes")
+            .join(STAGING_DIR)
+            .join(uuid::Uuid::new_v4().to_string());
+        fs::create_dir_all(&transaction).unwrap();
+        fs::write(transaction.join(ORIGIN_MARKER), origin).unwrap();
+        fs::write(transaction.join(name), body).unwrap();
+        transaction
+    }
+
+    #[test]
+    fn a_staged_note_is_restored_relative_to_this_vault() {
+        let root = vault("staging-restore");
+        staged_transaction(&root, "Projects/Plan.md", "Plan.md", "only copy");
+
+        assert_eq!(sweep_staging(&root), 1);
+
+        assert_eq!(
+            fs::read_to_string(root.join("Projects/Plan.md")).unwrap(),
+            "only copy"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Staging travels with the vault, so a marker can arrive from another machine. The
+    /// origin is resolved against *this* vault and must never escape it.
+    #[test]
+    fn a_staged_note_from_another_machine_cannot_escape_this_vault() {
+        let root = vault("staging-escape");
+        let outside = std::env::temp_dir().join(format!("escape-{}.md", uuid::Uuid::new_v4()));
+        let traversal = format!("../../../..{}", outside.to_string_lossy());
+        staged_transaction(
+            &root,
+            &traversal,
+            outside.file_name().unwrap().to_str().unwrap(),
+            "stolen",
+        );
+
+        assert_eq!(sweep_staging(&root), 0);
+
+        assert!(!outside.exists(), "the sweep wrote outside the vault");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Rejecting `..` is not enough: the notebook the origin names may itself be a symlink
+    /// out of the vault on the machine that receives it.
+    #[cfg(unix)]
+    #[test]
+    fn a_staged_note_cannot_escape_through_a_symlinked_notebook() {
+        use std::os::unix::fs::symlink;
+        let root = vault("staging-symlink");
+        let outside = std::env::temp_dir().join(format!("outside-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&outside).unwrap();
+        fs::remove_dir(root.join("Projects")).unwrap();
+        symlink(&outside, root.join("Projects")).unwrap();
+        staged_transaction(&root, "Projects/Plan.md", "Plan.md", "only copy");
+
+        assert_eq!(sweep_staging(&root), 0);
+
+        assert!(
+            !outside.join("Plan.md").exists(),
+            "the sweep followed a symlink out of the vault"
+        );
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[test]
+    fn a_staged_note_whose_original_is_back_in_place_is_discarded_not_restored() {
+        let root = vault("staging-stale");
+        fs::write(root.join("Projects/Plan.md"), "published").unwrap();
+        staged_transaction(&root, "Projects/Plan.md", "Plan.md", "stale copy");
+
+        assert_eq!(sweep_staging(&root), 0);
+
+        assert_eq!(
+            fs::read_to_string(root.join("Projects/Plan.md")).unwrap(),
+            "published"
+        );
+        assert!(!root.join(".helixnotes").join(STAGING_DIR).exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    const CRASH_VAULT_VAR: &str = "HELIXNOTES_CRASH_TEST_VAULT";
+    const CRASH_NOTES: usize = 400;
+
+    fn crash_note_body(index: usize, moved: bool) -> String {
+        format!("{} note {index}", if moved { "archive" } else { "project" })
+    }
+
+    /// Interrupt a real notebook move with a real process kill, then recover.
+    ///
+    /// A unit test cannot produce the state this exercises: unwinding a `DirectoryRelocation`
+    /// runs its cleanup, so the crash-recovery path only ever sees a simulation. Here a child
+    /// process performs the move against a real vault and the parent SIGKILLs it partway
+    /// through, leaving whatever the kernel happened to have written. The parent then runs
+    /// startup recovery — reading manifests from the machine-local directory they now live in.
+    ///
+    /// Where the kill lands is deliberately not controlled, so the assertions are the
+    /// invariants that must hold at *every* interruption point rather than one expected
+    /// outcome: every note survives exactly once, all of them on the same side of the move,
+    /// and recovery leaves no manifest behind for a later open to replay.
+    #[cfg(unix)]
+    #[test]
+    fn killing_the_app_mid_notebook_move_still_recovers() {
+        if let Ok(vault) = std::env::var(CRASH_VAULT_VAR) {
+            perform_crash_test_move(Path::new(&vault));
+            unreachable!("the child is killed or exits inside the move");
+        }
+
+        // The child must resolve machine-local state to the same place this process does,
+        // or the parent recovers against an empty directory and the test proves nothing.
+        let machine_root = crate::machine_local::test_root();
+        // Escalating delays walk the kill across the operation: the early ones land during
+        // the rename and manifest write, the later ones during the per-note rewrites.
+        let mut interrupted = 0;
+        let mut restored = 0;
+        for delay_ms in (0..40).map(|step| step * 2) {
+            let root = vault("directory-crash-kill");
+            let source = root.join("Projects/Launch");
+            fs::create_dir(&source).unwrap();
+            for index in 0..CRASH_NOTES {
+                fs::write(
+                    source.join(format!("Note{index}.md")),
+                    crash_note_body(index, false),
+                )
+                .unwrap();
+            }
+
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "vault::relocation::tests::killing_the_app_mid_notebook_move_still_recovers",
+                    "--exact",
+                ])
+                .env(CRASH_VAULT_VAR, &root)
+                .env(crate::machine_local::TEST_ROOT_VAR, &machine_root)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            // Wait for the child to reach the move before timing the kill. Sleeping from
+            // process spawn instead would measure test-binary startup, and every kill
+            // would land before the operation began.
+            let ready = root.join("child-ready");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while !ready.exists() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = fs::remove_file(&ready);
+
+            let manifests = crate::machine_local::relocation_dir(&root).unwrap();
+            if fs::read_dir(&manifests).unwrap().next().is_some() {
+                interrupted += 1;
+            }
+            // Exactly the startup sequence in `commands::open_vault_path`.
+            restored += sweep_staging(&root);
+            let failures = recover_directory_relocations(&root);
+            assert!(failures.is_empty(), "delay {delay_ms}ms: {failures:?}");
+
+            assert_crash_test_vault_is_whole(&root, delay_ms);
+
+            assert!(
+                fs::read_dir(&manifests).unwrap().next().is_none(),
+                "delay {delay_ms}ms: a manifest survived recovery and would replay on the next open"
+            );
+            fs::remove_dir_all(root).unwrap();
+        }
+        // Without this the test would quietly pass while killing children that had not
+        // begun the move, testing nothing.
+        assert!(
+            interrupted > 0,
+            "no run was killed with a move in flight; the timings need widening"
+        );
+        // The narrowest and most dangerous window: killed between claiming a note's only
+        // copy and publishing its replacement. If no run lands there, the restore path in
+        // `sweep_staging` is untested and this test is weaker than it looks.
+        assert!(
+            restored > 0,
+            "no run was killed while a note existed only in staging; the timings need widening"
+        );
+        eprintln!("interrupted {interrupted} moves; restored {restored} staged notes");
+    }
+
+    #[cfg(unix)]
+    fn perform_crash_test_move(root: &Path) {
+        let rewrites = (0..CRASH_NOTES)
+            .map(|index| DirectoryRewrite {
+                relative_path: PathBuf::from(format!("Note{index}.md")),
+                before: crash_note_body(index, false).into_bytes(),
+                after: crash_note_body(index, true).into_bytes(),
+            })
+            .collect();
+        fs::write(root.join("child-ready"), b"go").unwrap();
+        let transaction = relocate_directory(
+            root,
+            &root.join("Projects/Launch"),
+            &root.join("Archives/Launch"),
+            rewrites,
+        )
+        .expect("the move should start cleanly");
+        // Nothing commits: if the kill has not landed yet, wait for it rather than tidying
+        // up, so the parent always inspects an interrupted transaction.
+        std::mem::forget(transaction);
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        std::process::exit(0);
+    }
+
+    /// Every note is present exactly once, and the notebook is wholly on one side of the
+    /// move. A note that exists in neither place, in both, or with torn content is data loss.
+    #[cfg(unix)]
+    fn assert_crash_test_vault_is_whole(root: &Path, delay_ms: u64) {
+        let source = root.join("Projects/Launch");
+        let destination = root.join("Archives/Launch");
+        let moved = destination.is_dir();
+        assert!(
+            moved != source.is_dir(),
+            "delay {delay_ms}ms: the notebook is in both places or neither"
+        );
+        let home = if moved { &destination } else { &source };
+        for index in 0..CRASH_NOTES {
+            let note = home.join(format!("Note{index}.md"));
+            let body = fs::read_to_string(&note)
+                .unwrap_or_else(|error| panic!("delay {delay_ms}ms: lost {note:?}: {error}"));
+            assert_eq!(
+                body,
+                crash_note_body(index, moved),
+                "delay {delay_ms}ms: {note:?} was left half-written"
+            );
+        }
+    }
+
     #[test]
     fn directory_move_rollback_never_rewrites_a_recreated_source_file() {
         let root = vault("directory-rollback-ownership");
@@ -1185,10 +1598,8 @@ mod tests {
             fs::read_to_string(destination.join("Draft.md")).unwrap(),
             "archive draft"
         );
-        assert!(fs::read_dir(root.join(".helixnotes/relocation-recovery"))
-            .unwrap()
-            .next()
-            .is_none());
+        let manifests = crate::machine_local::relocation_dir(&root).unwrap();
+        assert!(fs::read_dir(manifests).unwrap().next().is_none());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1382,7 +1793,7 @@ mod tests {
         let root = vault("recovery-symlink");
         let outside = std::env::temp_dir().join(format!("outside-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&outside).unwrap();
-        symlink(&outside, root.join(".helixnotes/relocation-recovery")).unwrap();
+        symlink(&outside, root.join(".helixnotes/staging")).unwrap();
         let source = root.join("Projects/Plan.md");
         let destination = root.join("Resources/Plan.md");
         fs::write(&source, "precious").unwrap();
