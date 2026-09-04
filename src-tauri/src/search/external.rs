@@ -167,12 +167,14 @@ fn take_settled(pending: &mut HashMap<PathBuf, Seen>, now: Instant) -> Vec<PathB
 fn apply(search: &SearchIndex, settled: Vec<PathBuf>) -> Result<(), ApplyFailure> {
     let mut upserts = Vec::new();
     let mut gone = Vec::new();
+    let mut folder_arrived = false;
 
     for path in settled {
         let text = path.to_string_lossy().to_string();
         if path.is_file() {
             upserts.push(text);
         } else if path.is_dir() {
+            folder_arrived = true;
             // A folder that still exists means it arrived — renamed or moved into place.
             // Linux reports a child event per note and this would be redundant, but
             // Windows reports only the folder, so without walking it the notes inside
@@ -195,6 +197,18 @@ fn apply(search: &SearchIndex, settled: Vec<PathBuf>) -> Result<(), ApplyFailure
         }
     };
     removals.extend(gone);
+
+    // Windows reports a renamed folder as its new path only, never the old one, so the
+    // entries left at the old path have nothing to retire them and search would return
+    // each note twice — once pointing at a file that is no longer there. Retire whatever
+    // the filesystem no longer backs. Only on a folder event, which is rare, and it makes
+    // the index self-healing against any removal the watcher failed to see.
+    if folder_arrived {
+        match search.indexed_paths_missing_on_disk() {
+            Ok(stale) => removals.extend(stale),
+            Err(error) => log::warn!("Could not check the index for stale notes: {error}"),
+        }
+    }
 
     if upserts.is_empty() && removals.is_empty() {
         return Ok(());
@@ -429,8 +443,9 @@ mod tests {
         let destination = vault.join("Archives").join("Launch");
         std::fs::rename(&source, &destination).unwrap();
 
-        // Only the directories, exactly what Windows reports.
-        apply(&index, vec![destination.clone(), source.clone()]).unwrap();
+        // Only the destination: Windows reports the folder's new path and never the old
+        // one, so nothing here identifies what to retire.
+        apply(&index, vec![destination.clone()]).unwrap();
 
         let mut found = hits(&index, "zylophonic");
         found.sort();
@@ -441,7 +456,8 @@ mod tests {
         expected.sort();
         assert_eq!(
             found, expected,
-            "the notes must be indexed at the folder's new location, not lost with the old"
+            "each note must appear once, at the folder's new location — not lost with the \
+             old path, and not duplicated across both"
         );
         std::fs::remove_dir_all(vault).unwrap();
     }

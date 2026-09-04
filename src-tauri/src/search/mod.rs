@@ -474,6 +474,37 @@ impl SearchIndex {
         Ok(paths)
     }
 
+    /// Every indexed path whose file is no longer on disk.
+    ///
+    /// The watcher normally learns of a removal from the event that reports it, but a
+    /// folder renamed on Windows arrives as the new path only — the old one is never
+    /// reported, so nothing would otherwise retire those entries and search would return
+    /// two hits per note, one pointing at a file that no longer exists. Scanning for
+    /// entries the filesystem no longer backs repairs that without needing the old path.
+    pub fn indexed_paths_missing_on_disk(&self) -> Result<Vec<String>, String> {
+        let reader = self.index.reader().map_err(|error| error.to_string())?;
+        let searcher = reader.searcher();
+        let mut missing = Vec::new();
+        for segment in searcher.segment_readers() {
+            let store = segment
+                .get_store_reader(1)
+                .map_err(|error| error.to_string())?;
+            for doc_id in segment.doc_ids_alive() {
+                let document: TantivyDocument =
+                    store.get(doc_id).map_err(|error| error.to_string())?;
+                if let Some(value) = document
+                    .get_first(self.path_field)
+                    .and_then(|value| value.as_str())
+                {
+                    if !Path::new(value).exists() {
+                        missing.push(value.to_string());
+                    }
+                }
+            }
+        }
+        Ok(missing)
+    }
+
     pub fn search(&self, query_str: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
         let reader = self.index.reader().map_err(|e| e.to_string())?;
         let searcher = reader.searcher();
