@@ -165,7 +165,7 @@ fn take_settled(pending: &mut HashMap<PathBuf, Seen>, now: Instant) -> Vec<PathB
 /// This is where "resolve intent at flush time" happens: the event that queued a path is
 /// never consulted, only whether the path is a file right now.
 fn apply(search: &SearchIndex, settled: Vec<PathBuf>) -> Result<(), ApplyFailure> {
-    let mut upserts = Vec::new();
+    let mut upserts: Vec<String> = Vec::new();
     let mut gone = Vec::new();
     let mut folder_arrived = false;
 
@@ -209,6 +209,16 @@ fn apply(search: &SearchIndex, settled: Vec<PathBuf>) -> Result<(), ApplyFailure
             Err(error) => log::warn!("Could not check the index for stale notes: {error}"),
         }
     }
+
+    // One path can reach a batch twice — a folder event contributes every note inside it
+    // while the notes may also arrive as their own events. `apply_note_changes` issues all
+    // deletes before all adds, so a repeated path would be deleted once and then added
+    // twice, leaving two documents and returning the note twice from search.
+    let upserts: Vec<String> = {
+        let mut seen = HashSet::new();
+        upserts.retain(|path| seen.insert(path.clone()));
+        upserts
+    };
 
     if upserts.is_empty() && removals.is_empty() {
         return Ok(());
@@ -458,6 +468,30 @@ mod tests {
             found, expected,
             "each note must appear once, at the folder's new location — not lost with the \
              old path, and not duplicated across both"
+        );
+        std::fs::remove_dir_all(vault).unwrap();
+    }
+
+    /// A folder event contributes the notes inside it, and the same notes can arrive as
+    /// their own events in the same batch. Both reaching one flush must still leave one
+    /// document per note.
+    #[test]
+    fn a_note_reaching_one_batch_twice_is_indexed_once() {
+        let (vault, index) = indexed_vault("duplicate-upsert");
+        let notebook = vault.join("Projects").join("Launch");
+        std::fs::create_dir_all(&notebook).unwrap();
+        let note_path = note(&notebook, "One.md", "zylophonic once");
+
+        apply(
+            &index,
+            vec![notebook.clone(), note_path.clone(), note_path.clone()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            hits(&index, "zylophonic"),
+            vec![note_path.to_string_lossy()],
+            "the note must be indexed once, not once per event that mentioned it"
         );
         std::fs::remove_dir_all(vault).unwrap();
     }
