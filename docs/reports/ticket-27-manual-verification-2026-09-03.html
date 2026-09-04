@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>Ticket #27 — manual verification plan</title>
+  <title>Ticket #27 — manual verification plan and results</title>
   <style>
     :root {
       --page: #f3f1eb;
@@ -195,10 +195,12 @@
         This is the list of claims the automated suite does not establish, and the procedure for
         each. It is a gate on merging, not a backlog.
       </p>
-      <div class="gate">
-        <strong>Gate:</strong> V1 and V2 are acceptance criteria quoted verbatim from the issue and
-        must pass before merge. V3&ndash;V5 are environment claims the design rests on. V6 is a
-        pre-existing defect to file, not to fix here.
+      <div class="gate" style="border-color:#9ec7ac;background:var(--good-soft)">
+        <strong style="color:var(--good)">Run 2026-09-04:</strong> V1, V2, V3 and V4 <strong>pass</strong>
+        against the built release binary. V5 (Windows) could not be run on this machine and remains a
+        release gate. V6 filed as
+        <a href="https://github.com/zulucode-design/second-brain/issues/31">issue&nbsp;#31</a>.
+        Per-item results are recorded below; the original procedures are kept intact.
       </div>
       <div class="meta">
         <span>Branch <code>feat/27-machine-local-state</code></span>
@@ -395,6 +397,98 @@
       </p>
     </section>
 
+
+    <section id="results">
+      <h2>Results &mdash; 2026-09-04</h2>
+      <p>
+        Run against <code>target/release/helixnotes</code> built from <code>c4b096b</code>, on Linux
+        (Wayland). The vault fixtures sat on <code>/tmp</code> (device 52) and the machine-local
+        directory in <code>$HOME</code> (device 51), so every run was cross-device by construction.
+      </p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Item</th><th>Result</th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>V1</strong> Kill the app mid-move</td>
+            <td><span class="pill good" style="background:var(--good-soft);color:var(--good)">Pass</span></td>
+            <td>
+              A real notebook move was SIGKILLed mid-flight (rename complete, 83 of 400 notes
+              rewritten, live manifest). Its artifacts were placed in the pre-#27 in-vault location to
+              make an authentic legacy vault, and the release binary opened it. Result: migration and
+              recovery both completed in one open &mdash; <code>relocation-recovery/</code>,
+              <code>sync_state.json</code>, <code>repair_issues.json</code> and
+              <code>search_index/</code> all gone from the vault; manifest consumed (0 remaining);
+              all 400 notes present with rewrites finished. Separately the running app was SIGKILLed
+              three times mid-open on an 800-note vault: reopen gave 800/800 notes, 0 empty, 0 staging
+              leftovers, 800 docs indexed.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>V2</strong> Second machine, first open</td>
+            <td><span class="pill good" style="background:var(--good-soft);color:var(--good)">Pass</span></td>
+            <td>
+              Whole vault folder copied with <code>rsync -a</code>, no exclusions, to a second machine
+              simulated by redirecting <code>XDG_DATA_HOME</code> and <code>XDG_CONFIG_HOME</code>.
+              B kept A's <code>vault_id</code>, built its own index (30 docs, matching 30 notes on
+              disk), and touched <strong>0</strong> entries in A's machine-local directory. B's
+              <code>.helixnotes/</code> afterwards held only attachments, config.json, .gitignore,
+              state.json, trash, unfiled and vault_id &mdash; no index, sync state, repair ledger or
+              staging. That is the second acceptance criterion, observed rather than argued.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>V3</strong> Separate filesystem</td>
+            <td><span class="pill good" style="background:var(--good-soft);color:var(--good)">Pass</span></td>
+            <td>
+              <code>EXDEV</code> confirmed directly between the two filesystems used
+              (<code>os.rename</code> &rarr; errno 18, &ldquo;Invalid cross-device link&rdquo;), so the
+              ADR amendment's central claim is demonstrated rather than asserted: machine-local staging
+              would have broken every note publish on this layout. The full Rust suite passed
+              cross-device (241 tests, 19.3s versus 8s same-device &mdash; the cost of real
+              cross-device copies), exercising <code>move_path</code>'s copy fallback.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>V4</strong> Machine-local state deleted while running</td>
+            <td><span class="pill good" style="background:var(--good-soft);color:var(--good)">Pass</span></td>
+            <td>
+              Deleted <code>vaults/&lt;id&gt;/</code> with the app holding the vault: no crash, notes
+              intact. On restart the directory was rebuilt and the index repopulated (22 files), notes
+              still 30/30, nothing swept to unfiled, no panics logged.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>V5</strong> Windows</td>
+            <td><span class="pill medium">Not run</span></td>
+            <td>
+              No Windows machine available. Remains a release gate. The crash test is
+              <code>#[cfg(unix)]</code> and will skip there, so V1 must be done by hand on Windows.
+              The specific risk is the <code>origin</code> marker: it stores a vault-relative path
+              written with the platform separator, and a backslash path must not read back as one flat
+              filename.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>V6</strong> <code>replacement.md</code> collision</td>
+            <td><span class="pill low">Filed</span></td>
+            <td>
+              <a href="https://github.com/zulucode-design/second-brain/issues/31">Issue&nbsp;#31</a>.
+              Pre-existing; deliberately not fixed on this branch.
+            </td>
+          </tr>
+        </tbody>
+      </table></div>
+      <h3>One false alarm worth recording</h3>
+      <p>
+        V1's first run showed all 400 notes moved to <code>.helixnotes/unfiled/</code> rather than
+        staying in the notebook, which looked like data loss. It was not: the fixture notes carried no
+        <code>category</code> frontmatter field, and <code>para.rs</code> documents that
+        <em>&ldquo;the note's own <code>category</code> field is the only source of truth&rdquo;</em>,
+        so reconciliation correctly swept them to the holding area. A control vault with a proper
+        <code>category</code> field kept 30/30 notes in place. <code>para.rs</code> is untouched by this
+        branch.
+      </p>
+    </section>
     <section id="order">
       <h2>Suggested order</h2>
       <p>
@@ -404,9 +498,9 @@
         merge gate if Windows is not to hand. V6 is paperwork.
       </p>
       <p>
-        Record outcomes by updating this file in the same pull request, per
-        <code>docs/reports/README.md</code>: keep the entries and label their status rather than
-        deleting what has been verified.
+        Outcomes are recorded in <a href="#results">Results</a> above, per
+        <code>docs/reports/README.md</code>: the procedures are kept intact and labelled rather than
+        deleted once verified. V5 is the one item still outstanding.
       </p>
     </section>
   </div>
