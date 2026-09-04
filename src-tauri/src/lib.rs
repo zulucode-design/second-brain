@@ -8,6 +8,7 @@ mod commands;
 mod history;
 mod hotkey;
 mod image_proxy;
+mod machine_local;
 mod search;
 mod state;
 mod sync;

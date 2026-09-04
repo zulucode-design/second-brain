@@ -1,17 +1,16 @@
 // WebDAV sync provider.
 //
 // Model: the vault stays local; this mirrors it to/from a user-configured WebDAV
-// remote (Nextcloud/ownCloud/NAS). A local manifest (.helixnotes/sync_state.json)
+// remote (Nextcloud/ownCloud/NAS). A machine-local manifest (see `machine_local`)
 // records what was in sync last time, so we can do a three-way diff (local vs remote
 // vs manifest) and resolve each file as upload/download/delete, with keep-both
 // conflict copies so nothing is ever lost.
 //
 // Synced set: every `*.md` in the vault tree, `.helixnotes/attachments/`, and
-// `.helixnotes/notebook_icons.json`. Search indexes, trash, history, other metadata,
+// `.helixnotes/notebook_icons.json`. Trash, history, other metadata,
 // and the manifest itself remain local-only.
 
 use crate::state::AppState;
-use crate::vault::operations::helixnotes_dir;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -50,20 +49,38 @@ struct ManifestEntry {
     remote_etag: String, // remote etag at last sync
 }
 
-fn manifest_path(vault: &str) -> PathBuf {
-    helixnotes_dir(vault).join("sync_state.json")
+/// Records what this machine last saw on the remote, so it is machine-local. A missing
+/// manifest is not an error: sync falls back to treating everything as new, which is the
+/// same position a fresh machine starts from.
+fn manifest_path(vault: &str) -> Result<PathBuf, String> {
+    crate::machine_local::sync_state_path(Path::new(vault))
 }
 
 fn load_manifest(vault: &str) -> SyncManifest {
-    fs::read_to_string(manifest_path(vault))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+    // A manifest that cannot be read is not fatal: sync falls back to treating everything
+    // as new, which is the position a fresh machine starts from anyway. It does mean a
+    // full re-hash, so say why rather than doing it silently.
+    match manifest_path(vault) {
+        Ok(path) => fs::read_to_string(path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default(),
+        Err(error) => {
+            log::warn!("Syncing without a local manifest, so every file looks new: {error}");
+            SyncManifest::default()
+        }
+    }
 }
 
 fn save_manifest(vault: &str, m: &SyncManifest) {
-    if let Ok(s) = serde_json::to_string(m) {
-        let _ = fs::write(manifest_path(vault), s);
+    // Losing this costs the next sync a full re-hash rather than any data, but a silent
+    // no-op here looks exactly like a working sync that re-uploads everything each run.
+    let result = manifest_path(vault).and_then(|path| {
+        let encoded = serde_json::to_string(m).map_err(|error| error.to_string())?;
+        fs::write(path, encoded).map_err(|error| error.to_string())
+    });
+    if let Err(error) = result {
+        log::error!("Could not save the sync manifest; the next sync will re-hash: {error}");
     }
 }
 

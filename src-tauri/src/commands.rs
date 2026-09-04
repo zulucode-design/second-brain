@@ -42,7 +42,7 @@ fn record_repair_issue(
             key: "reconciliation:ledger".to_string(),
             stage: repair::RepairStage::Reconciliation,
             message: format!("The repair ledger was unreadable and has been replaced: {error}"),
-            paths: vec![".helixnotes/repair_issues.json".to_string()],
+            paths: vec![repair::ledger_location(vault_path)],
         });
         status
     });
@@ -54,7 +54,7 @@ fn record_repair_issue(
             message: format!(
                 "The repair warning could not be saved to disk. Keep the app open and retry: {error}"
             ),
-            paths: vec![".helixnotes/repair_issues.json".to_string()],
+            paths: vec![repair::ledger_location(vault_path)],
         });
         log::error!("Could not persist vault repair status: {error}");
     }
@@ -240,6 +240,13 @@ fn open_vault_path(
         .lock()
         .map_err(|error| error.to_string())?;
     operations::ensure_vault_structure(&path)?;
+    // Before anything reads state: pull machine-local state out of the vault if this is
+    // an older vault, and drop staging left behind by an interrupted note rewrite.
+    crate::machine_local::migrate(Path::new(&path))?;
+    let restored = crate::vault::relocation::sweep_staging(Path::new(&path));
+    if restored > 0 {
+        log::warn!("Restored {restored} note(s) left in staging by an interrupted rewrite");
+    }
     let (mut repair_status, ledger_error) = match repair::load(&path) {
         Ok(status) => (status, None),
         Err(error) => (repair::RepairStatus::default(), Some(error)),
@@ -250,7 +257,7 @@ fn open_vault_path(
             key: "reconciliation:ledger".to_string(),
             stage: repair::RepairStage::Reconciliation,
             message: format!("The repair ledger was unreadable and has been replaced: {error}"),
-            paths: vec![".helixnotes/repair_issues.json".to_string()],
+            paths: vec![repair::ledger_location(&path)],
         });
     }
 
@@ -3306,6 +3313,13 @@ static MOBILE_CONFIG_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::O
 #[cfg(mobile)]
 pub fn set_mobile_config_dir(path: std::path::PathBuf) {
     let _ = MOBILE_CONFIG_DIR.set(path);
+}
+
+/// The injected mobile directory, or `None` on desktop where it is never set.
+// Unused under `cfg(test)`, where machine-local state is rooted in a temp directory.
+#[cfg_attr(test, allow(dead_code))]
+pub fn mobile_config_dir() -> Option<std::path::PathBuf> {
+    MOBILE_CONFIG_DIR.get().cloned()
 }
 
 fn app_config_path() -> Result<std::path::PathBuf, String> {

@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Ticket #27 — manual verification plan and results</title>
+  <style>
+    :root {
+      --page: #f3f1eb;
+      --paper: #fffdf8;
+      --paper-2: #f7f4ec;
+      --ink: #20241f;
+      --muted: #626960;
+      --line: #d7d1c5;
+      --accent: #185f52;
+      --accent-soft: #dcece6;
+      --critical: #a42626;
+      --critical-soft: #f8dfdc;
+      --high: #a34b16;
+      --high-soft: #f8e5d7;
+      --medium: #776000;
+      --medium-soft: #f4ebbd;
+      --low: #4f6278;
+      --low-soft: #e3e9f0;
+      --good: #276c43;
+      --good-soft: #dcece2;
+      --shadow: 0 18px 48px rgba(31, 38, 32, 0.09);
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: Iowan Old Style, Palatino Linotype, Book Antiqua, Georgia, serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 8% -8%, rgba(24, 95, 82, 0.14), transparent 34rem), var(--page);
+      color: var(--ink);
+      font: 16px/1.62 var(--sans);
+    }
+    a { color: var(--accent); text-underline-offset: 0.16em; }
+    code { font-family: var(--mono); font-size: 0.87em; overflow-wrap: anywhere; }
+    .page { width: min(1180px, calc(100% - 30px)); margin: 26px auto 70px; }
+
+    .hero, section {
+      border: 1px solid var(--line);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+    .hero { padding: clamp(28px, 6vw, 66px); border-radius: 28px; }
+    .kicker { margin: 0 0 12px; color: var(--accent); font-size: 0.75rem; font-weight: 850; letter-spacing: 0.14em; text-transform: uppercase; }
+    h1, h2, h3, h4 { line-height: 1.18; }
+    h1 { max-width: 850px; margin: 0; font: 600 clamp(2.55rem, 7vw, 5rem)/1.03 var(--serif); letter-spacing: -0.045em; }
+    .intro { max-width: 820px; margin: 22px 0 0; color: var(--muted); font-size: clamp(1.03rem, 2vw, 1.25rem); }
+    .gate { margin-top: 27px; padding: 18px 20px; border: 1px solid #dfaaa6; border-radius: 15px; background: var(--critical-soft); }
+    .gate strong { color: var(--critical); }
+    .meta { display: flex; flex-wrap: wrap; gap: 7px 18px; margin-top: 22px; color: var(--muted); font-size: 0.86rem; }
+
+    .numbers { display: grid; grid-template-columns: repeat(5, 1fr); gap: 11px; margin-top: 16px; }
+    .number { min-height: 104px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); }
+    .number strong { display: block; font: 600 2.1rem/1 var(--serif); }
+    .number span { display: block; margin-top: 8px; color: var(--muted); font-size: 0.79rem; }
+    .number.critical strong { color: var(--critical); }
+    .number.high strong { color: var(--high); }
+    .number.medium strong { color: var(--medium); }
+    .number.low strong { color: var(--low); }
+    .number.good strong { color: var(--good); }
+
+    .layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 26px; margin-top: 31px; align-items: start; }
+    nav { position: sticky; top: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--paper) 94%, transparent); backdrop-filter: blur(10px); }
+    nav strong { display: block; margin: 0 7px 8px; color: var(--muted); font-size: 0.68rem; letter-spacing: 0.13em; text-transform: uppercase; }
+    nav a { display: block; padding: 6px 8px; border-radius: 8px; color: var(--ink); font-size: 0.86rem; text-decoration: none; }
+    nav a:hover { color: var(--accent); background: var(--accent-soft); }
+    main { min-width: 0; }
+    section { scroll-margin-top: 18px; margin-bottom: 27px; padding: clamp(22px, 4vw, 37px); border-radius: 22px; }
+    section > h2 { margin: 0 0 10px; font: 600 clamp(1.75rem, 4vw, 2.45rem)/1.12 var(--serif); letter-spacing: -0.025em; }
+    .section-intro { max-width: 780px; margin-top: 0; color: var(--muted); }
+
+    .callout { margin: 18px 0 0; padding: 16px 18px; border-left: 4px solid var(--accent); border-radius: 4px 12px 12px 4px; background: var(--accent-soft); }
+    .callout.warning { border-color: var(--high); background: var(--high-soft); }
+    .callout p { margin: 0; }
+    .decision-list { display: grid; gap: 11px; margin-top: 20px; }
+    .decision { padding: 16px 17px; border: 1px solid var(--line); border-radius: 13px; background: var(--paper-2); }
+    .decision h3 { margin: 0 0 5px; font-size: 1rem; }
+    .decision p { margin: 0; color: var(--muted); }
+    .decision .recommend { color: var(--ink); }
+
+    .loop { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; margin-top: 20px; counter-reset: loop; }
+    .loop div { padding: 15px; border: 1px solid var(--line); border-radius: 13px; background: var(--paper-2); counter-increment: loop; }
+    .loop div::before { content: counter(loop); display: grid; width: 28px; height: 28px; margin-bottom: 9px; place-items: center; border-radius: 50%; background: var(--accent); color: white; font-weight: 800; }
+    .loop strong { display: block; margin-bottom: 4px; }
+    .loop p { margin: 0; color: var(--muted); font-size: 0.89rem; }
+
+    .phase { margin-top: 30px; }
+    .phase > header { display: flex; align-items: baseline; justify-content: space-between; gap: 15px; margin-bottom: 11px; }
+    .phase > header h3 { margin: 0; font: 600 1.55rem/1.2 var(--serif); }
+    .phase > header span { color: var(--muted); font-size: 0.8rem; }
+    .work { margin-top: 12px; border: 1px solid var(--line); border-radius: 15px; background: var(--paper-2); overflow: hidden; }
+    .work-head { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; padding: 18px 18px 12px; }
+    .step { display: grid; width: 31px; height: 31px; place-items: center; border-radius: 50%; background: var(--accent); color: white; font-weight: 850; }
+    .work-head h4 { margin: 1px 0 3px; font-size: 1.08rem; }
+    .work-head p { margin: 0; color: var(--muted); font-size: 0.88rem; }
+    .badge { padding: 4px 9px; border-radius: 999px; font-size: 0.66rem; font-weight: 900; letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap; }
+    .badge.critical { color: var(--critical); background: var(--critical-soft); }
+    .badge.high { color: var(--high); background: var(--high-soft); }
+    .badge.medium { color: var(--medium); background: var(--medium-soft); }
+    .badge.low { color: var(--low); background: var(--low-soft); }
+    .work-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 0 18px 18px; }
+    .cell { padding: 13px 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper); }
+    .cell.wide { grid-column: 1 / -1; }
+    .cell strong { display: block; margin-bottom: 4px; color: var(--accent); font-size: 0.69rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    .cell p, .cell ul { margin: 0; }
+    .cell ul { padding-left: 19px; }
+    .cell li + li { margin-top: 4px; }
+    details { border-top: 1px dashed var(--line); padding: 12px 18px 15px; color: var(--muted); font-size: 0.85rem; }
+    summary { cursor: pointer; color: var(--accent); font-weight: 800; }
+    details p { margin: 8px 0 0; }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.89rem; }
+    th, td { padding: 11px 9px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 0.69rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    tbody tr:last-child td { border-bottom: 0; }
+    .status { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 0.7rem; font-weight: 850; white-space: nowrap; }
+    .status.open { color: var(--high); background: var(--high-soft); }
+    .status.later { color: var(--low); background: var(--low-soft); }
+    .status.gate { color: var(--critical); background: var(--critical-soft); }
+    .checklist { padding-left: 21px; }
+    .checklist li + li { margin-top: 8px; }
+    footer { padding: 10px 5px 0; color: var(--muted); font-size: 0.8rem; text-align: center; }
+
+    @media (max-width: 900px) {
+      .numbers { grid-template-columns: repeat(2, 1fr); }
+      .numbers .number:last-child { grid-column: 1 / -1; }
+      .layout { grid-template-columns: 1fr; }
+      nav { position: static; display: flex; flex-wrap: wrap; gap: 2px 6px; }
+      nav strong { width: 100%; }
+      nav a { display: inline-block; }
+      .loop { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 620px) {
+      .page { width: min(100% - 18px, 1180px); margin-top: 9px; }
+      .hero, section { border-radius: 17px; }
+      .hero { padding: 25px 20px; }
+      h1 { font-size: 2.55rem; }
+      .numbers, .loop, .work-body { grid-template-columns: 1fr; }
+      .numbers .number:last-child, .cell.wide { grid-column: auto; }
+      .work-head { grid-template-columns: auto 1fr; }
+      .work-head .badge { grid-column: 2; justify-self: start; }
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #141714; --paper: #1d211d; --paper-2: #242924; --ink: #e9ece5;
+        --muted: #adb6aa; --line: #3a4138; --accent: #8bcab4; --accent-soft: #233e35;
+        --critical: #ff9089; --critical-soft: #452524; --high: #f1a267; --high-soft: #482e1d;
+        --medium: #e3c65f; --medium-soft: #443d20; --low: #aec3d8; --low-soft: #2b3540;
+        --good: #7fd19c; --good-soft: #203b2a; --shadow: 0 18px 48px rgba(0, 0, 0, 0.25);
+      }
+    }
+    @media print {
+      :root { --page: white; --paper: white; --paper-2: #fafafa; --ink: #111; --muted: #555; --line: #ccc; }
+      body { background: white; font-size: 10.5pt; }
+      .page { width: 100%; margin: 0; }
+      .hero, section { box-shadow: none; }
+      .layout { display: block; }
+      nav { display: none; }
+      .work { break-inside: avoid; }
+      details, details > * { display: block; }
+    }
+
+    .quote { margin: 0 0 18px; padding: 14px 18px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 12px 12px 0; }
+    .note { margin-top: 16px; padding: 13px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper-2); color: var(--muted); }
+    .pill { display: inline-block; margin-left: 8px; padding: 3px 10px; border-radius: 999px; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; vertical-align: middle; }
+    .pill.critical { background: var(--critical-soft); color: var(--critical); }
+    .pill.high { background: var(--high-soft); color: var(--high); }
+    .pill.medium { background: var(--medium-soft); color: var(--medium); }
+    .pill.low { background: var(--low-soft); color: var(--low); }
+    section { margin-top: 20px; padding: clamp(22px, 4vw, 40px); border-radius: 22px; }
+    section h2 { margin: 0 0 16px; font: 600 clamp(1.5rem, 3vw, 2.1rem)/1.15 var(--serif); letter-spacing: -0.02em; }
+    section h3 { margin: 22px 0 8px; font-size: 0.78rem; font-weight: 850; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+    section ol, section ul { margin: 0; padding-left: 1.25rem; }
+    section li { margin: 6px 0; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <p class="kicker">Manual verification plan</p>
+      <h1>What the suite cannot prove about ticket&nbsp;#27</h1>
+      <p class="intro">
+        #27 moved machine-local state out of the vault. Its own text warns that
+        <em>&ldquo;a green test suite is not evidence here &mdash; the recovery code only runs when
+        something was interrupted, which is exactly the case tests tend not to produce.&rdquo;</em>
+        This is the list of claims the automated suite does not establish, and the procedure for
+        each. It is a gate on merging, not a backlog.
+      </p>
+      <div class="gate" style="border-color:#9ec7ac;background:var(--good-soft)">
+        <strong style="color:var(--good)">Run 2026-09-04:</strong> V1, V2, V3 and V4 <strong>pass</strong>
+        against the built release binary. V5 (Windows) could not be run on this machine and remains a
+        release gate. V6 filed as
+        <a href="https://github.com/zulucode-design/second-brain/issues/31">issue&nbsp;#31</a>.
+        Per-item results are recorded below; the original procedures are kept intact.
+      </div>
+      <div class="meta">
+        <span>Branch <code>feat/27-machine-local-state</code></span>
+        <span>Commit <code>1ec80fe</code></span>
+        <span>Automated: 239 Rust tests green, <code>pnpm verify</code> green</span>
+      </div>
+    </header>
+
+    <section id="why">
+      <h2>Why these gaps exist</h2>
+      <p>
+        Three different reasons, worth keeping apart because they call for different responses:
+      </p>
+      <ul>
+        <li><strong>The harness cannot reach it.</strong> The suite drives Rust functions, not the
+          Tauri application. Killing <em>the app</em> mid-operation is outside what
+          <code>cargo test</code> can express.</li>
+        <li><strong>The environment is single.</strong> One machine, one filesystem, one OS. Claims
+          about a second machine, a separate mount, or Windows are untested by construction.</li>
+        <li><strong>Known and deliberately out of scope.</strong> Real, pre-existing, and wider than
+          this ticket.</li>
+      </ul>
+      <p>
+        The automated crash test that <em>does</em> exist
+        (<code>killing_the_app_mid_notebook_move_still_recovers</code>) SIGKILLs a real child process
+        performing a real notebook move across 40 timings, then runs the real startup sequence. It is
+        the strongest repeatable form of AC&nbsp;5, and it found two defects the ordinary suite could
+        not. It is still not the application.
+      </p>
+    </section>
+
+    <section id="v1">
+      <h2>V1 &mdash; Kill the running app mid-move <span class="pill critical">Acceptance criterion</span></h2>
+      <p class="quote">
+        &ldquo;Interrupting a note move mid-flight and restarting still recovers, with recovery state
+        read from its new location &mdash; <strong>verified by actually killing the app mid-operation,
+        not by a unit test</strong>.&rdquo;
+      </p>
+      <h3>Procedure</h3>
+      <ol>
+        <li>Build and run the real app: <code>pnpm tauri dev</code>.</li>
+        <li>Create a notebook under <code>Projects/</code> with roughly 300&ndash;500 notes, so the
+          move takes long enough to interrupt. Reuse the generator shape from the crash test rather
+          than clicking: write the files directly into the vault, then open the vault in the app.</li>
+        <li>Note the machine-local directory for that vault:
+          <code>~/.local/share/helixnotes/vaults/$(cat &lt;vault&gt;/.helixnotes/vault_id)/</code>.</li>
+        <li>Start a move of that notebook to <code>Archives/</code> from the UI.</li>
+        <li>While it runs, from another terminal: <code>pkill -9 -f 'second-brain|helixnotes'</code>.
+          Use SIGKILL &mdash; SIGTERM would let cleanup run and prove nothing.</li>
+        <li>Inspect before restarting: confirm <code>relocation/&lt;uuid&gt;/directory-move.json</code>
+          exists <em>in the machine-local directory</em> and that <code>.helixnotes/</code> contains no
+          <code>relocation-recovery/</code>. This is the part of the criterion about the new location.</li>
+        <li>Restart the app and open the same vault.</li>
+      </ol>
+      <h3>Pass criteria</h3>
+      <ul>
+        <li>Every note is present exactly once, wholly on one side of the move, with intact content.</li>
+        <li>The machine-local <code>relocation/</code> directory is empty afterwards.</li>
+        <li>No repair banner, or a repair banner that names real paths and clears on retry.</li>
+        <li><code>.helixnotes/staging/</code> is gone or empty.</li>
+      </ul>
+      <p class="note">
+        Repeat at least five times, varying when the kill lands &mdash; early (during the directory
+        rename) and late (during per-note rewrites) exercise different code. If the app is too fast to
+        interrupt reliably, raise the note count rather than adding a sleep to production code.
+      </p>
+      <h3>On failure</h3>
+      <p>
+        Capture the vault and the machine-local directory <em>before</em> reopening &mdash; reopening
+        runs the sweep and destroys the evidence. <code>cp -a</code> both, then attach to the ticket.
+      </p>
+    </section>
+
+    <section id="v2">
+      <h2>V2 &mdash; Second machine, first open <span class="pill critical">Acceptance criterion</span></h2>
+      <p class="quote">
+        &ldquo;The search index rebuilds correctly from its new location, including for a vault opened
+        for the first time on a second machine.&rdquo;
+      </p>
+      <p>
+        Currently supported by reasoning plus the deleted-directory rebuild test: machine B is the same
+        code path as a missing machine-local directory. That is an argument, not a run.
+      </p>
+      <h3>Procedure</h3>
+      <ol>
+        <li>On machine A, use a vault until search works. Confirm <code>.helixnotes/vault_id</code> exists.</li>
+        <li>Copy the <strong>whole vault folder</strong> to machine B &mdash; <code>rsync -a</code>, no
+          exclusions. Copying everything is the point of the ticket; an exclusion list would test the
+          thing #27 exists to remove.</li>
+        <li>Do <em>not</em> copy <code>~/.local/share/helixnotes/</code>.</li>
+        <li>Open the vault on B and search for a term you know is in an old note.</li>
+      </ol>
+      <h3>Pass criteria</h3>
+      <ul>
+        <li>The vault opens without error and search returns correct results on B.</li>
+        <li>B creates <code>vaults/&lt;same id as A&gt;/search/</code> under its own data directory.</li>
+        <li>B's <code>vault_id</code> is unchanged &mdash; identical to A's.</li>
+        <li>Nothing new appears inside <code>.helixnotes/</code> on B beyond ordinary vault content.</li>
+      </ul>
+      <p class="note">
+        A second machine is not strictly required: a second Linux user account, or the same binary with
+        <code>XDG_DATA_HOME</code> pointed elsewhere, reproduces it faithfully and is far cheaper.
+        Use that as the routine form and a real second machine once before release.
+      </p>
+    </section>
+
+    <section id="v3">
+      <h2>V3 &mdash; Vault on a separate filesystem <span class="pill high">Design claim</span></h2>
+      <p>
+        The entire justification for keeping <code>.helixnotes/staging/</code> inside the vault is that
+        publishing a note is <code>fs::rename(staged, note)</code> and would fail with
+        <code>EXDEV</code> across mounts. That claim is load-bearing for the ADR amendment and has never
+        been run against an actual separate filesystem. The copy-fallback in
+        <code>machine_local::move_path</code> is likewise never exercised.
+      </p>
+      <h3>Procedure</h3>
+      <ol>
+        <li>Create a separate filesystem and put a vault on it:
+          <code>truncate -s 512M /tmp/vault.img &amp;&amp; mkfs.ext4 /tmp/vault.img</code>, then mount it.</li>
+        <li>Confirm it really is separate: <code>stat -c %d</code> on the vault and on
+          <code>~/.local/share</code> must differ.</li>
+        <li>Open the vault, rename a note (exercises <code>rewrite_file</code>), move a notebook
+          between categories, and run V1's kill test once on this vault.</li>
+        <li>Separately, seed a <em>legacy</em> vault on this mount (a
+          <code>.helixnotes/relocation-recovery/</code> and a <code>sync_state.json</code>) and open it,
+          to force <code>move_path</code> down its cross-device copy branch.</li>
+      </ol>
+      <h3>Pass criteria</h3>
+      <ul>
+        <li>No <code>EXDEV</code> / &ldquo;Invalid cross-device link&rdquo; anywhere in the log.</li>
+        <li>Migration completes; the legacy files are gone from the vault and present in the
+          machine-local directory.</li>
+      </ul>
+    </section>
+
+    <section id="v4">
+      <h2>V4 &mdash; Machine-local state deleted while running <span class="pill medium">Acceptance criterion, partly covered</span></h2>
+      <p class="quote">
+        &ldquo;A vault whose machine-local directories are deleted outside the app recovers by rebuilding
+        them, not by failing to open.&rdquo;
+      </p>
+      <p>
+        A unit test covers deletion between opens. It does not cover deletion <em>while the app holds
+        the vault</em>, which is when a live Tantivy index has open file handles.
+      </p>
+      <h3>Procedure</h3>
+      <ol>
+        <li>With the app open on a vault, <code>rm -rf ~/.local/share/helixnotes/vaults/&lt;id&gt;</code>.</li>
+        <li>Search, edit a note, rename a note, and move a notebook &mdash; without restarting.</li>
+        <li>Restart and repeat the same operations.</li>
+      </ol>
+      <h3>Pass criteria</h3>
+      <ul>
+        <li>No crash. Degraded search before restart is acceptable; data loss is not.</li>
+        <li>After restart the vault opens, the directory is rebuilt, and search works again.</li>
+      </ul>
+    </section>
+
+    <section id="v5">
+      <h2>V5 &mdash; Windows <span class="pill medium">Environment</span></h2>
+      <p>
+        The repo targets Windows and Linux. Everything above ran on Linux only. Windows differs in ways
+        this change touches directly: <code>sync_directory</code> is a no-op there, path separators reach
+        the <code>origin</code> marker, and <code>dirs::data_local_dir()</code> resolves elsewhere.
+      </p>
+      <h3>Minimum</h3>
+      <ul>
+        <li>Run the Rust suite on Windows &mdash; the crash test is <code>#[cfg(unix)]</code> and will
+          skip, so V1 must be done by hand there.</li>
+        <li>V1 once, using Task Manager &rarr; End Task rather than <code>pkill</code>.</li>
+        <li>Confirm the <code>origin</code> marker round-trips: a note in a nested notebook, renamed,
+          recovers to the right path. The marker stores a relative path written with the platform
+          separator; a backslash path must not be read back as a single flat filename.</li>
+      </ul>
+    </section>
+
+    <section id="v6">
+      <h2>V6 &mdash; The <code>replacement.md</code> collision <span class="pill low">File, do not fix here</span></h2>
+      <p>
+        Pre-existing and unrelated to this ticket's goal, but now easier to reach.
+        <code>rewrite_file</code> stages its rewritten copy as <code>replacement.md</code> inside the
+        transaction directory, and claims the original into the same directory under its own filename.
+        A note genuinely named <code>replacement.md</code> collides with the staged copy.
+      </p>
+      <p>
+        <code>rescue_legacy_staged_notes</code> also treats a file named <code>replacement.md</code> as
+        derived and discards it, so in a legacy vault the collision could cost that note.
+      </p>
+      <p class="note">
+        Action: open an issue referencing <code>vault/relocation.rs</code>
+        <code>rewrite_file</code>. The fix is to stage under a name that cannot collide &mdash; a
+        reserved subdirectory, or a name derived from the transaction id. Out of scope for #27; do not
+        widen this branch to take it.
+      </p>
+    </section>
+
+
+    <section id="results">
+      <h2>Results &mdash; 2026-09-04</h2>
+      <p>
+        Run against <code>target/release/helixnotes</code> built from <code>c4b096b</code>, on Linux
+        (Wayland). The vault fixtures sat on <code>/tmp</code> (device 52) and the machine-local
+        directory in <code>$HOME</code> (device 51), so every run was cross-device by construction.
+      </p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Item</th><th>Result</th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>V1</strong> Kill the app mid-move</td>
+            <td><span class="pill good" style="background:var(--good-soft);color:var(--good)">Pass</span></td>
+            <td>
+              A real notebook move was SIGKILLed mid-flight (rename complete, 83 of 400 notes
+              rewritten, live manifest). Its artifacts were placed in the pre-#27 in-vault location to
+              make an authentic legacy vault, and the release binary opened it. Result: migration and
+              recovery both completed in one open &mdash; <code>relocation-recovery/</code>,
+              <code>sync_state.json</code>, <code>repair_issues.json</code> and
+              <code>search_index/</code> all gone from the vault; manifest consumed (0 remaining);
+              all 400 notes present with rewrites finished. Separately the running app was SIGKILLed
+              three times mid-open on an 800-note vault: reopen gave 800/800 notes, 0 empty, 0 staging
+              leftovers, 800 docs indexed.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>V2</strong> Second machine, first open</td>
+            <td><span class="pill good" style="background:var(--good-soft);color:var(--good)">Pass</span></td>
+            <td>
+              Whole vault folder copied with <code>rsync -a</code>, no exclusions, to a second machine
+              simulated by redirecting <code>XDG_DATA_HOME</code> and <code>XDG_CONFIG_HOME</code>.
+              B kept A's <code>vault_id</code>, built its own index (30 docs, matching 30 notes on
+              disk), and touched <strong>0</strong> entries in A's machine-local directory. B's
+              <code>.helixnotes/</code> afterwards held only attachments, config.json, .gitignore,
+              state.json, trash, unfiled and vault_id &mdash; no index, sync state, repair ledger or
+              staging. That is the second acceptance criterion, observed rather than argued.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>V3</strong> Separate filesystem</td>
+            <td><span class="pill good" style="background:var(--good-soft);color:var(--good)">Pass</span></td>
+            <td>
+              <code>EXDEV</code> confirmed directly between the two filesystems used
+              (<code>os.rename</code> &rarr; errno 18, &ldquo;Invalid cross-device link&rdquo;), so the
+              ADR amendment's central claim is demonstrated rather than asserted: machine-local staging
+              would have broken every note publish on this layout. The full Rust suite passed
+              cross-device (241 tests, 19.3s versus 8s same-device &mdash; the cost of real
+              cross-device copies), exercising <code>move_path</code>'s copy fallback.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>V4</strong> Machine-local state deleted while running</td>
+            <td><span class="pill good" style="background:var(--good-soft);color:var(--good)">Pass</span></td>
+            <td>
+              Deleted <code>vaults/&lt;id&gt;/</code> with the app holding the vault: no crash, notes
+              intact. On restart the directory was rebuilt and the index repopulated (22 files), notes
+              still 30/30, nothing swept to unfiled, no panics logged.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>V5</strong> Windows</td>
+            <td><span class="pill medium">Not run</span></td>
+            <td>
+              No Windows machine available. Remains a release gate. The crash test is
+              <code>#[cfg(unix)]</code> and will skip there, so V1 must be done by hand on Windows.
+              The specific risk is the <code>origin</code> marker: it stores a vault-relative path
+              written with the platform separator, and a backslash path must not read back as one flat
+              filename.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>V6</strong> <code>replacement.md</code> collision</td>
+            <td><span class="pill low">Filed</span></td>
+            <td>
+              <a href="https://github.com/zulucode-design/second-brain/issues/31">Issue&nbsp;#31</a>.
+              Pre-existing; deliberately not fixed on this branch.
+            </td>
+          </tr>
+        </tbody>
+      </table></div>
+      <h3>One false alarm worth recording</h3>
+      <p>
+        V1's first run showed all 400 notes moved to <code>.helixnotes/unfiled/</code> rather than
+        staying in the notebook, which looked like data loss. It was not: the fixture notes carried no
+        <code>category</code> frontmatter field, and <code>para.rs</code> documents that
+        <em>&ldquo;the note's own <code>category</code> field is the only source of truth&rdquo;</em>,
+        so reconciliation correctly swept them to the holding area. A control vault with a proper
+        <code>category</code> field kept 30/30 notes in place. <code>para.rs</code> is untouched by this
+        branch.
+      </p>
+    </section>
+    <section id="order">
+      <h2>Suggested order</h2>
+      <p>
+        V1 first &mdash; it is the criterion most likely to fail and the most expensive to discover late.
+        V3 next, because if the <code>EXDEV</code> claim is wrong the ADR amendment is wrong and the
+        design changes. V2 and V4 are cheap and can run in any order. V5 is a release gate rather than a
+        merge gate if Windows is not to hand. V6 is paperwork.
+      </p>
+      <p>
+        Outcomes are recorded in <a href="#results">Results</a> above, per
+        <code>docs/reports/README.md</code>: the procedures are kept intact and labelled rather than
+        deleted once verified. V5 is the one item still outstanding.
+      </p>
+    </section>
+  </div>
+</body>
+</html>

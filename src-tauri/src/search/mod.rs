@@ -20,9 +20,10 @@ use walkdir::WalkDir;
 /// notes, so this never loses data).
 const INDEX_SCHEMA_VERSION: &str = "2-cjk-bigram";
 
-/// Per-vault search index dir in local app-data, kept out of the (possibly synced) vault.
+/// The pre-vault-id index location: keyed by a hash of the vault's path, so it was
+/// orphaned whenever the vault folder moved. Only used to clean up the stale copy.
 #[cfg(desktop)]
-fn vault_index_base(vault_path: &str) -> Option<std::path::PathBuf> {
+fn legacy_path_keyed_index(vault_path: &str) -> Option<std::path::PathBuf> {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(vault_path.as_bytes());
@@ -219,15 +220,21 @@ impl SearchIndex {
         };
         #[cfg(desktop)]
         let index = {
-            let base = vault_index_base(vault_path)
-                .unwrap_or_else(|| helixnotes_dir(vault_path).join("search_index"));
+            // No in-vault fallback: an index inside a synced vault is the situation this
+            // whole layout exists to prevent, so a machine with nowhere to put it fails
+            // loudly instead.
+            let base = crate::machine_local::search_dir(std::path::Path::new(vault_path))?;
             let index_dir = base.join("index");
             let version_path = base.join("version");
 
-            // Remove the old in-vault index so it stops syncing.
+            // Drop indexes left at the two earlier locations. The index is derived from
+            // the notes, so discarding it costs one rebuild and nothing else.
             let hn = helixnotes_dir(vault_path);
             let _ = fs::remove_dir_all(hn.join("search_index"));
             let _ = fs::remove_file(hn.join("search_index.version"));
+            if let Some(legacy) = legacy_path_keyed_index(vault_path) {
+                let _ = fs::remove_dir_all(legacy);
+            }
 
             // One-time wipe when the schema/tokenizer version changes; rebuild() repopulates.
             let version_ok = fs::read_to_string(&version_path)
