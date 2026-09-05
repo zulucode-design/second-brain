@@ -15,6 +15,17 @@ const ORIGIN_MARKER: &str = "origin";
 /// The rewritten copy a `rewrite_file` transaction stages before publishing it.
 pub(crate) const STAGED_REPLACEMENT: &str = "replacement.md";
 
+/// Subdirectory holding the note `rewrite_file` claimed from the vault, named by us rather
+/// than by the note's own filename.
+///
+/// The claimed original is the one thing in a rewrite transaction whose name we do not
+/// control — it is whatever the user called the note, and a note can be named exactly
+/// `replacement.md` or `origin`. Nesting it here means the note's filename only ever
+/// appears one level below the transaction directory's fixed, reserved top-level entries
+/// (`origin`, `replacement.md`, this directory itself), so no note name can ever collide
+/// with them. See #31.
+const CLAIMED_DIR: &str = "claimed";
+
 /// The manifest whose presence is what authorizes replaying a directory move.
 pub(crate) const DIRECTORY_MANIFEST: &str = "directory-move.json";
 
@@ -463,7 +474,16 @@ where
     }
     drop(replacement_file);
 
-    let recovery_source = transaction_dir.join(
+    let claimed_dir = transaction_dir.join(CLAIMED_DIR);
+    if let Err(error) = fs::create_dir(&claimed_dir) {
+        return cleanup_before_claim_error(
+            &replacement,
+            &replacement_identity,
+            &transaction_dir,
+            format!("Could not reserve space for the claimed rewrite source: {error}"),
+        );
+    }
+    let recovery_source = claimed_dir.join(
         source
             .file_name()
             .unwrap_or_else(|| OsStr::new("recovery.md")),
@@ -962,7 +982,16 @@ fn restore_staged_note(vault_root: &Path, transaction_dir: &Path) -> Result<bool
     let Some(name) = relative.file_name() else {
         return Ok(false);
     };
-    let staged = transaction_dir.join(name);
+    // The claimed original lives under `claimed/` as of #31; a transaction staged by a
+    // binary built before that fix used the transaction directory directly. Try the
+    // current layout first and fall back to the old one, so a rewrite interrupted just
+    // before an upgrade still recovers instead of being silently swept away below.
+    let staged = transaction_dir.join(CLAIMED_DIR).join(name);
+    let staged = if staged.is_file() {
+        staged
+    } else {
+        transaction_dir.join(name)
+    };
     // Origin present means the replacement was published and the staged copy is stale;
     // origin absent means the rewrite died holding the note's only copy.
     if origin.exists() || !staged.is_file() {
@@ -1254,6 +1283,86 @@ mod tests {
         fs::write(transaction.join(ORIGIN_MARKER), origin).unwrap();
         fs::write(transaction.join(name), body).unwrap();
         transaction
+    }
+
+    /// Same as `staged_transaction`, but under the current `claimed/` layout (#31), for
+    /// tests that need to construct a transaction the way `rewrite_file` writes one today.
+    fn staged_transaction_nested(root: &Path, origin: &str, name: &str, body: &str) -> PathBuf {
+        let transaction = root
+            .join(".helixnotes")
+            .join(STAGING_DIR)
+            .join(uuid::Uuid::new_v4().to_string());
+        let claimed = transaction.join(CLAIMED_DIR);
+        fs::create_dir_all(&claimed).unwrap();
+        fs::write(transaction.join(ORIGIN_MARKER), origin).unwrap();
+        fs::write(claimed.join(name), body).unwrap();
+        transaction
+    }
+
+    /// #31: a note literally named `replacement.md` is the one filename that used to
+    /// collide with `rewrite_file`'s own staging file. The bug was traced first —
+    /// `rewrite_file` returned `Err("Repair required: the installed rewrite was replaced
+    /// or changed; the original recovery copy was preserved")`, the note's content was
+    /// left unrewritten, and the claimed message was false: no recovery copy survived.
+    #[test]
+    fn rewriting_a_note_named_replacement_md_succeeds() {
+        let root = vault("replacement-collision");
+        let note = root.join("Projects").join("replacement.md");
+        fs::write(&note, "original body").unwrap();
+
+        rewrite_file(&root, &note, |_| Ok(b"rewritten body".to_vec())).unwrap();
+
+        assert_eq!(fs::read_to_string(&note).unwrap(), "rewritten body");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The same filename must not confuse crash recovery either: interrupting a rewrite
+    /// of `replacement.md` before publish must still recover the pre-rewrite content, not
+    /// leave the staged replacement's bytes mixed up with the claimed original's.
+    #[test]
+    fn an_interrupted_rewrite_of_replacement_md_recovers_the_original() {
+        let root = vault("replacement-collision-crash");
+        fs::create_dir_all(root.join(".helixnotes")).unwrap();
+        fs::create_dir_all(root.join("Projects")).unwrap();
+        // The note is genuinely gone from its real path, matching the moment after
+        // rewrite_file's claim rename but before its publish rename — the exact window
+        // sweep_staging exists to recover.
+        let transaction = staged_transaction_nested(
+            &root,
+            "Projects/replacement.md",
+            "replacement.md",
+            "original body",
+        );
+        fs::write(transaction.join(STAGED_REPLACEMENT), "rewritten body").unwrap();
+
+        assert_eq!(sweep_staging(&root), 1);
+
+        assert_eq!(
+            fs::read_to_string(root.join("Projects").join("replacement.md")).unwrap(),
+            "original body",
+            "recovery restores the pre-rewrite content; a crash abandons the rewrite \
+             rather than gambling on completing it"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A transaction staged by a binary built before #31 has no `claimed/` subdirectory.
+    /// `restore_staged_note` must still find and restore it, or upgrading mid-rewrite
+    /// would silently discard the note's only copy.
+    #[test]
+    fn a_transaction_from_before_the_claimed_subdirectory_still_recovers() {
+        let root = vault("pre-31-layout");
+        fs::create_dir_all(root.join(".helixnotes")).unwrap();
+        fs::create_dir_all(root.join("Projects")).unwrap();
+        staged_transaction(&root, "Projects/Plan.md", "Plan.md", "only copy");
+
+        assert_eq!(sweep_staging(&root), 1);
+
+        assert_eq!(
+            fs::read_to_string(root.join("Projects").join("Plan.md")).unwrap(),
+            "only copy"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
