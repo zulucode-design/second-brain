@@ -108,11 +108,19 @@ fn parse_trigger(trigger: &str) -> Result<Shortcut, Unavailable> {
 pub fn apply_trigger(app: &AppHandle, trigger: &str) -> HotkeyStatus {
     let shortcut = match parse_trigger(trigger) {
         Ok(shortcut) => shortcut,
-        Err(cause) => return HotkeyStatus::unavailable(&cause),
+        Err(cause) => {
+            log::warn!("Quick capture hotkey change rejected: {}", cause.reason());
+            return HotkeyStatus::unavailable(&cause);
+        }
     };
 
     let manager = app.global_shortcut();
-    let _ = manager.unregister_all();
+    if let Err(error) = manager.unregister_all() {
+        log::warn!(
+            "Could not unregister the previous quick capture hotkey before applying \
+             {trigger:?}: {error}"
+        );
+    }
 
     let result = manager.on_shortcut(shortcut, |app_handle, _shortcut, event| {
         if event.state() != ShortcutState::Pressed {
@@ -125,6 +133,7 @@ pub fn apply_trigger(app: &AppHandle, trigger: &str) -> HotkeyStatus {
         Ok(()) => {
             let status = HotkeyStatus::registered(Some(trigger.to_string()), false);
             store_and_publish(app, status.clone());
+            log::info!("Quick capture hotkey changed: {trigger}");
             status
         }
         Err(error) => {
@@ -133,6 +142,7 @@ pub fn apply_trigger(app: &AppHandle, trigger: &str) -> HotkeyStatus {
                 &error.to_string(),
             ));
             store_and_publish(app, status.clone());
+            log::warn!("Quick capture hotkey change rejected: {}", status.reason.as_deref().unwrap_or("unknown reason"));
             status
         }
     }
