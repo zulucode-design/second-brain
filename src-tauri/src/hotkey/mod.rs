@@ -37,6 +37,9 @@ pub mod windows;
 pub const SHORTCUT_ID: &str = "quick-capture";
 
 /// Shown to the user in the system's shortcut settings, so it is user-facing copy.
+/// Linux-only: Windows has no equivalent system-level description to populate, since the
+/// shortcut is configured entirely inside the app.
+#[cfg(target_os = "linux")]
 pub const SHORTCUT_DESCRIPTION: &str = "Quick capture a note";
 
 /// A hint only. The portal is free to ignore it, and on GNOME the user confirms or changes it
@@ -147,6 +150,7 @@ pub trait Cause {
 /// These are kept as distinct cases rather than one opaque string because they call for
 /// genuinely different actions, and because the portal reports several of them identically.
 /// Linux-specific: see [`Cause`] for why this is not the one type both platforms share.
+#[cfg(target_os = "linux")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unavailable {
     /// The shortcut cannot be useful because its capture surface could not be prepared.
@@ -173,12 +177,14 @@ pub enum Unavailable {
     PortalError { detail: String },
 }
 
+#[cfg(target_os = "linux")]
 impl Cause for Unavailable {
     fn reason(&self) -> String {
         Unavailable::reason(self)
     }
 }
 
+#[cfg(target_os = "linux")]
 impl Unavailable {
     /// The message shown to the user. Each one ends with the thing to actually do.
     pub fn reason(&self) -> String {
@@ -279,6 +285,7 @@ pub fn needs_binding<'a>(already_bound: impl IntoIterator<Item = &'a str>) -> bo
 ///
 /// The portal reports a missing desktop entry and a rejected app id with the same
 /// `NotAllowed`/`Failed` shapes, so the text is what distinguishes them.
+#[cfg(target_os = "linux")]
 pub fn classify_portal_error(app_id: &ApplicationId, message: &str) -> Unavailable {
     let lowered = message.to_ascii_lowercase();
     if lowered.contains("app info not found") || lowered.contains("an app id is required") {
@@ -327,6 +334,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn example_app_id() -> ApplicationId {
         ApplicationId::parse("io.github.example.App").expect("example id is valid")
     }
@@ -344,6 +352,7 @@ mod tests {
         assert!(needs_binding(vec!["something-else"]));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_missing_desktop_entry_is_reported_as_an_app_id_problem() {
         // Both of these are what the portal actually says; verified against
@@ -372,6 +381,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_declined_permission_says_how_to_be_asked_again() {
         // Two desktops, two behaviours, and the message has to be true on both.
@@ -396,6 +406,7 @@ mod tests {
         assert!(reason.contains("flatpak permission-reset io.github.example.App"));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn an_appimage_integration_failure_names_the_failed_local_setup() {
         let cause = Unavailable::AppImageIntegration {
@@ -408,6 +419,7 @@ mod tests {
         assert!(!reason.contains("dev-desktop-entry.sh"));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn an_unrecognised_portal_error_is_passed_through_rather_than_guessed_at() {
         let cause = classify_portal_error(&example_app_id(), "Something new went wrong");

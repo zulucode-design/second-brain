@@ -76,10 +76,6 @@ pub fn sync(enabled: bool, app_id: &ApplicationId, exec: &Path) -> io::Result<()
 mod tests {
     use super::*;
 
-    fn app_id() -> ApplicationId {
-        ApplicationId::parse("io.github.example.App").expect("example id is valid")
-    }
-
     // These exercise the real per-user registry hive rather than a fake one: HKCU is
     // always writable without elevation, which is the property this module exists to rely
     // on, so a test that could only pass by mocking that away would prove less than one
