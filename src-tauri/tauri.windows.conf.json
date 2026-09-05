@@ -12,6 +12,20 @@
         "fullscreen": false,
         "decorations": false,
         "dragDropEnabled": false
+      },
+      {
+        "title": "Quick capture",
+        "label": "capture",
+        "url": "/capture",
+        "width": 620,
+        "height": 260,
+        "resizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "center": true,
+        "focus": false,
+        "visible": false
       }
     ]
   }

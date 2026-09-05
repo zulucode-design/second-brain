@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, activeVaultConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
-	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings } from '$lib/api';
-	import { darkThemes, isMobile, isAndroid, isLinux } from '$lib/platform';
+	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, setHotkeyTrigger } from '$lib/api';
+	import { darkThemes, isMobile, isAndroid, isLinux, isWindows } from '$lib/platform';
 	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
 	import { getVersion } from '@tauri-apps/api/app';
@@ -853,6 +853,103 @@
 		}
 	}
 
+	// Windows only: the app owns the key (ADR-0001), so it is captured here rather than
+	// handed to the OS. `capturingHotkey` is a separate flag from the field's own focus
+	// state so the displayed trigger does not flicker between "listening" and the last
+	// saved value while a save is in flight.
+	let capturingHotkey = $state(false);
+
+	/**
+	 * Stop listening, and explain the silence, when no combination arrives.
+	 *
+	 * Windows delivers a combination already claimed via `RegisterHotKey` only to the
+	 * process that claimed it — never as an ordinary keydown to the focused window. So for
+	 * exactly the conflicts worth reporting, this field is never given the keystroke, no
+	 * `invoke` happens, and the backend's own "already used by another application" message
+	 * can never be reached. Without this, the button simply stays on "Press a key
+	 * combination…" forever and the user is told nothing at all.
+	 *
+	 * Not a fix for that gap — capturing those keys needs a native low-level keyboard hook
+	 * rather than DOM events. This only ensures the dead end names itself.
+	 */
+	const HOTKEY_CAPTURE_TIMEOUT_MS = 5000;
+	let hotkeyCaptureTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function stopHotkeyCapture() {
+		capturingHotkey = false;
+		if (hotkeyCaptureTimer !== null) {
+			clearTimeout(hotkeyCaptureTimer);
+			hotkeyCaptureTimer = null;
+		}
+	}
+
+	function startHotkeyCapture() {
+		hotkeyConfigureError = null;
+		capturingHotkey = true;
+		if (hotkeyCaptureTimer !== null) clearTimeout(hotkeyCaptureTimer);
+		hotkeyCaptureTimer = setTimeout(() => {
+			if (!capturingHotkey) return;
+			stopHotkeyCapture();
+			hotkeyConfigureError =
+				'No shortcut was captured. If you did press one, another application may already ' +
+				'have claimed it system-wide — Windows delivers those keys only to that ' +
+				'application, so this field never receives them. Try a different combination.';
+		}, HOTKEY_CAPTURE_TIMEOUT_MS);
+	}
+
+	/**
+	 * Render a KeyboardEvent the way `tauri-plugin-global-shortcut` parses it back:
+	 * modifier names joined by `+`, main key last. `null` for a bare modifier press (nothing
+	 * to save yet) or a key this format cannot express.
+	 */
+	function triggerFromKeyEvent(event: KeyboardEvent): string | null {
+		const modifierKeys = new Set(['Control', 'Alt', 'Shift', 'Meta']);
+		if (modifierKeys.has(event.key)) return null;
+
+		const parts: string[] = [];
+		if (event.ctrlKey) parts.push('Ctrl');
+		if (event.altKey) parts.push('Alt');
+		if (event.shiftKey) parts.push('Shift');
+		if (event.metaKey) parts.push('Super');
+		// A bare, unmodified key would capture every press of it system-wide — almost
+		// certainly not what was intended, and the plugin would happily register it. Refuse
+		// it here rather than let a mis-press become a permanently broken keyboard.
+		if (parts.length === 0) return null;
+
+		// A single printable character (letters, digits, most punctuation) round-trips
+		// through the parser as-is; anything else needs its own name, so this only handles
+		// what the settings UI can realistically ask for.
+		const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
+		parts.push(key);
+		return parts.join('+');
+	}
+
+	async function handleHotkeyCapture(event: KeyboardEvent) {
+		event.preventDefault();
+		if (event.key === 'Escape') {
+			stopHotkeyCapture();
+			return;
+		}
+		// A bare modifier is not yet a combination, so keep listening — and keep the timeout
+		// running rather than restarting it. Holding Ctrl+Alt still delivers those two
+		// keydowns even when the key they are held for is one this field will never be
+		// given, so treating them as progress would stop the timeout from ever firing in
+		// precisely the case it exists for.
+		const trigger = triggerFromKeyEvent(event);
+		if (!trigger) return;
+
+		stopHotkeyCapture();
+		hotkeyConfigureError = null;
+		try {
+			const status = await setHotkeyTrigger(trigger);
+			if (status.availability !== 'available') {
+				hotkeyConfigureError = status.reason ?? 'The shortcut could not be registered.';
+			}
+		} catch (e) {
+			hotkeyConfigureError = String(e);
+		}
+	}
+
 	// Editor settings
 	let pdfPreview = $state($appConfig?.pdf_preview ?? false);
 	let pdfHeight = $state($appConfig?.pdf_height ?? 600);
@@ -1444,6 +1541,37 @@
 									<p class="setting-desc" style="color: var(--text-primary);">{$hotkeyStatus.reason}</p>
 								{:else}
 									<p class="setting-desc">Not registered yet — open a vault to enable quick capture.</p>
+								{/if}
+								{#if hotkeyConfigureError}
+									<p class="setting-desc" style="color: var(--danger); margin-top: 8px;">{hotkeyConfigureError}</p>
+								{/if}
+							</div>
+							{/if}
+
+							{#if isWindows}
+							<div class="settings-section">
+								<h3>Quick capture hotkey</h3>
+								<p class="setting-desc" style="margin-bottom: 12px;">
+									Second Brain registers this key itself, so it is set here rather than in
+									Windows settings.
+								</p>
+								<button
+									class="import-btn"
+									class:capturing-hotkey={capturingHotkey}
+									onclick={startHotkeyCapture}
+									onkeydown={capturingHotkey ? handleHotkeyCapture : undefined}
+									onblur={stopHotkeyCapture}
+								>
+									{#if capturingHotkey}
+										Press a key combination… (Esc to cancel)
+									{:else if $hotkeyStatus.trigger}
+										{$hotkeyStatus.trigger} — click to change
+									{:else}
+										Click to set a shortcut
+									{/if}
+								</button>
+								{#if $hotkeyStatus.availability === 'unavailable' && !capturingHotkey}
+									<p class="setting-desc" style="color: var(--text-primary); margin-top: 8px;">{$hotkeyStatus.reason}</p>
 								{/if}
 								{#if hotkeyConfigureError}
 									<p class="setting-desc" style="color: var(--danger); margin-top: 8px;">{hotkeyConfigureError}</p>
@@ -3194,6 +3322,16 @@
 	.import-btn:disabled {
 		opacity: 0.6;
 		cursor: not-allowed;
+	}
+
+	/* The hotkey field while listening for a key combination — distinct from :focus so it
+	   reads as "recording" rather than merely "focused", since a plain focus ring would
+	   look identical to every other button on the panel. */
+	.import-btn.capturing-hotkey {
+		border-color: var(--accent);
+		background: var(--accent-light);
+		color: var(--accent);
+		cursor: text;
 	}
 
 	.maintenance-stats {
