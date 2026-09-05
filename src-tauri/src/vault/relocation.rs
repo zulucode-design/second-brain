@@ -1168,9 +1168,9 @@ fn rollback_directory_rewrites<'a>(
 /// call even when an earlier step is known to have failed: if the claimed original's only
 /// surviving copy is still sitting in `claimed/`, that directory is not empty, neither
 /// removal below does anything, and the evidence is left in place rather than guessed to
-/// be safe to discard. `remove_dir_all` — used freely in the *pre-claim* branches of this
-/// function, where the real note is provably still safe in the vault — would be wrong
-/// here for exactly that reason.
+/// be safe to discard. `cleanup_before_claim_error` uses `remove_dir_all` freely at its
+/// own, pre-claim, call sites — safe there because the real note is provably still in the
+/// vault at that point — but that would be wrong here for exactly the reason above.
 fn cleanup_transaction_dir(transaction_dir: &Path) {
     let _ = fs::remove_file(transaction_dir.join(ORIGIN_MARKER));
     let _ = fs::remove_dir(transaction_dir.join(CLAIMED_DIR));
@@ -1363,16 +1363,14 @@ mod tests {
     #[test]
     fn cleanup_transaction_dir_never_touches_an_unretrieved_claimed_original() {
         let root = vault("cleanup-unsettled");
-        let transaction_dir = root.join(".helixnotes").join(STAGING_DIR).join("txn");
-        let claimed_dir = transaction_dir.join(CLAIMED_DIR);
-        fs::create_dir_all(&claimed_dir).unwrap();
-        fs::write(claimed_dir.join("Plan.md"), "only surviving copy").unwrap();
-        fs::write(transaction_dir.join(ORIGIN_MARKER), "Projects/Plan.md").unwrap();
+        let transaction_dir =
+            staged_transaction_nested(&root, "Projects/Plan.md", "Plan.md", "only surviving copy");
+        let claimed_file = transaction_dir.join(CLAIMED_DIR).join("Plan.md");
 
         cleanup_transaction_dir(&transaction_dir);
 
         assert_eq!(
-            fs::read_to_string(claimed_dir.join("Plan.md")).unwrap(),
+            fs::read_to_string(&claimed_file).unwrap(),
             "only surviving copy",
             "a note whose restoration is still unresolved must not be deleted by cleanup"
         );
