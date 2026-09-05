@@ -140,6 +140,12 @@ pub struct AppConfig {
     pub gpu_acceleration: bool,
     #[serde(default)]
     pub autostart: bool,
+    /// The quick-capture hotkey, Windows only: the app owns the key there, so the user
+    /// types a combination in Settings rather than the compositor deciding one for them
+    /// (ADR-0001). `None` until set, meaning "use the same default Linux hints the
+    /// compositor with" — see `hotkey::windows::configured_trigger`.
+    #[serde(default)]
+    pub hotkey_trigger: Option<String>,
     #[serde(default)]
     pub pdf_preview: bool,
     #[serde(default = "default_pdf_height")]
@@ -284,6 +290,7 @@ impl Default for AppConfig {
             week_start: "monday".to_string(),
             gpu_acceleration: true,
             autostart: false,
+            hotkey_trigger: None,
             pdf_preview: false,
             pdf_height: 600,
             title_mode: "input".to_string(),

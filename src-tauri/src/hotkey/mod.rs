@@ -1,14 +1,21 @@
 //! The global hotkey that opens quick capture, and what to tell the user when it is absent.
 //!
-//! On Linux this goes through the XDG `GlobalShortcuts` portal rather than an X11 grab. The
-//! reasoning, and the rejected alternatives, are in `docs/adr/0001-linux-global-shortcuts-via-xdg-portal.md`;
-//! the short version is that an X11 grab under Wayland fires only while an X11 window holds
-//! focus and is silent otherwise, which is worse than not shipping the feature.
+//! The two backends diverge because the hotkey model itself does, not because one is more
+//! finished than the other — see ADR-0001. On Linux this goes through the XDG
+//! `GlobalShortcuts` portal rather than an X11 grab: an X11 grab under Wayland fires only
+//! while an X11 window holds focus and is silent otherwise, which is worse than not
+//! shipping the feature. **The app does not own the keybinding** — it sends a preferred
+//! trigger as a hint, the compositor decides, and there is no such thing as a registration
+//! conflict to report, only a shortcut that is bound or is not.
 //!
-//! The consequence that shapes this module: **the app does not own the keybinding.** It sends
-//! a preferred trigger as a hint, the compositor decides, and hands back a description to
-//! display. So there is no such thing as a registration conflict to report here — only a
-//! shortcut that is bound or is not, and a reason the user can act on.
+//! On Windows the app registers the key directly through `tauri-plugin-global-shortcut`
+//! (`windows.rs`). **The app does own the keybinding** there, so a failure is a real,
+//! specific conflict — another application already holds that combination — and the
+//! shortcut is configured from inside the app rather than handed to the OS.
+//!
+//! Both backends report through the same [`HotkeyStatus`], so the settings UI and the
+//! activation path above this module (`capture.rs`, `vault_status.rs`) never need to know
+//! which one is running underneath.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -20,8 +27,10 @@ pub mod desktop_entry;
 pub mod portal;
 #[cfg(target_os = "linux")]
 pub mod startup;
-#[cfg(target_os = "linux")]
 pub mod vault_status;
+pub mod window;
+#[cfg(target_os = "windows")]
+pub mod windows;
 
 /// The shortcut's identity with the portal. Stable: the compositor remembers bindings against
 /// it, so changing it would silently orphan whatever the user has already assigned.
@@ -121,10 +130,23 @@ pub fn configured_application_id() -> Result<ApplicationId, String> {
 /// rather than two enums that happen to share a name.
 pub use crate::ai_health::Availability;
 
+/// Something that explains why the hotkey is not registered, in the user's own terms.
+///
+/// Each backend has its own enum — `Unavailable` here for Linux, `windows::Unavailable` for
+/// Windows — because the two failure domains share nothing: a portal refusing a permission
+/// dialog and a registry key already claimed by another process are not the same kind of
+/// fact wearing different words, and forcing them into one enum would mean every match
+/// arm on one platform reasoning about cases that can never happen there. This trait is the
+/// only thing they share: enough for [`HotkeyStatus::unavailable`] to accept either.
+pub trait Cause {
+    fn reason(&self) -> String;
+}
+
 /// Why the hotkey is not registered, in terms that map to something the user can do.
 ///
 /// These are kept as distinct cases rather than one opaque string because they call for
 /// genuinely different actions, and because the portal reports several of them identically.
+/// Linux-specific: see [`Cause`] for why this is not the one type both platforms share.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unavailable {
     /// The shortcut cannot be useful because its capture surface could not be prepared.
@@ -149,6 +171,12 @@ pub enum Unavailable {
     PermissionDenied { app_id: String },
     /// Anything else the portal reported.
     PortalError { detail: String },
+}
+
+impl Cause for Unavailable {
+    fn reason(&self) -> String {
+        Unavailable::reason(self)
+    }
 }
 
 impl Unavailable {
@@ -223,7 +251,7 @@ impl HotkeyStatus {
         }
     }
 
-    pub fn unavailable(cause: &Unavailable) -> Self {
+    pub fn unavailable(cause: &impl Cause) -> Self {
         Self {
             availability: Availability::Unavailable,
             reason: Some(cause.reason()),
