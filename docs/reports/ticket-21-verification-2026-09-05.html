@@ -185,7 +185,7 @@
   <div class="page">
     <header class="hero">
       <p class="kicker">Verification record</p>
-      <h1>The Windows hotkey backend: what is verified, what needs a keyboard</h1>
+      <h1>The Windows hotkey backend: what the keyboard found</h1>
       <p class="intro">
         #21's own acceptance criteria say plainly: the visual and interactive parts
         &mdash; an overlay appearing over another application, focus returning to it,
@@ -193,20 +193,43 @@
         remote shell. This record keeps the two kinds of evidence separate rather than
         letting what was checked remotely stand in for what was not.
       </p>
-      <div class="gate" style="border-color:#9ec7ac;background:var(--good-soft)">
-        <strong style="color:var(--good)">Everything reachable without a person at the
-        keyboard is done and green.</strong> The interactive checklist below is what remains,
-        and #21 should not be merged until it is worked through at the Windows desktop.
+      <div class="gate">
+        <strong>The interactive pass found five real defects, every one of them invisible to
+        the remote checks.</strong> The first four items now pass. Item&nbsp;5's actual open
+        question &mdash; the ADR-0001 panic risk &mdash; is answered, and its remaining half
+        is deferred to <a href="https://github.com/zulucode-design/second-brain/issues/42">#42</a>
+        as structurally untestable from any dev build.
       </div>
       <div class="meta">
         <span>Branch <code>feat/21-windows-hotkey</code></span>
-        <span><code>pnpm verify</code> green on Linux; Windows test/fmt green, clippy blocked
-          only by the pre-existing gap in #40</span>
+        <span>Interactive pass 2026-09-05, at the Windows desktop, against real release and
+          debug builds</span>
+        <span>Five fixes: <code>523883a</code>, <code>7d8a9c2</code>, <code>d043b56</code>,
+          <code>af29cdd</code>, <code>b4f8b7a</code></span>
       </div>
     </header>
 
+    <section id="why">
+      <h2>Why this pass mattered</h2>
+      <p class="section-intro">
+        Everything in the remote table below was green before a person sat down at the
+        machine, and the feature was nonetheless completely non-functional: pressing the
+        hotkey did nothing at all, on any build, ever. Three separate defects stacked on top
+        of each other to produce exactly one symptom &mdash; silence &mdash; and a release
+        build has no log plugin, so nothing anywhere said why.
+      </p>
+      <div class="callout warning">
+        <p>Every one of the five defects sat in a file or a code path that compiles, tests,
+        lints and type-checks clean. None of them could have been caught by anything short of
+        pressing the key.</p>
+      </div>
+    </section>
+
     <section id="remote">
       <h2>Verified remotely, over the dev link from #22</h2>
+      <p class="section-intro">Unchanged and still accurate. Recorded before the interactive
+        pass; kept as-is to show precisely how much green is compatible with a broken
+        feature.</p>
       <div class="table-wrap"><table>
         <thead><tr><th>Check</th><th></th><th>Evidence</th></tr></thead>
         <tbody>
@@ -221,89 +244,313 @@
           <tr><td><code>cargo fmt --check</code> on Windows</td><td><span class="pill good">Pass</span></td><td>&mdash;</td></tr>
           <tr><td><code>cargo clippy -D warnings</code> on Windows</td><td><span class="pill good">Pass, modulo a filed gap</span></td>
               <td>Confirmed <code>main</code> already fails this independent of this branch
-              (filed as <a href="https://github.com/zulucode-design/second-brain/issues/40">#40</a>)
-              &mdash; the entire <code>hotkey</code> module was unused on Windows before this
-              backend existed to call it. This branch's own code introduces zero new
-              clippy findings; the four that remain are #40's, unrelated to #21.</td></tr>
+              (filed as <a href="https://github.com/zulucode-design/second-brain/issues/40">#40</a>).</td></tr>
           <tr><td>App starts and exits cleanly with the hotkey code active</td><td><span class="pill good">Pass</span></td>
-              <td>Launched the real release binary in the interactive console session (via a
-              scheduled task run with <code>/it</code> &mdash; a GUI launched over plain SSH
-              lands in a non-interactive session and never opens a vault, the same limitation
-              #22 documented). No crash, no repair issue recorded.</td></tr>
+              <td>Real release binary, interactive console session. No crash, no repair issue
+              recorded.</td></tr>
           <tr><td>svelte-check / TypeScript</td><td><span class="pill good">Pass</span></td>
               <td>0 errors on the new <code>isWindows</code> flag, <code>setHotkeyTrigger</code>,
               and the settings panel's Windows branch.</td></tr>
         </tbody>
       </table></div>
+    </section>
+
+    <section id="fixes">
+      <h2>What the interactive pass fixed</h2>
+
+      <div class="work">
+        <div class="work-head">
+          <span class="step">1</span>
+          <div>
+            <h4>The capture window was never declared on Windows</h4>
+            <p><code>523883a</code> &mdash; <code>tauri.windows.conf.json</code></p>
+          </div>
+          <span class="badge critical">Feature dead</span>
+        </div>
+        <div class="work-body">
+          <div class="cell"><strong>Symptom</strong><p>Pressing the hotkey did nothing. No
+            overlay, nothing in Alt+Tab, no notification, no error &mdash; on every build.</p></div>
+          <div class="cell"><strong>Cause</strong><p>The <code>capture</code> window existed
+            only in <code>tauri.linux.conf.json</code>. Tauri's per-platform config
+            <em>replaces</em> the <code>app.windows</code> array rather than merging into it,
+            so on Windows the app's window set was <code>["main"]</code>.</p></div>
+          <div class="cell wide"><strong>Chain</strong>
+            <ul>
+              <li><code>ensure_window</code> searched the config for label <code>"capture"</code>,
+                found nothing, and returned an error.</li>
+              <li><code>spawn()</code> treats that as fatal and returns early &mdash; so the
+                hotkey was never registered at startup at all.</li>
+              <li>Setting it manually in Settings calls <code>apply_trigger</code> directly,
+                which never touches the window, so registration genuinely succeeded and the
+                UI looked healthy.</li>
+              <li>Every later activation reached <code>show_capture_window</code>, found no
+                window, and logged a warning into a release build with no log plugin.</li>
+            </ul>
+          </div>
+        </div>
+        <details><summary>Also affects macOS</summary>
+          <p><code>tauri.macos.conf.json</code> declares only <code>main</code> as well.
+          Whenever quick capture reaches macOS it will fail identically. Out of scope for #21;
+          the same one missing block.</p>
+        </details>
+      </div>
+
+      <div class="work">
+        <div class="work-head">
+          <span class="step">2</span>
+          <div>
+            <h4>The window came up visible, and outlived the app</h4>
+            <p><code>7d8a9c2</code> &mdash; <code>hotkey/window.rs</code></p>
+          </div>
+          <span class="badge high">Unkillable window</span>
+        </div>
+        <div class="work-body">
+          <div class="cell"><strong>Symptom</strong><p>After fix 1, the overlay appeared at
+            launch, unprompted, parked over whatever else was on screen &mdash; and survived
+            closing the main window, leaving a process only Task Manager could end.</p></div>
+          <div class="cell"><strong>Cause</strong><p>Tauri creates this window from config
+            <em>before</em> our code runs, and on Windows it came up visible regardless of
+            the config's own <code>"visible": false</code>.</p></div>
+          <div class="cell wide"><strong>Evidence</strong><p>A debug build printed no
+            <code>"Capture window ready"</code> line, which only the branch that builds the
+            window logs &mdash; proving <code>ensure_window</code>'s <code>is_some()</code>
+            early return was what ran, and something else had already created it.
+            <code>ensure_window</code> now hides the window itself once it knows it exists,
+            whichever path found it, rather than trusting the flag. That is what its own name
+            already promised.</p></div>
+        </div>
+      </div>
+
+      <div class="work">
+        <div class="work-head">
+          <span class="step">3</span>
+          <div>
+            <h4>The overlay had no permission to dismiss itself</h4>
+            <p><code>d043b56</code> &mdash; <code>capabilities/capture.json</code></p>
+          </div>
+          <span class="badge high">Stuck open</span>
+        </div>
+        <div class="work-body">
+          <div class="cell"><strong>Symptom</strong><p>A note saved correctly, then the
+            overlay stayed on screen showing
+            <code>Command plugin:window|hide not allowed by ACL</code>, with no way to
+            dismiss it.</p></div>
+          <div class="cell"><strong>Cause</strong><p><code>capture.json</code> scoped itself
+            to <code>"platforms": ["linux"]</code>. <code>default.json</code> covers only
+            <code>main</code> and <code>note-*</code>, so the capture window had no ACL grant
+            on Windows at all.</p></div>
+          <div class="cell wide"><strong>Pattern</strong><p>Third instance of the same family
+            as fix 1: a Linux-only assumption written before a Windows capture window
+            existed, never widened when it gained one.</p></div>
+        </div>
+      </div>
+
+      <div class="work">
+        <div class="work-head">
+          <span class="step">4</span>
+          <div>
+            <h4>A rejected hotkey change killed the working one</h4>
+            <p><code>b4f8b7a</code> &mdash; <code>hotkey/windows.rs</code></p>
+          </div>
+          <span class="badge critical">Silent data-loss-shaped</span>
+        </div>
+        <div class="work-body">
+          <div class="cell"><strong>Symptom</strong><p>Rejecting a conflicting trigger left
+            the previously-working hotkey permanently dead &mdash; precisely what item 2's
+            own acceptance criterion says must not happen.</p></div>
+          <div class="cell"><strong>Cause</strong><p><code>apply_trigger</code> called
+            <code>unregister_all()</code> unconditionally <em>before</em> attempting the new
+            trigger, with no path that restores the old one on failure.</p></div>
+          <div class="cell wide"><strong>Fix</strong><p>Register the new trigger first; only
+            on success drop the specific old one &mdash; <code>unregister()</code>, not
+            <code>unregister_all()</code>, which would tear down the registration just added,
+            since the plugin tracks by shortcut value rather than by "the app's current
+            hotkey". A failed attempt now touches nothing. Startup's own call is unaffected:
+            its trigger equals the configured value, so there is nothing to drop.</p></div>
+        </div>
+        <details><summary>Why every earlier test missed this</summary>
+          <p>Every prior conflict attempt was made by physically pressing the combination,
+          and none of them ever reached <code>apply_trigger</code> at all (see the keystroke
+          limitation below). "The old shortcut still works" had been observed repeatedly and
+          meant nothing &mdash; the failing code had never run. It surfaced only once the
+          command was invoked directly, bypassing the keyboard.</p>
+        </details>
+      </div>
+
+      <div class="work">
+        <div class="work-head">
+          <span class="step">5</span>
+          <div>
+            <h4>The Settings-driven path logged nothing at all</h4>
+            <p><code>af29cdd</code> &mdash; <code>hotkey/windows.rs</code></p>
+          </div>
+          <span class="badge medium">Undiagnosable</span>
+        </div>
+        <div class="work-body">
+          <div class="cell wide"><strong>Cause</strong><p><code>apply_trigger</code> had no
+            logging: a parse failure, a failed <code>unregister_all()</code>, and a failed
+            registration all returned or proceeded silently. This contradicts the principle
+            already stated in <code>startup.rs</code> and applied to the startup path &mdash;
+            <em>"An unregistered hotkey is invisible by nature &mdash; nothing happens when
+            the key is pressed &mdash; so the reason has to be somewhere a person can read it
+            without attaching a debugger."</em> The manual-change path simply never got the
+            same treatment. Fix 4 was only findable after this was added.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="results">
+      <h2>Checklist results</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Item</th><th></th><th>Result</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>1 &mdash; The hotkey actually works</td>
+            <td><span class="pill good">Pass</span></td>
+            <td>After fixes 1&ndash;3. Overlay appears over another application, a note saves
+              to the chosen category, the overlay dismisses, and focus returns to the
+              application that was active before &mdash; not to the main window.</td>
+          </tr>
+          <tr>
+            <td>2 &mdash; A real conflict is reported by name</td>
+            <td><span class="pill pending">Split</span></td>
+            <td><strong>Backend: pass.</strong> Against a genuine
+              <code>RegisterHotKey</code> lock held from an interactive session, the command
+              returned exactly
+              <code>availability: 'unavailable'</code> with
+              <em>"The shortcut &quot;Ctrl+Alt+P&quot; is already used by another
+              application&hellip;"</em>, naming the combination, and did not persist it.
+              <strong>Old shortcut survives: pass</strong>, after fix 4 &mdash; it did not
+              before. <strong>Reaching it through the UI: cannot work</strong>, see the
+              keystroke limitation below.</td>
+          </tr>
+          <tr>
+            <td>3 &mdash; Capture works with the main window closed</td>
+            <td><span class="pill good">Pass</span></td>
+            <td>With close-to-tray on and the main window closed to the tray, the hotkey still
+              raises the overlay. Also answers the item's own open question: with close-to-tray
+              <em>off</em>, closing the main window destroys it but does <em>not</em> quit the
+              app, because the hidden capture window keeps the process alive.</td>
+          </tr>
+          <tr>
+            <td>4 &mdash; Autostart</td>
+            <td><span class="pill good">Pass</span></td>
+            <td>Toggling on writes
+              <code>HKCU\&hellip;\Run\io.github.zulucodedesign.SecondBrain</code> as a quoted
+              path, with no admin prompt; toggling off removes it; both idempotent. Survived a
+              real restart &mdash; the app launched at login, from a process whose command
+              line was exactly that registry value.</td>
+          </tr>
+          <tr>
+            <td>5 &mdash; The vault-unavailable notification</td>
+            <td><span class="pill good">Panic risk cleared</span></td>
+            <td>The open design question is answered: <strong>the ADR-0001 Tokio-nesting panic
+              does not reproduce on Windows.</strong> The correct
+              <code>NotifyVaultUnavailable</code> branch ran and no overlay appeared. No
+              notification displayed, for reasons that are upstream and packaging-dependent
+              rather than ours &mdash; deferred to
+              <a href="https://github.com/zulucode-design/second-brain/issues/42">#42</a>.</td>
+          </tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="limitation">
+      <h2>The keystroke limitation, and what it costs</h2>
+      <p class="section-intro">
+        This one is not a defect and cannot be patched; it is a property of the platform that
+        constrains what the settings UI can ever do.
+      </p>
+      <div class="callout warning">
+        <p>Once <em>any</em> process holds a combination via <code>RegisterHotKey</code>,
+        Windows stops delivering that combination as an ordinary keystroke to whatever window
+        has focus. It goes to the registering process as <code>WM_HOTKEY</code> and nowhere
+        else.</p>
+      </div>
+      <p>
+        The settings panel captures a shortcut by listening for a DOM <code>keydown</code>. So
+        for exactly the conflicts worth reporting &mdash; a combination genuinely claimed at
+        the OS level &mdash; the webview never receives the keystroke, <code>invoke</code> is
+        never called, and the backend is never asked. The button sits in
+        <em>"Press a key combination&hellip;"</em> indefinitely and no message appears,
+        because none was ever generated.
+      </p>
+      <p>
+        This is what #21 bills as its differentiator: <em>"a real conflict is reported by
+        name &mdash; the one thing this backend can say that Linux structurally cannot."</em>
+        The backend can say it, and does, correctly. The capture field cannot ask the
+        question. Surfacing it through normal use would mean capturing keys with a native
+        low-level keyboard hook (<code>WH_KEYBOARD_LL</code>) instead of DOM events &mdash; a
+        real architectural change, deliberately not attempted here.
+      </p>
       <p class="note">
-        What this does <em>not</em> establish: that the registered key actually fires the
-        overlay when pressed from outside the app, that focus returns correctly, or that the
-        key-capture field behaves as a person typing into it would experience it. Those are
-        exactly the acceptance criteria the issue names as unverifiable this way.
+        It also invalidated four earlier conflict tests in this session, each of which looked
+        like a UI bug and was not. Anything that reports on this path needs to state which
+        mechanism holds the conflicting key: a <code>RegisterHotKey</code> claim behaves
+        entirely differently from a low-level hook, which is why ShadowPlay's Alt+Z opened
+        <em>its</em> overlay while ours never saw the key.
       </p>
     </section>
 
-    <section id="interactive">
-      <h2>Needs a person at the Windows desktop</h2>
-      <p>Each maps directly to one of #21's acceptance criteria.</p>
-      <h3>1 &mdash; The hotkey actually works</h3>
-      <ol>
-        <li>Open Second Brain, open Settings, confirm the Windows section shows
-          "Click to set a shortcut".</li>
-        <li>Click it, press a combination (e.g. Ctrl+Alt+K), release. Confirm the field now
-          shows that combination.</li>
-        <li>Switch to any other application &mdash; a browser, Notepad.</li>
-        <li>Press the configured combination. The capture overlay should appear on top of
-          whatever was focused.</li>
-        <li>Type a note, pick a category, save (or press Esc to cancel).</li>
-        <li>Confirm focus returns to the application that was active before the hotkey was
-          pressed &mdash; not to Second Brain's main window.</li>
-      </ol>
-      <h3>2 &mdash; A real conflict is reported by name</h3>
-      <ol>
-        <li>In Settings, try to set the hotkey to a combination already bound elsewhere
-          &mdash; a common one to try is whatever your keyboard driver or another running app
-          already claims (Print Screen tools, clipboard managers, and IME switchers are common
-          culprits).</li>
-        <li>Confirm the settings panel shows a message naming that specific combination as
-          already in use, not a generic failure.</li>
-        <li>Confirm the previously-working shortcut is unaffected &mdash; a failed change
-          should not have torn down the one that was already registered.</li>
-      </ol>
-      <h3>3 &mdash; Capture works with the main window closed</h3>
-      <ol>
-        <li>Close Second Brain's main window (not Quit &mdash; if "close to tray" is off,
-          this may quit the app entirely; confirm which, since the criterion implies the
-          hotkey should survive at least a closed main window while the process is running).</li>
-        <li>Press the hotkey. The overlay should still appear.</li>
-      </ol>
-      <h3>4 &mdash; Autostart</h3>
-      <ol>
-        <li>Enable "Start at login" in Settings.</li>
-        <li>Open Task Manager &rarr; Startup apps, or <code>regedit</code> at
-          <code>HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run</code>,
-          and confirm a Second Brain entry appears with no admin prompt having been shown.</li>
-        <li>Disable it again and confirm the entry is removed.</li>
-        <li>Log out and back in (or restart) with it enabled, and confirm the app actually
-          launches at login.</li>
-      </ol>
-      <h3>5 &mdash; The vault-unavailable notification</h3>
-      <p class="quote">
-        This is the one design claim in the diff that could not be exercised at all from
-        here: whether <code>tauri-plugin-notification</code>'s Windows backend avoids the
-        Tokio-runtime-nesting panic that ruled it out on Linux (ADR-0001).
+    <section id="elsewhere">
+      <h2>Found here, not fixed here</h2>
+      <p class="section-intro">
+        Surfaced by this pass, but none of it is #21's code. Recorded so the next person does
+        not rediscover them from scratch.
       </p>
-      <ol>
-        <li>With a vault configured, rename or move the vault folder so the configured path
-          no longer resolves.</li>
-        <li>Press the hotkey.</li>
-        <li>Confirm a Windows notification appears naming the vault path, and that the app
-          does not crash or hang. If it panics instead, that confirms the plugin's Windows
-          backend has the same issue as Linux's, and a hand-rolled Win32 notification will be
-          needed &mdash; file that as its own follow-up rather than blocking this ticket
-          further, matching how ADR-0001 documented the equivalent Linux finding.</li>
-      </ol>
+      <div class="decision-list">
+        <div class="decision">
+          <h3>Tray: a click cannot restore a destroyed main window</h3>
+          <p><code>lib.rs</code>, <code>setup_tray</code>. Both the tray handler and the
+          single-instance callback re-show <code>main</code> only
+          <code>if let Some(window) = &hellip;get_webview_window("main")</code>. With
+          close-to-tray off, closing the window destroys it, so that is <code>None</code> and
+          both paths silently do nothing &mdash; the app is running, invisible, and
+          unreachable. <span class="recommend">Pre-existing; not in this diff.</span></p>
+        </div>
+        <div class="decision">
+          <h3>Tray: right-click raises the window instead of opening the menu</h3>
+          <p><code>lib.rs</code>. The handler matches
+          <code>TrayIconEvent::Click { .. }</code>, discarding the <code>button</code> field,
+          so a right-click also shows and focuses the window &mdash; pre-empting the context
+          menu. That makes <strong>Quit</strong> unreachable, which with close-to-tray on
+          leaves no graceful way to exit at all.
+          <span class="recommend">Pre-existing; not in this diff.</span></p>
+        </div>
+        <div class="decision">
+          <h3>Autostart opens the full window at login</h3>
+          <p>The <code>Run</code> value carries no quiet-start flag, so a login pops the main
+          window even with a tray icon configured. Every neighbouring value in that same key
+          uses one &mdash; <code>-silent</code>, <code>--minimized</code>,
+          <code>--startup_mode</code>, <code>--autostarted</code>.
+          <span class="recommend">Behaviour question, not a defect: item 4's criterion is
+          "launches at login", which it does.</span></p>
+        </div>
+        <div class="decision">
+          <h3>The capture window flashes white at launch</h3>
+          <p>Fix 2 hides the window as soon as our code can, but Tauri has already shown it by
+          then, so a brief white flash remains at startup. Cosmetic, and much better than the
+          window staying up permanently, but not nothing.
+          <span class="recommend">Worth a follow-up if it bothers anyone in daily use.</span></p>
+        </div>
+        <div class="decision">
+          <h3>Release builds have no logs at all</h3>
+          <p><code>lib.rs</code> gates <code>tauri_plugin_log</code> behind
+          <code>cfg!(debug_assertions)</code>, so every diagnostic in this module is
+          discarded in the shipped build &mdash; including the one explaining why a hotkey is
+          unavailable. Three of the five defects above were only diagnosable after switching
+          to a debug build. <span class="recommend">Pre-existing, and squarely at odds with
+          the reasoning in <code>startup.rs</code> about reasons needing to be readable
+          without a debugger.</span></p>
+        </div>
+      </div>
     </section>
+
+    <footer>
+      Interactive pass, Windows desktop, 2026-09-05 &mdash; five fixes on
+      <code>feat/21-windows-hotkey</code>, follow-ups in
+      <a href="https://github.com/zulucode-design/second-brain/issues/42">#42</a>.
+    </footer>
   </div>
 </body>
 </html>
