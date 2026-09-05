@@ -22,7 +22,8 @@ use crate::state::AppState;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unavailable {
     /// The shortcut cannot be useful because its capture surface could not be prepared.
-    CaptureWindow { detail: String },
+    /// Shared with Linux: see `super::window::CaptureWindowUnavailable`.
+    CaptureWindow(super::window::CaptureWindowUnavailable),
     /// The configured trigger does not parse into a real key combination — a stale or
     /// hand-edited setting, since the in-app capture field can only ever produce one that
     /// parses.
@@ -38,10 +39,7 @@ pub enum Unavailable {
 impl Cause for Unavailable {
     fn reason(&self) -> String {
         match self {
-            Self::CaptureWindow { detail } => format!(
-                "Quick capture could not prepare its capture window ({detail}). Restart the \
-                 app; if this continues, report this error."
-            ),
+            Self::CaptureWindow(cause) => cause.reason(),
             Self::InvalidTrigger { trigger, detail } => format!(
                 "The configured shortcut \"{trigger}\" is not a valid key combination \
                  ({detail}). Open Settings and set a new one."
@@ -62,11 +60,20 @@ impl Cause for Unavailable {
 /// The plugin's own error type stringifies whatever `global-hotkey` returned before it
 /// reaches here (`tauri_plugin_global_shortcut::Error::GlobalHotkey(String)`), so — the
 /// same shape as Linux's `classify_portal_error` — the only thing to match on is the text.
-/// `global-hotkey`'s Windows backend maps `ERROR_HOTKEY_ALREADY_REGISTERED` to a dedicated
-/// `AlreadyRegistered(HotKey)` variant whose `Display` starts "HotKey already registered:",
-/// confirmed against its source rather than guessed from a message this app has not
-/// actually seen fail; every other registration failure goes through `FailedToRegister`
-/// instead, worded differently.
+///
+/// Read from `global-hotkey`'s own source rather than guessed from a message this app has
+/// not actually seen fail (docs.rs has no working target for a Windows-only crate from
+/// here, so the source was fetched directly):
+///
+/// - `platform_impl/windows/mod.rs`, `RegisterHotKey` failing with
+///   `ERROR_HOTKEY_ALREADY_REGISTERED` maps to `Err(crate::Error::AlreadyRegistered(hotkey))`
+///   specifically, not the generic `FailedToRegister` path —
+///   <https://github.com/tauri-apps/global-hotkey/blob/35b81e58ffb6b7c333851ee4b75121616ea0ab3b/src/platform_impl/windows/mod.rs>,
+///   fetched 2026-09-05.
+/// - `error.rs`: `#[error("HotKey already registered: {0:?}")] AlreadyRegistered(HotKey)` —
+///   <https://github.com/tauri-apps/global-hotkey/blob/35b81e58ffb6b7c333851ee4b75121616ea0ab3b/src/error.rs>, same date. Every
+///   other registration failure goes through `FailedToRegister`, worded
+///   `"Unable to register hotkey: {0}"` — a different, non-overlapping prefix.
 fn classify_registration_error(trigger: &str, message: &str) -> Unavailable {
     if message.starts_with("HotKey already registered") {
         Unavailable::KeyTaken {
@@ -141,7 +148,9 @@ pub fn spawn(app: AppHandle) {
         resync_autostart(&app);
 
         if let Err(detail) = super::window::ensure_window(&app).await {
-            let status = HotkeyStatus::unavailable(&Unavailable::CaptureWindow { detail });
+            let status = HotkeyStatus::unavailable(&Unavailable::CaptureWindow(
+                super::window::CaptureWindowUnavailable(detail),
+            ));
             store_and_publish(&app, status);
             log::warn!(
                 "Quick capture hotkey unavailable: the capture window could not be prepared"

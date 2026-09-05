@@ -162,7 +162,8 @@ pub trait Cause {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unavailable {
     /// The shortcut cannot be useful because its capture surface could not be prepared.
-    CaptureWindow { detail: String },
+    /// Shared with Windows: see `window::CaptureWindowUnavailable`.
+    CaptureWindow(window::CaptureWindowUnavailable),
     /// An AppImage could not create the user-level desktop entry the portal requires.
     AppImageIntegration { detail: String },
     /// No `GlobalShortcuts` implementation on this desktop.
@@ -197,10 +198,7 @@ impl Unavailable {
     /// The message shown to the user. Each one ends with the thing to actually do.
     pub fn reason(&self) -> String {
         match self {
-            Self::CaptureWindow { detail } => format!(
-                "Quick capture could not prepare its capture window ({detail}). Restart the app; \
-                 if this continues, report this error."
-            ),
+            Self::CaptureWindow(cause) => cause.reason(),
             Self::AppImageIntegration { detail } => format!(
                 "Quick capture could not prepare the AppImage desktop entry ({detail}). Check \
                  that your user data directory is writable, then restart the app."

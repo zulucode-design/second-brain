@@ -1,16 +1,36 @@
 //! Showing the capture overlay — the one piece of hotkey handling with no opinion about
 //! Linux or Windows at all, since it is pure Tauri window management either way.
 //!
-//! Returns a bare `String` rather than either backend's own `Unavailable`, so a caller on
-//! either platform wraps it into its own `CaptureWindow { detail }` variant. Sharing the
-//! *error type* here would mean choosing one backend's enum to be the "real" one and the
-//! other importing it — exactly the coupling ADR-0001 argues against — when what is
-//! actually shared is only this function's behaviour, not either platform's taxonomy of
-//! what can go wrong.
+//! `ensure_window`/`show_capture_window` return a bare `String` rather than either
+//! backend's own `Unavailable`, so a caller on either platform wraps it into its own
+//! `CaptureWindow(CaptureWindowUnavailable)` variant. Sharing the *error enum* would mean
+//! choosing one backend's taxonomy to be the "real" one and the other importing it —
+//! exactly the coupling ADR-0001 argues against — when what is actually shared is only
+//! this function's behaviour, not either platform's classification of what else can go
+//! wrong. [`CaptureWindowUnavailable`] is the one exception: both platforms' failure here
+//! is identical in cause and in the message to show, so it is a single leaf type both
+//! enums hold rather than two copies of the same variant and the same wording.
 
 use tauri::{AppHandle, Emitter, Manager};
 
-use super::{SHOWN_EVENT, WINDOW_LABEL};
+use super::{Cause, SHOWN_EVENT, WINDOW_LABEL};
+
+/// The capture window could not be prepared or shown. Shared by both backends' `Unavailable`
+/// enums (`super::Unavailable::CaptureWindow` on Linux, `super::windows::Unavailable::CaptureWindow`
+/// on Windows) because the cause and the message are the same regardless of which backend
+/// asked: this module is what does the work, and it fails the same way either way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaptureWindowUnavailable(pub String);
+
+impl Cause for CaptureWindowUnavailable {
+    fn reason(&self) -> String {
+        format!(
+            "Quick capture could not prepare its capture window ({}). Restart the app; if \
+             this continues, report this error.",
+            self.0
+        )
+    }
+}
 
 /// Make sure the capture window exists, building it if Tauri did not.
 ///

@@ -60,9 +60,9 @@ pub fn spawn(app: AppHandle) {
 
         // The window has to exist before the hotkey can be answered, and it is cheap: it is
         // created hidden and never loaded again, so the first press is a show, not a load.
-        let readiness = super::window::ensure_window(&app)
-            .await
-            .map_err(|detail| Unavailable::CaptureWindow { detail });
+        let readiness = super::window::ensure_window(&app).await.map_err(|detail| {
+            Unavailable::CaptureWindow(crate::hotkey::window::CaptureWindowUnavailable(detail))
+        });
         let attempt =
             match register_when_ready(readiness, || async { Ok(register(&app).await) }).await {
                 Ok(attempt) => attempt,
@@ -218,7 +218,9 @@ where
 }
 
 fn show_capture_window(app: &AppHandle) -> Result<(), Unavailable> {
-    super::window::show_capture_window(app).map_err(|detail| Unavailable::CaptureWindow { detail })
+    super::window::show_capture_window(app).map_err(|detail| {
+        Unavailable::CaptureWindow(crate::hotkey::window::CaptureWindowUnavailable(detail))
+    })
 }
 
 /// The notification's id with the portal. Stable, so repeated presses against a vault that is
@@ -377,16 +379,18 @@ mod tests {
         let observed = registration_attempted.clone();
         let runtime = tokio::runtime::Runtime::new().expect("runtime starts");
         let result = runtime.block_on(register_when_ready::<(), _, _>(
-            Err(Unavailable::CaptureWindow {
-                detail: "capture window config is missing".to_string(),
-            }),
+            Err(Unavailable::CaptureWindow(
+                crate::hotkey::window::CaptureWindowUnavailable(
+                    "capture window config is missing".to_string(),
+                ),
+            )),
             move || async move {
                 observed.store(true, Ordering::SeqCst);
                 Ok(())
             },
         ));
 
-        assert!(matches!(result, Err(Unavailable::CaptureWindow { .. })));
+        assert!(matches!(result, Err(Unavailable::CaptureWindow(_))));
         assert!(!registration_attempted.load(Ordering::SeqCst));
     }
 
@@ -409,9 +413,11 @@ mod tests {
 
     #[test]
     fn a_failed_activation_ends_the_registered_session_with_an_unavailable_status() {
-        let outcome = activation_outcome(Err(Unavailable::CaptureWindow {
-            detail: "the compositor refused to focus the capture window".to_string(),
-        }));
+        let outcome = activation_outcome(Err(Unavailable::CaptureWindow(
+            crate::hotkey::window::CaptureWindowUnavailable(
+                "the compositor refused to focus the capture window".to_string(),
+            ),
+        )));
 
         let ActivationOutcome::EndSession(status) = outcome else {
             panic!("an unusable capture window must end the portal session");
