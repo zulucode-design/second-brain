@@ -101,10 +101,15 @@ fn parse_trigger(trigger: &str) -> Result<Shortcut, Unavailable> {
 /// held. Returns the status to publish either way, never an error: a failed registration is
 /// an ordinary outcome to report, not something the caller needs to additionally handle.
 ///
-/// The old binding is dropped first and unconditionally. `tauri-plugin-global-shortcut`
-/// tracks registrations per shortcut value, not per "the app's current hotkey", so calling
-/// `unregister_all` before registering the new one is what makes changing the shortcut in
-/// Settings not silently leave the previous key also still bound.
+/// The new trigger is registered *before* the old one is dropped, not after. Unregistering
+/// first (tried initially, see git history) leaves nothing bound at all the moment the new
+/// trigger turns out to be taken — confirmed live 2026-09-05: a rejected change silently
+/// killed the previously-working hotkey rather than leaving it alone, exactly the outcome
+/// this ticket's own checklist says must not happen. Registering first means a failure here
+/// has touched nothing; only a *successful* new registration drops the old one, and only
+/// that specific shortcut — `unregister_all` would tear down the one just added along with
+/// it, since the plugin tracks registrations per shortcut value, not per "the app's current
+/// hotkey".
 pub fn apply_trigger(app: &AppHandle, trigger: &str) -> HotkeyStatus {
     let shortcut = match parse_trigger(trigger) {
         Ok(shortcut) => shortcut,
@@ -115,12 +120,15 @@ pub fn apply_trigger(app: &AppHandle, trigger: &str) -> HotkeyStatus {
     };
 
     let manager = app.global_shortcut();
-    if let Err(error) = manager.unregister_all() {
-        log::warn!(
-            "Could not unregister the previous quick capture hotkey before applying \
-             {trigger:?}: {error}"
-        );
-    }
+
+    // Read before anything changes: this is what to drop once (and only once) the new
+    // trigger is confirmed live. Comparing as strings is enough here — both sides came
+    // through the same settings-panel capture or the same stored config, so there is no
+    // second spelling of the same combination to worry about missing.
+    let previous_trigger = configured_trigger(app);
+    let previous_shortcut = (previous_trigger != trigger)
+        .then(|| parse_trigger(&previous_trigger).ok())
+        .flatten();
 
     let result = manager.on_shortcut(shortcut, |app_handle, _shortcut, event| {
         if event.state() != ShortcutState::Pressed {
@@ -131,6 +139,14 @@ pub fn apply_trigger(app: &AppHandle, trigger: &str) -> HotkeyStatus {
 
     match result {
         Ok(()) => {
+            if let Some(previous_shortcut) = previous_shortcut {
+                if let Err(error) = manager.unregister(previous_shortcut) {
+                    log::warn!(
+                        "Could not unregister the previous quick capture hotkey \
+                         ({previous_trigger:?}) after registering {trigger:?}: {error}"
+                    );
+                }
+            }
             let status = HotkeyStatus::registered(Some(trigger.to_string()), false);
             store_and_publish(app, status.clone());
             log::info!("Quick capture hotkey changed: {trigger}");
@@ -142,7 +158,10 @@ pub fn apply_trigger(app: &AppHandle, trigger: &str) -> HotkeyStatus {
                 &error.to_string(),
             ));
             store_and_publish(app, status.clone());
-            log::warn!("Quick capture hotkey change rejected: {}", status.reason.as_deref().unwrap_or("unknown reason"));
+            log::warn!(
+                "Quick capture hotkey change rejected: {}",
+                status.reason.as_deref().unwrap_or("unknown reason")
+            );
             status
         }
     }
