@@ -388,11 +388,14 @@ fn open_vault_path(
     }
     #[cfg(desktop)]
     {
-        if let Err(error) = search.rebuild(&path) {
+        // Reconcile rather than rebuild: on an ordinary open almost nothing changed, and
+        // reconcile touches only what did. It falls back to a full rebuild internally if
+        // reconciliation itself fails, so this is never worse than what ran here before.
+        if let Err(error) = search.reconcile(&path) {
             repair_status.record(repair::RepairIssue {
                 key: "search:index".to_string(),
                 stage: repair::RepairStage::Search,
-                message: format!("Search rebuild while opening the vault failed: {error}"),
+                message: format!("Search index update while opening the vault failed: {error}"),
                 paths: vec![path.clone()],
             });
         } else {

@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Ticket #33 — reconciliation performance</title>
+  <style>
+    :root {
+      --page: #f3f1eb;
+      --paper: #fffdf8;
+      --paper-2: #f7f4ec;
+      --ink: #20241f;
+      --muted: #626960;
+      --line: #d7d1c5;
+      --accent: #185f52;
+      --accent-soft: #dcece6;
+      --critical: #a42626;
+      --critical-soft: #f8dfdc;
+      --high: #a34b16;
+      --high-soft: #f8e5d7;
+      --medium: #776000;
+      --medium-soft: #f4ebbd;
+      --low: #4f6278;
+      --low-soft: #e3e9f0;
+      --good: #276c43;
+      --good-soft: #dcece2;
+      --shadow: 0 18px 48px rgba(31, 38, 32, 0.09);
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: Iowan Old Style, Palatino Linotype, Book Antiqua, Georgia, serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 8% -8%, rgba(24, 95, 82, 0.14), transparent 34rem), var(--page);
+      color: var(--ink);
+      font: 16px/1.62 var(--sans);
+    }
+    a { color: var(--accent); text-underline-offset: 0.16em; }
+    code { font-family: var(--mono); font-size: 0.87em; overflow-wrap: anywhere; }
+    .page { width: min(1180px, calc(100% - 30px)); margin: 26px auto 70px; }
+
+    .hero, section {
+      border: 1px solid var(--line);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+    .hero { padding: clamp(28px, 6vw, 66px); border-radius: 28px; }
+    .kicker { margin: 0 0 12px; color: var(--accent); font-size: 0.75rem; font-weight: 850; letter-spacing: 0.14em; text-transform: uppercase; }
+    h1, h2, h3, h4 { line-height: 1.18; }
+    h1 { max-width: 850px; margin: 0; font: 600 clamp(2.55rem, 7vw, 5rem)/1.03 var(--serif); letter-spacing: -0.045em; }
+    .intro { max-width: 820px; margin: 22px 0 0; color: var(--muted); font-size: clamp(1.03rem, 2vw, 1.25rem); }
+    .gate { margin-top: 27px; padding: 18px 20px; border: 1px solid #dfaaa6; border-radius: 15px; background: var(--critical-soft); }
+    .gate strong { color: var(--critical); }
+    .meta { display: flex; flex-wrap: wrap; gap: 7px 18px; margin-top: 22px; color: var(--muted); font-size: 0.86rem; }
+
+    .numbers { display: grid; grid-template-columns: repeat(5, 1fr); gap: 11px; margin-top: 16px; }
+    .number { min-height: 104px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); }
+    .number strong { display: block; font: 600 2.1rem/1 var(--serif); }
+    .number span { display: block; margin-top: 8px; color: var(--muted); font-size: 0.79rem; }
+    .number.critical strong { color: var(--critical); }
+    .number.high strong { color: var(--high); }
+    .number.medium strong { color: var(--medium); }
+    .number.low strong { color: var(--low); }
+    .number.good strong { color: var(--good); }
+
+    .layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 26px; margin-top: 31px; align-items: start; }
+    nav { position: sticky; top: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--paper) 94%, transparent); backdrop-filter: blur(10px); }
+    nav strong { display: block; margin: 0 7px 8px; color: var(--muted); font-size: 0.68rem; letter-spacing: 0.13em; text-transform: uppercase; }
+    nav a { display: block; padding: 6px 8px; border-radius: 8px; color: var(--ink); font-size: 0.86rem; text-decoration: none; }
+    nav a:hover { color: var(--accent); background: var(--accent-soft); }
+    main { min-width: 0; }
+    section { scroll-margin-top: 18px; margin-bottom: 27px; padding: clamp(22px, 4vw, 37px); border-radius: 22px; }
+    section > h2 { margin: 0 0 10px; font: 600 clamp(1.75rem, 4vw, 2.45rem)/1.12 var(--serif); letter-spacing: -0.025em; }
+    .section-intro { max-width: 780px; margin-top: 0; color: var(--muted); }
+
+    .callout { margin: 18px 0 0; padding: 16px 18px; border-left: 4px solid var(--accent); border-radius: 4px 12px 12px 4px; background: var(--accent-soft); }
+    .callout.warning { border-color: var(--high); background: var(--high-soft); }
+    .callout p { margin: 0; }
+    .decision-list { display: grid; gap: 11px; margin-top: 20px; }
+    .decision { padding: 16px 17px; border: 1px solid var(--line); border-radius: 13px; background: var(--paper-2); }
+    .decision h3 { margin: 0 0 5px; font-size: 1rem; }
+    .decision p { margin: 0; color: var(--muted); }
+    .decision .recommend { color: var(--ink); }
+
+    .loop { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; margin-top: 20px; counter-reset: loop; }
+    .loop div { padding: 15px; border: 1px solid var(--line); border-radius: 13px; background: var(--paper-2); counter-increment: loop; }
+    .loop div::before { content: counter(loop); display: grid; width: 28px; height: 28px; margin-bottom: 9px; place-items: center; border-radius: 50%; background: var(--accent); color: white; font-weight: 800; }
+    .loop strong { display: block; margin-bottom: 4px; }
+    .loop p { margin: 0; color: var(--muted); font-size: 0.89rem; }
+
+    .phase { margin-top: 30px; }
+    .phase > header { display: flex; align-items: baseline; justify-content: space-between; gap: 15px; margin-bottom: 11px; }
+    .phase > header h3 { margin: 0; font: 600 1.55rem/1.2 var(--serif); }
+    .phase > header span { color: var(--muted); font-size: 0.8rem; }
+    .work { margin-top: 12px; border: 1px solid var(--line); border-radius: 15px; background: var(--paper-2); overflow: hidden; }
+    .work-head { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; padding: 18px 18px 12px; }
+    .step { display: grid; width: 31px; height: 31px; place-items: center; border-radius: 50%; background: var(--accent); color: white; font-weight: 850; }
+    .work-head h4 { margin: 1px 0 3px; font-size: 1.08rem; }
+    .work-head p { margin: 0; color: var(--muted); font-size: 0.88rem; }
+    .badge { padding: 4px 9px; border-radius: 999px; font-size: 0.66rem; font-weight: 900; letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap; }
+    .badge.critical { color: var(--critical); background: var(--critical-soft); }
+    .badge.high { color: var(--high); background: var(--high-soft); }
+    .badge.medium { color: var(--medium); background: var(--medium-soft); }
+    .badge.low { color: var(--low); background: var(--low-soft); }
+    .work-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 0 18px 18px; }
+    .cell { padding: 13px 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper); }
+    .cell.wide { grid-column: 1 / -1; }
+    .cell strong { display: block; margin-bottom: 4px; color: var(--accent); font-size: 0.69rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    .cell p, .cell ul { margin: 0; }
+    .cell ul { padding-left: 19px; }
+    .cell li + li { margin-top: 4px; }
+    details { border-top: 1px dashed var(--line); padding: 12px 18px 15px; color: var(--muted); font-size: 0.85rem; }
+    summary { cursor: pointer; color: var(--accent); font-weight: 800; }
+    details p { margin: 8px 0 0; }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.89rem; }
+    th, td { padding: 11px 9px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 0.69rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    tbody tr:last-child td { border-bottom: 0; }
+    .status { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 0.7rem; font-weight: 850; white-space: nowrap; }
+    .status.open { color: var(--high); background: var(--high-soft); }
+    .status.later { color: var(--low); background: var(--low-soft); }
+    .status.gate { color: var(--critical); background: var(--critical-soft); }
+    .checklist { padding-left: 21px; }
+    .checklist li + li { margin-top: 8px; }
+    footer { padding: 10px 5px 0; color: var(--muted); font-size: 0.8rem; text-align: center; }
+
+    @media (max-width: 900px) {
+      .numbers { grid-template-columns: repeat(2, 1fr); }
+      .numbers .number:last-child { grid-column: 1 / -1; }
+      .layout { grid-template-columns: 1fr; }
+      nav { position: static; display: flex; flex-wrap: wrap; gap: 2px 6px; }
+      nav strong { width: 100%; }
+      nav a { display: inline-block; }
+      .loop { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 620px) {
+      .page { width: min(100% - 18px, 1180px); margin-top: 9px; }
+      .hero, section { border-radius: 17px; }
+      .hero { padding: 25px 20px; }
+      h1 { font-size: 2.55rem; }
+      .numbers, .loop, .work-body { grid-template-columns: 1fr; }
+      .numbers .number:last-child, .cell.wide { grid-column: auto; }
+      .work-head { grid-template-columns: auto 1fr; }
+      .work-head .badge { grid-column: 2; justify-self: start; }
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #141714; --paper: #1d211d; --paper-2: #242924; --ink: #e9ece5;
+        --muted: #adb6aa; --line: #3a4138; --accent: #8bcab4; --accent-soft: #233e35;
+        --critical: #ff9089; --critical-soft: #452524; --high: #f1a267; --high-soft: #482e1d;
+        --medium: #e3c65f; --medium-soft: #443d20; --low: #aec3d8; --low-soft: #2b3540;
+        --good: #7fd19c; --good-soft: #203b2a; --shadow: 0 18px 48px rgba(0, 0, 0, 0.25);
+      }
+    }
+    @media print {
+      :root { --page: white; --paper: white; --paper-2: #fafafa; --ink: #111; --muted: #555; --line: #ccc; }
+      body { background: white; font-size: 10.5pt; }
+      .page { width: 100%; margin: 0; }
+      .hero, section { box-shadow: none; }
+      .layout { display: block; }
+      nav { display: none; }
+      .work { break-inside: avoid; }
+      details, details > * { display: block; }
+    }
+
+    .quote { margin: 0 0 18px; padding: 14px 18px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 12px 12px 0; }
+    .note { margin-top: 16px; padding: 13px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper-2); color: var(--muted); }
+    .pill { display: inline-block; margin-left: 8px; padding: 3px 10px; border-radius: 999px; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; vertical-align: middle; }
+    .pill.good { background: var(--good-soft); color: var(--good); }
+    section { margin-top: 20px; padding: clamp(22px, 4vw, 40px); border-radius: 22px; }
+    section h2 { margin: 0 0 16px; font: 600 clamp(1.5rem, 3vw, 2.1rem)/1.15 var(--serif); letter-spacing: -0.02em; }
+    section h3 { margin: 22px 0 8px; font-size: 0.78rem; font-weight: 850; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+    section ol, section ul { margin: 0; padding-left: 1.25rem; }
+    section li { margin: 6px 0; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <p class="kicker">Verification record</p>
+      <h1>Reconciling the index instead of rebuilding it</h1>
+      <p class="intro">
+        #33's acceptance criteria include a specific, measured performance claim: opening a
+        large, unchanged vault must be faster than the full rebuild it replaces, with a figure
+        recorded rather than asserted. This is that measurement, plus the correctness checks
+        the same change needed.
+      </p>
+      <div class="gate" style="border-color:#9ec7ac;background:var(--good-soft)">
+        <strong style="color:var(--good)">All acceptance criteria pass.</strong> Reconciliation
+        is ~6.3&times; faster than a full rebuild at both 5,000 and 20,000 notes, and the cost of
+        reconciling is dominated by determining what changed, not by re-reading it &mdash;
+        touching 20 of 20,000 notes cost 8&nbsp;ms more than touching none.
+      </div>
+      <div class="meta">
+        <span>Branch <code>feat/33-index-reconciliation</code></span>
+        <span><code>pnpm verify</code> green &mdash; 273 Rust tests</span>
+      </div>
+    </header>
+
+    <section id="design">
+      <h2>What changed</h2>
+      <p>
+        Every document gains a <code>fingerprint</code> field &mdash; the note's file size and
+        modification time, encoded as one opaque string, never queried or sorted on. Opening a
+        vault now calls <code>reconcile()</code> instead of <code>rebuild()</code>: it walks the
+        vault reading only filesystem metadata (no file content), reads every stored fingerprint
+        back out of the index in one pass over the segment store (also no file content), and
+        only for a path whose fingerprint differs &mdash; new, edited, or missing from one side
+        &mdash; does the actual read-and-parse a changed note requires. An untouched vault does
+        zero of those reads.
+      </p>
+      <p>
+        <code>INDEX_SCHEMA_VERSION</code> was bumped, so the first open after upgrading gets an
+        empty index (the existing wipe-on-mismatch logic, unchanged). Reconciling against an
+        empty index treats every on-disk note as new, which is exactly a rebuild &mdash; the
+        one-time post-upgrade case needed no special-cased code path, only a test proving the
+        general algorithm degrades to it correctly.
+      </p>
+      <p>
+        Reconciliation fails safe: any error walking the vault or reading the index falls back
+        to a full <code>rebuild()</code>, the same pattern the incremental write paths already
+        use. Only the desktop vault-open path changed. Mobile's index is RAM-only (rebuilt on
+        every process start because there is nothing to persist between opens), so
+        reconciliation has nothing to compare against there and mobile keeps calling
+        <code>rebuild()</code> as before.
+      </p>
+    </section>
+
+    <section id="perf">
+      <h2>Performance</h2>
+      <p>
+        Measured directly against <code>SearchIndex::rebuild</code> and
+        <code>SearchIndex::reconcile</code> on real on-disk indexes and synthetic vaults, each
+        note ~120 words with realistic frontmatter. Both figures are a second call after an
+        initial warm-up rebuild, so filesystem and page caches are equally warm for both.
+      </p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Vault size</th><th>Full rebuild</th><th>Reconcile, unchanged</th><th>Reconcile, 20 notes touched</th><th>Speedup</th></tr></thead>
+        <tbody>
+          <tr><td>5,000 notes (20&nbsp;MB)</td><td>126&nbsp;ms</td><td>20&nbsp;ms</td><td>&mdash;</td><td>6.3&times;</td></tr>
+          <tr><td>20,000 notes (79&nbsp;MB)</td><td>406&nbsp;ms</td><td>65&nbsp;ms</td><td>73&nbsp;ms</td><td>6.2&times;</td></tr>
+        </tbody>
+      </table></div>
+      <p>
+        The ratio holds across a 4&times; change in vault size, consistent with both operations
+        scaling with the number of notes &mdash; reconcile's saving is a smaller constant per
+        note (a metadata stat and a string comparison, instead of a file read, a frontmatter
+        parse, and tokenization), not a change in complexity class. The 20-touched-note run adds
+        only 8&nbsp;ms over the zero-change run at 20,000 notes, confirming that reconciling
+        cost is dominated by <em>deciding</em> what changed rather than by re-indexing it.
+      </p>
+      <p class="note">
+        Not measured: an actual application-startup wall-clock comparison, or a vault with the
+        machine-local index cold (first access after boot, no page cache). The library-level
+        timing here isolates the change this ticket makes; it does not include Tauri startup,
+        vault-open plumbing, or disk-cache-cold I/O.
+      </p>
+    </section>
+
+    <section id="correctness">
+      <h2>Correctness</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Criterion</th><th></th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr><td>Opening an unchanged vault does not reparse every note</td><td><span class="pill good">Pass</span></td>
+              <td>Proven, not timed: an unreadable-but-unchanged note (<code>chmod 000</code>) does not fail reconciliation, which is only possible if its read was never attempted.</td></tr>
+          <tr><td>Added / edited / deleted / moved notes are correct on next open</td><td><span class="pill good">Pass</span></td>
+              <td>Five dedicated tests. The edit case also confirms the old content stops matching, not just that the new content is found. The move case renames via <code>fs::rename</code>, which changes neither size nor mtime, so the note's fingerprint is identical at both paths &mdash; the diff has to get this right from path presence and absence alone, not from any difference in content. Mutation-checked: a plausible-but-wrong implementation that also suppresses a removal whenever its fingerprint still exists anywhere on disk (not just at the same path) fails this test with the note appearing twice.</td></tr>
+          <tr><td>Reconciling twice does not duplicate entries</td><td><span class="pill good">Pass</span></td>
+              <td><code>reconcile_is_a_no_op_on_an_unchanged_vault</code>.</td></tr>
+          <tr><td>Opening a large vault is measurably faster, with a figure recorded</td><td><span class="pill good">Pass</span></td>
+              <td>See above.</td></tr>
+          <tr><td>A failed reconciliation still falls back to a full rebuild</td><td><span class="pill good">Pass</span></td>
+              <td>An unreadable subdirectory fails <code>try_reconcile</code>'s walk; <code>reconcile()</code> falls back to <code>rebuild()</code>, which tolerates it and still indexes everything else.</td></tr>
+          <tr><td><code>pnpm verify</code> green</td><td><span class="pill good">Pass</span></td>
+              <td>273 Rust tests, svelte-check and clippy clean.</td></tr>
+        </tbody>
+      </table></div>
+      <p>
+        Every correctness property was mutation-checked: disabling the fingerprint comparison,
+        the removal branch, or the rebuild fallback each fails exactly the test written to
+        catch it.
+      </p>
+    </section>
+  </div>
+</body>
+</html>
