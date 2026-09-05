@@ -2785,6 +2785,42 @@ mod tests {
         fs::remove_dir_all(vault).unwrap();
     }
 
+    /// #31: `rename_note` reaches `rewrite_file` whenever the sanitized new title still
+    /// names the same file, and `rewrite_file` used to collide with its own staging file
+    /// for a note literally named `replacement.md`. Verified at this level, not just
+    /// inside `rewrite_file` directly, because this is the actual entry point a rename in
+    /// the app drives.
+    #[test]
+    fn renaming_a_note_literally_called_replacement_is_supported() {
+        let vault = scaffolded_vault("rename-replacement-md");
+        let vault_str = vault.to_string_lossy().to_string();
+        let note = create_note(&vault_str, Some("Projects"), "replacement").unwrap();
+        assert!(note.path.ends_with("replacement.md"));
+        let raw = fs::read_to_string(&note.path).unwrap();
+        fs::write(
+            &note.path,
+            format!(
+                "{raw}precious body
+"
+            ),
+        )
+        .unwrap();
+
+        // Trailing whitespace keeps the sanitized filename identical while still being a
+        // genuinely different title, so this exercises the same_file_target path.
+        let renamed = super::rename_note(&note.path, "replacement ", &vault_str).unwrap();
+
+        assert_eq!(
+            std::path::Path::new(&renamed),
+            std::path::Path::new(&note.path)
+        );
+        let after = fs::read_to_string(&renamed).unwrap();
+        let metadata = frontmatter::parse_note(&after, "replacement.md").0;
+        assert_eq!(metadata.title, "replacement ");
+        assert!(after.contains("precious body"));
+        fs::remove_dir_all(vault).unwrap();
+    }
+
     #[test]
     fn failed_backlink_rewrite_rolls_back_the_note_rename_and_prior_links() {
         let vault = scaffolded_vault("rename-backlink-rollback");
