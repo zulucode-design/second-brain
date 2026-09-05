@@ -1,7 +1,6 @@
 mod ai;
 mod ai_health;
 mod asset_scope;
-#[cfg(target_os = "linux")]
 mod autostart;
 mod backup;
 mod commands;
