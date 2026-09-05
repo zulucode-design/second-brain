@@ -508,7 +508,7 @@ where
         if let Err(error) = sync_directory(parent) {
             let restore = restore_recovery_source(&recovery_source, &source);
             let cleanup = remove_owned_file(&replacement, &replacement_identity);
-            let _ = fs::remove_dir(&transaction_dir);
+            cleanup_transaction_dir(&transaction_dir);
             return Err(format!(
                 "Could not sync claimed rewrite source ({error}). Source recovery: {}. Replacement cleanup: {}",
                 result_summary(restore),
@@ -519,7 +519,7 @@ where
     if let Err(error) = sync_directory(&transaction_dir) {
         let restore = restore_recovery_source(&recovery_source, &source);
         let cleanup = remove_owned_file(&replacement, &replacement_identity);
-        let _ = fs::remove_dir(&transaction_dir);
+        cleanup_transaction_dir(&transaction_dir);
         return Err(format!(
             "Could not sync rewrite recovery ({error}). Source recovery: {}. Replacement cleanup: {}",
             result_summary(restore),
@@ -532,7 +532,7 @@ where
         Err(error) => {
             let restore = restore_recovery_source(&recovery_source, &source);
             let cleanup = remove_owned_file(&replacement, &replacement_identity);
-            let _ = fs::remove_dir(&transaction_dir);
+            cleanup_transaction_dir(&transaction_dir);
             return Err(format!(
                 "Could not identify claimed rewrite source ({error}). Source recovery: {}. Replacement cleanup: {}",
                 result_summary(restore),
@@ -545,7 +545,7 @@ where
         Err(error) => {
             let restore = restore_recovery_source(&recovery_source, &source);
             let cleanup = remove_owned_file(&replacement, &replacement_identity);
-            let _ = fs::remove_dir(&transaction_dir);
+            cleanup_transaction_dir(&transaction_dir);
             return Err(format!(
                 "Could not verify claimed rewrite source ({error}). Source recovery: {}. Replacement cleanup: {}",
                 result_summary(restore),
@@ -556,7 +556,7 @@ where
     if claimed_identity != source_identity || digest(&claimed_bytes) != source_hash {
         let restore = restore_recovery_source(&recovery_source, &source);
         let cleanup = remove_owned_file(&replacement, &replacement_identity);
-        let _ = fs::remove_dir(&transaction_dir);
+        cleanup_transaction_dir(&transaction_dir);
         return Err(format!(
             "The note changed during rewrite. Source recovery: {}. Replacement cleanup: {}",
             result_summary(restore),
@@ -567,7 +567,7 @@ where
     if let Err(error) = fs::rename(&replacement, &source) {
         let restore = restore_recovery_source(&recovery_source, &source);
         let cleanup = remove_owned_file(&replacement, &replacement_identity);
-        let _ = fs::remove_dir(&transaction_dir);
+        cleanup_transaction_dir(&transaction_dir);
         return Err(format!(
             "Could not install rewritten note ({error}). Source recovery: {}. Replacement cleanup: {}",
             result_summary(restore),
@@ -610,7 +610,7 @@ where
     sync_directory(&transaction_dir).map_err(|error| {
         format!("Repair required: could not sync recovery cleanup after rewrite: {error}")
     })?;
-    let _ = fs::remove_dir(&transaction_dir);
+    cleanup_transaction_dir(&transaction_dir);
     Ok(())
 }
 
@@ -1161,6 +1161,22 @@ fn rollback_directory_rewrites<'a>(
     failures
 }
 
+/// Best-effort teardown of a `rewrite_file` transaction directory, once nothing upstream
+/// has reported the claimed original as still needing to be rescued.
+///
+/// Each removal only succeeds if its target is already empty, so this is always safe to
+/// call even when an earlier step is known to have failed: if the claimed original's only
+/// surviving copy is still sitting in `claimed/`, that directory is not empty, neither
+/// removal below does anything, and the evidence is left in place rather than guessed to
+/// be safe to discard. `remove_dir_all` — used freely in the *pre-claim* branches of this
+/// function, where the real note is provably still safe in the vault — would be wrong
+/// here for exactly that reason.
+fn cleanup_transaction_dir(transaction_dir: &Path) {
+    let _ = fs::remove_file(transaction_dir.join(ORIGIN_MARKER));
+    let _ = fs::remove_dir(transaction_dir.join(CLAIMED_DIR));
+    let _ = fs::remove_dir(transaction_dir);
+}
+
 fn restore_recovery_source(recovery: &Path, source: &Path) -> Result<(), String> {
     fs::hard_link(recovery, source).map_err(|error| {
         format!("could not restore without overwriting another writer ({error})")
@@ -1297,6 +1313,74 @@ mod tests {
         fs::write(transaction.join(ORIGIN_MARKER), origin).unwrap();
         fs::write(claimed.join(name), body).unwrap();
         transaction
+    }
+
+    /// #36: `rewrite_file`'s success path never removed the `origin` marker, so the final
+    /// `fs::remove_dir` was silently failing on every successful rewrite — the transaction
+    /// directory just accumulated until the vault's next open swept it away.
+    /// End to end, through the real function rather than the helper directly: a
+    /// successful rewrite must leave nothing behind in `.helixnotes/staging/` at all.
+    #[test]
+    fn a_successful_rewrite_leaves_no_staging_leftovers() {
+        let root = vault("no-leftovers");
+        let note = root.join("Projects").join("Plan.md");
+        fs::write(&note, "original").unwrap();
+
+        rewrite_file(&root, &note, |_| Ok(b"rewritten".to_vec())).unwrap();
+
+        assert_eq!(fs::read_to_string(&note).unwrap(), "rewritten");
+        let staging = root.join(".helixnotes").join(STAGING_DIR);
+        assert_eq!(
+            fs::read_dir(&staging).unwrap().count(),
+            0,
+            "a successful rewrite must not leave its transaction directory behind"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cleanup_transaction_dir_removes_a_settled_transaction_completely() {
+        let root = vault("cleanup-settled");
+        let transaction_dir = root.join(".helixnotes").join(STAGING_DIR).join("txn");
+        fs::create_dir_all(transaction_dir.join(CLAIMED_DIR)).unwrap();
+        fs::write(transaction_dir.join(ORIGIN_MARKER), "Projects/Plan.md").unwrap();
+        // The claimed original's own file is already gone by the time this ever runs in
+        // rewrite_file — remove_redundant_file(&recovery_source) always precedes it — so
+        // `claimed/` here is empty, matching the only state this is ever called in.
+
+        cleanup_transaction_dir(&transaction_dir);
+
+        assert!(
+            !transaction_dir.exists(),
+            "the origin marker and the empty claimed/ dir must not survive a settled rewrite"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The conservative half of #36's fix: if the claimed original was never actually
+    /// retrieved — restore_recovery_source failed, or was never attempted — its bytes must
+    /// still be sitting in `claimed/` afterward, not swept away because cleanup ran anyway.
+    #[test]
+    fn cleanup_transaction_dir_never_touches_an_unretrieved_claimed_original() {
+        let root = vault("cleanup-unsettled");
+        let transaction_dir = root.join(".helixnotes").join(STAGING_DIR).join("txn");
+        let claimed_dir = transaction_dir.join(CLAIMED_DIR);
+        fs::create_dir_all(&claimed_dir).unwrap();
+        fs::write(claimed_dir.join("Plan.md"), "only surviving copy").unwrap();
+        fs::write(transaction_dir.join(ORIGIN_MARKER), "Projects/Plan.md").unwrap();
+
+        cleanup_transaction_dir(&transaction_dir);
+
+        assert_eq!(
+            fs::read_to_string(claimed_dir.join("Plan.md")).unwrap(),
+            "only surviving copy",
+            "a note whose restoration is still unresolved must not be deleted by cleanup"
+        );
+        assert!(
+            transaction_dir.exists(),
+            "the transaction must stay visible for recovery"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     /// A failure between reserving `claimed/` and completing the claim must not leave
