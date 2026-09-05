@@ -390,11 +390,22 @@ pub fn run() {
                     }
                 }
                 tauri::WindowEvent::Destroyed
-                    // When main window is destroyed, close all note windows
+                    // When the main window is destroyed, close every other window this app
+                    // owns. They exist only in service of it: note windows, and the hidden
+                    // quick-capture overlay.
+                    //
+                    // Listing `note-` alone was enough until the capture window existed,
+                    // because a window left open here does not just linger — it keeps the
+                    // process alive, since Tauri exits when the last window closes. With
+                    // the overlay unlisted and permanently hidden, closing the main window
+                    // without close-to-tray left an invisible process no tray icon or
+                    // relaunch could reach, ending only in Task Manager. Confirmed on
+                    // Windows 2026-09-05; the same was latent on Linux from the moment the
+                    // overlay was added there.
                     if window.label() == "main" => {
                         let app = window.app_handle();
                         for (label, win) in app.webview_windows() {
-                            if label.starts_with("note-") {
+                            if label != "main" {
                                 let _ = win.close();
                             }
                         }

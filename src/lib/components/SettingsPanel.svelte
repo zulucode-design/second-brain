@@ -860,6 +860,44 @@
 	let capturingHotkey = $state(false);
 
 	/**
+	 * Stop listening, and explain the silence, when no combination arrives.
+	 *
+	 * Windows delivers a combination already claimed via `RegisterHotKey` only to the
+	 * process that claimed it — never as an ordinary keydown to the focused window. So for
+	 * exactly the conflicts worth reporting, this field is never given the keystroke, no
+	 * `invoke` happens, and the backend's own "already used by another application" message
+	 * can never be reached. Without this, the button simply stays on "Press a key
+	 * combination…" forever and the user is told nothing at all.
+	 *
+	 * Not a fix for that gap — capturing those keys needs a native low-level keyboard hook
+	 * rather than DOM events. This only ensures the dead end names itself.
+	 */
+	const HOTKEY_CAPTURE_TIMEOUT_MS = 5000;
+	let hotkeyCaptureTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function stopHotkeyCapture() {
+		capturingHotkey = false;
+		if (hotkeyCaptureTimer !== null) {
+			clearTimeout(hotkeyCaptureTimer);
+			hotkeyCaptureTimer = null;
+		}
+	}
+
+	function startHotkeyCapture() {
+		hotkeyConfigureError = null;
+		capturingHotkey = true;
+		if (hotkeyCaptureTimer !== null) clearTimeout(hotkeyCaptureTimer);
+		hotkeyCaptureTimer = setTimeout(() => {
+			if (!capturingHotkey) return;
+			stopHotkeyCapture();
+			hotkeyConfigureError =
+				'No shortcut was captured. If you did press one, another application may already ' +
+				'have claimed it system-wide — Windows delivers those keys only to that ' +
+				'application, so this field never receives them. Try a different combination.';
+		}, HOTKEY_CAPTURE_TIMEOUT_MS);
+	}
+
+	/**
 	 * Render a KeyboardEvent the way `tauri-plugin-global-shortcut` parses it back:
 	 * modifier names joined by `+`, main key last. `null` for a bare modifier press (nothing
 	 * to save yet) or a key this format cannot express.
@@ -889,13 +927,18 @@
 	async function handleHotkeyCapture(event: KeyboardEvent) {
 		event.preventDefault();
 		if (event.key === 'Escape') {
-			capturingHotkey = false;
+			stopHotkeyCapture();
 			return;
 		}
+		// A bare modifier is not yet a combination, so keep listening — and keep the timeout
+		// running rather than restarting it. Holding Ctrl+Alt still delivers those two
+		// keydowns even when the key they are held for is one this field will never be
+		// given, so treating them as progress would stop the timeout from ever firing in
+		// precisely the case it exists for.
 		const trigger = triggerFromKeyEvent(event);
 		if (!trigger) return;
 
-		capturingHotkey = false;
+		stopHotkeyCapture();
 		hotkeyConfigureError = null;
 		try {
 			const status = await setHotkeyTrigger(trigger);
@@ -1515,9 +1558,9 @@
 								<button
 									class="import-btn"
 									class:capturing-hotkey={capturingHotkey}
-									onclick={() => { capturingHotkey = true; hotkeyConfigureError = null; }}
+									onclick={startHotkeyCapture}
 									onkeydown={capturingHotkey ? handleHotkeyCapture : undefined}
-									onblur={() => { capturingHotkey = false; }}
+									onblur={stopHotkeyCapture}
 								>
 									{#if capturingHotkey}
 										Press a key combination… (Esc to cancel)
