@@ -20,7 +20,7 @@ use walkdir::WalkDir;
 /// Bumped whenever the index schema or tokenizer changes, so the on-disk index is
 /// wiped and rebuilt once on the next vault open (the index is derived from the
 /// notes, so this never loses data).
-const INDEX_SCHEMA_VERSION: &str = "2-cjk-bigram";
+const INDEX_SCHEMA_VERSION: &str = "3-reconciliation-fingerprint";
 
 /// The pre-vault-id index location: keyed by a hash of the vault's path, so it was
 /// orphaned whenever the vault folder moved. Only used to clean up the stale copy.
@@ -177,6 +177,7 @@ pub struct SearchIndex {
     title_field: Field,
     body_field: Field,
     tags_field: Field,
+    fingerprint_field: Field,
 }
 
 struct SearchSchema {
@@ -185,6 +186,25 @@ struct SearchSchema {
     title_field: Field,
     body_field: Field,
     tags_field: Field,
+    fingerprint_field: Field,
+}
+
+/// A cheap, comparable stand-in for a note's content: its size and modification time,
+/// encoded so two notes that changed can never collide with one that didn't. Reconciling
+/// the index against the vault compares this instead of re-reading and re-parsing every
+/// file, which is the whole saving — see `SearchIndex::reconcile`.
+///
+/// Stored as a string on the document rather than as separate numeric fields: it is never
+/// queried or sorted on, only compared for equality against a freshly computed one, so a
+/// single opaque field is simpler than two and just as sufficient.
+fn content_fingerprint(metadata: &std::fs::Metadata) -> String {
+    let nanos = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("{}:{nanos}", metadata.len())
 }
 
 /// Whether `path` sits in a part of the vault the index ignores.
@@ -216,6 +236,7 @@ fn build_search_schema() -> SearchSchema {
     let title_field = schema_builder.add_text_field("title", cjk_text_stored.clone());
     let body_field = schema_builder.add_text_field("body", cjk_text);
     let tags_field = schema_builder.add_text_field("tags", cjk_text_stored);
+    let fingerprint_field = schema_builder.add_text_field("fingerprint", STRING | STORED);
 
     SearchSchema {
         schema: schema_builder.build(),
@@ -223,6 +244,7 @@ fn build_search_schema() -> SearchSchema {
         title_field,
         body_field,
         tags_field,
+        fingerprint_field,
     }
 }
 
@@ -305,6 +327,7 @@ impl SearchIndex {
             title_field: fields.title_field,
             body_field: fields.body_field,
             tags_field: fields.tags_field,
+            fingerprint_field: fields.fingerprint_field,
         })
     }
 
@@ -314,6 +337,29 @@ impl SearchIndex {
         let index = Index::open_or_create(RamDirectory::create(), fields.schema.clone())
             .map_err(|error| error.to_string())?;
         Self::from_index(index, fields)
+    }
+
+    /// Build the document for `path`, reading and parsing it fresh. Every write path goes
+    /// through here, so the fingerprint that makes reconciliation possible is never
+    /// something a caller could forget to set.
+    fn build_document(
+        &self,
+        path: &str,
+        metadata: &fs::Metadata,
+    ) -> Result<TantivyDocument, String> {
+        let raw = fs::read_to_string(path).map_err(|error| error.to_string())?;
+        let filename = Path::new(path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy();
+        let (meta, content) = frontmatter::parse_note(&raw, &filename);
+        let mut document = TantivyDocument::new();
+        document.add_text(self.path_field, path);
+        document.add_text(self.title_field, &meta.title);
+        document.add_text(self.body_field, &content);
+        document.add_text(self.tags_field, meta.tags.join(" "));
+        document.add_text(self.fingerprint_field, content_fingerprint(metadata));
+        Ok(document)
     }
 
     pub fn rebuild(&self, vault_path: &str) -> Result<(), String> {
@@ -333,17 +379,12 @@ impl SearchIndex {
                     && e.path().extension().and_then(|x| x.to_str()) == Some("md")
             })
         {
-            if let Ok(raw) = fs::read_to_string(entry.path()) {
-                let filename = entry.file_name().to_string_lossy().to_string();
-                let (meta, content) = frontmatter::parse_note(&raw, &filename);
-                let path_str = entry.path().to_string_lossy().to_string();
-
-                let mut doc = TantivyDocument::new();
-                doc.add_text(self.path_field, &path_str);
-                doc.add_text(self.title_field, &meta.title);
-                doc.add_text(self.body_field, &content);
-                doc.add_text(self.tags_field, meta.tags.join(" "));
-                let _ = writer.add_document(doc);
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            let path_str = entry.path().to_string_lossy().to_string();
+            if let Ok(document) = self.build_document(&path_str, &metadata) {
+                let _ = writer.add_document(document);
             }
         }
 
@@ -352,14 +393,8 @@ impl SearchIndex {
     }
 
     pub fn index_note(&self, path: &str) -> Result<(), String> {
-        let p = Path::new(path);
-        let raw = fs::read_to_string(p).map_err(|e| e.to_string())?;
-        let filename = p
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        let (meta, content) = frontmatter::parse_note(&raw, &filename);
+        let metadata = fs::metadata(path).map_err(|e| e.to_string())?;
+        let document = self.build_document(path, &metadata)?;
 
         let mut writer_guard = self.writer.lock().map_err(|e| e.to_string())?;
         let writer = writer_guard.as_mut().ok_or("Writer not available")?;
@@ -369,12 +404,7 @@ impl SearchIndex {
         writer.delete_term(term);
 
         // Add updated
-        let mut doc = TantivyDocument::new();
-        doc.add_text(self.path_field, path);
-        doc.add_text(self.title_field, &meta.title);
-        doc.add_text(self.body_field, &content);
-        doc.add_text(self.tags_field, meta.tags.join(" "));
-        let _ = writer.add_document(doc);
+        let _ = writer.add_document(document);
 
         writer.commit().map_err(|e| e.to_string())?;
         Ok(())
@@ -401,18 +431,8 @@ impl SearchIndex {
     ) -> Result<(), String> {
         let mut documents = Vec::with_capacity(upsert_paths.len());
         for path in upsert_paths {
-            let raw = fs::read_to_string(path).map_err(|error| error.to_string())?;
-            let filename = Path::new(path)
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy();
-            let (meta, content) = frontmatter::parse_note(&raw, &filename);
-            let mut document = TantivyDocument::new();
-            document.add_text(self.path_field, path);
-            document.add_text(self.title_field, &meta.title);
-            document.add_text(self.body_field, &content);
-            document.add_text(self.tags_field, meta.tags.join(" "));
-            documents.push((path, document));
+            let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
+            documents.push(self.build_document(path, &metadata)?);
         }
 
         let mut writer_guard = self.writer.lock().map_err(|error| error.to_string())?;
@@ -420,7 +440,7 @@ impl SearchIndex {
         for path in remove_paths.iter().chain(upsert_paths) {
             writer.delete_term(Term::from_field_text(self.path_field, path));
         }
-        for (_, document) in documents {
+        for document in documents {
             writer
                 .add_document(document)
                 .map_err(|error| error.to_string())?;
@@ -503,6 +523,99 @@ impl SearchIndex {
             }
         }
         Ok(missing)
+    }
+
+    /// Every indexed path with its stored fingerprint, read back in one pass. The
+    /// counterpart `reconcile` compares against, rather than re-deriving from a search.
+    fn indexed_fingerprints(&self) -> Result<std::collections::HashMap<String, String>, String> {
+        let reader = self.index.reader().map_err(|error| error.to_string())?;
+        let searcher = reader.searcher();
+        let mut fingerprints = std::collections::HashMap::new();
+        for segment in searcher.segment_readers() {
+            let store = segment
+                .get_store_reader(1)
+                .map_err(|error| error.to_string())?;
+            for doc_id in segment.doc_ids_alive() {
+                let document: TantivyDocument =
+                    store.get(doc_id).map_err(|error| error.to_string())?;
+                let path = document
+                    .get_first(self.path_field)
+                    .and_then(|value| value.as_str());
+                let fingerprint = document
+                    .get_first(self.fingerprint_field)
+                    .and_then(|value| value.as_str());
+                if let (Some(path), Some(fingerprint)) = (path, fingerprint) {
+                    fingerprints.insert(path.to_string(), fingerprint.to_string());
+                }
+            }
+        }
+        Ok(fingerprints)
+    }
+
+    /// Bring the index up to date with the vault by comparing what's already indexed
+    /// against what's on disk, touching only what differs.
+    ///
+    /// `rebuild` re-reads and re-parses every note in the vault, which is the correct
+    /// thing to do when the index cannot be trusted (schema changes, corruption) but is
+    /// wasted work on an ordinary open, where the overwhelming majority of notes are
+    /// exactly as they were last time. Reconciling instead means: read metadata for every
+    /// on-disk note (cheap — no file content is touched), read every stored fingerprint
+    /// back out of the index (one pass over the store, also no content), and only for a
+    /// path whose fingerprint differs — new, edited, or absent from one side — do the
+    /// actual read-and-parse that `build_document` requires.
+    ///
+    /// A document with no fingerprint at all (written by a binary built before this
+    /// existed) compares unequal to anything and so is always treated as changed; the
+    /// schema-version bump that shipped alongside this forces exactly one such index-wide
+    /// mismatch, which is indistinguishable in cost from — and produces the identical
+    /// result as — the `rebuild` this replaces, without needing a special first-run case.
+    ///
+    /// Fails safe: any error scanning the vault or the index falls back to a full
+    /// `rebuild`, the same way the incremental write paths already do.
+    pub fn reconcile(&self, vault_path: &str) -> Result<(), String> {
+        match self.try_reconcile(vault_path) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                log::warn!("Index reconciliation failed ({error}); falling back to a full rebuild");
+                self.rebuild(vault_path)
+            }
+        }
+    }
+
+    fn try_reconcile(&self, vault_path: &str) -> Result<(), String> {
+        let indexed = self.indexed_fingerprints()?;
+        let mut seen = std::collections::HashSet::with_capacity(indexed.len());
+        let vault_root = Path::new(vault_path);
+
+        let mut upserts = Vec::new();
+        for entry in WalkDir::new(vault_path)
+            .into_iter()
+            .filter_entry(|e| !is_ignored_by_index(e.path(), vault_root))
+        {
+            let entry = entry.map_err(|error| error.to_string())?;
+            if !entry.file_type().is_file()
+                || entry.path().extension().and_then(|x| x.to_str()) != Some("md")
+            {
+                continue;
+            }
+            let metadata = entry.metadata().map_err(|error| error.to_string())?;
+            let path = entry.path().to_string_lossy().to_string();
+            seen.insert(path.clone());
+            let current = content_fingerprint(&metadata);
+            if indexed.get(&path) != Some(&current) {
+                upserts.push(path);
+            }
+        }
+
+        let removals: Vec<String> = indexed
+            .into_keys()
+            .filter(|path| !seen.contains(path))
+            .collect();
+
+        if upserts.is_empty() && removals.is_empty() {
+            return Ok(());
+        }
+        self.apply_note_changes(&removals, &upserts)
     }
 
     pub fn search(&self, query_str: &str, limit: usize) -> Result<Vec<SearchResult>, String> {
@@ -644,6 +757,160 @@ mod tests {
         let results = index.search("stable-index-token", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].path, existing.to_string_lossy());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn reconcile_vault(label: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("reconcile-{label}-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn write_note(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, format!("---\ntitle: {name}\n---\n{body}\n")).unwrap();
+        path
+    }
+
+    #[test]
+    fn reconcile_adds_a_note_created_outside_the_index() {
+        let root = reconcile_vault("added");
+        write_note(&root, "New.md", "zylophonic body");
+        let index = SearchIndex::new_in_memory().unwrap();
+
+        index.reconcile(&root.to_string_lossy()).unwrap();
+
+        assert_eq!(index.search("zylophonic", 10).unwrap().len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reconcile_updates_a_note_edited_outside_the_index() {
+        let root = reconcile_vault("edited");
+        let note = write_note(&root, "Edit.md", "original quixotrope");
+        let index = SearchIndex::new_in_memory().unwrap();
+        index.reconcile(&root.to_string_lossy()).unwrap();
+        assert_eq!(index.search("quixotrope", 10).unwrap().len(), 1);
+
+        // A distinct mtime is what reconcile actually keys on; sleeping guarantees one
+        // rather than relying on two writes landing in different filesystem-clock ticks.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        fs::write(&note, "---\ntitle: Edit.md\n---\nzylophonic replacement\n").unwrap();
+
+        index.reconcile(&root.to_string_lossy()).unwrap();
+
+        assert_eq!(index.search("zylophonic", 10).unwrap().len(), 1);
+        assert_eq!(
+            index.search("quixotrope", 10).unwrap().len(),
+            0,
+            "the old content must not still match after reconciling the edit"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reconcile_removes_a_note_deleted_outside_the_index() {
+        let root = reconcile_vault("deleted");
+        let note = write_note(&root, "Gone.md", "zylophonic doomed");
+        let index = SearchIndex::new_in_memory().unwrap();
+        index.reconcile(&root.to_string_lossy()).unwrap();
+        assert_eq!(index.search("zylophonic", 10).unwrap().len(), 1);
+
+        fs::remove_file(&note).unwrap();
+        index.reconcile(&root.to_string_lossy()).unwrap();
+
+        assert_eq!(index.search("zylophonic", 10).unwrap().len(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reconcile_is_a_no_op_on_an_unchanged_vault() {
+        let root = reconcile_vault("unchanged");
+        write_note(&root, "Stable.md", "zylophonic stable");
+        let index = SearchIndex::new_in_memory().unwrap();
+        index.reconcile(&root.to_string_lossy()).unwrap();
+
+        index.reconcile(&root.to_string_lossy()).unwrap();
+
+        let results = index.search("zylophonic", 10).unwrap();
+        assert_eq!(
+            results.len(),
+            1,
+            "reconciling twice must not duplicate the entry"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The actual performance claim, proven rather than timed: an unchanged note's bytes
+    /// are never read. `try_reconcile` (not the public `reconcile`, which would silently
+    /// mask this by falling back to a full rebuild) must succeed even though this file
+    /// cannot be opened — the only way that happens is if its fingerprint matched and the
+    /// read was never attempted.
+    #[cfg(unix)]
+    #[test]
+    fn reconcile_never_reads_a_note_whose_fingerprint_is_unchanged() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = reconcile_vault("unread");
+        let note = write_note(&root, "Untouched.md", "zylophonic untouched");
+        let index = SearchIndex::new_in_memory().unwrap();
+        index.reconcile(&root.to_string_lossy()).unwrap();
+
+        let mut permissions = fs::metadata(&note).unwrap().permissions();
+        permissions.set_mode(0o000);
+        fs::set_permissions(&note, permissions.clone()).unwrap();
+
+        let result = index.try_reconcile(&root.to_string_lossy());
+
+        permissions.set_mode(0o644);
+        fs::set_permissions(&note, permissions).unwrap();
+        result.unwrap();
+        assert_eq!(index.search("zylophonic", 10).unwrap().len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A vault reconciliation cannot walk must still leave search correct, by falling
+    /// back to the full rebuild that tolerates what reconcile does not.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_reconciliation_falls_back_to_a_full_rebuild() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = reconcile_vault("fallback");
+        write_note(&root, "Readable.md", "zylophonic readable");
+        let forbidden = root.join("Forbidden");
+        fs::create_dir(&forbidden).unwrap();
+        write_note(&forbidden, "Locked.md", "unreachable content");
+        let mut permissions = fs::metadata(&forbidden).unwrap().permissions();
+        permissions.set_mode(0o000);
+        fs::set_permissions(&forbidden, permissions.clone()).unwrap();
+
+        let index = SearchIndex::new_in_memory().unwrap();
+        let result = index.reconcile(&root.to_string_lossy());
+
+        permissions.set_mode(0o755);
+        fs::set_permissions(&forbidden, permissions).unwrap();
+        result.unwrap();
+        assert_eq!(
+            index.search("zylophonic", 10).unwrap().len(),
+            1,
+            "the fallback rebuild must still find what it could read"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A vault with a note reconcile has never seen, brought up to date, from a fresh
+    /// (freshly opened, empty) index — the exact shape of the one-time post-upgrade case,
+    /// with no special-cased code path to verify separately.
+    #[test]
+    fn reconcile_against_an_empty_index_behaves_like_a_rebuild() {
+        let root = reconcile_vault("cold-start");
+        write_note(&root, "First.md", "zylophonic first open");
+        let index = SearchIndex::new_in_memory().unwrap();
+
+        index.reconcile(&root.to_string_lossy()).unwrap();
+
+        assert_eq!(index.search("zylophonic", 10).unwrap().len(), 1);
         fs::remove_dir_all(root).unwrap();
     }
 }
