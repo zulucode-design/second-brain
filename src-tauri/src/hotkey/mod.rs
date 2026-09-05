@@ -34,6 +34,10 @@ pub mod windows;
 
 /// The shortcut's identity with the portal. Stable: the compositor remembers bindings against
 /// it, so changing it would silently orphan whatever the user has already assigned.
+///
+/// Linux-only: Windows's plugin identifies a registered shortcut by the `Shortcut` value
+/// itself and assigns its own numeric id, so there is no equivalent stable string to keep.
+#[cfg(target_os = "linux")]
 pub const SHORTCUT_ID: &str = "quick-capture";
 
 /// Shown to the user in the system's shortcut settings, so it is user-facing copy.
@@ -107,6 +111,10 @@ impl ApplicationId {
         Ok(Self(value))
     }
 
+    // Only the Linux portal needs the bare string today (Windows compares `ApplicationId`s
+    // by `Display`); kept as part of the type's public shape rather than removed for a
+    // platform that has not needed it yet.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -277,6 +285,9 @@ impl Default for HotkeyStatus {
 ///
 /// Bindings outlive the session that made them, so binding unconditionally at startup would
 /// show the permission dialog on every launch. Asking first turns it into a first-run event.
+/// Linux-only: Windows registers fresh every launch and cannot prompt, so this question
+/// never arises there.
+#[cfg(target_os = "linux")]
 pub fn needs_binding<'a>(already_bound: impl IntoIterator<Item = &'a str>) -> bool {
     !already_bound.into_iter().any(|id| id == SHORTCUT_ID)
 }
@@ -339,6 +350,7 @@ mod tests {
         ApplicationId::parse("io.github.example.App").expect("example id is valid")
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_shortcut_already_bound_is_not_bound_again() {
         // Binding again would re-prompt, and the dialog is the thing users remember.
@@ -346,6 +358,7 @@ mod tests {
         assert!(!needs_binding(vec!["something-else", SHORTCUT_ID]));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_shortcut_that_is_not_bound_yet_needs_binding() {
         assert!(needs_binding(Vec::<&str>::new()));

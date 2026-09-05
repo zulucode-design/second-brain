@@ -81,7 +81,7 @@ mod tests {
     // on, so a test that could only pass by mocking that away would prove less than one
     // that actually writes and cleans up under a throwaway value name.
     fn scoped_app_id(label: &str) -> ApplicationId {
-        ApplicationId::parse(&format!("io.github.example.SbAutostartTest{label}"))
+        ApplicationId::parse(format!("io.github.example.SbAutostartTest{label}"))
             .expect("generated test id is valid")
     }
 
