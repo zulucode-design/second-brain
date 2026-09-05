@@ -199,7 +199,7 @@
       </div>
       <div class="meta">
         <span>Branch <code>feat/33-index-reconciliation</code></span>
-        <span><code>pnpm verify</code> green &mdash; 272 Rust tests</span>
+        <span><code>pnpm verify</code> green &mdash; 273 Rust tests</span>
       </div>
     </header>
 
@@ -271,7 +271,7 @@
           <tr><td>Opening an unchanged vault does not reparse every note</td><td><span class="pill good">Pass</span></td>
               <td>Proven, not timed: an unreadable-but-unchanged note (<code>chmod 000</code>) does not fail reconciliation, which is only possible if its read was never attempted.</td></tr>
           <tr><td>Added / edited / deleted / moved notes are correct on next open</td><td><span class="pill good">Pass</span></td>
-              <td>Four dedicated tests; the edit case also confirms the old content stops matching, not just that the new content is found.</td></tr>
+              <td>Five dedicated tests. The edit case also confirms the old content stops matching, not just that the new content is found. The move case renames via <code>fs::rename</code>, which changes neither size nor mtime, so the note's fingerprint is identical at both paths &mdash; the diff has to get this right from path presence and absence alone, not from any difference in content. Mutation-checked: a plausible-but-wrong implementation that also suppresses a removal whenever its fingerprint still exists anywhere on disk (not just at the same path) fails this test with the note appearing twice.</td></tr>
           <tr><td>Reconciling twice does not duplicate entries</td><td><span class="pill good">Pass</span></td>
               <td><code>reconcile_is_a_no_op_on_an_unchanged_vault</code>.</td></tr>
           <tr><td>Opening a large vault is measurably faster, with a figure recorded</td><td><span class="pill good">Pass</span></td>
@@ -279,7 +279,7 @@
           <tr><td>A failed reconciliation still falls back to a full rebuild</td><td><span class="pill good">Pass</span></td>
               <td>An unreadable subdirectory fails <code>try_reconcile</code>'s walk; <code>reconcile()</code> falls back to <code>rebuild()</code>, which tolerates it and still indexes everything else.</td></tr>
           <tr><td><code>pnpm verify</code> green</td><td><span class="pill good">Pass</span></td>
-              <td>272 Rust tests, svelte-check and clippy clean.</td></tr>
+              <td>273 Rust tests, svelte-check and clippy clean.</td></tr>
         </tbody>
       </table></div>
       <p>

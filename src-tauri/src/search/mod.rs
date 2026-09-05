@@ -342,11 +342,13 @@ impl SearchIndex {
     /// Build the document for `path`, reading and parsing it fresh. Every write path goes
     /// through here, so the fingerprint that makes reconciliation possible is never
     /// something a caller could forget to set.
-    fn build_document(
-        &self,
-        path: &str,
-        metadata: &fs::Metadata,
-    ) -> Result<TantivyDocument, String> {
+    fn build_document(&self, path: &str) -> Result<TantivyDocument, String> {
+        // Metadata read before content, not after: if the file changes in the gap between
+        // the two calls, this ordering records a fingerprint for bytes at least as old as
+        // what gets indexed, so the mismatch is self-correcting on the next reconcile. The
+        // other order could record a fingerprint newer than what was actually read, which
+        // would look settled forever even though the index holds stale content.
+        let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
         let raw = fs::read_to_string(path).map_err(|error| error.to_string())?;
         let filename = Path::new(path)
             .file_name()
@@ -358,7 +360,7 @@ impl SearchIndex {
         document.add_text(self.title_field, &meta.title);
         document.add_text(self.body_field, &content);
         document.add_text(self.tags_field, meta.tags.join(" "));
-        document.add_text(self.fingerprint_field, content_fingerprint(metadata));
+        document.add_text(self.fingerprint_field, content_fingerprint(&metadata));
         Ok(document)
     }
 
@@ -379,11 +381,8 @@ impl SearchIndex {
                     && e.path().extension().and_then(|x| x.to_str()) == Some("md")
             })
         {
-            let Ok(metadata) = entry.metadata() else {
-                continue;
-            };
             let path_str = entry.path().to_string_lossy().to_string();
-            if let Ok(document) = self.build_document(&path_str, &metadata) {
+            if let Ok(document) = self.build_document(&path_str) {
                 let _ = writer.add_document(document);
             }
         }
@@ -393,8 +392,7 @@ impl SearchIndex {
     }
 
     pub fn index_note(&self, path: &str) -> Result<(), String> {
-        let metadata = fs::metadata(path).map_err(|e| e.to_string())?;
-        let document = self.build_document(path, &metadata)?;
+        let document = self.build_document(path)?;
 
         let mut writer_guard = self.writer.lock().map_err(|e| e.to_string())?;
         let writer = writer_guard.as_mut().ok_or("Writer not available")?;
@@ -431,8 +429,7 @@ impl SearchIndex {
     ) -> Result<(), String> {
         let mut documents = Vec::with_capacity(upsert_paths.len());
         for path in upsert_paths {
-            let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
-            documents.push(self.build_document(path, &metadata)?);
+            documents.push(self.build_document(path)?);
         }
 
         let mut writer_guard = self.writer.lock().map_err(|error| error.to_string())?;
@@ -469,9 +466,31 @@ impl SearchIndex {
                 prefix
             })
             .collect();
+        let mut paths = Vec::new();
+        self.for_each_indexed_document(|document| {
+            if let Some(value) = document
+                .get_first(self.path_field)
+                .and_then(|value| value.as_str())
+            {
+                if prefixes.iter().any(|prefix| value.starts_with(prefix)) {
+                    paths.push(value.to_string());
+                }
+            }
+        })?;
+        Ok(paths)
+    }
+
+    /// Visit every live document in the index once, in one pass over each segment's store.
+    ///
+    /// The three callers below each want a different projection of the same documents —
+    /// paths under a prefix, paths missing on disk, path-to-fingerprint pairs — so the
+    /// walk itself lives here once rather than three times.
+    fn for_each_indexed_document(
+        &self,
+        mut visit: impl FnMut(&TantivyDocument),
+    ) -> Result<(), String> {
         let reader = self.index.reader().map_err(|error| error.to_string())?;
         let searcher = reader.searcher();
-        let mut paths = Vec::new();
         for segment in searcher.segment_readers() {
             // One cached block: this walks each document once in order, so a larger
             // cache would hold blocks that are never read again.
@@ -481,17 +500,10 @@ impl SearchIndex {
             for doc_id in segment.doc_ids_alive() {
                 let document: TantivyDocument =
                     store.get(doc_id).map_err(|error| error.to_string())?;
-                if let Some(value) = document
-                    .get_first(self.path_field)
-                    .and_then(|value| value.as_str())
-                {
-                    if prefixes.iter().any(|prefix| value.starts_with(prefix)) {
-                        paths.push(value.to_string());
-                    }
-                }
+                visit(&document);
             }
         }
-        Ok(paths)
+        Ok(())
     }
 
     /// Every indexed path whose file is no longer on disk.
@@ -502,53 +514,35 @@ impl SearchIndex {
     /// two hits per note, one pointing at a file that no longer exists. Scanning for
     /// entries the filesystem no longer backs repairs that without needing the old path.
     pub fn indexed_paths_missing_on_disk(&self) -> Result<Vec<String>, String> {
-        let reader = self.index.reader().map_err(|error| error.to_string())?;
-        let searcher = reader.searcher();
         let mut missing = Vec::new();
-        for segment in searcher.segment_readers() {
-            let store = segment
-                .get_store_reader(1)
-                .map_err(|error| error.to_string())?;
-            for doc_id in segment.doc_ids_alive() {
-                let document: TantivyDocument =
-                    store.get(doc_id).map_err(|error| error.to_string())?;
-                if let Some(value) = document
-                    .get_first(self.path_field)
-                    .and_then(|value| value.as_str())
-                {
-                    if !Path::new(value).exists() {
-                        missing.push(value.to_string());
-                    }
+        self.for_each_indexed_document(|document| {
+            if let Some(value) = document
+                .get_first(self.path_field)
+                .and_then(|value| value.as_str())
+            {
+                if !Path::new(value).exists() {
+                    missing.push(value.to_string());
                 }
             }
-        }
+        })?;
         Ok(missing)
     }
 
     /// Every indexed path with its stored fingerprint, read back in one pass. The
     /// counterpart `reconcile` compares against, rather than re-deriving from a search.
     fn indexed_fingerprints(&self) -> Result<std::collections::HashMap<String, String>, String> {
-        let reader = self.index.reader().map_err(|error| error.to_string())?;
-        let searcher = reader.searcher();
         let mut fingerprints = std::collections::HashMap::new();
-        for segment in searcher.segment_readers() {
-            let store = segment
-                .get_store_reader(1)
-                .map_err(|error| error.to_string())?;
-            for doc_id in segment.doc_ids_alive() {
-                let document: TantivyDocument =
-                    store.get(doc_id).map_err(|error| error.to_string())?;
-                let path = document
-                    .get_first(self.path_field)
-                    .and_then(|value| value.as_str());
-                let fingerprint = document
-                    .get_first(self.fingerprint_field)
-                    .and_then(|value| value.as_str());
-                if let (Some(path), Some(fingerprint)) = (path, fingerprint) {
-                    fingerprints.insert(path.to_string(), fingerprint.to_string());
-                }
+        self.for_each_indexed_document(|document| {
+            let path = document
+                .get_first(self.path_field)
+                .and_then(|value| value.as_str());
+            let fingerprint = document
+                .get_first(self.fingerprint_field)
+                .and_then(|value| value.as_str());
+            if let (Some(path), Some(fingerprint)) = (path, fingerprint) {
+                fingerprints.insert(path.to_string(), fingerprint.to_string());
             }
-        }
+        })?;
         Ok(fingerprints)
     }
 
@@ -805,6 +799,34 @@ mod tests {
             0,
             "the old content must not still match after reconciling the edit"
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// `fs::rename` changes neither mtime nor size, so the moved note's fingerprint is
+    /// identical at its new path to what was stored for its old one — the case the diff
+    /// algorithm must get right without help from the fingerprint comparison, since path
+    /// presence/absence is what does the work here, not content equality.
+    #[test]
+    fn reconcile_moves_a_note_whose_fingerprint_is_unchanged_by_the_move() {
+        let root = reconcile_vault("moved");
+        fs::create_dir_all(root.join("Archives")).unwrap();
+        let old_path = write_note(&root, "Old.md", "zylophonic mover");
+        let index = SearchIndex::new_in_memory().unwrap();
+        index.reconcile(&root.to_string_lossy()).unwrap();
+        assert_eq!(index.search("zylophonic", 10).unwrap().len(), 1);
+
+        let new_path = root.join("Archives").join("New.md");
+        fs::rename(&old_path, &new_path).unwrap();
+
+        index.reconcile(&root.to_string_lossy()).unwrap();
+
+        let results = index.search("zylophonic", 10).unwrap();
+        assert_eq!(
+            results.len(),
+            1,
+            "the note must appear once after the move, not zero and not twice"
+        );
+        assert_eq!(results[0].path, new_path.to_string_lossy());
         fs::remove_dir_all(root).unwrap();
     }
 
