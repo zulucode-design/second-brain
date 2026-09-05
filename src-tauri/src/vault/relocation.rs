@@ -15,15 +15,11 @@ const ORIGIN_MARKER: &str = "origin";
 /// The rewritten copy a `rewrite_file` transaction stages before publishing it.
 pub(crate) const STAGED_REPLACEMENT: &str = "replacement.md";
 
-/// Subdirectory holding the note `rewrite_file` claimed from the vault, named by us rather
-/// than by the note's own filename.
+/// Subdirectory holding the note `rewrite_file` claimed from the vault.
 ///
-/// The claimed original is the one thing in a rewrite transaction whose name we do not
-/// control — it is whatever the user called the note, and a note can be named exactly
-/// `replacement.md` or `origin`. Nesting it here means the note's filename only ever
-/// appears one level below the transaction directory's fixed, reserved top-level entries
-/// (`origin`, `replacement.md`, this directory itself), so no note name can ever collide
-/// with them. See #31.
+/// Its own filename is the one thing in a rewrite transaction we do not control — a note
+/// can be named `replacement.md` or `origin` — so it lives a level below the transaction
+/// directory's fixed top-level entries instead of beside them. See #31.
 const CLAIMED_DIR: &str = "claimed";
 
 /// The manifest whose presence is what authorizes replaying a directory move.
@@ -1190,6 +1186,10 @@ fn cleanup_destination_error<T>(
     }
 }
 
+/// Every call site fires before the claim rename touches `source`, so the real note is
+/// always still safe in the vault at this point — nothing in `transaction_dir` can be the
+/// only copy of anything. `remove_dir_all` rather than `remove_dir` because `claimed_dir`
+/// (#31) may already exist and empty here, which a non-recursive removal would leave behind.
 fn cleanup_before_claim_error<T>(
     destination: &Path,
     identity: &Handle,
@@ -1197,7 +1197,7 @@ fn cleanup_before_claim_error<T>(
     error: String,
 ) -> Result<T, String> {
     let result = cleanup_destination_error(destination, identity, error);
-    let _ = fs::remove_dir(transaction_dir);
+    let _ = fs::remove_dir_all(transaction_dir);
     result
 }
 
@@ -1297,6 +1297,34 @@ mod tests {
         fs::write(transaction.join(ORIGIN_MARKER), origin).unwrap();
         fs::write(claimed.join(name), body).unwrap();
         transaction
+    }
+
+    /// A failure between reserving `claimed/` and completing the claim must not leave
+    /// that empty subdirectory behind — `remove_dir` alone would, since it refuses a
+    /// non-empty directory, and silently leaking `staging/<uuid>/claimed/` on every such
+    /// failure is exactly the kind of leftover this crash-recovery code exists to avoid.
+    #[test]
+    fn cleanup_before_claim_error_removes_an_already_reserved_claimed_dir() {
+        let root = vault("cleanup-claimed-dir");
+        let transaction_dir = root.join(".helixnotes").join(STAGING_DIR).join("txn");
+        fs::create_dir_all(transaction_dir.join(CLAIMED_DIR)).unwrap();
+        let destination = transaction_dir.join(STAGED_REPLACEMENT);
+        fs::write(&destination, b"staged").unwrap();
+        let identity = Handle::from_path(&destination).unwrap();
+
+        let result: Result<(), String> = cleanup_before_claim_error(
+            &destination,
+            &identity,
+            &transaction_dir,
+            "injected failure".to_string(),
+        );
+
+        assert!(result.is_err());
+        assert!(
+            !transaction_dir.exists(),
+            "an empty claimed/ must not stop the transaction directory from being cleaned up"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     /// #31: a note literally named `replacement.md` is the one filename that used to

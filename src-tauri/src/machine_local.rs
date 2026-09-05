@@ -286,6 +286,15 @@ pub fn migrate(vault_path: &Path) -> Result<(), String> {
 /// transaction from `relocate_file` also published its destination before claiming, so its
 /// claimed copy may be a duplicate; surfacing a duplicate in the holding area is the
 /// tolerable error here and losing the note is not.
+///
+/// Every file here is rescued, including one named `replacement.md` — not just whatever
+/// isn't. Ordinarily `replacement.md` is the rewritten copy, redundant because the real
+/// note is safely still in the tree; but a note genuinely named `replacement.md` collided
+/// with that exact file (#31), and *this* ancient layout wrote no origin marker, so there
+/// is no way to tell the redundant case from the collided one apart by name or by content.
+/// Skipping the redundant case saves nothing worth the risk of silently burying the
+/// collided one — this is the same tolerable-duplicate-over-lost-note trade the paragraph
+/// above already makes for `relocate_file`'s transactions.
 fn rescue_legacy_staged_notes(legacy_relocation: &Path, metadata_dir: &Path) -> Result<(), String> {
     let Ok(entries) = std::fs::read_dir(legacy_relocation) else {
         return Ok(());
@@ -304,10 +313,7 @@ fn rescue_legacy_staged_notes(legacy_relocation: &Path, metadata_dir: &Path) -> 
         for file in staged.flatten() {
             let path = file.path();
             let name = file.file_name();
-            // `replacement.md` is the rewritten copy, derived from a note that is still in
-            // the tree unless the claim below it also happened; the claimed original is
-            // whatever else is here.
-            if !path.is_file() || name == crate::vault::relocation::STAGED_REPLACEMENT {
+            if !path.is_file() {
                 continue;
             }
             std::fs::create_dir_all(&holding)
@@ -483,6 +489,35 @@ mod tests {
         assert_eq!(
             rescued,
             vec!["Plan 1.md".to_string(), "Plan.md".to_string()]
+        );
+        std::fs::remove_dir_all(vault).unwrap();
+    }
+
+    /// #31: the ancient pre-#27 layout has no origin marker, so there is no way to tell
+    /// "replacement.md is the redundant rewritten copy" apart from "replacement.md is the
+    /// collided claimed original, wearing the redundant copy's name" — the crash could have
+    /// landed on either side of the clobbering rename. A note whose only surviving copy is
+    /// named exactly `replacement.md` must still be rescued, not silently folded into
+    /// machine-local state on the theory that it was surely the redundant case.
+    #[test]
+    fn a_stranded_note_literally_named_replacement_md_is_still_rescued() {
+        let vault = legacy_vault("legacy-replacement-collision");
+        let metadata = helixnotes_dir(&vault);
+        let stranded = metadata.join("relocation-recovery").join("collided");
+        std::fs::create_dir_all(&stranded).unwrap();
+        // Only one file: whichever side of the clobbering rename the crash landed on, the
+        // ancient layout leaves exactly one file at this name, and it may be either bytes.
+        std::fs::write(stranded.join("replacement.md"), b"only surviving copy").unwrap();
+
+        migrate(&vault).unwrap();
+
+        let rescued = metadata
+            .join(crate::vault::para::UNFILED_DIR)
+            .join("replacement.md");
+        assert_eq!(
+            std::fs::read(rescued).unwrap(),
+            b"only surviving copy",
+            "a note literally named replacement.md must not be assumed redundant and skipped"
         );
         std::fs::remove_dir_all(vault).unwrap();
     }

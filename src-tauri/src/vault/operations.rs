@@ -2796,6 +2796,15 @@ mod tests {
         let vault_str = vault.to_string_lossy().to_string();
         let note = create_note(&vault_str, Some("Projects"), "replacement").unwrap();
         assert!(note.path.ends_with("replacement.md"));
+        let raw = fs::read_to_string(&note.path).unwrap();
+        fs::write(
+            &note.path,
+            format!(
+                "{raw}precious body
+"
+            ),
+        )
+        .unwrap();
 
         // Trailing whitespace keeps the sanitized filename identical while still being a
         // genuinely different title, so this exercises the same_file_target path.
@@ -2808,6 +2817,7 @@ mod tests {
         let after = fs::read_to_string(&renamed).unwrap();
         let metadata = frontmatter::parse_note(&after, "replacement.md").0;
         assert_eq!(metadata.title, "replacement ");
+        assert!(after.contains("precious body"));
         fs::remove_dir_all(vault).unwrap();
     }
 
