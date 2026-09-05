@@ -2234,10 +2234,7 @@ pub fn set_general_settings(
         }
     }
     #[cfg(target_os = "windows")]
-    if let (Ok(exec), Ok(app_id)) = (
-        std::env::current_exe(),
-        hotkey::configured_application_id(),
-    ) {
+    if let (Ok(exec), Ok(app_id)) = (std::env::current_exe(), hotkey::configured_application_id()) {
         if let Err(error) = crate::autostart::sync(config.autostart, &app_id, &exec) {
             log::warn!("Could not update the autostart entry: {error}");
         }

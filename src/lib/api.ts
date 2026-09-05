@@ -192,6 +192,16 @@ export async function openHotkeySettings(): Promise<void> {
 }
 
 /**
+ * Register `trigger` as the quick-capture hotkey, Windows only. The app owns the key here
+ * (ADR-0001), so unlike `openHotkeySettings` this registers directly and returns the real
+ * outcome — including a named conflict if another application already holds it — rather
+ * than handing the user to the OS.
+ */
+export async function setHotkeyTrigger(trigger: string): Promise<HotkeyStatus> {
+  return invoke("set_hotkey_trigger", { trigger });
+}
+
+/**
  * Notes that carry no category and so cannot be filed. A non-empty result means the
  * user has something to resolve.
  */

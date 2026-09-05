@@ -61,5 +61,7 @@ pub fn show_capture_window(app: &AppHandle) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     // The field decides its own focus: the window may have been shown while the webview was
     // still mounting, and only it knows when the textarea exists.
-    window.emit(SHOWN_EVENT, ()).map_err(|error| error.to_string())
+    window
+        .emit(SHOWN_EVENT, ())
+        .map_err(|error| error.to_string())
 }

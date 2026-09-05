@@ -49,10 +49,8 @@ fn entry_value(exec: &Path) -> String {
 /// touch nothing, which is what makes calling this on every settings save and every
 /// startup cheap rather than a write nobody asked for.
 pub fn sync(enabled: bool, app_id: &ApplicationId, exec: &Path) -> io::Result<()> {
-    let run_key = RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(
-        RUN_KEY,
-        winreg::enums::KEY_READ | winreg::enums::KEY_WRITE,
-    )?;
+    let run_key = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey_with_flags(RUN_KEY, winreg::enums::KEY_READ | winreg::enums::KEY_WRITE)?;
     let name = value_name(app_id);
 
     if !enabled {

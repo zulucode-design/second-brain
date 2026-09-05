@@ -121,8 +121,10 @@ pub fn apply_trigger(app: &AppHandle, trigger: &str) -> HotkeyStatus {
             status
         }
         Err(error) => {
-            let status =
-                HotkeyStatus::unavailable(&classify_registration_error(trigger, &error.to_string()));
+            let status = HotkeyStatus::unavailable(&classify_registration_error(
+                trigger,
+                &error.to_string(),
+            ));
             store_and_publish(app, status.clone());
             status
         }
@@ -141,7 +143,9 @@ pub fn spawn(app: AppHandle) {
         if let Err(detail) = super::window::ensure_window(&app).await {
             let status = HotkeyStatus::unavailable(&Unavailable::CaptureWindow { detail });
             store_and_publish(&app, status);
-            log::warn!("Quick capture hotkey unavailable: the capture window could not be prepared");
+            log::warn!(
+                "Quick capture hotkey unavailable: the capture window could not be prepared"
+            );
             return;
         }
 
