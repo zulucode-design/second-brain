@@ -32,36 +32,46 @@ impl Cause for CaptureWindowUnavailable {
     }
 }
 
-/// Make sure the capture window exists, building it if Tauri did not.
+/// Make sure the capture window exists and is hidden, building it if Tauri did not.
 ///
 /// **Not called from `setup`.** Building a window synchronously there deadlocks on Linux: the
 /// call waits on a GTK event loop that has not started yet, `setup` never returns, and the app
 /// runs on looking healthy because the main window already exists and background tasks are on
 /// their own threads. Observed 2026-09-02, and it costs an afternoon to find, because nothing
-/// errors — the builder simply never comes back. Untested on Windows, but nothing about this
-/// call is Linux-specific, so it runs after the event loop is up there too rather than
-/// re-deriving that this particular deadlock does not apply.
+/// errors — the builder simply never comes back. Nothing about this call is Linux-specific, so
+/// it runs after the event loop is up there too rather than re-deriving that this particular
+/// deadlock does not apply.
+///
+/// Hides the window explicitly rather than trusting the config's own `"visible": false` to
+/// have held: on Windows, confirmed 2026-09-05, Tauri creates this window from config *before*
+/// this function ever runs — the `is_some()` branch below is what finds it — and it comes up
+/// visible regardless of that flag, parked over whatever else is on screen and outliving
+/// `main`'s close since it is a real top-level window Tauri does not otherwise know to tie to
+/// the app's lifecycle. Asserting the hidden state here rather than assuming it holds is what
+/// this function's own name already promises.
 pub async fn ensure_window(app: &AppHandle) -> Result<(), String> {
-    if app.get_webview_window(WINDOW_LABEL).is_some() {
-        return Ok(());
-    }
-    let Some(config) = app
-        .config()
-        .app
-        .windows
-        .iter()
-        .find(|window| window.label == WINDOW_LABEL)
-        .cloned()
-    else {
-        return Err(format!(
-            "the application configuration declares no {WINDOW_LABEL:?} window"
-        ));
+    let window = if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
+        window
+    } else {
+        let Some(config) = app
+            .config()
+            .app
+            .windows
+            .iter()
+            .find(|window| window.label == WINDOW_LABEL)
+            .cloned()
+        else {
+            return Err(format!(
+                "the application configuration declares no {WINDOW_LABEL:?} window"
+            ));
+        };
+        let window = tauri::WebviewWindowBuilder::from_config(app, &config)
+            .and_then(|builder| builder.build())
+            .map_err(|error| error.to_string())?;
+        log::debug!("Capture window ready");
+        window
     };
-    tauri::WebviewWindowBuilder::from_config(app, &config)
-        .and_then(|builder| builder.build())
-        .map_err(|error| error.to_string())?;
-    log::debug!("Capture window ready");
-    Ok(())
+    window.hide().map_err(|error| error.to_string())
 }
 
 /// Bring the overlay up and put the caret in it.
