@@ -21,14 +21,16 @@ use std::sync::Mutex;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, VK_CONTROL, VK_ESCAPE, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GetMessageW, PostQuitMessage, PostThreadMessageW,
-    SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL,
-    WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    CallNextHookEx, DispatchMessageW, GetMessageW, PeekMessageW, PostQuitMessage,
+    PostThreadMessageW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, KBDLLHOOKSTRUCT,
+    MSG, PM_NOREMOVE, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    WM_USER,
 };
 
 /// Emitted once per capture attempt, whatever its outcome, so the field never waits forever.
@@ -117,7 +119,23 @@ pub fn disarm() {
 /// and that thread has to be pumping messages, which is why this is a bare thread rather
 /// than a Tauri async task.
 fn capture_thread(app: AppHandle, ready: mpsc::Sender<Result<u32, String>>) {
-    let hook = match unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0) } {
+    // Force this thread's message queue into existence before the hook goes on, and before
+    // anyone can `PostThreadMessageW` at it. A thread has no queue until it first asks for a
+    // message, and both the hook's delivery and `disarm` depend on one being there —
+    // `PostThreadMessageW` is documented to fail against a thread that has never called a
+    // message function.
+    let mut discard = MSG::default();
+    let _ = unsafe { PeekMessageW(&mut discard, None, WM_USER, WM_USER, PM_NOREMOVE) };
+
+    // A real module handle rather than `None`. The documentation permits null for a
+    // low-level hook, and `SetWindowsHookExW` accepted it — but it then installed a hook the
+    // system never called, 0 keys seen across every session on 2026-09-07. This is what
+    // every working example passes.
+    let module = unsafe { GetModuleHandleW(None) }.ok();
+
+    let hook = match unsafe {
+        SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), module.map(Into::into), 0)
+    } {
         Ok(hook) => hook,
         Err(error) => {
             // Reported rather than swallowed: a capture field that silently never responds
@@ -176,11 +194,14 @@ fn capture_thread(app: AppHandle, ready: mpsc::Sender<Result<u32, String>>) {
 /// formats a short string, and posts — no locks another thread holds, no I/O, and nothing
 /// that calls into Tauri.
 unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    // Counted before anything can return, so "the system never called this" is a count of
+    // zero and nothing else. Counting after the `code < 0` guard left those two cases
+    // sharing a number, which is the ambiguity this exists to remove.
+    CALLBACKS.fetch_add(1, Ordering::Relaxed);
+
     if code < 0 {
         return unsafe { CallNextHookEx(None, code, wparam, lparam) };
     }
-
-    CALLBACKS.fetch_add(1, Ordering::Relaxed);
 
     let message = wparam.0 as u32;
     let is_key_down = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;

@@ -976,6 +976,24 @@
 		return parts.join('+');
 	}
 
+	/**
+	 * Losing focus ends capture only on the DOM fallback, which needs focus to receive keys
+	 * at all.
+	 *
+	 * The hook does not: it reads the keyboard system-wide. Ending on blur there breaks the
+	 * exact case this feature exists for — pressing a combination another application has
+	 * claimed hands that application the foreground, so the app whose conflict is being
+	 * detected is the one cancelling the detection. Measured 2026-09-07: pressing Alt+Z
+	 * raised ShadowPlay's overlay and blur disarmed us about a second in.
+	 *
+	 * The hook still cannot outlive the field: the timeout, Escape, and closing the panel
+	 * all end it.
+	 */
+	function handleHotkeyFieldBlur() {
+		if (hookIsListening) return;
+		stopHotkeyCapture();
+	}
+
 	async function handleHotkeyCapture(event: KeyboardEvent) {
 		event.preventDefault();
 		if (event.key === 'Escape') {
@@ -1619,7 +1637,7 @@
 									class:capturing-hotkey={capturingHotkey}
 									onclick={startHotkeyCapture}
 									onkeydown={capturingHotkey && !hookIsListening ? handleHotkeyCapture : undefined}
-									onblur={stopHotkeyCapture}
+									onblur={handleHotkeyFieldBlur}
 								>
 									{#if capturingHotkey}
 										Press a key combination… (Esc to cancel)
