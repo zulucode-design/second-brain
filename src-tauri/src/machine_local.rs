@@ -37,7 +37,7 @@ fn helixnotes_dir(vault_path: &Path) -> PathBuf {
 }
 
 /// Overrides the machine-local root in test builds. See `machine_root`.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub const TEST_ROOT_VAR: &str = "HELIXNOTES_TEST_MACHINE_ROOT";
 
 /// This process's machine-local root, for a test that must share one with a child process.
@@ -47,7 +47,7 @@ pub const TEST_ROOT_VAR: &str = "HELIXNOTES_TEST_MACHINE_ROOT";
 /// root, and fail silently — parent and child disagreeing — if it did not. The child
 /// receives this path through `TEST_ROOT_VAR`, which it only ever reads, so no test
 /// mutates the environment of a multi-threaded binary.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub fn test_root() -> PathBuf {
     machine_root().expect("the test machine root is always available")
 }
@@ -60,6 +60,7 @@ pub fn test_root() -> PathBuf {
 /// needs the child that dies and the parent that recovers to agree on where manifests live.
 #[cfg(test)]
 fn machine_root() -> Result<PathBuf, String> {
+    #[cfg(unix)]
     if let Ok(root) = std::env::var(TEST_ROOT_VAR) {
         return Ok(PathBuf::from(root));
     }
