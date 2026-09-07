@@ -456,8 +456,49 @@ fn open_vault_path(
     *search_slot = Some(search);
     *watcher_slot = Some(new_watcher);
     *config = next;
+    // The lock has to be gone before the hotkey is claimed: registration reads this same
+    // config to find the trigger, and would deadlock against the guard still held here.
+    drop(config);
+
+    register_hotkey_now_a_vault_exists(&app);
 
     Ok(())
+}
+
+/// Claim the quick-capture hotkey now that there is somewhere to capture *to*.
+///
+/// Startup refuses to register when no vault is configured, which is right — a hotkey that
+/// opens an overlay with nowhere to save is worse than none. But that check ran only at
+/// startup, and nothing repeated it, so a first run went: pick a vault, and quick capture
+/// stays dead until the app is restarted. The settings panel even kept saying "Not
+/// registered yet — open a vault to enable quick capture" to someone who just had.
+///
+/// Both backends need this, for the same reason and with the same startup-only check
+/// (`hotkey::startup::spawn` on Linux, `hotkey::windows::spawn` here). Re-running spawn
+/// rather than calling `apply_trigger` directly, because everything else spawn does —
+/// preparing the capture window, resyncing autostart, publishing the status — is equally
+/// unfinished for a launch that had no vault.
+#[allow(unused_variables)]
+fn register_hotkey_now_a_vault_exists(app: &AppHandle) {
+    // Only when there is genuinely nothing bound. Opening a second vault, or reopening the
+    // same one, must not re-register a hotkey this app already holds: on Windows that asks
+    // the OS for a combination we are ourselves already holding, which comes back as
+    // `AlreadyRegistered` and would be reported to the user as "already used by another
+    // application" — a conflict with nobody.
+    let already_registered = app
+        .state::<AppState>()
+        .hotkey_status
+        .lock()
+        .map(|status| status.availability == hotkey::Availability::Available)
+        .unwrap_or(false);
+    if already_registered {
+        return;
+    }
+
+    #[cfg(target_os = "linux")]
+    hotkey::startup::spawn(app.clone());
+    #[cfg(target_os = "windows")]
+    hotkey::windows::spawn(app.clone());
 }
 
 #[tauri::command]

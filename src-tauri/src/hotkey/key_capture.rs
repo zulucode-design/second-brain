@@ -14,6 +14,7 @@
 //! and torn down on every path out — a captured combination, Escape, the panel closing, or
 //! the caller's timeout. It is deliberately not a hook the app holds for its lifetime.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::Mutex;
 
@@ -27,7 +28,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, PostQuitMessage, PostThreadMessageW,
     SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL,
-    WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN,
+    WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
 /// Emitted once per capture attempt, whatever its outcome, so the field never waits forever.
@@ -46,11 +47,30 @@ pub struct CaptureOutcome {
 /// is post `WM_QUIT` at it; the thread owns its own hook and cleans up after itself.
 static CAPTURE_THREAD: Mutex<Option<u32>> = Mutex::new(None);
 
+/// How many times the OS called the hook during this session, logged when it ends.
+///
+/// Here because "the hook installed successfully and then nothing happened" and "the hook
+/// installed and saw keys it decided not to keep" are indistinguishable from the outside,
+/// and the first time this ran on a real desktop it was impossible to tell which had
+/// occurred. A count separates them in one line.
+static CALLBACKS: AtomicUsize = AtomicUsize::new(0);
+
 thread_local! {
     /// Set by the capture thread before its message loop, read by the hook callback, which
     /// the OS calls on that same thread. Not shared, so no lock is taken in the callback —
     /// see the timeout note on [`hook_proc`].
     static CAPTURED: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+
+    /// Which modifiers are currently held, as `(ctrl, alt, shift, win)`.
+    ///
+    /// Tracked from the hook's own event stream rather than read with `GetAsyncKeyState`
+    /// inside the callback. A low-level hook runs *before* the system updates the key state
+    /// this call reports, so asking it there gives an answer that lags by one keystroke —
+    /// which for a shortcut picker means the modifier the user is holding right now is the
+    /// one it cannot see. Seeded once from the real key state before the loop starts, where
+    /// that call is trustworthy, so a hook armed with Ctrl already down knows it.
+    static MODIFIERS: std::cell::Cell<(bool, bool, bool, bool)> =
+        const { std::cell::Cell::new((false, false, false, false)) };
 }
 
 /// Install the hook and start listening. Idempotent: arming while already armed is a no-op
@@ -114,6 +134,12 @@ fn capture_thread(app: AppHandle, ready: mpsc::Sender<Result<u32, String>>) {
         return;
     }
 
+    CALLBACKS.store(0, Ordering::Relaxed);
+    // Trustworthy here, on the capture thread and outside the callback: this is the one
+    // place the real key state can be read, so a hook armed while Ctrl is already held
+    // starts out knowing it.
+    MODIFIERS.set(held_modifiers_now());
+
     let mut message = MSG::default();
     // GetMessageW returns 0 on WM_QUIT, which is what both the callback and `disarm` post.
     while unsafe { GetMessageW(&mut message, None, 0, 0) }.as_bool() {
@@ -131,9 +157,13 @@ fn capture_thread(app: AppHandle, ready: mpsc::Sender<Result<u32, String>>) {
     if let Ok(mut armed) = CAPTURE_THREAD.lock() {
         *armed = None;
     }
+    let callbacks = CALLBACKS.load(Ordering::Relaxed);
     match &trigger {
-        Some(trigger) => log::info!("Shortcut capture read {trigger}"),
-        None => log::info!("Shortcut capture ended without a combination"),
+        Some(trigger) => log::info!("Shortcut capture read {trigger} ({callbacks} keys seen)"),
+        // Zero here means the hook was installed and the OS never called it — a different
+        // problem entirely from the user simply not pressing anything, and one that is
+        // otherwise invisible.
+        None => log::info!("Shortcut capture ended without a combination ({callbacks} keys seen)"),
     }
     let _ = app.emit(CAPTURE_EVENT, CaptureOutcome { trigger });
 }
@@ -150,13 +180,36 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         return unsafe { CallNextHookEx(None, code, wparam, lparam) };
     }
 
-    let is_key_down = wparam.0 as u32 == WM_KEYDOWN || wparam.0 as u32 == WM_SYSKEYDOWN;
-    if !is_key_down {
+    CALLBACKS.fetch_add(1, Ordering::Relaxed);
+
+    let message = wparam.0 as u32;
+    let is_key_down = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
+    let is_key_up = message == WM_KEYUP || message == WM_SYSKEYUP;
+    if !is_key_down && !is_key_up {
         return unsafe { CallNextHookEx(None, code, wparam, lparam) };
     }
 
     let event = unsafe { *(lparam.0 as *const KBDLLHOOKSTRUCT) };
     let virtual_key = event.vkCode as u16;
+
+    // Modifiers are tracked as they happen, both directions, so the state is current by the
+    // time the key they are held for arrives.
+    if let Some(modifier) = modifier_of(virtual_key) {
+        let (ctrl, alt, shift, win) = MODIFIERS.get();
+        MODIFIERS.set(match modifier {
+            Modifier::Ctrl => (is_key_down, alt, shift, win),
+            Modifier::Alt => (ctrl, is_key_down, shift, win),
+            Modifier::Shift => (ctrl, alt, is_key_down, win),
+            Modifier::Win => (ctrl, alt, shift, is_key_down),
+        });
+        // Never a combination on its own, and passed through so holding a modifier does not
+        // interfere with anything else on the machine.
+        return unsafe { CallNextHookEx(None, code, wparam, lparam) };
+    }
+
+    if !is_key_down {
+        return unsafe { CallNextHookEx(None, code, wparam, lparam) };
+    }
 
     // Escape cancels, matching what the field already did with a DOM keydown. Swallowed so
     // it cancels the capture rather than also closing the settings panel behind it.
@@ -165,7 +218,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         return LRESULT(1);
     }
 
-    let Some(trigger) = trigger_from_key(virtual_key, current_modifiers()) else {
+    let Some(trigger) = trigger_from_key(virtual_key, MODIFIERS.get()) else {
         // A bare modifier, an unmodified key, or one this format cannot spell: not a
         // combination yet, so keep listening and let the keystroke through untouched.
         return unsafe { CallNextHookEx(None, code, wparam, lparam) };
@@ -178,11 +231,12 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
     LRESULT(1)
 }
 
-/// Which modifiers are held right now, as `(ctrl, alt, shift, win)`.
+/// Which modifiers are physically held, as `(ctrl, alt, shift, win)`.
 ///
-/// Read from the keyboard state rather than accumulated across events: the hook may be armed
-/// with Ctrl already down, and there is no earlier event to have seen it.
-fn current_modifiers() -> (bool, bool, bool, bool) {
+/// Only ever called on the capture thread *outside* the hook callback, to seed
+/// [`MODIFIERS`]. Inside a low-level hook this call reports a state that has not been
+/// updated for the keystroke being handled, which is why the callback tracks its own.
+fn held_modifiers_now() -> (bool, bool, bool, bool) {
     let held = |key: i32| (unsafe { GetAsyncKeyState(key) } as u16 & 0x8000) != 0;
     (
         held(VK_CONTROL.0 as i32),
@@ -190,6 +244,36 @@ fn current_modifiers() -> (bool, bool, bool, bool) {
         held(VK_SHIFT.0 as i32),
         held(VK_LWIN.0 as i32) || held(VK_RWIN.0 as i32),
     )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Modifier {
+    Ctrl,
+    Alt,
+    Shift,
+    Win,
+}
+
+/// Which modifier a virtual key is, if it is one.
+///
+/// A low-level hook reports the handed variants — `VK_LMENU` rather than `VK_MENU` — so
+/// matching only the generic codes would miss every modifier the user actually presses.
+fn modifier_of(virtual_key: u16) -> Option<Modifier> {
+    const VK_LSHIFT: u16 = 0xA0;
+    const VK_RSHIFT: u16 = 0xA1;
+    const VK_LCONTROL: u16 = 0xA2;
+    const VK_RCONTROL: u16 = 0xA3;
+    const VK_LMENU: u16 = 0xA4;
+    const VK_RMENU: u16 = 0xA5;
+    match virtual_key {
+        key if key == VK_CONTROL.0 || key == VK_LCONTROL || key == VK_RCONTROL => {
+            Some(Modifier::Ctrl)
+        }
+        key if key == VK_MENU.0 || key == VK_LMENU || key == VK_RMENU => Some(Modifier::Alt),
+        key if key == VK_SHIFT.0 || key == VK_LSHIFT || key == VK_RSHIFT => Some(Modifier::Shift),
+        key if key == VK_LWIN.0 || key == VK_RWIN.0 => Some(Modifier::Win),
+        _ => None,
+    }
 }
 
 /// Spell a virtual key plus its modifiers the way `tauri-plugin-global-shortcut` parses it
@@ -238,23 +322,12 @@ fn key_name(virtual_key: u16) -> Option<String> {
     match virtual_key {
         // Modifiers are not a combination on their own; keep listening for the key they
         // are being held for.
-        code if is_modifier(code) => None,
+        code if modifier_of(code).is_some() => None,
         code @ 0x30..=0x39 => Some(((code as u8) as char).to_string()), // 0-9
         code @ 0x41..=0x5A => Some(((code as u8) as char).to_string()), // A-Z
         code @ 0x70..=0x87 => Some(format!("F{}", code - 0x70 + 1)),    // F1-F24
         _ => None,
     }
-}
-
-fn is_modifier(virtual_key: u16) -> bool {
-    const VK_LSHIFT: u16 = 0xA0;
-    const VK_RMENU: u16 = 0xA5;
-    matches!(virtual_key, code if code == VK_CONTROL.0
-        || code == VK_MENU.0
-        || code == VK_SHIFT.0
-        || code == VK_LWIN.0
-        || code == VK_RWIN.0
-        || (VK_LSHIFT..=VK_RMENU).contains(&code))
 }
 
 #[cfg(test)]
@@ -309,6 +382,37 @@ mod tests {
                 None,
                 "{modifier:#x} is a modifier, not a key to save"
             );
+        }
+    }
+
+    #[test]
+    fn the_handed_modifier_codes_a_hook_actually_reports_are_recognised() {
+        // The hook is given VK_LMENU, not VK_MENU. Matching only the generic codes would
+        // miss every modifier a user physically presses, so the field would see Alt+Z as a
+        // bare Z and refuse it — which is exactly what a shortcut picker must not do.
+        let handed = [
+            (0xA2_u16, Modifier::Ctrl), // VK_LCONTROL
+            (0xA3, Modifier::Ctrl),     // VK_RCONTROL
+            (0xA4, Modifier::Alt),      // VK_LMENU
+            (0xA5, Modifier::Alt),      // VK_RMENU
+            (0xA0, Modifier::Shift),    // VK_LSHIFT
+            (0xA1, Modifier::Shift),    // VK_RSHIFT
+        ];
+        for (code, expected) in handed {
+            assert_eq!(modifier_of(code), Some(expected), "{code:#x}");
+        }
+        for (code, expected) in [
+            (VK_CONTROL.0, Modifier::Ctrl),
+            (VK_MENU.0, Modifier::Alt),
+            (VK_SHIFT.0, Modifier::Shift),
+            (VK_LWIN.0, Modifier::Win),
+            (VK_RWIN.0, Modifier::Win),
+        ] {
+            assert_eq!(modifier_of(code), Some(expected), "{code:#x}");
+        }
+        // Letters and digits must not be mistaken for modifiers.
+        for code in [0x41_u16, 0x5A, 0x30, 0x39] {
+            assert_eq!(modifier_of(code), None, "{code:#x}");
         }
     }
 

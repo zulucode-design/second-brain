@@ -1224,6 +1224,23 @@
 		if (event.target === event.currentTarget) close();
 	}
 
+	/**
+	 * Escape cancels shortcut capture before it closes the panel.
+	 *
+	 * While the field is listening, Escape is the documented way to back out of *it* — so
+	 * taking the whole panel down with it loses the setting the user was in the middle of,
+	 * and looks like the app overreacted to a cancel.
+	 */
+	function handleOverlayKeydown(event: KeyboardEvent) {
+		if (event.key !== 'Escape') return;
+		if (capturingHotkey) {
+			event.stopPropagation();
+			stopHotkeyCapture();
+			return;
+		}
+		close();
+	}
+
 	function dismissRestoreConfirm(event: MouseEvent) {
 		if (event.target === event.currentTarget) restoreConfirm = null;
 	}
@@ -1301,7 +1318,7 @@
 
 {#if $showSettings}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="settings-overlay" class:mobile={isMobile} onclick={closeSettingsFromOverlay} onkeydown={(e) => { if (e.key === 'Escape') close(); }}>
+	<div class="settings-overlay" class:mobile={isMobile} onclick={closeSettingsFromOverlay} onkeydown={handleOverlayKeydown}>
 		<div class="settings-panel" class:mobile={isMobile} role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
 			<div class="settings-header">
 				<h2 id="settings-title">Settings</h2>
