@@ -76,3 +76,12 @@ tauri-plugin-notification = "2"
 # HKEY_CURRENT_USER-only registry access for autostart/windows.rs. No admin privilege and
 # no service, matching the same current-user-only contract as the Linux .desktop entry.
 winreg = "0.52"
+# The WH_KEYBOARD_LL hook behind hotkey/key_capture.rs (ADR-0003). A combination already
+# claimed via RegisterHotKey is never delivered as an ordinary keystroke, so a low-level
+# hook is the only way the settings field can observe the conflicts it exists to report.
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }

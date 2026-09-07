@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, activeVaultConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
-	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, setHotkeyTrigger } from '$lib/api';
+	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, setHotkeyTrigger, startHotkeyCapture as armHotkeyCapture, cancelHotkeyCapture } from '$lib/api';
 	import { darkThemes, isMobile, isAndroid, isLinux, isWindows } from '$lib/platform';
 	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
@@ -860,20 +860,23 @@
 	let capturingHotkey = $state(false);
 
 	/**
-	 * Stop listening, and explain the silence, when no combination arrives.
+	 * Reading a shortcut on Windows goes through a low-level keyboard hook in the backend,
+	 * not a DOM `keydown` — see ADR-0003.
 	 *
-	 * Windows delivers a combination already claimed via `RegisterHotKey` only to the
-	 * process that claimed it — never as an ordinary keydown to the focused window. So for
-	 * exactly the conflicts worth reporting, this field is never given the keystroke, no
-	 * `invoke` happens, and the backend's own "already used by another application" message
-	 * can never be reached. Without this, the button simply stays on "Press a key
-	 * combination…" forever and the user is told nothing at all.
+	 * A combination already claimed via `RegisterHotKey` is delivered only to the process
+	 * that claimed it, so for exactly the conflicts worth reporting this field was never
+	 * given the key: no event, no `invoke`, and the backend's own "already used by another
+	 * application" message unreachable. The hook sits ahead of hotkey dispatch and does see
+	 * them.
 	 *
-	 * Not a fix for that gap — capturing those keys needs a native low-level keyboard hook
-	 * rather than DOM events. This only ensures the dead end names itself.
+	 * The DOM handler stays as the fallback for when the hook cannot be installed. It reaches
+	 * fewer combinations — precisely the ones that matter least — but it is better than a
+	 * field that does nothing.
 	 */
 	const HOTKEY_CAPTURE_TIMEOUT_MS = 5000;
 	let hotkeyCaptureTimer: ReturnType<typeof setTimeout> | null = null;
+	let hookIsListening = $state(false);
+	let unlistenHotkeyCapture: (() => void) | null = null;
 
 	function stopHotkeyCapture() {
 		capturingHotkey = false;
@@ -881,26 +884,75 @@
 			clearTimeout(hotkeyCaptureTimer);
 			hotkeyCaptureTimer = null;
 		}
+		if (unlistenHotkeyCapture) {
+			unlistenHotkeyCapture();
+			unlistenHotkeyCapture = null;
+		}
+		// Unconditionally, even when the hook already tore itself down after capturing:
+		// cancelling nothing is harmless, and a hook that outlives this field degrades typing
+		// everywhere, not just in this app.
+		if (hookIsListening) {
+			hookIsListening = false;
+			void cancelHotkeyCapture();
+		}
 	}
 
-	function startHotkeyCapture() {
+	async function applyCapturedTrigger(trigger: string) {
+		stopHotkeyCapture();
+		hotkeyConfigureError = null;
+		try {
+			const status = await setHotkeyTrigger(trigger);
+			if (status.availability !== 'available') {
+				hotkeyConfigureError = status.reason ?? 'The shortcut could not be registered.';
+			}
+		} catch (e) {
+			hotkeyConfigureError = String(e);
+		}
+	}
+
+	async function startHotkeyCapture() {
+		if (capturingHotkey) return;
 		hotkeyConfigureError = null;
 		capturingHotkey = true;
+
 		if (hotkeyCaptureTimer !== null) clearTimeout(hotkeyCaptureTimer);
 		hotkeyCaptureTimer = setTimeout(() => {
 			if (!capturingHotkey) return;
 			stopHotkeyCapture();
 			hotkeyConfigureError =
-				'No shortcut was captured. If you did press one, another application may already ' +
-				'have claimed it system-wide — Windows delivers those keys only to that ' +
-				'application, so this field never receives them. Try a different combination.';
+				'No shortcut was captured. A shortcut needs a modifier — hold Ctrl, Alt, Shift ' +
+				'or the Windows key and press another key.';
 		}, HOTKEY_CAPTURE_TIMEOUT_MS);
+
+		try {
+			// Listening before arming, so a combination pressed immediately is not missed.
+			unlistenHotkeyCapture = await listen<{ trigger: string | null }>(
+				'hotkey-capture',
+				(event) => {
+					const trigger = event.payload?.trigger ?? null;
+					// No trigger means Escape, or the hook being cancelled — not an error.
+					if (trigger) void applyCapturedTrigger(trigger);
+					else stopHotkeyCapture();
+				}
+			);
+			await armHotkeyCapture();
+			hookIsListening = true;
+		} catch (e) {
+			// Said out loud rather than left to look like the field simply does nothing, which
+			// is the failure ADR-0001 exists to prevent one layer down.
+			hookIsListening = false;
+			hotkeyConfigureError =
+				`Reading the keyboard directly failed (${e}). Combinations another application ` +
+				'has already claimed cannot be detected; other combinations still work.';
+		}
 	}
 
 	/**
-	 * Render a KeyboardEvent the way `tauri-plugin-global-shortcut` parses it back:
-	 * modifier names joined by `+`, main key last. `null` for a bare modifier press (nothing
-	 * to save yet) or a key this format cannot express.
+	 * Render a KeyboardEvent the way `tauri-plugin-global-shortcut` parses it back: modifier
+	 * names joined by `+`, main key last. `null` for a bare modifier press (nothing to save
+	 * yet) or a key this format cannot express.
+	 *
+	 * Only used on the fallback path now; the hook produces the same spelling in Rust.
 	 */
 	function triggerFromKeyEvent(event: KeyboardEvent): string | null {
 		const modifierKeys = new Set(['Control', 'Alt', 'Shift', 'Meta']);
@@ -931,23 +983,10 @@
 			return;
 		}
 		// A bare modifier is not yet a combination, so keep listening — and keep the timeout
-		// running rather than restarting it. Holding Ctrl+Alt still delivers those two
-		// keydowns even when the key they are held for is one this field will never be
-		// given, so treating them as progress would stop the timeout from ever firing in
-		// precisely the case it exists for.
+		// running rather than restarting it.
 		const trigger = triggerFromKeyEvent(event);
 		if (!trigger) return;
-
-		stopHotkeyCapture();
-		hotkeyConfigureError = null;
-		try {
-			const status = await setHotkeyTrigger(trigger);
-			if (status.availability !== 'available') {
-				hotkeyConfigureError = status.reason ?? 'The shortcut could not be registered.';
-			}
-		} catch (e) {
-			hotkeyConfigureError = String(e);
-		}
+		await applyCapturedTrigger(trigger);
 	}
 
 	// Editor settings
@@ -1175,6 +1214,9 @@
 		if (aiProvider && aiApiKey && aiApiKey !== ($appConfig?.ai_api_key ?? '')) {
 			saveAiSettings();
 		}
+		// Closing the panel while the shortcut field is still listening would leave a
+		// system-wide keyboard hook installed with nothing left to receive it.
+		stopHotkeyCapture();
 		$showSettings = false;
 	}
 
@@ -1559,7 +1601,7 @@
 									class="import-btn"
 									class:capturing-hotkey={capturingHotkey}
 									onclick={startHotkeyCapture}
-									onkeydown={capturingHotkey ? handleHotkeyCapture : undefined}
+									onkeydown={capturingHotkey && !hookIsListening ? handleHotkeyCapture : undefined}
 									onblur={stopHotkeyCapture}
 								>
 									{#if capturingHotkey}
