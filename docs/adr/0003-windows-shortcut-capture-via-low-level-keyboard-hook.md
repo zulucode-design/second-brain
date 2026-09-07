@@ -53,8 +53,9 @@ observes the keys this feature is about.
 
 ### Shape
 
-A new `hotkey/windows/capture.rs`, sitting beside `hotkey/windows.rs` rather than inside it —
-registration and capture are different concerns that happen to share a platform.
+A new `hotkey/key_capture.rs`, sitting beside `hotkey/windows.rs` rather than inside it —
+registration and capture are different concerns that happen to share a platform. (`capture.rs`
+under `hotkey/` is already taken by the note-capture flow, hence the longer name.)
 
 - **A dedicated thread**, spawned when capture is armed and joined when it is disarmed. Low-
   level hooks are dispatched by the OS onto the thread that installed them, and that thread
@@ -141,7 +142,7 @@ prevent.
 - The app installs a system-wide keyboard hook for a few seconds at a time, during an action
   the user explicitly started. Bugs in that window affect the whole machine, which is why the
   safety rules are listed as constraints rather than suggestions.
-- `hotkey/windows/capture.rs` is unit-testable only in its pure parts — virtual key to trigger
+- `hotkey/key_capture.rs` is unit-testable only in its pure parts — virtual key to trigger
   string, and the armed-state machine. That the hook installs, fires, swallows and uninstalls
   is verifiable only by a person at a Windows desktop, like the rest of #21.
 - Verification must state which mechanism holds any conflicting key. A `RegisterHotKey` claim
