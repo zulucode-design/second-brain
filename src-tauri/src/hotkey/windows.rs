@@ -121,14 +121,24 @@ pub fn apply_trigger(app: &AppHandle, trigger: &str) -> HotkeyStatus {
 
     let manager = app.global_shortcut();
 
-    // Read before anything changes: this is what to drop once (and only once) the new
-    // trigger is confirmed live. Comparing as strings is enough here — both sides came
-    // through the same settings-panel capture or the same stored config, so there is no
-    // second spelling of the same combination to worry about missing.
-    let previous_trigger = configured_trigger(app);
-    let previous_shortcut = (previous_trigger != trigger)
-        .then(|| parse_trigger(&previous_trigger).ok())
-        .flatten();
+    // Read before anything changes: what is *actually registered* right now, which is what
+    // to drop once (and only once) the new trigger is confirmed live — and what still holds
+    // if the new one is refused.
+    //
+    // Taken from the published status rather than from the config, because only the status
+    // knows whether the configured trigger ever registered. Config says what the user asked
+    // for; a startup registration that failed leaves that value in place with nothing bound
+    // behind it, and treating it as live would mean unregistering a shortcut this app does
+    // not hold, and reporting a working hotkey when there is none.
+    //
+    // Comparing as strings is enough: both sides came through the same settings-panel
+    // capture or the same stored config, so there is no second spelling of the same
+    // combination to miss.
+    let previous_trigger = registered_trigger(app);
+    let previous_shortcut = previous_trigger
+        .as_deref()
+        .filter(|previous| *previous != trigger)
+        .and_then(|previous| parse_trigger(previous).ok());
 
     let result = manager.on_shortcut(shortcut, |app_handle, _shortcut, event| {
         if event.state() != ShortcutState::Pressed {
@@ -153,16 +163,33 @@ pub fn apply_trigger(app: &AppHandle, trigger: &str) -> HotkeyStatus {
             status
         }
         Err(error) => {
-            let status = HotkeyStatus::unavailable(&classify_registration_error(
+            let rejection = HotkeyStatus::unavailable(&classify_registration_error(
                 trigger,
                 &error.to_string(),
             ));
-            store_and_publish(app, status.clone());
             log::warn!(
                 "Quick capture hotkey change rejected: {}",
-                status.reason.as_deref().unwrap_or("unknown reason")
+                rejection.reason.as_deref().unwrap_or("unknown reason")
             );
-            status
+
+            // Publish what is *bound*, not what was attempted. Registering first means a
+            // refusal has touched nothing, so whatever held the key before still holds it —
+            // and saying "unavailable" here would report a dead hotkey while the old one is
+            // live, which is the same "the UI disagrees with reality" failure that
+            // registering-before-unregistering exists to prevent, one layer up.
+            //
+            // The rejection is still *returned*, so the settings panel can name the conflict
+            // for the attempt the user just made. Those are two different questions: what
+            // happened to this attempt, and what the hotkey is now.
+            if let Some(previous) = &previous_trigger {
+                log::info!("Quick capture hotkey unchanged, still registered: {previous}");
+            }
+            store_and_publish(
+                app,
+                status_after_rejection(previous_trigger.as_deref(), &rejection),
+            );
+
+            rejection
         }
     }
 }
@@ -300,6 +327,39 @@ fn configured_vault_path(app: &AppHandle) -> Option<String> {
         .and_then(|config| config.active_vault.clone())
 }
 
+/// What to publish after a registration was refused, given what was bound before it.
+///
+/// Separate from the rejection itself because a refused change asks two different questions
+/// with two different answers: *what happened to this attempt* (the rejection, returned to
+/// the caller so the settings panel can name the conflict) and *what the hotkey is now*
+/// (this, stored and emitted). They only coincide when nothing was bound to begin with.
+fn status_after_rejection(
+    previous_trigger: Option<&str>,
+    rejection: &HotkeyStatus,
+) -> HotkeyStatus {
+    match previous_trigger {
+        // Registration happens before the old trigger is dropped, so a refusal has touched
+        // nothing and the previous binding is still live.
+        Some(previous) => HotkeyStatus::registered(Some(previous.to_string()), false),
+        // Nothing was bound before — at startup, or after an earlier failure — so the
+        // rejection is also the current state.
+        None => rejection.clone(),
+    }
+}
+
+/// The trigger this app currently holds a registration for, if any.
+///
+/// `None` means nothing is bound — before startup has decided, or after it failed. Distinct
+/// from [`configured_trigger`], which answers what the user *asked for*: the two disagree
+/// exactly when a registration failed, which is the case that matters here.
+fn registered_trigger(app: &AppHandle) -> Option<String> {
+    let state = app.state::<AppState>();
+    let status = state.hotkey_status.lock().ok()?;
+    (status.availability == Availability::Available)
+        .then(|| status.trigger.clone())
+        .flatten()
+}
+
 /// The trigger to register: whatever the user set in Settings, or the same default Linux
 /// hints the compositor with, so a first run behaves identically before either platform's
 /// user has ever touched the setting.
@@ -357,5 +417,40 @@ mod tests {
     #[test]
     fn a_valid_trigger_parses() {
         assert!(parse_trigger("Ctrl+Alt+N").is_ok());
+    }
+
+    #[test]
+    fn a_rejected_change_still_reports_the_hotkey_that_survived_it() {
+        // The registration order means a refusal touches nothing, so Ctrl+Alt+N is still
+        // live. Publishing the rejection here would tell the user their hotkey is dead
+        // while it keeps working — the same disagreement between the UI and reality that
+        // registering-before-unregistering exists to prevent.
+        let rejection = HotkeyStatus::unavailable(&Unavailable::KeyTaken {
+            trigger: "Ctrl+Alt+P".to_string(),
+        });
+
+        let published = status_after_rejection(Some("Ctrl+Alt+N"), &rejection);
+
+        assert_eq!(published.availability, Availability::Available);
+        assert_eq!(published.trigger.as_deref(), Some("Ctrl+Alt+N"));
+        assert!(published.reason.is_none());
+        // The attempt's own outcome is unchanged: the caller still gets the conflict to show.
+        assert_eq!(rejection.availability, Availability::Unavailable);
+        assert!(rejection.reason.is_some_and(|r| r.contains("Ctrl+Alt+P")));
+    }
+
+    #[test]
+    fn a_rejection_with_nothing_bound_before_is_reported_as_the_current_state() {
+        // Startup's own path: the configured trigger is the one being attempted, so there
+        // is no earlier binding to fall back to and the rejection really is the state.
+        let rejection = HotkeyStatus::unavailable(&Unavailable::KeyTaken {
+            trigger: "Ctrl+Alt+N".to_string(),
+        });
+
+        let published = status_after_rejection(None, &rejection);
+
+        assert_eq!(published, rejection);
+        assert_eq!(published.availability, Availability::Unavailable);
+        assert!(published.trigger.is_none());
     }
 }
