@@ -24,7 +24,7 @@ use tauri_plugin_fs::FsExt;
 use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder},
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -331,12 +331,10 @@ pub fn run() {
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
-            // Always show/focus the main window
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
+            // Always show/focus the main window, rebuilding it if a previous close
+            // destroyed it — launching the app again is the other thing a user does when
+            // they cannot find its window, so it must not no-op either.
+            show_main_window(app);
 
             // Extract .md file path from args (args[0] is the binary)
             let file_path = args.iter().skip(1).find(|arg| {
@@ -442,6 +440,49 @@ pub fn run() {
 }
 
 #[cfg(desktop)]
+/// Bring the main window back, rebuilding it if it no longer exists.
+///
+/// Every caller here — the tray menu, a tray click, a second launch — used to be
+/// `if let Some(window) = get_webview_window("main")` and nothing else, so each of them
+/// silently did nothing whenever `main` had been destroyed rather than hidden. A tray icon
+/// that answers a click by doing nothing is indistinguishable from a hung app.
+///
+/// Rebuilding from the config is the same move `hotkey::window::ensure_window` makes for the
+/// capture overlay, and it is safe for the same reason: it runs from an event callback, long
+/// after the event loop is up. Doing it during `setup` is what deadlocks on Linux — see that
+/// function for the full account.
+#[cfg(desktop)]
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        return;
+    }
+
+    let Some(config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|window| window.label == "main")
+        .cloned()
+    else {
+        log::error!("Cannot restore the main window: the configuration declares no \"main\"");
+        return;
+    };
+
+    match tauri::WebviewWindowBuilder::from_config(app, &config).and_then(|builder| builder.build())
+    {
+        Ok(window) => {
+            let _ = window.show();
+            let _ = window.set_focus();
+            log::info!("Rebuilt the main window after it had been destroyed");
+        }
+        Err(error) => log::error!("Could not rebuild the main window: {error}"),
+    }
+}
+
 fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let show = MenuItemBuilder::with_id("show", "Show HelixNotes").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
@@ -453,27 +494,29 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_else(|_| app.default_window_icon().cloned().unwrap()),
         )
         .menu(&menu)
+        // Left click restores the window; right click opens the menu. Without this the
+        // plugin's default (`true`) puts the menu on *both* buttons, and the click handler
+        // below then raced it to show the window as well.
+        .show_menu_on_left_click(false)
         .tooltip("HelixNotes")
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
-                }
-            }
+            "show" => show_main_window(app),
             "quit" => {
                 app.exit(0);
             }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            if let tauri::tray::TrayIconEvent::Click { .. } = event {
-                if let Some(window) = tray.app_handle().get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
-                }
+            // Matching `Click { .. }` discarded the button, so a *right* click also showed
+            // and focused the window — pre-empting the context menu, and with it the only
+            // Quit the app has. With close-to-tray on that left no graceful way to exit.
+            if let tauri::tray::TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
             }
         })
         .build(app)?;
