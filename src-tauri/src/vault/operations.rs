@@ -674,6 +674,7 @@ pub fn create_note(
         created: now,
         modified: now,
         category: Some(category),
+        source_url: None,
     };
 
     let raw = frontmatter::update_note_raw(&meta, "\n");
@@ -690,6 +691,73 @@ pub fn create_note(
         meta,
         preview: String::new(),
     })
+}
+
+/// Write a fully formed web clipping in one file-creation operation.
+///
+/// Fetching and extraction happen before this function is called. A write failure removes the
+/// newly-created file, so a failed clipping never leaves a blank or partial note behind.
+pub fn create_web_clipping(
+    vault_path: &str,
+    notebook_relative: &str,
+    title: &str,
+    markdown: &str,
+    source_url: &str,
+) -> Result<NoteEntry, String> {
+    let category = para::category_for_relative_path(notebook_relative).ok_or_else(|| {
+        "Web clippings must be filed under a PARA category: Projects, Areas, Resources, or Archives"
+            .to_string()
+    })?;
+    let requested_dir = Path::new(vault_path).join(safe_relative_path(notebook_relative)?);
+    let dir = ensure_vault_content_dir(vault_path, &requested_dir)?;
+    let filename = sanitize_filename(title);
+    let now = Utc::now();
+    let meta = NoteMeta {
+        id: Uuid::new_v4().to_string(),
+        title: title.to_string(),
+        tags: Vec::new(),
+        pinned: false,
+        created: now,
+        modified: now,
+        category: Some(category),
+        source_url: Some(source_url.to_string()),
+    };
+    let raw = frontmatter::update_note_raw(&meta, markdown);
+
+    for counter in 0.. {
+        let suffix = if counter == 0 {
+            String::new()
+        } else {
+            format!(" {counter}")
+        };
+        let file_path = dir.join(format!("{filename}{suffix}.md"));
+        let mut file = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&file_path)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        };
+        if let Err(error) = file.write_all(raw.as_bytes()).and_then(|_| file.sync_all()) {
+            drop(file);
+            let _ = fs::remove_file(&file_path);
+            return Err(error.to_string());
+        }
+
+        let vault_root = Path::new(vault_path);
+        let relative = crate::vault::path::to_portable_string(
+            file_path.strip_prefix(vault_root).unwrap_or(&file_path),
+        );
+        return Ok(NoteEntry {
+            path: file_path.to_string_lossy().to_string(),
+            relative_path: relative,
+            meta,
+            preview: markdown.lines().next().unwrap_or_default().to_string(),
+        });
+    }
+    unreachable!("the unbounded filename collision loop always returns")
 }
 
 pub fn duplicate_note(path: &str, vault_path: &str) -> Result<NoteEntry, String> {
@@ -2673,7 +2741,7 @@ pub fn sanitize_filename(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        compare_natural_names, create_note, create_notebook, duplicate_note,
+        compare_natural_names, create_note, create_notebook, create_web_clipping, duplicate_note,
         ensure_vault_structure, get_note_switcher_titles, helixnotes_dir, load_notebook_icons,
         load_quick_access, move_note, move_note_with_outcome, permanent_delete, read_note,
         restore_notebook, save_quick_access, scan_notebooks, set_notebook_icon, ParaCategory,
@@ -2719,6 +2787,31 @@ mod tests {
             Some(ParaCategory::Projects),
             "the category must be on disk, not just in the returned value"
         );
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn a_web_clipping_is_complete_and_records_its_source_url() {
+        let vault = scaffolded_vault("web-clipping");
+        let vault_str = vault.to_string_lossy().to_string();
+
+        let entry = create_web_clipping(
+            &vault_str,
+            "Resources",
+            "Field Notes",
+            "# Field Notes\n\nA clipped article body.",
+            "https://example.com/field-notes",
+        )
+        .unwrap();
+        let raw = fs::read_to_string(&entry.path).unwrap();
+        let (meta, body) = frontmatter::parse_note(&raw, "Field Notes.md");
+
+        assert_eq!(meta.category, Some(ParaCategory::Resources));
+        assert_eq!(
+            meta.source_url.as_deref(),
+            Some("https://example.com/field-notes")
+        );
+        assert!(body.contains("A clipped article body."));
         fs::remove_dir_all(vault).unwrap();
     }
 

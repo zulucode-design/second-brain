@@ -15,6 +15,8 @@ struct RawFrontmatter {
     modified: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_string")]
     category: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    source_url: Option<String>,
 }
 
 fn deserialize_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -87,6 +89,7 @@ pub fn parse_note(raw: &str, filename: &str) -> (NoteMeta, String) {
         created,
         modified,
         category,
+        source_url: fm.source_url,
     };
 
     let content = result.content;
@@ -136,9 +139,13 @@ pub fn serialize_frontmatter(meta: &NoteMeta) -> String {
         Some(c) => format!("category: {}\n", c.folder_name()),
         None => String::new(),
     };
+    let source_url_line = match &meta.source_url {
+        Some(url) => format!("source_url: \"{}\"\n", url.replace('"', "\\\"")),
+        None => String::new(),
+    };
 
     format!(
-        "---\nid: \"{}\"\ntitle: \"{}\"\ntags: {}\npinned: {}\ncreated: {}\nmodified: {}\n{}---\n",
+        "---\nid: \"{}\"\ntitle: \"{}\"\ntags: {}\npinned: {}\ncreated: {}\nmodified: {}\n{}{}---\n",
         meta.id,
         meta.title.replace('"', "\\\""),
         tags_str,
@@ -146,6 +153,7 @@ pub fn serialize_frontmatter(meta: &NoteMeta) -> String {
         meta.created.to_rfc3339(),
         meta.modified.to_rfc3339(),
         category_line,
+        source_url_line,
     )
 }
 
@@ -215,6 +223,17 @@ pub fn merge_frontmatter(original_raw: &str, meta: &NoteMeta, body: &str) -> Str
         }
         None => {
             mapping.remove(serde_yaml::Value::String("category".into()));
+        }
+    }
+    match &meta.source_url {
+        Some(url) => {
+            mapping.insert(
+                serde_yaml::Value::String("source_url".into()),
+                serde_yaml::Value::String(url.clone()),
+            );
+        }
+        None => {
+            mapping.remove(serde_yaml::Value::String("source_url".into()));
         }
     }
 
@@ -467,6 +486,7 @@ mod tests {
             created: Utc::now(),
             modified: Utc::now(),
             category,
+            source_url: None,
         }
     }
 
@@ -479,6 +499,17 @@ mod tests {
             let (parsed, _) = parse_note(&raw, "a-note.md");
             assert_eq!(parsed.category, Some(category));
         }
+    }
+
+    #[test]
+    fn source_url_survives_a_write_then_read() {
+        let mut meta = meta_with_category(Some(ParaCategory::Resources));
+        meta.source_url = Some("https://example.com/field-notes?view=full".to_string());
+
+        let raw = update_note_raw(&meta, "body\n");
+        let (parsed, _) = parse_note(&raw, "field-notes.md");
+
+        assert_eq!(parsed.source_url, meta.source_url);
     }
 
     #[test]

@@ -16,6 +16,9 @@ pub struct NoteMeta {
     /// note the user never categorised.
     #[serde(default)]
     pub category: Option<crate::vault::para::ParaCategory>,
+    /// Canonical address of the page a web clipping was created from.
+    #[serde(default)]
+    pub source_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

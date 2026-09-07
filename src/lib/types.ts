@@ -62,6 +62,8 @@ export interface NoteMeta {
   modified: string;
   /** `null` for notes predating PARA filing; never defaulted to a bucket. */
   category: ParaCategory | null;
+  /** Canonical page address when this note was created by web clipping. */
+  source_url: string | null;
 }
 
 export interface NoteEntry {

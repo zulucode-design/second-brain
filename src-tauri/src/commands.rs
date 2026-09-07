@@ -1052,6 +1052,46 @@ pub fn quick_capture_note(
     })
 }
 
+/// Fetch and distil a web page away from Tauri's UI thread, then file it only after the
+/// complete note is ready. This order prevents a failed network request from creating a draft.
+#[tauri::command]
+pub async fn clip_web_page(
+    state: State<'_, AppState>,
+    notebook_relative: String,
+    source_url: String,
+) -> Result<NoteEntry, String> {
+    let clipping = tokio::task::spawn_blocking(move || crate::web_clipping::clip_url(&source_url))
+        .await
+        .map_err(|error| format!("Web clipping task failed: {error}"))?
+        .map_err(|error| error.message().to_string())?;
+    let (article, canonical_url) = clipping;
+
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let config = state.config.lock().map_err(|error| error.to_string())?;
+    let vault_path = config
+        .active_vault
+        .as_ref()
+        .ok_or("No active vault")?
+        .clone();
+    drop(config);
+
+    let entry = operations::create_web_clipping(
+        &vault_path,
+        &notebook_relative,
+        &article.title,
+        &article.markdown,
+        &canonical_url,
+    )?;
+    if let Err(error) = index_note_now(&state, &vault_path, &entry.path) {
+        let _ = std::fs::remove_file(&entry.path);
+        return Err(error);
+    }
+    Ok(entry)
+}
+
 /// The AI backend's last known reachability.
 ///
 /// Read from stored state rather than probing, so asking is instant and the UI can call
