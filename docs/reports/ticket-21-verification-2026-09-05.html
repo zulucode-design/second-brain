@@ -204,8 +204,9 @@
         <span>Branch <code>feat/21-windows-hotkey</code></span>
         <span>Interactive pass 2026-09-05, at the Windows desktop, against real release and
           debug builds</span>
-        <span>Five fixes: <code>523883a</code>, <code>7d8a9c2</code>, <code>d043b56</code>,
-          <code>af29cdd</code>, <code>b4f8b7a</code></span>
+        <span>Five fixes from the pass: <code>523883a</code>, <code>7d8a9c2</code>,
+          <code>d043b56</code>, <code>af29cdd</code>, <code>b4f8b7a</code></span>
+        <span>Two after it: <code>8051508</code>, <code>5319786</code></span>
       </div>
     </header>
 
@@ -456,7 +457,8 @@
     </section>
 
     <section id="limitation">
-      <h2>The keystroke limitation, and what it costs</h2>
+      <h2>The keystroke limitation, and what it costs
+        &mdash; <a href="https://github.com/zulucode-design/second-brain/issues/46">#46</a></h2>
       <p class="section-intro">
         This one is not a defect and cannot be patched; it is a property of the platform that
         constrains what the settings UI can ever do.
@@ -492,6 +494,42 @@
       </p>
     </section>
 
+    <section id="after">
+      <h2>Fixed after the pass, in review</h2>
+      <p class="section-intro">
+        Two defects the interactive pass exposed but did not itself close &mdash; one it
+        found directly, one it created the conditions to notice.
+      </p>
+      <div class="decision-list">
+        <div class="decision">
+          <h3>The overlay kept the process alive &mdash; <code>8051508</code></h3>
+          <p><code>lib.rs</code>'s <code>Destroyed</code> handler closed only
+          <code>note-*</code> windows when <code>main</code> was destroyed, which was
+          sufficient right up until a second long-lived window existed. Tauri exits when the
+          last window closes, so the permanently-hidden overlay held an invisible process
+          open that no tray click and no relaunch could reach, ending only in Task Manager.
+          Now closes every window that is not <code>main</code>.
+          <span class="recommend">Latent on Linux since the overlay was added there; it took
+          a Windows pass to hit it.</span></p>
+        </div>
+        <div class="decision">
+          <h3>A rejected change reported a dead hotkey that was still working
+            &mdash; <code>5319786</code></h3>
+          <p>Fix 4 made a refused trigger leave the working registration alone, but
+          <code>apply_trigger</code> still stored and emitted the refusal as the hotkey's
+          state: <code>Unavailable</code>, <code>trigger: None</code>. So the old shortcut
+          kept firing while Settings said there was no hotkey at all &mdash; the same
+          disagreement between the UI and reality that registering-before-unregistering
+          exists to prevent, one layer up. The rejection is still returned, so the panel can
+          still name the conflicting combination; what is <em>published</em> is now whatever
+          is actually bound. Also sources that from the published status rather than the
+          config, which records only what the user asked for.
+          <span class="recommend">Found in review, not at the keyboard: it needs the
+          conflict path from item 2, which the settings field cannot reach.</span></p>
+        </div>
+      </div>
+    </section>
+
     <section id="elsewhere">
       <h2>Found here, not fixed here</h2>
       <p class="section-intro">
@@ -500,7 +538,8 @@
       </p>
       <div class="decision-list">
         <div class="decision">
-          <h3>Tray: a click cannot restore a destroyed main window</h3>
+          <h3>Tray: a click cannot restore a destroyed main window
+            &mdash; <a href="https://github.com/zulucode-design/second-brain/issues/44">#44</a></h3>
           <p><code>lib.rs</code>, <code>setup_tray</code>. Both the tray handler and the
           single-instance callback re-show <code>main</code> only
           <code>if let Some(window) = &hellip;get_webview_window("main")</code>. With
@@ -509,7 +548,8 @@
           unreachable. <span class="recommend">Pre-existing; not in this diff.</span></p>
         </div>
         <div class="decision">
-          <h3>Tray: right-click raises the window instead of opening the menu</h3>
+          <h3>Tray: right-click raises the window instead of opening the menu
+            &mdash; <a href="https://github.com/zulucode-design/second-brain/issues/44">#44</a></h3>
           <p><code>lib.rs</code>. The handler matches
           <code>TrayIconEvent::Click { .. }</code>, discarding the <code>button</code> field,
           so a right-click also shows and focuses the window &mdash; pre-empting the context
@@ -534,7 +574,8 @@
           <span class="recommend">Worth a follow-up if it bothers anyone in daily use.</span></p>
         </div>
         <div class="decision">
-          <h3>Release builds have no logs at all</h3>
+          <h3>Release builds have no logs at all
+            &mdash; <a href="https://github.com/zulucode-design/second-brain/issues/45">#45</a></h3>
           <p><code>lib.rs</code> gates <code>tauri_plugin_log</code> behind
           <code>cfg!(debug_assertions)</code>, so every diagnostic in this module is
           discarded in the shipped build &mdash; including the one explaining why a hotkey is
@@ -548,8 +589,11 @@
 
     <footer>
       Interactive pass, Windows desktop, 2026-09-05 &mdash; five fixes on
-      <code>feat/21-windows-hotkey</code>, follow-ups in
-      <a href="https://github.com/zulucode-design/second-brain/issues/42">#42</a>.
+      <code>feat/21-windows-hotkey</code>, two more after review, follow-ups in
+      <a href="https://github.com/zulucode-design/second-brain/issues/42">#42</a>,
+      <a href="https://github.com/zulucode-design/second-brain/issues/44">#44</a>,
+      <a href="https://github.com/zulucode-design/second-brain/issues/45">#45</a> and
+      <a href="https://github.com/zulucode-design/second-brain/issues/46">#46</a>.
     </footer>
   </div>
 </body>
