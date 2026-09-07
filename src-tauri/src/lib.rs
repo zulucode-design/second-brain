@@ -97,13 +97,34 @@ pub fn run() {
             // before the user tries one rather than after it fails.
             ai_health::spawn_poller(app.handle().clone());
 
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+            // Registered in every build, not just debug ones.
+            //
+            // `hotkey::startup` states the reason this exists: an unregistered hotkey is
+            // invisible by nature — nothing happens when the key is pressed — so why has to
+            // be somewhere a person can read without attaching a debugger. Gating the
+            // logger on `debug_assertions` made that true only in the builds where a
+            // developer could already attach one, which is not where the users who hit it
+            // are. Measured on Windows 2026-09-05: quick capture was completely
+            // non-functional on a release build, nothing anywhere said why, and three of
+            // the five defects behind it were diagnosable only after rebuilding in debug.
+            //
+            // Always on rather than behind a flag or a setting, because by the time someone
+            // knows to go looking for a switch they have already hit the problem the log
+            // was supposed to explain, and the run that produced it is gone.
+            //
+            // Targets are the plugin's own defaults: stdout, and a file in the OS log
+            // directory (`%LOCALAPPDATA%\<identifier>\logs` on Windows,
+            // `$XDG_DATA_HOME/<identifier>/logs` on Linux). The rotation is not — the
+            // default caps a single file at 40 KB and keeps only that one, which is too
+            // little to still hold the startup line that explains a hotkey by the time
+            // anyone thinks to look.
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(log::LevelFilter::Info)
+                    .max_file_size(5_000_000)
+                    .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(3))
+                    .build(),
+            )?;
 
             // Claim the global capture hotkey. Two entirely separate mechanisms (ADR-0001):
             // the Linux portal negotiates with the compositor, the Windows plugin registers

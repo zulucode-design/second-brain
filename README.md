@@ -53,6 +53,19 @@ pnpm verify        # typecheck, tests, clippy, build
 Linux builds also need the usual Tauri system dependencies (WebKitGTK and friends) — see
 the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
 
+## Logs
+
+Every build writes a log, release included. If something silently does nothing — a global
+hotkey that never fires is the usual one — the reason is here rather than on screen.
+
+| Platform | Location |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\io.github.zulucodedesign.SecondBrain\logs` |
+| Linux | `~/.local/share/io.github.zulucodedesign.SecondBrain/logs` |
+| macOS | `~/Library/Logs/io.github.zulucodedesign.SecondBrain` |
+
+Files roll at 5 MB and the three most recent are kept.
+
 ## Credits and license
 
 This project is a fork of **[HelixNotes](https://gitlab.com/ArkHost/HelixNotes)** by Yuri
