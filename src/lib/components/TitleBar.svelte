@@ -6,9 +6,11 @@
 
 	let {
 		onNewNote = () => {},
+		onClipWeb = () => {},
 		onSelectNote
 	}: {
 		onNewNote?: () => void;
+		onClipWeb?: () => void;
 		onSelectNote?: (path: string) => Promise<boolean>;
 	} = $props();
 
@@ -114,12 +116,18 @@
 			</svg>
 		</button>{/if}
 		{#if activeVaultConfig($appConfig)?.sync_provider === 'webdav'}
-		<button class="switch-vault-btn" class:active={$syncState.running} onclick={() => { if (!$syncState.running) syncNow().catch(() => {}); }} disabled={$syncState.running} title={$syncState.error ? `Sync error: ${$syncState.error}` : ($syncState.running ? 'Syncing vault...' : 'Sync vault now')}>
-			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class:sync-spin={$syncState.running}>
-				<path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/>
+			<button class="switch-vault-btn" class:active={$syncState.running} onclick={() => { if (!$syncState.running) syncNow().catch(() => {}); }} disabled={$syncState.running} title={$syncState.error ? `Sync error: ${$syncState.error}` : ($syncState.running ? 'Syncing vault...' : 'Sync vault now')}>
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class:sync-spin={$syncState.running}>
+					<path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/>
+				</svg>
+			</button>
+		{/if}
+		<button class="switch-vault-btn" onclick={onClipWeb} title="Clip web page">
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
+				<path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
 			</svg>
 		</button>
-		{/if}
 		<button class="new-note-btn" onclick={onNewNote} title={`New Note (${modKey}+N)`}>
 			<svg width="14" height="14" viewBox="0 0 14 14" fill="none">
 				<path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />

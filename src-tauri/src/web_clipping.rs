@@ -1,4 +1,4 @@
-use reqwest::{blocking::Client, redirect::Policy, Url};
+use reqwest::{blocking::Client, redirect::Policy, StatusCode, Url};
 use std::io::Read;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::time::Duration;
@@ -169,29 +169,40 @@ fn resolve_public_host(url: &Url) -> Result<(String, Vec<SocketAddr>), SourceErr
     Ok((host, addresses))
 }
 
-fn fetch_public_html(url: &Url) -> Result<String, SourceError> {
-    let (host, addresses) = resolve_public_host(url)?;
-    let redirect_host = host.clone();
-    let client = Client::builder()
+fn html_client(host: &str, addresses: &[SocketAddr]) -> Result<Client, SourceError> {
+    Client::builder()
         .timeout(Duration::from_secs(20))
-        .redirect(Policy::custom(move |attempt| {
-            let permitted = attempt.previous().len() < 5
-                && attempt
-                    .url()
-                    .host_str()
-                    .is_some_and(|next_host| next_host.eq_ignore_ascii_case(&redirect_host))
-                && validate_source_url(attempt.url().as_str()).is_ok();
-            if permitted {
-                attempt.follow()
-            } else {
-                attempt.stop()
-            }
-        }))
-        .resolve_to_addrs(&host, &addresses)
+        .redirect(Policy::none())
+        .resolve_to_addrs(host, addresses)
         .build()
-        .map_err(|_| {
-            SourceError::Unreachable("The web request could not be prepared".to_string())
-        })?;
+        .map_err(|_| SourceError::Unreachable("The web request could not be prepared".to_string()))
+}
+
+fn fetch_public_html(url: &Url) -> Result<String, SourceError> {
+    let mut current_url = url.clone();
+    for redirect_count in 0..=5 {
+        let html = fetch_public_html_without_redirects(&current_url, redirect_count)?;
+        match html {
+            FetchStep::Html(html) => return Ok(html),
+            FetchStep::Redirect(next_url) => current_url = next_url,
+        }
+    }
+    Err(SourceError::Blocked(
+        "The web page redirected too many times".to_string(),
+    ))
+}
+
+enum FetchStep {
+    Html(String),
+    Redirect(Url),
+}
+
+fn fetch_public_html_without_redirects(
+    url: &Url,
+    redirect_count: usize,
+) -> Result<FetchStep, SourceError> {
+    let (host, addresses) = resolve_public_host(url)?;
+    let client = html_client(&host, &addresses)?;
 
     let mut response = client.get(url.clone()).send().map_err(|error| {
         if error.is_timeout() {
@@ -200,11 +211,25 @@ fn fetch_public_html(url: &Url) -> Result<String, SourceError> {
             SourceError::Unreachable("The web page could not be reached".to_string())
         }
     })?;
+    if response.status().is_redirection() {
+        if redirect_count >= 5 {
+            return Err(SourceError::Blocked(
+                "The web page redirected too many times".to_string(),
+            ));
+        }
+        let location = response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .ok_or_else(|| {
+                SourceError::Unreachable(
+                    "The web page redirected without a destination".to_string(),
+                )
+            })?;
+        return Ok(FetchStep::Redirect(redirect_target(url, location)?));
+    }
     if !response.status().is_success() {
-        return Err(SourceError::Unreachable(format!(
-            "The web page returned HTTP {}",
-            response.status()
-        )));
+        return Err(status_failure(response.status()));
     }
     if response
         .content_length()
@@ -239,22 +264,61 @@ fn fetch_public_html(url: &Url) -> Result<String, SourceError> {
             "The web page exceeds the 5 MiB clipping limit".to_string(),
         ));
     }
-    String::from_utf8(body)
-        .map_err(|_| SourceError::Blocked("The web page is not valid UTF-8 HTML".to_string()))
+    let html = String::from_utf8(body)
+        .map_err(|_| SourceError::Blocked("The web page is not valid UTF-8 HTML".to_string()))?;
+    Ok(FetchStep::Html(html))
+}
+
+fn redirect_target(current_url: &Url, location: &str) -> Result<Url, SourceError> {
+    let next_url = current_url.join(location).map_err(|_| {
+        SourceError::Unreachable("The web page redirected to an invalid URL".to_string())
+    })?;
+    validate_source_url(next_url.as_str()).map_err(|error| match error {
+        ClipError::InvalidUrl(message) | ClipError::Blocked(message) => {
+            SourceError::Blocked(message)
+        }
+        ClipError::Fetch(message)
+        | ClipError::Timeout(message)
+        | ClipError::NotArticle(message) => SourceError::Unreachable(message),
+    })
+}
+
+fn status_failure(status: StatusCode) -> SourceError {
+    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+        return SourceError::Blocked(
+            "The web page requires login or permission before it can be clipped".to_string(),
+        );
+    }
+    SourceError::Unreachable(format!("The web page returned HTTP {status}"))
 }
 
 pub fn extract_article(html: &str, source_url: &str) -> Result<ClippedArticle, ClipError> {
+    if looks_like_login_wall(html) {
+        return Err(ClipError::NotArticle(
+            "The web page requires login before it can be clipped".to_string(),
+        ));
+    }
     let article = legible::parse(html, Some(source_url), None)
         .map_err(|error| ClipError::NotArticle(error.to_string()))?;
     if article.text_content.split_whitespace().count() < 20 {
         return Err(ClipError::NotArticle(
-            "No readable article content was found; the page may require a login".to_string(),
+            "No readable article content was found on that page".to_string(),
         ));
     }
     Ok(ClippedArticle {
         title: article.title.trim().to_string(),
         markdown: article.markdown_content.trim().to_string(),
     })
+}
+
+fn looks_like_login_wall(html: &str) -> bool {
+    let lower = html.to_ascii_lowercase();
+    lower.contains("<form")
+        && (lower.contains("type=\"password\"")
+            || lower.contains("type='password'")
+            || lower.contains(">sign in<")
+            || lower.contains(">log in<")
+            || lower.contains("login"))
 }
 
 #[cfg(test)]
@@ -312,6 +376,24 @@ mod tests {
             .expect_err("a login wall is not an article");
 
         assert!(matches!(error, ClipError::NotArticle(_)));
+        assert!(error.message().contains("requires login"));
+    }
+
+    #[test]
+    fn rejects_non_article_content_without_calling_it_a_login_page() {
+        let html = r#"
+            <html>
+              <head><title>Product chooser</title></head>
+              <body><main><h1>Pick a plan</h1><p>Short page.</p></main></body>
+            </html>
+        "#;
+
+        let error = extract_article(html, "https://example.com/plans")
+            .expect_err("thin marketing furniture is not an article");
+
+        assert!(matches!(error, ClipError::NotArticle(_)));
+        assert!(error.message().contains("No readable article content"));
+        assert!(!error.message().contains("login"));
     }
 
     #[test]
@@ -342,5 +424,36 @@ mod tests {
             fetch_with(&source, "https://example.com/article").expect_err("the source timed out");
 
         assert!(matches!(error, ClipError::Timeout(_)));
+    }
+
+    #[test]
+    fn reports_login_required_statuses_distinctly() {
+        for status in [
+            reqwest::StatusCode::UNAUTHORIZED,
+            reqwest::StatusCode::FORBIDDEN,
+        ] {
+            let error = status_failure(status);
+
+            assert!(
+                matches!(error, SourceError::Blocked(message) if message.contains("requires login"))
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_safe_cross_host_redirect_targets_for_public_web_pages() {
+        let current = Url::parse("https://example.com/story").unwrap();
+        let next = redirect_target(&current, "https://www.example.com/story").unwrap();
+
+        assert_eq!(next.as_str(), "https://www.example.com/story");
+    }
+
+    #[test]
+    fn rejects_redirect_targets_to_private_addresses() {
+        let current = Url::parse("https://example.com/story").unwrap();
+        let error = redirect_target(&current, "http://127.0.0.1/story")
+            .expect_err("private redirects stay blocked");
+
+        assert!(matches!(error, SourceError::Blocked(_)));
     }
 }

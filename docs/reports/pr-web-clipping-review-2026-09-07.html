@@ -63,20 +63,20 @@
   <div class="page">
     <header>
       <p class="kicker">Code review record</p>
-      <h1>Issue #5 web clipping is backend-only right now</h1>
+      <h1>Issue #5 web clipping now has the required app flow</h1>
       <p class="summary">
         Review target: <code>feat/web-clipping</code> at <code>b0ce390</code>, compared with
-        <code>origin/main</code> at <code>68f351c</code>. The branch has useful backend work,
-        but it should not be merged as the issue #5 implementation yet.
+        <code>origin/main</code> at <code>68f351c</code>. The first reviewed commit was backend-only;
+        the follow-up work adds the visible URL-paste and PARA category flow.
       </p>
-      <div class="gate">
-        <strong>Merge gate: blocked.</strong> The issue asks for a user to paste a URL and choose
-        a PARA category. The current diff exposes a backend command and frontend API wrapper, but
-        no visible app flow calls it.
+      <div class="gate" style="border-color:#a8cdb5;background:var(--good-soft)">
+        <strong style="color:var(--good)">Merge gate: automated verification passed.</strong> The
+        earlier backend-only blocker is resolved in the branch. The remaining release-confidence
+        step is a live app clipping run against a real article URL.
       </div>
       <div class="meta">
         <span>Branch: <code>feat/web-clipping</code></span>
-        <span>Commit reviewed: <code>b0ce390</code></span>
+        <span>Commits reviewed: <code>b0ce390</code> plus follow-up UI/report commits</span>
         <span>Date: 2026-09-07</span>
       </div>
     </header>
@@ -87,43 +87,43 @@
         <div class="card">
           <strong>Rust full suite</strong>
           <p><code>cargo test --manifest-path src-tauri/Cargo.toml</code></p>
-          <p>Passed: 279 tests, 1 ignored.</p>
+          <p>Passed in <code>pnpm verify</code>: 283 Rust tests, 1 ignored.</p>
         </div>
         <div class="card">
           <strong>Svelte typecheck</strong>
           <p><code>pnpm check</code></p>
-          <p>Passed: 0 errors, 0 warnings.</p>
+          <p>Passed in <code>pnpm verify</code>: 0 errors, 0 warnings.</p>
         </div>
       </div>
     </section>
 
     <section>
       <h2>Spec Findings</h2>
-      <div class="finding blocker">
-        <h3>Blocker: the required paste/category interaction is missing</h3>
+      <div class="finding pass">
+        <h3>Resolved: the required paste/category interaction is now present</h3>
         <p>
           Issue #5 says: "The user gives the app a URL and picks a PARA category." The acceptance
-          criterion says: "Pasting a URL and choosing a category produces a note." The diff adds
-          <code>clip_web_page</code> and <code>clipWebPage</code>, but no Svelte UI invokes that
-          API. This cannot close the ticket yet.
+          criterion says: "Pasting a URL and choosing a category produces a note." The branch now
+          adds desktop and mobile "Clip web page" entry points, a URL input modal, PARA category
+          buttons, and a call to <code>clipWebPage</code>.
         </p>
       </div>
-      <div class="finding warning">
-        <h3>Partial: login-walled pages and non-articles are not clearly separated</h3>
+      <div class="finding pass">
+        <h3>Improved: login-required HTTP statuses have a distinct message</h3>
         <p>
           Issue #5 asks for common failures, including login-walled pages and non-article content,
-          to report clear reasons. Short extracted content returns a combined message:
-          <code>No readable article content was found; the page may require a login</code>. HTTP
-          401/403 responses are reported as HTTP status fetch failures. This is actionable, but
-          not yet a strong distinction between login-required and non-article cases.
+          to report clear reasons. HTTP 401/403 now report that the page requires login or
+          permission. HTML pages that look like login forms also return a login-specific message,
+          while thin non-article pages report that no readable article content was found.
         </p>
       </div>
-      <div class="finding warning">
-        <h3>Judgement call: URL safety restrictions reject some real public articles</h3>
+      <div class="finding pass">
+        <h3>Resolved: public cross-host redirects are now allowed safely</h3>
         <p>
-          The issue says fetching is a network operation against an arbitrary site. The branch
-          blocks nonstandard ports and cross-host redirects. That is defensible for SSRF safety,
-          but it is stricter than the ticket states and should be accepted explicitly in review.
+          The first backend version rejected redirects to a different host, which would have broken
+          normal article redirects such as apex-to-www canonicalization. Redirects are now followed
+          manually. Each hop is validated and DNS-pinned before fetching, so private/local redirects
+          remain blocked.
         </p>
       </div>
     </section>
@@ -163,12 +163,12 @@
           <tr><th>Criterion</th><th>Status</th><th>Evidence</th></tr>
         </thead>
         <tbody>
-          <tr><td>Paste URL and choose category creates readable note</td><td>Blocked</td><td>No visible UI caller exists yet.</td></tr>
+          <tr><td>Paste URL and choose category creates readable note</td><td>Implemented, pending live app verification</td><td>Desktop/mobile modal calls <code>clipWebPage</code>, refreshes the lists, reads the created note, and selects it.</td></tr>
           <tr><td>Navigation/ad furniture excluded</td><td>Partially verified</td><td>Unit test covers a small HTML fixture.</td></tr>
           <tr><td>Source URL recorded</td><td>Verified</td><td><code>source_url</code> frontmatter round trip and clipping write test pass.</td></tr>
-          <tr><td>Saved note edits, links, searches normally</td><td>Not manually verified</td><td>The created note is a normal markdown file, but no app-level clipping flow test exists.</td></tr>
-          <tr><td>Fetching does not block UI</td><td>Backend design verified</td><td>Tauri command uses <code>spawn_blocking</code>; no UI wired yet.</td></tr>
-          <tr><td>Failures are clear and leave no partial note</td><td>Partially verified</td><td>Timeout/private/login fixture tests pass; clearer login vs non-article distinction remains.</td></tr>
+          <tr><td>Saved note edits, links, searches normally</td><td>Design verified, pending live verification</td><td>The clipping is written as a normal markdown note and selected through the existing editor path.</td></tr>
+          <tr><td>Fetching does not block UI</td><td>Implemented and typechecked</td><td>Tauri command uses <code>spawn_blocking</code>; the UI awaits it with disabled modal controls.</td></tr>
+          <tr><td>Failures are clear and leave no partial note</td><td>Partially verified</td><td>Timeout/private/login/non-article/redirect fixture tests pass; live unreachable-site behavior still needs manual verification.</td></tr>
         </tbody>
       </table>
     </section>
@@ -176,9 +176,9 @@
     <section>
       <h2>Recommended Next Work</h2>
       <ul>
-        <li>Add the visible clipping flow: paste URL, choose PARA category, call <code>clipWebPage</code>, refresh note/sidebar state, and select the created note.</li>
-        <li>Decide whether strict URL restrictions are acceptable for v1 because they protect local/private network resources.</li>
-        <li>Improve failure mapping for 401/403 and no-readable-content cases.</li>
+        <li>Run one live clipping from the app and confirm the created note opens, edits, links, and appears in search.</li>
+        <li>Run one live failure case from the app and confirm the modal displays the backend reason without creating a note.</li>
+        <li>Accept the remaining URL safety restriction that nonstandard ports are blocked to protect local/private services.</li>
         <li>Consider extracting shared safe URL/fetch behavior from image proxy and web clipping after the UI is in place.</li>
       </ul>
     </section>

@@ -64,12 +64,17 @@
 	} from '$lib/stores/app';
 	import { keybindings, matchAction } from '$lib/keybindings';
 	import { destinationForCategory, suggestedNotebookForCreation } from '$lib/utils/note-creation';
+	import {
+		canSubmitWebClip,
+		cleanClipUrlInput,
+		webClipFailureMessage
+	} from '$lib/utils/web-clipping';
 	import { PARA_CATEGORIES } from '$lib/types';
 
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
 	const isMobile = $derived($platformIsMobile);
-	import { loadVaultState, saveVaultState, readNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, getAppConfig, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus, getHotkeyStatus, getRepairStatus, retryRepairs } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, getAppConfig, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus, getHotkeyStatus, getRepairStatus, retryRepairs, clipWebPage } from '$lib/api';
 	import { darkThemes, isAndroid } from '$lib/platform';
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow } from '$lib/utils/window';
@@ -104,6 +109,13 @@
 	let noteCreationTitle = $state('Untitled');
 	let noteCreationSource = $state<'list' | 'wiki-link'>('list');
 	let noteCreationError = $state('');
+	let webClipOpen = $state(false);
+	let webClipBusy = $state(false);
+	let webClipUrl = $state('');
+	let webClipError = $state('');
+	let suggestedWebClipNotebook = $state<string | null>(null);
+	let webClipDialog = $state<HTMLDivElement>();
+	let webClipUrlInput = $state<HTMLInputElement>();
 
 	async function repairNow() {
 		repairBusy = true;
@@ -386,6 +398,43 @@
 		requestNoteCreation();
 	}
 
+	function requestWebClip() {
+		if ($viewMode === 'quickaccess' || $viewMode === 'trash' || $viewMode === 'unfiled') return;
+		if (!isMobile && $notelistCollapsed) $notelistCollapsed = false;
+		suggestedWebClipNotebook = suggestedNotebookForCreation(
+			$viewMode,
+			$activeNotebook?.relative_path
+		);
+		webClipUrl = '';
+		webClipError = '';
+		webClipOpen = true;
+		void tick().then(() => webClipUrlInput?.focus() ?? webClipDialog?.focus());
+	}
+
+	async function confirmWebClipCategory(category: ParaCategory) {
+		if (webClipBusy || !canSubmitWebClip(webClipUrl)) return;
+		webClipBusy = true;
+		webClipError = '';
+		try {
+			const destination = destinationForCategory(category, suggestedWebClipNotebook);
+			const entry = await clipWebPage(destination, cleanClipUrlInput(webClipUrl));
+			await Promise.all([sidebar?.refresh(), noteList?.refresh(true)]);
+			const content = await readNote(entry.path);
+			editor?.flushSave();
+			$viewerNote = null;
+			$activeNote = content;
+			$activeNotePath = entry.path;
+			$editorDirty = false;
+			handleNoteSelected(entry.path, content.content);
+			webClipOpen = false;
+			if (isMobile) $mobileView = 'editor';
+		} catch (error) {
+			webClipError = webClipFailureMessage(error);
+		} finally {
+			webClipBusy = false;
+		}
+	}
+
 	async function confirmNoteCategory(category: ParaCategory) {
 		if (noteCreationBusy) return;
 		noteCreationBusy = true;
@@ -572,6 +621,13 @@
 			if (e.code === 'Escape' && !noteCreationBusy) {
 				e.preventDefault();
 				noteCreationOpen = false;
+			}
+			return;
+		}
+		if (webClipOpen) {
+			if (e.code === 'Escape' && !webClipBusy) {
+				e.preventDefault();
+				webClipOpen = false;
 			}
 			return;
 		}
@@ -969,6 +1025,45 @@
 	</div>
 {/if}
 
+{#if webClipOpen}
+	<div class="creation-backdrop">
+		<button
+			class="creation-dismiss"
+			type="button"
+			aria-label="Cancel web clipping"
+			disabled={webClipBusy}
+			onclick={() => webClipOpen = false}
+		></button>
+		<div bind:this={webClipDialog} class="creation-dialog web-clip-dialog" role="dialog" aria-modal="true" aria-labelledby="web-clip-title" tabindex="-1">
+			<h2 id="web-clip-title">Clip web page</h2>
+			<label class="web-clip-field">
+				<span>URL</span>
+				<input
+					bind:this={webClipUrlInput}
+					bind:value={webClipUrl}
+					type="url"
+					inputmode="url"
+					placeholder="https://example.com/article"
+					disabled={webClipBusy}
+				>
+			</label>
+			<p>Choose where the clipping should be filed.</p>
+			{#if webClipError}<p class="creation-error" role="alert">{webClipError}</p>{/if}
+			<div class="creation-categories">
+				{#each PARA_CATEGORIES as category}
+					<button type="button" onclick={() => confirmWebClipCategory(category)} disabled={webClipBusy || !canSubmitWebClip(webClipUrl)}>
+						<strong>{category}</strong>
+						{#if suggestedWebClipNotebook?.startsWith(`${category}/`)}
+							<span>{suggestedWebClipNotebook.slice(category.length + 1)}</span>
+						{/if}
+					</button>
+				{/each}
+			</div>
+			<button class="creation-cancel" type="button" onclick={() => webClipOpen = false} disabled={webClipBusy}>Cancel</button>
+		</div>
+	</div>
+{/if}
+
 {#if repairStatus.issues.length > 0 || repairError}
 	<div class="repair-banner" role="alert">
 		<div>
@@ -1095,10 +1190,16 @@
 							<polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
 						</svg>
 					</button>
-				{:else}
-					<button class="mobile-header-btn" onclick={() => ($showSearch = true)} title="Search">
-						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<circle cx="11" cy="11" r="8" />
+					{:else}
+						<button class="mobile-header-btn" onclick={requestWebClip} title="Clip web page">
+							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
+								<path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+							</svg>
+						</button>
+						<button class="mobile-header-btn" onclick={() => ($showSearch = true)} title="Search">
+							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<circle cx="11" cy="11" r="8" />
 							<line x1="21" y1="21" x2="16.65" y2="16.65" />
 						</svg>
 					</button>
@@ -1172,7 +1273,7 @@
 				</div>
 			</div>
 		{:else}
-			<TitleBar onNewNote={createAndFocusNote} onSelectNote={selectNoteFromSwitcher} />
+			<TitleBar onNewNote={createAndFocusNote} onClipWeb={requestWebClip} onSelectNote={selectNoteFromSwitcher} />
 		{/if}
 		<div class="app-layout">
 			{#if !$focusMode}
@@ -1271,6 +1372,35 @@
 
 	.creation-dialog .creation-error {
 		color: var(--danger-color, #c33);
+	}
+
+	.web-clip-field {
+		display: grid;
+		gap: 6px;
+		margin: 14px 0 10px;
+	}
+
+	.web-clip-field span {
+		color: var(--text-secondary);
+		font-size: 12px;
+		font-weight: 600;
+	}
+
+	.web-clip-field input {
+		width: 100%;
+		padding: 9px 10px;
+		border: 1px solid var(--border-color);
+		border-radius: 8px;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		font: inherit;
+		font-size: 13px;
+		outline: none;
+	}
+
+	.web-clip-field input:focus {
+		border-color: var(--accent-color);
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 18%, transparent);
 	}
 
 	.creation-categories {
