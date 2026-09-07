@@ -15,6 +15,7 @@ mod sync;
 mod sync_config;
 mod types;
 mod vault;
+mod web_clipping;
 
 use state::AppState;
 #[allow(unused_imports)]
@@ -212,6 +213,7 @@ pub fn run() {
             commands::save_note,
             commands::create_note,
             commands::quick_capture_note,
+            commands::clip_web_page,
             commands::duplicate_note,
             commands::get_ai_status,
             commands::refresh_ai_status,

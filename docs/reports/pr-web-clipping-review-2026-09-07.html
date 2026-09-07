@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Issue #5 / Web clipping review</title>
+  <style>
+    :root {
+      --page: #f4f1eb;
+      --paper: #fffdf8;
+      --ink: #20241f;
+      --muted: #646b61;
+      --line: #d9d1c4;
+      --accent: #185f52;
+      --bad: #a42626;
+      --bad-soft: #f8dfdc;
+      --warn: #8a5a00;
+      --warn-soft: #f5ead0;
+      --good: #276c43;
+      --good-soft: #dcece2;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: Iowan Old Style, Palatino Linotype, Book Antiqua, Georgia, serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--page); color: var(--ink); font: 16px/1.6 var(--sans); }
+    .page { width: min(1120px, calc(100% - 32px)); margin: 28px auto 64px; }
+    header, section { border: 1px solid var(--line); border-radius: 18px; background: var(--paper); }
+    header { padding: clamp(26px, 5vw, 54px); }
+    section { margin-top: 20px; padding: clamp(22px, 4vw, 34px); }
+    h1, h2 { font-family: var(--serif); line-height: 1.15; letter-spacing: -0.025em; }
+    h1 { max-width: 860px; margin: 0; font-size: clamp(2.2rem, 6vw, 4.25rem); }
+    h2 { margin: 0 0 12px; font-size: clamp(1.45rem, 3vw, 2.05rem); }
+    p { margin: 0 0 12px; }
+    code { font-family: var(--mono); font-size: 0.88em; overflow-wrap: anywhere; }
+    ul { margin: 0; padding-left: 1.25rem; }
+    li + li { margin-top: 8px; }
+    .kicker { margin: 0 0 10px; color: var(--accent); font-size: 0.75rem; font-weight: 850; letter-spacing: 0.14em; text-transform: uppercase; }
+    .summary { max-width: 850px; color: var(--muted); font-size: 1.08rem; }
+    .gate { margin-top: 22px; padding: 16px 18px; border-radius: 12px; border: 1px solid #dfaaa6; background: var(--bad-soft); }
+    .gate strong { color: var(--bad); }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 18px; color: var(--muted); font-size: 0.87rem; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .card { padding: 15px 16px; border: 1px solid var(--line); border-radius: 12px; }
+    .card strong { display: block; margin-bottom: 4px; color: var(--accent); font-size: 0.72rem; letter-spacing: 0.09em; text-transform: uppercase; }
+    .finding { padding: 15px 16px; border-radius: 12px; border: 1px solid var(--line); }
+    .finding + .finding { margin-top: 12px; }
+    .finding.blocker { border-color: #dfaaa6; background: var(--bad-soft); }
+    .finding.warning { border-color: #dfc387; background: var(--warn-soft); }
+    .finding.pass { border-color: #a8cdb5; background: var(--good-soft); }
+    .finding h3 { margin: 0 0 6px; font-size: 1rem; }
+    .finding.blocker h3 { color: var(--bad); }
+    .finding.warning h3 { color: var(--warn); }
+    .finding.pass h3 { color: var(--good); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+    th, td { padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 0.72rem; letter-spacing: 0.09em; text-transform: uppercase; }
+    @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <p class="kicker">Code review record</p>
+      <h1>Issue #5 web clipping now has the required app flow</h1>
+      <p class="summary">
+        Review target: <code>feat/web-clipping</code> at <code>b0ce390</code>, compared with
+        <code>origin/main</code> at <code>68f351c</code>. The first reviewed commit was backend-only;
+        the follow-up work adds the visible URL-paste and PARA category flow.
+      </p>
+      <div class="gate" style="border-color:#a8cdb5;background:var(--good-soft)">
+        <strong style="color:var(--good)">Merge gate: automated verification passed.</strong> The
+        earlier backend-only blocker is resolved in the branch. The remaining release-confidence
+        step is a live app clipping run against a real article URL.
+      </div>
+      <div class="meta">
+        <span>Branch: <code>feat/web-clipping</code></span>
+        <span>Commits reviewed: <code>b0ce390</code> plus follow-up UI/report commits</span>
+        <span>Date: 2026-09-07</span>
+      </div>
+    </header>
+
+    <section>
+      <h2>Verification Run</h2>
+      <div class="grid">
+        <div class="card">
+          <strong>Rust full suite</strong>
+          <p><code>cargo test --manifest-path src-tauri/Cargo.toml</code></p>
+          <p>Passed in <code>pnpm verify</code>: 283 Rust tests, 1 ignored.</p>
+        </div>
+        <div class="card">
+          <strong>Svelte typecheck</strong>
+          <p><code>pnpm check</code></p>
+          <p>Passed in <code>pnpm verify</code>: 0 errors, 0 warnings.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Spec Findings</h2>
+      <div class="finding pass">
+        <h3>Resolved: the required paste/category interaction is now present</h3>
+        <p>
+          Issue #5 says: "The user gives the app a URL and picks a PARA category." The acceptance
+          criterion says: "Pasting a URL and choosing a category produces a note." The branch now
+          adds desktop and mobile "Clip web page" entry points, a URL input modal, PARA category
+          buttons, and a call to <code>clipWebPage</code>.
+        </p>
+      </div>
+      <div class="finding pass">
+        <h3>Improved: login-required HTTP statuses have a distinct message</h3>
+        <p>
+          Issue #5 asks for common failures, including login-walled pages and non-article content,
+          to report clear reasons. HTTP 401/403 now report that the page requires login or
+          permission. HTML pages that look like login forms also return a login-specific message,
+          while thin non-article pages report that no readable article content was found.
+        </p>
+      </div>
+      <div class="finding pass">
+        <h3>Resolved: public cross-host redirects are now allowed safely</h3>
+        <p>
+          The first backend version rejected redirects to a different host, which would have broken
+          normal article redirects such as apex-to-www canonicalization. Redirects are now followed
+          manually. Each hop is validated and DNS-pinned before fetching, so private/local redirects
+          remain blocked.
+        </p>
+      </div>
+    </section>
+
+    <section>
+      <h2>Standards Findings</h2>
+      <div class="finding pass">
+        <h3>No hard documented-standard violations found</h3>
+        <p>
+          The branch follows the repo's stated sources of truth: notes remain markdown files,
+          PARA category is captured in frontmatter, and the new command avoids holding the note
+          mutation lock during the network request.
+        </p>
+      </div>
+      <div class="finding warning">
+        <h3>Judgement call: duplicated safe remote-fetch logic</h3>
+        <p>
+          <code>src-tauri/src/web_clipping.rs</code> duplicates much of the existing URL
+          validation, DNS pinning, redirect, timeout, and byte-limit shape from
+          <code>src-tauri/src/image_proxy.rs</code>. Before this grows further, consider extracting
+          the shared safe-public-fetch behavior behind one module.
+        </p>
+      </div>
+      <div class="finding warning">
+        <h3>Judgement call: note metadata construction is scattered</h3>
+        <p>
+          Adding <code>source_url</code> required updating several places that construct
+          <code>NoteMeta</code>. A small constructor or builder would reduce future metadata churn.
+        </p>
+      </div>
+    </section>
+
+    <section>
+      <h2>Acceptance Status</h2>
+      <table>
+        <thead>
+          <tr><th>Criterion</th><th>Status</th><th>Evidence</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Paste URL and choose category creates readable note</td><td>Implemented, pending live app verification</td><td>Desktop/mobile modal calls <code>clipWebPage</code>, refreshes the lists, reads the created note, and selects it.</td></tr>
+          <tr><td>Navigation/ad furniture excluded</td><td>Partially verified</td><td>Unit test covers a small HTML fixture.</td></tr>
+          <tr><td>Source URL recorded</td><td>Verified</td><td><code>source_url</code> frontmatter round trip and clipping write test pass.</td></tr>
+          <tr><td>Saved note edits, links, searches normally</td><td>Design verified, pending live verification</td><td>The clipping is written as a normal markdown note and selected through the existing editor path.</td></tr>
+          <tr><td>Fetching does not block UI</td><td>Implemented and typechecked</td><td>Tauri command uses <code>spawn_blocking</code>; the UI awaits it with disabled modal controls.</td></tr>
+          <tr><td>Failures are clear and leave no partial note</td><td>Partially verified</td><td>Timeout/private/login/non-article/redirect fixture tests pass; live unreachable-site behavior still needs manual verification.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Recommended Next Work</h2>
+      <ul>
+        <li>Run one live clipping from the app and confirm the created note opens, edits, links, and appears in search.</li>
+        <li>Run one live failure case from the app and confirm the modal displays the backend reason without creating a note.</li>
+        <li>Accept the remaining URL safety restriction that nonstandard ports are blocked to protect local/private services.</li>
+        <li>Consider extracting shared safe URL/fetch behavior from image proxy and web clipping after the UI is in place.</li>
+      </ul>
+    </section>
+  </div>
+</body>
+</html>

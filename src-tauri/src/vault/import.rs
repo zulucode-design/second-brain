@@ -361,6 +361,7 @@ fn normalize_frontmatter(raw: &str, path: &Path) -> (NoteMeta, String) {
         created,
         modified,
         category,
+        source_url: None,
     };
     (meta, result.content)
 }

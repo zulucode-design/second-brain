@@ -162,6 +162,13 @@ export async function createNote(
   return invoke("create_note", { notebookRelative, title });
 }
 
+export async function clipWebPage(
+  notebookRelative: string,
+  sourceUrl: string,
+): Promise<NoteEntry> {
+  return invoke("clip_web_page", { notebookRelative, sourceUrl });
+}
+
 export async function duplicateNote(path: string): Promise<NoteEntry> {
   return invoke("duplicate_note", { path });
 }
