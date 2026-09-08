@@ -230,7 +230,7 @@ pub fn spawn(app: AppHandle) {
         }
 
         let trigger = configured_trigger();
-        let status = apply_trigger(&app, &trigger);
+        let status = apply_trigger(&app, trigger);
         match (&status.availability, &status.reason) {
             (Availability::Available, _) => {
                 log::info!("Quick capture hotkey registered: {trigger}")
