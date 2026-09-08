@@ -43,7 +43,11 @@ pub fn run() {
     #[cfg(desktop)]
     let show_tray = config.show_tray_icon;
     #[cfg(desktop)]
-    let close_to_tray = config.close_to_tray && show_tray;
+    // Whether a tray icon exists at all is decided here and cannot change without a restart,
+    // because the icon is built once in `setup`. Whether closing *hides* to it is read live
+    // from the config at close time — see the `CloseRequested` arm.
+    #[cfg(desktop)]
+    let tray_exists = show_tray;
     let app_state = AppState::new(config);
 
     // Inject the compile-time platform so the frontend never sniffs the (sometimes
@@ -401,8 +405,25 @@ pub fn run() {
 
             match event {
                 tauri::WindowEvent::CloseRequested { api, .. } => {
+                    // Read at close time, not at launch. Captured once, toggling the setting
+                    // did nothing until the app was relaunched — and the toggle said so, but
+                    // "requires restart" is a poor answer for a preference the app can simply
+                    // consult when it matters.
+                    //
+                    // Still gated on a tray icon actually existing: that is built once in
+                    // `setup` and genuinely cannot appear without a restart, so hiding to a
+                    // tray that is not there would leave the window unreachable.
+                    let hide_to_tray = tray_exists
+                        && window
+                            .app_handle()
+                            .state::<AppState>()
+                            .config
+                            .lock()
+                            .map(|config| config.close_to_tray)
+                            .unwrap_or(false);
+
                     // Only hide to tray for the main window
-                    if close_to_tray && window.label() == "main" {
+                    if hide_to_tray && window.label() == "main" {
                         api.prevent_close();
                         let _ = window.hide();
                     }

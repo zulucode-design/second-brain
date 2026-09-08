@@ -1418,7 +1418,7 @@
 								<label class="setting-toggle">
 									<span class="setting-label">
 										<span class="setting-name">Close to tray</span>
-										<span class="setting-desc">Minimize to tray instead of quitting when closing the window (requires restart)</span>
+										<span class="setting-desc">Minimize to tray instead of quitting when closing the window</span>
 									</span>
 									<button class="toggle-switch" class:on={closeToTray} role="switch" aria-checked={closeToTray} aria-label="Close to tray" onclick={() => { closeToTray = !closeToTray; saveGeneralSettings(); }}>
 										<span class="toggle-knob"></span>
