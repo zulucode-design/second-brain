@@ -357,30 +357,108 @@
     <section id="followups">
       <h2>Follow-ups this run produced</h2>
       <p>
-        None of these are #5's acceptance criteria, and none are fixed on this branch. They are
-        recorded here so the observation is not lost; no GitHub issues have been opened yet.
+        These were recorded rather than filed as GitHub issues. Three were then fixed on this
+        branch; the fourth is a decision, described below.
       </p>
       <div class="table-wrap"><table>
-        <thead><tr><th>Finding</th><th>Where</th><th>Why it is not fixed here</th></tr></thead>
+        <thead><tr><th>Finding</th><th>Where</th><th></th><th>Outcome</th></tr></thead>
         <tbody>
+          <tr><td>Safe-fetch logic is duplicated between the two fetchers</td>
+              <td><code>web_clipping.rs</code>, <code>image_proxy.rs</code></td>
+              <td><span class="pill good">Fixed</span></td>
+              <td><code>da31aa2</code> — one <code>safe_fetch</code> module. It reports what it
+                  rejected rather than how to phrase it, so every message survives unchanged and
+                  each caller keeps its own redirect policy.</td></tr>
           <tr><td>Image fetches send no User-Agent, so the same 403 is reachable</td>
               <td><code>image_proxy.rs</code></td>
-              <td>Serves images referenced from notes, not clipping. Fixing it here would widen a
-                  #5 branch into unrelated code.</td></tr>
-          <tr><td><code>meta refresh</code> and scripted redirects are not followed, so a valid
-                  article URL can report "no readable article"</td>
+              <td><span class="pill good">Fixed</span></td>
+              <td><code>da31aa2</code> — carried by the shared client. Having to find this bug
+                  twice is what motivated the extraction.</td></tr>
+          <tr><td><code>meta refresh</code> redirects are not followed, so a valid article URL
+                  can report "no readable article"</td>
               <td><code>web_clipping.rs</code></td>
-              <td>A distinct capability rather than a defect: the current message is accurate about
-                  what the fetched HTML contained.</td></tr>
+              <td><span class="pill good">Fixed</span></td>
+              <td><code>06bc520</code> — one hop from the same budget, destination validated
+                  identically. Also fixed a latent bug it made likelier: relative links were
+                  resolved against the requested URL rather than the final one.</td></tr>
           <tr><td>A crash between creating and writing the vault identity file leaves it
                   permanently empty</td>
               <td><code>machine_local.rs</code></td>
-              <td>Pre-existing, in the relocation lineage (#27 / #33), and unrelated to clipping.</td></tr>
-          <tr><td>Safe-fetch logic is duplicated between the two fetchers</td>
-              <td><code>web_clipping.rs</code>, <code>image_proxy.rs</code></td>
-              <td>Carried over from the PR&nbsp;#43 review as a judgement call, still unaddressed.</td></tr>
+              <td><span class="pill medium">Decided, not built</span></td>
+              <td>See below.</td></tr>
         </tbody>
       </table></div>
+    </section>
+
+    <section id="identity">
+      <h2>Decided: the vault identity gap is fixed with an OS lock</h2>
+      <p>
+        <code>vault_id</code> claims the identity file with <code>create_new</code> and writes it
+        immediately after. Those are two steps, so the file is briefly empty — and a process
+        killed inside that window leaves it empty permanently. Every later open then calls
+        <code>read_claimed_vault_id</code>, which polls for 500&nbsp;ms and gives up, so
+        <strong>the vault becomes permanently unopenable</strong>. This is what the flaky
+        relocation test is catching: it spawns 40 children killed at 0–78&nbsp;ms, so it lands in
+        the window every few runs.
+      </p>
+      <p>
+        The existing code will not take over a stalled claim, and says why: <em>a writer stalled on
+        a slow mount is indistinguishable from a dead one</em>, so replacing the file risks two
+        processes keying one vault to two ids. That reasoning stands. The fix has to remove the
+        ambiguity, not overrule it.
+      </p>
+      <p class="quote">
+        An OS lock is exactly that discriminator, because the kernel releases it when the holder
+        dies.
+      </p>
+      <p>
+        The creator keeps <code>create_new</code>, so exclusion is untouched, and additionally holds
+        an exclusive lock while it writes. A reader that finds the file empty attempts the lock: if
+        it blocks, a writer is alive and waiting is correct; if it acquires immediately, the previous
+        holder is dead and taking over is safe. Two would-be takers serialise on the same lock, and
+        the loser re-reads the winner's id.
+      </p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Option</th><th></th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td>OS lock (<code>flock</code> / <code>LockFileEx</code>)</td>
+              <td><span class="pill good">Chosen</span></td>
+              <td>Fixes the crash gap while strictly preserving the one-vault-one-id guarantee. No
+                  on-disk format change and no migration. <code>flock</code> is VFS-level on Linux,
+                  so the FAT/USB constraint that rules out <code>hard_link</code> does not apply.</td></tr>
+          <tr><td>Put the id in the filename</td>
+              <td><span class="pill critical">Rejected</span></td>
+              <td>Removes the empty window but not the race: two processes create two different
+                  names and both succeed, so uniqueness weakens from guaranteed to eventually
+                  converged. A process could switch ids after building an index keyed to the first.
+                  Also needs a format change and a migration.</td></tr>
+          <tr><td>Age heuristic — "empty for N seconds means abandoned"</td>
+              <td><span class="pill critical">Rejected</span></td>
+              <td>Does not fix the observed failure. The test recovers immediately after the kill,
+                  so the empty file is always fresh.</td></tr>
+          <tr><td>Delete the empty file and re-claim</td>
+              <td><span class="pill critical">Rejected</span></td>
+              <td>Clean unless a live writer still holds the descriptor — the exact case the wait
+                  could not rule out, which is the ambiguity this decision exists to remove.</td></tr>
+          <tr><td><code>hard_link</code> for atomic no-clobber creation</td>
+              <td><span class="pill critical">Rejected</span></td>
+              <td>Already rejected in-code for FAT/USB portability, and the file lives inside
+                  <code>.helixnotes/</code>, so that constraint is real.</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note">
+        Two costs accepted. <strong>A new dependency</strong> (<code>fs4</code> or similar, or a
+        small <code>libc</code>/<code>windows-sys</code> wrapper) — worth naming because SPEC §3
+        made a point of closing the backup gap without one, so this is a norm rather than a free
+        choice. <strong>Network filesystems</strong> — <code>flock</code> over NFS is historically
+        unreliable; where the lock is a no-op the behaviour degrades to what happens today, which
+        is no worse.
+      </p>
+      <p>
+        The test to write it against already exists. Proof is
+        <code>killing_the_app_mid_notebook_move_still_recovers</code> ceasing to reproduce across
+        repeated full-suite runs — it failed 2 of 9 before this work.
+      </p>
     </section>
   </div>
 </body>
