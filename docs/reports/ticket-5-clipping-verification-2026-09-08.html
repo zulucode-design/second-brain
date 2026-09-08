@@ -202,6 +202,7 @@
       </div>
       <div class="meta">
         <span>Branch <code>fix/5-clipping-live-failures</code></span>
+        <span>Updated 2026-09-08 after the identity fix</span>
         <span>Linux / Wayland</span>
         <span>Date 2026-09-08</span>
       </div>
@@ -384,14 +385,14 @@
           <tr><td>A crash between creating and writing the vault identity file leaves it
                   permanently empty</td>
               <td><code>machine_local.rs</code></td>
-              <td><span class="pill medium">Decided, not built</span></td>
+              <td><span class="pill good">Fixed</span></td>
               <td>See below.</td></tr>
         </tbody>
       </table></div>
     </section>
 
     <section id="identity">
-      <h2>Decided: the vault identity gap is fixed with an OS lock</h2>
+      <h2>Fixed: the vault identity is claimed under an OS lock</h2>
       <p>
         <code>vault_id</code> claims the identity file with <code>create_new</code> and writes it
         immediately after. Those are two steps, so the file is briefly empty — and a process
@@ -455,9 +456,43 @@
         is no worse.
       </p>
       <p>
-        The test to write it against already exists. Proof is
-        <code>killing_the_app_mid_notebook_move_still_recovers</code> ceasing to reproduce across
-        repeated full-suite runs — it failed 2 of 9 before this work.
+        Implemented in <code>48c3a4e</code>. <code>fs4</code> is already in the tree via
+        tantivy, so making it a direct dependency adds no crates to the build — which removes
+        most of the dependency objection above.
+      </p>
+      <p>
+        Two ways this could have made things worse, both handled. A filesystem that cannot lock
+        falls back to the previous conservative behaviour rather than refusing to open the vault
+        at all. And because claiming now opens the marker for writing, a vault on a read-only
+        mount would have stopped opening entirely; an identity already recorded there is read
+        without writing.
+      </p>
+      <h3>Evidence, and what it does not cover</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Condition</th><th>Full-suite runs</th><th>Failures</th></tr></thead>
+        <tbody>
+          <tr><td>Before the fix</td><td>9</td><td><span class="pill critical">2</span></td></tr>
+          <tr><td>After, undisturbed</td><td>47</td><td><span class="pill good">0</span></td></tr>
+          <tr><td>After, under saturated CPU</td><td>8</td><td><span class="pill good">0</span></td></tr>
+        </tbody>
+      </table></div>
+      <p>
+        55 consecutive clean runs. Were the original rate unchanged, that would happen roughly
+        once in a million.
+      </p>
+      <p class="note">
+        Stated honestly: two failures did occur after the fix, in a batch that overlapped
+        concurrent <code>cargo</code> invocations and live edits to the file under test. Their
+        output was not captured, so they cannot be attributed. Neither reproduced in the 55 clean
+        runs that followed, including the deliberate attempt to force them under load.
+      </p>
+      <p class="note">
+        One residual risk is worth recording because no number of passing runs can retire it: the
+        test ends with two sampling assertions — <code>interrupted &gt; 0</code> and
+        <code>restored &gt; 0</code> — which depend on a kill landing inside a narrow window
+        across the 40 delays. If scheduling ever fails to cooperate, the test fails with nothing
+        wrong in the product. That is a defect in the test rather than the vault, and it is
+        untouched here.
       </p>
     </section>
   </div>
