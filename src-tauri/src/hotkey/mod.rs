@@ -1,14 +1,21 @@
 //! The global hotkey that opens quick capture, and what to tell the user when it is absent.
 //!
-//! On Linux this goes through the XDG `GlobalShortcuts` portal rather than an X11 grab. The
-//! reasoning, and the rejected alternatives, are in `docs/adr/0001-linux-global-shortcuts-via-xdg-portal.md`;
-//! the short version is that an X11 grab under Wayland fires only while an X11 window holds
-//! focus and is silent otherwise, which is worse than not shipping the feature.
+//! The two backends diverge because the hotkey model itself does, not because one is more
+//! finished than the other — see ADR-0001. On Linux this goes through the XDG
+//! `GlobalShortcuts` portal rather than an X11 grab: an X11 grab under Wayland fires only
+//! while an X11 window holds focus and is silent otherwise, which is worse than not
+//! shipping the feature. **The app does not own the keybinding** — it sends a preferred
+//! trigger as a hint, the compositor decides, and there is no such thing as a registration
+//! conflict to report, only a shortcut that is bound or is not.
 //!
-//! The consequence that shapes this module: **the app does not own the keybinding.** It sends
-//! a preferred trigger as a hint, the compositor decides, and hands back a description to
-//! display. So there is no such thing as a registration conflict to report here — only a
-//! shortcut that is bound or is not, and a reason the user can act on.
+//! On Windows the app registers the key directly through `tauri-plugin-global-shortcut`
+//! (`windows.rs`). **The app does own the keybinding** there, so a failure is a real,
+//! specific conflict — another application already holds that combination — and the
+//! shortcut is configured from inside the app rather than handed to the OS.
+//!
+//! Both backends report through the same [`HotkeyStatus`], so the settings UI and the
+//! activation path above this module (`capture.rs`, `vault_status.rs`) never need to know
+//! which one is running underneath.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -20,14 +27,23 @@ pub mod desktop_entry;
 pub mod portal;
 #[cfg(target_os = "linux")]
 pub mod startup;
-#[cfg(target_os = "linux")]
 pub mod vault_status;
+pub mod window;
+#[cfg(target_os = "windows")]
+pub mod windows;
 
 /// The shortcut's identity with the portal. Stable: the compositor remembers bindings against
 /// it, so changing it would silently orphan whatever the user has already assigned.
+///
+/// Linux-only: Windows's plugin identifies a registered shortcut by the `Shortcut` value
+/// itself and assigns its own numeric id, so there is no equivalent stable string to keep.
+#[cfg(target_os = "linux")]
 pub const SHORTCUT_ID: &str = "quick-capture";
 
 /// Shown to the user in the system's shortcut settings, so it is user-facing copy.
+/// Linux-only: Windows has no equivalent system-level description to populate, since the
+/// shortcut is configured entirely inside the app.
+#[cfg(target_os = "linux")]
 pub const SHORTCUT_DESCRIPTION: &str = "Quick capture a note";
 
 /// A hint only. The portal is free to ignore it, and on GNOME the user confirms or changes it
@@ -95,6 +111,10 @@ impl ApplicationId {
         Ok(Self(value))
     }
 
+    // Only the Linux portal needs the bare string today (Windows compares `ApplicationId`s
+    // by `Display`); kept as part of the type's public shape rather than removed for a
+    // platform that has not needed it yet.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -121,14 +141,29 @@ pub fn configured_application_id() -> Result<ApplicationId, String> {
 /// rather than two enums that happen to share a name.
 pub use crate::ai_health::Availability;
 
+/// Something that explains why the hotkey is not registered, in the user's own terms.
+///
+/// Each backend has its own enum — `Unavailable` here for Linux, `windows::Unavailable` for
+/// Windows — because the two failure domains share nothing: a portal refusing a permission
+/// dialog and a registry key already claimed by another process are not the same kind of
+/// fact wearing different words, and forcing them into one enum would mean every match
+/// arm on one platform reasoning about cases that can never happen there. This trait is the
+/// only thing they share: enough for [`HotkeyStatus::unavailable`] to accept either.
+pub trait Cause {
+    fn reason(&self) -> String;
+}
+
 /// Why the hotkey is not registered, in terms that map to something the user can do.
 ///
 /// These are kept as distinct cases rather than one opaque string because they call for
 /// genuinely different actions, and because the portal reports several of them identically.
+/// Linux-specific: see [`Cause`] for why this is not the one type both platforms share.
+#[cfg(target_os = "linux")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unavailable {
     /// The shortcut cannot be useful because its capture surface could not be prepared.
-    CaptureWindow { detail: String },
+    /// Shared with Windows: see `window::CaptureWindowUnavailable`.
+    CaptureWindow(window::CaptureWindowUnavailable),
     /// An AppImage could not create the user-level desktop entry the portal requires.
     AppImageIntegration { detail: String },
     /// No `GlobalShortcuts` implementation on this desktop.
@@ -151,14 +186,19 @@ pub enum Unavailable {
     PortalError { detail: String },
 }
 
+#[cfg(target_os = "linux")]
+impl Cause for Unavailable {
+    fn reason(&self) -> String {
+        Unavailable::reason(self)
+    }
+}
+
+#[cfg(target_os = "linux")]
 impl Unavailable {
     /// The message shown to the user. Each one ends with the thing to actually do.
     pub fn reason(&self) -> String {
         match self {
-            Self::CaptureWindow { detail } => format!(
-                "Quick capture could not prepare its capture window ({detail}). Restart the app; \
-                 if this continues, report this error."
-            ),
+            Self::CaptureWindow(cause) => cause.reason(),
             Self::AppImageIntegration { detail } => format!(
                 "Quick capture could not prepare the AppImage desktop entry ({detail}). Check \
                  that your user data directory is writable, then restart the app."
@@ -223,7 +263,7 @@ impl HotkeyStatus {
         }
     }
 
-    pub fn unavailable(cause: &Unavailable) -> Self {
+    pub fn unavailable(cause: &impl Cause) -> Self {
         Self {
             availability: Availability::Unavailable,
             reason: Some(cause.reason()),
@@ -243,6 +283,9 @@ impl Default for HotkeyStatus {
 ///
 /// Bindings outlive the session that made them, so binding unconditionally at startup would
 /// show the permission dialog on every launch. Asking first turns it into a first-run event.
+/// Linux-only: Windows registers fresh every launch and cannot prompt, so this question
+/// never arises there.
+#[cfg(target_os = "linux")]
 pub fn needs_binding<'a>(already_bound: impl IntoIterator<Item = &'a str>) -> bool {
     !already_bound.into_iter().any(|id| id == SHORTCUT_ID)
 }
@@ -251,6 +294,7 @@ pub fn needs_binding<'a>(already_bound: impl IntoIterator<Item = &'a str>) -> bo
 ///
 /// The portal reports a missing desktop entry and a rejected app id with the same
 /// `NotAllowed`/`Failed` shapes, so the text is what distinguishes them.
+#[cfg(target_os = "linux")]
 pub fn classify_portal_error(app_id: &ApplicationId, message: &str) -> Unavailable {
     let lowered = message.to_ascii_lowercase();
     if lowered.contains("app info not found") || lowered.contains("an app id is required") {
@@ -299,10 +343,12 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn example_app_id() -> ApplicationId {
         ApplicationId::parse("io.github.example.App").expect("example id is valid")
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_shortcut_already_bound_is_not_bound_again() {
         // Binding again would re-prompt, and the dialog is the thing users remember.
@@ -310,12 +356,14 @@ mod tests {
         assert!(!needs_binding(vec!["something-else", SHORTCUT_ID]));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_shortcut_that_is_not_bound_yet_needs_binding() {
         assert!(needs_binding(Vec::<&str>::new()));
         assert!(needs_binding(vec!["something-else"]));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_missing_desktop_entry_is_reported_as_an_app_id_problem() {
         // Both of these are what the portal actually says; verified against
@@ -344,6 +392,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_declined_permission_says_how_to_be_asked_again() {
         // Two desktops, two behaviours, and the message has to be true on both.
@@ -368,6 +417,7 @@ mod tests {
         assert!(reason.contains("flatpak permission-reset io.github.example.App"));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn an_appimage_integration_failure_names_the_failed_local_setup() {
         let cause = Unavailable::AppImageIntegration {
@@ -380,6 +430,7 @@ mod tests {
         assert!(!reason.contains("dev-desktop-entry.sh"));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn an_unrecognised_portal_error_is_passed_through_rather_than_guessed_at() {
         let cause = classify_portal_error(&example_app_id(), "Something new went wrong");

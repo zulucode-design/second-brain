@@ -9,9 +9,7 @@
 
 use tauri::{AppHandle, Emitter, Manager};
 
-use super::{
-    portal, Availability, HotkeyStatus, Unavailable, SHOWN_EVENT, STATUS_EVENT, WINDOW_LABEL,
-};
+use super::{portal, Availability, HotkeyStatus, Unavailable, STATUS_EVENT};
 use crate::state::AppState;
 
 type ActivationListener = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
@@ -49,40 +47,6 @@ impl RegistrationAttempt {
     }
 }
 
-/// Make sure the capture window exists, building it if Tauri did not.
-///
-/// **Not called from `setup`.** Building a window synchronously there deadlocks on Linux: the
-/// call waits on a GTK event loop that has not started yet, `setup` never returns, and the app
-/// runs on looking healthy because the main window already exists and background tasks are on
-/// their own threads. Observed 2026-09-02, and it costs an afternoon to find, because nothing
-/// errors — the builder simply never comes back.
-///
-/// So this runs on the async runtime, after the loop is up.
-async fn ensure_window(app: &AppHandle) -> Result<(), Unavailable> {
-    if app.get_webview_window(WINDOW_LABEL).is_some() {
-        return Ok(());
-    }
-    let Some(config) = app
-        .config()
-        .app
-        .windows
-        .iter()
-        .find(|window| window.label == WINDOW_LABEL)
-        .cloned()
-    else {
-        return Err(Unavailable::CaptureWindow {
-            detail: format!("the application configuration declares no {WINDOW_LABEL:?} window"),
-        });
-    };
-    tauri::WebviewWindowBuilder::from_config(app, &config)
-        .and_then(|builder| builder.build())
-        .map_err(|error| Unavailable::CaptureWindow {
-            detail: error.to_string(),
-        })?;
-    log::debug!("Capture window ready");
-    Ok(())
-}
-
 /// Register the hotkey and keep answering it for as long as the app runs.
 ///
 /// Never fails loudly: a desktop without the portal is an ordinary state, not an error, and
@@ -96,7 +60,9 @@ pub fn spawn(app: AppHandle) {
 
         // The window has to exist before the hotkey can be answered, and it is cheap: it is
         // created hidden and never loaded again, so the first press is a show, not a load.
-        let readiness = ensure_window(&app).await;
+        let readiness = super::window::ensure_window(&app).await.map_err(|detail| {
+            Unavailable::CaptureWindow(crate::hotkey::window::CaptureWindowUnavailable(detail))
+        });
         let attempt =
             match register_when_ready(readiness, || async { Ok(register(&app).await) }).await {
                 Ok(attempt) => attempt,
@@ -251,32 +217,10 @@ where
     Ok(())
 }
 
-/// Bring the overlay up and put the caret in it.
-///
-/// The window already exists, hidden, created at startup: showing it is a compositor
-/// operation, where creating it would be a WebView load with the user waiting on it.
 fn show_capture_window(app: &AppHandle) -> Result<(), Unavailable> {
-    let Some(window) = app.get_webview_window(WINDOW_LABEL) else {
-        return Err(Unavailable::CaptureWindow {
-            detail: format!(
-                "the capture window is missing; available windows: {:?}",
-                app.webview_windows().keys().collect::<Vec<_>>()
-            ),
-        });
-    };
-    window
-        .show()
-        .and_then(|()| window.set_focus())
-        .map_err(|error| Unavailable::CaptureWindow {
-            detail: error.to_string(),
-        })?;
-    // The field decides its own focus: the window may have been shown while the webview was
-    // still mounting, and only it knows when the textarea exists.
-    window
-        .emit(SHOWN_EVENT, ())
-        .map_err(|error| Unavailable::CaptureWindow {
-            detail: error.to_string(),
-        })
+    super::window::show_capture_window(app).map_err(|detail| {
+        Unavailable::CaptureWindow(crate::hotkey::window::CaptureWindowUnavailable(detail))
+    })
 }
 
 /// The notification's id with the portal. Stable, so repeated presses against a vault that is
@@ -435,16 +379,18 @@ mod tests {
         let observed = registration_attempted.clone();
         let runtime = tokio::runtime::Runtime::new().expect("runtime starts");
         let result = runtime.block_on(register_when_ready::<(), _, _>(
-            Err(Unavailable::CaptureWindow {
-                detail: "capture window config is missing".to_string(),
-            }),
+            Err(Unavailable::CaptureWindow(
+                crate::hotkey::window::CaptureWindowUnavailable(
+                    "capture window config is missing".to_string(),
+                ),
+            )),
             move || async move {
                 observed.store(true, Ordering::SeqCst);
                 Ok(())
             },
         ));
 
-        assert!(matches!(result, Err(Unavailable::CaptureWindow { .. })));
+        assert!(matches!(result, Err(Unavailable::CaptureWindow(_))));
         assert!(!registration_attempted.load(Ordering::SeqCst));
     }
 
@@ -467,9 +413,11 @@ mod tests {
 
     #[test]
     fn a_failed_activation_ends_the_registered_session_with_an_unavailable_status() {
-        let outcome = activation_outcome(Err(Unavailable::CaptureWindow {
-            detail: "the compositor refused to focus the capture window".to_string(),
-        }));
+        let outcome = activation_outcome(Err(Unavailable::CaptureWindow(
+            crate::hotkey::window::CaptureWindowUnavailable(
+                "the compositor refused to focus the capture window".to_string(),
+            ),
+        )));
 
         let ActivationOutcome::EndSession(status) = outcome else {
             panic!("an unusable capture window must end the portal session");

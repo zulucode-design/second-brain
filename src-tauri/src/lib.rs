@@ -1,7 +1,6 @@
 mod ai;
 mod ai_health;
 mod asset_scope;
-#[cfg(target_os = "linux")]
 mod autostart;
 mod backup;
 mod commands;
@@ -26,7 +25,7 @@ use tauri_plugin_fs::FsExt;
 use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder},
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -45,17 +44,22 @@ pub fn run() {
     #[cfg(desktop)]
     let show_tray = config.show_tray_icon;
     #[cfg(desktop)]
-    let close_to_tray = config.close_to_tray && show_tray;
+    // Whether a tray icon exists at all is decided here and cannot change without a restart,
+    // because the icon is built once in `setup`. Whether closing *hides* to it is read live
+    // from the config at close time — see the `CloseRequested` arm.
+    #[cfg(desktop)]
+    let tray_exists = show_tray;
     let app_state = AppState::new(config);
 
     // Inject the compile-time platform so the frontend never sniffs the (sometimes
     // mobile-looking) WebKitGTK user-agent. (#63)
     let platform_init = format!(
-        "window.__HELIX_PLATFORM__={{mobile:{},android:{},ios:{},linux:{}}};",
+        "window.__HELIX_PLATFORM__={{mobile:{},android:{},ios:{},linux:{},windows:{}}};",
         cfg!(mobile),
         cfg!(target_os = "android"),
         cfg!(target_os = "ios"),
         cfg!(target_os = "linux"),
+        cfg!(target_os = "windows"),
     );
 
     let mut builder = tauri::Builder::default()
@@ -98,23 +102,46 @@ pub fn run() {
             // before the user tries one rather than after it fails.
             ai_health::spawn_poller(app.handle().clone());
 
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+            // Registered in every build, not just debug ones.
+            //
+            // `hotkey::startup` states the reason this exists: an unregistered hotkey is
+            // invisible by nature — nothing happens when the key is pressed — so why has to
+            // be somewhere a person can read without attaching a debugger. Gating the
+            // logger on `debug_assertions` made that true only in the builds where a
+            // developer could already attach one, which is not where the users who hit it
+            // are. Measured on Windows 2026-09-05: quick capture was completely
+            // non-functional on a release build, nothing anywhere said why, and three of
+            // the five defects behind it were diagnosable only after rebuilding in debug.
+            //
+            // Always on rather than behind a flag or a setting, because by the time someone
+            // knows to go looking for a switch they have already hit the problem the log
+            // was supposed to explain, and the run that produced it is gone.
+            //
+            // Targets are the plugin's own defaults: stdout, and a file in the OS log
+            // directory (`%LOCALAPPDATA%\<identifier>\logs` on Windows,
+            // `$XDG_DATA_HOME/<identifier>/logs` on Linux). The rotation is not — the
+            // default caps a single file at 40 KB and keeps only that one, which is too
+            // little to still hold the startup line that explains a hotkey by the time
+            // anyone thinks to look.
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(log::LevelFilter::Info)
+                    .max_file_size(5_000_000)
+                    .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(3))
+                    .build(),
+            )?;
 
-            // Claim the global capture hotkey. Linux only for now: on Windows the app owns
-            // the keybinding rather than the compositor, which is #21 and a different
-            // mechanism entirely (ADR-0001).
+            // Claim the global capture hotkey. Two entirely separate mechanisms (ADR-0001):
+            // the Linux portal negotiates with the compositor, the Windows plugin registers
+            // the key directly and can report a real conflict.
             //
             // After the log plugin, deliberately. This runs on a task that reports the one
             // thing nothing else can show — why a hotkey is not registered — and anything it
             // logs before the plugin exists is dropped.
             #[cfg(target_os = "linux")]
             hotkey::startup::spawn(app.handle().clone());
+            #[cfg(target_os = "windows")]
+            hotkey::windows::spawn(app.handle().clone());
 
             // On mobile, set config dir from Tauri's path resolver, then reload config
             #[cfg(mobile)]
@@ -309,12 +336,10 @@ pub fn run() {
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
-            // Always show/focus the main window
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
+            // Always show/focus the main window, rebuilding it if a previous close
+            // destroyed it — launching the app again is the other thing a user does when
+            // they cannot find its window, so it must not no-op either.
+            show_main_window(app);
 
             // Extract .md file path from args (args[0] is the binary)
             let file_path = args.iter().skip(1).find(|arg| {
@@ -342,6 +367,17 @@ pub fn run() {
         }));
 
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+        // The app owns the key on Windows (ADR-0001), so registration goes through this
+        // plugin directly rather than the Linux portal's compositor handshake. Both are
+        // Windows-only dependencies (Cargo.toml), not merely Windows-only behaviour, so
+        // this has to be behind the same #[cfg] as the crates themselves.
+        #[cfg(target_os = "windows")]
+        {
+            builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+            builder = builder.plugin(tauri_plugin_notification::init());
+        }
+
         let window_state_builder = tauri_plugin_window_state::Builder::default();
         #[cfg(target_os = "linux")]
         let window_state_builder = window_state_builder.with_state_flags(
@@ -371,18 +407,46 @@ pub fn run() {
 
             match event {
                 tauri::WindowEvent::CloseRequested { api, .. } => {
+                    // Read at close time, not at launch. Captured once, toggling the setting
+                    // did nothing until the app was relaunched — and the toggle said so, but
+                    // "requires restart" is a poor answer for a preference the app can simply
+                    // consult when it matters.
+                    //
+                    // Still gated on a tray icon actually existing: that is built once in
+                    // `setup` and genuinely cannot appear without a restart, so hiding to a
+                    // tray that is not there would leave the window unreachable.
+                    let hide_to_tray = tray_exists
+                        && window
+                            .app_handle()
+                            .state::<AppState>()
+                            .config
+                            .lock()
+                            .map(|config| config.close_to_tray)
+                            .unwrap_or(false);
+
                     // Only hide to tray for the main window
-                    if close_to_tray && window.label() == "main" {
+                    if hide_to_tray && window.label() == "main" {
                         api.prevent_close();
                         let _ = window.hide();
                     }
                 }
                 tauri::WindowEvent::Destroyed
-                    // When main window is destroyed, close all note windows
+                    // When the main window is destroyed, close every other window this app
+                    // owns. They exist only in service of it: note windows, and the hidden
+                    // quick-capture overlay.
+                    //
+                    // Listing `note-` alone was enough until the capture window existed,
+                    // because a window left open here does not just linger — it keeps the
+                    // process alive, since Tauri exits when the last window closes. With
+                    // the overlay unlisted and permanently hidden, closing the main window
+                    // without close-to-tray left an invisible process no tray icon or
+                    // relaunch could reach, ending only in Task Manager. Confirmed on
+                    // Windows 2026-09-05; the same was latent on Linux from the moment the
+                    // overlay was added there.
                     if window.label() == "main" => {
                         let app = window.app_handle();
                         for (label, win) in app.webview_windows() {
-                            if label.starts_with("note-") {
+                            if label != "main" {
                                 let _ = win.close();
                             }
                         }
@@ -397,7 +461,49 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+/// Bring the main window back, rebuilding it if it no longer exists.
+///
+/// Every caller here — the tray menu, a tray click, a second launch — used to be
+/// `if let Some(window) = get_webview_window("main")` and nothing else, so each of them
+/// silently did nothing whenever `main` had been destroyed rather than hidden. A tray icon
+/// that answers a click by doing nothing is indistinguishable from a hung app.
+///
+/// Rebuilding from the config is the same move `hotkey::window::ensure_window` makes for the
+/// capture overlay, and it is safe for the same reason: it runs from an event callback, long
+/// after the event loop is up. Doing it during `setup` is what deadlocks on Linux — see that
+/// function for the full account.
 #[cfg(desktop)]
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        return;
+    }
+
+    let Some(config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|window| window.label == "main")
+        .cloned()
+    else {
+        log::error!("Cannot restore the main window: the configuration declares no \"main\"");
+        return;
+    };
+
+    match tauri::WebviewWindowBuilder::from_config(app, &config).and_then(|builder| builder.build())
+    {
+        Ok(window) => {
+            let _ = window.show();
+            let _ = window.set_focus();
+            log::info!("Rebuilt the main window after it had been destroyed");
+        }
+        Err(error) => log::error!("Could not rebuild the main window: {error}"),
+    }
+}
+
 fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let show = MenuItemBuilder::with_id("show", "Show HelixNotes").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
@@ -409,27 +515,29 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_else(|_| app.default_window_icon().cloned().unwrap()),
         )
         .menu(&menu)
+        // Left click restores the window; right click opens the menu. Without this the
+        // plugin's default (`true`) puts the menu on *both* buttons, and the click handler
+        // below then raced it to show the window as well.
+        .show_menu_on_left_click(false)
         .tooltip("HelixNotes")
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
-                }
-            }
+            "show" => show_main_window(app),
             "quit" => {
                 app.exit(0);
             }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            if let tauri::tray::TrayIconEvent::Click { .. } = event {
-                if let Some(window) = tray.app_handle().get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
-                }
+            // Matching `Click { .. }` discarded the button, so a *right* click also showed
+            // and focused the window — pre-empting the context menu, and with it the only
+            // Quit the app has. With close-to-tray on that left no graceful way to exit.
+            if let tauri::tray::TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
             }
         })
         .build(app)?;
