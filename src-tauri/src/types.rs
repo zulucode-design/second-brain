@@ -104,6 +104,60 @@ pub enum StartupView {
     All,
 }
 
+/// The configured AI provider's persisted identity.
+///
+/// The explicit wire names are the values already present in user configuration files;
+/// changing the Rust representation must not ask anyone to configure their provider again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AiProvider {
+    Anthropic,
+    OpenAi,
+    Ollama,
+    OpenAiCompatible,
+    /// Preserve an unrecognised stored value so one bad setting cannot reset the whole config.
+    Unknown(String),
+}
+
+impl AiProvider {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Anthropic => "anthropic",
+            Self::OpenAi => "openai",
+            Self::Ollama => "ollama",
+            Self::OpenAiCompatible => "openai_compatible",
+            Self::Unknown(id) => id,
+        }
+    }
+
+    fn from_stored(id: String) -> Self {
+        match id.as_str() {
+            "anthropic" => Self::Anthropic,
+            "openai" => Self::OpenAi,
+            "ollama" => Self::Ollama,
+            "openai_compatible" => Self::OpenAiCompatible,
+            _ => Self::Unknown(id),
+        }
+    }
+}
+
+impl Serialize for AiProvider {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.id())
+    }
+}
+
+impl<'de> Deserialize<'de> for AiProvider {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        String::deserialize(deserializer).map(Self::from_stored)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub vaults: Vec<VaultConfig>,
@@ -178,7 +232,7 @@ pub struct AppConfig {
     #[serde(default = "default_max_versions")]
     pub max_versions_per_note: u32,
     #[serde(default)]
-    pub ai_provider: Option<String>,
+    pub ai_provider: Option<AiProvider>,
     #[serde(default)]
     pub ai_api_key: Option<String>,
     #[serde(default)]
@@ -544,5 +598,48 @@ mod startup_view_tests {
         let config: AppConfig = serde_json::from_value(value).unwrap();
 
         assert!(!config.show_note_switcher);
+    }
+}
+
+#[cfg(test)]
+mod ai_provider_tests {
+    use super::{AiProvider, AppConfig};
+
+    #[test]
+    fn existing_provider_ids_round_trip_unchanged() {
+        for (saved, provider) in [
+            ("\"anthropic\"", AiProvider::Anthropic),
+            ("\"openai\"", AiProvider::OpenAi),
+            ("\"ollama\"", AiProvider::Ollama),
+            ("\"openai_compatible\"", AiProvider::OpenAiCompatible),
+        ] {
+            let loaded: AiProvider = serde_json::from_str(saved).unwrap();
+            assert_eq!(loaded, provider);
+            assert_eq!(serde_json::to_string(&loaded).unwrap(), saved);
+        }
+    }
+
+    #[test]
+    fn an_unknown_legacy_provider_is_preserved_instead_of_rejecting_the_config() {
+        let loaded: AiProvider = serde_json::from_str("\"future_local\"").unwrap();
+
+        assert_eq!(loaded, AiProvider::Unknown("future_local".to_string()));
+        assert_eq!(serde_json::to_string(&loaded).unwrap(), "\"future_local\"");
+    }
+
+    #[test]
+    fn an_existing_app_config_loads_the_typed_provider_without_rewriting_its_id() {
+        let mut saved = serde_json::to_value(AppConfig::default()).unwrap();
+        saved.as_object_mut().unwrap().insert(
+            "ai_provider".to_string(),
+            serde_json::json!("openai_compatible"),
+        );
+
+        let loaded: AppConfig = serde_json::from_value(saved).unwrap();
+        assert_eq!(loaded.ai_provider, Some(AiProvider::OpenAiCompatible));
+        assert_eq!(
+            serde_json::to_value(loaded).unwrap()["ai_provider"],
+            serde_json::json!("openai_compatible")
+        );
     }
 }

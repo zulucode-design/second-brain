@@ -2,10 +2,8 @@ use reqwest::Client;
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
+use crate::ai_provider::{AiApiProtocol, AiBackendTarget, AiRequestSettings};
 use crate::types::AiStreamEvent;
-
-const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
-const OPENAI_API_URL: &str = "https://api.openai.com/v1/chat/completions";
 
 /// A client that gives up rather than waiting indefinitely.
 ///
@@ -24,73 +22,34 @@ fn client() -> Client {
 #[allow(clippy::too_many_arguments)]
 pub fn ai_request(
     app: AppHandle,
-    provider: String,
-    api_key: String,
-    model: String,
+    settings: AiRequestSettings,
     system_prompt: String,
     user_message: String,
     request_id: String,
-    base_url: Option<String>,
 ) {
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             // Handle all API keys as optional; ollama and v1 completions doesnt always require it.
-            let key_opt = if api_key.trim().is_empty() {
-                None
-            } else {
-                Some(api_key.as_str())
-            };
-            let result = match provider.as_str() {
-                "openai" => {
+            let result = match settings.protocol() {
+                AiApiProtocol::OpenAiChatCompletions => {
                     stream_openai(
                         &app,
-                        OPENAI_API_URL,
-                        Some(&api_key),
-                        &model,
+                        settings.endpoint(),
+                        settings.api_key(),
+                        settings.model(),
                         &system_prompt,
                         &user_message,
                         &request_id,
                     )
                     .await
                 }
-                "ollama" => {
-                    let url = crate::ai_health::resolve_base_url(base_url.as_deref());
-                    let url = format!("{}/v1/chat/completions", url.trim_end_matches('/'));
-                    stream_openai(
-                        &app,
-                        &url,
-                        key_opt,
-                        &model,
-                        &system_prompt,
-                        &user_message,
-                        &request_id,
-                    )
-                    .await
-                }
-                "openai_compatible" => {
-                    let url = base_url.as_deref().unwrap_or("");
-                    if url.is_empty() {
-                        Err("No base URL configured for OpenAI Compatible provider".to_string())
-                    } else {
-                        let url = format!("{}/v1/chat/completions", normalize_openai_base(url));
-                        stream_openai(
-                            &app,
-                            &url,
-                            key_opt,
-                            &model,
-                            &system_prompt,
-                            &user_message,
-                            &request_id,
-                        )
-                        .await
-                    }
-                }
-                _ => {
+                AiApiProtocol::AnthropicMessages => {
                     stream_anthropic(
                         &app,
-                        &api_key,
-                        &model,
+                        settings.endpoint(),
+                        settings.api_key().unwrap_or_default(),
+                        settings.model(),
                         &system_prompt,
                         &user_message,
                         &request_id,
@@ -112,18 +71,9 @@ pub fn ai_request(
     });
 }
 
-/// Normalize an OpenAI-compatible base URL: drop a trailing slash and a trailing `/v1`,
-/// so both `https://host` and `https://host/v1` work (we append `/v1/chat/completions`).
-fn normalize_openai_base(base: &str) -> String {
-    let b = base.trim().trim_end_matches('/');
-    b.strip_suffix("/v1")
-        .unwrap_or(b)
-        .trim_end_matches('/')
-        .to_string()
-}
-
 async fn stream_anthropic(
     app: &AppHandle,
+    endpoint: &str,
     api_key: &str,
     model: &str,
     system_prompt: &str,
@@ -146,7 +96,7 @@ async fn stream_anthropic(
     });
 
     let response = client
-        .post(ANTHROPIC_API_URL)
+        .post(endpoint)
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")
@@ -394,43 +344,33 @@ async fn stream_openai(
 }
 
 pub async fn test_connection(
-    provider: &str,
-    api_key: &str,
-    model: &str,
-    base_url: Option<&str>,
+    settings: &AiRequestSettings,
+    health_target: Option<&AiBackendTarget>,
 ) -> Result<String, String> {
-    let key_opt = if api_key.trim().is_empty() {
-        None
-    } else {
-        Some(api_key)
-    };
-    match provider {
-        "openai" => test_openai(OPENAI_API_URL, Some(api_key), model).await,
-        "ollama" => {
-            // Reuse the health probe so the button reports the same actionable reason the
-            // status readout does, rather than a raw transport error.
-            let url = crate::ai_health::resolve_base_url(base_url);
-            let target =
-                crate::ai_health::OllamaTarget::new(url, model, key_opt.map(str::to_string), 0);
-            let status = crate::ai_health::probe(&target).await;
-            match status.reason {
-                Some(reason) => Err(reason),
-                None => Ok(format!("Connected to Ollama at {url}")),
-            }
+    if let Some(target) = health_target {
+        let status = crate::ai_health::probe(target).await;
+        return match status.reason {
+            Some(reason) => Err(reason),
+            None => Ok(format!("Connected at {}", target.id().endpoint)),
+        };
+    }
+
+    match settings.protocol() {
+        AiApiProtocol::OpenAiChatCompletions => {
+            test_openai(settings.endpoint(), settings.api_key(), settings.model()).await
         }
-        "openai_compatible" => {
-            let url = base_url.unwrap_or("");
-            if url.is_empty() {
-                return Err("No base URL configured for OpenAI Compatible provider".to_string());
-            }
-            let url = format!("{}/v1/chat/completions", normalize_openai_base(url));
-            test_openai(&url, key_opt, model).await
+        AiApiProtocol::AnthropicMessages => {
+            test_anthropic(
+                settings.endpoint(),
+                settings.api_key().unwrap_or_default(),
+                settings.model(),
+            )
+            .await
         }
-        _ => test_anthropic(api_key, model).await,
     }
 }
 
-async fn test_anthropic(api_key: &str, model: &str) -> Result<String, String> {
+async fn test_anthropic(endpoint: &str, api_key: &str, model: &str) -> Result<String, String> {
     let client = client();
 
     let body = json!({
@@ -445,7 +385,7 @@ async fn test_anthropic(api_key: &str, model: &str) -> Result<String, String> {
     });
 
     let response = client
-        .post(ANTHROPIC_API_URL)
+        .post(endpoint)
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")

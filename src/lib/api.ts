@@ -20,6 +20,7 @@ import type {
   TaskItem,
   ExternalVaultResult,
   StartupView,
+  AiProvider,
   RepairStatus,
 } from "./types";
 
@@ -556,7 +557,7 @@ export async function createVersion(
 // ── AI ──
 
 export async function setAiSettings(
-  provider: string | null,
+  provider: AiProvider | null,
   apiKey: string | null,
   model: string,
   writingStyle: string | null,

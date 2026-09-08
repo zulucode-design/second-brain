@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::time::Duration;
 
+use crate::ai_provider::{AiBackendTarget, AiTargetId, ConfiguredAiProvider, ProbeProtocol};
+
 /// How long to wait for the backend before calling it unreachable.
 ///
 /// An unreachable host on a private network typically fails fast, but a sleeping one can
@@ -36,7 +38,7 @@ pub const REQUEST_STALL_TIMEOUT: Duration = Duration::from_secs(120);
 /// Gap between probes while the backend is answering.
 pub const INTERVAL_WHEN_AVAILABLE: Duration = Duration::from_secs(120);
 
-/// Gap between checks when there is no Ollama backend to watch at all.
+/// Gap between checks when there is no probeable backend to watch at all.
 ///
 /// Only the provider setting can change this, so the poller just needs to notice that
 /// eventually rather than poll for it.
@@ -55,55 +57,6 @@ pub enum Availability {
     Unknown,
     Available,
     Unavailable,
-}
-
-/// The backend's reachability, and why, in terms the user can act on.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AiTargetId {
-    pub endpoint: String,
-    pub model: String,
-    pub generation: u64,
-}
-
-/// Everything needed to probe Ollama. The credential is deliberately excluded from the
-/// serializable identity and this type does not implement `Debug`, preventing accidental
-/// logging while still letting credential changes advance the generation.
-#[derive(Clone, PartialEq, Eq)]
-pub struct OllamaTarget {
-    id: AiTargetId,
-    bearer_token: Option<String>,
-}
-
-impl OllamaTarget {
-    pub fn new(
-        endpoint: impl Into<String>,
-        model: impl Into<String>,
-        bearer_token: Option<String>,
-        generation: u64,
-    ) -> Self {
-        Self {
-            id: AiTargetId {
-                endpoint: endpoint.into(),
-                model: model.into(),
-                generation,
-            },
-            bearer_token: bearer_token.filter(|token| !token.trim().is_empty()),
-        }
-    }
-
-    pub fn id(&self) -> &AiTargetId {
-        &self.id
-    }
-
-    fn bearer_token(&self) -> Option<&str> {
-        self.bearer_token.as_deref()
-    }
-
-    pub fn same_settings(&self, other: &Self) -> bool {
-        self.id.endpoint == other.id.endpoint
-            && self.id.model == other.id.model
-            && self.bearer_token == other.bearer_token
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,30 +100,30 @@ impl AiStatus {
         }
     }
 
-    pub fn unknown_for(target: &OllamaTarget) -> Self {
+    pub fn unknown_for(target: &AiBackendTarget) -> Self {
         Self {
             availability: Availability::Unknown,
             reason: None,
-            endpoint: Some(target.id.endpoint.clone()),
-            target: Some(target.id.clone()),
+            endpoint: Some(target.id().endpoint.clone()),
+            target: Some(target.id().clone()),
         }
     }
 
-    fn available_for(target: &OllamaTarget) -> Self {
+    fn available_for(target: &AiBackendTarget) -> Self {
         Self {
             availability: Availability::Available,
             reason: None,
-            endpoint: Some(target.id.endpoint.clone()),
-            target: Some(target.id.clone()),
+            endpoint: Some(target.id().endpoint.clone()),
+            target: Some(target.id().clone()),
         }
     }
 
-    fn unavailable_for(target: &OllamaTarget, reason: impl Into<String>) -> Self {
+    fn unavailable_for(target: &AiBackendTarget, reason: impl Into<String>) -> Self {
         Self {
             availability: Availability::Unavailable,
             reason: Some(reason.into()),
-            endpoint: Some(target.id.endpoint.clone()),
-            target: Some(target.id.clone()),
+            endpoint: Some(target.id().endpoint.clone()),
+            target: Some(target.id().clone()),
         }
     }
 
@@ -179,11 +132,31 @@ impl AiStatus {
     }
 }
 
+/// Return the already-known failure only when it belongs to the backend configured now.
+///
+/// A result from an earlier generation must never disable a newly selected endpoint,
+/// model, credential, or provider protocol while its first probe is still in flight.
+pub fn known_unavailability(
+    status: &AiStatus,
+    current_target: Option<&AiTargetId>,
+) -> Option<String> {
+    if status.availability != Availability::Unavailable
+        || current_target.is_none_or(|target| !status.belongs_to(target))
+    {
+        return None;
+    }
+    Some(
+        status
+            .reason
+            .clone()
+            .unwrap_or_else(|| "The AI backend is unreachable.".to_string()),
+    )
+}
+
 /// How long to wait before probing again.
 ///
-/// `tracking` is false when the configured provider is not Ollama, in which case there is
-/// nothing to watch and the poller should idle rather than wake every few seconds to do
-/// nothing.
+/// `tracking` is false when the configured provider cannot be probed, in which case the
+/// poller should idle rather than wake every few seconds to do nothing.
 pub fn next_probe_interval(status: &AiStatus, tracking: bool) -> Duration {
     if !tracking {
         return INTERVAL_WHEN_IDLE;
@@ -221,6 +194,25 @@ pub fn describe_failure(endpoint: &str, error: &reqwest::Error) -> String {
     format!("Could not reach {endpoint}: {error}")
 }
 
+fn describe_probe_failure(target: &AiBackendTarget, error: &reqwest::Error) -> String {
+    if target.protocol() == ProbeProtocol::Ollama {
+        return describe_failure(&target.id().endpoint, error);
+    }
+    let endpoint = &target.id().endpoint;
+    if error.is_timeout() {
+        return format!(
+            "{endpoint} did not answer within {}s. The machine running the OpenAI-compatible backend may be asleep, or the private network may be down.",
+            PROBE_TIMEOUT.as_secs()
+        );
+    }
+    if error.is_connect() {
+        return format!(
+            "Could not connect to {endpoint}. Check that the OpenAI-compatible backend is running on that machine and that both machines are on the same private network."
+        );
+    }
+    format!("Could not reach the OpenAI-compatible backend at {endpoint}: {error}")
+}
+
 /// Whether a model appears in Ollama's list of installed models.
 ///
 /// Ollama resolves a bare name to its `:latest` tag, so `llama3` means `llama3:latest`
@@ -231,13 +223,6 @@ pub fn model_installed(tags_response: &serde_json::Value, model: &str) -> bool {
     if wanted.is_empty() {
         return false;
     }
-    // A name with no tag means the `:latest` tag, which is how Ollama resolves it.
-    let latest_tag = if wanted.contains(':') {
-        wanted.to_string()
-    } else {
-        format!("{wanted}:latest")
-    };
-    let latest_tag = latest_tag.as_str();
 
     tags_response
         .get("models")
@@ -247,9 +232,14 @@ pub fn model_installed(tags_response: &serde_json::Value, model: &str) -> bool {
                 entry
                     .get("name")
                     .and_then(|n| n.as_str())
-                    .is_some_and(|name| name == wanted || name == latest_tag)
+                    .is_some_and(|name| model_name_matches(name, wanted))
             })
         })
+}
+
+fn model_name_matches(available: &str, configured: &str) -> bool {
+    available == configured
+        || (!configured.contains(':') && available == format!("{configured}:latest"))
 }
 
 /// The URL that lists installed models, used as the reachability probe.
@@ -260,17 +250,53 @@ pub fn tags_url(base_url: &str) -> String {
     format!("{}/api/tags", base_url.trim_end_matches('/'))
 }
 
+fn models_url(target: &AiBackendTarget) -> String {
+    match target.protocol() {
+        ProbeProtocol::Ollama => tags_url(&target.id().endpoint),
+        ProbeProtocol::OpenAiCompatible => {
+            format!("{}/v1/models", target.id().endpoint.trim_end_matches('/'))
+        }
+    }
+}
+
+fn configured_model_is_available(target: &AiBackendTarget, response: &serde_json::Value) -> bool {
+    match target.protocol() {
+        ProbeProtocol::Ollama => model_installed(response, &target.id().model),
+        ProbeProtocol::OpenAiCompatible => response
+            .get("data")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|models| {
+                models.iter().any(|entry| {
+                    entry
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|available| model_name_matches(available, &target.id().model))
+                })
+            }),
+    }
+}
+
+fn unexpected_backend(target: &AiBackendTarget, detail: &str) -> String {
+    match target.protocol() {
+        ProbeProtocol::Ollama => not_ollama(&target.id().endpoint, detail),
+        ProbeProtocol::OpenAiCompatible => format!(
+            "{} answered, but {detail}. Check that this address exposes an OpenAI-compatible API.",
+            target.id().endpoint
+        ),
+    }
+}
+
 /// Ask the backend whether it is there and has the model, without running inference.
 ///
 /// Every outcome is a status rather than an error, because an unreachable backend is an
 /// ordinary condition here, not a failure of the app.
-pub async fn probe(target: &OllamaTarget) -> AiStatus {
+pub async fn probe(target: &AiBackendTarget) -> AiStatus {
     probe_with_timeout(target, PROBE_TIMEOUT).await
 }
 
-async fn probe_with_timeout(target: &OllamaTarget, timeout: Duration) -> AiStatus {
-    let base_url = target.id.endpoint.as_str();
-    let model = target.id.model.as_str();
+async fn probe_with_timeout(target: &AiBackendTarget, timeout: Duration) -> AiStatus {
+    let base_url = target.id().endpoint.as_str();
+    let model = target.id().model.as_str();
     let client = match reqwest::Client::builder().timeout(timeout).build() {
         Ok(client) => client,
         Err(e) => {
@@ -278,84 +304,71 @@ async fn probe_with_timeout(target: &OllamaTarget, timeout: Duration) -> AiStatu
         }
     };
 
-    let mut request = client.get(tags_url(base_url));
+    let mut request = client.get(models_url(target));
     if let Some(token) = target.bearer_token() {
         request = request.bearer_auth(token);
     }
     let response = match request.send().await {
         Ok(response) => response,
         Err(e) => {
-            return AiStatus::unavailable_for(target, describe_failure(base_url, &e));
+            return AiStatus::unavailable_for(target, describe_probe_failure(target, &e));
         }
     };
 
     if !response.status().is_success() {
         return AiStatus::unavailable_for(
             target,
-            not_ollama(base_url, &format!("returned {}", response.status())),
+            unexpected_backend(target, &format!("returned {}", response.status())),
         );
     }
 
-    let tags: serde_json::Value = match response.json().await {
-        Ok(tags) => tags,
+    let models: serde_json::Value = match response.json().await {
+        Ok(models) => models,
         Err(_) => {
-            return AiStatus::unavailable_for(
-                target,
-                not_ollama(base_url, "its reply was not Ollama's model list"),
-            )
+            let detail = match target.protocol() {
+                ProbeProtocol::Ollama => "its reply was not Ollama's model list",
+                ProbeProtocol::OpenAiCompatible => {
+                    "its reply was not a valid OpenAI-compatible model list"
+                }
+            };
+            return AiStatus::unavailable_for(target, unexpected_backend(target, detail));
         }
     };
 
     // Reachable but missing the model is still unavailable, and the fix is specific.
-    if !model.trim().is_empty() && !model_installed(&tags, model) {
-        return AiStatus::unavailable_for(
-            target,
-            format!("Ollama is running at {base_url} but does not have \"{model}\". Install it on that machine with: ollama pull {model}"),
-        );
+    if !model.trim().is_empty() && !configured_model_is_available(target, &models) {
+        let reason = match target.protocol() {
+            ProbeProtocol::Ollama => format!(
+                "Ollama is running at {base_url} but does not have \"{model}\". Install it on that machine with: ollama pull {model}"
+            ),
+            ProbeProtocol::OpenAiCompatible => format!(
+                "The OpenAI-compatible backend at {base_url} does not list the configured model \"{model}\". Check the model name and backend configuration."
+            ),
+        };
+        return AiStatus::unavailable_for(target, reason);
     }
 
     AiStatus::available_for(target)
 }
 
-/// The endpoint and model to probe, or `None` when the configured provider is not Ollama.
+/// The endpoint and model to probe, or `None` when the configured provider is not probeable.
 ///
 /// Cloud providers are not tracked: their reachability is the user's internet connection,
 /// which the app cannot usefully report on, and a wrong claim would disable working
 /// features.
-pub fn ollama_target(config: &crate::types::AppConfig, generation: u64) -> Option<OllamaTarget> {
-    if config.ai_provider.as_deref() != Some("ollama") {
-        return None;
-    }
-    let base = resolve_base_url(config.ollama_base_url.as_deref()).to_string();
-    Some(OllamaTarget::new(
-        base,
-        config.ai_model.clone(),
-        config.ollama_api_key.clone(),
-        generation,
-    ))
+pub fn health_target(config: &crate::types::AppConfig, generation: u64) -> Option<AiBackendTarget> {
+    ConfiguredAiProvider::from_config(config).health_target(generation)
 }
 
-pub fn same_probe_settings(left: Option<&OllamaTarget>, right: Option<&OllamaTarget>) -> bool {
+pub fn same_probe_settings(
+    left: Option<&AiBackendTarget>,
+    right: Option<&AiBackendTarget>,
+) -> bool {
     match (left, right) {
         (Some(left), Some(right)) => left.same_settings(right),
         (None, None) => true,
         _ => false,
     }
-}
-
-/// Ollama's address when the user has not set one, i.e. running on this machine.
-pub const DEFAULT_URL: &str = "http://localhost:11434";
-
-/// The address to talk to Ollama on, given whatever is in the settings.
-///
-/// Every caller must resolve through this. A blank or whitespace-only setting is the same
-/// as no setting, and if the probe and the request disagreed about that, the probe would
-/// report a healthy localhost while requests went to a malformed URL.
-pub fn resolve_base_url(configured: Option<&str>) -> &str {
-    configured
-        .map(str::trim)
-        .filter(|url| !url.is_empty())
-        .unwrap_or(DEFAULT_URL)
 }
 
 /// Watch the backend for as long as the app runs, announcing every change.
@@ -390,13 +403,13 @@ pub async fn check_now(app: &tauri::AppHandle) -> (AiStatus, bool) {
             .lock()
             .map(|health| health.generation)
             .unwrap_or(0);
-        (ollama_target(&config, generation), generation)
+        (health_target(&config, generation), generation)
     };
 
     let tracking = target.is_some();
     let status = match target.as_ref() {
         Some(target) => probe(target).await,
-        // Not using Ollama: nothing is claimed either way.
+        // No probeable backend: nothing is claimed either way.
         None => AiStatus::unknown(),
     };
 
@@ -454,10 +467,27 @@ fn commit_probe_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_provider::ConfiguredAiProvider;
+    use crate::types::{AiProvider, AppConfig};
     use serde_json::json;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::mpsc::{self, Receiver};
+
+    fn ollama_test_target(
+        endpoint: impl Into<String>,
+        model: impl Into<String>,
+        bearer_token: Option<String>,
+        generation: u64,
+    ) -> AiBackendTarget {
+        AiBackendTarget::new(
+            endpoint,
+            model,
+            ProbeProtocol::Ollama,
+            bearer_token,
+            generation,
+        )
+    }
 
     fn one_shot_server(
         status: &str,
@@ -501,7 +531,7 @@ mod tests {
 
     async fn probe_response(status: &str, body: &str) -> AiStatus {
         let (endpoint, _) = one_shot_server(status, body, Duration::ZERO);
-        let target = OllamaTarget::new(endpoint, "gemma3:4b", None, 7);
+        let target = ollama_test_target(endpoint, "gemma3:4b", None, 7);
         probe(&target).await
     }
 
@@ -643,7 +673,7 @@ mod tests {
             listener.local_addr().expect("read refused address")
         );
         drop(listener);
-        let refused_target = OllamaTarget::new(refused_endpoint, "gemma3:4b", None, 7);
+        let refused_target = ollama_test_target(refused_endpoint, "gemma3:4b", None, 7);
         let refused = probe_with_timeout(&refused_target, Duration::from_millis(200)).await;
         let refused_reason = refused
             .reason
@@ -666,7 +696,7 @@ mod tests {
             r#"{"models":[{"name":"gemma3:4b"}]}"#,
             Duration::from_millis(100),
         );
-        let stalled_target = OllamaTarget::new(stalled_endpoint, "gemma3:4b", None, 7);
+        let stalled_target = ollama_test_target(stalled_endpoint, "gemma3:4b", None, 7);
         let stalled = probe_with_timeout(&stalled_target, Duration::from_millis(20)).await;
         assert!(stalled
             .reason
@@ -679,7 +709,7 @@ mod tests {
         let body = r#"{"models":[{"name":"gemma3:4b"}]}"#;
 
         let (health_endpoint, health_request) = one_shot_server("200 OK", body, Duration::ZERO);
-        let health_target = OllamaTarget::new(
+        let health_target = ollama_test_target(
             health_endpoint,
             "gemma3:4b",
             Some("health-secret".to_string()),
@@ -697,14 +727,19 @@ mod tests {
 
         let (connection_endpoint, connection_request) =
             one_shot_server("200 OK", body, Duration::ZERO);
-        crate::ai::test_connection(
-            "ollama",
-            "connection-secret",
-            "gemma3:4b",
-            Some(&connection_endpoint),
-        )
-        .await
-        .expect("connection check should succeed");
+        let connection_config = AppConfig {
+            ai_provider: Some(AiProvider::Ollama),
+            ai_model: "gemma3:4b".to_string(),
+            ollama_base_url: Some(connection_endpoint),
+            ollama_api_key: Some("connection-secret".to_string()),
+            ..AppConfig::default()
+        };
+        let configured = ConfiguredAiProvider::from_config(&connection_config);
+        let settings = configured.request_settings().expect("request settings");
+        let connection_target = configured.health_target(1).expect("health target");
+        crate::ai::test_connection(&settings, Some(&connection_target))
+            .await
+            .expect("connection check should succeed");
         assert!(connection_request
             .recv_timeout(Duration::from_secs(1))
             .expect("connection request")
@@ -713,7 +748,7 @@ mod tests {
 
         let (blank_endpoint, blank_request) = one_shot_server("200 OK", body, Duration::ZERO);
         let blank_target =
-            OllamaTarget::new(blank_endpoint, "gemma3:4b", Some("   ".to_string()), 1);
+            ollama_test_target(blank_endpoint, "gemma3:4b", Some("   ".to_string()), 1);
         assert_eq!(
             probe(&blank_target).await.availability,
             Availability::Available
@@ -725,10 +760,58 @@ mod tests {
             .contains("authorization:"));
     }
 
+    #[tokio::test]
+    async fn an_openai_compatible_local_server_is_probed_through_its_public_interface() {
+        let body = r#"{"object":"list","data":[{"id":"gemma3:latest"}]}"#;
+        let (endpoint, request) = one_shot_server("200 OK", body, Duration::ZERO);
+        let config = AppConfig {
+            ai_provider: Some(AiProvider::OpenAiCompatible),
+            ai_model: "gemma3".to_string(),
+            openai_compatible_base_url: Some(format!("{endpoint}/v1")),
+            openai_compatible_api_key: Some("compatible-secret".to_string()),
+            ..AppConfig::default()
+        };
+        let target = ConfiguredAiProvider::from_config(&config)
+            .health_target(4)
+            .expect("configured compatible backend");
+
+        let status = probe(&target).await;
+
+        assert_eq!(status.availability, Availability::Available);
+        assert!(status.belongs_to(target.id()));
+        let request = request
+            .recv_timeout(Duration::from_secs(1))
+            .expect("health request");
+        assert!(request.starts_with("GET /v1/models HTTP/1.1"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer compatible-secret"));
+    }
+
+    #[tokio::test]
+    async fn openai_compatible_connection_failures_name_the_configured_backend() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("reserve refused port");
+        let endpoint = format!("http://{}", listener.local_addr().expect("read address"));
+        drop(listener);
+        let target = AiBackendTarget::new(
+            endpoint,
+            "gemma3:4b",
+            ProbeProtocol::OpenAiCompatible,
+            None,
+            1,
+        );
+
+        let status = probe_with_timeout(&target, Duration::from_millis(200)).await;
+        let reason = status.reason.expect("failed probe guidance");
+
+        assert!(reason.contains("OpenAI-compatible"), "{reason}");
+        assert!(!reason.contains("Ollama"), "{reason}");
+    }
+
     #[test]
     fn ai_status_generation_rejects_stale_probe_results() {
-        let old_target = OllamaTarget::new("http://old", "old-model", None, 1);
-        let new_target = OllamaTarget::new("http://new", "new-model", None, 2);
+        let old_target = ollama_test_target("http://old", "old-model", None, 1);
+        let new_target = ollama_test_target("http://new", "new-model", None, 2);
         let health = Mutex::new(crate::state::AiHealthState {
             generation: 2,
             status: AiStatus::unknown_for(&new_target),
@@ -752,13 +835,13 @@ mod tests {
 
     #[test]
     fn credential_changes_create_a_new_exact_health_target() {
-        let old_target = OllamaTarget::new(
+        let old_target = ollama_test_target(
             "http://desktop:11434",
             "gemma3:4b",
             Some("old-secret".to_string()),
             1,
         );
-        let new_target = OllamaTarget::new(
+        let new_target = ollama_test_target(
             "http://desktop:11434",
             "gemma3:4b",
             Some("new-secret".to_string()),
@@ -768,5 +851,55 @@ mod tests {
 
         assert!(!old_target.same_settings(&new_target));
         assert!(!stale_status.belongs_to(new_target.id()));
+    }
+
+    #[test]
+    fn switching_provider_protocol_invalidates_the_tracked_target() {
+        let ollama = AiBackendTarget::new(
+            "http://desktop:11434",
+            "gemma3:4b",
+            ProbeProtocol::Ollama,
+            None,
+            1,
+        );
+        let compatible = AiBackendTarget::new(
+            "http://desktop:11434",
+            "gemma3:4b",
+            ProbeProtocol::OpenAiCompatible,
+            None,
+            1,
+        );
+
+        assert!(!same_probe_settings(Some(&ollama), Some(&compatible)));
+    }
+
+    #[test]
+    fn fast_refusal_applies_only_to_the_exact_current_target() {
+        let current = AiBackendTarget::new(
+            "http://desktop:11434",
+            "gemma3:4b",
+            ProbeProtocol::OpenAiCompatible,
+            None,
+            2,
+        );
+        let stale = AiBackendTarget::new(
+            "http://desktop:11434",
+            "gemma3:4b",
+            ProbeProtocol::OpenAiCompatible,
+            None,
+            1,
+        );
+        let status = AiStatus::unavailable_for(&current, "backend is asleep");
+
+        assert_eq!(
+            known_unavailability(&status, Some(current.id())).as_deref(),
+            Some("backend is asleep")
+        );
+        assert_eq!(known_unavailability(&status, Some(stale.id())), None);
+        assert_eq!(known_unavailability(&status, None), None);
+        assert_eq!(
+            known_unavailability(&AiStatus::unknown_for(&current), Some(current.id())),
+            None
+        );
     }
 }

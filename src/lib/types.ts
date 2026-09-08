@@ -157,6 +157,8 @@ export interface CustomTheme {
 
 export type StartupView = "all" | "quickaccess" | "tasks";
 
+export type AiProvider = 'anthropic' | 'openai' | 'ollama' | 'openai_compatible';
+
 export interface AppConfig {
   vaults: VaultConfig[];
   active_vault: string | null;
@@ -194,7 +196,7 @@ export interface AppConfig {
   last_backup_time: string | null;
   backup_include_attachments: boolean;
   max_versions_per_note: number;
-  ai_provider: string | null;
+  ai_provider: AiProvider | null;
   ai_api_key: string | null;
   openai_api_key: string | null;
   ollama_base_url: string | null;

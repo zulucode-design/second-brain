@@ -59,9 +59,9 @@ export const hotkeyStatus = writable<HotkeyStatus>({
 /**
  * Whether AI-dependent features should be offered.
  *
- * `unknown` counts as usable: the backend has not been checked yet, or a non-Ollama
- * provider is configured, and disabling working features on a guess is worse than letting
- * a call fail.
+ * `unknown` counts as usable: the backend has not been checked yet, or the configured
+ * provider is not probeable, and disabling working features on a guess is worse than
+ * letting a call fail.
  */
 export const aiUsable = derived(
   aiStatus,
