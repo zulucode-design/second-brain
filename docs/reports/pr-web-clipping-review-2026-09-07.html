@@ -74,6 +74,15 @@
         earlier backend-only blocker is resolved in the branch. The remaining release-confidence
         step is a live app clipping run against a real article URL.
       </div>
+      <div class="gate">
+        <strong>Updated 2026-09-08: that live run has now happened, and it failed.</strong>
+        Clipping a Wikipedia article was rejected twice over &mdash; once by a login-wall
+        heuristic that fires on any page containing a form and the word "login", and once by a
+        missing User-Agent that Wikimedia answers with <code>403</code>. Both defects sat behind
+        this report's "partially verified" rows, and neither was reachable from the HTML fixtures
+        this review examined. Fixed on <code>fix/5-clipping-live-failures</code>; see
+        <a href="ticket-5-clipping-verification-2026-09-08.html">the #5 verification record</a>.
+      </div>
       <div class="meta">
         <span>Branch: <code>feat/web-clipping</code></span>
         <span>Commits reviewed: <code>b0ce390</code> plus follow-up UI/report commits</span>

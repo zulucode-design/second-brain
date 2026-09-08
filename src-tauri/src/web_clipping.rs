@@ -5,6 +5,19 @@ use std::time::Duration;
 
 const MAX_ARTICLE_BYTES: u64 = 5 * 1024 * 1024;
 
+/// Below this, what the parser returned is a stub, a paywall teaser, or page furniture
+/// rather than something worth filing as a note.
+const MIN_ARTICLE_WORDS: usize = 20;
+
+/// Sites that publish a User-Agent policy — Wikimedia among them — answer an unidentified
+/// client with 403, which the app can only report as a page needing permission. Naming the
+/// app and where it comes from is what those policies ask for.
+const CLIP_USER_AGENT: &str = concat!(
+    "SecondBrain/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/zulucode-design/second-brain)"
+);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClippedArticle {
     pub title: String,
@@ -171,6 +184,7 @@ fn resolve_public_host(url: &Url) -> Result<(String, Vec<SocketAddr>), SourceErr
 
 fn html_client(host: &str, addresses: &[SocketAddr]) -> Result<Client, SourceError> {
     Client::builder()
+        .user_agent(CLIP_USER_AGENT)
         .timeout(Duration::from_secs(20))
         .redirect(Policy::none())
         .resolve_to_addrs(host, addresses)
@@ -292,18 +306,16 @@ fn status_failure(status: StatusCode) -> SourceError {
     SourceError::Unreachable(format!("The web page returned HTTP {status}"))
 }
 
+/// Distil a fetched page into a note body.
+///
+/// Readable content decides first, and a login wall is only ever diagnosed for a page that
+/// produced no article. Checking for the wall up front reads the furniture every ordinary
+/// article carries — a search form, a "Log in" link — as the wall itself.
 pub fn extract_article(html: &str, source_url: &str) -> Result<ClippedArticle, ClipError> {
-    if looks_like_login_wall(html) {
-        return Err(ClipError::NotArticle(
-            "The web page requires login before it can be clipped".to_string(),
-        ));
-    }
-    let article = legible::parse(html, Some(source_url), None)
-        .map_err(|error| ClipError::NotArticle(error.to_string()))?;
-    if article.text_content.split_whitespace().count() < 20 {
-        return Err(ClipError::NotArticle(
-            "No readable article content was found on that page".to_string(),
-        ));
+    let article =
+        legible::parse(html, Some(source_url), None).map_err(|_| unreadable_page_error(html))?;
+    if article.text_content.split_whitespace().count() < MIN_ARTICLE_WORDS {
+        return Err(unreadable_page_error(html));
     }
     Ok(ClippedArticle {
         title: article.title.trim().to_string(),
@@ -311,14 +323,22 @@ pub fn extract_article(html: &str, source_url: &str) -> Result<ClippedArticle, C
     })
 }
 
-fn looks_like_login_wall(html: &str) -> bool {
+/// Why a page yielded no article. A password field is the one cause we can name with
+/// confidence; anything else is reported as what the user actually observes.
+fn unreadable_page_error(html: &str) -> ClipError {
+    if asks_for_a_password(html) {
+        return ClipError::NotArticle(
+            "The web page requires login before it can be clipped".to_string(),
+        );
+    }
+    ClipError::NotArticle("No readable article content was found on that page".to_string())
+}
+
+fn asks_for_a_password(html: &str) -> bool {
     let lower = html.to_ascii_lowercase();
-    lower.contains("<form")
-        && (lower.contains("type=\"password\"")
-            || lower.contains("type='password'")
-            || lower.contains(">sign in<")
-            || lower.contains(">log in<")
-            || lower.contains("login"))
+    lower.contains("type=\"password\"")
+        || lower.contains("type='password'")
+        || lower.contains("type=password")
 }
 
 #[cfg(test)]
@@ -356,6 +376,40 @@ mod tests {
         assert!(!article.markdown.contains("Products Pricing"));
         assert!(!article.markdown.contains("unrelated product"));
         assert!(!article.markdown.contains("stealSecrets"));
+    }
+
+    /// Ordinary articles carry a search form and a sign-in link in their furniture.
+    /// Wikipedia and most blogs do, so reading those as a wall rejects most of the web.
+    #[test]
+    fn clips_an_article_whose_furniture_offers_a_login_link() {
+        let html = r#"
+            <!doctype html>
+            <html>
+              <head><title>Zettelkasten</title></head>
+              <body>
+                <nav>
+                  <form action="/search"><input type="search" name="q"></form>
+                  <a href="/login">Log in</a>
+                  <a href="/signup">Create account</a>
+                </nav>
+                <main>
+                  <article>
+                    <h1>Zettelkasten</h1>
+                    <p>A zettelkasten is a method of personal knowledge management built
+                       from many small notes that each hold a single idea.</p>
+                    <p>Because every note is linked to the others it belongs beside, the
+                       collection grows into a structure the writer did not plan in advance.</p>
+                  </article>
+                </main>
+              </body>
+            </html>
+        "#;
+
+        let article = extract_article(html, "https://example.org/wiki/Zettelkasten")
+            .expect("a login link in the navigation is not a login wall");
+
+        assert!(article.markdown.contains("single idea"));
+        assert!(!article.markdown.contains("Create account"));
     }
 
     #[test]
@@ -446,6 +500,41 @@ mod tests {
         let next = redirect_target(&current, "https://www.example.com/story").unwrap();
 
         assert_eq!(next.as_str(), "https://www.example.com/story");
+    }
+
+    /// The fixtures above are written by the same person as the parser call, so they cannot
+    /// show what real pages do to it. This clips live articles chosen for the furniture that
+    /// broke the earlier heuristic: a search form plus a sign-in link.
+    #[test]
+    #[ignore = "needs network access to third-party sites"]
+    fn clips_live_articles_from_the_public_web() {
+        for url in [
+            "https://en.wikipedia.org/wiki/Zettelkasten",
+            "https://blog.rust-lang.org/2024/02/08/Rust-1.76.0/",
+        ] {
+            let (article, canonical_url) = clip_url(url).unwrap_or_else(|error| {
+                panic!("clipping {url} failed: {}", error.message());
+            });
+
+            assert_eq!(canonical_url, url);
+            assert!(!article.title.is_empty(), "{url} produced no title");
+            assert!(
+                article.markdown.split_whitespace().count() > 100,
+                "{url} produced only {} words",
+                article.markdown.split_whitespace().count()
+            );
+        }
+    }
+
+    /// An unreachable host must surface as a fetch failure, not a panic or a hang.
+    #[test]
+    #[ignore = "needs network access to resolve a nonexistent host"]
+    fn reports_an_unreachable_host_without_producing_an_article() {
+        let error = clip_url("https://this-host-does-not-exist.invalid/article")
+            .expect_err("a nonexistent host cannot be clipped");
+
+        assert!(matches!(error, ClipError::Fetch(_) | ClipError::Blocked(_)));
+        assert!(!error.message().is_empty());
     }
 
     #[test]

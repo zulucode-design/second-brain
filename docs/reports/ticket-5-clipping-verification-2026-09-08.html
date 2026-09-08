@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Ticket #5 — web clipping verification record</title>
+  <style>
+    :root {
+      --page: #f3f1eb;
+      --paper: #fffdf8;
+      --paper-2: #f7f4ec;
+      --ink: #20241f;
+      --muted: #626960;
+      --line: #d7d1c5;
+      --accent: #185f52;
+      --accent-soft: #dcece6;
+      --critical: #a42626;
+      --critical-soft: #f8dfdc;
+      --high: #a34b16;
+      --high-soft: #f8e5d7;
+      --medium: #776000;
+      --medium-soft: #f4ebbd;
+      --low: #4f6278;
+      --low-soft: #e3e9f0;
+      --good: #276c43;
+      --good-soft: #dcece2;
+      --shadow: 0 18px 48px rgba(31, 38, 32, 0.09);
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: Iowan Old Style, Palatino Linotype, Book Antiqua, Georgia, serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 8% -8%, rgba(24, 95, 82, 0.14), transparent 34rem), var(--page);
+      color: var(--ink);
+      font: 16px/1.62 var(--sans);
+    }
+    a { color: var(--accent); text-underline-offset: 0.16em; }
+    code { font-family: var(--mono); font-size: 0.87em; overflow-wrap: anywhere; }
+    .page { width: min(1180px, calc(100% - 30px)); margin: 26px auto 70px; }
+
+    .hero, section {
+      border: 1px solid var(--line);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+    .hero { padding: clamp(28px, 6vw, 66px); border-radius: 28px; }
+    .kicker { margin: 0 0 12px; color: var(--accent); font-size: 0.75rem; font-weight: 850; letter-spacing: 0.14em; text-transform: uppercase; }
+    h1, h2, h3, h4 { line-height: 1.18; }
+    h1 { max-width: 850px; margin: 0; font: 600 clamp(2.55rem, 7vw, 5rem)/1.03 var(--serif); letter-spacing: -0.045em; }
+    .intro { max-width: 820px; margin: 22px 0 0; color: var(--muted); font-size: clamp(1.03rem, 2vw, 1.25rem); }
+    .gate { margin-top: 27px; padding: 18px 20px; border: 1px solid #dfaaa6; border-radius: 15px; background: var(--critical-soft); }
+    .gate strong { color: var(--critical); }
+    .meta { display: flex; flex-wrap: wrap; gap: 7px 18px; margin-top: 22px; color: var(--muted); font-size: 0.86rem; }
+
+    .numbers { display: grid; grid-template-columns: repeat(5, 1fr); gap: 11px; margin-top: 16px; }
+    .number { min-height: 104px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); }
+    .number strong { display: block; font: 600 2.1rem/1 var(--serif); }
+    .number span { display: block; margin-top: 8px; color: var(--muted); font-size: 0.79rem; }
+    .number.critical strong { color: var(--critical); }
+    .number.high strong { color: var(--high); }
+    .number.medium strong { color: var(--medium); }
+    .number.low strong { color: var(--low); }
+    .number.good strong { color: var(--good); }
+
+    .layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 26px; margin-top: 31px; align-items: start; }
+    nav { position: sticky; top: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--paper) 94%, transparent); backdrop-filter: blur(10px); }
+    nav strong { display: block; margin: 0 7px 8px; color: var(--muted); font-size: 0.68rem; letter-spacing: 0.13em; text-transform: uppercase; }
+    nav a { display: block; padding: 6px 8px; border-radius: 8px; color: var(--ink); font-size: 0.86rem; text-decoration: none; }
+    nav a:hover { color: var(--accent); background: var(--accent-soft); }
+    main { min-width: 0; }
+    section { scroll-margin-top: 18px; margin-bottom: 27px; padding: clamp(22px, 4vw, 37px); border-radius: 22px; }
+    section > h2 { margin: 0 0 10px; font: 600 clamp(1.75rem, 4vw, 2.45rem)/1.12 var(--serif); letter-spacing: -0.025em; }
+    .section-intro { max-width: 780px; margin-top: 0; color: var(--muted); }
+
+    .callout { margin: 18px 0 0; padding: 16px 18px; border-left: 4px solid var(--accent); border-radius: 4px 12px 12px 4px; background: var(--accent-soft); }
+    .callout.warning { border-color: var(--high); background: var(--high-soft); }
+    .callout p { margin: 0; }
+    .decision-list { display: grid; gap: 11px; margin-top: 20px; }
+    .decision { padding: 16px 17px; border: 1px solid var(--line); border-radius: 13px; background: var(--paper-2); }
+    .decision h3 { margin: 0 0 5px; font-size: 1rem; }
+    .decision p { margin: 0; color: var(--muted); }
+    .decision .recommend { color: var(--ink); }
+
+    .loop { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; margin-top: 20px; counter-reset: loop; }
+    .loop div { padding: 15px; border: 1px solid var(--line); border-radius: 13px; background: var(--paper-2); counter-increment: loop; }
+    .loop div::before { content: counter(loop); display: grid; width: 28px; height: 28px; margin-bottom: 9px; place-items: center; border-radius: 50%; background: var(--accent); color: white; font-weight: 800; }
+    .loop strong { display: block; margin-bottom: 4px; }
+    .loop p { margin: 0; color: var(--muted); font-size: 0.89rem; }
+
+    .phase { margin-top: 30px; }
+    .phase > header { display: flex; align-items: baseline; justify-content: space-between; gap: 15px; margin-bottom: 11px; }
+    .phase > header h3 { margin: 0; font: 600 1.55rem/1.2 var(--serif); }
+    .phase > header span { color: var(--muted); font-size: 0.8rem; }
+    .work { margin-top: 12px; border: 1px solid var(--line); border-radius: 15px; background: var(--paper-2); overflow: hidden; }
+    .work-head { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; padding: 18px 18px 12px; }
+    .step { display: grid; width: 31px; height: 31px; place-items: center; border-radius: 50%; background: var(--accent); color: white; font-weight: 850; }
+    .work-head h4 { margin: 1px 0 3px; font-size: 1.08rem; }
+    .work-head p { margin: 0; color: var(--muted); font-size: 0.88rem; }
+    .badge { padding: 4px 9px; border-radius: 999px; font-size: 0.66rem; font-weight: 900; letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap; }
+    .badge.critical { color: var(--critical); background: var(--critical-soft); }
+    .badge.high { color: var(--high); background: var(--high-soft); }
+    .badge.medium { color: var(--medium); background: var(--medium-soft); }
+    .badge.low { color: var(--low); background: var(--low-soft); }
+    .work-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 0 18px 18px; }
+    .cell { padding: 13px 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper); }
+    .cell.wide { grid-column: 1 / -1; }
+    .cell strong { display: block; margin-bottom: 4px; color: var(--accent); font-size: 0.69rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    .cell p, .cell ul { margin: 0; }
+    .cell ul { padding-left: 19px; }
+    .cell li + li { margin-top: 4px; }
+    details { border-top: 1px dashed var(--line); padding: 12px 18px 15px; color: var(--muted); font-size: 0.85rem; }
+    summary { cursor: pointer; color: var(--accent); font-weight: 800; }
+    details p { margin: 8px 0 0; }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.89rem; }
+    th, td { padding: 11px 9px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 0.69rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    tbody tr:last-child td { border-bottom: 0; }
+    .status { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 0.7rem; font-weight: 850; white-space: nowrap; }
+    .status.open { color: var(--high); background: var(--high-soft); }
+    .status.later { color: var(--low); background: var(--low-soft); }
+    .status.gate { color: var(--critical); background: var(--critical-soft); }
+    .checklist { padding-left: 21px; }
+    .checklist li + li { margin-top: 8px; }
+    footer { padding: 10px 5px 0; color: var(--muted); font-size: 0.8rem; text-align: center; }
+
+    @media (max-width: 900px) {
+      .numbers { grid-template-columns: repeat(2, 1fr); }
+      .numbers .number:last-child { grid-column: 1 / -1; }
+      .layout { grid-template-columns: 1fr; }
+      nav { position: static; display: flex; flex-wrap: wrap; gap: 2px 6px; }
+      nav strong { width: 100%; }
+      nav a { display: inline-block; }
+      .loop { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 620px) {
+      .page { width: min(100% - 18px, 1180px); margin-top: 9px; }
+      .hero, section { border-radius: 17px; }
+      .hero { padding: 25px 20px; }
+      h1 { font-size: 2.55rem; }
+      .numbers, .loop, .work-body { grid-template-columns: 1fr; }
+      .numbers .number:last-child, .cell.wide { grid-column: auto; }
+      .work-head { grid-template-columns: auto 1fr; }
+      .work-head .badge { grid-column: 2; justify-self: start; }
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #141714; --paper: #1d211d; --paper-2: #242924; --ink: #e9ece5;
+        --muted: #adb6aa; --line: #3a4138; --accent: #8bcab4; --accent-soft: #233e35;
+        --critical: #ff9089; --critical-soft: #452524; --high: #f1a267; --high-soft: #482e1d;
+        --medium: #e3c65f; --medium-soft: #443d20; --low: #aec3d8; --low-soft: #2b3540;
+        --good: #7fd19c; --good-soft: #203b2a; --shadow: 0 18px 48px rgba(0, 0, 0, 0.25);
+      }
+    }
+    @media print {
+      :root { --page: white; --paper: white; --paper-2: #fafafa; --ink: #111; --muted: #555; --line: #ccc; }
+      body { background: white; font-size: 10.5pt; }
+      .page { width: 100%; margin: 0; }
+      .hero, section { box-shadow: none; }
+      .layout { display: block; }
+      nav { display: none; }
+      .work { break-inside: avoid; }
+      details, details > * { display: block; }
+    }
+
+    .quote { margin: 0 0 18px; padding: 14px 18px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 12px 12px 0; }
+    .note { margin-top: 16px; padding: 13px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper-2); color: var(--muted); }
+    .pill { display: inline-block; margin-left: 8px; padding: 3px 10px; border-radius: 999px; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; vertical-align: middle; }
+    .pill.good { background: var(--good-soft); color: var(--good); }
+    .pill.critical { background: var(--critical-soft); color: var(--critical); }
+    .pill.medium { background: var(--medium-soft); color: var(--medium); }
+    section { margin-top: 20px; padding: clamp(22px, 4vw, 40px); border-radius: 22px; }
+    section h2 { margin: 0 0 16px; font: 600 clamp(1.5rem, 3vw, 2.1rem)/1.15 var(--serif); letter-spacing: -0.02em; }
+    section h3 { margin: 22px 0 8px; font-size: 0.78rem; font-weight: 850; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+    section ol, section ul { margin: 0; padding-left: 1.25rem; }
+    section li { margin: 6px 0; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <p class="kicker">Verification record</p>
+      <h1>Web clipping from a URL</h1>
+      <p class="intro">
+        #5's code merged in <a href="https://github.com/zulucode-design/second-brain/pull/43">PR&nbsp;#43</a>
+        on 2026-09-07, but the issue stayed open: the PR used <code>Refs #5</code> rather than a
+        closing keyword, and its own review report listed a live clipping run as the outstanding
+        step. This record is that run &mdash; and it found two defects that the fixture-based
+        suite could not.
+      </p>
+      <div class="gate">
+        <strong>#5 was not ready to close.</strong> Clipping a Wikipedia article &mdash; the most
+        ordinary input the feature has &mdash; failed twice over, each time with a message that
+        blamed the site rather than the app. Both are fixed on
+        <code>fix/5-clipping-live-failures</code>.
+      </div>
+      <div class="meta">
+        <span>Branch <code>fix/5-clipping-live-failures</code></span>
+        <span>Linux / Wayland</span>
+        <span>Date 2026-09-08</span>
+      </div>
+    </header>
+
+    <section id="method">
+      <h2>Method</h2>
+      <p>
+        The earlier suite tested <code>extract_article</code> against HTML fixtures written by the
+        same hand that wrote the parser call, so it could only confirm the author's model of a web
+        page. The two defects below both live in the gap between that model and real sites, and
+        neither fixture could have exposed them.
+      </p>
+      <p>
+        Verification therefore drives <code>clip_url</code> &mdash; validation, DNS pinning,
+        redirects, fetch, and extraction, the whole path the Tauri command calls &mdash; against
+        live third-party URLs, as two network-gated tests carrying
+        <code>#[ignore]</code> in the manner already established by
+        <code>hotkey::portal</code>. They are run with
+        <code>cargo test -- --ignored</code>, not in <code>pnpm verify</code>, so an offline or
+        firewalled machine still gets a green suite.
+      </p>
+      <p class="note">
+        Not covered here: the Svelte click path. This machine is a Wayland session with no
+        <code>xdotool</code>, so the modal cannot be driven from a script. Pasting a URL into the
+        running app and picking a category remains a manual step, listed under
+        <a href="#remaining">what is still unverified</a>.
+      </p>
+    </section>
+
+    <section id="defects">
+      <h2>The two defects the fixtures missed</h2>
+
+      <h3>1. The login-wall heuristic rejected most of the open web</h3>
+      <p class="quote">
+        <code>lower.contains("&lt;form") &amp;&amp; (&hellip; || lower.contains("login"))</code>
+      </p>
+      <p>
+        <code>extract_article</code> tested for a login wall <em>before</em> attempting extraction,
+        and the test fired when a page contained any <code>&lt;form&gt;</code> element and the
+        string <code>login</code> anywhere in its HTML. That describes an enormous share of the web:
+        a search box in the header and a "Log in" link in the nav is the default shape of a
+        content site.
+      </p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Page</th><th>Has a form</th><th>Trigger matched</th><th>Result before the fix</th></tr></thead>
+        <tbody>
+          <tr><td>Wikipedia &mdash; <em>Zettelkasten</em></td><td>yes, the search box</td><td><code>"login"</code> &times;4</td><td><span class="pill critical">Rejected</span></td></tr>
+          <tr><td><code>fs.blog/great-talks</code></td><td>yes, search and newsletter</td><td><code>"&gt;log in&lt;"</code></td><td><span class="pill critical">Rejected</span></td></tr>
+          <tr><td>Rust blog post</td><td>no</td><td>&mdash;</td><td><span class="pill good">Accepted</span></td></tr>
+        </tbody>
+      </table></div>
+      <p>
+        The user saw <em>"The web page requires login before it can be clipped"</em> for a page
+        requiring no login, so acceptance criterion&nbsp;1 failed on ordinary input while the suite
+        stayed green. The existing fixture passed because it was a bare login page with no
+        navigation &mdash; it never contained the furniture that causes the false positive.
+      </p>
+      <p>
+        <strong>Fix.</strong> Readable content decides first. Extraction runs, and a login wall is
+        only ever <em>diagnosed</em> for a page that already produced no article, narrowed to the
+        one signal that is not furniture: an actual password input. A wall is now a better
+        explanation of a failure rather than a gate in front of success.
+      </p>
+
+      <h3>2. The clipper sent no User-Agent, so Wikipedia returned 403</h3>
+      <p>
+        With the heuristic fixed, the live run still failed &mdash; now reporting
+        <em>"The web page requires login or permission before it can be clipped"</em>, the
+        401/403 branch. <code>html_client</code> built a <code>reqwest</code> client with no
+        <code>user_agent</code>, and Wikimedia's User-Agent policy answers an unidentified client
+        with <code>403</code>.
+      </p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Request</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td><code>curl -H "User-Agent:" https://en.wikipedia.org/wiki/Zettelkasten</code></td><td><span class="pill critical">403</span></td></tr>
+          <tr><td>the same URL with a descriptive agent</td><td><span class="pill good">200</span></td></tr>
+        </tbody>
+      </table></div>
+      <p>
+        <strong>Fix.</strong> The client now identifies the app and where it comes from, which is
+        what those policies ask for. Note that <code>image_proxy.rs</code> omits a User-Agent in the
+        same way; it is out of scope for #5 and is recorded below as a follow-up rather than widened into this
+        change.
+      </p>
+      <p class="note">
+        A third finding was <em>not</em> a defect. <code>blog.rust-lang.org/&hellip;/Rust-1.76.0.html</code>
+        returns a 460-byte JavaScript redirect stub, and the app correctly reported no readable
+        article. The stale URL was in the test, not the code; the canonical trailing-slash URL clips
+        fine. Following <code>meta refresh</code> / scripted redirects is a real gap, recorded as a follow-up rather
+        than fixed here.
+      </p>
+    </section>
+
+    <section id="results">
+      <h2>Acceptance criteria</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Criterion</th><th></th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr><td>Pasting a URL and choosing a category produces a note with readable content</td>
+              <td><span class="pill good">Pass</span></td>
+              <td>Live clip of the Wikipedia article yields <strong>5,825 words</strong> of article
+                  markdown. Category filing is covered by
+                  <code>a_web_clipping_is_complete_and_records_its_source_url</code>; the click
+                  itself is manual.</td></tr>
+          <tr><td>Page furniture such as navigation and adverts is excluded</td>
+              <td><span class="pill good">Pass</span></td>
+              <td>The live clipping's markdown carries prose, headings, images and cross-references,
+                  and none of Wikipedia's nav, sidebar or edit links.</td></tr>
+          <tr><td>The note records its source URL</td>
+              <td><span class="pill good">Pass</span></td>
+              <td><code>source_url</code> frontmatter round-trip test passes; the live clip returns
+                  the canonical URL alongside the article.</td></tr>
+          <tr><td>The saved note behaves like any other note</td>
+              <td><span class="pill medium">Manual</span></td>
+              <td>Written as an ordinary markdown note through <code>create_web_clipping</code> and
+                  indexed by the same path; editing, linking and search need the app.</td></tr>
+          <tr><td>Fetching never blocks the UI</td>
+              <td><span class="pill good">Pass</span></td>
+              <td><code>clip_web_page</code> runs the fetch in <code>spawn_blocking</code> and takes
+                  the note-mutation lock only afterwards; the modal disables its controls while busy.</td></tr>
+          <tr><td>Failures report a clear reason and leave no partial note</td>
+              <td><span class="pill good">Pass</span></td>
+              <td>Unreachable host verified live. Timeout, private-address, login, non-article and
+                  redirect-loop paths covered by tests. The note is only written after a complete
+                  article exists, so a failed fetch cannot leave a draft.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="remaining">
+      <h2>Still unverified</h2>
+      <ul>
+        <li><strong>The click path.</strong> Paste a URL into the running app, pick a category, and
+          confirm the note opens in the editor, edits, accepts a wiki-link, and appears in search.
+          Not scriptable on this Wayland session.</li>
+        <li><strong>One failure case from the UI.</strong> Confirm the modal shows the backend's
+          reason and creates no note.</li>
+      </ul>
+      <p class="note">
+        A pre-existing flake was observed while running the suite, unrelated to clipping:
+        <code>vault::relocation::tests::killing_the_app_mid_notebook_move_still_recovers</code>
+        failed in 2 of 9 full suite runs, and was the only failing test in every one of them. It
+        passes in isolation. Root cause is in <code>machine_local.rs</code> &mdash; the
+        vault identity file is created empty by <code>create_new</code> and written immediately
+        after, so a process killed inside that window leaves a permanently empty file that
+        <code>read_claimed_vault_id</code> waits 500&nbsp;ms for and then gives up on. It is not
+        touched by this branch.
+      </p>
+    </section>
+
+    <section id="followups">
+      <h2>Follow-ups this run produced</h2>
+      <p>
+        None of these are #5's acceptance criteria, and none are fixed on this branch. They are
+        recorded here so the observation is not lost; no GitHub issues have been opened yet.
+      </p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Finding</th><th>Where</th><th>Why it is not fixed here</th></tr></thead>
+        <tbody>
+          <tr><td>Image fetches send no User-Agent, so the same 403 is reachable</td>
+              <td><code>image_proxy.rs</code></td>
+              <td>Serves images referenced from notes, not clipping. Fixing it here would widen a
+                  #5 branch into unrelated code.</td></tr>
+          <tr><td><code>meta refresh</code> and scripted redirects are not followed, so a valid
+                  article URL can report "no readable article"</td>
+              <td><code>web_clipping.rs</code></td>
+              <td>A distinct capability rather than a defect: the current message is accurate about
+                  what the fetched HTML contained.</td></tr>
+          <tr><td>A crash between creating and writing the vault identity file leaves it
+                  permanently empty</td>
+              <td><code>machine_local.rs</code></td>
+              <td>Pre-existing, in the relocation lineage (#27 / #33), and unrelated to clipping.</td></tr>
+          <tr><td>Safe-fetch logic is duplicated between the two fetchers</td>
+              <td><code>web_clipping.rs</code>, <code>image_proxy.rs</code></td>
+              <td>Carried over from the PR&nbsp;#43 review as a judgement call, still unaddressed.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+  </div>
+</body>
+</html>
