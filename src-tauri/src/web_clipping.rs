@@ -1,6 +1,6 @@
+use crate::safe_fetch::{self, Body, HostRejection, UrlRejection};
 use reqwest::{blocking::Client, redirect::Policy, StatusCode, Url};
-use std::io::Read;
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::net::SocketAddr;
 use std::time::Duration;
 
 const MAX_ARTICLE_BYTES: u64 = 5 * 1024 * 1024;
@@ -8,15 +8,6 @@ const MAX_ARTICLE_BYTES: u64 = 5 * 1024 * 1024;
 /// Below this, what the parser returned is a stub, a paywall teaser, or page furniture
 /// rather than something worth filing as a note.
 const MIN_ARTICLE_WORDS: usize = 20;
-
-/// Sites that publish a User-Agent policy — Wikimedia among them — answer an unidentified
-/// client with 403, which the app can only report as a page needing permission. Naming the
-/// app and where it comes from is what those policies ask for.
-const CLIP_USER_AGENT: &str = concat!(
-    "SecondBrain/",
-    env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/zulucode-design/second-brain)"
-);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClippedArticle {
@@ -52,79 +43,30 @@ pub enum SourceError {
     Blocked(String),
 }
 
-fn is_public_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ip) => {
-            let [a, b, c, _] = ip.octets();
-            !(a == 0
-                || a == 10
-                || a == 127
-                || a >= 224
-                || (a == 100 && (64..=127).contains(&b))
-                || (a == 169 && b == 254)
-                || (a == 172 && (16..=31).contains(&b))
-                || (a == 192 && b == 168)
-                || (a == 192 && b == 0 && c == 0)
-                || (a == 192 && b == 0 && c == 2)
-                || (a == 198 && (b == 18 || b == 19))
-                || (a == 198 && b == 51 && c == 100)
-                || (a == 203 && b == 0 && c == 113))
+/// The clipper's wording for an address it will not fetch.
+///
+/// Local and private addresses collapse to one message deliberately: distinguishing them
+/// would tell whoever supplied the URL which internal names resolve.
+fn validate_source_url(raw_url: &str) -> Result<Url, ClipError> {
+    safe_fetch::validate_public_url(raw_url).map_err(|rejection| match rejection {
+        UrlRejection::Unparseable => ClipError::InvalidUrl("Enter a valid web address".to_string()),
+        UrlRejection::NotHttp => {
+            ClipError::InvalidUrl("Only HTTP and HTTPS pages can be clipped".to_string())
         }
-        IpAddr::V6(ip) => {
-            if ip.is_unspecified() || ip.is_loopback() || ip.to_ipv4().is_some() {
-                return false;
-            }
-            let first = ip.segments()[0];
-            (0x2000..=0x3fff).contains(&first) && ip.segments()[..2] != [0x2001, 0x0db8]
-        }
-    }
-}
-
-fn validate_source_url(raw_url: &str) -> Result<reqwest::Url, ClipError> {
-    let url = reqwest::Url::parse(raw_url)
-        .map_err(|_| ClipError::InvalidUrl("Enter a valid web address".to_string()))?;
-    if !matches!(url.scheme(), "http" | "https") {
-        return Err(ClipError::InvalidUrl(
-            "Only HTTP and HTTPS pages can be clipped".to_string(),
-        ));
-    }
-    if !url.username().is_empty() || url.password().is_some() {
-        return Err(ClipError::InvalidUrl(
+        UrlRejection::HasCredentials => ClipError::InvalidUrl(
             "Web addresses containing credentials cannot be clipped".to_string(),
-        ));
-    }
-    let expected_port = if url.scheme() == "https" { 443 } else { 80 };
-    if url.port_or_known_default() != Some(expected_port) {
-        return Err(ClipError::Blocked(
+        ),
+        UrlRejection::NonStandardPort => ClipError::Blocked(
             "Web addresses using nonstandard ports cannot be clipped".to_string(),
-        ));
-    }
-    let host = url
-        .host_str()
-        .ok_or_else(|| ClipError::InvalidUrl("The web address has no host".to_string()))?;
-    if host.ends_with('.') {
-        return Err(ClipError::InvalidUrl(
-            "The web address host must not end with a dot".to_string(),
-        ));
-    }
-    let normalized = host
-        .trim_start_matches('[')
-        .trim_end_matches(']')
-        .to_ascii_lowercase();
-    if normalized == "localhost" || normalized.ends_with(".localhost") {
-        return Err(ClipError::Blocked(
-            "Local and private web addresses cannot be clipped".to_string(),
-        ));
-    }
-    if normalized
-        .parse::<IpAddr>()
-        .is_ok_and(|address| !is_public_ip(address))
-    {
-        return Err(ClipError::Blocked(
-            "Local and private web addresses cannot be clipped".to_string(),
-        ));
-    }
-    Ok(url)
+        ),
+        UrlRejection::NoHost => ClipError::InvalidUrl("The web address has no host".to_string()),
+        UrlRejection::TrailingDot => {
+            ClipError::InvalidUrl("The web address host must not end with a dot".to_string())
+        }
+        UrlRejection::LocalName | UrlRejection::PrivateAddress => {
+            ClipError::Blocked("Local and private web addresses cannot be clipped".to_string())
+        }
+    })
 }
 
 pub fn fetch_article_html(raw_url: &str) -> Result<String, ClipError> {
@@ -154,40 +96,30 @@ where
 }
 
 fn resolve_public_host(url: &Url) -> Result<(String, Vec<SocketAddr>), SourceError> {
-    let host = url
-        .host_str()
-        .ok_or_else(|| SourceError::Unreachable("The web address has no host".to_string()))?
-        .trim_start_matches('[')
-        .trim_end_matches(']')
-        .to_ascii_lowercase();
-    let port = url
-        .port_or_known_default()
-        .ok_or_else(|| SourceError::Unreachable("The web address has no port".to_string()))?;
-    let addresses: Vec<_> = (host.as_str(), port)
-        .to_socket_addrs()
-        .map_err(|_| {
+    safe_fetch::resolve_public_addrs(url).map_err(|rejection| match rejection {
+        HostRejection::NoHost => {
+            SourceError::Unreachable("The web address has no host".to_string())
+        }
+        HostRejection::NoPort => {
+            SourceError::Unreachable("The web address has no port".to_string())
+        }
+        HostRejection::Unresolvable(_) => {
             SourceError::Unreachable("The web page host could not be reached".to_string())
-        })?
-        .collect();
-    if addresses.is_empty() {
-        return Err(SourceError::Unreachable(
-            "The web page host resolved to no addresses".to_string(),
-        ));
-    }
-    if addresses.iter().any(|address| !is_public_ip(address.ip())) {
-        return Err(SourceError::Blocked(
+        }
+        HostRejection::NoAddresses => {
+            SourceError::Unreachable("The web page host resolved to no addresses".to_string())
+        }
+        HostRejection::PrivateAddress => SourceError::Blocked(
             "The web page host resolves to a local or private address".to_string(),
-        ));
-    }
-    Ok((host, addresses))
+        ),
+    })
 }
 
+/// Redirects are refused at the client and handled by hand, because each hop has to be
+/// revalidated before it is followed — a public page may redirect to a private address.
 fn html_client(host: &str, addresses: &[SocketAddr]) -> Result<Client, SourceError> {
-    Client::builder()
-        .user_agent(CLIP_USER_AGENT)
-        .timeout(Duration::from_secs(20))
+    safe_fetch::pinned_client(host, addresses, Duration::from_secs(20))
         .redirect(Policy::none())
-        .resolve_to_addrs(host, addresses)
         .build()
         .map_err(|_| SourceError::Unreachable("The web request could not be prepared".to_string()))
 }
@@ -245,14 +177,6 @@ fn fetch_public_html_without_redirects(
     if !response.status().is_success() {
         return Err(status_failure(response.status()));
     }
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_ARTICLE_BYTES)
-    {
-        return Err(SourceError::Blocked(
-            "The web page exceeds the 5 MiB clipping limit".to_string(),
-        ));
-    }
     if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
         let content_type = content_type
             .to_str()
@@ -267,17 +191,16 @@ fn fetch_public_html_without_redirects(
         }
     }
 
-    let mut body = Vec::new();
-    response
-        .by_ref()
-        .take(MAX_ARTICLE_BYTES + 1)
-        .read_to_end(&mut body)
+    let body = safe_fetch::read_capped(&mut response, MAX_ARTICLE_BYTES)
         .map_err(|_| SourceError::Unreachable("The web page could not be read".to_string()))?;
-    if body.len() as u64 > MAX_ARTICLE_BYTES {
-        return Err(SourceError::Blocked(
-            "The web page exceeds the 5 MiB clipping limit".to_string(),
-        ));
-    }
+    let body = match body {
+        Body::Complete(body) => body,
+        Body::TooLarge => {
+            return Err(SourceError::Blocked(
+                "The web page exceeds the 5 MiB clipping limit".to_string(),
+            ))
+        }
+    };
     let html = String::from_utf8(body)
         .map_err(|_| SourceError::Blocked("The web page is not valid UTF-8 HTML".to_string()))?;
     Ok(FetchStep::Html(html))
