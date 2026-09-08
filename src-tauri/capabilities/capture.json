@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "capture",
   "description": "The quick-capture overlay. Deliberately the smallest set of permissions that lets it take a thought and put it away: it is a window a global hotkey can raise over anything, so it gets no more reach than that needs.",
-  "platforms": ["linux"],
+  "platforms": ["linux", "windows"],
   "windows": ["capture"],
   "permissions": [
     "core:event:default",

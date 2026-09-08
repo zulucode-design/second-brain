@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, activeVaultConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
 	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings } from '$lib/api';
-	import { darkThemes, isMobile, isAndroid, isLinux } from '$lib/platform';
+	import { darkThemes, isMobile, isAndroid, isLinux, isWindows } from '$lib/platform';
 	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
 	import { getVersion } from '@tauri-apps/api/app';
@@ -1085,6 +1085,10 @@
 		if (event.target === event.currentTarget) close();
 	}
 
+	function handleOverlayKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape') close();
+	}
+
 	function dismissRestoreConfirm(event: MouseEvent) {
 		if (event.target === event.currentTarget) restoreConfirm = null;
 	}
@@ -1162,7 +1166,7 @@
 
 {#if $showSettings}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="settings-overlay" class:mobile={isMobile} onclick={closeSettingsFromOverlay} onkeydown={(e) => { if (e.key === 'Escape') close(); }}>
+	<div class="settings-overlay" class:mobile={isMobile} onclick={closeSettingsFromOverlay} onkeydown={handleOverlayKeydown}>
 		<div class="settings-panel" class:mobile={isMobile} role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
 			<div class="settings-header">
 				<h2 id="settings-title">Settings</h2>
@@ -1414,7 +1418,7 @@
 								<label class="setting-toggle">
 									<span class="setting-label">
 										<span class="setting-name">Close to tray</span>
-										<span class="setting-desc">Minimize to tray instead of quitting when closing the window (requires restart)</span>
+										<span class="setting-desc">Minimize to tray instead of quitting when closing the window</span>
 									</span>
 									<button class="toggle-switch" class:on={closeToTray} role="switch" aria-checked={closeToTray} aria-label="Close to tray" onclick={() => { closeToTray = !closeToTray; saveGeneralSettings(); }}>
 										<span class="toggle-knob"></span>
@@ -1448,6 +1452,27 @@
 								{#if hotkeyConfigureError}
 									<p class="setting-desc" style="color: var(--danger); margin-top: 8px;">{hotkeyConfigureError}</p>
 								{/if}
+							</div>
+							{/if}
+
+							{#if isWindows}
+							<div class="settings-section">
+								<h3>Quick capture hotkey</h3>
+								{#if $hotkeyStatus.availability === 'available'}
+									<p class="setting-desc" style="margin-bottom: 12px;">
+										Bound to <strong style="color: var(--text-primary);">{$hotkeyStatus.trigger ?? 'Ctrl+Alt+N'}</strong>.
+									</p>
+								{:else if $hotkeyStatus.availability === 'unavailable'}
+									<p class="setting-desc" style="color: var(--text-primary); margin-bottom: 12px;">{$hotkeyStatus.reason}</p>
+								{:else}
+									<p class="setting-desc" style="margin-bottom: 12px;">Not registered yet — open a vault to enable quick capture.</p>
+								{/if}
+								<p class="setting-desc">
+									The combination is fixed for now. Choosing your own is planned for after the
+									first release: doing it properly means reading a combination another
+									application has already claimed, and the mechanism for that did not work
+									reliably enough to ship.
+								</p>
 							</div>
 							{/if}
 						{/if}
@@ -3194,6 +3219,16 @@
 	.import-btn:disabled {
 		opacity: 0.6;
 		cursor: not-allowed;
+	}
+
+	/* The hotkey field while listening for a key combination — distinct from :focus so it
+	   reads as "recording" rather than merely "focused", since a plain focus ring would
+	   look identical to every other button on the panel. */
+	.import-btn.capturing-hotkey {
+		border-color: var(--accent);
+		background: var(--accent-light);
+		color: var(--accent);
+		cursor: text;
 	}
 
 	.maintenance-stats {

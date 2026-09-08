@@ -1,0 +1,752 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Ticket #21 — verification record and remaining checklist</title>
+  <style>
+    :root {
+      --page: #f3f1eb;
+      --paper: #fffdf8;
+      --paper-2: #f7f4ec;
+      --ink: #20241f;
+      --muted: #626960;
+      --line: #d7d1c5;
+      --accent: #185f52;
+      --accent-soft: #dcece6;
+      --critical: #a42626;
+      --critical-soft: #f8dfdc;
+      --high: #a34b16;
+      --high-soft: #f8e5d7;
+      --medium: #776000;
+      --medium-soft: #f4ebbd;
+      --low: #4f6278;
+      --low-soft: #e3e9f0;
+      --good: #276c43;
+      --good-soft: #dcece2;
+      --shadow: 0 18px 48px rgba(31, 38, 32, 0.09);
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: Iowan Old Style, Palatino Linotype, Book Antiqua, Georgia, serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 8% -8%, rgba(24, 95, 82, 0.14), transparent 34rem), var(--page);
+      color: var(--ink);
+      font: 16px/1.62 var(--sans);
+    }
+    a { color: var(--accent); text-underline-offset: 0.16em; }
+    code { font-family: var(--mono); font-size: 0.87em; overflow-wrap: anywhere; }
+    .page { width: min(1180px, calc(100% - 30px)); margin: 26px auto 70px; }
+
+    .hero, section {
+      border: 1px solid var(--line);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+    .hero { padding: clamp(28px, 6vw, 66px); border-radius: 28px; }
+    .kicker { margin: 0 0 12px; color: var(--accent); font-size: 0.75rem; font-weight: 850; letter-spacing: 0.14em; text-transform: uppercase; }
+    h1, h2, h3, h4 { line-height: 1.18; }
+    h1 { max-width: 850px; margin: 0; font: 600 clamp(2.55rem, 7vw, 5rem)/1.03 var(--serif); letter-spacing: -0.045em; }
+    .intro { max-width: 820px; margin: 22px 0 0; color: var(--muted); font-size: clamp(1.03rem, 2vw, 1.25rem); }
+    .gate { margin-top: 27px; padding: 18px 20px; border: 1px solid #dfaaa6; border-radius: 15px; background: var(--critical-soft); }
+    .gate strong { color: var(--critical); }
+    .meta { display: flex; flex-wrap: wrap; gap: 7px 18px; margin-top: 22px; color: var(--muted); font-size: 0.86rem; }
+
+    .numbers { display: grid; grid-template-columns: repeat(5, 1fr); gap: 11px; margin-top: 16px; }
+    .number { min-height: 104px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); }
+    .number strong { display: block; font: 600 2.1rem/1 var(--serif); }
+    .number span { display: block; margin-top: 8px; color: var(--muted); font-size: 0.79rem; }
+    .number.critical strong { color: var(--critical); }
+    .number.high strong { color: var(--high); }
+    .number.medium strong { color: var(--medium); }
+    .number.low strong { color: var(--low); }
+    .number.good strong { color: var(--good); }
+
+    .layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 26px; margin-top: 31px; align-items: start; }
+    nav { position: sticky; top: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--paper) 94%, transparent); backdrop-filter: blur(10px); }
+    nav strong { display: block; margin: 0 7px 8px; color: var(--muted); font-size: 0.68rem; letter-spacing: 0.13em; text-transform: uppercase; }
+    nav a { display: block; padding: 6px 8px; border-radius: 8px; color: var(--ink); font-size: 0.86rem; text-decoration: none; }
+    nav a:hover { color: var(--accent); background: var(--accent-soft); }
+    main { min-width: 0; }
+    section { scroll-margin-top: 18px; margin-bottom: 27px; padding: clamp(22px, 4vw, 37px); border-radius: 22px; }
+    section > h2 { margin: 0 0 10px; font: 600 clamp(1.75rem, 4vw, 2.45rem)/1.12 var(--serif); letter-spacing: -0.025em; }
+    .section-intro { max-width: 780px; margin-top: 0; color: var(--muted); }
+
+    .callout { margin: 18px 0 0; padding: 16px 18px; border-left: 4px solid var(--accent); border-radius: 4px 12px 12px 4px; background: var(--accent-soft); }
+    .callout.warning { border-color: var(--high); background: var(--high-soft); }
+    .callout p { margin: 0; }
+    .decision-list { display: grid; gap: 11px; margin-top: 20px; }
+    .decision { padding: 16px 17px; border: 1px solid var(--line); border-radius: 13px; background: var(--paper-2); }
+    .decision h3 { margin: 0 0 5px; font-size: 1rem; }
+    .decision p { margin: 0; color: var(--muted); }
+    .decision .recommend { color: var(--ink); }
+
+    .loop { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; margin-top: 20px; counter-reset: loop; }
+    .loop div { padding: 15px; border: 1px solid var(--line); border-radius: 13px; background: var(--paper-2); counter-increment: loop; }
+    .loop div::before { content: counter(loop); display: grid; width: 28px; height: 28px; margin-bottom: 9px; place-items: center; border-radius: 50%; background: var(--accent); color: white; font-weight: 800; }
+    .loop strong { display: block; margin-bottom: 4px; }
+    .loop p { margin: 0; color: var(--muted); font-size: 0.89rem; }
+
+    .phase { margin-top: 30px; }
+    .phase > header { display: flex; align-items: baseline; justify-content: space-between; gap: 15px; margin-bottom: 11px; }
+    .phase > header h3 { margin: 0; font: 600 1.55rem/1.2 var(--serif); }
+    .phase > header span { color: var(--muted); font-size: 0.8rem; }
+    .work { margin-top: 12px; border: 1px solid var(--line); border-radius: 15px; background: var(--paper-2); overflow: hidden; }
+    .work-head { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; padding: 18px 18px 12px; }
+    .step { display: grid; width: 31px; height: 31px; place-items: center; border-radius: 50%; background: var(--accent); color: white; font-weight: 850; }
+    .work-head h4 { margin: 1px 0 3px; font-size: 1.08rem; }
+    .work-head p { margin: 0; color: var(--muted); font-size: 0.88rem; }
+    .badge { padding: 4px 9px; border-radius: 999px; font-size: 0.66rem; font-weight: 900; letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap; }
+    .badge.critical { color: var(--critical); background: var(--critical-soft); }
+    .badge.high { color: var(--high); background: var(--high-soft); }
+    .badge.medium { color: var(--medium); background: var(--medium-soft); }
+    .badge.low { color: var(--low); background: var(--low-soft); }
+    .work-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 0 18px 18px; }
+    .cell { padding: 13px 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper); }
+    .cell.wide { grid-column: 1 / -1; }
+    .cell strong { display: block; margin-bottom: 4px; color: var(--accent); font-size: 0.69rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    .cell p, .cell ul { margin: 0; }
+    .cell ul { padding-left: 19px; }
+    .cell li + li { margin-top: 4px; }
+    details { border-top: 1px dashed var(--line); padding: 12px 18px 15px; color: var(--muted); font-size: 0.85rem; }
+    summary { cursor: pointer; color: var(--accent); font-weight: 800; }
+    details p { margin: 8px 0 0; }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.89rem; }
+    th, td { padding: 11px 9px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 0.69rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    tbody tr:last-child td { border-bottom: 0; }
+    .status { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 0.7rem; font-weight: 850; white-space: nowrap; }
+    .status.open { color: var(--high); background: var(--high-soft); }
+    .status.later { color: var(--low); background: var(--low-soft); }
+    .status.gate { color: var(--critical); background: var(--critical-soft); }
+    .checklist { padding-left: 21px; }
+    .checklist li + li { margin-top: 8px; }
+    footer { padding: 10px 5px 0; color: var(--muted); font-size: 0.8rem; text-align: center; }
+
+    @media (max-width: 900px) {
+      .numbers { grid-template-columns: repeat(2, 1fr); }
+      .numbers .number:last-child { grid-column: 1 / -1; }
+      .layout { grid-template-columns: 1fr; }
+      nav { position: static; display: flex; flex-wrap: wrap; gap: 2px 6px; }
+      nav strong { width: 100%; }
+      nav a { display: inline-block; }
+      .loop { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 620px) {
+      .page { width: min(100% - 18px, 1180px); margin-top: 9px; }
+      .hero, section { border-radius: 17px; }
+      .hero { padding: 25px 20px; }
+      h1 { font-size: 2.55rem; }
+      .numbers, .loop, .work-body { grid-template-columns: 1fr; }
+      .numbers .number:last-child, .cell.wide { grid-column: auto; }
+      .work-head { grid-template-columns: auto 1fr; }
+      .work-head .badge { grid-column: 2; justify-self: start; }
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #141714; --paper: #1d211d; --paper-2: #242924; --ink: #e9ece5;
+        --muted: #adb6aa; --line: #3a4138; --accent: #8bcab4; --accent-soft: #233e35;
+        --critical: #ff9089; --critical-soft: #452524; --high: #f1a267; --high-soft: #482e1d;
+        --medium: #e3c65f; --medium-soft: #443d20; --low: #aec3d8; --low-soft: #2b3540;
+        --good: #7fd19c; --good-soft: #203b2a; --shadow: 0 18px 48px rgba(0, 0, 0, 0.25);
+      }
+    }
+    @media print {
+      :root { --page: white; --paper: white; --paper-2: #fafafa; --ink: #111; --muted: #555; --line: #ccc; }
+      body { background: white; font-size: 10.5pt; }
+      .page { width: 100%; margin: 0; }
+      .hero, section { box-shadow: none; }
+      .layout { display: block; }
+      nav { display: none; }
+      .work { break-inside: avoid; }
+      details, details > * { display: block; }
+    }
+
+    .quote { margin: 0 0 18px; padding: 14px 18px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 12px 12px 0; }
+    .note { margin-top: 16px; padding: 13px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper-2); color: var(--muted); }
+    .pill { display: inline-block; margin-left: 8px; padding: 3px 10px; border-radius: 999px; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; vertical-align: middle; }
+    .pill.good { background: var(--good-soft); color: var(--good); }
+    .pill.pending { background: var(--medium-soft); color: var(--medium); }
+    section { margin-top: 20px; padding: clamp(22px, 4vw, 40px); border-radius: 22px; }
+    section h2 { margin: 0 0 16px; font: 600 clamp(1.5rem, 3vw, 2.1rem)/1.15 var(--serif); letter-spacing: -0.02em; }
+    section h3 { margin: 22px 0 8px; font-size: 0.78rem; font-weight: 850; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+    section ol, section ul { margin: 0; padding-left: 1.25rem; }
+    section li { margin: 6px 0; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <p class="kicker">Verification record</p>
+      <h1>The Windows hotkey backend: what the keyboard found</h1>
+      <p class="intro">
+        #21's own acceptance criteria say plainly: the visual and interactive parts
+        &mdash; an overlay appearing over another application, focus returning to it,
+        a key-capture field responding to real keystrokes &mdash; cannot be verified over a
+        remote shell. This record keeps the two kinds of evidence separate rather than
+        letting what was checked remotely stand in for what was not.
+      </p>
+      <div class="gate">
+        <strong>The interactive passes found ten real defects, every one of them invisible to
+        the remote checks.</strong> All are closed. Item&nbsp;5's actual open question &mdash;
+        the ADR-0001 panic risk &mdash; is answered, and its remaining half is deferred to
+        <a href="https://github.com/zulucode-design/second-brain/issues/42">#42</a> as
+        structurally untestable from any dev build; a packaged install for that is
+        <a href="https://github.com/zulucode-design/second-brain/issues/49">#49</a>. Choosing
+        the hotkey yourself is deferred to
+        <a href="https://github.com/zulucode-design/second-brain/issues/46">#46</a>, gated on
+        the release.
+      </div>
+      <div class="meta">
+        <span>Branch <code>feat/21-windows-hotkey</code></span>
+        <span>Interactive pass 2026-09-05, at the Windows desktop, against real release and
+          debug builds</span>
+        <span>Five fixes from the pass: <code>523883a</code>, <code>7d8a9c2</code>,
+          <code>d043b56</code>, <code>af29cdd</code>, <code>b4f8b7a</code></span>
+        <span>Two after it: <code>8051508</code>, <code>5319786</code></span>
+      </div>
+    </header>
+
+    <section id="why">
+      <h2>Why this pass mattered</h2>
+      <p class="section-intro">
+        Everything in the remote table below was green before a person sat down at the
+        machine, and the feature was nonetheless completely non-functional: pressing the
+        hotkey did nothing at all, on any build, ever. Three separate defects stacked on top
+        of each other to produce exactly one symptom &mdash; silence &mdash; and a release
+        build has no log plugin, so nothing anywhere said why.
+      </p>
+      <div class="callout warning">
+        <p>Every one of the five defects sat in a file or a code path that compiles, tests,
+        lints and type-checks clean. None of them could have been caught by anything short of
+        pressing the key.</p>
+      </div>
+    </section>
+
+    <section id="remote">
+      <h2>Verified remotely, over the dev link from #22</h2>
+      <p class="section-intro">Unchanged and still accurate. Recorded before the interactive
+        pass; kept as-is to show precisely how much green is compatible with a broken
+        feature.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Check</th><th></th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr><td>Compiles on Windows</td><td><span class="pill good">Pass</span></td>
+              <td><code>cargo check --all-targets</code>, and a real release build via
+              <code>pnpm tauri build --no-bundle</code>.</td></tr>
+          <tr><td>Rust test suite on Windows</td><td><span class="pill good">Pass</span></td>
+              <td>238 passed, including 9 new tests specific to this branch: 5 for
+              <code>autostart::windows::sync</code> (writing and deleting real
+              <code>HKEY_CURRENT_USER</code> values, cleaned up after each run) and 4 for
+              trigger parsing and conflict classification in <code>hotkey::windows</code>.</td></tr>
+          <tr><td><code>cargo fmt --check</code> on Windows</td><td><span class="pill good">Pass</span></td><td>&mdash;</td></tr>
+          <tr><td><code>cargo clippy -D warnings</code> on Windows</td><td><span class="pill good">Pass, modulo a filed gap</span></td>
+              <td>Confirmed <code>main</code> already fails this independent of this branch
+              (filed as <a href="https://github.com/zulucode-design/second-brain/issues/40">#40</a>).</td></tr>
+          <tr><td>App starts and exits cleanly with the hotkey code active</td><td><span class="pill good">Pass</span></td>
+              <td>Real release binary, interactive console session. No crash, no repair issue
+              recorded.</td></tr>
+          <tr><td>svelte-check / TypeScript</td><td><span class="pill good">Pass</span></td>
+              <td>0 errors on the new <code>isWindows</code> flag, <code>setHotkeyTrigger</code>,
+              and the settings panel's Windows branch.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="fixes">
+      <h2>What the interactive pass fixed</h2>
+
+      <div class="work">
+        <div class="work-head">
+          <span class="step">1</span>
+          <div>
+            <h4>The capture window was never declared on Windows</h4>
+            <p><code>523883a</code> &mdash; <code>tauri.windows.conf.json</code></p>
+          </div>
+          <span class="badge critical">Feature dead</span>
+        </div>
+        <div class="work-body">
+          <div class="cell"><strong>Symptom</strong><p>Pressing the hotkey did nothing. No
+            overlay, nothing in Alt+Tab, no notification, no error &mdash; on every build.</p></div>
+          <div class="cell"><strong>Cause</strong><p>The <code>capture</code> window existed
+            only in <code>tauri.linux.conf.json</code>. Tauri's per-platform config
+            <em>replaces</em> the <code>app.windows</code> array rather than merging into it,
+            so on Windows the app's window set was <code>["main"]</code>.</p></div>
+          <div class="cell wide"><strong>Chain</strong>
+            <ul>
+              <li><code>ensure_window</code> searched the config for label <code>"capture"</code>,
+                found nothing, and returned an error.</li>
+              <li><code>spawn()</code> treats that as fatal and returns early &mdash; so the
+                hotkey was never registered at startup at all.</li>
+              <li>Setting it manually in Settings calls <code>apply_trigger</code> directly,
+                which never touches the window, so registration genuinely succeeded and the
+                UI looked healthy.</li>
+              <li>Every later activation reached <code>show_capture_window</code>, found no
+                window, and logged a warning into a release build with no log plugin.</li>
+            </ul>
+          </div>
+        </div>
+        <details><summary>Also affects macOS</summary>
+          <p><code>tauri.macos.conf.json</code> declares only <code>main</code> as well.
+          Whenever quick capture reaches macOS it will fail identically. Out of scope for #21;
+          the same one missing block.</p>
+        </details>
+      </div>
+
+      <div class="work">
+        <div class="work-head">
+          <span class="step">2</span>
+          <div>
+            <h4>The window came up visible, and outlived the app</h4>
+            <p><code>7d8a9c2</code> &mdash; <code>hotkey/window.rs</code></p>
+          </div>
+          <span class="badge high">Unkillable window</span>
+        </div>
+        <div class="work-body">
+          <div class="cell"><strong>Symptom</strong><p>After fix 1, the overlay appeared at
+            launch, unprompted, parked over whatever else was on screen &mdash; and survived
+            closing the main window, leaving a process only Task Manager could end.</p></div>
+          <div class="cell"><strong>Cause</strong><p>Tauri creates this window from config
+            <em>before</em> our code runs, and on Windows it came up visible regardless of
+            the config's own <code>"visible": false</code>.</p></div>
+          <div class="cell wide"><strong>Evidence</strong><p>A debug build printed no
+            <code>"Capture window ready"</code> line, which only the branch that builds the
+            window logs &mdash; proving <code>ensure_window</code>'s <code>is_some()</code>
+            early return was what ran, and something else had already created it.
+            <code>ensure_window</code> now hides the window itself once it knows it exists,
+            whichever path found it, rather than trusting the flag. That is what its own name
+            already promised.</p></div>
+        </div>
+      </div>
+
+      <div class="work">
+        <div class="work-head">
+          <span class="step">3</span>
+          <div>
+            <h4>The overlay had no permission to dismiss itself</h4>
+            <p><code>d043b56</code> &mdash; <code>capabilities/capture.json</code></p>
+          </div>
+          <span class="badge high">Stuck open</span>
+        </div>
+        <div class="work-body">
+          <div class="cell"><strong>Symptom</strong><p>A note saved correctly, then the
+            overlay stayed on screen showing
+            <code>Command plugin:window|hide not allowed by ACL</code>, with no way to
+            dismiss it.</p></div>
+          <div class="cell"><strong>Cause</strong><p><code>capture.json</code> scoped itself
+            to <code>"platforms": ["linux"]</code>. <code>default.json</code> covers only
+            <code>main</code> and <code>note-*</code>, so the capture window had no ACL grant
+            on Windows at all.</p></div>
+          <div class="cell wide"><strong>Pattern</strong><p>Third instance of the same family
+            as fix 1: a Linux-only assumption written before a Windows capture window
+            existed, never widened when it gained one.</p></div>
+        </div>
+      </div>
+
+      <div class="work">
+        <div class="work-head">
+          <span class="step">4</span>
+          <div>
+            <h4>A rejected hotkey change killed the working one</h4>
+            <p><code>b4f8b7a</code> &mdash; <code>hotkey/windows.rs</code></p>
+          </div>
+          <span class="badge critical">Silent data-loss-shaped</span>
+        </div>
+        <div class="work-body">
+          <div class="cell"><strong>Symptom</strong><p>Rejecting a conflicting trigger left
+            the previously-working hotkey permanently dead &mdash; precisely what item 2's
+            own acceptance criterion says must not happen.</p></div>
+          <div class="cell"><strong>Cause</strong><p><code>apply_trigger</code> called
+            <code>unregister_all()</code> unconditionally <em>before</em> attempting the new
+            trigger, with no path that restores the old one on failure.</p></div>
+          <div class="cell wide"><strong>Fix</strong><p>Register the new trigger first; only
+            on success drop the specific old one &mdash; <code>unregister()</code>, not
+            <code>unregister_all()</code>, which would tear down the registration just added,
+            since the plugin tracks by shortcut value rather than by "the app's current
+            hotkey". A failed attempt now touches nothing. Startup's own call is unaffected:
+            its trigger equals the configured value, so there is nothing to drop.</p></div>
+        </div>
+        <details><summary>Why every earlier test missed this</summary>
+          <p>Every prior conflict attempt was made by physically pressing the combination,
+          and none of them ever reached <code>apply_trigger</code> at all (see the keystroke
+          limitation below). "The old shortcut still works" had been observed repeatedly and
+          meant nothing &mdash; the failing code had never run. It surfaced only once the
+          command was invoked directly, bypassing the keyboard.</p>
+        </details>
+      </div>
+
+      <div class="work">
+        <div class="work-head">
+          <span class="step">5</span>
+          <div>
+            <h4>The Settings-driven path logged nothing at all</h4>
+            <p><code>af29cdd</code> &mdash; <code>hotkey/windows.rs</code></p>
+          </div>
+          <span class="badge medium">Undiagnosable</span>
+        </div>
+        <div class="work-body">
+          <div class="cell wide"><strong>Cause</strong><p><code>apply_trigger</code> had no
+            logging: a parse failure, a failed <code>unregister_all()</code>, and a failed
+            registration all returned or proceeded silently. This contradicts the principle
+            already stated in <code>startup.rs</code> and applied to the startup path &mdash;
+            <em>"An unregistered hotkey is invisible by nature &mdash; nothing happens when
+            the key is pressed &mdash; so the reason has to be somewhere a person can read it
+            without attaching a debugger."</em> The manual-change path simply never got the
+            same treatment. Fix 4 was only findable after this was added.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="results">
+      <h2>Checklist results</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Item</th><th></th><th>Result</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>1 &mdash; The hotkey actually works</td>
+            <td><span class="pill good">Pass</span></td>
+            <td>After fixes 1&ndash;3. Overlay appears over another application, a note saves
+              to the chosen category, the overlay dismisses, and focus returns to the
+              application that was active before &mdash; not to the main window.</td>
+          </tr>
+          <tr>
+            <td>2 &mdash; A real conflict is reported by name</td>
+            <td><span class="pill pending">Split</span></td>
+            <td><strong>Backend: pass.</strong> Against a genuine
+              <code>RegisterHotKey</code> lock held from an interactive session, the command
+              returned exactly
+              <code>availability: 'unavailable'</code> with
+              <em>"The shortcut &quot;Ctrl+Alt+P&quot; is already used by another
+              application&hellip;"</em>, naming the combination, and did not persist it.
+              <strong>Old shortcut survives: pass</strong>, after fix 4 &mdash; it did not
+              before. <strong>Reaching it through the UI: cannot work</strong>, see the
+              keystroke limitation below.</td>
+          </tr>
+          <tr>
+            <td>3 &mdash; Capture works with the main window closed</td>
+            <td><span class="pill good">Pass</span></td>
+            <td>With close-to-tray on and the main window closed to the tray, the hotkey still
+              raises the overlay. Also answers the item's own open question: with close-to-tray
+              <em>off</em>, closing the main window destroys it but does <em>not</em> quit the
+              app, because the hidden capture window keeps the process alive.</td>
+          </tr>
+          <tr>
+            <td>4 &mdash; Autostart</td>
+            <td><span class="pill good">Pass</span></td>
+            <td>Toggling on writes
+              <code>HKCU\&hellip;\Run\io.github.zulucodedesign.SecondBrain</code> as a quoted
+              path, with no admin prompt; toggling off removes it; both idempotent. Survived a
+              real restart &mdash; the app launched at login, from a process whose command
+              line was exactly that registry value.</td>
+          </tr>
+          <tr>
+            <td>5 &mdash; The vault-unavailable notification</td>
+            <td><span class="pill good">Panic risk cleared</span></td>
+            <td>The open design question is answered: <strong>the ADR-0001 Tokio-nesting panic
+              does not reproduce on Windows.</strong> The correct
+              <code>NotifyVaultUnavailable</code> branch ran and no overlay appeared. No
+              notification displayed, for reasons that are upstream and packaging-dependent
+              rather than ours &mdash; deferred to
+              <a href="https://github.com/zulucode-design/second-brain/issues/42">#42</a>.</td>
+          </tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="limitation">
+      <h2>The keystroke limitation, and what it costs
+        &mdash; <a href="https://github.com/zulucode-design/second-brain/issues/46">#46</a></h2>
+      <p class="section-intro">
+        This one is not a defect and cannot be patched; it is a property of the platform that
+        constrains what the settings UI can ever do.
+      </p>
+      <div class="callout warning">
+        <p>Once <em>any</em> process holds a combination via <code>RegisterHotKey</code>,
+        Windows stops delivering that combination as an ordinary keystroke to whatever window
+        has focus. It goes to the registering process as <code>WM_HOTKEY</code> and nowhere
+        else.</p>
+      </div>
+      <p>
+        The settings panel captures a shortcut by listening for a DOM <code>keydown</code>. So
+        for exactly the conflicts worth reporting &mdash; a combination genuinely claimed at
+        the OS level &mdash; the webview never receives the keystroke, <code>invoke</code> is
+        never called, and the backend is never asked. The button sits in
+        <em>"Press a key combination&hellip;"</em> indefinitely and no message appears,
+        because none was ever generated.
+      </p>
+      <p>
+        This is what #21 bills as its differentiator: <em>"a real conflict is reported by
+        name &mdash; the one thing this backend can say that Linux structurally cannot."</em>
+        The backend can say it, and does, correctly. The capture field cannot ask the
+        question. Surfacing it through normal use would mean capturing keys with a native
+        low-level keyboard hook (<code>WH_KEYBOARD_LL</code>) instead of DOM events &mdash; a
+        real architectural change, deliberately not attempted here.
+      </p>
+      <p class="note">
+        It also invalidated four earlier conflict tests in this session, each of which looked
+        like a UI bug and was not. Anything that reports on this path needs to state which
+        mechanism holds the conflicting key: a <code>RegisterHotKey</code> claim behaves
+        entirely differently from a low-level hook, which is why ShadowPlay's Alt+Z opened
+        <em>its</em> overlay while ours never saw the key.
+      </p>
+    </section>
+
+    <section id="after">
+      <h2>Fixed after the pass, in review</h2>
+      <p class="section-intro">
+        Two defects the interactive pass exposed but did not itself close &mdash; one it
+        found directly, one it created the conditions to notice.
+      </p>
+      <div class="decision-list">
+        <div class="decision">
+          <h3>The overlay kept the process alive &mdash; <code>8051508</code></h3>
+          <p><code>lib.rs</code>'s <code>Destroyed</code> handler closed only
+          <code>note-*</code> windows when <code>main</code> was destroyed, which was
+          sufficient right up until a second long-lived window existed. Tauri exits when the
+          last window closes, so the permanently-hidden overlay held an invisible process
+          open that no tray click and no relaunch could reach, ending only in Task Manager.
+          Now closes every window that is not <code>main</code>.
+          <span class="recommend">Latent on Linux since the overlay was added there; it took
+          a Windows pass to hit it.</span></p>
+        </div>
+        <div class="decision">
+          <h3>A rejected change reported a dead hotkey that was still working
+            &mdash; <code>5319786</code></h3>
+          <p>Fix 4 made a refused trigger leave the working registration alone, but
+          <code>apply_trigger</code> still stored and emitted the refusal as the hotkey's
+          state: <code>Unavailable</code>, <code>trigger: None</code>. So the old shortcut
+          kept firing while Settings said there was no hotkey at all &mdash; the same
+          disagreement between the UI and reality that registering-before-unregistering
+          exists to prevent, one layer up. The rejection is still returned, so the panel can
+          still name the conflicting combination; what is <em>published</em> is now whatever
+          is actually bound. Also sources that from the published status rather than the
+          config, which records only what the user asked for.
+          <span class="recommend">Found in review, not at the keyboard: it needs the
+          conflict path from item 2, which the settings field cannot reach.</span></p>
+        </div>
+      </div>
+    </section>
+
+    <section id="second-pass">
+      <h2>The second interactive pass, 2026-09-07</h2>
+      <p class="section-intro">
+        #44, #45 and #46 were filed as separate issues from the first pass, then pulled back
+        into this PR: they belong to the work done here, and merging without them would leave
+        the Windows quick-capture path half-finished. This is what came of that.
+      </p>
+      <div class="decision-list">
+        <div class="decision">
+          <h3>#45 &mdash; release builds now log <span class="status open">Verified</span></h3>
+          <p>The <code>cfg!(debug_assertions)</code> gate is gone, so the logger is registered
+          in every build. Confirmed on a real release binary: the first line written was
+          <code>Quick capture hotkey not registered: no vault is configured yet</code> &mdash;
+          <code>hotkey::windows</code>'s own "why there is no hotkey" message, reaching a
+          shipped build for the first time. Rotation raised from the plugin's 40&nbsp;KB
+          default to 5&nbsp;MB keeping three, since 40&nbsp;KB does not still hold the startup
+          line by the time anyone looks. Paths are in the README.</p>
+        </div>
+        <div class="decision">
+          <h3>#44 &mdash; the tray is reachable <span class="status open">Verified</span></h3>
+          <p>Right-click opens the menu and <strong>Quit</strong> works; left-click restores
+          the window. The handler now matches the left button explicitly instead of
+          discarding it, and turns off the plugin's <code>show_menu_on_left_click</code>
+          default, which had been putting the menu on both buttons. All three restore paths
+          &mdash; tray menu, tray click, second launch &mdash; go through one
+          <code>show_main_window</code> that rebuilds the window from config when it is gone.</p>
+        </div>
+        <div class="decision">
+          <h3>Registration was startup-only <span class="status open">Fixed</span></h3>
+          <p>Found while setting the machine up for this pass. <code>spawn</code> refuses to
+          register with no vault configured, which is right, but nothing repeated the check:
+          a first run went "choose a vault, and quick capture stays dead until restart", with
+          settings still saying <em>open a vault to enable quick capture</em> to someone who
+          just had. Opening a vault now re-runs <code>spawn</code> &mdash; and only when
+          nothing is bound, since re-registering a combination this app already holds returns
+          <code>AlreadyRegistered</code> and would be reported as a conflict with nobody.</p>
+        </div>
+        <div class="decision">
+          <h3>#46 &mdash; the keyboard hook failed, and was removed
+            <span class="status gate">Three rounds, no capture</span></h3>
+          <p>A <code>WH_KEYBOARD_LL</code> hook (ADR-0003) is the only mechanism that can
+          <em>see</em> a combination another process has claimed. It was built and tested
+          across three rounds and never captured one. Each round found a real defect:
+          modifiers read with <code>GetAsyncKeyState</code> inside a callback that runs ahead
+          of the state it reports; <code>hMod</code> passed as null, which returned a valid
+          handle for a hook the system never called; and capture state in
+          <code>thread_local!</code> when the callback does not run on the installing thread.
+          After all three, most sessions still logged <code>0 keys seen</code>.</p>
+          <p style="margin-top: 8px;">Every symptom followed from keys never being recognised
+          &mdash; unrecognised means not swallowed, so <code>Ctrl+Alt+N</code> reached the
+          app's own registered hotkey and opened the overlay, and <code>Alt+Z</code> reached
+          ShadowPlay. <span class="recommend">Shipped instead: the combination is typed.
+          It reaches strictly more cases than the hook would have, including elevated-process
+          conflicts UIPI hides from a normal-integrity hook. ADR-0003 is Rejected with the
+          evidence; ADR-0004 records the decision.</span></p>
+        </div>
+      </div>
+      <div class="callout warning">
+        <p><strong>What this cost, and why it is written down.</strong> Three build-and-test
+        rounds, each needing a person at a physical keyboard, because none of it is observable
+        from CI, from Linux, or over the dev link &mdash; a low-level hook needs an
+        interactive desktop session and SSH lands in session&nbsp;0. The instrumentation that
+        finally separated "installed but never called" from "called and kept nothing" was a
+        count of callback invocations, and it was added late. One diagnostic was logged at
+        <code>debug</code> while the logger runs at <code>info</code>, so it never appeared at
+        all. Prefer mechanisms whose correctness can be established off the target machine.</p>
+      </div>
+    </section>
+
+    <section id="settled">
+      <h2>Settled, 2026-09-08</h2>
+      <p class="section-intro">
+        The hotkey was made fixed rather than configurable, and the last two defects closed.
+        Verified at the Windows desktop against a release build.
+      </p>
+      <div class="decision-list">
+        <div class="decision">
+          <h3>The Windows hotkey is fixed at Ctrl+Alt+N
+            <span class="status open">Verified</span></h3>
+          <p>Two mechanisms were built to let the settings field read a combination another
+          application had claimed &mdash; a keyboard hook that never captured one, and a typed
+          field that was never exercised. Rather than carry a third attempt into v1 for a
+          setting no user has asked for, the combination is now fixed and choosing your own is
+          deferred to
+          <a href="https://github.com/zulucode-design/second-brain/issues/46">#46</a>, gated on
+          the release. <span class="recommend">Registration is untouched: still a real
+          <code>RegisterHotKey</code> call that names a genuine conflict, so #21's
+          differentiator holds &mdash; what is deferred is <em>acting</em> on it by choosing
+          another key. ADR-0005.</span></p>
+        </div>
+        <div class="decision">
+          <h3>Close-to-tray applies without a restart
+            <span class="status open">Verified</span></h3>
+          <p><code>close_to_tray</code> was read once at launch and captured into the
+          window-event closure, so toggling it did nothing until relaunch &mdash; the same
+          read-once-at-startup shape as the hotkey registration bug. Now read when the close
+          is requested, and the toggle no longer promises a restart. Still gated on a tray
+          icon actually existing, which is built once in <code>setup</code>: hiding to a tray
+          that is not there would leave the window unreachable, which is the failure
+          <a href="https://github.com/zulucode-design/second-brain/issues/44">#44</a> fixed
+          from the other direction.</p>
+        </div>
+        <div class="decision">
+          <h3>The overlay, the tray, and the settings panel
+            <span class="status open">Verified</span></h3>
+          <p>Quick capture opens on <code>Ctrl+Alt+N</code>; the tray menu opens on
+          right-click with a working <strong>Quit</strong> and the window restores on
+          left-click; the hotkey section shows the binding read-only with no orphaned
+          controls. Checked against the release build at <code>7f12749</code>.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="elsewhere">
+      <h2>Found here, not fixed here</h2>
+      <p class="section-intro">
+        Surfaced by this pass, but none of it is #21's code. Recorded so the next person does
+        not rediscover them from scratch.
+      </p>
+      <div class="decision-list">
+        <div class="decision">
+          <h3>Tray: a click cannot restore a destroyed main window
+            &mdash; <a href="https://github.com/zulucode-design/second-brain/issues/44">#44</a>,
+            fixed above</h3>
+          <p><code>lib.rs</code>, <code>setup_tray</code>. Both the tray handler and the
+          single-instance callback re-show <code>main</code> only
+          <code>if let Some(window) = &hellip;get_webview_window("main")</code>. With
+          close-to-tray off, closing the window destroys it, so that is <code>None</code> and
+          both paths silently do nothing &mdash; the app is running, invisible, and
+          unreachable. <span class="recommend">Pre-existing; not in this diff.</span></p>
+        </div>
+        <div class="decision">
+          <h3>Tray: right-click raises the window instead of opening the menu
+            &mdash; <a href="https://github.com/zulucode-design/second-brain/issues/44">#44</a>,
+            fixed above</h3>
+          <p><code>lib.rs</code>. The handler matches
+          <code>TrayIconEvent::Click { .. }</code>, discarding the <code>button</code> field,
+          so a right-click also shows and focuses the window &mdash; pre-empting the context
+          menu. That makes <strong>Quit</strong> unreachable, which with close-to-tray on
+          leaves no graceful way to exit at all.
+          <span class="recommend">Pre-existing; not in this diff.</span></p>
+        </div>
+        <div class="decision">
+          <h3>Close-to-tray needs a restart to take effect &mdash; fixed above</h3>
+          <p>Observed 2026-09-07, fixed 2026-09-08. Kept here because it was found the same
+          way as everything else in this section: by using the app rather than by testing
+          it.</p>
+        </div>
+        <div class="decision">
+          <h3>Autostart opens the full window at login</h3>
+          <p>The <code>Run</code> value carries no quiet-start flag, so a login pops the main
+          window even with a tray icon configured. Every neighbouring value in that same key
+          uses one &mdash; <code>-silent</code>, <code>--minimized</code>,
+          <code>--startup_mode</code>, <code>--autostarted</code>.
+          <span class="recommend">Behaviour question, not a defect: item 4's criterion is
+          "launches at login", which it does.</span></p>
+        </div>
+        <div class="decision">
+          <h3>The capture window flashes white at launch</h3>
+          <p>Fix 2 hides the window as soon as our code can, but Tauri has already shown it by
+          then, so a brief white flash remains at startup. Cosmetic, and much better than the
+          window staying up permanently, but not nothing.
+          <span class="recommend">Worth a follow-up if it bothers anyone in daily use.</span></p>
+        </div>
+        <div class="decision">
+          <h3>Release builds have no logs at all
+            &mdash; <a href="https://github.com/zulucode-design/second-brain/issues/45">#45</a>,
+            fixed above</h3>
+          <p><code>lib.rs</code> gates <code>tauri_plugin_log</code> behind
+          <code>cfg!(debug_assertions)</code>, so every diagnostic in this module is
+          discarded in the shipped build &mdash; including the one explaining why a hotkey is
+          unavailable. Three of the five defects above were only diagnosable after switching
+          to a debug build. <span class="recommend">Pre-existing, and squarely at odds with
+          the reasoning in <code>startup.rs</code> about reasons needing to be readable
+          without a debugger.</span></p>
+        </div>
+      </div>
+    </section>
+
+    <section id="review">
+      <h2>Code review, 2026-09-08</h2>
+      <p class="section-intro">
+        Review against <code>main</code> covered the Windows hotkey, tray, release logging,
+        and fixed-hotkey decisions now contained in this PR. No specification defect or
+        documented-standard violation remains.
+      </p>
+      <div class="decision-list">
+        <div class="decision">
+          <h3>Verification correction <span class="status open">Fixed</span></h3>
+          <p>GitHub verification initially failed because <code>show_main_window</code> carried
+          the same <code>#[cfg(desktop)]</code> attribute twice. The redundant attribute was
+          removed in <code>07c0004</code>; it had no runtime effect.</p>
+        </div>
+        <div class="decision">
+          <h3>Two maintainability observations <span class="status later">Non-blocking</span></h3>
+          <p>The Linux and Windows hotkey backends each publish status through the same
+          state-lock-and-event sequence, and each reaches through configuration to answer
+          whether an active vault exists. Extracting neutral helpers would reduce future
+          duplication, but neither observation changes the verified behavior or blocks this
+          feature. They remain review notes rather than expanding this already cross-platform
+          PR.</p>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      Interactive passes at the Windows desktop, 2026-09-05 to 2026-09-08 &mdash; on
+      <code>feat/21-windows-hotkey</code>, follow-ups in
+      <a href="https://github.com/zulucode-design/second-brain/issues/42">#42</a>,
+      <a href="https://github.com/zulucode-design/second-brain/issues/44">#44</a>,
+      <a href="https://github.com/zulucode-design/second-brain/issues/45">#45</a> and
+      <a href="https://github.com/zulucode-design/second-brain/issues/46">#46</a>.
+    </footer>
+  </div>
+</body>
+</html>
