@@ -1815,6 +1815,7 @@ dependencies = [
  "chrono",
  "dirs",
  "dunce",
+ "fs4",
  "futures",
  "gray_matter",
  "image",
