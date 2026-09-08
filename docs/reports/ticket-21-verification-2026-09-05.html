@@ -530,6 +530,75 @@
       </div>
     </section>
 
+    <section id="second-pass">
+      <h2>The second interactive pass, 2026-09-07</h2>
+      <p class="section-intro">
+        #44, #45 and #46 were filed as separate issues from the first pass, then pulled back
+        into this PR: they belong to the work done here, and merging without them would leave
+        the Windows quick-capture path half-finished. This is what came of that.
+      </p>
+      <div class="decision-list">
+        <div class="decision">
+          <h3>#45 &mdash; release builds now log <span class="status open">Verified</span></h3>
+          <p>The <code>cfg!(debug_assertions)</code> gate is gone, so the logger is registered
+          in every build. Confirmed on a real release binary: the first line written was
+          <code>Quick capture hotkey not registered: no vault is configured yet</code> &mdash;
+          <code>hotkey::windows</code>'s own "why there is no hotkey" message, reaching a
+          shipped build for the first time. Rotation raised from the plugin's 40&nbsp;KB
+          default to 5&nbsp;MB keeping three, since 40&nbsp;KB does not still hold the startup
+          line by the time anyone looks. Paths are in the README.</p>
+        </div>
+        <div class="decision">
+          <h3>#44 &mdash; the tray is reachable <span class="status open">Verified</span></h3>
+          <p>Right-click opens the menu and <strong>Quit</strong> works; left-click restores
+          the window. The handler now matches the left button explicitly instead of
+          discarding it, and turns off the plugin's <code>show_menu_on_left_click</code>
+          default, which had been putting the menu on both buttons. All three restore paths
+          &mdash; tray menu, tray click, second launch &mdash; go through one
+          <code>show_main_window</code> that rebuilds the window from config when it is gone.</p>
+        </div>
+        <div class="decision">
+          <h3>Registration was startup-only <span class="status open">Fixed</span></h3>
+          <p>Found while setting the machine up for this pass. <code>spawn</code> refuses to
+          register with no vault configured, which is right, but nothing repeated the check:
+          a first run went "choose a vault, and quick capture stays dead until restart", with
+          settings still saying <em>open a vault to enable quick capture</em> to someone who
+          just had. Opening a vault now re-runs <code>spawn</code> &mdash; and only when
+          nothing is bound, since re-registering a combination this app already holds returns
+          <code>AlreadyRegistered</code> and would be reported as a conflict with nobody.</p>
+        </div>
+        <div class="decision">
+          <h3>#46 &mdash; the keyboard hook failed, and was removed
+            <span class="status gate">Three rounds, no capture</span></h3>
+          <p>A <code>WH_KEYBOARD_LL</code> hook (ADR-0003) is the only mechanism that can
+          <em>see</em> a combination another process has claimed. It was built and tested
+          across three rounds and never captured one. Each round found a real defect:
+          modifiers read with <code>GetAsyncKeyState</code> inside a callback that runs ahead
+          of the state it reports; <code>hMod</code> passed as null, which returned a valid
+          handle for a hook the system never called; and capture state in
+          <code>thread_local!</code> when the callback does not run on the installing thread.
+          After all three, most sessions still logged <code>0 keys seen</code>.</p>
+          <p style="margin-top: 8px;">Every symptom followed from keys never being recognised
+          &mdash; unrecognised means not swallowed, so <code>Ctrl+Alt+N</code> reached the
+          app's own registered hotkey and opened the overlay, and <code>Alt+Z</code> reached
+          ShadowPlay. <span class="recommend">Shipped instead: the combination is typed.
+          It reaches strictly more cases than the hook would have, including elevated-process
+          conflicts UIPI hides from a normal-integrity hook. ADR-0003 is Rejected with the
+          evidence; ADR-0004 records the decision.</span></p>
+        </div>
+      </div>
+      <div class="callout warning">
+        <p><strong>What this cost, and why it is written down.</strong> Three build-and-test
+        rounds, each needing a person at a physical keyboard, because none of it is observable
+        from CI, from Linux, or over the dev link &mdash; a low-level hook needs an
+        interactive desktop session and SSH lands in session&nbsp;0. The instrumentation that
+        finally separated "installed but never called" from "called and kept nothing" was a
+        count of callback invocations, and it was added late. One diagnostic was logged at
+        <code>debug</code> while the logger runs at <code>info</code>, so it never appeared at
+        all. Prefer mechanisms whose correctness can be established off the target machine.</p>
+      </div>
+    </section>
+
     <section id="elsewhere">
       <h2>Found here, not fixed here</h2>
       <p class="section-intro">
@@ -539,7 +608,8 @@
       <div class="decision-list">
         <div class="decision">
           <h3>Tray: a click cannot restore a destroyed main window
-            &mdash; <a href="https://github.com/zulucode-design/second-brain/issues/44">#44</a></h3>
+            &mdash; <a href="https://github.com/zulucode-design/second-brain/issues/44">#44</a>,
+            fixed above</h3>
           <p><code>lib.rs</code>, <code>setup_tray</code>. Both the tray handler and the
           single-instance callback re-show <code>main</code> only
           <code>if let Some(window) = &hellip;get_webview_window("main")</code>. With
@@ -549,13 +619,22 @@
         </div>
         <div class="decision">
           <h3>Tray: right-click raises the window instead of opening the menu
-            &mdash; <a href="https://github.com/zulucode-design/second-brain/issues/44">#44</a></h3>
+            &mdash; <a href="https://github.com/zulucode-design/second-brain/issues/44">#44</a>,
+            fixed above</h3>
           <p><code>lib.rs</code>. The handler matches
           <code>TrayIconEvent::Click { .. }</code>, discarding the <code>button</code> field,
           so a right-click also shows and focuses the window &mdash; pre-empting the context
           menu. That makes <strong>Quit</strong> unreachable, which with close-to-tray on
           leaves no graceful way to exit at all.
           <span class="recommend">Pre-existing; not in this diff.</span></p>
+        </div>
+        <div class="decision">
+          <h3>Close-to-tray needs a restart to take effect</h3>
+          <p>Observed 2026-09-07. <code>close_to_tray</code> is read once at launch and
+          captured into the window-event closure, so toggling the setting does nothing until
+          the app is relaunched &mdash; the same "read once at startup" shape as the hotkey
+          registration bug fixed above. <span class="recommend">Not filed yet; no decision on
+          whether it belongs in this PR.</span></p>
         </div>
         <div class="decision">
           <h3>Autostart opens the full window at login</h3>
@@ -575,7 +654,8 @@
         </div>
         <div class="decision">
           <h3>Release builds have no logs at all
-            &mdash; <a href="https://github.com/zulucode-design/second-brain/issues/45">#45</a></h3>
+            &mdash; <a href="https://github.com/zulucode-design/second-brain/issues/45">#45</a>,
+            fixed above</h3>
           <p><code>lib.rs</code> gates <code>tauri_plugin_log</code> behind
           <code>cfg!(debug_assertions)</code>, so every diagnostic in this module is
           discarded in the shipped build &mdash; including the one explaining why a hotkey is
