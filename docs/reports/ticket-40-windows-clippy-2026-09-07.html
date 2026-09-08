@@ -15,9 +15,9 @@
     </style>
   </head>
   <body>
-    <p><span class="status pending">Windows verification blocked on PR #41</span></p>
+    <p><span class="status pass">Windows verification passed</span></p>
     <h1>Ticket #40 — Windows strict-Clippy remediation</h1>
-    <p>Updated 2026-09-07. This report records the narrow source fix for the Windows-only
+    <p>Updated 2026-09-08. This report records the narrow source fix for the Windows-only
       <code>dead_code</code> warnings found after ticket #27.</p>
 
     <h2>Finding</h2>
@@ -43,14 +43,13 @@
         <tr><td>Formatting</td><td><span class="status pass">Passed</span></td><td><code>cargo fmt --check</code></td></tr>
         <tr><td>Unix crash recovery</td><td><span class="status pass">Passed</span></td><td><code>killing_the_app_mid_notebook_move_still_recovers</code>: 1 passed</td></tr>
         <tr><td>Linux strict Clippy</td><td><span class="status pass">Passed</span></td><td><code>cargo clippy --all-targets -- -D warnings</code></td></tr>
-        <tr><td>Windows strict Clippy</td><td><span class="status pending">Blocked</span></td><td>The exact command was run on Windows against this commit. The four original relocation/machine-local warnings no longer appear. It then fails on 14 unused Linux-hotkey symbols because this branch is based on <code>main</code> before PR #41 supplies their Windows backend. Rebase after #41 merges, then rerun this command.</td></tr>
+        <tr><td>Windows strict Clippy</td><td><span class="status pass">Passed</span></td><td>After PR #41 and PR #48 merged, the #40 patch was applied on top of <code>main</code> at <code>7f5d148</code>. The exact command <code>cargo clippy --all-targets -- -D warnings</code> completed successfully on the Windows host with no warnings or errors.</td></tr>
       </tbody>
     </table>
 
     <div class="callout">
-      <strong>Release relevance:</strong> this resolves the original four-helper source cause, but
-      the ticket cannot be fully verified until PR #41 is merged and the stated Windows command
-      passes. A Windows Clippy CI job remains
+      <strong>Release relevance:</strong> the original four-helper source cause is fixed and the
+      complete Windows strict-Clippy gate passes on the post-#41 code. A Windows Clippy CI job remains
       a recommended follow-up so the same platform-specific unused-code gap cannot silently recur.
     </div>
   </body>
