@@ -5,9 +5,12 @@
 //! Because the app owns the key here, a failed registration is a real, specific fact —
 //! another process already holds that combination — not a permission the user granted or
 //! withheld. That is the one failure mode this backend can report that Linux structurally
-//! cannot, and it is also why the settings UI shows a key-capture field here instead of a
-//! read-only trigger: the app can act on what the user types, because it is the one asking
-//! the OS for the key, not a compositor deciding on its own.
+//! cannot: the app can say precisely which combination is taken, because it is the one
+//! asking the OS for the key rather than a compositor deciding on its own.
+//!
+//! The combination itself is fixed (ADR-0005). Choosing it from inside the app was built and
+//! removed before v1 — the settings field could not read a combination another application
+//! had already claimed, which is the one case a picker here would exist for.
 
 use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -24,9 +27,9 @@ pub enum Unavailable {
     /// The shortcut cannot be useful because its capture surface could not be prepared.
     /// Shared with Linux: see `super::window::CaptureWindowUnavailable`.
     CaptureWindow(super::window::CaptureWindowUnavailable),
-    /// The configured trigger does not parse into a real key combination — a stale or
-    /// hand-edited setting, since the in-app capture field can only ever produce one that
-    /// parses.
+    /// The trigger does not parse into a real key combination. Not reachable from any user
+    /// action while the trigger is fixed (ADR-0005): it would mean `PREFERRED_TRIGGER` itself
+    /// is malformed, which is a bug in this app rather than anything the user did.
     InvalidTrigger { trigger: String, detail: String },
     /// Another application already holds this exact key combination. Named as its own case
     /// because it is the one thing the app can say precisely here that it could never say
@@ -41,12 +44,13 @@ impl Cause for Unavailable {
         match self {
             Self::CaptureWindow(cause) => cause.reason(),
             Self::InvalidTrigger { trigger, detail } => format!(
-                "The configured shortcut \"{trigger}\" is not a valid key combination \
-                 ({detail}). Open Settings and set a new one."
+                "The built-in shortcut \"{trigger}\" is not a valid key combination \
+                 ({detail}). This is a bug in Second Brain; please report it."
             ),
             Self::KeyTaken { trigger } => format!(
                 "The shortcut \"{trigger}\" is already used by another application, so quick \
-                 capture has no hotkey. Open Settings and choose a different combination."
+                 capture has no hotkey. Quick capture still works from inside the app; \
+                 choosing a different combination is not available yet."
             ),
             Self::PluginError { detail } => {
                 format!("The global hotkey could not be registered: {detail}")
@@ -100,6 +104,11 @@ fn parse_trigger(trigger: &str) -> Result<Shortcut, Unavailable> {
 /// Register `trigger` as the quick-capture hotkey, replacing whatever this app previously
 /// held. Returns the status to publish either way, never an error: a failed registration is
 /// an ordinary outcome to report, not something the caller needs to additionally handle.
+///
+/// While the trigger is fixed (ADR-0005) this is only ever called with the same value, so
+/// the replacement path below cannot currently run. It is kept rather than removed because
+/// the swap order is the subtle part — and the part a rejected change got wrong once
+/// already — and configurability is expected back after v1.
 ///
 /// The new trigger is registered *before* the old one is dropped, not after. Unregistering
 /// first (tried initially, see git history) leaves nothing bound at all the moment the new
@@ -220,7 +229,7 @@ pub fn spawn(app: AppHandle) {
             return;
         }
 
-        let trigger = configured_trigger(&app);
+        let trigger = configured_trigger();
         let status = apply_trigger(&app, &trigger);
         match (&status.availability, &status.reason) {
             (Availability::Available, _) => {
@@ -360,17 +369,16 @@ fn registered_trigger(app: &AppHandle) -> Option<String> {
         .flatten()
 }
 
-/// The trigger to register: whatever the user set in Settings, or the same default Linux
-/// hints the compositor with, so a first run behaves identically before either platform's
-/// user has ever touched the setting.
-fn configured_trigger(app: &AppHandle) -> String {
-    app.state::<AppState>()
-        .config
-        .lock()
-        .ok()
-        .and_then(|config| config.hotkey_trigger.clone())
-        .filter(|trigger| !trigger.is_empty())
-        .unwrap_or_else(|| PREFERRED_TRIGGER.to_string())
+/// The trigger to register. Fixed, not configured — see ADR-0005.
+///
+/// The same value Linux hints the compositor with, so a first run behaves identically on
+/// both platforms. It is a constant rather than a setting because changing it from inside
+/// the app was removed before v1: the mechanism that would let the settings field read a
+/// combination another application has already claimed does not work on the one Windows
+/// machine this has been tested against, and a picker that silently cannot see the
+/// conflicts it exists to report is worse than not offering one.
+fn configured_trigger() -> &'static str {
+    PREFERRED_TRIGGER
 }
 
 #[cfg(test)]

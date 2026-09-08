@@ -240,7 +240,6 @@ pub fn run() {
             commands::refresh_ai_status,
             commands::get_hotkey_status,
             commands::open_hotkey_settings,
-            commands::set_hotkey_trigger,
             commands::list_unfiled_notes,
             commands::file_unfiled_note,
             commands::rename_note,

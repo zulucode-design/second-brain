@@ -1167,37 +1167,6 @@ pub async fn open_hotkey_settings() -> Result<(), String> {
     }
 }
 
-/// Set the quick-capture hotkey, Windows only. The app owns the key here (ADR-0001), so
-/// unlike Linux's `open_hotkey_settings` — which hands the user to the compositor — this
-/// registers `trigger` directly and reports the outcome, including a real conflict if
-/// another application already holds it.
-///
-/// Persisted only on success: a trigger that failed to register is not the user's actual
-/// setting, and saving it anyway would mean the next launch retries and fails identically
-/// with no chance to notice until then.
-#[tauri::command]
-pub fn set_hotkey_trigger(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    trigger: String,
-) -> Result<hotkey::HotkeyStatus, String> {
-    #[cfg(target_os = "windows")]
-    {
-        let status = hotkey::windows::apply_trigger(&app, &trigger);
-        if status.availability == hotkey::Availability::Available {
-            let mut config = state.config.lock().map_err(|e| e.to_string())?;
-            config.hotkey_trigger = Some(trigger);
-            save_app_config(&config)?;
-        }
-        Ok(status)
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = (app, state, trigger);
-        Err("The hotkey is only configured from inside the app on Windows.".to_string())
-    }
-}
-
 /// Notes that carry no category and so cannot be filed.
 ///
 /// Non-empty means the user has something to resolve: until each one is given a

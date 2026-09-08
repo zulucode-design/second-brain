@@ -1,8 +1,14 @@
 # ADR-0004: A conflicting Windows shortcut is typed, not captured
 
-- **Status**: Accepted
+- **Status**: Superseded by [ADR-0005](./0005-windows-quick-capture-hotkey-is-fixed-until-v1.md) before it shipped
 - **Date**: 2026-09-07
 - **Context**: Ticket #46, after [ADR-0003](./0003-windows-shortcut-capture-via-low-level-keyboard-hook.md) was built and removed
+
+> **Superseded, 2026-09-08.** Typed entry was built but never exercised on Windows. Rather
+> than carry a third capture mechanism into v1 on the strength of an untested path, the
+> Windows hotkey was fixed to a single combination and configurability deferred until after
+> the first release. The reasoning below still holds and is the starting point for whoever
+> picks this up again.
 
 ## Context
 
