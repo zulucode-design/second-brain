@@ -713,6 +713,32 @@
       </div>
     </section>
 
+    <section id="review">
+      <h2>Code review, 2026-09-08</h2>
+      <p class="section-intro">
+        Review against <code>main</code> covered the Windows hotkey, tray, release logging,
+        and fixed-hotkey decisions now contained in this PR. No specification defect or
+        documented-standard violation remains.
+      </p>
+      <div class="decision-list">
+        <div class="decision">
+          <h3>Verification correction <span class="status open">Fixed</span></h3>
+          <p>GitHub verification initially failed because <code>show_main_window</code> carried
+          the same <code>#[cfg(desktop)]</code> attribute twice. The redundant attribute was
+          removed in <code>07c0004</code>; it had no runtime effect.</p>
+        </div>
+        <div class="decision">
+          <h3>Two maintainability observations <span class="status later">Non-blocking</span></h3>
+          <p>The Linux and Windows hotkey backends each publish status through the same
+          state-lock-and-event sequence, and each reaches through configuration to answer
+          whether an active vault exists. Extracting neutral helpers would reduce future
+          duplication, but neither observation changes the verified behavior or blocks this
+          feature. They remain review notes rather than expanding this already cross-platform
+          PR.</p>
+        </div>
+      </div>
+    </section>
+
     <footer>
       Interactive passes at the Windows desktop, 2026-09-05 to 2026-09-08 &mdash; on
       <code>feat/21-windows-hotkey</code>, follow-ups in
