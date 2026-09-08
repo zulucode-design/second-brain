@@ -194,11 +194,15 @@
         letting what was checked remotely stand in for what was not.
       </p>
       <div class="gate">
-        <strong>The interactive pass found five real defects, every one of them invisible to
-        the remote checks.</strong> The first four items now pass. Item&nbsp;5's actual open
-        question &mdash; the ADR-0001 panic risk &mdash; is answered, and its remaining half
-        is deferred to <a href="https://github.com/zulucode-design/second-brain/issues/42">#42</a>
-        as structurally untestable from any dev build.
+        <strong>The interactive passes found ten real defects, every one of them invisible to
+        the remote checks.</strong> All are closed. Item&nbsp;5's actual open question &mdash;
+        the ADR-0001 panic risk &mdash; is answered, and its remaining half is deferred to
+        <a href="https://github.com/zulucode-design/second-brain/issues/42">#42</a> as
+        structurally untestable from any dev build; a packaged install for that is
+        <a href="https://github.com/zulucode-design/second-brain/issues/49">#49</a>. Choosing
+        the hotkey yourself is deferred to
+        <a href="https://github.com/zulucode-design/second-brain/issues/46">#46</a>, gated on
+        the release.
       </div>
       <div class="meta">
         <span>Branch <code>feat/21-windows-hotkey</code></span>
@@ -599,6 +603,50 @@
       </div>
     </section>
 
+    <section id="settled">
+      <h2>Settled, 2026-09-08</h2>
+      <p class="section-intro">
+        The hotkey was made fixed rather than configurable, and the last two defects closed.
+        Verified at the Windows desktop against a release build.
+      </p>
+      <div class="decision-list">
+        <div class="decision">
+          <h3>The Windows hotkey is fixed at Ctrl+Alt+N
+            <span class="status open">Verified</span></h3>
+          <p>Two mechanisms were built to let the settings field read a combination another
+          application had claimed &mdash; a keyboard hook that never captured one, and a typed
+          field that was never exercised. Rather than carry a third attempt into v1 for a
+          setting no user has asked for, the combination is now fixed and choosing your own is
+          deferred to
+          <a href="https://github.com/zulucode-design/second-brain/issues/46">#46</a>, gated on
+          the release. <span class="recommend">Registration is untouched: still a real
+          <code>RegisterHotKey</code> call that names a genuine conflict, so #21's
+          differentiator holds &mdash; what is deferred is <em>acting</em> on it by choosing
+          another key. ADR-0005.</span></p>
+        </div>
+        <div class="decision">
+          <h3>Close-to-tray applies without a restart
+            <span class="status open">Verified</span></h3>
+          <p><code>close_to_tray</code> was read once at launch and captured into the
+          window-event closure, so toggling it did nothing until relaunch &mdash; the same
+          read-once-at-startup shape as the hotkey registration bug. Now read when the close
+          is requested, and the toggle no longer promises a restart. Still gated on a tray
+          icon actually existing, which is built once in <code>setup</code>: hiding to a tray
+          that is not there would leave the window unreachable, which is the failure
+          <a href="https://github.com/zulucode-design/second-brain/issues/44">#44</a> fixed
+          from the other direction.</p>
+        </div>
+        <div class="decision">
+          <h3>The overlay, the tray, and the settings panel
+            <span class="status open">Verified</span></h3>
+          <p>Quick capture opens on <code>Ctrl+Alt+N</code>; the tray menu opens on
+          right-click with a working <strong>Quit</strong> and the window restores on
+          left-click; the hotkey section shows the binding read-only with no orphaned
+          controls. Checked against the release build at <code>7f12749</code>.</p>
+        </div>
+      </div>
+    </section>
+
     <section id="elsewhere">
       <h2>Found here, not fixed here</h2>
       <p class="section-intro">
@@ -629,12 +677,10 @@
           <span class="recommend">Pre-existing; not in this diff.</span></p>
         </div>
         <div class="decision">
-          <h3>Close-to-tray needs a restart to take effect</h3>
-          <p>Observed 2026-09-07. <code>close_to_tray</code> is read once at launch and
-          captured into the window-event closure, so toggling the setting does nothing until
-          the app is relaunched &mdash; the same "read once at startup" shape as the hotkey
-          registration bug fixed above. <span class="recommend">Not filed yet; no decision on
-          whether it belongs in this PR.</span></p>
+          <h3>Close-to-tray needs a restart to take effect &mdash; fixed above</h3>
+          <p>Observed 2026-09-07, fixed 2026-09-08. Kept here because it was found the same
+          way as everything else in this section: by using the app rather than by testing
+          it.</p>
         </div>
         <div class="decision">
           <h3>Autostart opens the full window at login</h3>
@@ -668,8 +714,8 @@
     </section>
 
     <footer>
-      Interactive pass, Windows desktop, 2026-09-05 &mdash; five fixes on
-      <code>feat/21-windows-hotkey</code>, two more after review, follow-ups in
+      Interactive passes at the Windows desktop, 2026-09-05 to 2026-09-08 &mdash; on
+      <code>feat/21-windows-hotkey</code>, follow-ups in
       <a href="https://github.com/zulucode-design/second-brain/issues/42">#42</a>,
       <a href="https://github.com/zulucode-design/second-brain/issues/44">#44</a>,
       <a href="https://github.com/zulucode-design/second-brain/issues/45">#45</a> and
