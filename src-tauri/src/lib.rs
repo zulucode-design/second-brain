@@ -459,7 +459,6 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-#[cfg(desktop)]
 /// Bring the main window back, rebuilding it if it no longer exists.
 ///
 /// Every caller here — the tray menu, a tray click, a second launch — used to be
