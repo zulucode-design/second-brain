@@ -87,79 +87,171 @@ fn machine_root() -> Result<PathBuf, String> {
         .ok_or_else(|| "No per-machine data directory is available on this system".to_string())
 }
 
+/// How long to wait for another process to finish claiming the identity.
+///
+/// Only a live writer can hold the lock, and writing 36 bytes is instant, so this is a
+/// generous allowance for a slow mount rather than a real expectation.
+const CLAIM_LOCK_ATTEMPTS: u32 = 50;
+const CLAIM_LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(10);
+
 /// Read the vault's identity, creating it on first open.
 ///
-/// `create_new` makes the write a single atomic claim, so two processes opening the same
-/// vault at once cannot end up with two different ids.
+/// The claim is made under an exclusive file lock rather than by `create_new`. Creating a
+/// file and writing it are two steps, so a `create_new` claim is briefly an empty file, and
+/// a process killed inside that window left it empty permanently: every later open then
+/// waited for a writer that no longer existed, gave up, and failed. The vault became
+/// unopenable for good.
+///
+/// A lock answers the question that waiting could not — is the writer alive? The kernel
+/// releases it when its holder dies, so an empty file under a *free* lock is abandoned
+/// rather than in flight, and can be claimed. Nothing here trusts the file's contents
+/// unless it holds the lock, which is what makes two processes opening the same vault at
+/// once still agree on one id.
 fn vault_id(vault_path: &Path) -> Result<String, String> {
     let metadata_dir = helixnotes_dir(vault_path);
     std::fs::create_dir_all(&metadata_dir)
         .map_err(|error| format!("Could not create the vault metadata directory: {error}"))?;
     let path = metadata_dir.join(VAULT_ID_FILE);
 
-    match std::fs::read_to_string(&path) {
-        Ok(contents) => {
-            let id = contents.trim().to_string();
-            if is_well_formed_id(&id) {
-                return Ok(id);
-            }
-            if id.is_empty() {
-                // An empty file is a claim in flight, and waiting is the only safe response.
-                // A writer stalled on a slow mount is indistinguishable from a dead one, so
-                // replacing the file on a timeout would let two processes key the same vault
-                // to two directories — the exact failure the id exists to prevent. Fail the
-                // open instead; the next one succeeds once the writer lands.
-                return read_claimed_vault_id(&path);
-            }
-            // Non-empty but malformed is damage rather than a race, and what it points at is
-            // either derived (the index, rebuilt) or inert (staging), so replacing it loses
-            // nothing.
-            let replacement = uuid::Uuid::new_v4().to_string();
-            std::fs::write(&path, &replacement)
-                .map_err(|error| format!("Could not repair the vault identity: {error}"))?;
-            Ok(replacement)
+    let file = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+    {
+        Ok(file) => file,
+        // Only *claiming* an identity needs to write. A vault on a read-only mount, or one
+        // whose marker is read-only, can still be opened and read, so an id already recorded
+        // there is answer enough.
+        Err(error) => {
+            return std::fs::read_to_string(&path)
+                .ok()
+                .map(|contents| contents.trim().to_string())
+                .filter(|id| is_well_formed_id(id))
+                .ok_or_else(|| format!("Could not open the vault identity: {error}"));
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            // `create_new` is the atomic part: exactly one process creates the file, and
-            // everyone else takes the branch below. Portable to filesystems without hard
-            // links, which a vault on a USB stick may well be.
-            let candidate = uuid::Uuid::new_v4().to_string();
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-            {
-                Ok(mut file) => {
-                    use std::io::Write;
-                    file.write_all(candidate.as_bytes())
-                        .and_then(|_| file.sync_all())
-                        .map_err(|error| format!("Could not write the vault identity: {error}"))?;
-                    Ok(candidate)
-                }
-                // Lost the race: another process claimed it first, so adopt theirs.
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    read_claimed_vault_id(&path)
-                }
-                Err(error) => Err(format!("Could not create the vault identity: {error}")),
-            }
-        }
-        Err(error) => Err(format!("Could not read the vault identity: {error}")),
+    };
+
+    let Some(_claim) = ClaimLock::acquire(&file)? else {
+        // The filesystem does not support locking. Fall back to what this did before locks,
+        // which is conservative rather than correct: wait out an empty file and fail if it
+        // never fills, since without a lock a stalled writer cannot be told from a dead one.
+        return unlocked_vault_id(&path);
+    };
+
+    if let Some(id) = read_well_formed_id(&file)? {
+        return Ok(id);
     }
+
+    // Holding the lock, an empty file is an abandoned claim and a malformed one is damage.
+    // Both are replaced, and both are safe to replace: what the id keys is either derived
+    // (the index, rebuilt) or inert (staging).
+    let replacement = uuid::Uuid::new_v4().to_string();
+    write_identity(&file, &replacement)?;
+    Ok(replacement)
+}
+
+/// The id currently in the file, if it is one.
+fn read_well_formed_id(file: &std::fs::File) -> Result<Option<String>, String> {
+    use std::io::{Read, Seek};
+
+    let mut handle = file;
+    handle
+        .rewind()
+        .map_err(|error| format!("Could not read the vault identity: {error}"))?;
+    let mut contents = String::new();
+    handle
+        .read_to_string(&mut contents)
+        .map_err(|error| format!("Could not read the vault identity: {error}"))?;
+    let id = contents.trim().to_string();
+    Ok(is_well_formed_id(&id).then_some(id))
+}
+
+fn write_identity(file: &std::fs::File, id: &str) -> Result<(), String> {
+    use std::io::{Seek, Write};
+
+    let mut handle = file;
+    handle
+        .rewind()
+        .and_then(|()| handle.set_len(0))
+        .and_then(|()| handle.write_all(id.as_bytes()))
+        .and_then(|()| handle.sync_all())
+        .map_err(|error| format!("Could not write the vault identity: {error}"))
+}
+
+/// An exclusive claim on the identity file.
+///
+/// Released on drop, and — the property the design rests on — by the kernel if the process
+/// holding it dies without dropping anything.
+struct ClaimLock<'a>(&'a std::fs::File);
+
+impl<'a> ClaimLock<'a> {
+    /// `Ok(None)` means this filesystem cannot lock, not that the lock was refused.
+    fn acquire(file: &'a std::fs::File) -> Result<Option<ClaimLock<'a>>, String> {
+        use fs4::FileExt;
+
+        for attempt in 0..CLAIM_LOCK_ATTEMPTS {
+            if attempt > 0 {
+                std::thread::sleep(CLAIM_LOCK_WAIT);
+            }
+            match file.try_lock_exclusive() {
+                Ok(()) => return Ok(Some(ClaimLock(file))),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => continue,
+                // Locking is unsupported here. Refusing to open the vault over that would be
+                // a worse failure than the one locks are here to fix.
+                Err(error) => {
+                    log::warn!("Vault identity locking is unavailable: {error}");
+                    return Ok(None);
+                }
+            }
+        }
+        Err(
+            "The vault identity is held by another process that never finished writing it"
+                .to_string(),
+        )
+    }
+}
+
+impl Drop for ClaimLock<'_> {
+    fn drop(&mut self) {
+        use fs4::FileExt;
+
+        let _ = FileExt::unlock(self.0);
+    }
+}
+
+/// The pre-lock behaviour, kept for filesystems that cannot lock.
+fn unlocked_vault_id(path: &Path) -> Result<String, String> {
+    let contents = std::fs::read_to_string(path)
+        .map_err(|error| format!("Could not read the vault identity: {error}"))?;
+    let id = contents.trim().to_string();
+    if is_well_formed_id(&id) {
+        return Ok(id);
+    }
+    if id.is_empty() {
+        return read_claimed_vault_id(path);
+    }
+    let replacement = uuid::Uuid::new_v4().to_string();
+    std::fs::write(path, &replacement)
+        .map_err(|error| format!("Could not repair the vault identity: {error}"))?;
+    Ok(replacement)
 }
 
 fn is_well_formed_id(id: &str) -> bool {
     !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
-/// Read an id another process is in the middle of claiming.
+/// Read an id another process is in the middle of claiming, without a lock to ask.
 ///
-/// The winner of the `create_new` race creates the file and then writes it, so there is a
-/// brief window where it is empty. Treating that window as corruption is what would let a
-/// second process overwrite a live id and key the same vault to two directories.
+/// Reachable only on a filesystem that cannot lock. A writer stalled on a slow mount is
+/// indistinguishable from a dead one here, so replacing the file on a timeout could let two
+/// processes key the same vault to two directories. Failing the open is the safe answer;
+/// where locking works, `vault_id` no longer has to make that trade.
 fn read_claimed_vault_id(path: &Path) -> Result<String, String> {
-    for attempt in 0..50 {
+    for attempt in 0..CLAIM_LOCK_ATTEMPTS {
         if attempt > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::thread::sleep(CLAIM_LOCK_WAIT);
         }
         if let Ok(contents) = std::fs::read_to_string(path) {
             let id = contents.trim().to_string();
@@ -417,6 +509,121 @@ mod tests {
         std::fs::write(metadata.join("repair_issues.json"), b"{\"issues\":[]}").unwrap();
         std::fs::create_dir_all(metadata.join("search_index")).unwrap();
         root
+    }
+
+    fn bare_vault(label: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("machine-local-{label}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join(".helixnotes")).unwrap();
+        root
+    }
+
+    /// The bug this file's locking exists for: a process killed between creating the
+    /// identity file and writing it leaves an empty file, and before locks that made the
+    /// vault unopenable for good rather than for one run.
+    #[test]
+    fn adopts_an_identity_a_crashed_process_never_finished_writing() {
+        let vault = bare_vault("abandoned-claim");
+        let path = helixnotes_dir(&vault).join(VAULT_ID_FILE);
+        std::fs::write(&path, b"").unwrap();
+
+        let id = vault_id(&vault).expect("an abandoned claim is claimable");
+
+        assert!(is_well_formed_id(&id));
+        assert_eq!(std::fs::read_to_string(&path).unwrap().trim(), id);
+    }
+
+    #[test]
+    fn keeps_an_identity_that_is_already_written() {
+        let vault = bare_vault("existing-id");
+        let path = helixnotes_dir(&vault).join(VAULT_ID_FILE);
+        std::fs::write(&path, b"11111111-2222-3333-4444-555555555555\n").unwrap();
+
+        assert_eq!(
+            vault_id(&vault).unwrap(),
+            "11111111-2222-3333-4444-555555555555"
+        );
+    }
+
+    #[test]
+    fn replaces_an_identity_that_is_damaged_rather_than_empty() {
+        let vault = bare_vault("damaged-id");
+        let path = helixnotes_dir(&vault).join(VAULT_ID_FILE);
+        std::fs::write(&path, b"not a vault id -- \x00 garbage").unwrap();
+
+        let id = vault_id(&vault).unwrap();
+
+        assert!(is_well_formed_id(&id));
+        assert_eq!(std::fs::read_to_string(&path).unwrap().trim(), id);
+    }
+
+    /// Replacing a damaged id must not leave any of the old bytes behind: the file is
+    /// rewritten in place, so a shorter id written over a longer one would otherwise trail
+    /// the remainder of what was there.
+    #[test]
+    fn leaves_no_remnant_of_a_longer_previous_value() {
+        let vault = bare_vault("truncation");
+        let path = helixnotes_dir(&vault).join(VAULT_ID_FILE);
+        std::fs::write(&path, "!".repeat(4096).as_bytes()).unwrap();
+
+        let id = vault_id(&vault).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), id);
+    }
+
+    /// Opening the marker for writing is how a claim is made, but reading a vault that
+    /// already has one must not depend on being able to.
+    #[test]
+    #[cfg(unix)]
+    fn reads_an_existing_identity_even_when_it_cannot_be_written() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let vault = bare_vault("read-only-id");
+        let path = helixnotes_dir(&vault).join(VAULT_ID_FILE);
+        std::fs::write(&path, b"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+        let id = vault_id(&vault);
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(id.unwrap(), "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+    }
+
+    /// What the lock buys, stated as a contrast: the lockless path still cannot tell a dead
+    /// writer from a slow one, so it waits and fails — which is what every open of a vault
+    /// with an abandoned claim used to do, forever.
+    #[test]
+    fn without_a_lock_an_abandoned_claim_is_still_indistinguishable_from_a_live_one() {
+        let vault = bare_vault("unlocked-fallback");
+        let path = helixnotes_dir(&vault).join(VAULT_ID_FILE);
+        std::fs::write(&path, b"").unwrap();
+
+        let error = unlocked_vault_id(&path).expect_err("an empty file cannot be adopted");
+
+        assert!(error.contains("never finished being written"));
+    }
+
+    /// The guarantee `create_new` used to provide, which the lock now has to carry: many
+    /// processes opening one vault at once still settle on a single identity.
+    #[test]
+    fn concurrent_opens_agree_on_one_identity() {
+        let vault = bare_vault("concurrent");
+
+        let ids: Vec<_> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| scope.spawn(|| vault_id(&vault).unwrap()))
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect()
+        });
+
+        let first = &ids[0];
+        assert!(
+            ids.iter().all(|id| id == first),
+            "processes disagreed on the vault identity: {ids:?}"
+        );
     }
 
     #[test]
