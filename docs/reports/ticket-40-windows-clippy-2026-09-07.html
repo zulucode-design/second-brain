@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ticket #40 — Windows Clippy remediation</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+      body { max-width: 900px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.55; }
+      h1, h2 { color: #f9fafb; } code { background: #1f2937; padding: .12rem .3rem; border-radius: .25rem; }
+      .status { display: inline-block; border-radius: 999px; padding: .2rem .65rem; font-weight: 700; }
+      .pass { background: #064e3b; color: #a7f3d0; } .pending { background: #78350f; color: #fde68a; }
+      table { border-collapse: collapse; width: 100%; } th, td { text-align: left; border-bottom: 1px solid #374151; padding: .65rem; vertical-align: top; }
+      .callout { border-left: 4px solid #60a5fa; background: #172554; padding: .9rem 1rem; }
+    </style>
+  </head>
+  <body>
+    <p><span class="status pass">Windows verification passed</span></p>
+    <h1>Ticket #40 — Windows strict-Clippy remediation</h1>
+    <p>Updated 2026-09-08. This report records the narrow source fix for the Windows-only
+      <code>dead_code</code> warnings found after ticket #27.</p>
+
+    <h2>Finding</h2>
+    <p>The Unix-only crash-recovery test kills a child process with Unix process semantics.
+      Its test-only helpers were nevertheless compiled on Windows, where no test referenced them.
+      With warnings denied, Windows Clippy therefore failed before it could provide a clean quality gate.</p>
+
+    <h2>Remediation</h2>
+    <p>The helpers now have the same availability as the test that uses them:</p>
+    <ul>
+      <li><code>machine_local::TEST_ROOT_VAR</code>, <code>test_root()</code>, and the test-only
+        environment override compile only for Unix tests.</li>
+      <li>The crash-test constants and body helper compile only for Unix tests.</li>
+    </ul>
+    <p>No production behavior, Windows runtime path, or test result is changed. On Windows the
+      unavailable crash-kill test remains deliberately absent; its required recovery verification
+      is manual, as recorded for ticket #27.</p>
+
+    <h2>Verification record</h2>
+    <table>
+      <thead><tr><th>Check</th><th>Status</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Formatting</td><td><span class="status pass">Passed</span></td><td><code>cargo fmt --check</code></td></tr>
+        <tr><td>Unix crash recovery</td><td><span class="status pass">Passed</span></td><td><code>killing_the_app_mid_notebook_move_still_recovers</code>: 1 passed</td></tr>
+        <tr><td>Linux strict Clippy</td><td><span class="status pass">Passed</span></td><td><code>cargo clippy --all-targets -- -D warnings</code></td></tr>
+        <tr><td>Windows strict Clippy</td><td><span class="status pass">Passed</span></td><td>After PR #41 and PR #48 merged, the #40 patch was applied on top of <code>main</code> at <code>7f5d148</code>. The exact command <code>cargo clippy --all-targets -- -D warnings</code> completed successfully on the Windows host with no warnings or errors.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <strong>Release relevance:</strong> the original four-helper source cause is fixed and the
+      complete Windows strict-Clippy gate passes on the post-#41 code. A Windows Clippy CI job remains
+      a recommended follow-up so the same platform-specific unused-code gap cannot silently recur.
+    </div>
+  </body>
+</html>

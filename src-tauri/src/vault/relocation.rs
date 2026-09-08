@@ -1548,9 +1548,12 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(unix)]
     const CRASH_VAULT_VAR: &str = "HELIXNOTES_CRASH_TEST_VAULT";
+    #[cfg(unix)]
     const CRASH_NOTES: usize = 400;
 
+    #[cfg(unix)]
     fn crash_note_body(index: usize, moved: bool) -> String {
         format!("{} note {index}", if moved { "archive" } else { "project" })
     }
