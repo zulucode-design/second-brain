@@ -241,8 +241,6 @@ pub fn run() {
             commands::get_hotkey_status,
             commands::open_hotkey_settings,
             commands::set_hotkey_trigger,
-            commands::start_hotkey_capture,
-            commands::cancel_hotkey_capture,
             commands::list_unfiled_notes,
             commands::file_unfiled_note,
             commands::rename_note,

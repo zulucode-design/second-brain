@@ -1,8 +1,14 @@
 # ADR-0003: Windows shortcut capture uses a low-level keyboard hook, not DOM key events
 
-- **Status**: Proposed
+- **Status**: Rejected — built, measured, removed. Superseded by [ADR-0004](./0004-windows-shortcut-is-typed-not-captured.md)
 - **Date**: 2026-09-07
 - **Context**: Ticket #46, found while verifying #21 (Windows global hotkey backend)
+
+> **Outcome, 2026-09-07.** This was implemented and tested against a real Windows desktop
+> across three rounds. It never captured a single combination. The record of what it did is
+> kept below the decision, because the reasoning here is still correct — the hook is the only
+> mechanism that can *see* those keys — and the next person to reach that conclusion should
+> find out here that it has already been tried.
 
 ## Context
 
@@ -150,3 +156,40 @@ prevent.
   used has not reported anything. Four tests on 2026-09-05 were void for exactly this.
 - If it proves unreliable in daily use, the fallback is the text-entry alternative above,
   which reaches strictly more combinations than the hook does.
+
+## What happened when it ran
+
+Three rounds at the Windows desktop, 2026-09-07. Each fixed a real defect and none made the
+feature work.
+
+| Round | Defect found | Evidence | Result |
+| --- | --- | --- | --- |
+| 1 | Modifiers read with `GetAsyncKeyState` inside the callback, which reports state the hook runs *ahead* of | `Alt+Z` seen as a bare `Z` | Still nothing captured |
+| 2 | `hMod` passed as null. `SetWindowsHookExW` returned a valid handle and the system never called the hook | `0 keys seen`, every session | Hook began firing: `2`, `7 keys seen` |
+| 3 | Captured key and modifier state in `thread_local!`, but the callback does not run on the installing thread | Counts non-zero, modifiers always "none held" | Still nothing captured |
+
+After all three, most sessions still logged `0 keys seen`. The hook installs, occasionally
+fires, and does not reliably receive keystrokes on that machine — with NVIDIA ShadowPlay
+present, itself a low-level hook consumer.
+
+Every symptom followed from keys never being recognised: unrecognised means not swallowed, so
+`Ctrl+Alt+N` reached the app's own registered hotkey and opened the capture overlay, and
+`Alt+Z` reached ShadowPlay.
+
+### What this cost, and the lesson
+
+Three build-and-test rounds, each requiring a person at a physical keyboard, because none of
+it is observable from CI, from Linux, or over SSH — a low-level hook needs an interactive
+desktop session, and the SSH link lands in session 0.
+
+The instrumentation is what eventually made the difference, and it was added too late: a
+count of how many times the callback ran separated "installed but never called" from "called
+and kept nothing", which no amount of reasoning about the symptoms had managed. One of the
+diagnostics was logged at `debug` while the logger runs at `info`, so it never appeared at
+all — a reminder to check that a diagnostic can actually be read before relying on it.
+
+The deeper lesson is about the shape of the risk rather than the API. This is a mechanism
+whose correctness cannot be established anywhere except the target machine, under the
+specific software installed on it. That is worth knowing *before* choosing it, and it is the
+argument [ADR-0004](./0004-windows-shortcut-is-typed-not-captured.md) makes for the
+alternative this ADR had already identified and set aside.

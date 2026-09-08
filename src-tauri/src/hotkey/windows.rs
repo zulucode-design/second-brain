@@ -88,7 +88,7 @@ fn classify_registration_error(trigger: &str, message: &str) -> Unavailable {
 
 /// Parse a trigger string into a shortcut the plugin can register, wrapping the parse
 /// failure into this backend's own vocabulary rather than the plugin's `HotKeyParseError`.
-pub(super) fn parse_trigger(trigger: &str) -> Result<Shortcut, Unavailable> {
+fn parse_trigger(trigger: &str) -> Result<Shortcut, Unavailable> {
     trigger
         .parse::<Shortcut>()
         .map_err(|error| Unavailable::InvalidTrigger {

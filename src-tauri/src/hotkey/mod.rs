@@ -23,8 +23,6 @@ use std::fmt;
 pub mod capture;
 #[cfg(target_os = "linux")]
 pub mod desktop_entry;
-#[cfg(target_os = "windows")]
-pub mod key_capture;
 #[cfg(target_os = "linux")]
 pub mod portal;
 #[cfg(target_os = "linux")]

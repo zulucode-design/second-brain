@@ -202,27 +202,6 @@ export async function setHotkeyTrigger(trigger: string): Promise<HotkeyStatus> {
 }
 
 /**
- * Start reading a shortcut from the keyboard itself, Windows only (ADR-0003).
- *
- * A DOM `keydown` cannot see the combinations this field exists to report: once another
- * process claims one through `RegisterHotKey`, Windows delivers it only to that process, so
- * the webview is never given the key. A low-level keyboard hook is.
- *
- * The captured combination arrives on the `hotkey-capture` event, not from this call — the
- * user has not pressed anything yet when it returns. Always pair it with
- * `cancelHotkeyCapture` on every exit, including a timeout: the hook is system-wide while
- * it is installed.
- */
-export async function startHotkeyCapture(): Promise<void> {
-  return invoke("start_hotkey_capture");
-}
-
-/** Stop reading, and remove the keyboard hook. Safe to call when nothing is listening. */
-export async function cancelHotkeyCapture(): Promise<void> {
-  return invoke("cancel_hotkey_capture");
-}
-
-/**
  * Notes that carry no category and so cannot be filed. A non-empty result means the
  * user has something to resolve.
  */

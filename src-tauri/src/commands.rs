@@ -1198,39 +1198,6 @@ pub fn set_hotkey_trigger(
     }
 }
 
-/// Start listening for a shortcut on the keyboard itself, Windows only (ADR-0003).
-///
-/// The settings field cannot read these from a DOM `keydown`: a combination already claimed
-/// via `RegisterHotKey` is delivered only to the process that claimed it, so for exactly the
-/// conflicts worth reporting the webview never sees the key. A low-level hook does.
-///
-/// The outcome arrives as a `hotkey-capture` event rather than this call's return value,
-/// because the user has not pressed anything yet when it returns. Always cancel it —
-/// [`cancel_hotkey_capture`] — on every path out of the field, including a timeout.
-#[tauri::command]
-pub fn start_hotkey_capture(app: AppHandle) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        hotkey::key_capture::arm(app)
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = app;
-        Err("Shortcut capture is only used on Windows.".to_string())
-    }
-}
-
-/// Stop listening and remove the keyboard hook. Safe to call when nothing is armed.
-///
-/// A hook that outlives the field it belongs to degrades typing everywhere, not just in this
-/// app, so this is called from every exit: a captured combination, Escape, the panel
-/// closing, and the field's own timeout.
-#[tauri::command]
-pub fn cancel_hotkey_capture() {
-    #[cfg(target_os = "windows")]
-    hotkey::key_capture::disarm();
-}
-
 /// Notes that carry no category and so cannot be filed.
 ///
 /// Non-empty means the user has something to resolve: until each one is given a
