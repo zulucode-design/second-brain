@@ -19,7 +19,7 @@ use std::time::Duration;
 /// Sites that publish a User-Agent policy — Wikimedia among them — answer an unidentified
 /// client with 403, which a caller can only report as a page needing permission. Naming the
 /// app and where it comes from is what those policies ask for.
-pub const USER_AGENT: &str = concat!(
+const USER_AGENT: &str = concat!(
     "SecondBrain/",
     env!("CARGO_PKG_VERSION"),
     " (+https://github.com/zulucode-design/second-brain)"
@@ -57,7 +57,7 @@ pub enum Body {
     TooLarge,
 }
 
-pub fn is_public_ip(ip: IpAddr) -> bool {
+fn is_public_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => {
             let [a, b, c, _] = ip.octets();

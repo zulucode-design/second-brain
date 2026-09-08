@@ -96,60 +96,94 @@ const CLAIM_LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(10
 
 /// Read the vault's identity, creating it on first open.
 ///
-/// The claim is made under an exclusive file lock rather than by `create_new`. Creating a
-/// file and writing it are two steps, so a `create_new` claim is briefly an empty file, and
-/// a process killed inside that window left it empty permanently: every later open then
+/// `create_new` still decides who creates the file, but it is no longer the whole claim.
+/// Creating a file and writing it are two steps, so a claim is briefly an empty file, and a
+/// process killed inside that window used to leave it empty permanently: every later open
 /// waited for a writer that no longer existed, gave up, and failed. The vault became
-/// unopenable for good.
+/// unopenable for good, not just for one run.
 ///
-/// A lock answers the question that waiting could not — is the writer alive? The kernel
+/// An exclusive lock answers what waiting could not — is that writer still alive? The kernel
 /// releases it when its holder dies, so an empty file under a *free* lock is abandoned
-/// rather than in flight, and can be claimed. Nothing here trusts the file's contents
-/// unless it holds the lock, which is what makes two processes opening the same vault at
-/// once still agree on one id.
+/// rather than in flight, and can be taken over. Beyond the creator, nothing writes to the
+/// file without holding that lock, which is what keeps two processes opening one vault at
+/// the same time agreeing on one id.
 fn vault_id(vault_path: &Path) -> Result<String, String> {
     let metadata_dir = helixnotes_dir(vault_path);
     std::fs::create_dir_all(&metadata_dir)
         .map_err(|error| format!("Could not create the vault metadata directory: {error}"))?;
     let path = metadata_dir.join(VAULT_ID_FILE);
 
+    // Claiming as the creator comes first because `create_new` answers, atomically and
+    // without needing a lock, the one question a filesystem that cannot lock can still
+    // settle: has anyone started a claim here at all? Only one process is ever the creator,
+    // so only it may write into a file no one else can be holding — which is what keeps a
+    // lockless filesystem working exactly as it did before locks existed.
+    match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(file) => {
+            // Hold the lock across the write so a process that opens the file in the gap
+            // waits for this claim instead of reading it as abandoned.
+            let _claim = ClaimLock::acquire(&file)?;
+            return settle_identity(&file);
+        }
+        // Could not create it at all. If one is already recorded, that is answer enough, so
+        // a vault on a read-only mount still opens.
+        Err(error) if error.kind() != std::io::ErrorKind::AlreadyExists => {
+            return recorded_identity(&path)
+                .ok_or_else(|| format!("Could not create the vault identity: {error}"));
+        }
+        Err(_) => {}
+    }
+
     let file = match std::fs::OpenOptions::new()
         .read(true)
         .write(true)
-        .create(true)
-        .truncate(false)
         .open(&path)
     {
         Ok(file) => file,
-        // Only *claiming* an identity needs to write. A vault on a read-only mount, or one
-        // whose marker is read-only, can still be opened and read, so an id already recorded
-        // there is answer enough.
         Err(error) => {
-            return std::fs::read_to_string(&path)
-                .ok()
-                .map(|contents| contents.trim().to_string())
-                .filter(|id| is_well_formed_id(id))
-                .ok_or_else(|| format!("Could not open the vault identity: {error}"));
+            return recorded_identity(&path)
+                .ok_or_else(|| format!("Could not open the vault identity: {error}"))
         }
     };
 
-    let Some(_claim) = ClaimLock::acquire(&file)? else {
-        // The filesystem does not support locking. Fall back to what this did before locks,
-        // which is conservative rather than correct: wait out an empty file and fail if it
-        // never fills, since without a lock a stalled writer cannot be told from a dead one.
-        return unlocked_vault_id(&path);
+    let claim = ClaimLock::acquire(&file)?;
+    let id = if claim.is_some() {
+        settle_identity(&file)
+    } else {
+        // No lock to ask, so a writer that stalled cannot be told from one that died and an
+        // empty file is waited out rather than taken over. That is the pre-lock trade, now
+        // reachable only on a filesystem that cannot lock.
+        unlocked_vault_id(&path)
     };
+    drop(claim);
+    id
+}
 
-    if let Some(id) = read_well_formed_id(&file)? {
+/// Decide the identity of a file this process is entitled to write: it either created the
+/// file, or it holds the lock on it.
+///
+/// Re-reading before writing is what makes the creator path safe against a process that
+/// opened the file in the gap between `create_new` and the lock and claimed it first.
+fn settle_identity(file: &std::fs::File) -> Result<String, String> {
+    if let Some(id) = read_well_formed_id(file)? {
         return Ok(id);
     }
-
-    // Holding the lock, an empty file is an abandoned claim and a malformed one is damage.
-    // Both are replaced, and both are safe to replace: what the id keys is either derived
-    // (the index, rebuilt) or inert (staging).
     let replacement = uuid::Uuid::new_v4().to_string();
-    write_identity(&file, &replacement)?;
+    write_identity(file, &replacement)?;
     Ok(replacement)
+}
+
+/// An identity already on disk, read without needing to write anything.
+fn recorded_identity(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|contents| contents.trim().to_string())
+        .filter(|id| is_well_formed_id(id))
 }
 
 /// The id currently in the file, if it is one.
@@ -587,6 +621,24 @@ mod tests {
 
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert_eq!(id.unwrap(), "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+    }
+
+    /// A first open must claim an identity through the creator path alone, without the lock
+    /// having to work. Creating the marker before testing for lockability would leave a
+    /// filesystem that cannot lock staring at an empty file it is not allowed to fill —
+    /// reintroducing, on that filesystem, exactly the permanent failure locks are here to fix.
+    #[test]
+    fn a_first_open_claims_an_identity_without_relying_on_the_lock() {
+        let vault = bare_vault("first-open");
+        let path = helixnotes_dir(&vault).join(VAULT_ID_FILE);
+        assert!(!path.exists(), "the marker must not exist yet");
+
+        let id = vault_id(&vault).expect("a first open claims an identity");
+
+        assert!(is_well_formed_id(&id));
+        assert_eq!(std::fs::read_to_string(&path).unwrap().trim(), id);
+        // And the claim is stable: opening again adopts it rather than minting another.
+        assert_eq!(vault_id(&vault).unwrap(), id);
     }
 
     /// What the lock buys, stated as a contrast: the lockless path still cannot tell a dead

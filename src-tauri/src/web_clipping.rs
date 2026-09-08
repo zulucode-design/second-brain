@@ -5,8 +5,12 @@ use std::time::Duration;
 
 const MAX_ARTICLE_BYTES: u64 = 5 * 1024 * 1024;
 
-/// Below this, what the parser returned is a stub, a paywall teaser, or page furniture
-/// rather than something worth filing as a note.
+/// Below this, what the parser returned is a redirect stub or leftover page furniture rather
+/// than something worth filing as a note.
+///
+/// It is deliberately not a paywall test. A soft paywall serves a teaser of real prose and
+/// clears any threshold low enough to be safe, so raising this to catch one would start
+/// refusing short articles instead.
 const MIN_ARTICLE_WORDS: usize = 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,21 +236,28 @@ fn meta_refresh_target(html: &str) -> Option<String> {
         {
             continue;
         }
-        let content = tag_attribute(&tag, "content")?;
-        let (delay, target) = content.split_once(';')?;
-        if delay.trim().parse::<f32>().is_ok_and(|delay| delay > 1.0) {
-            return None;
+        // Every step below moves on to the next tag rather than abandoning the scan: a page
+        // may carry a refresh that is not a redirect — no destination, or a long delay —
+        // ahead of one that is.
+        let Some(content) = tag_attribute(&tag, "content") else {
+            continue;
+        };
+        let Some((delay, target)) = content.split_once(';') else {
+            continue;
+        };
+        // A delay that will not parse is not an instruction to go anywhere, and one longer
+        // than a moment is a page reloading itself rather than redirecting.
+        if !delay.trim().parse::<f32>().is_ok_and(|delay| delay <= 1.0) {
+            continue;
         }
         let target = target.trim();
-        let target = target
-            .strip_prefix("url=")
-            .or_else(|| target.strip_prefix("URL="))
-            .or_else(|| {
-                target
-                    .get(..4)
-                    .filter(|prefix| prefix.eq_ignore_ascii_case("url="))
-                    .map(|_| &target[4..])
-            })?;
+        let Some(target) = target
+            .get(..4)
+            .filter(|prefix| prefix.eq_ignore_ascii_case("url="))
+            .map(|_| &target[4..])
+        else {
+            continue;
+        };
         let target = target.trim().trim_matches(['"', '\''].as_slice());
         if !target.is_empty() {
             return Some(target.to_string());
@@ -610,6 +621,20 @@ mod tests {
         }
     }
 
+    /// A refresh that is not a redirect must not hide one that is: each is skipped so the
+    /// scan continues, rather than abandoning the document.
+    #[test]
+    fn a_non_redirect_refresh_does_not_hide_a_later_real_one() {
+        let html = r#"
+            <meta http-equiv="refresh" content="5">
+            <meta http-equiv="refresh" content="600; url=/reload-loop">
+            <meta http-equiv="refresh">
+            <meta http-equiv="refresh" content="0; url=/the-article">
+        "#;
+
+        assert_eq!(meta_refresh_target(html).as_deref(), Some("/the-article"));
+    }
+
     /// A page reloading itself on a timer is not redirecting, and a clipper that treats it
     /// as one walks away from the article the user asked for.
     #[test]
@@ -617,6 +642,7 @@ mod tests {
         for html in [
             r#"<meta http-equiv="refresh" content="30; url=/dashboard">"#,
             r#"<meta http-equiv="refresh" content="5">"#,
+            r#"<meta http-equiv="refresh" content="not-a-number; url=/nowhere">"#,
             r#"<meta http-equiv="content-type" content="0; url=/elsewhere">"#,
             r#"<metadata http-equiv="refresh" content="0; url=/elsewhere">"#,
             r#"<p>no meta here</p>"#,

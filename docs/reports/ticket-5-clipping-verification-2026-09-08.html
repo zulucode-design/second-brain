@@ -175,6 +175,7 @@
     .pill.good { background: var(--good-soft); color: var(--good); }
     .pill.critical { background: var(--critical-soft); color: var(--critical); }
     .pill.medium { background: var(--medium-soft); color: var(--medium); }
+    .pill.low { background: var(--low-soft); color: var(--low); }
     section { margin-top: 20px; padding: clamp(22px, 4vw, 40px); border-radius: 22px; }
     section h2 { margin: 0 0 16px; font: 600 clamp(1.5rem, 3vw, 2.1rem)/1.15 var(--serif); letter-spacing: -0.02em; }
     section h3 { margin: 22px 0 8px; font-size: 0.78rem; font-weight: 850; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
@@ -389,6 +390,80 @@
               <td>See below.</td></tr>
         </tbody>
       </table></div>
+    </section>
+
+    <section id="review">
+      <h2>What the two-axis review changed</h2>
+      <p>
+        Standards and Spec were reviewed in parallel against <code>origin/main</code> before
+        the pull request. Both found real defects, and one was serious enough that shipping
+        without it would have made this branch a regression for some users.
+      </p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Finding</th><th>Axis</th><th></th><th>Resolution</th></tr></thead>
+        <tbody>
+          <tr><td>The lockless fallback reintroduced the very bug being fixed. The marker was
+                  created <em>before</em> lockability was tested, so on a filesystem that
+                  cannot lock every process met an empty file none of them was permitted to
+                  fill — permanently, on every open. Such filesystems worked before this
+                  branch.</td>
+              <td>Spec</td><td><span class="pill critical">Serious</span></td>
+              <td>Fixed. <code>create_new</code> is attempted first and is the creator signal
+                  again, so the lockless path claims exactly as it always did. A test pins a
+                  first open succeeding without the lock.</td></tr>
+          <tr><td>The code contradicted this report: the report said the creator keeps
+                  <code>create_new</code>, the code had dropped it for
+                  <code>create(true)</code>.</td>
+              <td>Spec</td><td><span class="pill critical">Serious</span></td>
+              <td>Resolved by the same change — the report's claim is now true.</td></tr>
+          <tr><td><code>meta_refresh_target</code> used <code>?</code> inside its loop, so a
+                  refresh tag lacking a destination aborted the whole scan and hid a real
+                  redirect later in the document. An unparseable delay was also followed.</td>
+              <td>both</td><td><span class="pill medium">Real</span></td>
+              <td>Fixed: every step now skips to the next tag, and a delay must parse and be
+                  immediate. Regression test added.</td></tr>
+          <tr><td><code>MIN_ARTICLE_WORDS</code> claimed to filter "a paywall teaser", which 20
+                  words does not do.</td>
+              <td>Spec</td><td><span class="pill medium">Real</span></td>
+              <td>The comment was the defect, not the constant. Corrected, and the limitation
+                  recorded below.</td></tr>
+          <tr><td><code>USER_AGENT</code> and <code>is_public_ip</code> exported from
+                  <code>safe_fetch</code> with no caller outside it.</td>
+              <td>Standards</td><td><span class="pill low">Minor</span></td>
+              <td>Made private.</td></tr>
+          <tr><td>The lock decision is ADR-shaped but lived only in this report.</td>
+              <td>Standards</td><td><span class="pill low">Minor</span></td>
+              <td>Written up as
+                  <code>docs/adr/0006-vault-identity-is-claimed-under-a-file-lock.md</code>.</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note">
+        Two findings were considered and deliberately not acted on. The duplication between
+        <code>unlocked_vault_id</code> and the locked path is kept, because the two make
+        different safety trades and a shared helper would blur exactly the distinction that
+        matters. And the per-caller <code>match</code> over the rejection enums is kept,
+        because clipping merges the local-name and private-address arms on purpose — telling
+        the two apart would reveal which internal names resolve.
+      </p>
+    </section>
+
+    <section id="limits">
+      <h2>Known limitation: soft paywalls</h2>
+      <p>
+        A hard login wall — an HTTP 401/403, or a page whose only content is a password form —
+        is detected and reported. A <em>soft</em> paywall is not. Those serve HTTP 200 with a
+        few paragraphs of real prose and hide the rest, so the clipping succeeds and files a
+        note containing the teaser.
+      </p>
+      <p>
+        Against #5's "leave no partial note behind", that is a genuine gap. It is left open
+        deliberately rather than overlooked. The obvious lever — raising
+        <code>MIN_ARTICLE_WORDS</code> until teasers fail — cannot work: a teaser is longer
+        than plenty of legitimate short articles, so any threshold high enough to catch one
+        starts refusing the other. Detecting soft paywalls means recognising publisher
+        markup, which is a different piece of work, and this branch exists precisely because
+        an over-eager wall heuristic rejected most of the open web.
+      </p>
     </section>
 
     <section id="identity">
