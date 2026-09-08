@@ -69,20 +69,22 @@ fn validate_source_url(raw_url: &str) -> Result<Url, ClipError> {
     })
 }
 
-pub fn fetch_article_html(raw_url: &str) -> Result<String, ClipError> {
-    fetch_with(&fetch_public_html, raw_url)
-}
-
+/// Clip a page, reporting the article and the address it actually came from.
+///
+/// The address returned is where the fetch ended, not where it began. Relative links in the
+/// article resolve against it, so a page reached through a redirect would otherwise have
+/// every one of its links rewritten to a path on the wrong page.
 pub fn clip_url(raw_url: &str) -> Result<(ClippedArticle, String), ClipError> {
-    let canonical_url = validate_source_url(raw_url)?.to_string();
-    let html = fetch_article_html(&canonical_url)?;
-    let article = extract_article(&html, &canonical_url)?;
-    Ok((article, canonical_url))
+    let requested_url = validate_source_url(raw_url)?.to_string();
+    let (html, final_url) = fetch_with(&fetch_public_html, &requested_url)?;
+    let final_url = final_url.to_string();
+    let article = extract_article(&html, &final_url)?;
+    Ok((article, final_url))
 }
 
-fn fetch_with<Source>(source: &Source, raw_url: &str) -> Result<String, ClipError>
+fn fetch_with<Source>(source: &Source, raw_url: &str) -> Result<(String, Url), ClipError>
 where
-    Source: Fn(&reqwest::Url) -> Result<String, SourceError>,
+    Source: Fn(&Url) -> Result<(String, Url), SourceError>,
 {
     let url = validate_source_url(raw_url)?;
     source(&url).map_err(|error| match error {
@@ -124,12 +126,12 @@ fn html_client(host: &str, addresses: &[SocketAddr]) -> Result<Client, SourceErr
         .map_err(|_| SourceError::Unreachable("The web request could not be prepared".to_string()))
 }
 
-fn fetch_public_html(url: &Url) -> Result<String, SourceError> {
+fn fetch_public_html(url: &Url) -> Result<(String, Url), SourceError> {
     let mut current_url = url.clone();
     for redirect_count in 0..=5 {
         let html = fetch_public_html_without_redirects(&current_url, redirect_count)?;
         match html {
-            FetchStep::Html(html) => return Ok(html),
+            FetchStep::Html(html) => return Ok((html, current_url)),
             FetchStep::Redirect(next_url) => current_url = next_url,
         }
     }
@@ -203,7 +205,106 @@ fn fetch_public_html_without_redirects(
     };
     let html = String::from_utf8(body)
         .map_err(|_| SourceError::Blocked("The web page is not valid UTF-8 HTML".to_string()))?;
+    if let Some(target) = meta_refresh_target(&html) {
+        if redirect_count >= 5 {
+            return Err(SourceError::Blocked(
+                "The web page redirected too many times".to_string(),
+            ));
+        }
+        return Ok(FetchStep::Redirect(redirect_target(url, &target)?));
+    }
     Ok(FetchStep::Html(html))
+}
+
+/// Where a page redirects by `<meta http-equiv="refresh">`, if it does.
+///
+/// Sites publish these as plain HTML stubs — a title, a script, and a `<noscript>` fallback
+/// — so a fetcher that only understands 3xx sees a few hundred bytes of nothing and reports
+/// no readable article for a URL that is perfectly good. Following it costs one hop from the
+/// same budget, and the destination is validated like any other.
+///
+/// Only an immediate refresh counts. A page that sets a long delay is reloading itself on a
+/// timer, which is not a redirect and must not drag the clipper somewhere else.
+fn meta_refresh_target(html: &str) -> Option<String> {
+    for tag in html_tags(html, "meta") {
+        if !tag_attribute(&tag, "http-equiv")
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case("refresh"))
+        {
+            continue;
+        }
+        let content = tag_attribute(&tag, "content")?;
+        let (delay, target) = content.split_once(';')?;
+        if delay.trim().parse::<f32>().is_ok_and(|delay| delay > 1.0) {
+            return None;
+        }
+        let target = target.trim();
+        let target = target
+            .strip_prefix("url=")
+            .or_else(|| target.strip_prefix("URL="))
+            .or_else(|| {
+                target
+                    .get(..4)
+                    .filter(|prefix| prefix.eq_ignore_ascii_case("url="))
+                    .map(|_| &target[4..])
+            })?;
+        let target = target.trim().trim_matches(['"', '\''].as_slice());
+        if !target.is_empty() {
+            return Some(target.to_string());
+        }
+    }
+    None
+}
+
+/// The text of every `<name ...>` tag in the document, without a full HTML parse.
+fn html_tags(html: &str, name: &str) -> Vec<String> {
+    let opener = format!("<{name}");
+    let lower = html.to_ascii_lowercase();
+    let mut tags = Vec::new();
+    let mut cursor = 0;
+    while let Some(offset) = lower[cursor..].find(&opener) {
+        let start = cursor + offset;
+        // Reject <metadata> and friends: the name has to end where the tag says it does.
+        let after = lower[start + opener.len()..].chars().next();
+        if after.is_some_and(|c| c.is_ascii_alphanumeric() || c == '-') {
+            cursor = start + opener.len();
+            continue;
+        }
+        let end = html[start..]
+            .find('>')
+            .map_or(html.len(), |offset| start + offset);
+        tags.push(html[start..end].to_string());
+        cursor = end.max(start + opener.len());
+    }
+    tags
+}
+
+/// An attribute's value from a single tag's text, quoted or bare.
+fn tag_attribute(tag: &str, attribute: &str) -> Option<String> {
+    let lower = tag.to_ascii_lowercase();
+    let mut cursor = 0;
+    while let Some(offset) = lower[cursor..].find(attribute) {
+        let start = cursor + offset;
+        cursor = start + attribute.len();
+        // The match has to be a whole attribute name, not the tail of another.
+        if lower[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            continue;
+        }
+        let rest = tag[cursor..].trim_start();
+        let Some(rest) = rest.strip_prefix('=') else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let value = match rest.chars().next() {
+            Some(quote @ ('"' | '\'')) => rest[1..].split(quote).next()?,
+            _ => rest.split_whitespace().next()?,
+        };
+        return Some(value.to_string());
+    }
+    None
 }
 
 fn redirect_target(current_url: &Url, location: &str) -> Result<Url, SourceError> {
@@ -385,7 +486,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    fetch_article_html(url),
+                    clip_url(url),
                     Err(ClipError::InvalidUrl(_) | ClipError::Blocked(_))
                 ),
                 "accepted {url}"
@@ -395,7 +496,7 @@ mod tests {
 
     #[test]
     fn reports_a_timeout_as_a_distinct_actionable_failure() {
-        let source = |_url: &reqwest::Url| Err(SourceError::Timeout);
+        let source = |_url: &Url| Err(SourceError::Timeout);
 
         let error =
             fetch_with(&source, "https://example.com/article").expect_err("the source timed out");
@@ -434,12 +535,17 @@ mod tests {
         for url in [
             "https://en.wikipedia.org/wiki/Zettelkasten",
             "https://blog.rust-lang.org/2024/02/08/Rust-1.76.0/",
+            // Serves a meta-refresh stub rather than the post itself.
+            "https://blog.rust-lang.org/2024/02/08/Rust-1.76.0.html",
         ] {
             let (article, canonical_url) = clip_url(url).unwrap_or_else(|error| {
                 panic!("clipping {url} failed: {}", error.message());
             });
 
-            assert_eq!(canonical_url, url);
+            assert!(
+                canonical_url.starts_with("https://"),
+                "{url} -> {canonical_url}"
+            );
             assert!(!article.title.is_empty(), "{url} produced no title");
             assert!(
                 article.markdown.split_whitespace().count() > 100,
@@ -458,6 +564,65 @@ mod tests {
 
         assert!(matches!(error, ClipError::Fetch(_) | ClipError::Blocked(_)));
         assert!(!error.message().is_empty());
+    }
+
+    /// The exact stub blog.rust-lang.org serves for a renamed post: no article, a script,
+    /// and a noscript meta refresh carrying the real address.
+    #[test]
+    fn follows_a_meta_refresh_stub_to_the_real_article() {
+        let html = r#"
+            <!doctype html>
+            <meta charset="utf-8">
+            <title>Redirect</title>
+            <script>
+              const target = "https://blog.example.org/2024/02/08/Release/";
+              window.location.replace(target);
+            </script>
+            <noscript>
+              <meta http-equiv="refresh" content="0; url=https://blog.example.org/2024/02/08/Release/">
+            </noscript>
+            <p><a href="https://blog.example.org/2024/02/08/Release/">Click here</a>.</p>
+        "#;
+
+        assert_eq!(
+            meta_refresh_target(html).as_deref(),
+            Some("https://blog.example.org/2024/02/08/Release/")
+        );
+    }
+
+    #[test]
+    fn reads_a_meta_refresh_however_it_is_written() {
+        for (html, expected) in [
+            (
+                r#"<meta http-equiv="REFRESH" content="0;URL='/next'">"#,
+                Some("/next"),
+            ),
+            (
+                r#"<meta content=0;url=/bare http-equiv=refresh>"#,
+                Some("/bare"),
+            ),
+            (
+                r#"<meta http-equiv='refresh' content='1; url=/soon'>"#,
+                Some("/soon"),
+            ),
+        ] {
+            assert_eq!(meta_refresh_target(html).as_deref(), expected, "{html}");
+        }
+    }
+
+    /// A page reloading itself on a timer is not redirecting, and a clipper that treats it
+    /// as one walks away from the article the user asked for.
+    #[test]
+    fn ignores_refreshes_that_are_not_redirects() {
+        for html in [
+            r#"<meta http-equiv="refresh" content="30; url=/dashboard">"#,
+            r#"<meta http-equiv="refresh" content="5">"#,
+            r#"<meta http-equiv="content-type" content="0; url=/elsewhere">"#,
+            r#"<metadata http-equiv="refresh" content="0; url=/elsewhere">"#,
+            r#"<p>no meta here</p>"#,
+        ] {
+            assert_eq!(meta_refresh_target(html), None, "{html}");
+        }
     }
 
     #[test]
