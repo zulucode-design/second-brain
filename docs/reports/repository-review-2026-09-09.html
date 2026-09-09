@@ -1,0 +1,618 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Read-only architecture, security, correctness, quality, and delivery review of the Second Brain repository at commit 76cecc3d.">
+  <title>Second Brain — Repository Review — 2026-09-09</title>
+  <style>
+    :root {
+      --page: #f4f1ea;
+      --surface: #fffdf8;
+      --surface-2: #f7f3eb;
+      --ink: #1d2524;
+      --muted: #5e6966;
+      --line: #d8d3c8;
+      --accent: #185f59;
+      --accent-soft: #dcefeb;
+      --critical: #9f1d26;
+      --critical-soft: #f9dfe1;
+      --high: #a54816;
+      --high-soft: #fae8da;
+      --medium: #82610b;
+      --medium-soft: #f5edcf;
+      --low: #3e6570;
+      --low-soft: #deedf0;
+      --good: #217448;
+      --good-soft: #dff1e6;
+      --shadow: 0 12px 34px rgb(35 42 39 / 9%);
+      --radius: 15px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: Georgia, "Times New Roman", serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.65;
+    }
+    a { color: var(--accent); text-underline-offset: 3px; }
+    a:hover { text-decoration-thickness: 2px; }
+    code, kbd {
+      font-family: var(--mono);
+      font-size: .9em;
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      padding: .12rem .35rem;
+      overflow-wrap: anywhere;
+    }
+    pre {
+      background: #17211f;
+      color: #e7efec;
+      padding: 1rem;
+      border-radius: 10px;
+      overflow-x: auto;
+      font: .88rem/1.55 var(--mono);
+    }
+    pre code { background: transparent; border: 0; padding: 0; color: inherit; }
+    h1, h2, h3, h4 { color: var(--ink); line-height: 1.18; scroll-margin-top: 1.25rem; }
+    h1, h2 { font-family: var(--serif); }
+    h1 { margin: .25rem 0 .8rem; font-size: clamp(2.15rem, 5vw, 4.3rem); letter-spacing: -.035em; }
+    h2 { margin: 0 0 1rem; font-size: clamp(1.65rem, 3vw, 2.35rem); letter-spacing: -.02em; }
+    h3 { margin: 1.5rem 0 .55rem; font-size: 1.18rem; }
+    p { margin: .55rem 0 1rem; }
+    ul, ol { padding-left: 1.25rem; }
+    li + li { margin-top: .35rem; }
+
+    .wrap { width: min(1180px, calc(100% - 2rem)); margin: 0 auto; }
+    .hero { padding: 4.6rem 0 2.1rem; border-bottom: 1px solid var(--line); }
+    .kicker { color: var(--accent); font-weight: 800; letter-spacing: .13em; text-transform: uppercase; font-size: .75rem; }
+    .lede { max-width: 850px; font-size: clamp(1.02rem, 2vw, 1.26rem); color: var(--muted); }
+    .gate {
+      margin: 1.4rem 0;
+      max-width: 940px;
+      border: 1px solid color-mix(in srgb, var(--critical) 45%, var(--line));
+      border-left: 6px solid var(--critical);
+      background: var(--critical-soft);
+      border-radius: 10px;
+      padding: 1rem 1.15rem;
+    }
+    .gate strong { color: var(--critical); }
+    .meta { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; margin-top: 1.5rem; }
+    .meta div { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: .75rem .85rem; }
+    .meta dt { color: var(--muted); font-size: .72rem; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
+    .meta dd { margin: .2rem 0 0; font-weight: 700; overflow-wrap: anywhere; }
+
+    .metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: .8rem; margin: 1.2rem auto 0; }
+    .metric { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: .9rem 1rem; box-shadow: var(--shadow); }
+    .metric b { display: block; font: 700 1.75rem/1 var(--serif); }
+    .metric span { display: block; margin-top: .38rem; color: var(--muted); font-size: .8rem; }
+
+    .layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 1.5rem; padding: 1.5rem 0 4rem; align-items: start; }
+    nav {
+      position: sticky;
+      top: 1rem;
+      max-height: calc(100vh - 2rem);
+      overflow: auto;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1rem;
+      box-shadow: var(--shadow);
+    }
+    nav strong { display: block; margin-bottom: .6rem; font-size: .78rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+    nav a { display: block; padding: .3rem .45rem; border-radius: 6px; color: var(--ink); text-decoration: none; font-size: .88rem; }
+    nav a:hover { color: var(--accent); background: var(--accent-soft); }
+    main { min-width: 0; }
+    section {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: clamp(1.2rem, 3vw, 2rem);
+      margin-bottom: 1rem;
+      box-shadow: var(--shadow);
+    }
+    .section-intro { max-width: 800px; color: var(--muted); }
+
+    .callout { border-left: 5px solid var(--accent); background: var(--accent-soft); border-radius: 8px; padding: .8rem 1rem; margin: 1rem 0; }
+    .callout.good { border-color: var(--good); background: var(--good-soft); }
+    .callout.warn { border-color: var(--medium); background: var(--medium-soft); }
+    .callout.bad { border-color: var(--critical); background: var(--critical-soft); }
+    .callout p:last-child { margin-bottom: 0; }
+
+    .pill { display: inline-flex; align-items: center; gap: .35rem; border: 1px solid transparent; border-radius: 999px; padding: .18rem .55rem; font-size: .72rem; font-weight: 800; letter-spacing: .035em; text-transform: uppercase; vertical-align: middle; white-space: nowrap; }
+    .pill.critical { color: var(--critical); background: var(--critical-soft); border-color: color-mix(in srgb, var(--critical) 28%, transparent); }
+    .pill.high { color: var(--high); background: var(--high-soft); border-color: color-mix(in srgb, var(--high) 28%, transparent); }
+    .pill.medium { color: var(--medium); background: var(--medium-soft); border-color: color-mix(in srgb, var(--medium) 28%, transparent); }
+    .pill.low { color: var(--low); background: var(--low-soft); border-color: color-mix(in srgb, var(--low) 28%, transparent); }
+    .pill.good { color: var(--good); background: var(--good-soft); border-color: color-mix(in srgb, var(--good) 28%, transparent); }
+
+    .finding { margin: 1rem 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+    .finding-head { padding: .85rem 1rem; background: var(--surface-2); display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+    .finding-head h3 { margin: 0; font-size: 1.05rem; }
+    .finding-body { padding: 1rem; }
+    .finding-body p:first-child { margin-top: 0; }
+    .finding-body p:last-child { margin-bottom: 0; }
+    .evidence { margin-top: .8rem; padding: .72rem .85rem; background: var(--surface-2); border-radius: 8px; color: var(--muted); font-size: .88rem; }
+    .evidence strong { color: var(--ink); }
+
+    .table-wrap { overflow-x: auto; margin: 1rem 0; border: 1px solid var(--line); border-radius: 10px; }
+    table { width: 100%; border-collapse: collapse; min-width: 650px; }
+    th, td { padding: .7rem .8rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+    th { background: var(--surface-2); font-size: .76rem; letter-spacing: .045em; text-transform: uppercase; }
+    tr:last-child td { border-bottom: 0; }
+    td code { white-space: normal; }
+
+    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+    .card { border: 1px solid var(--line); border-radius: 10px; padding: 1rem; background: var(--surface-2); }
+    .card h3 { margin-top: 0; }
+    .checklist { list-style: none; padding: 0; }
+    .checklist li { position: relative; padding-left: 1.6rem; }
+    .checklist li::before { content: "✓"; position: absolute; left: 0; color: var(--good); font-weight: 900; }
+    .roadmap { counter-reset: phase; list-style: none; padding: 0; }
+    .roadmap > li { counter-increment: phase; border-left: 4px solid var(--accent); background: var(--surface-2); border-radius: 8px; padding: .85rem 1rem; margin: .75rem 0; }
+    .roadmap > li::before { content: "Phase " counter(phase); display: block; color: var(--accent); font-size: .73rem; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+    .roadmap h3 { margin: .15rem 0 .5rem; }
+    .roadmap ol { margin-bottom: .2rem; }
+
+    footer { padding: 1.25rem 0 3rem; color: var(--muted); font-size: .85rem; }
+
+    @media (max-width: 900px) {
+      .meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .layout { grid-template-columns: 1fr; }
+      nav { position: static; max-height: none; display: flex; flex-wrap: wrap; gap: .2rem; }
+      nav strong { width: 100%; }
+      nav a { display: inline-block; }
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 560px) {
+      .wrap { width: min(100% - 1rem, 1180px); }
+      .hero { padding-top: 2.5rem; }
+      .meta, .metrics { grid-template-columns: 1fr; }
+      section { border-radius: 10px; }
+      .finding-head { align-items: flex-start; flex-direction: column; }
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #111716;
+        --surface: #18201e;
+        --surface-2: #202a27;
+        --ink: #e9efec;
+        --muted: #aab7b2;
+        --line: #35413d;
+        --accent: #7ed4c8;
+        --accent-soft: #203c38;
+        --critical: #ff969c;
+        --critical-soft: #3d2226;
+        --high: #f2aa7a;
+        --high-soft: #3b2a20;
+        --medium: #e5c86f;
+        --medium-soft: #39331f;
+        --low: #9fcbd4;
+        --low-soft: #24373b;
+        --good: #8cd3a8;
+        --good-soft: #22382c;
+        --shadow: 0 12px 34px rgb(0 0 0 / 24%);
+      }
+    }
+    @media print {
+      :root { --page: #fff; --surface: #fff; --surface-2: #f7f7f5; --ink: #111; --muted: #444; --line: #bbb; --shadow: none; }
+      body { font-size: 10.5pt; }
+      .wrap { width: 100%; }
+      .hero { padding-top: 0; }
+      nav { display: none; }
+      .layout { display: block; }
+      section { box-shadow: none; break-inside: avoid; }
+      .finding, .card, .callout { break-inside: avoid; }
+      a { color: inherit; text-decoration: none; }
+      a[href^="http"]::after { content: " (" attr(href) ")"; font-size: .8em; overflow-wrap: anywhere; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <div class="kicker">Read-only engineering assessment</div>
+      <h1>Second Brain repository review</h1>
+      <p class="lede">A comprehensive architecture, correctness, security, data-safety, frontend, backend, quality, documentation, and delivery review of the repository. This report records what is working, what should change, and the recommended order of work.</p>
+      <div class="gate"><strong>Current gate:</strong> the application has a strong local-first core, but should not be considered production-ready for untrusted WebDAV sync or destructive restore operations until the critical path-confinement issue and the high-severity data-loss risks are resolved.</div>
+      <dl class="meta">
+        <div><dt>Review date</dt><dd>2026-09-09</dd></div>
+        <div><dt>Branch</dt><dd><code>main</code></dd></div>
+        <div><dt>Reviewed commit</dt><dd><code>76cecc3ddbfd4ff96df5539a580c3fb03cedda9e</code></dd></div>
+        <div><dt>Method</dt><dd>Static audit + isolated verification + CI evidence</dd></div>
+      </dl>
+      <div class="metrics" aria-label="Review metrics">
+        <div class="metric"><b>1</b><span>Critical security finding</span></div>
+        <div class="metric"><b>6</b><span>High-severity findings</span></div>
+        <div class="metric"><b>33/33</b><span>Frontend tests passed</span></div>
+        <div class="metric"><b>0</b><span>Svelte errors or warnings</span></div>
+        <div class="metric"><b>Green</b><span>Exact-commit Linux CI</span></div>
+      </div>
+    </div>
+  </header>
+
+  <div class="wrap layout">
+    <nav aria-label="Report contents">
+      <strong>Jump to</strong>
+      <a href="#executive-summary">Executive summary</a>
+      <a href="#scope">Scope &amp; method</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#strengths">What works well</a>
+      <a href="#critical">Critical finding</a>
+      <a href="#high">High findings</a>
+      <a href="#medium">Medium findings</a>
+      <a href="#product">Product alignment</a>
+      <a href="#verification">Verification</a>
+      <a href="#testing">Testing &amp; delivery</a>
+      <a href="#roadmap">Roadmap</a>
+      <a href="#limitations">Limitations</a>
+      <a href="#conclusion">Conclusion</a>
+    </nav>
+
+    <main>
+      <section id="executive-summary">
+        <h2>Executive summary</h2>
+        <p>This is a substantial Tauri/Svelte desktop notes application, not a throwaway prototype. It has strong foundations around plain-Markdown ownership, PARA filing, crash-recoverable relocation, machine-local search, filesystem watching, global quick capture, and secure public-web clipping. The exact reviewed commit type-checks, passes all frontend tests, builds successfully, and passed the complete Linux verification and packaging workflow.</p>
+        <p>The highest risks are concentrated in older persistence and synchronization paths that do not use the same transaction and containment principles as the newer relocation subsystem. The most urgent sequence is:</p>
+        <ol>
+          <li>Constrain WebDAV paths and reject symlink escapes.</li>
+          <li>Make restore staged and transactional.</li>
+          <li>Serialize sync with edits and vault transitions.</li>
+          <li>Make note/config/manifest writes crash-safe.</li>
+          <li>Repair editor save ordering and close behavior.</li>
+          <li>Add fault-injection and cross-platform integration coverage.</li>
+        </ol>
+        <div class="callout good"><strong>Important:</strong> no application code or configuration was changed during the review. The only repository change associated with this deliverable is this approved HTML report.</div>
+      </section>
+
+      <section id="scope">
+        <h2>Scope and method</h2>
+        <p class="section-intro">The review combined five independent read-only passes and a final cross-check. Claims were traced to repository evidence rather than inferred only from filenames or documentation.</p>
+        <div class="grid-2">
+          <div class="card">
+            <h3>Inspected</h3>
+            <ul class="checklist">
+              <li>Repository guidance, README, SPEC, and ADRs</li>
+              <li>Svelte routes, stores, components, utilities, and editor extensions</li>
+              <li>Tauri startup, commands, state, vault operations, and platform integration</li>
+              <li>Search, watchers, backup, restore, import, sync, AI, and clipping</li>
+              <li>Capabilities, packaging, scripts, manifests, CI, and test suites</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Severity model</h3>
+            <ul>
+              <li><span class="pill critical">Critical</span> credible out-of-bound write or severe security boundary failure.</li>
+              <li><span class="pill high">High</span> realistic source-data loss, destructive partial completion, or major integrity failure.</li>
+              <li><span class="pill medium">Medium</span> important correctness, reliability, scale, privacy, accessibility, or release-readiness gap.</li>
+              <li><span class="pill low">Low</span> repository hygiene or localized maintainability issue.</li>
+            </ul>
+          </div>
+        </div>
+        <p>The baseline working tree was clean on <code>main</code> at commit <code>76cecc3d</code>. Verification that required dependencies was performed in an isolated temporary clone so the reviewed checkout was not populated with generated artifacts.</p>
+      </section>
+
+      <section id="architecture">
+        <h2>Repository and architecture breakdown</h2>
+        <h3>Frontend</h3>
+        <p>The frontend uses Svelte 5, SvelteKit, TypeScript, TipTap, Markdown-It, Mermaid, KaTeX, syntax highlighting, and Tauri IPC. State is centralized in Svelte stores, and native commands are wrapped by a shared typed API module.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Area</th><th>Primary files</th><th>Responsibility</th></tr></thead>
+            <tbody>
+              <tr><td>Startup and routing</td><td><code>src/routes/+page.svelte</code><br><code>src/routes/capture/+page.svelte</code></td><td>Config restoration, vault opening, main/note-window mode, global capture.</td></tr>
+              <tr><td>Native boundary</td><td><code>src/lib/api.ts</code></td><td>Central typed wrapper over Tauri <code>invoke</code> and event APIs.</td></tr>
+              <tr><td>Application state</td><td><code>src/lib/stores/app.ts</code></td><td>Notes, active path, layout, view, repair, task, and dirty state.</td></tr>
+              <tr><td>Application shell</td><td><code>src/lib/components/AppLayout.svelte</code></td><td>Initialization, navigation, listeners, backup/sync scheduling, dialogs, responsive layout.</td></tr>
+              <tr><td>Editor</td><td><code>src/lib/components/Editor.svelte</code></td><td>TipTap/source editing, Markdown, persistence, attachments, AI, history, menus, and selection behavior.</td></tr>
+              <tr><td>Lists and graph</td><td><code>NoteList.svelte</code><br><code>GraphView.svelte</code></td><td>Navigation, virtualization, batch actions, explicit-link graph and physics.</td></tr>
+              <tr><td>Settings</td><td><code>SettingsPanel.svelte</code></td><td>AI, backup, sync, themes, display, and application configuration.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>Rust/Tauri backend</h3>
+        <p>The backend uses Rust, Tauri 2, plain Markdown/YAML source files, Tantivy as a derived index, filesystem watchers, WebDAV reconciliation, Reqwest/rustls networking, and platform-specific hotkey/autostart implementations.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Area</th><th>Primary files</th><th>Responsibility</th></tr></thead>
+            <tbody>
+              <tr><td>Runtime composition</td><td><code>src-tauri/src/lib.rs</code></td><td>Plugins, command registration, state, windows, tray, updater, logging, and lifecycle.</td></tr>
+              <tr><td>Application services</td><td><code>src-tauri/src/commands.rs</code></td><td>Vault transitions, note orchestration, search side effects, tasks, backup, import, sync, AI, and config.</td></tr>
+              <tr><td>Vault domain</td><td><code>src-tauri/src/vault/operations.rs</code><br><code>para.rs</code></td><td>Note/notebook lifecycle, frontmatter, PARA containment, attachments, trash, and restore.</td></tr>
+              <tr><td>Durable relocation</td><td><code>src-tauri/src/vault/relocation.rs</code></td><td>Staging, identity checks, fsync, rollback, and startup recovery.</td></tr>
+              <tr><td>Search</td><td><code>src-tauri/src/search/</code></td><td>Tantivy schema, indexing, reconciliation, and coalesced external updates.</td></tr>
+              <tr><td>Synchronization</td><td><code>src-tauri/src/sync.rs</code></td><td>Current in-process WebDAV three-way reconciliation and manifest.</td></tr>
+              <tr><td>Bulk workflows</td><td><code>backup.rs</code><br><code>vault/import.rs</code></td><td>ZIP backup/restore and Obsidian conversion.</td></tr>
+              <tr><td>Network safety</td><td><code>safe_fetch.rs</code><br><code>web_clipping.rs</code><br><code>image_proxy.rs</code></td><td>SSRF defenses, redirects, DNS pinning, extraction, and response limits.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="strengths">
+        <h2>What works well</h2>
+        <div class="grid-2">
+          <div class="card"><h3>Local-first source of truth</h3><p>Markdown/YAML remains authoritative while search is derived and rebuildable. This is the right ownership model for a durable notes application.</p></div>
+          <div class="card"><h3>PARA enforcement</h3><p>The four categories are enforced below the UI. Metadata drives reconciliation, unresolved notes enter a holding area, and category roots are protected.</p></div>
+          <div class="card"><h3>Transactional relocation</h3><p>Moves, renames, delete, and restore use staging, identity/content checks, recovery copies, manifests, rollback, and filesystem synchronization.</p></div>
+          <div class="card"><h3>Vault identity</h3><p>Machine-local identity claiming uses locking and cautious recovery instead of allowing competing or silently replaced identities.</p></div>
+          <div class="card"><h3>Search and watcher design</h3><p>Tantivy indexing is incremental and machine-local. External events are coalesced and interpreted from final filesystem state, improving cross-platform behavior.</p></div>
+          <div class="card"><h3>Secure public fetching</h3><p>Clipping and image fetching reject private destinations and URL credentials, pin DNS results, revalidate redirects, and cap response sizes.</p></div>
+          <div class="card"><h3>Quick capture safeguards</h3><p>The capture window has minimal capabilities, preserves text on failure, requires explicit filing, and protects against accidental dismissal.</p></div>
+          <div class="card"><h3>Linux delivery checks</h3><p>CI performs full project verification, builds deb and rpm packages, and validates the desktop entry required by the Linux global-shortcut design.</p></div>
+        </div>
+      </section>
+
+      <section id="critical">
+        <h2>Critical finding</h2>
+        <article class="finding">
+          <div class="finding-head"><h3>SEC-01 — WebDAV remote paths can escape the vault</h3><span class="pill critical">Critical · high confidence</span></div>
+          <div class="finding-body">
+            <p>Server-controlled WebDAV <code>href</code> paths are percent-decoded, stripped using lexical string-prefix logic, and returned without rejecting parent components, roots, platform prefixes, backslashes, or decoded separators. The resulting string is later passed to <code>vault.join(relpath)</code> and written.</p>
+            <pre><code>let target = vault.join(relpath);
+fs::write(&amp;target, bytes)</code></pre>
+            <p>A malicious or compromised configured endpoint could provide a path such as an encoded <code>../outside.md</code> and potentially overwrite files outside the vault with the application user's permissions. An existing symlink in the destination path can produce a similar escape.</p>
+            <p><strong>Required correction:</strong> construct validated portable path components; reject dot/parent/root/prefix and decoded separator forms; require a component-boundary match with the configured base; use no-follow destination opens; and recheck containment beneath the canonical vault before committing a write.</p>
+            <div class="evidence"><strong>Evidence:</strong> <code>src-tauri/src/sync.rs:129-134</code>, <code>src-tauri/src/sync.rs:403-436</code>, and download/conflict writes in <code>src-tauri/src/sync.rs:522-703</code>. The current sync test covers only the synced-path allowlist, not hostile href mapping.</div>
+          </div>
+        </article>
+      </section>
+
+      <section id="high">
+        <h2>High-severity findings</h2>
+        <article class="finding">
+          <div class="finding-head"><h3>DATA-01 — Backup restore deletes live data before extraction is proven</h3><span class="pill high">High · high confidence</span></div>
+          <div class="finding-body">
+            <p>Restore opens the ZIP, deletes all visible vault content and attachments, and then extracts directly into the live tree. A corrupt later member, CRC/decompression failure, permission error, disk-full condition, or process termination can leave the vault empty or partially restored.</p>
+            <p><strong>Recommendation:</strong> validate quotas and entry types, extract into a sibling staging tree, fsync it, and atomically swap it with the live tree while retaining a rollback copy. Serialize restore against edits and vault transitions.</p>
+            <div class="evidence"><strong>Evidence:</strong> <code>src-tauri/src/backup.rs:182-259</code>; restore command threading in <code>src-tauri/src/commands.rs:2884-2917</code>.</div>
+          </div>
+        </article>
+
+        <article class="finding">
+          <div class="finding-head"><h3>DATA-02 — Pre-switch save can clear dirty state without a successful save</h3><span class="pill high">High · high confidence</span></div>
+          <div class="finding-body">
+            <p>Normal autosaves use a promise queue, but <code>flushSave()</code> bypasses it. It calls asynchronous <code>saveNote()</code> without awaiting, queueing, or catching a rejected promise, then unconditionally clears <code>editorDirty</code>. Its synchronous <code>try/catch</code> cannot catch asynchronous rejection.</p>
+            <p>The same path refuses to save an empty body over a previously substantial note, so a user cannot intentionally clear a note through normal save paths.</p>
+            <p><strong>Recommendation:</strong> make navigation await an immutable queued save request; clear dirty state only after success; preserve and expose failed state; and replace the content-length heuristic with explicit serialization-validity handling that permits intentional empty notes.</p>
+            <div class="evidence"><strong>Evidence:</strong> queue/autosave at <code>src/lib/components/Editor.svelte:3014-3068</code>; unsafe flush at <code>src/lib/components/Editor.svelte:3303-3320</code>.</div>
+          </div>
+        </article>
+
+        <article class="finding">
+          <div class="finding-head"><h3>DATA-03 — Sync decisions race active note edits</h3><span class="pill high">High · high confidence</span></div>
+          <div class="finding-body">
+            <p>Sync prevents overlapping sync jobs but does not acquire the normal note mutation lock. It scans hashes first, then later applies decisions from that stale snapshot. A note edited after scanning can still be deleted by the remote-deleted/local-unchanged branch.</p>
+            <p><strong>Recommendation:</strong> coordinate sync through a vault-scoped transaction, or re-read and identity/hash-check every file immediately before destructive overwrite or delete. Failure to remove a file must not be counted as a successful deletion.</p>
+            <div class="evidence"><strong>Evidence:</strong> <code>src-tauri/src/commands.rs:3226-3261</code>; scan/apply and deletion branches in <code>src-tauri/src/sync.rs:522-748</code>.</div>
+          </div>
+        </article>
+
+        <article class="finding">
+          <div class="finding-head"><h3>DATA-04 — Vault switching during sync can rebuild the wrong search runtime</h3><span class="pill high">High · high confidence</span></div>
+          <div class="finding-body">
+            <p>Sync captures the old vault path. At completion it retrieves whichever search index is currently active and rebuilds it using that old path. If the user changes vaults during sync, the current search instance can be populated from the previous vault.</p>
+            <p><strong>Recommendation:</strong> bind background work to a vault ID/generation and the specific <code>Arc&lt;SearchIndex&gt;</code> captured at start. Reject side effects and events from stale generations.</p>
+            <div class="evidence"><strong>Evidence:</strong> active search replacement in <code>src-tauri/src/commands.rs:453-458</code>; post-sync rebuild in <code>src-tauri/src/sync.rs:750-753</code>.</div>
+          </div>
+        </article>
+
+        <article class="finding">
+          <div class="finding-head"><h3>DATA-05 — Notes and application configuration are not atomically replaced</h3><span class="pill high">High · high confidence</span></div>
+          <div class="finding-body">
+            <p>Ordinary note saves use direct <code>fs::write</code>. Application config opens the live file with <code>truncate(true)</code>. A crash or disk-full event can leave either file truncated. Existing unreadable or malformed application config silently becomes <code>AppConfig::default()</code>, making vault registrations, settings, and credentials appear lost.</p>
+            <p>The sync manifest has the same direct-write/default-on-corruption pattern; its isolated impact is lower, but corruption changes three-way reconciliation history.</p>
+            <p><strong>Recommendation:</strong> use one same-directory temp + write + <code>sync_all</code> + atomic replace + parent-fsync primitive. Preserve a verified prior generation and surface corruption rather than silently defaulting.</p>
+            <div class="evidence"><strong>Evidence:</strong> notes at <code>src-tauri/src/vault/operations.rs:618-637</code>; config at <code>src-tauri/src/commands.rs:3398-3481</code>; manifest at <code>src-tauri/src/sync.rs:59-84</code>.</div>
+          </div>
+        </article>
+
+        <article class="finding">
+          <div class="finding-head"><h3>SEC-02 — File symlinks can cross the vault boundary</h3><span class="pill high">High · high confidence</span></div>
+          <div class="finding-body">
+            <p>Bulk scanners do not recursively follow directory symlinks, but they can treat file symlinks as regular files because they use target-following <code>is_file</code>, <code>File::open</code>, and <code>fs::read</code>. This can upload or back up an outside file. A sync download onto an existing file symlink can overwrite the outside target.</p>
+            <p><strong>Recommendation:</strong> reject symlink entries via directory-entry file types and <code>symlink_metadata</code>; use no-follow opens for destination files; and apply the normal note-path containment policy to every bulk workflow.</p>
+            <div class="evidence"><strong>Evidence:</strong> sync scanning/writes in <code>src-tauri/src/sync.rs:129-168</code>; backup scanning in <code>src-tauri/src/backup.rs:66-106</code>.</div>
+          </div>
+        </article>
+      </section>
+
+      <section id="medium">
+        <h2>Medium and lower-severity findings</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>ID</th><th>Finding</th><th>Impact and recommendation</th></tr></thead>
+            <tbody>
+              <tr><td><span class="pill medium">DATA-06</span></td><td>Window close does not reliably drain pending saves.</td><td>Component teardown calls the unsafe fire-and-forget flush, while native close paths do not await debounce/blob/save completion. Add a close handshake with retry/discard behavior.</td></tr>
+              <tr><td><span class="pill medium">AI-01</span></td><td>AI stream events omit request identity.</td><td>Overlapping requests or windows can consume stale text/done/error events. Include request ID and origin window in every event and support cancellation.</td></tr>
+              <tr><td><span class="pill medium">IDX-01</span></td><td>Search rebuild can silently omit notes.</td><td>Walk, document-build, and add failures can be ignored before a partial index is committed. Aggregate failures and connect them to the repair ledger.</td></tr>
+              <tr><td><span class="pill medium">IMP-01</span></td><td>Import can report false or incomplete success.</td><td>Several read/write errors are suppressed while conversion counts advance. Return structured partial failures and use atomic rewrites.</td></tr>
+              <tr><td><span class="pill medium">PERF-01</span></td><td>Graph layout is O(N²) per iteration.</td><td>All-pairs repulsion plus synchronous startup iterations can freeze large vaults. Move layout to a worker and use Barnes–Hut/spatial bucketing.</td></tr>
+              <tr><td><span class="pill medium">UX-01</span></td><td>Async note and search requests can resolve out of order.</td><td>Rapid navigation or query changes can commit stale responses. Add request generations or cancellation and commit only the latest response.</td></tr>
+              <tr><td><span class="pill medium">UX-02</span></td><td>Important failures are frequently console-only.</td><td>Autosave and mutation errors need persistent, actionable UI states such as “Save failed—retry,” not only logs.</td></tr>
+              <tr><td><span class="pill medium">A11Y-01</span></td><td>Zoom, selection, overlay, and graph accessibility gaps.</td><td>Re-enable browser/pinch zoom, scope no-selection CSS to controls, introduce shared modal focus behavior, and provide a textual keyboard-accessible graph alternative.</td></tr>
+              <tr><td><span class="pill medium">SEC-03</span></td><td>Provider and sync secrets remain in JSON and webview state.</td><td>Unix mode <code>0600</code> is positive, but OS keychain storage and redacted IPC would reduce renderer and backup exposure.</td></tr>
+              <tr><td><span class="pill medium">SEC-04</span></td><td>WebDAV permits plaintext Basic authentication and unbounded bodies.</td><td>Require HTTPS by default, make LAN HTTP an explicit warned exception, and stream remote objects through size-capped staging files.</td></tr>
+              <tr><td><span class="pill medium">DOC-01</span></td><td>README/SPEC describe a materially different product.</td><td>Mark features as shipped/in progress/planned and resolve the sidecar-versus-WebDAV architecture before further sync investment.</td></tr>
+              <tr><td><span class="pill medium">QA-01</span></td><td>CI is Linux-only and integrated desktop coverage is limited.</td><td>Add Windows/macOS native checks and a small rendered/Tauri smoke suite, focusing first on save, restore, sync, and lifecycle behavior.</td></tr>
+              <tr><td><span class="pill medium">MAINT-01</span></td><td>Core Svelte components are too broad.</td><td>Extract persistence/navigation, AI sessions, attachments, graph layout, operation status, theme application, and shared modals from the editor/app/settings monoliths.</td></tr>
+              <tr><td><span class="pill low">HYG-01</span></td><td>Future frontend tests are ignored by <code>/tests/</code>.</td><td>Existing tests remain tracked, but new files can be hidden from Git. Remove or narrow the ignore rule.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="product">
+        <h2>Product and specification alignment</h2>
+        <p>The running product is a capable local-first Markdown application, but several defining features described in the README and authoritative SPEC are not implemented. The documentation should distinguish target architecture from shipped behavior.</p>
+        <div class="grid-2">
+          <div class="card">
+            <h3>Implemented now</h3>
+            <ul class="checklist">
+              <li>Plain Markdown/YAML storage</li>
+              <li>PARA filing, holding area, and reconciliation</li>
+              <li>TipTap and source-mode editing</li>
+              <li>Windows/Linux global quick capture</li>
+              <li>Tantivy keyword/fuzzy search</li>
+              <li>Explicit wiki-link graph</li>
+              <li>Tasks, attachments, trash, history, and backups</li>
+              <li>Security-hardened URL clipping</li>
+              <li>In-process WebDAV synchronization</li>
+              <li>Local or cloud AI writing assistance</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Documented but not found</h3>
+            <ul>
+              <li>SQLite embedding storage and semantic search/Q&amp;A</li>
+              <li>Capture-time similarity or duplicate detection</li>
+              <li>Semantic graph edges and link promotion</li>
+              <li>Voice recording and whisper.cpp transcription</li>
+              <li>Bundled synchronization sidecar via <code>externalBin</code></li>
+              <li>Explicit device pairing and Tailscale workflow</li>
+              <li>Notion publishing</li>
+              <li>Conflict-pair review and choose-one UI</li>
+            </ul>
+          </div>
+        </div>
+        <h3>Primary contradictions</h3>
+        <ul>
+          <li><strong>Sync:</strong> the SPEC says the project does not author the sync engine and uses a bundled sidecar; the code authors an in-process WebDAV reconciler.</li>
+          <li><strong>Sync boundary:</strong> the SPEC says trash/history sync; the current path explicitly excludes them.</li>
+          <li><strong>AI privacy:</strong> README language presents local/no-cloud AI, while the settings support Anthropic, OpenAI, Ollama, and arbitrary OpenAI-compatible providers.</li>
+          <li><strong>Brand/release identity:</strong> user-facing product docs say Second Brain while package, updater, config, and UI areas retain HelixNotes identity.</li>
+          <li><strong>Platform scope:</strong> README advertises Windows/Linux and the SPEC excludes mobile, while inherited mobile-specific paths remain in the codebase.</li>
+        </ul>
+        <div class="callout warn"><strong>Recommendation:</strong> add a maintained feature-status matrix with <em>Shipped</em>, <em>In progress</em>, and <em>Planned</em>. Treat the sync architecture decision as a product decision before treating implementation and documentation drift as a simple cleanup.</div>
+      </section>
+
+      <section id="verification">
+        <h2>Verification evidence</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Check</th><th>Result</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td>Repository state</td><td><span class="pill good">Pass</span></td><td>Clean <code>main</code> baseline at <code>76cecc3d</code>; <code>git diff --check</code> passed.</td></tr>
+              <tr><td>Svelte/TypeScript check</td><td><span class="pill good">Pass</span></td><td><strong>0 errors, 0 warnings</strong> in an isolated temporary clone.</td></tr>
+              <tr><td>Frontend tests</td><td><span class="pill good">Pass</span></td><td><strong>33 of 33</strong> tests passed.</td></tr>
+              <tr><td>Frontend production build</td><td><span class="pill good">Pass</span></td><td>Vite/SvelteKit static build completed successfully.</td></tr>
+              <tr><td>Local Rust test attempt</td><td><span class="pill medium">Environment blocked</span></td><td>The sandbox lacks the system <code>gdk-3.0</code> package. Cargo target output was redirected outside the repository.</td></tr>
+              <tr><td>Exact-commit GitHub Verify</td><td><span class="pill good">Pass</span></td><td>Full project verification on Rust 1.88 passed for the reviewed commit.</td></tr>
+              <tr><td>Linux deb/rpm packages</td><td><span class="pill good">Pass</span></td><td>Both unsigned packages built and passed desktop-entry verification.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>CI evidence: <a href="https://github.com/zulucode-design/second-brain/actions/runs/34293447117">GitHub Actions run 34293447117</a>.</p>
+        <div class="callout"><strong>Interpretation:</strong> green tests and builds establish baseline health, but do not invalidate the concurrency, crash-consistency, or hostile-input findings. Those paths currently lack the focused fault-injection and adversarial tests needed to expose them.</div>
+      </section>
+
+      <section id="testing">
+        <h2>Testing and delivery assessment</h2>
+        <h3>Existing strengths</h3>
+        <p>Rust tests substantially cover PARA rules, relocation recovery, vault identity, watcher behavior, search reconciliation, frontmatter, safe-fetch URL policy, clipping, and repair persistence. Frontend tests cover policy and utility behavior for creation, paths, PARA UI, virtualization, startup, sync settings, Markdown round-tripping, and clipping.</p>
+        <h3>Highest-value missing tests</h3>
+        <ol>
+          <li>Encoded WebDAV traversal, base-prefix confusion, Windows drive/UNC forms, and symlink destinations.</li>
+          <li>Sync/edit race, vault switch during sync, manifest corruption, server without reliable ETags, and two-machine convergence.</li>
+          <li>Restore archive corruption, disk-full, expansion quotas, process interruption, and rollback.</li>
+          <li>Editor save ordering, intentional empty-note save, close during debounce, and failed persistence.</li>
+          <li>Simultaneous AI requests from multiple windows and exact request correlation.</li>
+          <li>Rendered Svelte interaction and native Tauri launch/edit/reopen/capture/tray smoke tests.</li>
+        </ol>
+        <h3>Delivery gaps</h3>
+        <ul>
+          <li>The sole CI runner is Ubuntu; Windows- and macOS-specific native code is not compiled or packaged in CI.</li>
+          <li>There is no complete signed release, notarization, updater-metadata, clean-install, or rollback workflow.</li>
+          <li>Supply-chain automation such as advisory checks, license policy, SBOM, and provenance is absent.</li>
+          <li>The updater configuration retains inherited infrastructure and should be validated for ownership and key custody before release.</li>
+        </ul>
+      </section>
+
+      <section id="roadmap">
+        <h2>Prioritized remediation roadmap</h2>
+        <ol class="roadmap">
+          <li>
+            <h3>Release-blocking security and data safety</h3>
+            <ol>
+              <li>Fix WebDAV path construction and add no-follow destination writes.</li>
+              <li>Make restore staged, bounded, atomic, and recoverable.</li>
+              <li>Serialize sync with note mutations and vault transitions.</li>
+              <li>Revalidate identity/hash immediately before sync delete or overwrite.</li>
+              <li>Bind every background job and completion event to a vault generation.</li>
+              <li>Reject symlinks consistently in sync, backup, import, and restore.</li>
+            </ol>
+          </li>
+          <li>
+            <h3>Persistence correctness and editor lifecycle</h3>
+            <ol>
+              <li>Introduce a shared crash-safe atomic-write primitive.</li>
+              <li>Use it for notes, config, sync manifest, notebook icons, and import rewrites.</li>
+              <li>Preserve corrupt files and expose repair state instead of silently defaulting.</li>
+              <li>Replace <code>flushSave()</code> with an awaited save coordinator.</li>
+              <li>Permit intentional empty notes through explicit validation.</li>
+              <li>Add a close/save handshake and persistent save-error UI.</li>
+            </ol>
+          </li>
+          <li>
+            <h3>Correctness visibility, tests, and platform confidence</h3>
+            <ol>
+              <li>Correlate and cancel AI stream requests.</li>
+              <li>Report partial search/import failures through the repair and operation UI.</li>
+              <li>Add hostile-input and fault-injection suites for sync, restore, and writes.</li>
+              <li>Add Windows and macOS CI plus a minimal integrated desktop smoke suite.</li>
+              <li>Reconcile README, SPEC, ADRs, and shipped behavior.</li>
+              <li>Decide whether WebDAV or a bundled sidecar is the supported sync architecture.</li>
+            </ol>
+          </li>
+          <li>
+            <h3>Scale, maintainability, accessibility, and release polish</h3>
+            <ol>
+              <li>Move graph layout to a worker and replace all-pairs repulsion.</li>
+              <li>Extract persistence, AI, attachments, graph, modal, theme, and operation-status services from monolithic components.</li>
+              <li>Restore user zoom and text selection; complete modal and graph accessibility.</li>
+              <li>Remove the broad <code>/tests/</code> ignore rule.</li>
+              <li>Complete product rebranding, updater ownership, signing, and release documentation.</li>
+            </ol>
+          </li>
+        </ol>
+      </section>
+
+      <section id="limitations">
+        <h2>Known limitations and unverified areas</h2>
+        <p>This review was primarily static and did not claim to prove runtime behavior that requires real desktop environments, remote services, accessibility tooling, or fault injection. Before release, manually or automatically verify:</p>
+        <ul>
+          <li>Power-loss and disk-full behavior for note, config, restore, import, and sync writes.</li>
+          <li>Hostile WebDAV listings, encoded paths, oversized responses, unstable/no ETags, TLS/auth behavior, and interrupted reconciliation.</li>
+          <li>Window close timing and process shutdown while saves or background jobs are active.</li>
+          <li>Windows global shortcut conflicts, autostart, notifications, installer behavior, and native close lifecycle.</li>
+          <li>Linux portal behavior across representative Wayland/X11 desktop environments.</li>
+          <li>Graph performance at 1k and 10k notes.</li>
+          <li>Keyboard-only, screen-reader, reduced-motion, high-contrast, and zoom behavior.</li>
+          <li>Raw HTML/URL payload handling through clipping and imported Markdown in the final TipTap DOM.</li>
+        </ul>
+      </section>
+
+      <section id="conclusion">
+        <h2>Conclusion</h2>
+        <p>The repository has a strong core and several examples of excellent engineering, particularly transactional relocation, PARA enforcement, vault identity, machine-local search, watcher coalescing, capture isolation, and safe public-web fetching.</p>
+        <p>The central inconsistency is that newer safety-focused subsystems are robust while ordinary saves, restore, import, and WebDAV do not yet use the same containment and transaction model. Applying the relocation layer's durability discipline across those workflows would eliminate much of the current risk.</p>
+        <div class="gate"><strong>Recommended order:</strong> WebDAV containment → transactional restore → sync/edit serialization → atomic persistence → editor save lifecycle → targeted tests → additional product features.</div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="wrap">
+    <p>Repository review recorded 2026-09-09 for <code>zulucode-design/second-brain</code> at commit <code>76cecc3ddbfd4ff96df5539a580c3fb03cedda9e</code>. This is a self-contained report with no external scripts, stylesheets, fonts, or images.</p>
+  </footer>
+</body>
+</html>
