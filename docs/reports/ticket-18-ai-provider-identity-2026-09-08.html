@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ticket #18 — AI provider identity</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+      body { max-width: 960px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.55; }
+      h1, h2 { color: #f9fafb; } code { background: #1f2937; padding: .12rem .3rem; border-radius: .25rem; }
+      .status { display: inline-block; border-radius: 999px; padding: .2rem .65rem; font-weight: 700; }
+      .pass { background: #064e3b; color: #a7f3d0; } .pending { background: #78350f; color: #fde68a; }
+      table { border-collapse: collapse; width: 100%; } th, td { text-align: left; border-bottom: 1px solid #374151; padding: .65rem; vertical-align: top; }
+      .callout { border-left: 4px solid #60a5fa; background: #172554; padding: .9rem 1rem; }
+    </style>
+  </head>
+  <body>
+    <p><span class="status pass">Implementation complete</span> <span class="status pass">Manual verification passed</span></p>
+    <h1>Ticket #18 — AI provider identity and probeable backends</h1>
+    <p>Updated 2026-09-08. This report records the implementation and automated evidence for
+      replacing scattered provider strings with explicit, capability-based provider contracts.</p>
+
+    <h2>What changed</h2>
+    <ul>
+      <li>Rust configuration now stores an <code>AiProvider</code> enum while serializing the same
+        existing IDs. Unknown legacy IDs survive a load/save cycle instead of invalidating the config.</li>
+      <li><code>ConfiguredAiProvider</code> owns key selection, configurable-address behavior,
+        API-key requirements, probeability, and health-target construction.</li>
+      <li>The health probe supports both Ollama's <code>/api/tags</code> response and the
+        OpenAI-compatible <code>/v1/models</code> response, including optional bearer authentication.</li>
+      <li>Fast refusal is provider-independent and applies only to an unavailable result for the
+        exact current target generation. Switching provider, endpoint, model, protocol, or credentials
+        invalidates stale health.</li>
+      <li>TypeScript uses an <code>AiProvider</code> union and exhaustive capability table. Both local
+        provider choices display live status and the manual “Check now” action.</li>
+    </ul>
+
+    <h2>Acceptance criteria</h2>
+    <table>
+      <thead><tr><th>Criterion</th><th>Status</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Provider is typed, not a bare string</td><td><span class="status pass">Met</span></td><td>Rust enum plus TypeScript union; network routing matches exhaustively on the enum.</td></tr>
+        <tr><td>Tracking follows probeability</td><td><span class="status pass">Met</span></td><td>Capability profile creates targets for Ollama and configured OpenAI-compatible backends.</td></tr>
+        <tr><td>OpenAI-compatible local server receives status, reason, and fast refusal</td><td><span class="status pass">Met</span></td><td>Socket-level tests plus manual healthy, outage, refusal, and recovery checks against a local dual-protocol fixture.</td></tr>
+        <tr><td>New provider cases fail compilation until handled</td><td><span class="status pass">Met</span></td><td>Exhaustive Rust matches and <code>Record&lt;AiProvider, AiProviderMetadata&gt;</code>.</td></tr>
+        <tr><td>Existing saved settings load unchanged</td><td><span class="status pass">Met</span></td><td>Known and unknown provider IDs have serialization round-trip tests.</td></tr>
+        <tr><td>Provider switches update tracking without restart</td><td><span class="status pass">Met</span></td><td>Protocol changes fail <code>same_probe_settings</code>, advance the generation, reset status, and schedule an immediate probe; manually verified switching between reachable Ollama and OpenAI Compatible targets.</td></tr>
+        <tr><td>No Ollama behavior regression</td><td><span class="status pass">Automated</span></td><td>Existing Ollama probe matrix, authentication, default URL, timeout, and model matching tests pass.</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Automated verification</h2>
+    <table>
+      <thead><tr><th>Check</th><th>Status</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Svelte and TypeScript</td><td><span class="status pass">Passed</span></td><td><code>pnpm check</code>: 0 errors, 0 warnings.</td></tr>
+        <tr><td>Frontend behavior tests</td><td><span class="status pass">Passed</span></td><td><code>pnpm test</code>: 33 passed.</td></tr>
+        <tr><td>Rust behavior tests</td><td><span class="status pass">Passed</span></td><td><code>pnpm test:rust</code>: 309 passed, 3 environment-dependent tests intentionally ignored.</td></tr>
+        <tr><td>Formatting and strict Clippy</td><td><span class="status pass">Passed</span></td><td><code>cargo fmt --check</code> and <code>cargo clippy --all-targets -- -D warnings</code>.</td></tr>
+        <tr><td>Production build</td><td><span class="status pass">Passed</span></td><td><code>pnpm build</code>; existing non-blocking bundle-size advisory only.</td></tr>
+        <tr><td>Complete gate</td><td><span class="status pass">Passed</span></td><td><code>pnpm verify</code>. The first post-review run hit one intermittent, unrelated crash-recovery test failure; that test passed immediately on its mandated-wrapper rerun and again in the complete successful gate.</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Review remediation</h2>
+    <p>The final independent re-review found <strong>0 Standards violations</strong> and
+      <strong>0 Spec findings</strong>. The Standards axis raised one judgement call about
+      repeated exhaustive provider/protocol matches. It was retained intentionally: those
+      matches are centralized in the provider and health modules and make a newly added case
+      fail compilation until its capabilities and wire behavior are handled, as ticket #18 requires.</p>
+    <ul>
+      <li>The provider profile now resolves one secret-safe request-settings object, eliminating
+        duplicate URL normalization, repeated provider dispatch, and repeated settings tuples.</li>
+      <li>OpenAI-compatible model discovery accepts Ollama's bare-name to <code>:latest</code>
+        equivalence, preventing false unavailability for the same Ollama model.</li>
+      <li>The exhaustive frontend metadata drives provider buttons, keys, model controls,
+        privacy text, defaults, and server behavior. The shared status snippet preserves the
+        existing Ollama Server URL → Status → API Key order.</li>
+    </ul>
+
+    <h2>Manual verification</h2>
+    <p>Passed on 2026-09-08 using the Linux/WSLg development build and a disposable local
+      server that exposed both Ollama and OpenAI-compatible discovery contracts.</p>
+    <ol>
+      <li>Selected OpenAI Compatible with <code>http://127.0.0.1:18018/v1</code> and
+        <code>gemma3</code>. The app normalized the displayed target to
+        <code>http://127.0.0.1:18018</code>, matched the advertised
+        <code>gemma3:latest</code>, reported reachable, and passed “Test Connection.”</li>
+      <li>Ran an editor AI action, received the fixture's streamed response, previewed it,
+        and replaced the selected text successfully.</li>
+      <li>Stopped the server and used “Check now.” Settings displayed an actionable
+        OpenAI-compatible-specific reason with no Ollama wording; the editor refused the
+        next AI action immediately with the same reason and left the note unchanged.</li>
+      <li>Restarted the server. Background probing restored reachable status and a second
+        AI action succeeded without restarting HelixNotes.</li>
+      <li>Switched to Ollama and back to OpenAI Compatible. Both protocols independently
+        reached the dual-protocol fixture without restarting the app.</li>
+    </ol>
+
+    <h2>Deferred findings from the session</h2>
+    <ul>
+      <li><strong><a href="https://github.com/zulucode-design/second-brain/issues/52">#52</a>:</strong> the editor context menu and lower submenus can be clipped by
+        the bottom window edge. This is a separate, pre-existing positioning defect.</li>
+      <li><strong><a href="https://github.com/zulucode-design/second-brain/issues/53">#53</a>:</strong> switching providers replaces the shared model with each
+        provider's default. This pre-existing behavior avoids cross-provider model mismatch
+        but loses custom choices; the follow-up tracks provider-specific remembered models.</li>
+    </ul>
+
+    <div class="callout">
+      <strong>Still not tested:</strong> a real third-party OpenAI-compatible application,
+      actual machine sleep/wake recovery, and preservation of a pre-existing saved Ollama
+      profile (the test profile began with AI disabled). Visual status rendering and live
+      outage/recovery were verified manually. Automated tests cover serialization compatibility,
+      Ollama regressions, HTTP contracts, auth headers, target identity, status transitions,
+      and the refusal rule.
+    </div>
+  </body>
+</html>

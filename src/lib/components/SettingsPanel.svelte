@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, activeVaultConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
 	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings } from '$lib/api';
+	import type { AiProvider } from '$lib/types';
+	import { AI_PROVIDER_METADATA, AI_PROVIDER_OPTIONS } from '$lib/utils/ai-provider';
 	import { darkThemes, isMobile, isAndroid, isLinux, isWindows } from '$lib/platform';
 	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
@@ -281,12 +283,18 @@
 	}
 
 	// AI state
-	let aiProvider = $state<string | null>($appConfig?.ai_provider ?? null);
+	let aiProvider = $state<AiProvider | null>($appConfig?.ai_provider ?? null);
+	let aiProviderMetadata = $derived(
+		aiProvider ? AI_PROVIDER_METADATA[aiProvider] : null,
+	);
 	let aiApiKey = $derived.by(() => {
-		if (aiProvider === 'openai') return _openaiKey;
-		if (aiProvider === 'ollama') return '';
-		if (aiProvider === 'openai_compatible') return _openaiCompatibleKey;
-		return _anthropicKey;
+		switch (aiProviderMetadata?.keySlot) {
+			case 'anthropic': return _anthropicKey;
+			case 'openai': return _openaiKey;
+			case 'ollama': return _ollamaApiKey;
+			case 'openaiCompatible': return _openaiCompatibleKey;
+			default: return '';
+		}
 	});
 	let _anthropicKey = $state($appConfig?.ai_api_key ?? '');
 	let _openaiKey = $state($appConfig?.openai_api_key ?? '');
@@ -313,10 +321,19 @@
 		{ value: 'gpt-5-mini', label: 'GPT-5 Mini', desc: 'Fast' },
 		{ value: 'gpt-5.2', label: 'GPT-5.2', desc: 'Previous gen' },
 	];
-	let aiModels = $derived(aiProvider === 'openai' ? openaiModels : anthropicModels);
+	let aiModels = $derived(aiProviderMetadata?.modelInput === 'openaiChoices' ? openaiModels : anthropicModels);
+
+	function updateCloudAiKey(value: string) {
+		switch (aiProviderMetadata?.keySlot) {
+			case 'anthropic': _anthropicKey = value; break;
+			case 'openai': _openaiKey = value; break;
+			case 'ollama': _ollamaApiKey = value; break;
+			case 'openaiCompatible': _openaiCompatibleKey = value; break;
+		}
+	}
 
 	async function saveAiSettings() {
-		const baseUrl = aiProvider === 'ollama' ? (_ollamaBaseUrl || null) : null;
+		const baseUrl = aiProviderMetadata?.serverKind === 'ollama' ? (_ollamaBaseUrl || null) : null;
 		await setAiSettings(
 			aiProvider,
 			aiApiKey || null,
@@ -1163,6 +1180,31 @@
 		}
 	});
 </script>
+
+{#snippet aiHealthStatusSection()}
+	<div class="settings-section">
+		<h3>Status</h3>
+		<div class="ai-status" class:unavailable={$aiStatus.availability === 'unavailable'} class:available={$aiStatus.availability === 'available'}>
+			<span class="ai-status-dot"></span>
+			<span>
+				{#if $aiStatus.availability === 'available'}
+					Reachable{$aiStatus.endpoint ? ` at ${$aiStatus.endpoint}` : ''}
+				{:else if $aiStatus.availability === 'unavailable'}
+					{$aiStatus.reason ?? 'Unreachable'}
+				{:else}
+					Not checked yet
+				{/if}
+			</span>
+		</div>
+		<button class="btn-secondary" disabled={aiStatusChecking} onclick={checkAiStatus}>
+			{aiStatusChecking ? 'Checking…' : 'Check now'}
+		</button>
+		<p class="setting-hint">
+			Checked automatically in the background. AI features switch themselves back
+			on when the machine becomes reachable again &mdash; no restart needed.
+		</p>
+	</div>
+{/snippet}
 
 {#if $showSettings}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -2225,21 +2267,20 @@
 								<h3>Provider</h3>
 								<div class="setting-options" style="flex-wrap: wrap;">
 									<button class="option-btn" class:active={!aiProvider} onclick={() => { if (!aiProvider) return; aiProvider = null; aiTestMessage = null; saveAiSettings(); }}>Disabled</button>
-									<button class="option-btn" class:active={aiProvider === 'ollama'} onclick={() => { if (aiProvider === 'ollama') return; aiProvider = 'ollama'; aiModel = 'gemma3:4b'; aiTestMessage = null; saveAiSettings(); }}>Ollama</button>
-									<button class="option-btn" class:active={aiProvider === 'anthropic'} onclick={() => { if (aiProvider === 'anthropic') return; aiProvider = 'anthropic'; aiModel = 'claude-sonnet-4-6'; aiTestMessage = null; saveAiSettings(); }}>Anthropic</button>
-									<button class="option-btn" class:active={aiProvider === 'openai'} onclick={() => { if (aiProvider === 'openai') return; aiProvider = 'openai'; aiModel = 'gpt-5.5'; aiTestMessage = null; saveAiSettings(); }}>OpenAI</button>
-									<button class="option-btn" class:active={aiProvider === 'openai_compatible'} onclick={() => { if (aiProvider === 'openai_compatible') return; aiProvider = 'openai_compatible'; aiModel = ''; aiTestMessage = null; saveAiSettings(); }}>OpenAI Compatible</button>
+									{#each AI_PROVIDER_OPTIONS as [providerOption, metadata]}
+										<button class="option-btn" class:active={aiProvider === providerOption} onclick={() => { if (aiProvider === providerOption) return; aiProvider = providerOption; aiModel = metadata.defaultModel; aiTestMessage = null; saveAiSettings(); }}>{metadata.label}</button>
+									{/each}
 								</div>
 							</div>
 
 							{#if aiProvider}
-								{#if aiProvider === 'ollama' || aiProvider === 'openai_compatible'}
+								{#if aiProviderMetadata?.hasConfigurableAddress}
 									<p class="setting-hint" style="color: var(--text-success, #4ade80); margin-top: -4px; margin-bottom: 12px;">Your data stays on your device. No text is sent to any external server.</p>
 								{:else}
-									<p class="setting-hint" style="color: var(--text-warning, #f59e0b); margin-top: -4px; margin-bottom: 12px;">Your selected text and note content will be sent to {aiProvider === 'openai' ? 'OpenAI' : 'Anthropic'} servers for processing.</p>
+									<p class="setting-hint" style="color: var(--text-warning, #f59e0b); margin-top: -4px; margin-bottom: 12px;">Your selected text and note content will be sent to {aiProviderMetadata?.remoteService} servers for processing.</p>
 								{/if}
 
-								{#if aiProvider === 'ollama'}
+								{#if aiProviderMetadata?.serverKind === 'ollama'}
 									<div class="settings-section">
 										<h3>Server URL</h3>
 										<input
@@ -2260,29 +2301,8 @@
 											what keeps it reachable only to your own machines.
 										</p>
 									</div>
+									{@render aiHealthStatusSection()}
 
-									<div class="settings-section">
-										<h3>Status</h3>
-										<div class="ai-status" class:unavailable={$aiStatus.availability === 'unavailable'} class:available={$aiStatus.availability === 'available'}>
-											<span class="ai-status-dot"></span>
-											<span>
-												{#if $aiStatus.availability === 'available'}
-													Reachable{$aiStatus.endpoint ? ` at ${$aiStatus.endpoint}` : ''}
-												{:else if $aiStatus.availability === 'unavailable'}
-													{$aiStatus.reason ?? 'Unreachable'}
-												{:else}
-													Not checked yet
-												{/if}
-											</span>
-										</div>
-										<button class="btn-secondary" disabled={aiStatusChecking} onclick={checkAiStatus}>
-											{aiStatusChecking ? 'Checking…' : 'Check now'}
-										</button>
-										<p class="setting-hint">
-											Checked automatically in the background. AI features switch themselves back
-											on when the machine becomes reachable again &mdash; no restart needed.
-										</p>
-									</div>
 									<div class="settings-section">
 										<h3>API Key <span style="font-weight: 400; text-transform: none; font-size: 11px;">(optional)</span></h3>
 										<div class="ai-key-row">
@@ -2303,7 +2323,7 @@
 											</button>
 										</div>
 									</div>
-								{:else if aiProvider === 'openai_compatible'}
+								{:else if aiProviderMetadata?.serverKind === 'openaiCompatible'}
 									<div class="settings-section">
 										<h3>Server URL</h3>
 										<input
@@ -2316,6 +2336,7 @@
 										/>
 										<p class="setting-hint">Base URL for any OpenAI-compatible server (LM Studio, LocalAI, vLLM, Nvidia NIM, etc.). Enter the server root; the app appends <code>/v1/chat/completions</code> (a trailing <code>/v1</code> is fine too).</p>
 									</div>
+									{@render aiHealthStatusSection()}
 									<div class="settings-section">
 										<h3>API Key <span style="font-weight: 400; text-transform: none; font-size: 11px;">(optional)</span></h3>
 										<div class="ai-key-row">
@@ -2343,9 +2364,9 @@
 											<input
 												type={aiShowKey ? 'text' : 'password'}
 												class="ai-key-input"
-												placeholder={aiProvider === 'openai' ? 'sk-...' : 'sk-ant-...'}
+												placeholder={aiProviderMetadata?.keyPlaceholder}
 												value={aiApiKey}
-												oninput={(e) => { const v = (e.target as HTMLInputElement).value; if (aiProvider === 'openai') _openaiKey = v; else _anthropicKey = v; }}
+												oninput={(e) => updateCloudAiKey((e.target as HTMLInputElement).value)}
 												onblur={saveAiSettings}
 											/>
 											<button class="ai-key-toggle" onclick={() => aiShowKey = !aiShowKey} title={aiShowKey ? 'Hide' : 'Show'}>
@@ -2356,26 +2377,24 @@
 												{/if}
 											</button>
 										</div>
-										{#if aiProvider === 'openai'}
-											<p class="setting-hint">Get your API key from <a href="https://platform.openai.com/api-keys" target="_blank" class="ai-link">platform.openai.com</a></p>
-										{:else}
-											<p class="setting-hint">Get your API key from <a href="https://console.anthropic.com/settings/keys" target="_blank" class="ai-link">console.anthropic.com</a></p>
+										{#if aiProviderMetadata?.keyHelpUrl}
+											<p class="setting-hint">Get your API key from <a href={aiProviderMetadata.keyHelpUrl} target="_blank" class="ai-link">{aiProviderMetadata.keyHelpLabel}</a></p>
 										{/if}
 									</div>
 								{/if}
 
 								<div class="settings-section">
 									<h3>Model</h3>
-									{#if aiProvider === 'ollama' || aiProvider === 'openai_compatible'}
+									{#if aiProviderMetadata?.modelInput === 'custom'}
 										<input
 											type="text"
 											class="ai-key-input"
-											placeholder={aiProvider === 'ollama' ? 'gemma3:4b' : 'Enter model name'}
+											placeholder={aiProviderMetadata.serverKind === 'ollama' ? 'gemma3:4b' : 'Enter model name'}
 											value={aiModel}
 											oninput={(e) => { aiModel = (e.target as HTMLInputElement).value; }}
 											onblur={saveAiSettings}
 										/>
-										<p class="setting-hint">{aiProvider === 'ollama' ? 'Enter the model name as shown by <code>ollama list</code>' : 'Enter the model name as required by your server'}</p>
+										<p class="setting-hint">{aiProviderMetadata.serverKind === 'ollama' ? 'Enter the model name as shown by <code>ollama list</code>' : 'Enter the model name as required by your server'}</p>
 									{:else}
 										<div class="ai-model-options">
 											{#each aiModels as m}
@@ -2407,7 +2426,7 @@
 
 								<div class="settings-section">
 									<h3>Connection</h3>
-									<button class="import-btn" onclick={handleTestAi} disabled={aiTestLoading || (aiProvider === 'openai_compatible' && !_openaiCompatibleBaseUrl) || (aiProvider !== 'ollama' && aiProvider !== 'openai_compatible' && !aiApiKey)}>
+									<button class="import-btn" onclick={handleTestAi} disabled={aiTestLoading || (aiProviderMetadata?.serverKind === 'openaiCompatible' && !_openaiCompatibleBaseUrl) || (aiProviderMetadata?.requiresApiKey && !aiApiKey)}>
 										{#if aiTestLoading}
 											<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
 											Testing...

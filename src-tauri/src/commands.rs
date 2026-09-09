@@ -2985,7 +2985,7 @@ pub fn get_note_version_content(
 #[allow(clippy::too_many_arguments)]
 pub fn set_ai_settings(
     app: AppHandle,
-    provider: Option<String>,
+    provider: Option<AiProvider>,
     api_key: Option<String>,
     model: String,
     writing_style: Option<String>,
@@ -3001,27 +3001,27 @@ pub fn set_ai_settings(
         .lock()
         .map_err(|e| e.to_string())?
         .generation;
-    let previous_target = crate::ai_health::ollama_target(&config, generation);
+    let previous_target = crate::ai_health::health_target(&config, generation);
     let mut candidate = config.clone();
     let key = api_key.filter(|k| !k.trim().is_empty());
-    match provider.as_deref() {
-        Some("openai") => candidate.openai_api_key = key,
-        Some("ollama") => {
+    match provider.as_ref() {
+        Some(AiProvider::OpenAi) => candidate.openai_api_key = key,
+        Some(AiProvider::Ollama) => {
             candidate.ollama_base_url = base_url.filter(|u| !u.trim().is_empty());
             candidate.ollama_api_key = ollama_api_key.filter(|k| !k.trim().is_empty());
         }
-        Some("openai_compatible") => {
+        Some(AiProvider::OpenAiCompatible) => {
             candidate.openai_compatible_base_url =
                 openai_compatible_base_url.filter(|u| !u.trim().is_empty());
             candidate.openai_compatible_api_key =
                 openai_compatible_api_key.filter(|k| !k.trim().is_empty());
         }
-        _ => candidate.ai_api_key = key,
+        Some(AiProvider::Anthropic | AiProvider::Unknown(_)) | None => candidate.ai_api_key = key,
     }
     candidate.ai_provider = provider;
     candidate.ai_model = model;
     candidate.ai_writing_style = writing_style.filter(|s| !s.trim().is_empty());
-    let next_target = crate::ai_health::ollama_target(&candidate, generation);
+    let next_target = crate::ai_health::health_target(&candidate, generation);
     let health_settings_changed =
         !crate::ai_health::same_probe_settings(previous_target.as_ref(), next_target.as_ref());
     // Persist first: a failed settings save must not change the live provider or health
@@ -3031,7 +3031,7 @@ pub fn set_ai_settings(
     let invalidated_status = if health_settings_changed {
         let mut health = state.ai_health.lock().map_err(|e| e.to_string())?;
         health.generation += 1;
-        let target = crate::ai_health::ollama_target(&config, health.generation);
+        let target = crate::ai_health::health_target(&config, health.generation);
         let status = target
             .as_ref()
             .map(crate::ai_health::AiStatus::unknown_for)
@@ -3055,38 +3055,27 @@ pub fn set_ai_settings(
 
 #[tauri::command]
 pub fn test_ai_connection(app: AppHandle) -> Result<(), String> {
-    let (provider, api_key, model, base_url) = {
+    let (settings, health_target) = {
         let state = app.state::<AppState>();
         let config = state.config.lock().map_err(|e| e.to_string())?;
-        let provider = config
-            .ai_provider
-            .clone()
-            .unwrap_or_else(|| "anthropic".to_string());
-        let key = match provider.as_str() {
-            "ollama" => Some(config.ollama_api_key.clone().unwrap_or_default()),
-            "openai_compatible" => {
-                Some(config.openai_compatible_api_key.clone().unwrap_or_default())
-            }
-            "openai" => config.openai_api_key.clone(),
-            _ => config.ai_api_key.clone(),
-        }
-        .ok_or("No API key configured")?;
-        let model = config.ai_model.clone();
-        let base_url = match provider.as_str() {
-            "openai_compatible" => config.openai_compatible_base_url.clone(),
-            _ => config.ollama_base_url.clone(),
-        };
-        (provider, key, model, base_url)
+        let configured = crate::ai_provider::ConfiguredAiProvider::from_config(&config);
+        let settings = configured
+            .request_settings()
+            .map_err(|error| error.to_string())?;
+        let generation = state
+            .ai_health
+            .lock()
+            .map_err(|error| error.to_string())?
+            .generation;
+        (settings, configured.health_target(generation))
     };
 
     std::thread::spawn(move || {
         use tauri::Emitter;
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(crate::ai::test_connection(
-            &provider,
-            &api_key,
-            &model,
-            base_url.as_deref(),
+            &settings,
+            health_target.as_ref(),
         ));
         match result {
             Ok(msg) => {
@@ -3306,57 +3295,36 @@ pub fn ai_ask(
     custom_prompt: Option<String>,
     request_id: String,
 ) -> Result<(), String> {
-    let (provider, api_key, model, writing_style, base_url, ollama_target) = {
+    let (settings, writing_style, health_target) = {
         let state = app.state::<AppState>();
         let config = state.config.lock().map_err(|e| e.to_string())?;
-        let provider = config
-            .ai_provider
-            .clone()
-            .unwrap_or_else(|| "anthropic".to_string());
-        let key = match provider.as_str() {
-            "ollama" => Some(config.ollama_api_key.clone().unwrap_or_default()),
-            "openai_compatible" => {
-                Some(config.openai_compatible_api_key.clone().unwrap_or_default())
-            }
-            "openai" => config.openai_api_key.clone(),
-            _ => config.ai_api_key.clone(),
-        }
-        .ok_or("No API key configured. Go to Settings > AI to set up your API key.")?;
-        let model = config.ai_model.clone();
+        let configured = crate::ai_provider::ConfiguredAiProvider::from_config(&config);
+        let settings = configured
+            .request_settings()
+            .map_err(|error| error.to_string())?;
         let style = config.ai_writing_style.clone();
-        let base_url = match provider.as_str() {
-            "openai_compatible" => config.openai_compatible_base_url.clone(),
-            _ => config.ollama_base_url.clone(),
-        };
         let generation = state
             .ai_health
             .lock()
             .map_err(|e| e.to_string())?
             .generation;
-        let ollama_target =
-            crate::ai_health::ollama_target(&config, generation).map(|target| target.id().clone());
-        (provider, key, model, style, base_url, ollama_target)
+        let health_target = configured
+            .health_target(generation)
+            .map(|target| target.id().clone());
+        (settings, style, health_target)
     };
 
     // Refuse immediately when the backend is known to be down, with the reason the poller
     // already worked out. Starting the request instead would leave the user waiting on a
     // machine that is asleep.
-    if provider == "ollama" {
-        let status = app
-            .state::<AppState>()
-            .ai_health
-            .lock()
-            .map(|health| health.status.clone())
-            .map_err(|e| e.to_string())?;
-        if status.availability == crate::ai_health::Availability::Unavailable
-            && ollama_target
-                .as_ref()
-                .is_some_and(|target| status.belongs_to(target))
-        {
-            return Err(status
-                .reason
-                .unwrap_or_else(|| "The AI backend is unreachable.".to_string()));
-        }
+    let status = app
+        .state::<AppState>()
+        .ai_health
+        .lock()
+        .map(|health| health.status.clone())
+        .map_err(|e| e.to_string())?;
+    if let Some(reason) = crate::ai_health::known_unavailability(&status, health_target.as_ref()) {
+        return Err(reason);
     }
 
     let mut system_prompt = "You are a helpful writing assistant inside a note-taking app called HelixNotes. \
@@ -3394,16 +3362,7 @@ pub fn ai_ask(
         _ => format!("Improve this text:\n\n{}", text),
     };
 
-    crate::ai::ai_request(
-        app,
-        provider,
-        api_key,
-        model,
-        system_prompt,
-        user_message,
-        request_id,
-        base_url,
-    );
+    crate::ai::ai_request(app, settings, system_prompt, user_message, request_id);
     Ok(())
 }
 

@@ -1,5 +1,6 @@
 mod ai;
 mod ai_health;
+mod ai_provider;
 mod asset_scope;
 mod autostart;
 mod backup;
