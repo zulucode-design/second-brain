@@ -9,6 +9,7 @@ mod history;
 mod hotkey;
 mod image_proxy;
 mod machine_local;
+mod notion;
 mod safe_fetch;
 mod search;
 mod secret_store;
