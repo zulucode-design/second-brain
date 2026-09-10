@@ -69,6 +69,15 @@ pub struct MapEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_hash: Option<String>,
 
+    /// The file's modification time when that hash was taken.
+    ///
+    /// Checked before the hash so an unchanged note costs no *file read* either. Polling
+    /// every five minutes would otherwise re-read the whole vault twelve times an hour to
+    /// learn nothing. The hash is still what decides — a file synced from the other machine
+    /// gets a new mtime with identical bytes, and must not be republished for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_mtime: Option<i64>,
+
     /// Why the last attempt failed, if it did.
     ///
     /// A note that cannot be pushed — malformed, or rejected by Notion — is skipped and
@@ -87,6 +96,7 @@ impl MapEntry {
             page_id: None,
             data_source_id: None,
             content_hash: None,
+            source_mtime: None,
             last_error: None,
         }
     }
@@ -240,6 +250,7 @@ mod tests {
             page_id: Some("page-1".into()),
             data_source_id: Some(data_source.into()),
             content_hash: Some(hash.into()),
+            source_mtime: Some(1_000),
             last_error: None,
         }
     }

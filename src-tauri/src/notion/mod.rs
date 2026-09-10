@@ -35,3 +35,6 @@ pub mod blocks;
 pub mod client;
 pub mod config;
 pub mod map;
+pub mod plan;
+pub mod properties;
+pub mod publish;
