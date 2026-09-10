@@ -110,14 +110,10 @@ impl MapEntry {
             last_error: None,
         }
     }
-
 }
 
 fn entry_path(vault_path: &Path, note_id: &str) -> Result<PathBuf, String> {
-    Ok(notion_dir(vault_path).join(format!(
-        "{}.json",
-        safe_path_component(note_id, "note ID")?
-    )))
+    Ok(notion_dir(vault_path).join(format!("{}.json", safe_path_component(note_id, "note ID")?)))
 }
 
 /// Read one note's entry. A missing entry is not an error: it means the note has never
@@ -340,11 +336,7 @@ mod tests {
     fn a_damaged_entry_reads_as_absent() {
         let vault = tempdir();
         std::fs::create_dir_all(notion_dir(&vault)).unwrap();
-        std::fs::write(
-            notion_dir(&vault).join("note-1.json"),
-            "{ not json at all",
-        )
-        .unwrap();
+        std::fs::write(notion_dir(&vault).join("note-1.json"), "{ not json at all").unwrap();
 
         assert!(load(&vault, "note-1").is_none());
     }

@@ -1,3 +1,4 @@
+import type { NotionStatus, VisiblePage } from '$lib/utils/notion-settings';
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AiStatus,
@@ -549,6 +550,35 @@ export async function testSyncConnection(): Promise<void> {
 
 export async function syncNow(): Promise<void> {
   return invoke("sync_now");
+}
+
+// Notion is a read-only published view, not a sync provider (ADR-0002), so it has its own
+// commands rather than a value in the sync settings.
+
+export async function notionStatus(): Promise<NotionStatus> {
+  return invoke("notion_status");
+}
+
+/** Checks the token against Notion before storing it; resolves to the connection's name. */
+export async function notionConnect(token: string): Promise<string> {
+  return invoke("notion_connect", { token });
+}
+
+export async function notionDisconnect(): Promise<void> {
+  return invoke("notion_disconnect");
+}
+
+export async function notionVisiblePages(): Promise<VisiblePage[]> {
+  return invoke("notion_visible_pages");
+}
+
+export async function notionSetup(parentPageId: string): Promise<void> {
+  return invoke("notion_setup", { parentPageId });
+}
+
+/** Returns at once; progress and the outcome arrive as `notion-publish-*` events. */
+export async function notionPublishNow(): Promise<void> {
+  return invoke("notion_publish_now");
 }
 
 // ── Version History ──

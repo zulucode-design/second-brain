@@ -146,7 +146,11 @@ impl NotionClient {
     ///
     /// The interval is a parameter rather than a constant so a test can exercise pacing
     /// without spending a real second per request.
-    pub fn with_base(token: impl Into<String>, base: impl Into<String>, interval: Duration) -> Self {
+    pub fn with_base(
+        token: impl Into<String>,
+        base: impl Into<String>,
+        interval: Duration,
+    ) -> Self {
         Self {
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
@@ -362,7 +366,11 @@ impl NotionClient {
             .ok_or_else(|| NotionError::Validation("Notion returned no page id".into()))
     }
 
-    pub async fn append_blocks(&self, page_id: &str, blocks: Vec<Value>) -> Result<(), NotionError> {
+    pub async fn append_blocks(
+        &self,
+        page_id: &str,
+        blocks: Vec<Value>,
+    ) -> Result<(), NotionError> {
         if blocks.is_empty() {
             return Ok(());
         }
@@ -554,8 +562,13 @@ mod tests {
         let name = client(&base).whoami().await.unwrap();
 
         let request = requests.recv().unwrap();
-        assert!(request.contains("authorization: Bearer ntn_test") || request.contains("Authorization: Bearer ntn_test"));
-        assert!(request.to_lowercase().contains(&format!("notion-version: {API_VERSION}").to_lowercase()));
+        assert!(
+            request.contains("authorization: Bearer ntn_test")
+                || request.contains("Authorization: Bearer ntn_test")
+        );
+        assert!(request
+            .to_lowercase()
+            .contains(&format!("notion-version: {API_VERSION}").to_lowercase()));
         assert_eq!(name, "Spike");
     }
 
@@ -594,7 +607,10 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(!error.is_fatal(), "one bad note must not halt the publisher");
+        assert!(
+            !error.is_fatal(),
+            "one bad note must not halt the publisher"
+        );
         assert!(matches!(error, NotionError::Validation(_)));
     }
 
@@ -692,7 +708,10 @@ mod tests {
 
         let request = requests.recv().unwrap();
         assert!(request.contains("parent-page"));
-        assert!(request.contains(NOTE_ID_PROPERTY), "the schema must carry Note ID");
+        assert!(
+            request.contains(NOTE_ID_PROPERTY),
+            "the schema must carry Note ID"
+        );
         assert!(
             request.contains("Managed by Second Brain"),
             "the marker must be written even though this version never reads it (#58)"
@@ -714,7 +733,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_page_is_found_by_its_note_id() {
-        let (base, requests) = scripted_server(vec![("200 OK", r#"{"results":[{"id":"page-9"}]}"#)]);
+        let (base, requests) =
+            scripted_server(vec![("200 OK", r#"{"results":[{"id":"page-9"}]}"#)]);
 
         let found = client(&base)
             .find_page_by_note_id("ds-1", "note-abc")
@@ -745,7 +765,10 @@ mod tests {
         // source, which the API docs warn about explicitly.
         let (base, requests) = scripted_server(vec![("200 OK", r#"{"id":"page-1"}"#)]);
 
-        client(&base).move_page("page-1", "ds-target").await.unwrap();
+        client(&base)
+            .move_page("page-1", "ds-target")
+            .await
+            .unwrap();
 
         let request = requests.recv().unwrap();
         assert!(request.contains("/pages/page-1/move"));

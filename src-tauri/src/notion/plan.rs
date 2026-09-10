@@ -104,10 +104,7 @@ pub enum Action {
     /// The note was deleted locally; its page is trashed and the tombstone cleared.
     Trash { note_id: String, page_id: String },
     /// Nothing to do, but the reason is worth counting.
-    Skip {
-        note_id: String,
-        reason: SkipReason,
-    },
+    Skip { note_id: String, reason: SkipReason },
     /// The note is published and unchanged.
     UpToDate { note_id: String },
 }
@@ -354,7 +351,11 @@ mod tests {
     #[test]
     fn an_unchanged_note_does_nothing() {
         let entry = published("h1", "ds-Projects");
-        let action = decide(&note(Some(ParaCategory::Projects), "h1"), Some(&entry), &registry());
+        let action = decide(
+            &note(Some(ParaCategory::Projects), "h1"),
+            Some(&entry),
+            &registry(),
+        );
         assert!(matches!(action, Action::UpToDate { .. }));
         assert!(!action.is_work());
     }
@@ -362,7 +363,11 @@ mod tests {
     #[test]
     fn an_edited_note_replaces_its_content() {
         let entry = published("h1", "ds-Projects");
-        let action = decide(&note(Some(ParaCategory::Projects), "h2"), Some(&entry), &registry());
+        let action = decide(
+            &note(Some(ParaCategory::Projects), "h2"),
+            Some(&entry),
+            &registry(),
+        );
         assert!(matches!(action, Action::UpdateContent { ref page_id, .. } if page_id == "page-1"));
     }
 
@@ -394,11 +399,16 @@ mod tests {
     #[test]
     fn a_note_both_edited_and_recategorised_is_visited_once() {
         let entry = published("h1", "ds-Projects");
-        let action = decide(&note(Some(ParaCategory::Areas), "h2"), Some(&entry), &registry());
+        let action = decide(
+            &note(Some(ParaCategory::Areas), "h2"),
+            Some(&entry),
+            &registry(),
+        );
 
         match action {
             Action::Move {
-                also_update_content, ..
+                also_update_content,
+                ..
             } => assert!(
                 also_update_content,
                 "the edit should fold into the move rather than pushing twice"
@@ -412,7 +422,11 @@ mod tests {
         // The window: page created, process killed before the map was updated. Creating
         // blind here is exactly how the vault ends up with two pages per note.
         let entry = MapEntry::creating();
-        let action = decide(&note(Some(ParaCategory::Projects), "h1"), Some(&entry), &registry());
+        let action = decide(
+            &note(Some(ParaCategory::Projects), "h1"),
+            Some(&entry),
+            &registry(),
+        );
         assert!(matches!(action, Action::ResolveInterrupted { .. }));
     }
 
@@ -420,7 +434,11 @@ mod tests {
     fn a_published_entry_that_lost_its_page_id_resolves_instead_of_creating() {
         let mut entry = published("h1", "ds-Projects");
         entry.page_id = None;
-        let action = decide(&note(Some(ParaCategory::Projects), "h1"), Some(&entry), &registry());
+        let action = decide(
+            &note(Some(ParaCategory::Projects), "h1"),
+            Some(&entry),
+            &registry(),
+        );
         assert!(matches!(action, Action::ResolveInterrupted { .. }));
     }
 
@@ -440,7 +458,8 @@ mod tests {
     #[test]
     fn a_conflict_copy_never_reaches_the_published_view() {
         let mut copy = note(Some(ParaCategory::Projects), "h1");
-        copy.snapshot.relative_path = "Projects/Thing.sync-conflict-20260903-141500-ABCDEF.md".into();
+        copy.snapshot.relative_path =
+            "Projects/Thing.sync-conflict-20260903-141500-ABCDEF.md".into();
 
         let action = decide(&copy, None, &registry());
 
@@ -459,10 +478,13 @@ mod tests {
             parent_page_id: Some("parent".into()),
             ..Default::default()
         };
-        partial.set_link(ParaCategory::Areas, DatabaseLink {
-            database_id: "db".into(),
-            data_source_id: "ds".into(),
-        });
+        partial.set_link(
+            ParaCategory::Areas,
+            DatabaseLink {
+                database_id: "db".into(),
+                data_source_id: "ds".into(),
+            },
+        );
 
         let action = decide(&note(Some(ParaCategory::Projects), "h1"), None, &partial);
 
@@ -481,7 +503,11 @@ mod tests {
         let mut entry = published("h1", "ds-Projects");
         entry.state = EntryState::Deleted;
 
-        let action = decide(&note(Some(ParaCategory::Projects), "h1"), Some(&entry), &registry());
+        let action = decide(
+            &note(Some(ParaCategory::Projects), "h1"),
+            Some(&entry),
+            &registry(),
+        );
 
         assert!(matches!(action, Action::UpToDate { .. }));
         assert!(!action.is_work());
@@ -492,7 +518,11 @@ mod tests {
         let mut entry = published("h1", "ds-Projects");
         entry.state = EntryState::Deleted;
 
-        let action = decide(&note(Some(ParaCategory::Projects), "h2"), Some(&entry), &registry());
+        let action = decide(
+            &note(Some(ParaCategory::Projects), "h2"),
+            Some(&entry),
+            &registry(),
+        );
 
         assert!(matches!(action, Action::UpdateContent { ref page_id, .. } if page_id == "page-1"));
     }
@@ -501,7 +531,11 @@ mod tests {
     fn a_deleted_note_that_never_had_a_page_is_simply_created() {
         let mut entry = MapEntry::creating();
         entry.state = EntryState::Deleted;
-        let action = decide(&note(Some(ParaCategory::Projects), "h1"), Some(&entry), &registry());
+        let action = decide(
+            &note(Some(ParaCategory::Projects), "h1"),
+            Some(&entry),
+            &registry(),
+        );
         assert!(matches!(action, Action::Create { .. }));
     }
 

@@ -253,6 +253,14 @@ pub fn notion_publish_now(app: AppHandle) -> Result<(), String> {
         }
     };
 
+    // Connected but not set up: every note would be read only to be skipped for want of a
+    // database, every five minutes, and the panel would report it as a run. Refusing is
+    // both cheaper and more honest about what state the machine is in.
+    if !config::load_registry(&vault).is_complete() {
+        state.notion_publishing.store(false, Ordering::SeqCst);
+        return Err("Finish setting up Notion before publishing".into());
+    }
+
     tauri::async_runtime::spawn(async move {
         let outcome = publish_once(&app, &client, &vault).await;
 
@@ -498,9 +506,8 @@ mod tests {
 
     fn write_note(vault: &Path, category: &str, name: &str, id: &str, body: &str) -> PathBuf {
         let path = vault.join(category).join(format!("{name}.md"));
-        let raw = format!(
-            "---\nid: \"{id}\"\ntitle: \"{name}\"\ncategory: {category}\n---\n{body}\n"
-        );
+        let raw =
+            format!("---\nid: \"{id}\"\ntitle: \"{name}\"\ncategory: {category}\n---\n{body}\n");
         std::fs::write(&path, raw).unwrap();
         path
     }
@@ -571,7 +578,10 @@ mod tests {
 
         note_deleted(&vault, path.to_str().unwrap());
 
-        assert!(!config::notion_dir(&vault).exists(), "nothing should be created");
+        assert!(
+            !config::notion_dir(&vault).exists(),
+            "nothing should be created"
+        );
     }
 
     #[test]
@@ -625,7 +635,10 @@ mod tests {
         let (snapshots, prepared) = enumerate(&vault);
 
         assert_eq!(snapshots.len(), 1);
-        assert_eq!(snapshots[0].note_id, "id-1", "resolved from the map, not the file");
+        assert_eq!(
+            snapshots[0].note_id, "id-1",
+            "resolved from the map, not the file"
+        );
         assert!(prepared.is_empty(), "the file should not have been read");
     }
 

@@ -74,7 +74,7 @@
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
 	const isMobile = $derived($platformIsMobile);
-	import { loadVaultState, saveVaultState, readNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, getAppConfig, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus, getHotkeyStatus, getRepairStatus, retryRepairs, clipWebPage } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, notionStatus, notionPublishNow, getAppConfig, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus, getHotkeyStatus, getRepairStatus, retryRepairs, clipWebPage } from '$lib/api';
 	import { darkThemes, isAndroid } from '$lib/platform';
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow } from '$lib/utils/window';
@@ -167,6 +167,7 @@
 	let isQuickAccess = $derived(noteRelativePath ? $quickAccessPaths.includes(noteRelativePath) : false);
 	let backupInterval: ReturnType<typeof setInterval> | null = null;
 	let syncInterval: ReturnType<typeof setInterval> | null = null;
+	let notionInterval: ReturnType<typeof setInterval> | null = null;
 	let unlistenSync: Array<() => void> = [];
 	let unsubDirty: (() => void) | null = null;
 	let onChangeSyncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -214,6 +215,22 @@
 		if (Date.now() - last >= mins * 60 * 1000) {
 			try { await syncNow(); } catch (_) {}
 		}
+	}
+
+	// Publish to Notion on a timer. A read-only view, fed separately from sync (ADR-0002).
+	//
+	// Cheap by construction: a push that finds nothing changed makes no API call and opens no
+	// note, so ticking every few minutes costs a directory walk. The backend refuses to run
+	// two pushes at once, and refuses outright on a machine where Notion is not switched on
+	// — which is how exactly one machine ends up publishing.
+	let notionPollMs = 5 * 60 * 1000;
+	let lastNotionPublish = 0;
+
+	async function checkScheduledNotion() {
+		if (Date.now() - lastNotionPublish < notionPollMs) return;
+		lastNotionPublish = Date.now();
+		// Not connected on this machine is the normal case for every machine but one.
+		try { await notionPublishNow(); } catch (_) {}
 	}
 
 	export async function triggerSyncNow() {
@@ -970,6 +987,18 @@
 		checkScheduledSync();
 		syncInterval = setInterval(checkScheduledSync, 60 * 1000);
 
+		// Notion: once at startup, then on its own interval. The tick always runs, even when
+		// Notion is not set up yet — gating it on startup state would mean connecting in
+		// Settings mid-session publishes nothing automatically until the next launch. The
+		// interval is read once rather than every tick, which would walk the map to learn one
+		// number.
+		try {
+			const status = await notionStatus();
+			notionPollMs = Math.max(1, status.poll_minutes) * 60 * 1000;
+		} catch (_) {}
+		checkScheduledNotion();
+		notionInterval = setInterval(checkScheduledNotion, 60 * 1000);
+
 		// Auto-sync on note change: a save flips editorDirty true -> false. Debounce a sync.
 		unsubDirty = editorDirty.subscribe((d) => {
 			const vc = activeVaultConfig(get(appConfig));
@@ -989,6 +1018,7 @@
 		unlistenOpenFile?.();
 		if (backupInterval) clearInterval(backupInterval);
 		if (syncInterval) clearInterval(syncInterval);
+		if (notionInterval) clearInterval(notionInterval);
 		if (onChangeSyncTimer) clearTimeout(onChangeSyncTimer);
 		unsubDirty?.();
 		unlistenSync.forEach((u) => u());

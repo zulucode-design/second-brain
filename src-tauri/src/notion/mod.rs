@@ -32,8 +32,8 @@
 //! regardless.
 
 pub mod blocks;
-pub mod commands;
 pub mod client;
+pub mod commands;
 pub mod config;
 pub mod map;
 pub mod plan;

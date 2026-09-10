@@ -98,7 +98,10 @@ pub fn content_hash(raw: &str) -> String {
 }
 
 /// Read one note from disk into the shape the publisher wants.
-pub fn read_note(vault_path: &Path, relative_path: &str) -> Result<(NoteMeta, String, String), String> {
+pub fn read_note(
+    vault_path: &Path,
+    relative_path: &str,
+) -> Result<(NoteMeta, String, String), String> {
     let full = vault_path.join(relative_path);
     let raw = std::fs::read_to_string(&full).map_err(|error| error.to_string())?;
     let filename = Path::new(relative_path)
@@ -273,7 +276,15 @@ async fn execute(
             // Written before the call, so an interrupted create leaves a trace.
             let _ = map::save(vault_path, note_id, &MapEntry::creating());
             let page_id = create_page(client, data_source_id, note).await?;
-            publish_entry(vault_path, note_id, &page_id, data_source_id, content_hash, *mtime, relative_path);
+            publish_entry(
+                vault_path,
+                note_id,
+                &page_id,
+                data_source_id,
+                content_hash,
+                *mtime,
+                relative_path,
+            );
             Ok(())
         }
 
@@ -295,12 +306,28 @@ async fn execute(
                     client
                         .update_properties(&page_id, properties::for_note(&note.meta))
                         .await?;
-                    publish_entry(vault_path, note_id, &page_id, data_source_id, content_hash, *mtime, relative_path);
+                    publish_entry(
+                        vault_path,
+                        note_id,
+                        &page_id,
+                        data_source_id,
+                        content_hash,
+                        *mtime,
+                        relative_path,
+                    );
                     Ok(())
                 }
                 None => {
                     let page_id = create_page(client, data_source_id, note).await?;
-                    publish_entry(vault_path, note_id, &page_id, data_source_id, content_hash, *mtime, relative_path);
+                    publish_entry(
+                        vault_path,
+                        note_id,
+                        &page_id,
+                        data_source_id,
+                        content_hash,
+                        *mtime,
+                        relative_path,
+                    );
                     Ok(())
                 }
             }
@@ -318,7 +345,15 @@ async fn execute(
             client
                 .update_properties(page_id, properties::for_note(&note.meta))
                 .await?;
-            publish_entry(vault_path, note_id, page_id, data_source_id, content_hash, *mtime, relative_path);
+            publish_entry(
+                vault_path,
+                note_id,
+                page_id,
+                data_source_id,
+                content_hash,
+                *mtime,
+                relative_path,
+            );
             Ok(())
         }
 
@@ -343,7 +378,15 @@ async fn execute(
             if *also_update_content {
                 replace_content(client, page_id, note).await?;
             }
-            publish_entry(vault_path, note_id, page_id, data_source_id, content_hash, *mtime, relative_path);
+            publish_entry(
+                vault_path,
+                note_id,
+                page_id,
+                data_source_id,
+                content_hash,
+                *mtime,
+                relative_path,
+            );
             Ok(())
         }
 
@@ -490,7 +533,9 @@ mod tests {
                             .to_ascii_lowercase()
                             .split("content-length:")
                             .nth(1)
-                            .and_then(|rest| rest.split("\r\n").next()?.trim().parse::<usize>().ok())
+                            .and_then(|rest| {
+                                rest.split("\r\n").next()?.trim().parse::<usize>().ok()
+                            })
                             .unwrap_or(0);
                         if request.len() >= index + 4 + declared {
                             break;
@@ -508,7 +553,6 @@ mod tests {
 
         (format!("http://{address}"), rx)
     }
-
 
     /// Drive [`run`] from whole notes, the way every test but the gate test wants to.
     ///
@@ -608,7 +652,10 @@ mod tests {
 
         assert_eq!(summary.created, 1);
         let request = requests.recv().unwrap();
-        assert!(request.contains("ds-Projects"), "into its category's database");
+        assert!(
+            request.contains("ds-Projects"),
+            "into its category's database"
+        );
         assert!(request.contains("note-1"), "carrying its note id");
 
         let entry = map::load(&vault, "note-1").expect("the mapping must be recorded");
@@ -650,7 +697,11 @@ mod tests {
                 state: EntryState::Published,
                 page_id: Some("page-1".into()),
                 data_source_id: Some("ds-Projects".into()),
-                content_hash: Some(content_hash_of(&note("note-1", ParaCategory::Areas, "body"))),
+                content_hash: Some(content_hash_of(&note(
+                    "note-1",
+                    ParaCategory::Areas,
+                    "body",
+                ))),
                 source_mtime: Some(1),
                 relative_path: Some("Projects/note-1.md".into()),
                 last_error: None,
@@ -687,7 +738,11 @@ mod tests {
 
         let entry = map::load(&vault, "note-1").unwrap();
         assert_eq!(entry.data_source_id.as_deref(), Some("ds-Areas"));
-        assert_eq!(entry.page_id.as_deref(), Some("page-1"), "identity preserved");
+        assert_eq!(
+            entry.page_id.as_deref(),
+            Some("page-1"),
+            "identity preserved"
+        );
     }
 
     #[tokio::test]
@@ -791,7 +846,10 @@ mod tests {
         // which is why this must not halt.
         let vault = vault();
         let (base, _r) = scripted_server(vec![
-            ("400 Bad Request", r#"{"message":"body.children[0] invalid"}"#),
+            (
+                "400 Bad Request",
+                r#"{"message":"body.children[0] invalid"}"#,
+            ),
             ("200 OK", r#"{"id":"page-2"}"#),
         ]);
 

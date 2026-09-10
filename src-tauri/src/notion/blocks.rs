@@ -147,11 +147,43 @@ fn blocks_of(kind: &str, runs: Vec<Value>, children: Vec<Value>) -> Vec<Value> {
 /// unknown fence language becomes plain text rather than a failed request.
 fn code_language(raw: &str) -> &'static str {
     const KNOWN: &[&str] = &[
-        "bash", "c", "c#", "c++", "css", "diff", "docker", "elixir", "go", "graphql",
-        "html", "java", "javascript", "json", "kotlin", "latex", "lua", "makefile",
-        "markdown", "nix", "objective-c", "ocaml", "perl", "php", "powershell", "python",
-        "r", "ruby", "rust", "scala", "shell", "sql", "swift", "toml", "typescript",
-        "xml", "yaml",
+        "bash",
+        "c",
+        "c#",
+        "c++",
+        "css",
+        "diff",
+        "docker",
+        "elixir",
+        "go",
+        "graphql",
+        "html",
+        "java",
+        "javascript",
+        "json",
+        "kotlin",
+        "latex",
+        "lua",
+        "makefile",
+        "markdown",
+        "nix",
+        "objective-c",
+        "ocaml",
+        "perl",
+        "php",
+        "powershell",
+        "python",
+        "r",
+        "ruby",
+        "rust",
+        "scala",
+        "shell",
+        "sql",
+        "swift",
+        "toml",
+        "typescript",
+        "xml",
+        "yaml",
     ];
 
     let normalised = raw.trim().to_ascii_lowercase();
@@ -242,9 +274,8 @@ pub fn to_blocks(markdown: &str) -> Vec<Value> {
                     Some(Container::ListItem { .. })
                 );
                 if inside_item {
-                    let already_has_text = stack
-                        .last()
-                        .is_some_and(|frame| !frame.children.is_empty());
+                    let already_has_text =
+                        stack.last().is_some_and(|frame| !frame.children.is_empty());
                     if already_has_text {
                         flush!("paragraph");
                     }
@@ -364,7 +395,9 @@ pub fn to_blocks(markdown: &str) -> Vec<Value> {
             // An image cannot be displayed: local attachments are never uploaded, and an
             // external URL Notion cannot fetch fails validation and takes the whole page
             // with it. Naming it and linking it always works.
-            Event::Start(Tag::Image { dest_url, title, .. }) => {
+            Event::Start(Tag::Image {
+                dest_url, title, ..
+            }) => {
                 let label = if title.is_empty() {
                     "image".to_string()
                 } else {
@@ -427,7 +460,9 @@ pub fn to_blocks(markdown: &str) -> Vec<Value> {
     while let Some(mut frame) = stack.pop() {
         if !frame.runs.is_empty() {
             let runs = std::mem::take(&mut frame.runs);
-            frame.children.extend(blocks_of("paragraph", runs, Vec::new()));
+            frame
+                .children
+                .extend(blocks_of("paragraph", runs, Vec::new()));
         }
         let mut children = frame.children;
         children.extend(result);

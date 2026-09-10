@@ -99,7 +99,10 @@ mod tests {
     #[test]
     fn the_title_becomes_the_pages_title() {
         let properties = for_note(&meta());
-        assert_eq!(properties["Name"]["title"][0]["text"]["content"], json!("A note"));
+        assert_eq!(
+            properties["Name"]["title"][0]["text"]["content"],
+            json!("A note")
+        );
     }
 
     #[test]
@@ -161,7 +164,9 @@ mod tests {
         let mut meta = meta();
         meta.tags = vec!["t".repeat(400)];
         let properties = for_note(&meta);
-        let name = properties["Tags"]["multi_select"][0]["name"].as_str().unwrap();
+        let name = properties["Tags"]["multi_select"][0]["name"]
+            .as_str()
+            .unwrap();
         assert_eq!(name.chars().count(), MAX_TAG_LENGTH);
     }
 

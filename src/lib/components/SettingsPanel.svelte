@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, activeVaultConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
-	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex } from '$lib/api';
+	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, notionStatus, notionConnect, notionDisconnect, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex } from '$lib/api';
 	import type { AiProvider } from '$lib/types';
 	import { AI_PROVIDER_METADATA, AI_PROVIDER_OPTIONS } from '$lib/utils/ai-provider';
 	import { darkThemes, isMobile, isAndroid, isLinux, isWindows } from '$lib/platform';
 	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
+	import { describeSummary, describeSkipped, nextStep, type NotionStatus, type NotionSummary, type VisiblePage } from '$lib/utils/notion-settings';
 	import { getVersion } from '@tauri-apps/api/app';
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import { openUrl } from '$lib/api';
@@ -16,7 +17,7 @@
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
 
-	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'maintenance' | 'ai' | 'sync' | 'updates';
+	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'maintenance' | 'ai' | 'sync' | 'notion' | 'updates';
 	let activeTab = $state<Tab>('styling');
 
 	// Updates state
@@ -560,6 +561,129 @@
 		} catch (e) {
 			syncMessage = { type: 'error', text: String(e) };
 			syncRunning = false;
+			cleanup();
+		}
+	}
+
+	// ── Notion ──
+	// A read-only published view, not a sync provider (ADR-0002). Its state comes from the
+	// backend rather than the vault config, because the token must never reach the webview
+	// and the database registry lives in the vault, not in the app config.
+	let notion = $state<NotionStatus | null>(null);
+	let notionToken = $state('');
+	let notionShowToken = $state(false);
+	let notionBusy = $state(false);
+	let notionMessage = $state<{ type: 'success' | 'error'; text: string } | null>(null);
+	let notionPages = $state<VisiblePage[] | null>(null);
+	let notionProgress = $state<{ done: number; total: number } | null>(null);
+
+	async function refreshNotion() {
+		try {
+			notion = await notionStatus();
+		} catch (e) {
+			notionMessage = { type: 'error', text: String(e) };
+		}
+	}
+
+	$effect(() => {
+		if (activeTab === 'notion') refreshNotion();
+	});
+
+	async function handleNotionConnect() {
+		notionBusy = true;
+		notionMessage = null;
+		try {
+			const name = await notionConnect(notionToken);
+			// Cleared once stored: the field is an input, not a place the token lives.
+			notionToken = '';
+			notionMessage = { type: 'success', text: `Connected as "${name}".` };
+			await refreshNotion();
+		} catch (e) {
+			notionMessage = { type: 'error', text: String(e) };
+		} finally {
+			notionBusy = false;
+		}
+	}
+
+	async function handleNotionDisconnect() {
+		notionMessage = null;
+		notionPages = null;
+		try {
+			await notionDisconnect();
+			notionMessage = { type: 'success', text: 'Disconnected. Your pages stay in Notion.' };
+			await refreshNotion();
+		} catch (e) {
+			notionMessage = { type: 'error', text: String(e) };
+		}
+	}
+
+	async function handleNotionLoadPages() {
+		notionBusy = true;
+		notionMessage = null;
+		try {
+			notionPages = await notionVisiblePages();
+			if (!notionPages.length) {
+				// The single most common setup failure: a new connection can see nothing
+				// until a page is explicitly shared with it.
+				notionMessage = {
+					type: 'error',
+					text: 'The connection cannot see any pages yet. In Notion, open a page, choose ••• → Add connections, and pick this connection.'
+				};
+			}
+		} catch (e) {
+			notionMessage = { type: 'error', text: String(e) };
+		} finally {
+			notionBusy = false;
+		}
+	}
+
+	async function handleNotionSetup(page: VisiblePage) {
+		notionBusy = true;
+		notionMessage = null;
+		try {
+			await notionSetup(page.id);
+			notionPages = null;
+			notionMessage = { type: 'success', text: `Created Projects, Areas, Resources, and Archives under "${page.title}".` };
+			await refreshNotion();
+		} catch (e) {
+			notionMessage = { type: 'error', text: String(e) };
+			// Setup keeps whatever databases it managed to create, so refreshing shows the
+			// partial state honestly rather than implying nothing happened.
+			await refreshNotion();
+		} finally {
+			notionBusy = false;
+		}
+	}
+
+	async function handleNotionPublish() {
+		notionBusy = true;
+		notionMessage = null;
+		notionProgress = null;
+		const unlisteners: Array<() => void> = [];
+		const cleanup = () => {
+			unlisteners.forEach((u) => u());
+			notionBusy = false;
+			notionProgress = null;
+		};
+
+		unlisteners.push(await listen<{ done: number; total: number }>('notion-publish-progress', (event) => {
+			notionProgress = event.payload;
+		}));
+		unlisteners.push(await listen<NotionSummary>('notion-publish-finished', async (event) => {
+			notionMessage = { type: 'success', text: describeSummary(event.payload) };
+			cleanup();
+			await refreshNotion();
+		}));
+		unlisteners.push(await listen<{ error: string; fatal: boolean }>('notion-publish-failed', async (event) => {
+			notionMessage = { type: 'error', text: event.payload.error };
+			cleanup();
+			await refreshNotion();
+		}));
+
+		try {
+			await notionPublishNow();
+		} catch (e) {
+			notionMessage = { type: 'error', text: String(e) };
 			cleanup();
 		}
 	}
@@ -1322,6 +1446,12 @@
 							<path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/>
 						</svg>
 						Sync
+					</button>
+					<button class="tab-btn" class:active={activeTab === 'notion'} onclick={() => activeTab = 'notion'}>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 7h8"/><path d="M8 11h8"/><path d="M8 15h5"/>
+						</svg>
+						Notion
 					</button>
 					{#if !isAndroid}
 					<button class="tab-btn" class:active={activeTab === 'updates'} onclick={() => activeTab = 'updates'}>
@@ -2657,6 +2787,119 @@
 										</span>
 										<button class="toggle-switch" class:on={syncOnOpen} role="switch" aria-checked={syncOnOpen} aria-label="Sync when the vault opens" onclick={() => { syncOnOpen = !syncOnOpen; saveSyncSettings(); }}><span class="toggle-knob"></span></button>
 									</label>
+								</div>
+							{/if}
+						</div>
+
+					{:else if activeTab === 'notion'}
+						<div class="tab-content">
+							<div class="settings-section">
+								<h3>Notion</h3>
+								<p class="setting-hint">Publishes your notes to Notion so you can read them on a phone or in a browser. It only writes: changes made in Notion never come back here. Attachments are not uploaded.</p>
+								<p class="setting-hint">Only one machine should publish. Turn this on where the app is usually running, and leave it off on the others.</p>
+								{#if notion && nextStep(notion)}
+									<p class="setting-hint"><strong>{nextStep(notion)}</strong></p>
+								{/if}
+							</div>
+
+							{#if notion && !notion.connected}
+								<div class="settings-section">
+									<h3>Integration Token</h3>
+									<div class="ai-key-row">
+										<input type={notionShowToken ? 'text' : 'password'} class="ai-key-input" placeholder="ntn_…" value={notionToken} oninput={(e) => { notionToken = (e.target as HTMLInputElement).value; }} />
+										<button class="ai-key-toggle" onclick={() => notionShowToken = !notionShowToken} title={notionShowToken ? 'Hide' : 'Show'}>
+											{#if notionShowToken}
+												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+											{:else}
+												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+											{/if}
+										</button>
+									</div>
+									<p class="setting-hint">Create one at notion.so/my-integrations. Stored only on this device, never in the vault.</p>
+									<button class="import-btn" onclick={handleNotionConnect} disabled={notionBusy || !notionToken.trim()} style="margin-top: 8px;">
+										{#if notionBusy}
+											<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
+											Checking...
+										{:else}
+											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
+											Connect
+										{/if}
+									</button>
+								</div>
+							{/if}
+
+							{#if notion?.connected && !notion.setup_complete}
+								<div class="settings-section">
+									<h3>Where to Publish</h3>
+									<p class="setting-hint">Four databases — Projects, Areas, Resources, Archives — are created under a page you choose. Only pages you have shared with the connection are listed.</p>
+									{#if !notionPages}
+										<button class="import-btn" onclick={handleNotionLoadPages} disabled={notionBusy}>
+											{#if notionBusy}
+												<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
+												Loading...
+											{:else}
+												Choose a page
+											{/if}
+										</button>
+									{:else}
+										<div class="setting-options" style="flex-direction: column; align-items: stretch;">
+											{#each notionPages as page (page.id)}
+												<button class="option-btn" onclick={() => handleNotionSetup(page)} disabled={notionBusy}>{page.title}</button>
+											{/each}
+										</div>
+									{/if}
+								</div>
+							{/if}
+
+							{#if notion?.connected && notion.setup_complete}
+								<div class="settings-section">
+									<h3>Publish</h3>
+									<button class="import-btn" onclick={handleNotionPublish} disabled={notionBusy || !notion.enabled}>
+										{#if notionBusy}
+											<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
+											{#if notionProgress && notionProgress.total}
+												Publishing {notionProgress.done} of {notionProgress.total}...
+											{:else}
+												Publishing...
+											{/if}
+										{:else}
+											Publish Now
+										{/if}
+									</button>
+									<p class="setting-hint">Changes publish automatically every {notion.poll_minutes} minutes while the app is open.</p>
+									{#if notion.last_run}
+										<p class="setting-hint">Last published: {new Date(notion.last_run).toLocaleString()}</p>
+									{/if}
+									{#if notion.last_summary}
+										<p class="setting-hint">{describeSummary(notion.last_summary)}</p>
+										{#if describeSkipped(notion.last_summary)}
+											<p class="setting-hint">{describeSkipped(notion.last_summary)}</p>
+										{/if}
+									{/if}
+									{#if notion.failing_notes}
+										<p class="setting-hint">{notion.failing_notes} {notion.failing_notes === 1 ? 'note is' : 'notes are'} failing to publish and will be retried.</p>
+									{/if}
+								</div>
+							{/if}
+
+							{#if notionMessage}
+								<div class="settings-section">
+									<div class="import-result {notionMessage.type}">
+										{#if notionMessage.type === 'success'}
+											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
+										{:else}
+											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
+										{/if}
+										<span>{notionMessage.text}</span>
+									</div>
+								</div>
+							{/if}
+
+							{#if notion?.connected}
+								<div class="settings-section">
+									<h3>Connection</h3>
+									<button class="import-btn" onclick={handleNotionDisconnect} disabled={notionBusy}>Disconnect</button>
+									<p class="setting-hint">Forgets the token on this device. Your pages stay in Notion, and reconnecting picks up where it left off.</p>
 								</div>
 							{/if}
 						</div>
