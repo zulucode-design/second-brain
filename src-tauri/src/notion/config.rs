@@ -13,6 +13,27 @@
 //!   tell that the databases already exist, so it would create four more and every note
 //!   would appear twice.
 //!
+//! ## Where the registry lives, and where it is supposed to end up
+//!
+//! ADR-0002 says vault-scoped settings belong in "a new in-vault settings file", with
+//! snapshot retention as its first member. **That file does not exist yet** —
+//! `max_versions_per_note` is still on the per-machine `AppConfig` (`types.rs`), so the
+//! move it describes has not happened. It is expected to arrive with #28, which is the
+//! ticket that makes two machines share a vault in the first place.
+//!
+//! So [`DatabaseRegistry`] is stored in its own file beside the note map rather than in a
+//! shared settings file that has not been designed. It is vault-scoped either way, which is
+//! the property that matters; the choice is only about which file carries it, and inventing
+//! a cross-cutting settings file here would prejudge a decision #28 should make with the
+//! full set of settings in view.
+//!
+//! **When #28 creates that file**: this registry is a candidate to move into it, and moving
+//! it is contained — [`load_registry`] and [`save_registry`] are the only readers and
+//! writers. Two things to carry across if it moves. It must stay vault-scoped, because a
+//! machine-local copy makes a second machine create four more databases and duplicate every
+//! note. And it must stay free of credentials, which is asserted by a test here rather than
+//! left to a comment: the file travels to every machine the vault reaches.
+//!
 //! Notion is deliberately **not** a value of [`crate::sync_config::SyncSettings::provider`].
 //! That field names the one provider a vault syncs with, so adding Notion to it would mean
 //! that turning on the Notion view turns off file sync. The two are unrelated: the machines

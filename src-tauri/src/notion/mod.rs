@@ -31,5 +31,6 @@
 //! binaries sync between the machines instead, and the free tier caps uploads at 5MB
 //! regardless.
 
+pub mod blocks;
 pub mod config;
 pub mod map;
