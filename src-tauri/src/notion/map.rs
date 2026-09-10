@@ -78,6 +78,15 @@ pub struct MapEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_mtime: Option<i64>,
 
+    /// Where the note was when it was last published.
+    ///
+    /// Kept so a run can tell which note a file belongs to *without opening it*. The map is
+    /// keyed by note id, and the id lives inside the file — so without this, learning
+    /// whether a note had changed would require reading every note, which is the cost the
+    /// modification-time gate exists to avoid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relative_path: Option<String>,
+
     /// Why the last attempt failed, if it did.
     ///
     /// A note that cannot be pushed — malformed, or rejected by Notion — is skipped and
@@ -97,32 +106,11 @@ impl MapEntry {
             data_source_id: None,
             content_hash: None,
             source_mtime: None,
+            relative_path: None,
             last_error: None,
         }
     }
 
-    /// Whether this note needs an API call, given what the vault now holds.
-    ///
-    /// The three reasons are deliberately distinct: content changed, category changed, or
-    /// a previous run left the entry unfinished. A caller that only compared hashes would
-    /// miss a category change, because moving a note between categories need not alter a
-    /// single byte of it.
-    pub fn needs_push(&self, content_hash: &str, data_source_id: &str) -> bool {
-        match self.state {
-            EntryState::Creating | EntryState::Deleted => true,
-            EntryState::Published => {
-                self.content_hash.as_deref() != Some(content_hash)
-                    || self.data_source_id.as_deref() != Some(data_source_id)
-            }
-        }
-    }
-
-    /// Whether the page has to move to a different data source.
-    pub fn needs_move(&self, data_source_id: &str) -> bool {
-        self.page_id.is_some()
-            && self.data_source_id.as_deref() != Some(data_source_id)
-            && self.state != EntryState::Deleted
-    }
 }
 
 fn entry_path(vault_path: &Path, note_id: &str) -> Result<PathBuf, String> {
@@ -251,6 +239,7 @@ mod tests {
             data_source_id: Some(data_source.into()),
             content_hash: Some(hash.into()),
             source_mtime: Some(1_000),
+            relative_path: Some("Projects/Note.md".into()),
             last_error: None,
         }
     }
@@ -270,38 +259,10 @@ mod tests {
     }
 
     #[test]
-    fn an_unchanged_note_needs_no_api_call() {
-        let entry = published("hash-1", "ds-projects");
-        assert!(!entry.needs_push("hash-1", "ds-projects"));
-    }
-
-    #[test]
-    fn an_edited_note_needs_a_push() {
-        let entry = published("hash-1", "ds-projects");
-        assert!(entry.needs_push("hash-2", "ds-projects"));
-    }
-
-    #[test]
-    fn a_recategorised_note_needs_a_push_even_though_its_bytes_are_identical() {
-        // Moving a note between categories changes no content, so a hash comparison alone
-        // would decide nothing needs doing and the page would stay in the wrong database.
-        let entry = published("hash-1", "ds-projects");
-        assert!(entry.needs_push("hash-1", "ds-areas"));
-        assert!(entry.needs_move("ds-areas"));
-    }
-
-    #[test]
-    fn a_note_in_the_right_place_needs_no_move() {
-        let entry = published("hash-1", "ds-projects");
-        assert!(!entry.needs_move("ds-projects"));
-    }
-
-    #[test]
     fn an_interrupted_creation_is_retried_rather_than_assumed_lost() {
         // The window this exists for: page created, process killed before the map was
         // updated. The entry must send the next run to ask Notion, not to skip the note.
         let entry = MapEntry::creating();
-        assert!(entry.needs_push("any-hash", "ds-projects"));
         assert_eq!(entry.state, EntryState::Creating);
         assert!(entry.page_id.is_none());
     }
@@ -364,15 +325,6 @@ mod tests {
         restore(&vault, "note-1").unwrap();
 
         assert_eq!(load(&vault, "note-1"), Some(entry));
-    }
-
-    #[test]
-    fn a_tombstoned_note_is_never_treated_as_needing_a_move() {
-        // Its page is about to be trashed; moving it first would be a wasted call against
-        // a rate-limited API, and would move a page into a database only to remove it.
-        let mut entry = published("hash-1", "ds-projects");
-        entry.state = EntryState::Deleted;
-        assert!(!entry.needs_move("ds-areas"));
     }
 
     #[test]

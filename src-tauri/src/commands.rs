@@ -1397,6 +1397,12 @@ pub fn delete_note(state: State<'_, AppState>, path: String) -> Result<(), Strin
         .map_err(|error| error.to_string())?;
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+
+    // Before the file goes: the note id that identifies its Notion page lives inside it,
+    // and once it is deleted there is nothing left to read. Deleting the map entry here
+    // instead would leak the page — it would sit in Notion with no way left to find it.
+    crate::notion::commands::note_deleted(std::path::Path::new(vault_path), &path);
+
     if let Err(error) = operations::delete_note(vault_path, &path) {
         record_transaction_repair_if_needed(
             &state,
@@ -2178,6 +2184,10 @@ pub fn restore_note(state: State<'_, AppState>, trash_path: String) -> Result<St
             return Err(error);
         }
     };
+    // Restored before the publisher acted on the tombstone: the page was never touched, so
+    // clearing the tombstone costs nothing and keeps the page's identity.
+    crate::notion::commands::note_restored(std::path::Path::new(&vault_path), &restored);
+
     index_note_now(&state, &vault_path, &restored)?;
     queue_semantic_note_now(&state, &restored);
     Ok(restored)
@@ -3986,7 +3996,7 @@ mod secret_config_tests {
     }
 }
 
-fn save_app_config(config: &AppConfig) -> Result<(), String> {
+pub(crate) fn save_app_config(config: &AppConfig) -> Result<(), String> {
     let path = app_config_path()?;
     if config.secret_store_error.is_some() {
         let recovery: Option<AppConfig> = std::fs::read_to_string(&path)

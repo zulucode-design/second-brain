@@ -30,7 +30,7 @@
 //! rejected token ends a run, because retrying it cannot succeed and spends a budget shared
 //! with everything else in the user's workspace.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -45,7 +45,11 @@ use crate::types::NoteMeta;
 use crate::vault::para::ParaCategory;
 
 /// What a run did, for the Settings panel.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+///
+/// Deserialized as well as serialized: the last run is written to a machine-local file so
+/// the panel can report it after a restart, and so the background process #57 introduces
+/// and the app agree on what happened without talking to each other.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Summary {
     pub created: u32,
     pub updated: u32,
@@ -111,11 +115,15 @@ pub fn read_note(vault_path: &Path, relative_path: &str) -> Result<(NoteMeta, St
 /// is visible rather than looking like a hang. It is a callback rather than a Tauri event so
 /// this runs unchanged inside the background process #57 introduces, which has no window to
 /// emit to.
+/// `read` is called only for notes that survive the modification-time gate, which is the
+/// point of taking an enumeration rather than the notes themselves: a caller that had to
+/// read every note to call this would have paid the cost the gate exists to avoid.
 pub async fn run(
     vault_path: &Path,
     client: &NotionClient,
     registry: &DatabaseRegistry,
-    notes: Vec<NoteSource>,
+    snapshots: Vec<NoteSnapshot>,
+    mut read: impl FnMut(&NoteSnapshot) -> Result<NoteSource, String>,
     mut report: impl FnMut(Progress),
 ) -> Result<Summary, NotionError> {
     let mut summary = Summary::default();
@@ -124,7 +132,7 @@ pub async fn run(
     // works through everything else, and trashing is cheap.
     let outstanding = map::all(vault_path);
     let tombstones = plan::tombstone_actions(&outstanding);
-    let total = tombstones.len() + notes.len();
+    let total = tombstones.len() + snapshots.len();
     let mut done = 0;
 
     for action in tombstones {
@@ -151,17 +159,30 @@ pub async fn run(
         report(Progress { done, total });
     }
 
-    for note in notes {
-        let note_id = note.snapshot.note_id.clone();
+    for snapshot in snapshots {
+        let note_id = snapshot.note_id.clone();
         let entry = map::load(vault_path, &note_id);
 
         // The cheap gate: an unchanged modification time means the file is not read at all.
-        if !plan::needs_inspection(entry.as_ref(), note.snapshot.mtime) {
+        if !plan::needs_inspection(entry.as_ref(), snapshot.mtime) {
             summary.up_to_date += 1;
             done += 1;
             report(Progress { done, total });
             continue;
         }
+
+        let note = match read(&snapshot) {
+            Ok(note) => note,
+            Err(error) => {
+                // A note that cannot be read is this note's problem, not the run's — it may
+                // be mid-write by the editor, or arriving from the other machine.
+                log::warn!("Skipping {note_id}, which could not be read: {error}");
+                summary.failed += 1;
+                done += 1;
+                report(Progress { done, total });
+                continue;
+            }
+        };
 
         let inspected = InspectedNote {
             snapshot: note.snapshot.clone(),
@@ -182,6 +203,16 @@ pub async fn run(
         report(Progress { done, total });
     }
 
+    log::info!(
+        "Notion: {} created, {} updated, {} moved, {} trashed, {} unchanged, {} skipped, {} failed",
+        summary.created,
+        summary.updated,
+        summary.moved,
+        summary.trashed,
+        summary.up_to_date,
+        summary.total_skipped(),
+        summary.failed,
+    );
     Ok(summary)
 }
 
@@ -224,6 +255,11 @@ async fn execute(
     action: &Action,
     note: &NoteSource,
 ) -> Result<(), NotionError> {
+    // Nothing that does not call Notion needs an executor arm.
+    if !action.is_work() {
+        return Ok(());
+    }
+
     match action {
         Action::UpToDate { .. } | Action::Skip { .. } => Ok(()),
 
@@ -232,12 +268,12 @@ async fn execute(
             data_source_id,
             content_hash,
             mtime,
-            ..
+            relative_path,
         } => {
             // Written before the call, so an interrupted create leaves a trace.
             let _ = map::save(vault_path, note_id, &MapEntry::creating());
             let page_id = create_page(client, data_source_id, note).await?;
-            publish_entry(vault_path, note_id, &page_id, data_source_id, content_hash, *mtime);
+            publish_entry(vault_path, note_id, &page_id, data_source_id, content_hash, *mtime, relative_path);
             Ok(())
         }
 
@@ -246,7 +282,7 @@ async fn execute(
             data_source_id,
             content_hash,
             mtime,
-            ..
+            relative_path,
         } => {
             // Ask Notion before creating anything. The page may exist from the interrupted
             // run; creating blind is how a vault ends up with two pages per note.
@@ -259,12 +295,12 @@ async fn execute(
                     client
                         .update_properties(&page_id, properties::for_note(&note.meta))
                         .await?;
-                    publish_entry(vault_path, note_id, &page_id, data_source_id, content_hash, *mtime);
+                    publish_entry(vault_path, note_id, &page_id, data_source_id, content_hash, *mtime, relative_path);
                     Ok(())
                 }
                 None => {
                     let page_id = create_page(client, data_source_id, note).await?;
-                    publish_entry(vault_path, note_id, &page_id, data_source_id, content_hash, *mtime);
+                    publish_entry(vault_path, note_id, &page_id, data_source_id, content_hash, *mtime, relative_path);
                     Ok(())
                 }
             }
@@ -276,13 +312,13 @@ async fn execute(
             data_source_id,
             content_hash,
             mtime,
-            ..
+            relative_path,
         } => {
             replace_content(client, page_id, note).await?;
             client
                 .update_properties(page_id, properties::for_note(&note.meta))
                 .await?;
-            publish_entry(vault_path, note_id, page_id, data_source_id, content_hash, *mtime);
+            publish_entry(vault_path, note_id, page_id, data_source_id, content_hash, *mtime, relative_path);
             Ok(())
         }
 
@@ -293,6 +329,7 @@ async fn execute(
             content_hash,
             mtime,
             also_update_content,
+            relative_path,
             ..
         } => {
             client.move_page(page_id, data_source_id).await?;
@@ -306,7 +343,7 @@ async fn execute(
             if *also_update_content {
                 replace_content(client, page_id, note).await?;
             }
-            publish_entry(vault_path, note_id, page_id, data_source_id, content_hash, *mtime);
+            publish_entry(vault_path, note_id, page_id, data_source_id, content_hash, *mtime, relative_path);
             Ok(())
         }
 
@@ -388,6 +425,7 @@ async fn find_existing(
     Ok(None)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn publish_entry(
     vault_path: &Path,
     note_id: &str,
@@ -395,6 +433,7 @@ fn publish_entry(
     data_source_id: &str,
     content_hash: &str,
     mtime: i64,
+    relative_path: &str,
 ) {
     let entry = MapEntry {
         state: EntryState::Published,
@@ -402,6 +441,7 @@ fn publish_entry(
         data_source_id: Some(data_source_id.to_string()),
         content_hash: Some(content_hash.to_string()),
         source_mtime: Some(mtime),
+        relative_path: Some(relative_path.to_string()),
         last_error: None,
     };
     if let Err(error) = map::save(vault_path, note_id, &entry) {
@@ -469,6 +509,39 @@ mod tests {
         (format!("http://{address}"), rx)
     }
 
+
+    /// Drive [`run`] from whole notes, the way every test but the gate test wants to.
+    ///
+    /// `run` takes an enumeration plus a reader rather than the notes themselves, because a
+    /// caller that read every note up front would have paid exactly the cost the
+    /// modification-time gate exists to avoid.
+    async fn run_notes(
+        vault_path: &std::path::Path,
+        client: &NotionClient,
+        registry: &DatabaseRegistry,
+        notes: Vec<NoteSource>,
+        report: impl FnMut(Progress),
+    ) -> Result<Summary, NotionError> {
+        let snapshots: Vec<NoteSnapshot> = notes.iter().map(|n| n.snapshot.clone()).collect();
+        let mut by_id: std::collections::HashMap<String, NoteSource> = notes
+            .into_iter()
+            .map(|n| (n.snapshot.note_id.clone(), n))
+            .collect();
+        run(
+            vault_path,
+            client,
+            registry,
+            snapshots,
+            move |snapshot| {
+                by_id
+                    .remove(&snapshot.note_id)
+                    .ok_or_else(|| "no such note".to_string())
+            },
+            report,
+        )
+        .await
+    }
+
     fn client(base: &str) -> NotionClient {
         NotionClient::with_base("t", base, Duration::from_millis(1))
     }
@@ -523,7 +596,7 @@ mod tests {
         let vault = vault();
         let (base, requests) = scripted_server(vec![("200 OK", r#"{"id":"page-1"}"#)]);
 
-        let summary = run(
+        let summary = run_notes(
             &vault,
             &client(&base),
             &registry(),
@@ -551,12 +624,12 @@ mod tests {
         let (base, _r) = scripted_server(vec![("200 OK", r#"{"id":"page-1"}"#)]);
         let notes = || vec![note("note-1", ParaCategory::Projects, "# Hello")];
 
-        run(&vault, &client(&base), &registry(), notes(), |_| {})
+        run_notes(&vault, &client(&base), &registry(), notes(), |_| {})
             .await
             .unwrap();
 
         // The server has no responses left; any request would fail the run.
-        let summary = run(&vault, &client(&base), &registry(), notes(), |_| {})
+        let summary = run_notes(&vault, &client(&base), &registry(), notes(), |_| {})
             .await
             .unwrap();
 
@@ -579,6 +652,7 @@ mod tests {
                 data_source_id: Some("ds-Projects".into()),
                 content_hash: Some(content_hash_of(&note("note-1", ParaCategory::Areas, "body"))),
                 source_mtime: Some(1),
+                relative_path: Some("Projects/note-1.md".into()),
                 last_error: None,
             },
         )
@@ -589,7 +663,7 @@ mod tests {
             ("200 OK", r#"{"id":"page-1"}"#),
         ]);
 
-        let summary = run(
+        let summary = run_notes(
             &vault,
             &client(&base),
             &registry(),
@@ -629,7 +703,7 @@ mod tests {
             ("200 OK", r#"{"id":"page-orphan"}"#), // properties
         ]);
 
-        let summary = run(
+        let summary = run_notes(
             &vault,
             &client(&base),
             &registry(),
@@ -663,6 +737,7 @@ mod tests {
                 data_source_id: Some("ds-Projects".into()),
                 content_hash: Some("h".into()),
                 source_mtime: Some(1),
+                relative_path: Some("Projects/note-1.md".into()),
                 last_error: None,
             },
         )
@@ -670,7 +745,7 @@ mod tests {
 
         let (base, requests) = scripted_server(vec![("200 OK", r#"{"id":"page-9"}"#)]);
 
-        let summary = run(&vault, &client(&base), &registry(), vec![], |_| {})
+        let summary = run_notes(&vault, &client(&base), &registry(), vec![], |_| {})
             .await
             .unwrap();
 
@@ -694,6 +769,7 @@ mod tests {
                 data_source_id: None,
                 content_hash: None,
                 source_mtime: None,
+                relative_path: None,
                 last_error: None,
             },
         )
@@ -701,7 +777,7 @@ mod tests {
 
         let (base, _r) = scripted_server(vec![("404 Not Found", r#"{"message":"gone"}"#)]);
 
-        let summary = run(&vault, &client(&base), &registry(), vec![], |_| {})
+        let summary = run_notes(&vault, &client(&base), &registry(), vec![], |_| {})
             .await
             .unwrap();
 
@@ -719,7 +795,7 @@ mod tests {
             ("200 OK", r#"{"id":"page-2"}"#),
         ]);
 
-        let summary = run(
+        let summary = run_notes(
             &vault,
             &client(&base),
             &registry(),
@@ -750,7 +826,7 @@ mod tests {
             ("200 OK", r#"{"id":"page-2"}"#),
         ]);
 
-        let error = run(
+        let error = run_notes(
             &vault,
             &client(&base),
             &registry(),
@@ -778,7 +854,7 @@ mod tests {
         copy.snapshot.relative_path =
             "Projects/Note.sync-conflict-20260903-141500-ABCDEF.md".into();
 
-        let summary = run(&vault, &client(&base), &registry(), vec![copy], |_| {})
+        let summary = run_notes(&vault, &client(&base), &registry(), vec![copy], |_| {})
             .await
             .unwrap();
 
@@ -794,7 +870,7 @@ mod tests {
         let mut orphan = note("note-1", ParaCategory::Projects, "body");
         orphan.snapshot.category = None;
 
-        let summary = run(&vault, &client(&base), &registry(), vec![orphan], |_| {})
+        let summary = run_notes(&vault, &client(&base), &registry(), vec![orphan], |_| {})
             .await
             .unwrap();
 
@@ -815,7 +891,7 @@ mod tests {
             ("200 OK", r#"{"id":"page-1"}"#),
         ]);
 
-        let summary = run(
+        let summary = run_notes(
             &vault,
             &client(&base),
             &registry(),
@@ -842,7 +918,7 @@ mod tests {
         ]);
 
         let mut seen = Vec::new();
-        run(
+        run_notes(
             &vault,
             &client(&base),
             &registry(),
@@ -856,6 +932,80 @@ mod tests {
         .unwrap();
 
         assert_eq!(seen, vec![(1, 2), (2, 2)]);
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_note_is_never_even_read_from_disk() {
+        // The reason `run` takes an enumeration and a reader rather than the notes: at
+        // twelve polls an hour, re-reading the whole vault to learn nothing is the cost
+        // this exists to avoid.
+        let vault = vault();
+        map::save(
+            &vault,
+            "note-1",
+            &MapEntry {
+                state: EntryState::Published,
+                page_id: Some("page-1".into()),
+                data_source_id: Some("ds-Projects".into()),
+                content_hash: Some("whatever".into()),
+                source_mtime: Some(100),
+                relative_path: Some("Projects/note-1.md".into()),
+                last_error: None,
+            },
+        )
+        .unwrap();
+
+        let (base, _r) = scripted_server(vec![]);
+        let snapshot = note("note-1", ParaCategory::Projects, "body").snapshot;
+        let mut reads = 0;
+
+        let summary = run(
+            &vault,
+            &client(&base),
+            &registry(),
+            vec![snapshot],
+            |_| {
+                reads += 1;
+                Err("the file should never have been opened".to_string())
+            },
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(reads, 0, "an unchanged mtime must not cost a file read");
+        assert_eq!(summary.up_to_date, 1);
+    }
+
+    #[tokio::test]
+    async fn a_note_that_cannot_be_read_is_skipped_without_stopping_the_run() {
+        // Mid-write by the editor, or still arriving from the other machine.
+        let vault = vault();
+        let (base, _r) = scripted_server(vec![("200 OK", r#"{"id":"page-2"}"#)]);
+        let unreadable = note("locked", ParaCategory::Projects, "body").snapshot;
+        let readable = note("fine", ParaCategory::Projects, "body");
+        let readable_snapshot = readable.snapshot.clone();
+        let mut readable = Some(readable);
+
+        let summary = run(
+            &vault,
+            &client(&base),
+            &registry(),
+            vec![unreadable, readable_snapshot],
+            |snapshot| {
+                if snapshot.note_id == "fine" {
+                    readable.take().ok_or_else(|| "already taken".to_string())
+                } else {
+                    Err("permission denied".to_string())
+                }
+            },
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(summary.failed, 1);
+        assert_eq!(summary.created, 1, "the readable note still publishes");
     }
 
     #[test]

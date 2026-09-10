@@ -113,18 +113,6 @@ pub enum Action {
 }
 
 impl Action {
-    pub fn note_id(&self) -> &str {
-        match self {
-            Action::Create { note_id, .. }
-            | Action::ResolveInterrupted { note_id, .. }
-            | Action::UpdateContent { note_id, .. }
-            | Action::Move { note_id, .. }
-            | Action::Trash { note_id, .. }
-            | Action::Skip { note_id, .. }
-            | Action::UpToDate { note_id } => note_id,
-        }
-    }
-
     /// Whether this action calls Notion at all, for reporting how much a run actually did.
     pub fn is_work(&self) -> bool {
         !matches!(self, Action::Skip { .. } | Action::UpToDate { .. })
@@ -349,6 +337,7 @@ mod tests {
             data_source_id: Some(data_source.into()),
             content_hash: Some(hash.into()),
             source_mtime: Some(100),
+            relative_path: Some("Projects/Thing.md".into()),
             last_error: None,
         }
     }
