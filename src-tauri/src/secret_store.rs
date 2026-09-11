@@ -184,6 +184,15 @@ pub(crate) fn copy_plaintext_recovery(from: &AppConfig, to: &mut AppConfig) {
 
 pub(crate) fn has_plaintext_credentials(config: &AppConfig) -> bool {
     !credential_values(config).is_empty()
+        || config.vaults.iter().any(|vault| {
+            vault
+                .sync
+                .credentials
+                .webdav
+                .password
+                .as_deref()
+                .is_some_and(|password| !password.is_empty())
+        })
         || config
             .legacy_sync
             .credentials
@@ -311,6 +320,11 @@ fn clear_credentials(config: &mut AppConfig) {
     let ids = credential_ids(config);
     for id in ids {
         assign(config, &id, None);
+    }
+    // A missing vault identity must not make an unaddressable password survive in
+    // runtime memory or in the redacted disk projection.
+    for vault in &mut config.vaults {
+        vault.sync.credentials.webdav.password = None;
     }
     config.legacy_sync.credentials.webdav.password = None;
 }
@@ -488,20 +502,35 @@ mod tests {
             openai_api_key: Some("openai-secret".to_string()),
             ollama_api_key: Some("ollama-secret".to_string()),
             openai_compatible_api_key: Some("compatible-secret".to_string()),
-            vaults: vec![VaultConfig {
-                path: "/vaults/life".to_string(),
-                vault_id: Some("life-vault-id".to_string()),
-                sync: SyncSettings {
-                    credentials: ProviderCredentials {
-                        webdav: WebdavCredentials {
-                            password: Some("webdav-secret".to_string()),
-                            ..Default::default()
+            vaults: vec![
+                VaultConfig {
+                    path: "/vaults/life".to_string(),
+                    vault_id: Some("life-vault-id".to_string()),
+                    sync: SyncSettings {
+                        credentials: ProviderCredentials {
+                            webdav: WebdavCredentials {
+                                password: Some("webdav-secret".to_string()),
+                                ..Default::default()
+                            },
                         },
+                        ..Default::default()
                     },
                     ..Default::default()
                 },
-                ..Default::default()
-            }],
+                VaultConfig {
+                    path: "/vaults/unidentified".to_string(),
+                    sync: SyncSettings {
+                        credentials: ProviderCredentials {
+                            webdav: WebdavCredentials {
+                                password: Some("unaddressable-webdav-secret".to_string()),
+                                ..Default::default()
+                            },
+                        },
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            ],
             ..Default::default()
         };
 
@@ -513,6 +542,7 @@ mod tests {
             "ollama-secret",
             "compatible-secret",
             "webdav-secret",
+            "unaddressable-webdav-secret",
         ] {
             assert!(!json.contains(secret), "persisted plaintext: {secret}");
         }

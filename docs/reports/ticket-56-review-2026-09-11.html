@@ -36,8 +36,9 @@
     <h2>Standards review</h2>
     <p><span class="status resolved">Resolved</span> The first pass found that WebDAV keyring
       accounts were derived from a bookmark or path hash. That would orphan a password when a
-      local vault moved. Per-vault accounts now use <code>.helixnotes/vault_id</code>, and opening a
-      moved vault refreshes its path without changing its credential identity.</p>
+      local vault moved. Per-vault accounts now use <code>.helixnotes/vault_id</code>. Once that
+      identity is known, opening a moved vault refreshes its path without changing its credential
+      account.</p>
     <p><span class="status resolved">Resolved</span> The first pass also found repeated credential
       enumeration and duplicate in-memory test stores. Credential enumeration now has one binding
       roster, and secret-store tests share one test adapter.</p>
@@ -53,6 +54,11 @@
       legacy WebDAV password could be treated as migrated and erased. Migration now stops loudly
       unless every plaintext WebDAV password has a stable vault identity. The original file is left
       unchanged for a later retry.</p>
+    <p><span class="status resolved">Resolved</span> The re-review found that identity discovery
+      could recreate an obsolete path for a vault moved before its first keyring migration, then
+      redact the password under that fabricated identity. Vault identity lookup now requires the
+      saved vault directory to exist. A missing path leaves the original config untouched, stores
+      no credential, and reports the blocked migration.</p>
 
     <h2>Test-first evidence</h2>
     <p>The public configuration seams cover successful plaintext migration, redacted persistence,
@@ -67,13 +73,13 @@
       <tbody>
         <tr><td>Svelte diagnostics</td><td><span class="status pass">Passed</span></td><td>0 errors and 0 warnings</td></tr>
         <tr><td>JavaScript tests</td><td><span class="status pass">Passed</span></td><td>33 passed</td></tr>
-        <tr><td>Rust tests</td><td><span class="status pass">Passed</span></td><td>335 passed, 4 ignored, 0 failed through <code>pnpm test:rust</code></td></tr>
+        <tr><td>Rust tests</td><td><span class="status pass">Passed</span></td><td>336 passed, 4 ignored, 0 failed through <code>pnpm test:rust</code></td></tr>
         <tr><td>Rust formatting and Clippy</td><td><span class="status pass">Passed</span></td><td><code>cargo fmt --check</code> and all-target strict Clippy</td></tr>
         <tr><td>Production build</td><td><span class="status pass">Passed</span></td><td>Static site built successfully; the existing large-chunk advisory remains non-blocking</td></tr>
       </tbody>
     </table>
 
-    <p class="callout">PR creation is deferred until the final verification run and the two-axis
-      re-review are complete. The PR must not be merged as part of ticket #56's current goal.</p>
+    <p class="callout">The final verification and two-axis review are complete. The next step is
+      to open the PR and start CI. The PR must not be merged as part of ticket #56's current goal.</p>
   </body>
 </html>

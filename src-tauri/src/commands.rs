@@ -3934,6 +3934,56 @@ mod secret_config_tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), original_json);
         std::fs::remove_file(path).unwrap();
     }
+
+    #[test]
+    fn moved_vault_before_upgrade_does_not_migrate_under_a_fabricated_identity() {
+        let config_path = std::env::temp_dir().join(format!(
+            "helixnotes-moved-vault-config-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        let stale_vault_path = std::env::temp_dir().join(format!(
+            "helixnotes-moved-vault-stale-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let original = AppConfig {
+            vaults: vec![VaultConfig {
+                path: stale_vault_path.to_string_lossy().into_owned(),
+                name: "Moved vault".to_string(),
+                sync: crate::sync_config::SyncSettings {
+                    credentials: crate::sync_config::ProviderCredentials {
+                        webdav: crate::sync_config::WebdavCredentials {
+                            password: Some("must-remain-recoverable".to_string()),
+                            ..Default::default()
+                        },
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let original_json = serde_json::to_string(&original).unwrap();
+        std::fs::write(&config_path, &original_json).unwrap();
+        let store = MemoryStore::default();
+
+        let loaded = load_app_config_from(&config_path, &store);
+
+        assert!(loaded.vaults[0].sync.credentials.webdav.password.is_none());
+        assert!(loaded
+            .secret_store_error
+            .as_deref()
+            .is_some_and(|error| error.contains("vault identity is available")));
+        assert_eq!(
+            std::fs::read_to_string(&config_path).unwrap(),
+            original_json
+        );
+        assert!(store.0.borrow().is_empty());
+        assert!(
+            !stale_vault_path.exists(),
+            "identity discovery must never recreate an obsolete vault path"
+        );
+        std::fs::remove_file(config_path).unwrap();
+    }
 }
 
 fn save_app_config(config: &AppConfig) -> Result<(), String> {
