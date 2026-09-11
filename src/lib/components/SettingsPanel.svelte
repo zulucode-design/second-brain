@@ -573,7 +573,10 @@
 	let notionToken = $state('');
 	let notionShowToken = $state(false);
 	let notionBusy = $state(false);
-	let notionMessage = $state<{ type: 'success' | 'error'; text: string } | null>(null);
+	// Which section produced the message, so it renders under the button that caused it. A
+	// separate section below everything else sat off-screen in a normal-height panel, and a
+	// publish that succeeded looked like one that did nothing.
+	let notionMessage = $state<{ type: 'success' | 'error'; text: string; at: 'connect' | 'setup' | 'publish' | 'connection' } | null>(null);
 	let notionPages = $state<VisiblePage[] | null>(null);
 	let notionProgress = $state<{ done: number; total: number } | null>(null);
 
@@ -581,7 +584,7 @@
 		try {
 			notion = await notionStatus();
 		} catch (e) {
-			notionMessage = { type: 'error', text: String(e) };
+			notionMessage = { type: 'error', text: String(e), at: 'connection' };
 		}
 	}
 
@@ -596,10 +599,10 @@
 			const name = await notionConnect(notionToken);
 			// Cleared once stored: the field is an input, not a place the token lives.
 			notionToken = '';
-			notionMessage = { type: 'success', text: `Connected as "${name}".` };
+			notionMessage = { type: 'success', text: `Connected as "${name}".`, at: 'connect' };
 			await refreshNotion();
 		} catch (e) {
-			notionMessage = { type: 'error', text: String(e) };
+			notionMessage = { type: 'error', text: String(e), at: 'connect' };
 		} finally {
 			notionBusy = false;
 		}
@@ -610,10 +613,10 @@
 		notionPages = null;
 		try {
 			await notionDisconnect();
-			notionMessage = { type: 'success', text: 'Disconnected. Your pages stay in Notion.' };
+			notionMessage = { type: 'success', text: 'Disconnected. Your pages stay in Notion.', at: 'connection' };
 			await refreshNotion();
 		} catch (e) {
-			notionMessage = { type: 'error', text: String(e) };
+			notionMessage = { type: 'error', text: String(e), at: 'connection' };
 		}
 	}
 
@@ -627,11 +630,12 @@
 				// until a page is explicitly shared with it.
 				notionMessage = {
 					type: 'error',
-					text: 'The connection cannot see any pages yet. In Notion, open a page, choose ••• → Add connections, and pick this connection.'
+					text: 'The connection cannot see any pages yet. In Notion, open a page, choose ••• → Add connections, and pick this connection.',
+					at: 'setup'
 				};
 			}
 		} catch (e) {
-			notionMessage = { type: 'error', text: String(e) };
+			notionMessage = { type: 'error', text: String(e), at: 'setup' };
 		} finally {
 			notionBusy = false;
 		}
@@ -643,10 +647,10 @@
 		try {
 			await notionSetup(page.id);
 			notionPages = null;
-			notionMessage = { type: 'success', text: `Created Projects, Areas, Resources, and Archives under "${page.title}".` };
+			notionMessage = { type: 'success', text: `Created Projects, Areas, Resources, and Archives under "${page.title}".`, at: 'setup' };
 			await refreshNotion();
 		} catch (e) {
-			notionMessage = { type: 'error', text: String(e) };
+			notionMessage = { type: 'error', text: String(e), at: 'setup' };
 			// Setup keeps whatever databases it managed to create, so refreshing shows the
 			// partial state honestly rather than implying nothing happened.
 			await refreshNotion();
@@ -670,12 +674,12 @@
 			notionProgress = event.payload;
 		}));
 		unlisteners.push(await listen<NotionSummary>('notion-publish-finished', async (event) => {
-			notionMessage = { type: 'success', text: describeSummary(event.payload) };
+			notionMessage = { type: 'success', text: describeSummary(event.payload), at: 'publish' };
 			cleanup();
 			await refreshNotion();
 		}));
 		unlisteners.push(await listen<{ error: string; fatal: boolean }>('notion-publish-failed', async (event) => {
-			notionMessage = { type: 'error', text: event.payload.error };
+			notionMessage = { type: 'error', text: event.payload.error, at: 'publish' };
 			cleanup();
 			await refreshNotion();
 		}));
@@ -683,7 +687,7 @@
 		try {
 			await notionPublishNow();
 		} catch (e) {
-			notionMessage = { type: 'error', text: String(e) };
+			notionMessage = { type: 'error', text: String(e), at: 'publish' };
 			cleanup();
 		}
 	}
@@ -2793,10 +2797,23 @@
 
 					{:else if activeTab === 'notion'}
 						<div class="tab-content">
+							{#snippet notionResult(at: string)}
+								{#if notionMessage && notionMessage.at === at}
+									<div class="import-result {notionMessage.type}">
+										{#if notionMessage.type === 'success'}
+											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
+										{:else}
+											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
+										{/if}
+										<span>{notionMessage.text}</span>
+									</div>
+								{/if}
+							{/snippet}
 							<div class="settings-section">
 								<h3>Notion</h3>
 								<p class="setting-hint">Publishes your notes to Notion so you can read them on a phone or in a browser. It only writes: changes made in Notion never come back here. Attachments are not uploaded.</p>
 								<p class="setting-hint">Only one machine should publish. Turn this on where the app is usually running, and leave it off on the others.</p>
+								{@render notionResult('connection')}
 								{#if notion && nextStep(notion)}
 									<p class="setting-hint"><strong>{nextStep(notion)}</strong></p>
 								{/if}
@@ -2825,6 +2842,7 @@
 											Connect
 										{/if}
 									</button>
+									{@render notionResult('connect')}
 								</div>
 							{/if}
 
@@ -2848,6 +2866,7 @@
 											{/each}
 										</div>
 									{/if}
+									{@render notionResult('setup')}
 								</div>
 							{/if}
 
@@ -2866,6 +2885,7 @@
 											Publish Now
 										{/if}
 									</button>
+									{@render notionResult('publish')}
 									<p class="setting-hint">Changes publish automatically every {notion.poll_minutes} minutes while the app is open.</p>
 									{#if notion.last_run}
 										<p class="setting-hint">Last published: {new Date(notion.last_run).toLocaleString()}</p>
@@ -2882,23 +2902,11 @@
 								</div>
 							{/if}
 
-							{#if notionMessage}
-								<div class="settings-section">
-									<div class="import-result {notionMessage.type}">
-										{#if notionMessage.type === 'success'}
-											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
-										{:else}
-											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
-										{/if}
-										<span>{notionMessage.text}</span>
-									</div>
-								</div>
-							{/if}
-
 							{#if notion?.connected}
 								<div class="settings-section">
 									<h3>Connection</h3>
 									<button class="import-btn" onclick={handleNotionDisconnect} disabled={notionBusy}>Disconnect</button>
+									{@render notionResult('connection')}
 									<p class="setting-hint">Forgets the token on this device. Your pages stay in Notion, and reconnecting picks up where it left off.</p>
 								</div>
 							{/if}
