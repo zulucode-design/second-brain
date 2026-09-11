@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ticket #65 — pre-merge review</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+      body { max-width: 900px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.55; }
+      h1, h2 { color: #f9fafb; }
+      code { background: #1f2937; padding: .12rem .3rem; border-radius: .25rem; }
+      .status { display: inline-block; border-radius: 999px; padding: .2rem .65rem; font-weight: 700; }
+      .pass { background: #064e3b; color: #a7f3d0; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { text-align: left; border-bottom: 1px solid #374151; padding: .65rem; vertical-align: top; }
+    </style>
+  </head>
+  <body>
+    <p><span class="status pass">Review passed</span></p>
+    <h1>Ticket #65 — note-menu submenus stay open</h1>
+    <p>Reviewed 2026-09-11 against <code>origin/main...fix/note-menu-stays-open</code>, with
+      <code>origin/main</code> fixed at
+      <code>fba068ccc3903fb1d18543bcd0c11d3912979d2b</code>.</p>
+
+    <h2>Standards review</h2>
+    <p><span class="status pass">0 findings</span> Moving propagation control to the context-menu
+      boundary introduces no documented-standard violations or credible baseline code smells.</p>
+
+    <h2>Spec review</h2>
+    <p><span class="status pass">0 findings</span> The container-level click boundary covers every
+      content-swapping action named by #65 while leaving explicit close actions and outside-click
+      dismissal intact. The earlier one-button workaround is removed.</p>
+
+    <h2>Verification</h2>
+    <table>
+      <thead><tr><th>Check</th><th>Status</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Svelte diagnostics</td><td><span class="status pass">Passed</span></td><td>0 errors and 0 warnings through <code>pnpm check</code></td></tr>
+        <tr><td>Application click-through</td><td><span class="status pass">Passed</span></td><td>Linux/WebKitGTK: Tags… and Move to… remain usable; the same bubbling failure had previously been observed for Move to… on Windows/WebView2</td></tr>
+        <tr><td>Two-axis review</td><td><span class="status pass">Passed</span></td><td>Standards: 0 findings; Spec: 0 findings</td></tr>
+      </tbody>
+    </table>
+  </body>
+</html>
