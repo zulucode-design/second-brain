@@ -35,6 +35,8 @@ pub mod blocks;
 pub mod client;
 pub mod commands;
 pub mod config;
+#[cfg(test)]
+mod live_tests;
 pub mod map;
 pub mod plan;
 pub mod properties;
