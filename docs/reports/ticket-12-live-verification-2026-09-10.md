@@ -110,10 +110,17 @@ smaller ones, fixed in `0591622`:
 ## Incidental
 
 One pre-existing test, `vault::relocation::tests::killing_the_app_mid_notebook_move_still_recovers`,
-failed once in eight full-suite runs during this work and passed in every other run,
-including five in isolation. It kills a child process mid-move, which is timing-sensitive by
-construction. Nothing on this branch touches relocation. Its failure output was not captured,
-so the cause is unknown.
+failed once in eight full-suite runs during this work.
+
+**Update, same day:** a loop set up to catch it failed on run 24 of 25, with output. It is not
+flaky and not a coverage shortfall. The *correctness* assertion failed: recovery could not
+parse an **empty** `directory-move.json`. The manifest is written with `create_new` followed
+by `write_all`, so a kill between the two leaves a zero-byte file under the final name.
+Recovery handles a missing manifest but not an incomplete one.
+
+No note is lost, because the manifest precedes the rename. But the vault is stuck: every open
+fails recovery, shows a repair warning the user can't clear, and skips category reconciliation,
+until the file is deleted by hand. Filed as **#61**. Nothing on this branch touches relocation.
 
 ## Reproduction
 
