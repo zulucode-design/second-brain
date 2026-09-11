@@ -176,6 +176,18 @@ not because it is known to fix anything. The cause is unknown.
 
 - **The packaged app.** Everything above ran from a test binary or a dev build.
 
+## Credential-storage integration — 2026-09-11
+
+The original click-through branch temporarily stored the Notion token in the machine-local
+`config.json`, explicitly pending #56. PR #66 has now landed first, and #12 is rebased onto its
+OS credential-store boundary. The token remains on the runtime `NotionSettings` value consumed by
+the headless publisher, but persisted configuration is redacted; storage uses the vault's stable
+identity under the dedicated `integration:notion:<vault-id>` account.
+
+Automated coverage verifies plaintext migration, redacted serialization, and that the token follows
+the vault identity when its folder moves. The live Notion behavior above is unchanged by this
+persistence-only integration and was not repeated against the already-trashed disposable databases.
+
 ## Incidental
 
 One pre-existing test, `vault::relocation::tests::killing_the_app_mid_notebook_move_still_recovers`,

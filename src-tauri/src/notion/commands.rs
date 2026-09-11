@@ -74,17 +74,18 @@ fn update_settings(
     change: impl FnOnce(&mut NotionSettings),
 ) -> Result<(), String> {
     let mut config = state.config.lock().map_err(|error| error.to_string())?;
-    let active = config
+    let mut candidate = config.clone();
+    let active = candidate
         .active_vault
         .clone()
         .ok_or_else(|| "No active vault".to_string())?;
-    let vault = config
+    let vault = candidate
         .vaults
         .iter_mut()
         .find(|vault| vault.path == active)
         .ok_or_else(|| "The active vault is not in the vault list".to_string())?;
     change(&mut vault.notion);
-    crate::commands::save_app_config(&config)
+    crate::commands::commit_secret_config(&mut config, candidate)
 }
 
 fn client_for(config: &AppConfig) -> Result<NotionClient, String> {

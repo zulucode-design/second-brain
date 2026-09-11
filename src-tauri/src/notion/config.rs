@@ -4,10 +4,10 @@
 //! synced wholesale between machines, so anything in it travels, and anything that must
 //! *not* travel has to live somewhere else entirely.
 //!
-//! - **The token is machine-local.** It is a workspace-write credential, and a credential
-//!   in a synced folder is a credential on every machine that folder ever reaches. It
-//!   therefore rides on [`crate::types::VaultConfig`], which is stored in the per-machine
-//!   `config.json`.
+//! - **The token is machine-local and secret.** It is a workspace-write credential, and a
+//!   credential in a synced folder is a credential on every machine that folder ever
+//!   reaches. Its runtime value rides on [`crate::types::VaultConfig`], while persistence
+//!   is keyed by the vault's stable identity in the OS credential store (ADR-0008).
 //! - **The database registry is vault-scoped.** It records which Notion databases hold
 //!   *this vault's* notes. Keeping it machine-local would mean a second machine could not
 //!   tell that the databases already exist, so it would create four more and every note
@@ -78,7 +78,7 @@ pub const NOTE_ID_PROPERTY: &str = "Note ID";
 /// against how stale the view may be, not against the rate limit.
 pub const DEFAULT_POLL_MINUTES: u32 = 5;
 
-/// The machine-local half: the credential and whether this machine publishes.
+/// The machine-local half: whether this machine publishes and its runtime credential.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NotionSettings {
     /// Whether this machine pushes to Notion.
@@ -92,10 +92,9 @@ pub struct NotionSettings {
 
     /// The internal integration token.
     ///
-    /// Plaintext in a 0600 file today, matching the WebDAV password beside it. #56 moves
-    /// every provider secret to the OS keyring at once; doing only this one would protect
-    /// the newer credential and leave the older one exposed, which is theatre rather than
-    /// security.
+    /// Hydrated from the OS credential store at startup and cleared from the serialized
+    /// config projection. Keeping it on the runtime settings type lets the headless
+    /// publisher receive one complete configuration without learning about the keyring.
     #[serde(default)]
     pub token: Option<String>,
 

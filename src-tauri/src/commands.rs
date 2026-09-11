@@ -3996,7 +3996,7 @@ mod secret_config_tests {
     }
 }
 
-pub(crate) fn save_app_config(config: &AppConfig) -> Result<(), String> {
+fn save_app_config(config: &AppConfig) -> Result<(), String> {
     let path = app_config_path()?;
     if config.secret_store_error.is_some() {
         let recovery: Option<AppConfig> = std::fs::read_to_string(&path)
@@ -4007,7 +4007,10 @@ pub(crate) fn save_app_config(config: &AppConfig) -> Result<(), String> {
     save_app_config_to(&path, config)
 }
 
-fn commit_secret_config(config: &mut AppConfig, mut candidate: AppConfig) -> Result<(), String> {
+pub(crate) fn commit_secret_config(
+    config: &mut AppConfig,
+    mut candidate: AppConfig,
+) -> Result<(), String> {
     if let Some(error) = &config.secret_store_error {
         return Err(format!(
             "Credentials cannot be changed until the OS secret store is available; restart the app after unlocking it. {error}"
