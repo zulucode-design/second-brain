@@ -97,12 +97,37 @@ smaller ones, fixed in `0591622`:
 - Network errors hid their cause.
 - "An unchanged vault costs nothing" was inferred, not measured. The client now counts.
 
+## Windows
+
+The publisher is meant to run on the Windows desktop (#57), so the same live test was run
+there, over `ssh sb-windows`, on the branch after merging `main` (`710d5ba`).
+
+| Check | Linux | Windows |
+| --- | --- | --- |
+| Setup | Pass, 4 requests | Pass, 4 requests |
+| 120-note first sync | 134 requests, 122.3 s, 1.10 req/s | 134 requests, 106.9 s, 1.25 req/s |
+| Unchanged rerun | **0 requests** | **0 requests** |
+| Edit, move with tags, delete, interrupted create | Pass | Pass |
+| Entire map lost | 0 created, 119 updated | 0 created, 119 updated |
+
+The unchanged rerun is the check that mattered. Enumeration rewrites `\` separators to `/`
+before matching a note's path against its map entry; if that were wrong on Windows, every
+note would look new and the whole vault would republish every five minutes. Zero requests
+means every one of the 120 Windows paths matched.
+
+All 132 Notion unit tests also pass on Windows, including the enumeration tests that walk
+real files.
+
+The full Windows suite was **not** clean, in three modules this branch doesn't touch. On
+the branch's original base, `concurrent_opens_agree_on_one_identity` failed every time with
+`os error 33`. #60 fixed that, and merging `main` picked the fix up. After the merge it
+still failed once under full-suite load, though it passed 5/5 alone. Separately, `main`
+itself failed two `search::external` tests with `Access is denied (os error 5)` in one of
+two runs, and a debounce test is timing-sensitive. CI runs only on Ubuntu, so none of this
+was visible. All three are recorded as **#62**.
+
 ## Not covered
 
-- **Windows.** The publisher is meant to run on the Windows desktop (#57), and this ran on
-  Linux. The API behaviour is identical, but enumeration rewrites `\` separators to `/`
-  before matching notes against the map, and that path has not run on Windows. If it is
-  wrong there, every note looks new on every run.
 - **The guided setup clicked through in the app.** The backend path was driven directly;
   the Settings tab has been type-checked but not operated by hand.
 - **The packaged app.** Everything here ran from a test binary.
