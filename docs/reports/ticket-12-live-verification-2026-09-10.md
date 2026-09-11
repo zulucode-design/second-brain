@@ -126,11 +126,55 @@ itself failed two `search::external` tests with `Access is denied (os error 5)` 
 two runs, and a debounce test is timing-sensitive. CI runs only on Ubuntu, so none of this
 was visible. All three are recorded as **#62**.
 
+## Setup click-through — 2026-09-11
+
+Operated by hand in `pnpm tauri dev` on the Linux laptop, against a throwaway vault. The app
+ran under an isolated `XDG_CONFIG_HOME` and `XDG_DATA_HOME`, so the user's real settings and
+notes were never involved. Evidence is the app log, the vault on disk, and direct API reads.
+
+| Step | Result | Evidence |
+| --- | --- | --- |
+| Connect with a token | Pass | `Connected as "Second Brain spike".` shown; field cleared |
+| Choose a parent page | Pass | Picker listed the shared page |
+| Setup | Pass | Four databases under the page, each carrying the #58 marker |
+| First publish | Pass | 8 created, 12 requests |
+| Edit → publish | Pass | 1 updated; page text replaced |
+| Tag change → publish | Pass | Notion tags changed from `clickthrough, projects` to `clickthrough, areas` |
+| Category change (Move to…) → publish | Pass | 1 moved, 4 requests; **same page id**, now in the Projects database, tags matching the note |
+| Delete → publish | Pass | 1 trashed |
+| Automatic publish, no click | Pass | Edit at 11:41:40 UTC picked up by the timer at 11:42:41; idle runs on a 5-minute cadence at **0 requests** |
+| Disconnect | Pass | "Disconnected. Your pages stay in Notion."; back to the token step |
+
+### Found on the way, none in the Notion code
+
+- **#64: every `tauri dev` launch hung on its spinner.** Semantic search (#60) built a blocking
+  HTTP client inside the async `open_vault`, and reqwest's debug tripwire panicked. Fixed on
+  `fix/64-semantic-index-async-drop` with a regression test that fails on `main`, then merged
+  here so the click-through could run at all.
+- **#65: right-click → Tags... did nothing.** Buttons that replace the menu's contents closed
+  the menu they had just opened. `95c184e` had patched one of those buttons. Fixed at the menu
+  container on `fix/note-menu-stays-open`, then merged here.
+- **#67: the semantic worker wakes itself about 80 times a second** while Ollama is unreachable,
+  which on the laptop is the normal state. It pegged the laptop's CPU and rotated the logs away
+  in about 12 minutes; the earliest publish runs of this click-through fell off the log.
+- **Not a bug, but a test-data mistake.** The throwaway notes were given tags named after their
+  categories (`#projects`, `#areas`), which made changing a tag look like changing the category.
+  The app behaved correctly: a tag isn't a category, and a category changes through Move to….
+  Whether a category deserves its own control is recorded on #65 as a UX question.
+
+### One result left unexplained
+
+The **first** publish (8 created) showed no result message, according to the operator. A later
+publish did show one: the screenshot at 06:33 has "Everything is up to date." directly under
+Publish. `7570f56` moved each result under the button that produced it, and its commit message
+says the box had been off-screen. **That rationale is contradicted by the screenshot.** A second
+hypothesis, that map writes triggered the vault watcher and re-rendered the panel, is refuted:
+the watcher skips `.helixnotes`. The placement change is kept because it matches the Sync tab,
+not because it is known to fix anything. The cause is unknown.
+
 ## Not covered
 
-- **The guided setup clicked through in the app.** The backend path was driven directly;
-  the Settings tab has been type-checked but not operated by hand.
-- **The packaged app.** Everything here ran from a test binary.
+- **The packaged app.** Everything above ran from a test binary or a dev build.
 
 ## Incidental
 
