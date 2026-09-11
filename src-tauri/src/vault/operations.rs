@@ -2744,7 +2744,8 @@ mod tests {
         compare_natural_names, create_note, create_notebook, create_web_clipping, duplicate_note,
         ensure_vault_structure, get_note_switcher_titles, helixnotes_dir, load_notebook_icons,
         load_quick_access, move_note, move_note_with_outcome, permanent_delete, read_note,
-        restore_notebook, save_quick_access, scan_notebooks, set_notebook_icon, ParaCategory,
+        restore_notebook, save_note, save_quick_access, scan_notebooks, set_notebook_icon,
+        ParaCategory,
     };
     use crate::search::SearchIndex;
     use crate::vault::frontmatter;
@@ -2837,6 +2838,30 @@ mod tests {
         let entry = create_note(&vault_str, Some("Areas/Health"), "Running").unwrap();
 
         assert_eq!(entry.meta.category, Some(ParaCategory::Areas));
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn saving_and_renaming_preserve_only_the_user_authored_body() {
+        let vault = scaffolded_vault("save-rename-body");
+        let vault_str = vault.to_string_lossy().to_string();
+        let note = create_note(&vault_str, Some("Areas"), "My hobbies").unwrap();
+        let authored_body = "this is the test of ollama being offline";
+
+        assert_eq!(read_note(&vault_str, &note.path).unwrap().content, "");
+        save_note(&vault_str, &note.path, &note.meta, authored_body).unwrap();
+        assert_eq!(
+            read_note(&vault_str, &note.path).unwrap().content,
+            authored_body
+        );
+        let renamed_path = super::rename_note(&note.path, "test", &vault_str).unwrap();
+        let renamed = read_note(&vault_str, &renamed_path).unwrap();
+        assert_eq!(renamed.content, authored_body);
+        save_note(&vault_str, &renamed_path, &renamed.meta, authored_body).unwrap();
+        assert_eq!(
+            read_note(&vault_str, &renamed_path).unwrap().content,
+            authored_body
+        );
         fs::remove_dir_all(vault).unwrap();
     }
 

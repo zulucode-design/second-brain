@@ -1003,10 +1003,12 @@ mod tests {
             "Areas",
             "coffee before work",
         );
+        let markdown_before_rebuild = std::fs::read(&current).unwrap();
 
         index.rebuild_from_notes(&root).unwrap();
         index.retry_pending().unwrap();
 
+        assert_eq!(std::fs::read(&current).unwrap(), markdown_before_rebuild);
         let status = index.status().unwrap();
         assert_eq!(status.indexed_notes, 1);
         assert_eq!(status.queued_notes, 0);

@@ -108,7 +108,7 @@
     <li>Approximate-nearest-neighbour indexing; the recorded optimized exact scan does not justify it.</li>
     <li>Combining keyword and semantic scores; each mode remains understandable and independently degradable.</li>
     <li>Future threshold tuning/confidence display remains possible; issue #7 uses a <code>0.45</code> minimum cosine score calibrated against live EmbeddingGemma results. Title-only notes remain searchable, while low-confidence matches are suppressed.</li>
-    <li>Unexpected Markdown headings appearing in a note body during repeated Windows testing are tracked separately in <a href="https://github.com/zulucode-design/second-brain/issues/59">issue #59</a>; raw-file inspection confirmed the content was in Markdown, but the writer path has not yet been identified.</li>
+    <li><strong>Historical finding — resolved by issue #59:</strong> unexpected Markdown headings appeared in a note body during repeated Windows testing. Raw-file inspection confirmed the content was in Markdown; the follow-up traced the writer to an inherited frontmatter serializer that prepended the current title as an H1 on every non-empty save. Issue #59 removes that hidden body mutation and adds regression coverage across create, save, rename, and semantic rebuild.</li>
   </ul>
 
   <h2>Review notes</h2>

@@ -96,29 +96,6 @@ pub fn parse_note(raw: &str, filename: &str) -> (NoteMeta, String) {
     (meta, content)
 }
 
-/// Ensure the body starts with `# Title` heading for external app compatibility.
-/// If the body already starts with `# Title`, leave it as-is.
-fn ensure_title_heading(body: &str, title: &str) -> String {
-    let trimmed = body.trim_start();
-
-    // Check if body already starts with `# Title`
-    if let Some(rest) = trimmed.strip_prefix("# ") {
-        let first_line_end = rest.find('\n').unwrap_or(rest.len());
-        let heading_text = rest[..first_line_end].trim();
-        if heading_text.eq_ignore_ascii_case(title.trim()) {
-            return body.to_string();
-        }
-    }
-
-    // Don't add heading to empty notes (new/blank notes)
-    if trimmed.is_empty() {
-        return body.to_string();
-    }
-
-    // Prepend `# Title` heading
-    format!("# {}\n\n{}", title, body)
-}
-
 pub fn serialize_frontmatter(meta: &NoteMeta) -> String {
     let tags_str = if meta.tags.is_empty() {
         "[]".to_string()
@@ -159,8 +136,7 @@ pub fn serialize_frontmatter(meta: &NoteMeta) -> String {
 
 pub fn update_note_raw(meta: &NoteMeta, body: &str) -> String {
     let fm = serialize_frontmatter(meta);
-    let body_with_heading = ensure_title_heading(body, &meta.title);
-    format!("{}{}", fm, body_with_heading)
+    format!("{}{}", fm, body)
 }
 
 /// Merge NoteMeta fields into existing frontmatter, preserving unknown YAML keys.
@@ -243,8 +219,7 @@ pub fn merge_frontmatter(original_raw: &str, meta: &NoteMeta, body: &str) -> Str
         Err(_) => return update_note_raw(meta, body),
     };
 
-    let body_with_heading = ensure_title_heading(body, &meta.title);
-    format!("---\n{}---\n{}", yaml_str, body_with_heading)
+    format!("---\n{}---\n{}", yaml_str, body)
 }
 
 /// Change only the category field while preserving every other YAML value.
