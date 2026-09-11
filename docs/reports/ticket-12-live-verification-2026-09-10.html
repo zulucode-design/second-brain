@@ -567,9 +567,22 @@ executor and a direct <code>cargo test</code> reproduction command. The
 common state is now represented once by <code>PublishRecord</code>, and
 focused live tests go through <code>pnpm test:rust</code> so the Windows
 test manifest remains in force. The full local verification after these
-changes passed 470 Rust tests (6 environment-dependent tests ignored),
+changes passed 473 Rust tests (6 environment-dependent tests ignored),
 44 JavaScript tests, Svelte diagnostics, strict Clippy, formatting, and
 the production web build.</p>
+<p>A second Spec pass found three lifecycle and durability gaps. A failed
+local delete could leave a false tombstone; notebook deletion and restore
+did not apply the lifecycle to descendant notes; and page creation continued
+when the required pre-create intent could not be saved. The deletion path now
+uses one transactional marker boundary for individual notes and recursively
+discovered notebook descendants, restores markers after a failed local delete,
+and clears them after notebook restore. A failed create-intent write now stops
+before the page-create request. Focused regression tests cover each boundary.</p>
+<p>The same source then produced fresh unsigned Debian and RPM artifacts with
+the exact package command used by CI. Both artifacts passed the repository's
+installed desktop-entry verifier. This proves the release source compiles and
+packages; it does not replace the still-open packaged-app interaction against
+a disposable Notion workspace.</p>
 <h2 id="incidental">Incidental</h2>
 <p>One pre-existing test,
 <code>vault::relocation::tests::killing_the_app_mid_notebook_move_still_recovers</code>,

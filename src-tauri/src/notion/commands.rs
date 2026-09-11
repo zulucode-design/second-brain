@@ -508,32 +508,76 @@ fn collect_snapshot(
 /// This is the whole reason deletion is driven by a tombstone rather than by noticing a
 /// missing note — and it has to be, because with sync a missing note may simply not have
 /// arrived yet (ADR-0002).
-pub fn note_deleted(vault_path: &Path, note_path: &str) {
+pub fn note_deleted(vault_path: &Path, note_path: &str) -> Result<(), String> {
     // Vaults that never set Notion up pay nothing for this.
     if !config::notion_dir(vault_path).exists() {
-        return;
+        return Ok(());
     }
     let Some(note_id) = note_id_at(note_path) else {
-        return;
+        return Ok(());
     };
-    if let Err(error) = map::tombstone(vault_path, &note_id) {
-        log::warn!("Could not record that {note_id} needs removing from Notion: {error}");
-    }
+    map::tombstone(vault_path, &note_id).map_err(|error| {
+        format!("Could not record that {note_id} needs removing from Notion: {error}")
+    })
 }
 
 /// Undo a tombstone for a note restored from the app's trash.
 ///
 /// Costs no API call and keeps the page identity: the page was never touched, so a restore
 /// that happens before the publisher runs nets out to nothing at all.
-pub fn note_restored(vault_path: &Path, note_path: &str) {
+pub fn note_restored(vault_path: &Path, note_path: &str) -> Result<(), String> {
     if !config::notion_dir(vault_path).exists() {
-        return;
+        return Ok(());
     }
     let Some(note_id) = note_id_at(note_path) else {
-        return;
+        return Ok(());
     };
-    if let Err(error) = map::restore(vault_path, &note_id) {
-        log::warn!("Could not clear the Notion tombstone for {note_id}: {error}");
+    map::restore(vault_path, &note_id)
+        .map_err(|error| format!("Could not clear the Notion tombstone for {note_id}: {error}"))
+}
+
+/// Run a local deletion only after every affected note has a durable tombstone.
+///
+/// If either a marker write or the deletion fails, markers are rolled back while the source
+/// files still exist. The same boundary serves one note and all descendants of a notebook.
+pub fn with_notes_deleted<T>(
+    vault_path: &Path,
+    note_paths: &[String],
+    delete: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let mut marked: Vec<String> = Vec::new();
+    for path in note_paths {
+        if let Err(error) = note_deleted(vault_path, path) {
+            return match notes_restored(vault_path, &marked) {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(format!(
+                    "{error}. Could not roll back earlier Notion deletion markers: {rollback_error}"
+                )),
+            };
+        }
+        marked.push(path.clone());
+    }
+    match delete() {
+        Ok(value) => Ok(value),
+        Err(error) => match notes_restored(vault_path, &marked) {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(format!(
+                "{error}. Could not roll back Notion deletion markers: {rollback_error}"
+            )),
+        },
+    }
+}
+
+/// Clear tombstones for notes that remain local or have just been restored.
+pub fn notes_restored(vault_path: &Path, note_paths: &[String]) -> Result<(), String> {
+    let failures: Vec<String> = note_paths
+        .iter()
+        .filter_map(|path| note_restored(vault_path, path).err())
+        .collect();
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
     }
 }
 
@@ -627,7 +671,7 @@ mod tests {
         let path = write_note(&vault, "Projects", "One", "id-1", "body");
         map::save(&vault, "id-1", &published_entry("Projects/One.md")).unwrap();
 
-        note_deleted(&vault, path.to_str().unwrap());
+        note_deleted(&vault, path.to_str().unwrap()).unwrap();
 
         let entry = map::load(&vault, "id-1").expect("the tombstone must survive the note");
         assert_eq!(entry.state, EntryState::Deleted);
@@ -644,8 +688,8 @@ mod tests {
         let path = write_note(&vault, "Projects", "One", "id-1", "body");
         map::save(&vault, "id-1", &published_entry("Projects/One.md")).unwrap();
 
-        note_deleted(&vault, path.to_str().unwrap());
-        note_restored(&vault, path.to_str().unwrap());
+        note_deleted(&vault, path.to_str().unwrap()).unwrap();
+        note_restored(&vault, path.to_str().unwrap()).unwrap();
 
         let entry = map::load(&vault, "id-1").unwrap();
         assert_eq!(entry.state, EntryState::Published);
@@ -657,13 +701,40 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_local_delete_restores_every_tombstone() {
+        let vault = vault();
+        let first = write_note(&vault, "Projects", "One", "id-1", "body");
+        let second = write_note(&vault, "Projects", "Two", "id-2", "body");
+        map::save(&vault, "id-1", &published_entry("Projects/One.md")).unwrap();
+        map::save(&vault, "id-2", &published_entry("Projects/Two.md")).unwrap();
+        let paths = vec![
+            first.to_string_lossy().to_string(),
+            second.to_string_lossy().to_string(),
+        ];
+
+        let result = with_notes_deleted(&vault, &paths, || {
+            Err::<(), _>("the local delete failed".to_string())
+        });
+
+        assert_eq!(result.unwrap_err(), "the local delete failed");
+        assert_eq!(
+            map::load(&vault, "id-1").unwrap().state,
+            EntryState::Published
+        );
+        assert_eq!(
+            map::load(&vault, "id-2").unwrap().state,
+            EntryState::Published
+        );
+    }
+
+    #[test]
     fn a_vault_that_never_set_notion_up_pays_nothing_on_delete() {
         // The hook runs on every deletion in the app, including for users who will never
         // connect Notion at all.
         let vault = vault();
         let path = write_note(&vault, "Projects", "One", "id-1", "body");
 
-        note_deleted(&vault, path.to_str().unwrap());
+        note_deleted(&vault, path.to_str().unwrap()).unwrap();
 
         assert!(
             !config::notion_dir(&vault).exists(),
@@ -678,7 +749,7 @@ mod tests {
         // The directory exists — another note is published — but this note is not in it.
         map::save(&vault, "other", &published_entry("Projects/Other.md")).unwrap();
 
-        note_deleted(&vault, path.to_str().unwrap());
+        note_deleted(&vault, path.to_str().unwrap()).unwrap();
 
         assert!(map::load(&vault, "id-1").is_none());
     }

@@ -329,7 +329,11 @@ async fn execute(
             ..
         } => {
             // Written before the call, so an interrupted create leaves a trace.
-            let _ = map::save(vault_path, note_id, &MapEntry::creating());
+            map::save(vault_path, note_id, &MapEntry::creating()).map_err(|error| {
+                NotionError::Local(format!(
+                    "could not record the create intent for {note_id}: {error}"
+                ))
+            })?;
             let page_id = create_page(client, data_source_id, note).await?;
             publish_entry(vault_path, action, &page_id);
             Ok(())
@@ -674,6 +678,35 @@ mod tests {
         let entry = map::load(&vault, "note-1").expect("the mapping must be recorded");
         assert_eq!(entry.state, EntryState::Published);
         assert_eq!(entry.page_id.as_deref(), Some("page-1"));
+    }
+
+    #[tokio::test]
+    async fn a_page_is_not_created_when_its_intent_cannot_be_persisted() {
+        let vault = vault();
+        let state_parent = vault.join(".helixnotes");
+        std::fs::create_dir_all(&state_parent).unwrap();
+        std::fs::write(state_parent.join("notion"), "blocks the state directory").unwrap();
+        let (base, requests) = creating_server(vec![]);
+        let notion = client(&base);
+
+        let summary = run_notes(
+            &vault,
+            &notion,
+            &registry(),
+            vec![note("note-1", ParaCategory::Projects, "# Hello")],
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(summary.failed, 1);
+        assert_eq!(notion.requests_sent(), 4, "only the recovery sweep may run");
+        let sent: Vec<String> = requests.try_iter().collect();
+        assert!(
+            sent.iter()
+                .all(|request| !request.starts_with("POST /pages ")),
+            "creating without a durable intent can duplicate the page after a crash"
+        );
     }
 
     #[tokio::test]

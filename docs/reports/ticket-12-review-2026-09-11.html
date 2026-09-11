@@ -30,7 +30,9 @@
         <tr><td>Live-test instructions bypassed <code>pnpm test:rust</code></td><td><span class="status resolved">Resolved</span></td><td>Source and report now use the manifest-aware project entry point.</td></tr>
         <tr><td>Ticket verification was stored as Markdown</td><td><span class="status resolved">Resolved</span></td><td>The complete historical record is now a standalone HTML report.</td></tr>
         <tr><td>Published-note state was duplicated across executor arms</td><td><span class="status resolved">Resolved</span></td><td><code>PublishRecord</code> owns the shared state and one finalization path writes it.</td></tr>
+        <tr><td><code>Action</code> is classified by several exhaustive switches</td><td><span class="status open">Accepted</span></td><td>Judgement finding retained. Execution, success metrics, and durable-record extraction are distinct exhaustive responsibilities; Rust's compiler now forces a new variant to define each deliberately.</td></tr>
         <tr><td>The live-test helper <code>ds</code> was opaque</td><td><span class="status resolved">Resolved</span></td><td>Renamed to <code>data_source_id</code>.</td></tr>
+        <tr><td>The listener-cleanup helper was named <code>keep</code></td><td><span class="status resolved">Resolved</span></td><td>Renamed to <code>registerUnlistener</code> so its lifecycle role is explicit.</td></tr>
       </tbody>
     </table>
 
@@ -41,14 +43,18 @@
         <tr><td>Automatic runs did not expose durable progress</td><td><span class="status resolved">Resolved</span></td><td>Progress is retained in backend state and global Settings listeners cover manual and timer-driven runs.</td></tr>
         <tr><td>Holding-area notes were absent from the uncategorised count</td><td><span class="status resolved">Resolved</span></td><td>Direct holding-area Markdown files now reach the planner with no category and are counted as skipped.</td></tr>
         <tr><td>Publishing could not be disabled independently of disconnecting</td><td><span class="status resolved">Resolved</span></td><td>A per-machine toggle now changes <code>enabled</code> without deleting the keyring token.</td></tr>
+        <tr><td>A failed single-note deletion left a live tombstone</td><td><span class="status resolved">Resolved</span></td><td>Local deletion and its durable marker now share one transactional boundary; a failed delete restores the previous published state.</td></tr>
+        <tr><td>Notebook delete and restore bypassed descendant lifecycle hooks</td><td><span class="status resolved">Resolved</span></td><td>Validated recursive note discovery feeds the same transactional tombstone boundary, and notebook restore clears every descendant marker.</td></tr>
+        <tr><td>Page creation continued after the pre-create intent write failed</td><td><span class="status resolved">Resolved</span></td><td>The publisher now reports a local-state failure without issuing the page-create request.</td></tr>
         <tr><td>The packaged workflow has not been exercised against a disposable workspace</td><td><span class="status open">Open</span></td><td>Required before this PR merges and #12 closes.</td></tr>
       </tbody>
     </table>
 
     <h2>Verification after remediation</h2>
-    <p>Local <code>pnpm verify</code> passed: 44 JavaScript tests, 470 Rust tests, 6 ignored
+    <p>Local <code>pnpm verify</code> passed: 44 JavaScript tests, 473 Rust tests, 6 ignored
       environment-dependent tests, clean Svelte diagnostics, formatting, strict Clippy, and a
-      successful production web build. Live Linux and Windows API verification and the dev-build
+      successful production web build. The exact CI command also produced fresh unsigned Debian
+      and RPM packages, whose installed desktop entries passed the package verifier. Live Linux and Windows API verification and the dev-build
       setup click-through remain recorded in the companion verification report.</p>
   </body>
 </html>

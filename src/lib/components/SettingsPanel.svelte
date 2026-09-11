@@ -599,24 +599,24 @@
 	onMount(() => {
 		let disposed = false;
 		const unlisteners: Array<() => void> = [];
-		const keep = (unlisten: () => void) => disposed ? unlisten() : unlisteners.push(unlisten);
+		const registerUnlistener = (unlisten: () => void) => disposed ? unlisten() : unlisteners.push(unlisten);
 
 		void listen<{ done: number; total: number }>('notion-publish-progress', (event) => {
 			notionPublishing = true;
 			notionProgress = event.payload;
-		}).then(keep);
+		}).then(registerUnlistener);
 		void listen<NotionSummary>('notion-publish-finished', async (event) => {
 			notionPublishing = false;
 			notionProgress = null;
 			notionMessage = { type: 'success', text: describeSummary(event.payload), at: 'publish' };
 			await refreshNotion();
-		}).then(keep);
+		}).then(registerUnlistener);
 		void listen<{ error: string; fatal: boolean }>('notion-publish-failed', async (event) => {
 			notionPublishing = false;
 			notionProgress = null;
 			notionMessage = { type: 'error', text: event.payload.error, at: 'publish' };
 			await refreshNotion();
-		}).then(keep);
+		}).then(registerUnlistener);
 
 		return () => {
 			disposed = true;

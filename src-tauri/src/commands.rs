@@ -1041,6 +1041,10 @@ pub fn move_notebook(
 
 #[tauri::command]
 pub fn delete_notebook(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let vault_path = {
         let config = state.config.lock().map_err(|e| e.to_string())?;
         config
@@ -1049,7 +1053,12 @@ pub fn delete_notebook(state: State<'_, AppState>, path: String) -> Result<(), S
             .ok_or("No active vault")?
             .clone()
     };
-    operations::delete_notebook(&vault_path, &path)?;
+    let note_paths = operations::notebook_note_paths(&vault_path, &path)?;
+    crate::notion::commands::with_notes_deleted(
+        std::path::Path::new(&vault_path),
+        &note_paths,
+        || operations::delete_notebook(&vault_path, &path),
+    )?;
     reconcile_semantic_now(&state, &vault_path);
     Ok(())
 }
@@ -1401,9 +1410,11 @@ pub fn delete_note(state: State<'_, AppState>, path: String) -> Result<(), Strin
     // Before the file goes: the note id that identifies its Notion page lives inside it,
     // and once it is deleted there is nothing left to read. Deleting the map entry here
     // instead would leak the page — it would sit in Notion with no way left to find it.
-    crate::notion::commands::note_deleted(std::path::Path::new(vault_path), &path);
-
-    if let Err(error) = operations::delete_note(vault_path, &path) {
+    if let Err(error) = crate::notion::commands::with_notes_deleted(
+        std::path::Path::new(vault_path),
+        std::slice::from_ref(&path),
+        || operations::delete_note(vault_path, &path),
+    ) {
         record_transaction_repair_if_needed(
             &state,
             vault_path,
@@ -2186,7 +2197,7 @@ pub fn restore_note(state: State<'_, AppState>, trash_path: String) -> Result<St
     };
     // Restored before the publisher acted on the tombstone: the page was never touched, so
     // clearing the tombstone costs nothing and keeps the page's identity.
-    crate::notion::commands::note_restored(std::path::Path::new(&vault_path), &restored);
+    crate::notion::commands::note_restored(std::path::Path::new(&vault_path), &restored)?;
 
     index_note_now(&state, &vault_path, &restored)?;
     queue_semantic_note_now(&state, &restored);
@@ -2195,6 +2206,10 @@ pub fn restore_note(state: State<'_, AppState>, trash_path: String) -> Result<St
 
 #[tauri::command]
 pub fn restore_notebook(state: State<'_, AppState>, trash_path: String) -> Result<String, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let vault_path = {
         let config = state.config.lock().map_err(|e| e.to_string())?;
         config
@@ -2204,6 +2219,8 @@ pub fn restore_notebook(state: State<'_, AppState>, trash_path: String) -> Resul
             .clone()
     };
     let restored = operations::restore_notebook(&vault_path, &trash_path)?;
+    let note_paths = operations::notebook_note_paths(&vault_path, &restored)?;
+    crate::notion::commands::notes_restored(std::path::Path::new(&vault_path), &note_paths)?;
     reconcile_semantic_now(&state, &vault_path);
     Ok(restored)
 }

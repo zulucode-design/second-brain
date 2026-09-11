@@ -348,7 +348,7 @@ async fn verify(vault: &Path, registry: &DatabaseRegistry, probe: &Probe) {
     let deleted = 3;
     let doomed = map::load(vault, "live-0003").unwrap().page_id.unwrap();
     let path = note_path(vault, category_of(deleted), deleted);
-    note_deleted(vault, path.to_str().unwrap());
+    note_deleted(vault, path.to_str().unwrap()).unwrap();
     std::fs::remove_file(&path).unwrap();
     let summary = publish_once(vault, &NotionClient::new(probe.token.clone()), registry).await;
     assert_eq!(summary.trashed, 1);

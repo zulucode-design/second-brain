@@ -48,6 +48,8 @@ const MAX_BACKOFF: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotionError {
+    /// Machine-local publisher state could not be persisted safely.
+    Local(String),
     /// The token was rejected. Fatal to the run.
     Unauthorized(String),
     /// Notion refused this specific request. One note's problem.
@@ -74,6 +76,9 @@ impl NotionError {
 
     pub fn message(&self) -> String {
         match self {
+            NotionError::Local(detail) => {
+                format!("Could not save Notion publisher state: {detail}")
+            }
             NotionError::Unauthorized(detail) => {
                 format!("Notion rejected the connection: {detail}")
             }
