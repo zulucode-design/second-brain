@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ticket #59 — pre-PR review</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+      body { max-width: 900px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.55; }
+      h1, h2 { color: #f9fafb; }
+      code { background: #1f2937; padding: .12rem .3rem; border-radius: .25rem; }
+      .status { display: inline-block; border-radius: 999px; padding: .2rem .65rem; font-weight: 700; }
+      .pass { background: #064e3b; color: #a7f3d0; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { text-align: left; border-bottom: 1px solid #374151; padding: .65rem; vertical-align: top; }
+      .callout { border-left: 4px solid #60a5fa; background: #172554; padding: .9rem 1rem; }
+    </style>
+  </head>
+  <body>
+    <p><span class="status pass">Review findings remediated</span></p>
+    <h1>Ticket #59 — preserve user-authored note bodies</h1>
+    <p>Reviewed 2026-09-10 against <code>origin/main...fix/59-unexpected-headings</code>,
+      with <code>origin/main</code> fixed at <code>eb05716fef3bc9a002c571a37fc55057e502a9b8</code>.</p>
+
+    <h2>Cause and correction</h2>
+    <p>The frontmatter serializer called <code>ensure_title_heading</code> for every non-empty
+      save. It inserted the note title as an H1. Renaming and saving again could therefore leave
+      the old inserted heading in the body and add another one for the new title.</p>
+    <p>The serializer now writes frontmatter followed by the body it was given. The change applies
+      to both fresh serialization and frontmatter merging. Existing headings are not removed:
+      stored Markdown does not reveal whether an older heading came from the app or the user.</p>
+
+    <h2>Standards review</h2>
+    <p>The first pass found one documentation violation: the ticket #7 report still said the writer
+      was unknown. That historical finding is now retained and marked resolved, with the writer and
+      ticket #59 correction identified. No code-quality or repository-convention findings remain.</p>
+
+    <h2>Spec review</h2>
+    <p>The first pass found incomplete boundary coverage. The regression now checks the body after
+      note creation, initial save, rename, and the post-rename autosave sequence. The semantic
+      rebuild test also compares the Markdown bytes before and after rebuilding. No scope creep or
+      conflicting implementation was found.</p>
+
+    <h2>Test-first evidence</h2>
+    <p>The new public-seam regression failed before the fix. The persisted body was
+      <code># test\n\n# My hobbies\n\nthis is the test of ollama being offline</code> instead of the
+      supplied body. The same exact test passed after removing the hidden mutation.</p>
+
+    <h2>Verification record</h2>
+    <table>
+      <thead><tr><th>Check</th><th>Status</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Svelte diagnostics</td><td><span class="status pass">Passed</span></td><td>0 errors and 0 warnings</td></tr>
+        <tr><td>JavaScript tests</td><td><span class="status pass">Passed</span></td><td>33 passed</td></tr>
+        <tr><td>Rust tests</td><td><span class="status pass">Passed</span></td><td>326 passed, 4 ignored, 0 failed through <code>pnpm test:rust</code></td></tr>
+        <tr><td>Rust formatting and Clippy</td><td><span class="status pass">Passed</span></td><td><code>cargo fmt --check</code> and all-target strict Clippy</td></tr>
+        <tr><td>Production build</td><td><span class="status pass">Passed</span></td><td>Static site built successfully; the existing large-chunk advisory remains non-blocking</td></tr>
+      </tbody>
+    </table>
+
+    <p class="callout">PR creation was deliberately deferred until this review and its remediation
+      were complete.</p>
+  </body>
+</html>
