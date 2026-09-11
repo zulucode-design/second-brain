@@ -162,6 +162,9 @@ pub async fn run(
         report(Progress { done, total });
     }
 
+    // First pass: decide everything, executing nothing. Deciding first is what lets a run
+    // check its creates against Notion in one sweep before any of them happen.
+    let mut planned: Vec<(Action, NoteSource)> = Vec::new();
     for snapshot in snapshots {
         let note_id = snapshot.note_id.clone();
         let entry = map::load(vault_path, &note_id);
@@ -192,7 +195,39 @@ pub async fn run(
             content_hash: content_hash_of(&note),
         };
         let action = plan::decide(&inspected, entry.as_ref(), registry);
+        planned.push((action, note));
+    }
 
+    // A note with no map entry may be new, or its entry may have been lost. Only Notion can
+    // say which, so any run about to create asks it once, up front, rather than per note.
+    // Runs with nothing to create — every idle poll — skip this and still cost nothing.
+    if planned
+        .iter()
+        .any(|(action, _)| matches!(action, Action::Create { .. }))
+    {
+        let existing = existing_pages(client, registry).await?;
+        let mut adopted = 0;
+        planned = planned
+            .into_iter()
+            .map(|(action, note)| {
+                let found = existing.get(&note.snapshot.note_id);
+                let action = plan::adopt_existing(action, found);
+                if found.is_some() && !matches!(action, Action::Create { .. }) {
+                    adopted += 1;
+                }
+                (action, note)
+            })
+            .collect();
+        if adopted > 0 {
+            log::warn!(
+                "Adopted {adopted} Notion pages that already existed for notes with no map entry — \
+                 the map had been lost or damaged, and these would otherwise have been duplicated"
+            );
+        }
+    }
+
+    for (action, note) in planned {
+        let note_id = note.snapshot.note_id.clone();
         match execute(vault_path, client, registry, &action, &note).await {
             Ok(()) => tally(&mut summary, &action),
             Err(error) if error.is_fatal() => return Err(error),
@@ -207,7 +242,7 @@ pub async fn run(
     }
 
     log::info!(
-        "Notion: {} created, {} updated, {} moved, {} trashed, {} unchanged, {} skipped, {} failed",
+        "Notion: {} created, {} updated, {} moved, {} trashed, {} unchanged, {} skipped, {} failed ({} requests)",
         summary.created,
         summary.updated,
         summary.moved,
@@ -215,8 +250,30 @@ pub async fn run(
         summary.up_to_date,
         summary.total_skipped(),
         summary.failed,
+        client.requests_sent(),
     );
     Ok(summary)
+}
+
+/// Every page this app has published, by note id, as `(page id, data source id)`.
+///
+/// All four data sources, not just the note's own: a note recategorised while its map
+/// entry was missing has its page in the old category's database, and only a full sweep
+/// finds it there.
+async fn existing_pages(
+    client: &NotionClient,
+    registry: &DatabaseRegistry,
+) -> Result<std::collections::HashMap<String, (String, String)>, NotionError> {
+    let mut existing = std::collections::HashMap::new();
+    for category in ParaCategory::ALL {
+        let Some(link) = registry.link(category) else {
+            continue;
+        };
+        for (page_id, note_id) in client.list_note_pages(&link.data_source_id).await? {
+            existing.insert(note_id, (page_id, link.data_source_id.clone()));
+        }
+    }
+    Ok(existing)
 }
 
 fn content_hash_of(note: &NoteSource) -> String {
@@ -586,6 +643,14 @@ mod tests {
         .await
     }
 
+    /// A server for a run that creates: it first answers the sweep of all four databases
+    /// that checks whether the pages already exist, then the given responses.
+    fn creating_server(responses: Vec<(&str, &str)>) -> (String, Receiver<String>) {
+        let mut all = vec![("200 OK", r#"{"results":[],"has_more":false}"#); 4];
+        all.extend(responses);
+        scripted_server(all)
+    }
+
     fn client(base: &str) -> NotionClient {
         NotionClient::with_base("t", base, Duration::from_millis(1))
     }
@@ -638,7 +703,7 @@ mod tests {
     #[tokio::test]
     async fn a_new_note_is_created_and_recorded() {
         let vault = vault();
-        let (base, requests) = scripted_server(vec![("200 OK", r#"{"id":"page-1"}"#)]);
+        let (base, requests) = creating_server(vec![("200 OK", r#"{"id":"page-1"}"#)]);
 
         let summary = run_notes(
             &vault,
@@ -651,7 +716,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(summary.created, 1);
-        let request = requests.recv().unwrap();
+        let request = {
+            for _ in 0..4 {
+                requests.recv().unwrap();
+            }
+            requests.recv().unwrap()
+        };
         assert!(
             request.contains("ds-Projects"),
             "into its category's database"
@@ -668,17 +738,24 @@ mod tests {
         // The whole point of the hash and the mtime: a poll every five minutes must not
         // re-upload the vault.
         let vault = vault();
-        let (base, _r) = scripted_server(vec![("200 OK", r#"{"id":"page-1"}"#)]);
+        let (base, _r) = creating_server(vec![("200 OK", r#"{"id":"page-1"}"#)]);
         let notes = || vec![note("note-1", ParaCategory::Projects, "# Hello")];
 
         run_notes(&vault, &client(&base), &registry(), notes(), |_| {})
             .await
             .unwrap();
 
-        // The server has no responses left; any request would fail the run.
-        let summary = run_notes(&vault, &client(&base), &registry(), notes(), |_| {})
+        // A fresh client, so its request count covers the second run alone.
+        let second = client(&base);
+        let summary = run_notes(&vault, &second, &registry(), notes(), |_| {})
             .await
             .unwrap();
+
+        assert_eq!(
+            second.requests_sent(),
+            0,
+            "an unchanged vault must cost no API calls at all"
+        );
 
         assert_eq!(summary.up_to_date, 1);
         assert_eq!(summary.created, 0);
@@ -781,6 +858,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_lost_map_adopts_existing_pages_instead_of_duplicating_them() {
+        // The acceptance criterion: the mapping can be rebuilt if lost. No map entry exists,
+        // so the note looks new — but Notion already has its page, carrying its note id.
+        let vault = vault();
+        let page = r#"{"results":[{"id":"page-kept","properties":{"Note ID":{"rich_text":[{"plain_text":"note-1"}]}}}],"has_more":false}"#;
+        let empty = r#"{"results":[],"has_more":false}"#;
+        let (base, requests) = scripted_server(vec![
+            ("200 OK", page), // Projects: the page is found here
+            ("200 OK", empty),
+            ("200 OK", empty),
+            ("200 OK", empty),
+            ("200 OK", r#"{"id":"page-kept"}"#), // erase
+            ("200 OK", r#"{"id":"page-kept"}"#), // append
+            ("200 OK", r#"{"id":"page-kept"}"#), // properties
+        ]);
+
+        let summary = run_notes(
+            &vault,
+            &client(&base),
+            &registry(),
+            vec![note("note-1", ParaCategory::Projects, "body")],
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(summary.created, 0, "creating here is exactly the duplicate");
+        assert_eq!(summary.updated, 1);
+
+        let sent: Vec<String> = (0..7).map(|_| requests.recv().unwrap()).collect();
+        assert!(
+            !sent.iter().any(|r| r.starts_with("POST /pages ")),
+            "no page may be created for a note Notion already holds"
+        );
+
+        let entry = map::load(&vault, "note-1").expect("the map entry is rebuilt");
+        assert_eq!(entry.page_id.as_deref(), Some("page-kept"));
+    }
+
+    #[tokio::test]
+    async fn a_page_without_a_note_id_is_never_adopted() {
+        // Someone added a page to the database by hand. It carries no note id, so it is not
+        // ours: it must not be claimed, and the note still gets its own page.
+        let vault = vault();
+        let stranger = r#"{"results":[{"id":"page-by-hand","properties":{"Note ID":{"rich_text":[]}}}],"has_more":false}"#;
+        let empty = r#"{"results":[],"has_more":false}"#;
+        let (base, _r) = scripted_server(vec![
+            ("200 OK", stranger),
+            ("200 OK", empty),
+            ("200 OK", empty),
+            ("200 OK", empty),
+            ("200 OK", r#"{"id":"page-new"}"#),
+        ]);
+
+        let summary = run_notes(
+            &vault,
+            &client(&base),
+            &registry(),
+            vec![note("note-1", ParaCategory::Projects, "body")],
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(summary.created, 1);
+        assert_eq!(
+            map::load(&vault, "note-1").unwrap().page_id.as_deref(),
+            Some("page-new")
+        );
+    }
+
+    #[tokio::test]
     async fn a_tombstoned_page_is_trashed_and_its_entry_removed() {
         let vault = vault();
         map::save(
@@ -845,7 +994,7 @@ mod tests {
         // A publisher that stops publishing looks exactly like one with nothing to do,
         // which is why this must not halt.
         let vault = vault();
-        let (base, _r) = scripted_server(vec![
+        let (base, _r) = creating_server(vec![
             (
                 "400 Bad Request",
                 r#"{"message":"body.children[0] invalid"}"#,
@@ -943,7 +1092,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n\n");
 
-        let (base, requests) = scripted_server(vec![
+        let (base, requests) = creating_server(vec![
             ("200 OK", r#"{"id":"page-1"}"#),
             ("200 OK", r#"{"id":"page-1"}"#),
             ("200 OK", r#"{"id":"page-1"}"#),
@@ -960,7 +1109,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(summary.created, 1);
-        let create = requests.recv().unwrap();
+        let create = {
+            for _ in 0..4 {
+                requests.recv().unwrap();
+            }
+            requests.recv().unwrap()
+        };
         assert!(create.contains("POST /pages"));
         // Two appends follow the create: 250 blocks is 100 + 100 + 50.
         assert!(requests.recv().unwrap().contains("/blocks/page-1/children"));
@@ -970,7 +1124,7 @@ mod tests {
     #[tokio::test]
     async fn progress_is_reported_for_every_note_so_a_first_sync_is_not_a_hang() {
         let vault = vault();
-        let (base, _r) = scripted_server(vec![
+        let (base, _r) = creating_server(vec![
             ("200 OK", r#"{"id":"p1"}"#),
             ("200 OK", r#"{"id":"p2"}"#),
         ]);
@@ -1039,7 +1193,7 @@ mod tests {
     async fn a_note_that_cannot_be_read_is_skipped_without_stopping_the_run() {
         // Mid-write by the editor, or still arriving from the other machine.
         let vault = vault();
-        let (base, _r) = scripted_server(vec![("200 OK", r#"{"id":"page-2"}"#)]);
+        let (base, _r) = creating_server(vec![("200 OK", r#"{"id":"page-2"}"#)]);
         let unreadable = note("locked", ParaCategory::Projects, "body").snapshot;
         let readable = note("fine", ParaCategory::Projects, "body");
         let readable_snapshot = readable.snapshot.clone();

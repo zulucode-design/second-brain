@@ -125,8 +125,9 @@ pub fn load(vault_path: &Path, note_id: &str) -> Option<MapEntry> {
         Ok(entry) => Some(entry),
         Err(error) => {
             // A damaged entry reads as absent, which sends the note down the create path.
-            // That would duplicate a page were the create path naive — it is not: it writes
-            // `Creating` first and asks Notion by `Note ID` before creating anything.
+            // That would duplicate its page, except that any run about to create first lists
+            // what Notion already holds and adopts a page carrying this note's id instead —
+            // see `publish::run`.
             log::warn!("Ignoring an unreadable Notion map entry for {note_id}: {error}");
             None
         }

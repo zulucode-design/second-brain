@@ -22,6 +22,7 @@
 //!   case is handled here and never reaches the caller.
 
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -135,6 +136,11 @@ pub struct NotionClient {
     token: String,
     base: String,
     pacer: Arc<Pacer>,
+    /// Every request actually sent, retries included.
+    ///
+    /// Counted rather than inferred, because "an unchanged vault costs no API calls" is a
+    /// claim the design rests on and the only honest evidence for it is a count of zero.
+    requests: AtomicU64,
 }
 
 impl NotionClient {
@@ -159,7 +165,13 @@ impl NotionClient {
             token: token.into(),
             base: base.into().trim_end_matches('/').to_string(),
             pacer: Arc::new(Pacer::new(interval)),
+            requests: AtomicU64::new(0),
         }
+    }
+
+    /// How many requests this client has sent, retries included.
+    pub fn requests_sent(&self) -> u64 {
+        self.requests.load(Ordering::Relaxed)
     }
 
     /// Every request to Notion goes through here.
@@ -173,6 +185,7 @@ impl NotionClient {
 
         for attempt in 0..=MAX_RETRIES {
             self.pacer.wait().await;
+            self.requests.fetch_add(1, Ordering::Relaxed);
 
             let mut builder = self
                 .http
@@ -185,7 +198,7 @@ impl NotionClient {
 
             let response = match builder.send().await {
                 Ok(response) => response,
-                Err(error) => return Err(NotionError::Network(error.to_string())),
+                Err(error) => return Err(NotionError::Network(cause_chain(&error))),
             };
 
             let status = response.status();
@@ -345,6 +358,59 @@ impl NotionClient {
         Ok(response["results"][0]["id"].as_str().map(str::to_string))
     }
 
+    /// Every page in a data source, as `(page id, note id)`.
+    ///
+    /// This is the rebuild the map depends on: the note id travels to Notion as a property,
+    /// so what Notion already holds can always be recovered from Notion itself. Paginated at
+    /// Notion's maximum of 100, so a data source of a thousand pages is ten requests.
+    pub async fn list_note_pages(
+        &self,
+        data_source_id: &str,
+    ) -> Result<Vec<(String, String)>, NotionError> {
+        let mut pages = Vec::new();
+        let mut cursor: Option<String> = None;
+
+        loop {
+            let mut body = json!({ "page_size": 100 });
+            if let Some(next) = &cursor {
+                body["start_cursor"] = json!(next);
+            }
+            let response = self
+                .request(
+                    reqwest::Method::POST,
+                    &format!("/data_sources/{data_source_id}/query"),
+                    Some(body),
+                )
+                .await?;
+
+            for page in response["results"].as_array().into_iter().flatten() {
+                let Some(page_id) = page["id"].as_str() else {
+                    continue;
+                };
+                let note_id: String = page["properties"][NOTE_ID_PROPERTY]["rich_text"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|run| run["plain_text"].as_str())
+                    .collect();
+                // A page without a note id was not made by this app — someone added it by
+                // hand. It is never adopted and never touched.
+                if !note_id.is_empty() {
+                    pages.push((page_id.to_string(), note_id));
+                }
+            }
+
+            match (
+                response["has_more"].as_bool(),
+                response["next_cursor"].as_str(),
+            ) {
+                (Some(true), Some(next)) => cursor = Some(next.to_string()),
+                _ => break,
+            }
+        }
+        Ok(pages)
+    }
+
     pub async fn create_page(
         &self,
         data_source_id: &str,
@@ -473,6 +539,23 @@ fn page_title(page: &Value) -> Option<String> {
         }
     }
     None
+}
+
+/// An error and everything underneath it.
+///
+/// reqwest's own message for a failed send is "error sending request for url (…)", which
+/// names what failed but never why — the timeout, the DNS failure, or the TLS problem is
+/// only in the source chain. Shown in Settings, the bare message leaves the user nothing to
+/// act on.
+fn cause_chain(error: &dyn std::error::Error) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    message
 }
 
 /// How long to wait after a 429, honouring `Retry-After` when Notion sends one.

@@ -28,7 +28,8 @@ pub struct NoteSnapshot {
     pub note_id: String,
     pub relative_path: String,
     pub category: Option<ParaCategory>,
-    /// Filesystem modification time, in seconds.
+    /// Filesystem modification time, in nanoseconds; see `commands::mtime_of` for why
+    /// not seconds.
     pub mtime: i64,
 }
 
@@ -270,6 +271,57 @@ pub fn decide(
                     mtime,
                 },
             }
+        }
+    }
+}
+
+/// Turn a create into an adoption when Notion already holds a page for the note.
+///
+/// A note with no map entry looks never-published, but that is only one of the two things
+/// it can mean. The other is that the map was lost — a wiped machine, a damaged file, a
+/// directory the sync engine dropped. Creating in that case gives every note a second page.
+/// So a create is checked against what Notion actually holds, which is the rebuild the map
+/// promises: the note id travels to Notion as a property precisely so it can be read back.
+///
+/// `existing` is `(page id, data source id)` for the page carrying this note's id. An adopted
+/// page's content is refreshed rather than trusted, because nothing records whether the note
+/// changed while the map was gone.
+pub fn adopt_existing(action: Action, existing: Option<&(String, String)>) -> Action {
+    let (
+        Action::Create {
+            note_id,
+            relative_path,
+            data_source_id,
+            content_hash,
+            mtime,
+        },
+        Some((page_id, found_in)),
+    ) = (&action, existing)
+    else {
+        return action;
+    };
+
+    if found_in == data_source_id {
+        Action::UpdateContent {
+            note_id: note_id.clone(),
+            relative_path: relative_path.clone(),
+            page_id: page_id.clone(),
+            data_source_id: data_source_id.clone(),
+            content_hash: content_hash.clone(),
+            mtime: *mtime,
+        }
+    } else {
+        // The page is in another category's database: the note was recategorised while
+        // the map was gone. Moving it keeps its identity; creating would leave the old one.
+        Action::Move {
+            note_id: note_id.clone(),
+            relative_path: relative_path.clone(),
+            page_id: page_id.clone(),
+            from_data_source_id: Some(found_in.clone()),
+            data_source_id: data_source_id.clone(),
+            content_hash: content_hash.clone(),
+            mtime: *mtime,
+            also_update_content: true,
         }
     }
 }
@@ -537,6 +589,64 @@ mod tests {
             &registry(),
         );
         assert!(matches!(action, Action::Create { .. }));
+    }
+
+    fn create_action() -> Action {
+        decide(&note(Some(ParaCategory::Projects), "h1"), None, &registry())
+    }
+
+    #[test]
+    fn a_note_with_no_entry_and_no_page_is_still_created() {
+        // Genuinely new: the check finds nothing, and the create goes ahead unchanged.
+        let action = adopt_existing(create_action(), None);
+        assert!(matches!(action, Action::Create { .. }));
+    }
+
+    #[test]
+    fn a_lost_map_adopts_the_existing_page_instead_of_duplicating_it() {
+        // The map was lost, so the note looks new. Notion already has its page.
+        let existing = ("page-kept".to_string(), "ds-Projects".to_string());
+        let action = adopt_existing(create_action(), Some(&existing));
+
+        match action {
+            Action::UpdateContent { page_id, .. } => assert_eq!(page_id, "page-kept"),
+            other => panic!("expected the page to be adopted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_lost_map_whose_note_changed_category_moves_the_page_rather_than_leaving_it() {
+        let existing = ("page-kept".to_string(), "ds-Areas".to_string());
+        let action = adopt_existing(create_action(), Some(&existing));
+
+        match action {
+            Action::Move {
+                page_id,
+                data_source_id,
+                also_update_content,
+                ..
+            } => {
+                assert_eq!(page_id, "page-kept", "identity preserved");
+                assert_eq!(data_source_id, "ds-Projects");
+                assert!(
+                    also_update_content,
+                    "nothing records whether the note changed while the map was gone"
+                );
+            }
+            other => panic!("expected a move, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn adoption_leaves_every_other_action_alone() {
+        let existing = ("page".to_string(), "ds-Projects".to_string());
+        let up_to_date = Action::UpToDate {
+            note_id: "n".into(),
+        };
+        assert_eq!(
+            adopt_existing(up_to_date.clone(), Some(&existing)),
+            up_to_date
+        );
     }
 
     #[test]

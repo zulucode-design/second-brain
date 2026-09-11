@@ -193,28 +193,43 @@ pub async fn notion_setup(app: AppHandle, parent_page_id: String) -> Result<(), 
         (client_for(&config)?, active_vault(&config)?)
     };
 
-    let mut registry = config::load_registry(&vault);
+    setup_databases(&client, &vault, &parent_page_id)
+        .await
+        .map(|_| ())
+}
+
+/// Create whichever of the four databases do not exist yet, under `parent_page_id`.
+///
+/// Separate from the command so the same code path is the one the live verification drives,
+/// rather than a copy of it that could drift.
+pub(crate) async fn setup_databases(
+    client: &NotionClient,
+    vault: &Path,
+    parent_page_id: &str,
+) -> Result<DatabaseRegistry, String> {
+    let mut registry = config::load_registry(vault);
     // A different parent means starting again: the databases recorded live somewhere the
     // user no longer means to use.
-    if registry.parent_page_id.as_deref() != Some(parent_page_id.as_str()) {
+    if registry.parent_page_id.as_deref() != Some(parent_page_id) {
         registry = DatabaseRegistry {
-            parent_page_id: Some(parent_page_id.clone()),
+            parent_page_id: Some(parent_page_id.to_string()),
             ..Default::default()
         };
     }
 
     for category in registry.missing() {
         let link = client
-            .create_database(&parent_page_id, category.folder_name())
+            .create_database(parent_page_id, category.folder_name())
             .await
             .map_err(|error| error.message())?;
         registry.set_link(category, link);
         // Saved per database rather than at the end, so an interruption keeps what
         // succeeded and the next attempt creates only the rest.
-        config::save_registry(&vault, &registry)?;
+        config::save_registry(vault, &registry)?;
     }
 
-    config::save_registry(&vault, &registry)
+    config::save_registry(vault, &registry)?;
+    Ok(registry)
 }
 
 /// Push now, in the background.
@@ -315,11 +330,27 @@ async fn publish_once(
     .await
 }
 
+/// A file's modification time, in nanoseconds since the epoch.
+///
+/// Nanoseconds, not seconds. At one-second resolution an autosave, a publish, and a second
+/// autosave can all land in the same second: the publisher records that second, the later
+/// edit leaves the timestamp unchanged, and the gate treats the note as untouched — so the
+/// last edit of a burst is never published until the note is edited again. Filesystems
+/// with coarse timestamps (FAT, some network mounts) still have that window; ext4, btrfs,
+/// APFS, and NTFS do not.
+pub(crate) fn mtime_of(meta: &std::fs::Metadata) -> i64 {
+    meta.modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|since| since.as_nanos() as i64)
+        .unwrap_or(0)
+}
+
 /// Walk the vault, reading only what the map cannot already account for.
 ///
 /// Returns the notes to consider, plus the ones that had to be opened — so the publisher's
 /// reader serves them from memory rather than opening each file a second time.
-fn enumerate(vault: &Path) -> (Vec<NoteSnapshot>, HashMap<String, NoteSource>) {
+pub(crate) fn enumerate(vault: &Path) -> (Vec<NoteSnapshot>, HashMap<String, NoteSource>) {
     // path -> (note id, mtime at last publish)
     let known: HashMap<String, (String, Option<i64>)> = map::all(vault)
         .into_iter()
@@ -356,9 +387,7 @@ fn enumerate(vault: &Path) -> (Vec<NoteSnapshot>, HashMap<String, NoteSource>) {
             let mtime = entry
                 .metadata()
                 .ok()
-                .and_then(|meta| meta.modified().ok())
-                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|since| since.as_secs() as i64)
+                .map(|meta| mtime_of(&meta))
                 .unwrap_or(0);
 
             // Known and unmoved: the note id comes from the map, and the file stays shut.
@@ -512,14 +541,8 @@ mod tests {
         path
     }
 
-    fn mtime_of(path: &Path) -> i64 {
-        std::fs::metadata(path)
-            .unwrap()
-            .modified()
-            .unwrap()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
+    fn file_mtime(path: &Path) -> i64 {
+        super::mtime_of(&std::fs::metadata(path).unwrap())
     }
 
     fn published_entry(path: &str) -> MapEntry {
@@ -625,7 +648,7 @@ mod tests {
                 page_id: Some("page-1".into()),
                 data_source_id: Some("ds".into()),
                 content_hash: Some("hash".into()),
-                source_mtime: Some(mtime_of(&path)),
+                source_mtime: Some(file_mtime(&path)),
                 relative_path: Some("Projects/One.md".into()),
                 last_error: None,
             },
@@ -654,7 +677,7 @@ mod tests {
                 page_id: Some("page-1".into()),
                 data_source_id: Some("ds".into()),
                 content_hash: Some("hash".into()),
-                source_mtime: Some(mtime_of(&path) - 500),
+                source_mtime: Some(file_mtime(&path) - 500),
                 relative_path: Some("Projects/One.md".into()),
                 last_error: None,
             },
