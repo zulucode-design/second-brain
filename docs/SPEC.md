@@ -437,7 +437,9 @@ that an attachment which has not yet arrived reads as *not synced yet*, never as
 
 Carried forward into ticket breakdown — these are unresolved, not settled:
 
-1. **Embedding model**: which model, and how are embeddings invalidated on note edit?
+1. ~~**Embedding model**: which model, and how are embeddings invalidated on note edit?~~ —
+   **resolved** by [ADR-0007](adr/0007-use-embeddinggemma-with-versioned-local-chunk-embeddings.md):
+   fixed Ollama `embeddinggemma`, versioned chunk profiles, and re-embedding from Markdown.
 2. ~~**Global hotkey**: Linux support varies across X11/Wayland~~ — **resolved** by
    [ADR-0001](adr/0001-linux-global-shortcuts-via-xdg-portal.md) and ticket #4: Linux
    registers through the XDG GlobalShortcuts portal only, never an X11 grab. X11 is

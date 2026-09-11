@@ -164,7 +164,7 @@ fn take_settled(pending: &mut HashMap<PathBuf, Seen>, now: Instant) -> Vec<PathB
 ///
 /// This is where "resolve intent at flush time" happens: the event that queued a path is
 /// never consulted, only whether the path is a file right now.
-fn apply(search: &SearchIndex, settled: Vec<PathBuf>) -> Result<(), ApplyFailure> {
+fn apply(search: &SearchIndex, settled: Vec<PathBuf>) -> Result<AppliedChanges, ApplyFailure> {
     let mut upserts: Vec<String> = Vec::new();
     let mut gone = Vec::new();
     let mut folder_arrived = false;
@@ -221,12 +221,16 @@ fn apply(search: &SearchIndex, settled: Vec<PathBuf>) -> Result<(), ApplyFailure
     };
 
     if upserts.is_empty() && removals.is_empty() {
-        return Ok(());
+        return Ok(AppliedChanges {
+            removals: Vec::new(),
+            upserts,
+        });
     }
     let removals: Vec<String> = removals.into_iter().collect();
-    search
-        .apply_note_changes(&removals, &upserts)
-        .map_err(|error| ApplyFailure::new(error, removals, upserts))
+    if let Err(error) = search.apply_note_changes(&removals, &upserts) {
+        return Err(ApplyFailure::new(error, removals, upserts));
+    }
+    Ok(AppliedChanges { removals, upserts })
 }
 
 /// Every note inside `directory`, for when the filesystem reports the folder rather than
@@ -253,6 +257,11 @@ struct ApplyFailure {
     paths: Vec<String>,
 }
 
+struct AppliedChanges {
+    removals: Vec<String>,
+    upserts: Vec<String>,
+}
+
 impl ApplyFailure {
     /// Keeps a bounded sample of the paths: a failed sync burst could involve thousands,
     /// and a repair message listing them all helps nobody.
@@ -266,24 +275,52 @@ impl ApplyFailure {
 }
 
 fn flush(app: &AppHandle, vault_path: &str, search: &Arc<SearchIndex>, settled: Vec<PathBuf>) {
-    let Err(ApplyFailure {
-        error: incremental_error,
-        paths,
-    }) = apply(search, settled)
-    else {
-        return;
+    let semantic = app
+        .state::<AppState>()
+        .semantic_index
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
+    let applied = match apply(search, settled) {
+        Ok(applied) => applied,
+        Err(ApplyFailure {
+            error: incremental_error,
+            paths,
+        }) => {
+            // Same recovery policy the app's own write paths use.
+            let state = app.state::<AppState>();
+            let _ = crate::commands::rebuild_after_failed_index_update(
+                &state,
+                vault_path,
+                search,
+                "Indexing changes made outside the app",
+                &incremental_error,
+                paths,
+            );
+            if let Some(semantic) = semantic {
+                if let Err(error) = semantic.reconcile_from_notes(Path::new(vault_path)) {
+                    log::error!(
+                        "Could not reconcile semantic changes made outside the app: {error}"
+                    );
+                }
+            }
+            return;
+        }
     };
 
-    // Same recovery policy the app's own write paths use.
-    let state = app.state::<AppState>();
-    let _ = crate::commands::rebuild_after_failed_index_update(
-        &state,
-        vault_path,
-        search,
-        "Indexing changes made outside the app",
-        &incremental_error,
-        paths,
-    );
+    let Some(semantic) = semantic else {
+        return;
+    };
+    for path in applied.removals {
+        if let Err(error) = semantic.note_removed(Path::new(&path)) {
+            log::error!("Could not remove an external semantic-search change: {error}");
+        }
+    }
+    for path in applied.upserts {
+        if let Err(error) = semantic.note_changed(Path::new(&path)) {
+            log::error!("Could not queue an external semantic-search change: {error}");
+        }
+    }
 }
 
 #[cfg(test)]

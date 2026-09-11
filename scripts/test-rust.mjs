@@ -11,6 +11,11 @@ if (windows) {
   env.HELIX_WINDOWS_TEST_MANIFEST = "1";
 }
 
+// Forward optional Cargo test filters and harness flags. This keeps the Windows
+// manifest setup as the single supported entry point for focused tests and
+// explicitly ignored measurements too.
+args.push(...process.argv.slice(2));
+
 const result = spawnSync(windows ? "cargo.exe" : "cargo", args, {
   cwd: process.cwd(),
   env,

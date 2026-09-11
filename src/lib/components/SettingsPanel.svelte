@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, activeVaultConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
-	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings } from '$lib/api';
+	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex } from '$lib/api';
 	import type { AiProvider } from '$lib/types';
 	import { AI_PROVIDER_METADATA, AI_PROVIDER_OPTIONS } from '$lib/utils/ai-provider';
 	import { darkThemes, isMobile, isAndroid, isLinux, isWindows } from '$lib/platform';
@@ -10,7 +10,7 @@
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import { openUrl } from '$lib/api';
 	import type { OrphanAttachment } from '$lib/api';
-	import type { ImportResult, BackupEntry, CustomTheme, CustomThemeColors, StartupView, VaultStats } from '$lib/types';
+	import type { ImportResult, BackupEntry, CustomTheme, CustomThemeColors, StartupView, VaultStats, SemanticStatus } from '$lib/types';
 	import { normalizeStartupView } from '$lib/utils/startup-view';
 	import { withSyncSettings } from '$lib/utils/sync-settings';
 
@@ -126,6 +126,10 @@
 	let orphanedAttachments = $state<OrphanAttachment[] | null>(null);
 	let scanningOrphanedAttachments = $state(false);
 	let trashingOrphanedAttachments = $state(false);
+	let semanticStatus = $state<SemanticStatus | null>(null);
+	let semanticStatusError = $state(false);
+	let rebuildingSemantic = $state(false);
+	let semanticMessage = $state('');
 	const orphanedAttachmentTotal = $derived((orphanedAttachments ?? []).reduce((total, attachment) => total + attachment.size, 0));
 
 	$effect(() => {
@@ -133,9 +137,17 @@
 			vaultStats = null;
 			vaultStatsError = false;
 			orphanedAttachments = null;
+			semanticStatus = null;
+			semanticStatusError = false;
+			semanticMessage = '';
 			return;
 		}
-		if (activeTab === 'maintenance') void loadVaultStats();
+		if (activeTab === 'maintenance') {
+			void loadVaultStats();
+			void loadSemanticStatus();
+			const refresh = window.setInterval(() => void loadSemanticStatus(), 2_000);
+			return () => window.clearInterval(refresh);
+		}
 	});
 
 	async function loadVaultStats() {
@@ -146,6 +158,31 @@
 			vaultStats = null;
 			vaultStatsError = true;
 			console.error('Failed to load vault statistics:', error);
+		}
+	}
+
+	async function loadSemanticStatus() {
+		semanticStatusError = false;
+		try {
+			semanticStatus = await getSemanticStatus();
+		} catch (error) {
+			semanticStatus = null;
+			semanticStatusError = true;
+			console.error('Failed to load semantic index status:', error);
+		}
+	}
+
+	async function rebuildSemanticSearch() {
+		rebuildingSemantic = true;
+		semanticMessage = '';
+		try {
+			await rebuildSemanticIndex();
+			await loadSemanticStatus();
+			semanticMessage = 'Rebuild queued. Embeddings will finish in the background.';
+		} catch (error) {
+			semanticMessage = `Could not rebuild semantic search: ${String(error)}`;
+		} finally {
+			rebuildingSemantic = false;
 		}
 	}
 
@@ -1551,6 +1588,35 @@
 								{:else}
 									<p class="setting-desc">Loading vault statistics…</p>
 								{/if}
+							</div>
+
+							<div class="settings-section">
+								<h3>Semantic Index</h3>
+								<p class="setting-desc">Machine-local embeddings derived from your Markdown notes. The source notes are never changed by rebuilding.</p>
+								{#if semanticStatus}
+									<div class="maintenance-stats">
+										<div class="maintenance-stat-row">
+											<span class="maintenance-stat-label">Model</span>
+											<span class="maintenance-stat-value">{semanticStatus.model}</span>
+										</div>
+										<div class="maintenance-stat-row">
+											<span class="maintenance-stat-label">Indexed notes</span>
+											<span class="maintenance-stat-value">{semanticStatus.indexedNotes}</span>
+										</div>
+										<div class="maintenance-stat-row">
+											<span class="maintenance-stat-label">Waiting for embedding</span>
+											<span class="maintenance-stat-value">{semanticStatus.queuedNotes}</span>
+										</div>
+									</div>
+								{:else if semanticStatusError}
+									<p class="setting-desc">Semantic index status could not be loaded.</p>
+								{:else}
+									<p class="setting-desc">Loading semantic index status…</p>
+								{/if}
+								<button class="import-btn cleanup-action" onclick={rebuildSemanticSearch} disabled={rebuildingSemantic}>
+									{rebuildingSemantic ? 'Preparing rebuild…' : 'Rebuild semantic index'}
+								</button>
+								{#if semanticMessage}<p class="cleanup-message">{semanticMessage}</p>{/if}
 							</div>
 
 							<div class="settings-section">

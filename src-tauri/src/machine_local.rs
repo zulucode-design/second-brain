@@ -8,7 +8,7 @@
 //!
 //! What lives here:
 //!
-//! - `search/` — the Tantivy index. Derived from the notes; each machine builds its own.
+//! - `search/` and `semantic.sqlite3` — derived search indexes; each machine builds its own.
 //! - `relocation/` — directory-move manifests. Replaying another machine's in-flight
 //!   manifest is exactly the data loss the manifests exist to prevent.
 //! - `sync_state.json` and `repair_issues.json` — each a record of what *this* machine saw.
@@ -93,6 +93,11 @@ fn machine_root() -> Result<PathBuf, String> {
 /// generous allowance for a slow mount rather than a real expectation.
 const CLAIM_LOCK_ATTEMPTS: u32 = 50;
 const CLAIM_LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(10);
+
+fn is_lock_contention(error: &std::io::Error) -> bool {
+    matches!(error.kind(), std::io::ErrorKind::WouldBlock)
+        || matches!(error.raw_os_error(), Some(32 | 33))
+}
 
 /// Read the vault's identity, creating it on first open.
 ///
@@ -231,7 +236,7 @@ impl<'a> ClaimLock<'a> {
             }
             match file.try_lock_exclusive() {
                 Ok(()) => return Ok(Some(ClaimLock(file))),
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => continue,
+                Err(error) if is_lock_contention(&error) => continue,
                 // Locking is unsupported here. Refusing to open the vault over that would be
                 // a worse failure than the one locks are here to fix.
                 Err(error) => {
@@ -344,6 +349,11 @@ pub fn relocation_dir(vault_path: &Path) -> Result<PathBuf, String> {
 /// Directory holding this machine's Tantivy index for the vault.
 pub fn search_dir(vault_path: &Path) -> Result<PathBuf, String> {
     machine_local_dir(vault_path, "search")
+}
+
+/// SQLite store for embeddings, semantic metadata, and the durable inference queue.
+pub fn semantic_database_path(vault_path: &Path) -> Result<PathBuf, String> {
+    vault_dir(vault_path).map(|dir| dir.join("semantic.sqlite3"))
 }
 
 /// File recording what this machine last saw on the sync remote.

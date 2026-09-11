@@ -5,6 +5,7 @@ use crate::state::AppState;
 use crate::types::*;
 use crate::vault::{operations, repair, watcher};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tauri_plugin_fs::FsExt;
 
@@ -132,6 +133,63 @@ fn index_note_now(state: &State<'_, AppState>, vault_path: &str, path: &str) -> 
     )
 }
 
+/// Record semantic work after the Markdown mutation has succeeded. Inference never runs
+/// here: `note_changed` is a local SQLite enqueue and the semantic worker owns the network.
+fn queue_semantic_note_now(state: &State<'_, AppState>, path: &str) {
+    let semantic = state
+        .semantic_index
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
+    if let Some(semantic) = semantic {
+        if let Err(error) = semantic.note_changed(Path::new(path)) {
+            log::error!("Could not queue semantic indexing for {path}: {error}");
+        }
+    }
+}
+
+fn remove_semantic_note_now(state: &State<'_, AppState>, path: &str) {
+    let semantic = state
+        .semantic_index
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
+    if let Some(semantic) = semantic {
+        if let Err(error) = semantic.note_removed(Path::new(path)) {
+            log::error!("Could not remove semantic indexing for {path}: {error}");
+        }
+    }
+}
+
+fn queue_moved_semantic_notes_now(
+    state: &State<'_, AppState>,
+    old_path: &str,
+    new_path: &str,
+    rewritten_paths: &[String],
+) {
+    remove_semantic_note_now(state, old_path);
+    queue_semantic_note_now(state, new_path);
+    for path in rewritten_paths {
+        queue_semantic_note_now(state, path);
+    }
+}
+
+/// Bulk notebook operations can change many paths without emitting one event per note on
+/// every filesystem. Reconciliation is local-only: it removes vanished paths and queues the
+/// current Markdown files, leaving inference to the background worker.
+fn reconcile_semantic_now(state: &State<'_, AppState>, vault_path: &str) {
+    let semantic = state
+        .semantic_index
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
+    if let Some(semantic) = semantic {
+        if let Err(error) = semantic.reconcile_from_notes(Path::new(vault_path)) {
+            log::error!("Could not reconcile semantic search after a notebook change: {error}");
+        }
+    }
+}
+
 fn remove_note_now(
     state: &State<'_, AppState>,
     vault_path: &str,
@@ -213,6 +271,10 @@ fn clear_vault_runtime(state: &State<'_, AppState>) -> Result<(), String> {
     *state.watcher.lock().map_err(|error| error.to_string())? = None;
     *state
         .search_index
+        .lock()
+        .map_err(|error| error.to_string())? = None;
+    *state
+        .semantic_index
         .lock()
         .map_err(|error| error.to_string())? = None;
     Ok(())
@@ -327,8 +389,26 @@ fn open_vault_path(
         }
     }
 
-    // Stage the search index and watcher before replacing the active runtime.
+    // Stage both derived search stores before replacing the active runtime. Semantic
+    // inference is always Ollama-backed in v1, independently of the provider selected for
+    // writing tools, so switching those tools never makes the local knowledge index vanish.
+    let (ollama_url, ollama_token) = {
+        let config = state.config.lock().map_err(|error| error.to_string())?;
+        (
+            config
+                .ollama_base_url
+                .clone()
+                .unwrap_or_else(|| crate::ai_provider::DEFAULT_OLLAMA_URL.to_string()),
+            config.ollama_api_key.clone(),
+        )
+    };
     let search = std::sync::Arc::new(SearchIndex::new(&path)?);
+    let semantic = std::sync::Arc::new(crate::semantic_search::SemanticIndex::open(
+        Path::new(&path),
+        &ollama_url,
+        ollama_token,
+    )?);
+    semantic.start_background();
     #[cfg(target_os = "ios")]
     {
         if external.is_some() {
@@ -412,6 +492,7 @@ fn open_vault_path(
     // Update config. External vaults use the bookmark as their stable identity;
     // the resolved path is refreshed whenever the vault opens.
     let mut search_slot = state.search_index.lock().map_err(|e| e.to_string())?;
+    let mut semantic_slot = state.semantic_index.lock().map_err(|e| e.to_string())?;
     let mut watcher_slot = state.watcher.lock().map_err(|e| e.to_string())?;
     let mut config = state.config.lock().map_err(|e| e.to_string())?;
     let mut next = config.clone();
@@ -450,15 +531,23 @@ fn open_vault_path(
             ..Default::default()
         });
     }
-    next.active_vault = Some(path);
+    next.active_vault = Some(path.clone());
     next.active_bookmark_id = active_bookmark_id;
     save_app_config(&next)?;
     *search_slot = Some(search);
+    *semantic_slot = Some(semantic.clone());
     *watcher_slot = Some(new_watcher);
     *config = next;
     // The lock has to be gone before the hotkey is claimed: registration reads this same
     // config to find the trigger, and would deadlock against the guard still held here.
     drop(config);
+
+    let semantic_vault = path.clone();
+    std::thread::spawn(move || {
+        if let Err(error) = semantic.reconcile_from_notes(Path::new(&semantic_vault)) {
+            log::error!("Could not reconcile the semantic index: {error}");
+        }
+    });
 
     register_hotkey_now_a_vault_exists(&app);
 
@@ -893,7 +982,9 @@ pub fn rename_notebook(
 ) -> Result<String, String> {
     let config = state.config.lock().map_err(|error| error.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
-    operations::rename_notebook(vault_path, &path, &new_name)
+    let renamed = operations::rename_notebook(vault_path, &path, &new_name)?;
+    reconcile_semantic_now(&state, vault_path);
+    Ok(renamed)
 }
 
 #[tauri::command]
@@ -933,6 +1024,7 @@ pub fn move_notebook(
         &vault_path,
         vec![notebook_path, new_full_path.clone()],
     )?;
+    reconcile_semantic_now(&state, &vault_path);
 
     Ok(new_full_path)
 }
@@ -947,7 +1039,9 @@ pub fn delete_notebook(state: State<'_, AppState>, path: String) -> Result<(), S
             .ok_or("No active vault")?
             .clone()
     };
-    operations::delete_notebook(&vault_path, &path)
+    operations::delete_notebook(&vault_path, &path)?;
+    reconcile_semantic_now(&state, &vault_path);
+    Ok(())
 }
 
 // ── Notes ──
@@ -1007,6 +1101,7 @@ pub fn save_note(
     operations::save_note(&vault_path, &path, &meta, &body)?;
 
     index_note_now(&state, &vault_path, &path)?;
+    queue_semantic_note_now(&state, &path);
 
     Ok(())
 }
@@ -1030,6 +1125,7 @@ pub fn duplicate_note(
 
     let entry = operations::duplicate_note(&path, &vault)?;
     index_note_now(&state, &vault, &entry.path)?;
+    queue_semantic_note_now(&state, &entry.path);
     Ok(entry)
 }
 
@@ -1048,6 +1144,7 @@ pub fn create_note(
     let entry = operations::create_note(vault_path, notebook_relative.as_deref(), &title)?;
 
     index_note_now(&state, vault_path, &entry.path)?;
+    queue_semantic_note_now(&state, &entry.path);
 
     Ok(entry)
 }
@@ -1130,6 +1227,7 @@ pub async fn clip_web_page(
         let _ = std::fs::remove_file(&entry.path);
         return Err(error);
     }
+    queue_semantic_note_now(&state, &entry.path);
     Ok(entry)
 }
 
@@ -1235,6 +1333,7 @@ pub fn file_unfiled_note(
     let new_path = operations::file_unfiled_note(vault_path, &note_path, &category)?;
 
     index_note_now(&state, vault_path, &new_path)?;
+    queue_moved_semantic_notes_now(&state, &note_path, &new_path, &[]);
 
     Ok(new_path)
 }
@@ -1276,6 +1375,7 @@ pub fn rename_note(
         &outcome.path,
         &outcome.rewritten_paths,
     )?;
+    queue_moved_semantic_notes_now(&state, &path, &outcome.path, &outcome.rewritten_paths);
     Ok(outcome.path)
 }
 
@@ -1299,6 +1399,7 @@ pub fn delete_note(state: State<'_, AppState>, path: String) -> Result<(), Strin
     }
 
     remove_note_now(&state, vault_path, &path)?;
+    remove_semantic_note_now(&state, &path);
 
     Ok(())
 }
@@ -1325,6 +1426,7 @@ pub fn move_note(
         &outcome.path,
         &outcome.rewritten_paths,
     )?;
+    queue_moved_semantic_notes_now(&state, &note_path, &outcome.path, &outcome.rewritten_paths);
 
     Ok(outcome.path)
 }
@@ -1745,7 +1847,9 @@ pub fn set_task_done(
     }
     operations::save_note(&vault_path, &note_path, &meta, &new_body)?;
 
-    index_note_now(&state, &vault_path, &note_path)
+    index_note_now(&state, &vault_path, &note_path)?;
+    queue_semantic_note_now(&state, &note_path);
+    Ok(())
 }
 
 fn set_priority_on_line(line: &str, priority: Option<&str>) -> String {
@@ -1801,7 +1905,9 @@ pub fn set_task_priority(
     }
     operations::save_note(&vault_path, &note_path, &meta, &new_body)?;
 
-    index_note_now(&state, &vault_path, &note_path)
+    index_note_now(&state, &vault_path, &note_path)?;
+    queue_semantic_note_now(&state, &note_path);
+    Ok(())
 }
 
 fn set_due_on_line(line: &str, due: Option<&str>) -> String {
@@ -1856,7 +1962,9 @@ pub fn set_task_due(
     }
     operations::save_note(&vault_path, &note_path, &meta, &new_body)?;
 
-    index_note_now(&state, &vault_path, &note_path)
+    index_note_now(&state, &vault_path, &note_path)?;
+    queue_semantic_note_now(&state, &note_path);
+    Ok(())
 }
 
 // ── Search ──
@@ -1872,6 +1980,63 @@ pub fn search_notes(
         .as_ref()
         .ok_or("Search index not initialized")?;
     search.search(&query, limit.unwrap_or(20))
+}
+
+#[tauri::command]
+pub async fn semantic_search(
+    state: State<'_, AppState>,
+    query: String,
+    category: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<SearchResult>, String> {
+    if query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let category = category
+        .map(|value| {
+            crate::vault::para::ParaCategory::from_name(&value)
+                .ok_or_else(|| format!("Unknown PARA category: {value}"))
+        })
+        .transpose()?;
+    let semantic = state
+        .semantic_index
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone()
+        .ok_or("Semantic search is not initialized")?;
+    tokio::task::spawn_blocking(move || semantic.search(&query, category, limit.unwrap_or(20)))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub fn get_semantic_status(
+    state: State<'_, AppState>,
+) -> Result<crate::semantic_search::SemanticStatus, String> {
+    state
+        .semantic_index
+        .lock()
+        .map_err(|error| error.to_string())?
+        .as_ref()
+        .ok_or("Semantic search is not initialized")?
+        .status()
+}
+
+#[tauri::command]
+pub async fn rebuild_semantic_index(state: State<'_, AppState>) -> Result<(), String> {
+    let vault = {
+        let config = state.config.lock().map_err(|error| error.to_string())?;
+        config.active_vault.clone().ok_or("No active vault")?
+    };
+    let semantic = state
+        .semantic_index
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone()
+        .ok_or("Semantic search is not initialized")?;
+    tokio::task::spawn_blocking(move || semantic.rebuild_from_notes(Path::new(&vault)))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -2004,6 +2169,7 @@ pub fn restore_note(state: State<'_, AppState>, trash_path: String) -> Result<St
         }
     };
     index_note_now(&state, &vault_path, &restored)?;
+    queue_semantic_note_now(&state, &restored);
     Ok(restored)
 }
 
@@ -2017,7 +2183,9 @@ pub fn restore_notebook(state: State<'_, AppState>, trash_path: String) -> Resul
             .ok_or("No active vault")?
             .clone()
     };
-    operations::restore_notebook(&vault_path, &trash_path)
+    let restored = operations::restore_notebook(&vault_path, &trash_path)?;
+    reconcile_semantic_now(&state, &vault_path);
+    Ok(restored)
 }
 
 #[tauri::command]
@@ -2981,6 +3149,40 @@ pub fn get_note_version_content(
 
 // ── AI ──
 
+fn restart_semantic_index(app: &AppHandle) -> Result<(), String> {
+    let (vault, base_url, token) = {
+        let state = app.state::<AppState>();
+        let config = state.config.lock().map_err(|error| error.to_string())?;
+        let Some(vault) = config.active_vault.clone() else {
+            return Ok(());
+        };
+        (
+            vault,
+            config
+                .ollama_base_url
+                .clone()
+                .unwrap_or_else(|| crate::ai_provider::DEFAULT_OLLAMA_URL.to_string()),
+            config.ollama_api_key.clone(),
+        )
+    };
+    let semantic = Arc::new(crate::semantic_search::SemanticIndex::open(
+        Path::new(&vault),
+        &base_url,
+        token,
+    )?);
+    semantic.start_background();
+    *app.state::<AppState>()
+        .semantic_index
+        .lock()
+        .map_err(|error| error.to_string())? = Some(semantic.clone());
+    std::thread::spawn(move || {
+        if let Err(error) = semantic.reconcile_from_notes(Path::new(&vault)) {
+            log::error!("Could not reconcile semantic search after its settings changed: {error}");
+        }
+    });
+    Ok(())
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn set_ai_settings(
@@ -3022,6 +3224,8 @@ pub fn set_ai_settings(
     candidate.ai_model = model;
     candidate.ai_writing_style = writing_style.filter(|s| !s.trim().is_empty());
     let next_target = crate::ai_health::health_target(&candidate, generation);
+    let semantic_settings_changed = candidate.ollama_base_url != config.ollama_base_url
+        || candidate.ollama_api_key != config.ollama_api_key;
     let health_settings_changed =
         !crate::ai_health::same_probe_settings(previous_target.as_ref(), next_target.as_ref());
     // Persist first: a failed settings save must not change the live provider or health
@@ -3049,6 +3253,9 @@ pub fn set_ai_settings(
         tauri::async_runtime::spawn(async move {
             crate::ai_health::check_now(&refresh_app).await;
         });
+    }
+    if semantic_settings_changed {
+        restart_semantic_index(&app)?;
     }
     Ok(())
 }
