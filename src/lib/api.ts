@@ -22,6 +22,7 @@ import type {
   StartupView,
   AiProvider,
   RepairStatus,
+  SemanticStatus,
 } from "./types";
 
 export async function openVault(path: string): Promise<void> {
@@ -256,6 +257,22 @@ export async function searchNotes(
   limit?: number,
 ): Promise<SearchResult[]> {
   return invoke("search_notes", { query, limit });
+}
+
+export async function semanticSearch(
+  query: string,
+  category?: ParaCategory,
+  limit?: number,
+): Promise<SearchResult[]> {
+  return invoke("semantic_search", { query, category: category ?? null, limit });
+}
+
+export async function getSemanticStatus(): Promise<SemanticStatus> {
+  return invoke("get_semantic_status");
+}
+
+export async function rebuildSemanticIndex(): Promise<void> {
+  return invoke("rebuild_semantic_index");
 }
 
 export async function reindex(): Promise<void> {

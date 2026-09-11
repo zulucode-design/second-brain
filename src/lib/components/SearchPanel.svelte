@@ -1,41 +1,87 @@
 <script lang="ts">
 	import { showSearch, activeNote, activeNotePath, editorDirty, appConfig, mobileView, notebooks, activeNotebook, activeTag, viewMode } from '$lib/stores/app';
-	import { searchNotes, readNote } from '$lib/api';
+	import { searchNotes, semanticSearch, readNote } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
-	import type { SearchResult, NotebookEntry } from '$lib/types';
+	import { PARA_CATEGORIES, type SearchResult, type NotebookEntry, type ParaCategory } from '$lib/types';
 	import { isMobile } from '$lib/platform';
 
 	let query = $state('');
 	let results = $state<SearchResult[]>([]);
 	let selectedIndex = $state(0);
+	let mode = $state<'keyword' | 'semantic'>('keyword');
+	let category = $state<ParaCategory | ''>('');
+	let searchError = $state('');
+	let searching = $state(false);
+	let requestGeneration = 0;
 	let inputEl = $state<HTMLInputElement>(null!);
 	let resultsEl = $state<HTMLDivElement>(null!);
 
-	const doSearch = debounce(async (q: string) => {
-		if (!q.trim()) {
-			results = [];
-			return;
-		}
+	const executeSearch = debounce(async (
+		q: string,
+		searchMode: 'keyword' | 'semantic',
+		searchCategory: ParaCategory | '',
+		generation: number,
+	) => {
+		if (generation !== requestGeneration) return;
 		try {
-			results = await searchNotes(q, 20);
+			const found = searchMode === 'semantic'
+				? await semanticSearch(q, searchCategory || undefined, 20)
+				: await searchNotes(q, 20);
+			if (generation !== requestGeneration) return;
+			results = found;
 			selectedIndex = 0;
 		} catch (e) {
+			if (generation !== requestGeneration) return;
 			console.error('Search failed:', e);
 			results = [];
+			searchError = searchMode === 'semantic'
+				? `Semantic search is unavailable: ${String(e)}`
+				: `Search failed: ${String(e)}`;
+		} finally {
+			if (generation === requestGeneration) searching = false;
 		}
 	}, 150);
+
+	function requestSearch() {
+		const generation = ++requestGeneration;
+		results = [];
+		searchError = '';
+		if (!query.trim()) {
+			searching = false;
+			return;
+		}
+		searching = true;
+		executeSearch(query, mode, category, generation);
+	}
 
 	$effect(() => {
 		if ($showSearch && inputEl) {
 			query = '';
 			results = [];
 			selectedIndex = 0;
+			searchError = '';
+			searching = false;
+			requestGeneration += 1;
 			setTimeout(() => inputEl?.focus(), 50);
 		}
 	});
 
 	function handleInput() {
-		doSearch(query);
+		requestSearch();
+	}
+
+	function changeMode(next: 'keyword' | 'semantic') {
+		mode = next;
+		results = [];
+		searchError = '';
+		requestSearch();
+	}
+
+	function changeCategory(event: Event) {
+		category = (event.currentTarget as HTMLSelectElement).value as ParaCategory | '';
+		results = [];
+		searchError = '';
+		requestSearch();
 	}
 
 	function scrollToSelected() {
@@ -146,8 +192,29 @@
 				/>
 				{#if !isMobile}<kbd class="search-esc">Esc</kbd>{/if}
 			</div>
+			<div class="search-options">
+				<div class="search-modes" aria-label="Search mode">
+					<button class:active={mode === 'keyword'} onclick={() => changeMode('keyword')}>Keyword</button>
+					<button class:active={mode === 'semantic'} onclick={() => changeMode('semantic')}>Semantic</button>
+				</div>
+				{#if mode === 'semantic'}
+					<label>
+						<span>Category</span>
+						<select value={category} onchange={changeCategory}>
+							<option value="">All categories</option>
+							{#each PARA_CATEGORIES as option}
+								<option value={option}>{option}</option>
+							{/each}
+						</select>
+					</label>
+				{/if}
+			</div>
 
-			{#if results.length > 0}
+			{#if searchError}
+				<div class="search-error">{searchError}</div>
+			{:else if searching}
+				<div class="search-empty"><span>Searching…</span></div>
+			{:else if results.length > 0}
 				<div class="search-results" bind:this={resultsEl}>
 					{#each results as result, i}
 						<button
@@ -169,7 +236,7 @@
 								{/if}
 							</div>
 							{#if result.snippet}
-								<span class="result-snippet">{@html highlightSnippet(result.snippet, query)}</span>
+								<span class="result-snippet">{@html highlightSnippet(result.snippet, mode === 'keyword' ? query : '')}</span>
 							{/if}
 						</button>
 					{/each}
@@ -267,6 +334,60 @@
 
 	.search-input-wrapper input::placeholder {
 		color: var(--text-tertiary);
+	}
+
+	.search-options {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 8px 18px;
+		border-bottom: 1px solid var(--border-light);
+	}
+
+	.search-modes {
+		display: flex;
+		gap: 4px;
+	}
+
+	.search-modes button {
+		border: 1px solid var(--border-color);
+		background: var(--bg-primary);
+		color: var(--text-secondary);
+		border-radius: 6px;
+		padding: 5px 10px;
+		font: inherit;
+		font-size: 12px;
+		cursor: pointer;
+	}
+
+	.search-modes button.active {
+		border-color: var(--accent);
+		background: color-mix(in srgb, var(--accent) 12%, transparent);
+		color: var(--text-accent);
+	}
+
+	.search-options label {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		font-size: 12px;
+		color: var(--text-tertiary);
+	}
+
+	.search-options select {
+		border: 1px solid var(--border-color);
+		background: var(--bg-primary);
+		color: var(--text-primary);
+		border-radius: 6px;
+		padding: 4px 7px;
+	}
+
+	.search-error {
+		padding: 22px 20px;
+		color: var(--error, #c94b5d);
+		font-size: 13px;
+		line-height: 1.5;
 	}
 
 	.search-esc {

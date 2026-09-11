@@ -11,6 +11,7 @@ mod image_proxy;
 mod machine_local;
 mod safe_fetch;
 mod search;
+mod semantic_search;
 mod state;
 mod sync;
 mod sync_config;
@@ -262,6 +263,9 @@ pub fn run() {
             commands::set_task_priority,
             commands::set_task_due,
             commands::search_notes,
+            commands::semantic_search,
+            commands::get_semantic_status,
+            commands::rebuild_semantic_index,
             commands::reindex,
             commands::get_repair_status,
             commands::retry_repairs,

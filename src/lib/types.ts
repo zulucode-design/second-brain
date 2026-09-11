@@ -34,6 +34,12 @@ export interface AiStatus {
   target: AiTargetId | null;
 }
 
+export interface SemanticStatus {
+  indexedNotes: number;
+  queuedNotes: number;
+  model: string;
+}
+
 /** Whether the global quick-capture hotkey is registered, and why not when it is not. */
 export interface HotkeyStatus {
   availability: Availability;

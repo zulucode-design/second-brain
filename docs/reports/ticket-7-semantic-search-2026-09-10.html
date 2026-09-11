@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Ticket #7 — Semantic Search Implementation Record</title>
+  <style>
+    :root { color-scheme: light dark; --bg:#f5f7fb; --card:#fff; --ink:#182033; --muted:#667085; --line:#dfe4ee; --accent:#405bd8; --ok:#087443; --warn:#9a6700; --info:#175cd3; }
+    @media (prefers-color-scheme:dark) { :root { --bg:#11141d; --card:#191e2b; --ink:#edf1fb; --muted:#a6afc1; --line:#30384a; --accent:#91a3ff; --ok:#6ce9a6; --warn:#fec84b; --info:#84adff; } }
+    * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    main { max-width:1050px; margin:auto; padding:42px 22px 70px; } h1 { margin:0 0 5px; font-size:2rem; line-height:1.15; } h2 { margin:34px 0 12px; font-size:1.2rem; } h3 { margin:21px 0 6px; font-size:1rem; } p { margin:7px 0 12px; } a { color:var(--accent); } code { font:0.92em ui-monospace,SFMono-Regular,Consolas,monospace; background:color-mix(in srgb,var(--accent) 9%,transparent); padding:.1em .35em; border-radius:4px; }
+    .lede,.card,.metric { background:var(--card); border:1px solid var(--line); border-radius:12px; } .lede { margin-top:22px; padding:20px 22px; border-left:5px solid var(--accent); } .meta { color:var(--muted); } .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin:14px 0; } .metric { padding:16px; } .metric strong { display:block; font-size:1.45rem; } .metric span { color:var(--muted); }
+    .pill { display:inline-block; padding:3px 9px; border-radius:999px; font-size:.8rem; font-weight:700; } .green { color:var(--ok); background:color-mix(in srgb,var(--ok) 12%,transparent); } .amber { color:var(--warn); background:color-mix(in srgb,var(--warn) 14%,transparent); } .blue { color:var(--info); background:color-mix(in srgb,var(--info) 12%,transparent); }
+    table { width:100%; border-collapse:separate; border-spacing:0; overflow:hidden; border:1px solid var(--line); border-radius:10px; background:var(--card); } th,td { padding:11px 13px; text-align:left; vertical-align:top; border-bottom:1px solid var(--line); } th { font-size:.82rem; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; } tr:last-child td { border-bottom:0; } ul,ol { padding-left:22px; } li { margin:5px 0; } .card { padding:18px 20px; margin:12px 0; } .callout { border-left:4px solid var(--warn); } footer { margin-top:38px; color:var(--muted); font-size:.88rem; }
+  </style>
+</head>
+<body><main>
+  <div class="meta">Second Brain · Engineering record · 10 September 2026</div>
+  <h1>Ticket #7: Note embeddings and semantic search</h1>
+  <p><a href="https://github.com/zulucode-design/second-brain/issues/7">GitHub issue #7</a> · Branch <code>feat/7-semantic-search</code></p>
+
+  <section class="lede">
+    <span class="pill green">Manual verification passed</span>
+    <h2 style="margin-top:10px">Implementation and automated verification are complete</h2>
+    <p>Semantic search is a separate, machine-local projection beside the unchanged Tantivy keyword index. Note writes never wait for inference; unavailable embedding work persists in SQLite and recovers in the background. Windows manual verification passed the outage queue and automatic recovery path; the model-calibrated similarity cutoff suppresses unrelated low-confidence results while retaining valid matches.</p>
+  </section>
+
+  <div class="grid">
+    <div class="metric"><strong>322 passed</strong><span>Rust tests; 4 intentionally ignored</span></div>
+    <div class="metric"><strong>0 / 0</strong><span>Svelte errors / warnings</span></div>
+    <div class="metric"><strong>119 ms</strong><span>optimized 10,000-note exact scan</span></div>
+    <div class="metric"><strong>10,000 × 768</strong><span>representative benchmark shape</span></div>
+  </div>
+
+  <h2>What changed</h2>
+  <div class="card">
+    <ul>
+      <li>Added a deep Rust semantic-index module with an injected embedding boundary and production Ollama adapter.</li>
+      <li>Stored versioned note/chunk vectors and the pending embedding queue in machine-local SQLite via bundled <code>rusqlite</code>.</li>
+      <li>Added chunked embedding (1,500 characters, 200 overlap), cosine ranking, best chunk per note, result limits, and PARA-category filtering.</li>
+      <li>Connected create, save, duplicate, clip, file, rename, move, task-edit, trash, restore, notebook mutation, and external filesystem paths to indexing or reconciliation.</li>
+      <li>Added automatic startup reconciliation, 20-second retry, immediate wake on new work, profile migration, and exact-file corrupt-database recovery.</li>
+      <li>Added an explicit Keyword/Semantic choice in Search and status plus on-demand rebuild in Settings → Maintenance.</li>
+      <li>Made the supported Rust test launcher forward filters, release flags, and ignored-test flags while preserving the Windows test manifest.</li>
+    </ul>
+  </div>
+
+  <h2>Acceptance evidence</h2>
+  <table>
+    <thead><tr><th>Criterion</th><th>Status</th><th>Evidence</th></tr></thead>
+    <tbody>
+      <tr><td>Embeddings via the AI backend, stored locally</td><td><span class="pill green">Automated pass</span></td><td>Ollama <code>/api/embed</code> contract test; real temp SQLite persistence/reopen test.</td></tr>
+      <tr><td>Meaning finds what keyword matching misses</td><td><span class="pill green">Manual + automated pass</span></td><td>Deterministic seam and score-scale regression tests pass. Packaged Windows verification found focused matches for “wheel”, “two wheeled vehicle”, “offline”, “not online”, “bicycle”, and “motorcycle”, with one result each.</td></tr>
+      <tr><td>Filter to one PARA category</td><td><span class="pill green">Automated pass</span></td><td>Cross-category SQLite integration test and semantic Search category control.</td></tr>
+      <tr><td>Edit refreshes; deletion removes</td><td><span class="pill green">Automated pass</span></td><td>Replacement/no-duplicate and indexed-plus-pending deletion tests; command and watcher lifecycle wiring.</td></tr>
+      <tr><td>Rebuild from Markdown truth</td><td><span class="pill green">Automated pass</span></td><td>Stale removal/current-note rebuild test; explicit corruption recovery test; Maintenance action.</td></tr>
+      <tr><td>Unavailable work recovers later</td><td><span class="pill green">Manual + automated pass</span></td><td>Windows test showed 2 queued notes while Ollama was stopped, then 0 queued after Ollama restarted without restarting HelixNotes; save and keyword search remained available.</td></tr>
+      <tr><td>Keyword search remains independent</td><td><span class="pill green">Automated pass</span></td><td>Existing keyword command is unchanged; complete Rust suite passes with unavailable-backend coverage.</td></tr>
+      <tr><td>Representative latency measured</td><td><span class="pill green">Complete</span></td><td>10,000 notes × 768 dimensions: 119 ms optimized (60–119 ms across loaded runs), 1,894 ms debug. No ANN justified.</td></tr>
+      <tr><td>Model and migration ADR</td><td><span class="pill green">Complete</span></td><td><a href="../adr/0007-use-embeddinggemma-with-versioned-local-chunk-embeddings.md">ADR-0007</a>.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Architecture and failure behavior</h2>
+  <table>
+    <thead><tr><th>Concern</th><th>Decision</th></tr></thead>
+    <tbody>
+      <tr><td>Search modes</td><td>Keyword and semantic remain explicit, separate operations. Backend failure cannot disable literal search.</td></tr>
+      <tr><td>Identity</td><td>Stable frontmatter ID when available; current path retained; path identity only for legacy ID-less notes.</td></tr>
+      <tr><td>Write path</td><td>Successful Markdown mutation enqueues SQLite work only. Network inference belongs to the worker.</td></tr>
+      <tr><td>Long notes</td><td>Overlapping chunks; query returns one result per note using its highest-scoring chunk.</td></tr>
+      <tr><td>Model changes</td><td>The versioned embedding profile prevents incompatible comparisons and queues current Markdown for replacement vectors.</td></tr>
+      <tr><td>Damage</td><td>SQLite corruption replaces only the exact derived database and its own sidecars. Permissions and ordinary I/O failures are not treated as corruption.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Automated verification</h2>
+  <div class="card">
+    <p><code>pnpm check</code> — <strong>pass</strong>, 0 errors and 0 warnings.</p>
+    <p><code>pnpm test</code> — <strong>pass</strong>, 33 passed.</p>
+    <p><code>pnpm test:rust</code> — <strong>pass</strong>, 325 passed, 0 failed, 4 ignored. Three pre-existing environment/network tests and the opt-in semantic benchmark are ignored in the ordinary suite.</p>
+    <p><code>pnpm lint:rust</code> — <strong>pass</strong>, rustfmt check and Clippy with <code>-D warnings</code>.</p>
+    <p><code>pnpm build</code> — <strong>pass</strong>, production SvelteKit build completed. Vite reports the repository's existing large-chunk advisory.</p>
+    <p><code>pnpm test:rust --release semantic_search::tests::brute_force_search_latency_for_ten_thousand_notes -- --ignored --nocapture</code> — <strong>pass</strong>, 119 ms on Linux 7.1.13, Intel Core i5-9300H (4 cores / 8 threads), optimized build.</p>
+    <p>Windows isolated build — <strong>pass</strong>, <code>pnpm test:rust</code> completed with 291 passed, 0 failed, 3 ignored. The packaged NSIS and MSI artifacts were produced; Tauri exited after bundling because this checkout has an updater public key but no private signing key. The corrected package manually passed focused semantic searches for edited note content.</p>
+  </div>
+
+  <h2>Manual verification gate</h2>
+  <div class="card callout">
+    <p><strong>Do not mark ticket #7 complete from automated evidence alone.</strong> Verify these in a desktop build with Ollama 0.11.10+ and <code>ollama pull embeddinggemma</code>:</p>
+    <ol>
+      <li>Open a representative vault and watch Settings → Maintenance move from waiting to indexed.</li>
+      <li>Create a note about a daily routine without the planned query words. Confirm semantic search for “how I structure my mornings” finds it while keyword search does not.</li>
+      <li>Filter the semantic result to its PARA category, then to a different category.</li>
+      <li>Edit the distinguishing concept, wait for the queue to settle, and confirm the new meaning ranks above the old one while unrelated low-confidence results are suppressed by the cutoff.</li>
+      <li>Stop Ollama, edit/create a note, confirm note saving and keyword search still work, and confirm a waiting count appears.</li>
+      <li>Restart Ollama without restarting the app; confirm the waiting count reaches zero and the new note becomes semantically findable.</li>
+      <li>Trash and restore the note, confirming disappearance and return. Exercise notebook move/rename if time permits.</li>
+      <li>Run Rebuild semantic index; confirm notes stay intact and results return after background processing.</li>
+      <li>Repeat the core search/outage recovery path in the packaged Windows build before merge.</li>
+    </ol>
+  </div>
+
+  <h2>Explicitly deferred</h2>
+  <ul>
+    <li>Q&amp;A/chat prompt UI (#8), capture-time similarity (#9), and suggested links (#10).</li>
+    <li>CLI provider architecture (#51); v1 semantic indexing deliberately uses the configured Ollama host independently of writing-provider choice.</li>
+    <li>Approximate-nearest-neighbour indexing; the recorded optimized exact scan does not justify it.</li>
+    <li>Combining keyword and semantic scores; each mode remains understandable and independently degradable.</li>
+    <li>Future threshold tuning/confidence display remains possible; issue #7 uses a <code>0.45</code> minimum cosine score calibrated against live EmbeddingGemma results. Title-only notes remain searchable, while low-confidence matches are suppressed.</li>
+    <li>Unexpected Markdown headings appearing in a note body during repeated Windows testing are tracked separately in <a href="https://github.com/zulucode-design/second-brain/issues/59">issue #59</a>; raw-file inspection confirmed the content was in Markdown, but the writer path has not yet been identified.</li>
+  </ul>
+
+  <h2>Review notes</h2>
+  <div class="card">
+    <p><span class="pill green">No hard findings</span> The standards/spec review found no documented-standard violation and no missing issue requirement in the isolated issue #7 worktree.</p>
+    <p>Three low-severity maintainability heuristics were noted for future cleanup: repeated semantic-state lookup, repeated startup/restart setup, and the paired Ollama URL/token parameters. They do not change the approved seams or block manual verification; extracting them now would add churn without changing behavior.</p>
+  </div>
+
+  <footer>This report is a committed project record. Update it in the same pull request when review findings, manual verification, or remaining work changes.</footer>
+</main></body>
+</html>

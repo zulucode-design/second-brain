@@ -1,5 +1,6 @@
 use crate::ai_health::AiStatus;
 use crate::search::SearchIndex;
+use crate::semantic_search::SemanticIndex;
 use crate::types::AppConfig;
 use crate::vault::repair::RepairStatus;
 use crate::vault::watcher::VaultWatcher;
@@ -15,6 +16,7 @@ pub struct AiHealthState {
 pub struct AppState {
     pub config: Mutex<AppConfig>,
     pub search_index: Mutex<Option<Arc<SearchIndex>>>,
+    pub semantic_index: Mutex<Option<Arc<SemanticIndex>>>,
     pub watcher: Mutex<Option<VaultWatcher>>,
     pub vault_transition: tokio::sync::Mutex<()>,
     pub importing: AtomicBool,
@@ -44,6 +46,7 @@ impl AppState {
             config: Mutex::new(config),
             hotkey_status: Mutex::new(crate::hotkey::HotkeyStatus::unknown()),
             search_index: Mutex::new(None),
+            semantic_index: Mutex::new(None),
             watcher: Mutex::new(None),
             vault_transition: tokio::sync::Mutex::new(()),
             importing: AtomicBool::new(false),
