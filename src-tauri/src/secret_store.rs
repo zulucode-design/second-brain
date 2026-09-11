@@ -1,5 +1,4 @@
 use crate::types::AppConfig;
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -95,6 +94,10 @@ pub(crate) fn hydrate_config(
     store: &dyn SecretStore,
 ) -> Result<LoadOutcome, String> {
     let had_plaintext = has_plaintext_credentials(config);
+    if let Some(error) = unaddressable_plaintext(config) {
+        clear_credentials(config);
+        return Err(error);
+    }
     let plaintext = credential_values(config);
     clear_credentials(config);
 
@@ -139,6 +142,46 @@ pub(crate) fn redacted_config(config: &AppConfig) -> AppConfig {
     redacted
 }
 
+/// Preserve an as-yet-unmigrated recovery copy while allowing non-secret settings to save.
+///
+/// These values are never put back into the running config. They remain only in the file
+/// that already held them until a later startup can complete the keyring migration.
+pub(crate) fn copy_plaintext_recovery(from: &AppConfig, to: &mut AppConfig) {
+    to.ai_api_key.clone_from(&from.ai_api_key);
+    to.openai_api_key.clone_from(&from.openai_api_key);
+    to.ollama_api_key.clone_from(&from.ollama_api_key);
+    to.openai_compatible_api_key
+        .clone_from(&from.openai_compatible_api_key);
+    to.legacy_sync
+        .credentials
+        .webdav
+        .password
+        .clone_from(&from.legacy_sync.credentials.webdav.password);
+
+    for source in &from.vaults {
+        let Some(password) = source.sync.credentials.webdav.password.as_ref() else {
+            continue;
+        };
+        if let Some(target) = to.vaults.iter_mut().find(|target| {
+            source
+                .vault_id
+                .as_deref()
+                .zip(target.vault_id.as_deref())
+                .is_some_and(|(source, target)| source == target)
+                || source
+                    .bookmark_id
+                    .as_deref()
+                    .zip(target.bookmark_id.as_deref())
+                    .is_some_and(|(source, target)| source == target)
+                || (source.bookmark_id.is_none()
+                    && target.bookmark_id.is_none()
+                    && source.path == target.path)
+        }) {
+            target.sync.credentials.webdav.password = Some(password.clone());
+        }
+    }
+}
+
 pub(crate) fn has_plaintext_credentials(config: &AppConfig) -> bool {
     !credential_values(config).is_empty()
         || config
@@ -158,6 +201,10 @@ pub(crate) fn apply_config_changes(
     after: &AppConfig,
     store: &dyn SecretStore,
 ) -> Result<AppliedChanges, String> {
+    if let Some(error) = unaddressable_plaintext(before).or_else(|| unaddressable_plaintext(after))
+    {
+        return Err(error);
+    }
     let before_values = credential_values(before);
     let after_values = credential_values(after);
     let mut ids = credential_ids(before);
@@ -217,62 +264,55 @@ fn restore_snapshots(
     Ok(())
 }
 
-fn vault_identity(config: &crate::types::VaultConfig) -> String {
-    let identity = config.bookmark_id.as_deref().unwrap_or(&config.path);
-    format!("{:x}", Sha256::digest(identity.as_bytes()))
+fn vault_identity(config: &crate::types::VaultConfig) -> Option<&str> {
+    config.vault_id.as_deref()
 }
 
 fn credential_ids(config: &AppConfig) -> Vec<SecretId> {
-    let mut ids = vec![
-        SecretId::AnthropicApiKey,
-        SecretId::OpenAiApiKey,
-        SecretId::OllamaApiKey,
-        SecretId::OpenAiCompatibleApiKey,
-    ];
-    ids.extend(
-        config
-            .vaults
-            .iter()
-            .map(|vault| SecretId::WebdavPassword(vault_identity(vault))),
-    );
-    ids
+    credential_bindings(config)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect()
 }
 
 fn credential_values(config: &AppConfig) -> HashMap<SecretId, String> {
-    let mut values = HashMap::new();
-    insert_present(&mut values, SecretId::AnthropicApiKey, &config.ai_api_key);
-    insert_present(&mut values, SecretId::OpenAiApiKey, &config.openai_api_key);
-    insert_present(&mut values, SecretId::OllamaApiKey, &config.ollama_api_key);
-    insert_present(
-        &mut values,
-        SecretId::OpenAiCompatibleApiKey,
-        &config.openai_compatible_api_key,
-    );
-    for vault in &config.vaults {
-        insert_present(
-            &mut values,
-            SecretId::WebdavPassword(vault_identity(vault)),
-            &vault.sync.credentials.webdav.password,
-        );
-    }
-    values
+    credential_bindings(config)
+        .into_iter()
+        .filter_map(|(id, value)| {
+            value
+                .filter(|value| !value.is_empty())
+                .map(|value| (id, value))
+        })
+        .collect()
 }
 
-fn insert_present(values: &mut HashMap<SecretId, String>, id: SecretId, value: &Option<String>) {
-    if let Some(value) = value.as_ref().filter(|value| !value.is_empty()) {
-        values.insert(id, value.clone());
-    }
+fn credential_bindings(config: &AppConfig) -> Vec<(SecretId, Option<String>)> {
+    let mut bindings = vec![
+        (SecretId::AnthropicApiKey, config.ai_api_key.clone()),
+        (SecretId::OpenAiApiKey, config.openai_api_key.clone()),
+        (SecretId::OllamaApiKey, config.ollama_api_key.clone()),
+        (
+            SecretId::OpenAiCompatibleApiKey,
+            config.openai_compatible_api_key.clone(),
+        ),
+    ];
+    bindings.extend(config.vaults.iter().filter_map(|vault| {
+        vault_identity(vault).map(|identity| {
+            (
+                SecretId::WebdavPassword(identity.to_string()),
+                vault.sync.credentials.webdav.password.clone(),
+            )
+        })
+    }));
+    bindings
 }
 
 fn clear_credentials(config: &mut AppConfig) {
-    config.ai_api_key = None;
-    config.openai_api_key = None;
-    config.ollama_api_key = None;
-    config.openai_compatible_api_key = None;
-    config.legacy_sync.credentials.webdav.password = None;
-    for vault in &mut config.vaults {
-        vault.sync.credentials.webdav.password = None;
+    let ids = credential_ids(config);
+    for id in ids {
+        assign(config, &id, None);
     }
+    config.legacy_sync.credentials.webdav.password = None;
 }
 
 fn assign(config: &mut AppConfig, id: &SecretId, value: Option<String>) {
@@ -285,7 +325,7 @@ fn assign(config: &mut AppConfig, id: &SecretId, value: Option<String>) {
             if let Some(vault) = config
                 .vaults
                 .iter_mut()
-                .find(|vault| vault_identity(vault) == *identity)
+                .find(|vault| vault_identity(vault) == Some(identity.as_str()))
             {
                 vault.sync.credentials.webdav.password = value;
             }
@@ -294,6 +334,43 @@ fn assign(config: &mut AppConfig, id: &SecretId, value: Option<String>) {
         // stable key is available now so that branch never needs to persist its token.
         SecretId::NotionToken(_) => {}
     }
+}
+
+fn unaddressable_plaintext(config: &AppConfig) -> Option<String> {
+    if config.vaults.iter().any(|vault| {
+        vault
+            .sync
+            .credentials
+            .webdav
+            .password
+            .as_deref()
+            .is_some_and(|password| !password.is_empty())
+            && vault_identity(vault).is_none()
+    }) {
+        return Some(
+            "A WebDAV password cannot migrate until its vault identity is available".to_string(),
+        );
+    }
+
+    let legacy = config
+        .legacy_sync
+        .credentials
+        .webdav
+        .password
+        .as_deref()
+        .filter(|password| !password.is_empty());
+    if legacy.is_some_and(|legacy| {
+        !config.vaults.iter().any(|vault| {
+            vault.sync.credentials.webdav.password.as_deref() == Some(legacy)
+                && vault_identity(vault).is_some()
+        })
+    }) {
+        return Some(
+            "The legacy WebDAV password cannot migrate until it is associated with an identifiable vault"
+                .to_string(),
+        );
+    }
+    None
 }
 
 fn rollback(
@@ -310,15 +387,13 @@ fn rollback(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::sync_config::{ProviderCredentials, SyncSettings, WebdavCredentials};
-    use crate::types::VaultConfig;
+pub(crate) mod test_support {
+    use super::{SecretId, SecretStore};
     use std::cell::RefCell;
     use std::collections::HashMap;
 
     #[derive(Default)]
-    struct MemoryStore(RefCell<HashMap<SecretId, String>>);
+    pub(crate) struct MemoryStore(pub(crate) RefCell<HashMap<SecretId, String>>);
 
     impl SecretStore for MemoryStore {
         fn get(&self, id: &SecretId) -> Result<Option<String>, String> {
@@ -335,6 +410,14 @@ mod tests {
             Ok(())
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::MemoryStore;
+    use super::*;
+    use crate::sync_config::{ProviderCredentials, SyncSettings, WebdavCredentials};
+    use crate::types::VaultConfig;
 
     #[test]
     fn plaintext_credentials_migrate_to_the_secret_store() {
@@ -346,6 +429,7 @@ mod tests {
             vaults: vec![VaultConfig {
                 path: "/vaults/life".to_string(),
                 name: "Life".to_string(),
+                vault_id: Some("life-vault-id".to_string()),
                 sync: SyncSettings {
                     credentials: ProviderCredentials {
                         webdav: WebdavCredentials {
@@ -406,6 +490,7 @@ mod tests {
             openai_compatible_api_key: Some("compatible-secret".to_string()),
             vaults: vec![VaultConfig {
                 path: "/vaults/life".to_string(),
+                vault_id: Some("life-vault-id".to_string()),
                 sync: SyncSettings {
                     credentials: ProviderCredentials {
                         webdav: WebdavCredentials {
@@ -481,6 +566,49 @@ mod tests {
         assert_eq!(
             store.0.get(&SecretId::OpenAiApiKey).unwrap().as_deref(),
             Some("old-openai")
+        );
+    }
+
+    #[test]
+    fn webdav_password_follows_the_vault_id_when_the_folder_moves() {
+        let store = MemoryStore::default();
+        let mut before_move = AppConfig {
+            vaults: vec![VaultConfig {
+                path: "/old/location".to_string(),
+                vault_id: Some("stable-vault-id".to_string()),
+                sync: SyncSettings {
+                    credentials: ProviderCredentials {
+                        webdav: WebdavCredentials {
+                            password: Some("follow-the-vault".to_string()),
+                            ..Default::default()
+                        },
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        hydrate_config(&mut before_move, &store).unwrap();
+        let mut after_move = AppConfig {
+            vaults: vec![VaultConfig {
+                path: "/new/location".to_string(),
+                vault_id: Some("stable-vault-id".to_string()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        hydrate_config(&mut after_move, &store).unwrap();
+
+        assert_eq!(
+            after_move.vaults[0]
+                .sync
+                .credentials
+                .webdav
+                .password
+                .as_deref(),
+            Some("follow-the-vault")
         );
     }
 }

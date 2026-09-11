@@ -129,6 +129,8 @@ export interface VaultConfig {
   path: string;
   name: string;
   bookmark_id?: string | null;
+  /** Stable identity from `.helixnotes/vault_id`, used only for machine-local state. */
+  vault_id?: string | null;
   // Per-vault sync. Credentials are grouped per provider and the schedule is shared,
   // so adding a provider does not mean more loose fields here.
   sync_provider?: string | null;

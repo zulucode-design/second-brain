@@ -66,6 +66,10 @@ pub struct VaultConfig {
     pub name: String,
     #[serde(default)]
     pub bookmark_id: Option<String>,
+    /// Stable identity copied from `.helixnotes/vault_id` for machine-local lookups that
+    /// must still work before or after the vault folder moves.
+    #[serde(default)]
+    pub vault_id: Option<String>,
     /// How this vault syncs. Flattened, so the stored layout is unchanged for anyone
     /// upgrading; see [`crate::sync_config`] for how older settings are read.
     #[serde(default, flatten)]

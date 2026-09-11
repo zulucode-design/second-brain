@@ -488,6 +488,7 @@ fn open_vault_path(
 
     let new_watcher = watcher::start_watcher(app.clone(), path.clone(), search.clone())?;
     asset_scope::allow_vault_assets(&app, Path::new(&path))?;
+    let stable_vault_id = crate::machine_local::vault_id(Path::new(&path))?;
 
     // Update config. External vaults use the bookmark as their stable identity;
     // the resolved path is refreshed whenever the vault opens.
@@ -507,29 +508,38 @@ fn open_vault_path(
         {
             vault.path.clone_from(&path);
             vault.name = name;
+            vault.vault_id = Some(stable_vault_id.clone());
         } else {
             next.vaults.push(VaultConfig {
                 path: path.clone(),
                 name,
                 bookmark_id: Some(bookmark_id),
+                vault_id: Some(stable_vault_id.clone()),
                 ..Default::default()
             });
         }
-    } else if !next
-        .vaults
-        .iter()
-        .any(|vault| vault.bookmark_id.is_none() && vault.path == path)
-    {
+    } else {
         let name = std::path::Path::new(&path)
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        next.vaults.push(VaultConfig {
-            path: path.clone(),
-            name,
-            ..Default::default()
-        });
+        if let Some(vault) = next.vaults.iter_mut().find(|vault| {
+            vault.bookmark_id.is_none()
+                && (vault.path == path
+                    || vault.vault_id.as_deref() == Some(stable_vault_id.as_str()))
+        }) {
+            vault.path.clone_from(&path);
+            vault.name = name;
+            vault.vault_id = Some(stable_vault_id.clone());
+        } else {
+            next.vaults.push(VaultConfig {
+                path: path.clone(),
+                name,
+                vault_id: Some(stable_vault_id.clone()),
+                ..Default::default()
+            });
+        }
     }
     next.active_vault = Some(path.clone());
     next.active_bookmark_id = active_bookmark_id;
@@ -3658,12 +3668,20 @@ fn load_app_config_from(
         .and_then(|contents| serde_json::from_str(&contents).ok())
         .unwrap_or_default();
     let structural_migration = migrate_global_sync_to_vault(&mut config);
+    let identity_migration = match populate_vault_ids(&mut config) {
+        Ok(changed) => changed,
+        Err(error) => {
+            config = crate::secret_store::redacted_config(&config);
+            config.secret_store_error = Some(error);
+            return config;
+        }
+    };
     let had_plaintext = crate::secret_store::has_plaintext_credentials(&config);
 
     match crate::secret_store::hydrate_config(&mut config, store) {
         Ok(outcome) => {
             config.secret_store_error = None;
-            if structural_migration || outcome.migrated_plaintext {
+            if structural_migration || identity_migration || outcome.migrated_plaintext {
                 if let Err(save_error) = save_app_config_to(path, &config) {
                     if outcome.migrated_plaintext {
                         let rollback_error =
@@ -3692,6 +3710,37 @@ fn load_app_config_from(
         }
     }
     config
+}
+
+fn populate_vault_ids(config: &mut AppConfig) -> Result<bool, String> {
+    let mut changed = false;
+    for vault in &mut config.vaults {
+        if vault.vault_id.is_some() {
+            continue;
+        }
+        match crate::machine_local::vault_id(std::path::Path::new(&vault.path)) {
+            Ok(identity) => {
+                vault.vault_id = Some(identity);
+                changed = true;
+            }
+            Err(error)
+                if vault
+                    .sync
+                    .credentials
+                    .webdav
+                    .password
+                    .as_deref()
+                    .is_some_and(|password| !password.is_empty()) =>
+            {
+                return Err(format!(
+                    "The WebDAV password for '{}' cannot migrate until its vault identity is available: {error}",
+                    vault.name
+                ));
+            }
+            Err(_) => {}
+        }
+    }
+    Ok(changed)
 }
 
 // One-time migration: WebDAV sync moved from global AppConfig to per-vault VaultConfig.
@@ -3761,28 +3810,10 @@ mod config_permission_tests {
 #[cfg(test)]
 mod secret_config_tests {
     use super::*;
+    use crate::secret_store::test_support::MemoryStore;
     use crate::secret_store::{SecretId, SecretStore};
-    use std::cell::RefCell;
-    use std::collections::HashMap;
 
     struct UnavailableStore;
-
-    #[derive(Default)]
-    struct MemoryStore(RefCell<HashMap<SecretId, String>>);
-
-    impl SecretStore for MemoryStore {
-        fn get(&self, id: &SecretId) -> Result<Option<String>, String> {
-            Ok(self.0.borrow().get(id).cloned())
-        }
-        fn set(&self, id: &SecretId, value: &str) -> Result<(), String> {
-            self.0.borrow_mut().insert(id.clone(), value.to_string());
-            Ok(())
-        }
-        fn delete(&self, id: &SecretId) -> Result<(), String> {
-            self.0.borrow_mut().remove(id);
-            Ok(())
-        }
-    }
 
     impl SecretStore for UnavailableStore {
         fn get(&self, _id: &SecretId) -> Result<Option<String>, String> {
@@ -3851,15 +3882,68 @@ mod secret_config_tests {
         );
         std::fs::remove_file(path).unwrap();
     }
+
+    #[test]
+    fn unavailable_store_still_allows_non_secret_settings_to_persist() {
+        let path = std::env::temp_dir().join(format!(
+            "helixnotes-headless-settings-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        let recovery = AppConfig {
+            ai_api_key: Some("unmigrated-recovery-copy".to_string()),
+            ..Default::default()
+        };
+        std::fs::write(&path, serde_json::to_string(&recovery).unwrap()).unwrap();
+        let mut loaded = load_app_config_from(&path, &UnavailableStore);
+        loaded.theme = "dark".to_string();
+
+        save_app_config_with_recovery(&path, &loaded, Some(&recovery)).unwrap();
+
+        let persisted: AppConfig =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(persisted.theme, "dark");
+        assert_eq!(
+            persisted.ai_api_key.as_deref(),
+            Some("unmigrated-recovery-copy")
+        );
+        assert!(
+            loaded.ai_api_key.is_none(),
+            "the recovery copy must not become a runtime fallback"
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn legacy_webdav_password_without_a_vault_is_preserved_for_a_later_retry() {
+        let path = std::env::temp_dir().join(format!(
+            "helixnotes-legacy-webdav-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        let mut original = AppConfig::default();
+        original.legacy_sync.credentials.webdav.password = Some("legacy-recovery-copy".to_string());
+        let original_json = serde_json::to_string(&original).unwrap();
+        std::fs::write(&path, &original_json).unwrap();
+
+        let loaded = load_app_config_from(&path, &MemoryStore::default());
+
+        assert!(loaded.legacy_sync.credentials.webdav.password.is_none());
+        assert!(loaded
+            .secret_store_error
+            .as_deref()
+            .is_some_and(|error| error.contains("legacy WebDAV password")));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original_json);
+        std::fs::remove_file(path).unwrap();
+    }
 }
 
 fn save_app_config(config: &AppConfig) -> Result<(), String> {
-    if let Some(error) = &config.secret_store_error {
-        return Err(format!(
-            "Settings cannot be saved until the OS secret store is available; restart the app after unlocking it. {error}"
-        ));
-    }
     let path = app_config_path()?;
+    if config.secret_store_error.is_some() {
+        let recovery: Option<AppConfig> = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|contents| serde_json::from_str(&contents).ok());
+        return save_app_config_with_recovery(&path, config, recovery.as_ref());
+    }
     save_app_config_to(&path, config)
 }
 
@@ -3896,6 +3980,19 @@ fn save_app_config_to(path: &std::path::Path, config: &AppConfig) -> Result<(), 
     let data = serde_json::to_string_pretty(&redacted).map_err(|e| e.to_string())?;
     write_private_file(path, data.as_bytes())?;
     Ok(())
+}
+
+fn save_app_config_with_recovery(
+    path: &std::path::Path,
+    config: &AppConfig,
+    recovery: Option<&AppConfig>,
+) -> Result<(), String> {
+    let mut persisted = crate::secret_store::redacted_config(config);
+    if let Some(recovery) = recovery {
+        crate::secret_store::copy_plaintext_recovery(recovery, &mut persisted);
+    }
+    let data = serde_json::to_string_pretty(&persisted).map_err(|error| error.to_string())?;
+    write_private_file(path, data.as_bytes())
 }
 
 // ── Install Type Detection ──

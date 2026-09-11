@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ticket #56 — pre-PR review</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+      body { max-width: 940px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.55; }
+      h1, h2 { color: #f9fafb; }
+      code { background: #1f2937; padding: .12rem .3rem; border-radius: .25rem; }
+      .status { display: inline-block; border-radius: 999px; padding: .2rem .65rem; font-weight: 700; }
+      .pass { background: #064e3b; color: #a7f3d0; }
+      .resolved { background: #78350f; color: #fde68a; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { text-align: left; border-bottom: 1px solid #374151; padding: .65rem; vertical-align: top; }
+      .callout { border-left: 4px solid #60a5fa; background: #172554; padding: .9rem 1rem; }
+    </style>
+  </head>
+  <body>
+    <p><span class="status pass">Review findings remediated</span></p>
+    <h1>Ticket #56 — move provider secrets to the OS keyring</h1>
+    <p>Reviewed 2026-09-11 against <code>origin/main...feat/56-os-keyring</code>, with
+      <code>origin/main</code> fixed at <code>fba068ccc3903fb1d18543bcd0c11d3912979d2b</code>.</p>
+
+    <h2>Security boundary</h2>
+    <p>AI API keys and per-vault WebDAV passwords now live in the current user's native OS
+      credential store. <code>config.json</code> keeps provider URLs, usernames, and other
+      non-secret settings, but its normal persisted form is redacted. Future per-vault provider
+      credentials can use the same stable vault identity and transactional write path.</p>
+    <p>Startup migrates existing plaintext only after every required keyring read succeeds. A
+      partial keyring write is rolled back. If migration or the final config write fails, runtime
+      credentials are cleared and the original plaintext file remains available for a later retry.
+      Provider settings never fall back to that file.</p>
+
+    <h2>Standards review</h2>
+    <p><span class="status resolved">Resolved</span> The first pass found that WebDAV keyring
+      accounts were derived from a bookmark or path hash. That would orphan a password when a
+      local vault moved. Per-vault accounts now use <code>.helixnotes/vault_id</code>, and opening a
+      moved vault refreshes its path without changing its credential identity.</p>
+    <p><span class="status resolved">Resolved</span> The first pass also found repeated credential
+      enumeration and duplicate in-memory test stores. Credential enumeration now has one binding
+      roster, and secret-store tests share one test adapter.</p>
+    <p><span class="status resolved">Resolved</span> This report was missing in the first pass. It
+      is now committed with the code as required by the repository's reporting policy.</p>
+
+    <h2>Spec review</h2>
+    <p><span class="status resolved">Resolved</span> The first pass found that an unavailable
+      keyring blocked every config write. Headless operation can now save non-secret settings while
+      provider features stay unconfigured. If the old file contains an unmigrated credential, only
+      that existing recovery value is carried forward on disk; it is not loaded into runtime state.</p>
+    <p><span class="status resolved">Resolved</span> The first pass found that an unassociated
+      legacy WebDAV password could be treated as migrated and erased. Migration now stops loudly
+      unless every plaintext WebDAV password has a stable vault identity. The original file is left
+      unchanged for a later retry.</p>
+
+    <h2>Test-first evidence</h2>
+    <p>The public configuration seams cover successful plaintext migration, redacted persistence,
+      migration rollback, settings rollback, unavailable-store startup, non-secret headless writes,
+      unassociated legacy WebDAV recovery, moved-vault identity, and sync's unconfigured response.
+      Tests use an in-memory credential-store adapter, so CI does not require an unlocked desktop
+      keyring.</p>
+
+    <h2>Verification record</h2>
+    <table>
+      <thead><tr><th>Check</th><th>Status</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Svelte diagnostics</td><td><span class="status pass">Passed</span></td><td>0 errors and 0 warnings</td></tr>
+        <tr><td>JavaScript tests</td><td><span class="status pass">Passed</span></td><td>33 passed</td></tr>
+        <tr><td>Rust tests</td><td><span class="status pass">Passed</span></td><td>335 passed, 4 ignored, 0 failed through <code>pnpm test:rust</code></td></tr>
+        <tr><td>Rust formatting and Clippy</td><td><span class="status pass">Passed</span></td><td><code>cargo fmt --check</code> and all-target strict Clippy</td></tr>
+        <tr><td>Production build</td><td><span class="status pass">Passed</span></td><td>Static site built successfully; the existing large-chunk advisory remains non-blocking</td></tr>
+      </tbody>
+    </table>
+
+    <p class="callout">PR creation is deferred until the final verification run and the two-axis
+      re-review are complete. The PR must not be merged as part of ticket #56's current goal.</p>
+  </body>
+</html>
