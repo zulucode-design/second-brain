@@ -26,7 +26,16 @@ pub trait EmbeddingBackend: Send + Sync {
 pub struct OllamaEmbeddingBackend {
     endpoint: String,
     bearer_token: Option<String>,
-    client: reqwest::blocking::Client,
+    /// Built on first use, never in `new`.
+    ///
+    /// A blocking client must not be built on the async runtime: reqwest's debug builds
+    /// panic when they do, and release builds block a runtime worker instead. `new` runs
+    /// inside `open_vault`, an async command, so building here left every `tauri dev`
+    /// launch on a permanent spinner (#64). `embed` only ever runs off the runtime — on the
+    /// background worker, or through `spawn_blocking` — so building where it is used keeps
+    /// construction off the runtime whoever opens the index. Dropping one on the runtime is
+    /// safe: its `Drop` only signals and joins its own thread.
+    client: OnceLock<reqwest::blocking::Client>,
 }
 
 impl OllamaEmbeddingBackend {
@@ -35,16 +44,24 @@ impl OllamaEmbeddingBackend {
         if base_url.is_empty() {
             return Err("No Ollama address is configured for semantic search".to_string());
         }
+        Ok(Self {
+            endpoint: format!("{base_url}/api/embed"),
+            bearer_token: bearer_token.filter(|token| !token.trim().is_empty()),
+            client: OnceLock::new(),
+        })
+    }
+
+    fn client(&self) -> Result<&reqwest::blocking::Client, String> {
+        if let Some(client) = self.client.get() {
+            return Ok(client);
+        }
         let client = reqwest::blocking::Client::builder()
             .connect_timeout(crate::ai_health::REQUEST_CONNECT_TIMEOUT)
             .timeout(crate::ai_health::REQUEST_STALL_TIMEOUT)
             .build()
-            .map_err(|error| error.to_string())?;
-        Ok(Self {
-            endpoint: format!("{base_url}/api/embed"),
-            bearer_token: bearer_token.filter(|token| !token.trim().is_empty()),
-            client,
-        })
+            .map_err(|error| format!("Could not start the embedding client: {error}"))?;
+        // Two workers racing here each build one; the loser's is dropped, off the runtime.
+        Ok(self.client.get_or_init(|| client))
     }
 }
 
@@ -61,7 +78,7 @@ impl EmbeddingBackend for OllamaEmbeddingBackend {
             embeddings: Vec<Vec<f32>>,
         }
 
-        let mut request = self.client.post(&self.endpoint).json(&Request {
+        let mut request = self.client()?.post(&self.endpoint).json(&Request {
             model: "embeddinggemma",
             input: inputs,
             // Chunking owns the size boundary. Silent server-side truncation would make
@@ -640,6 +657,23 @@ fn cosine_similarity(left: &[f32], right: &[f32]) -> Option<f32> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn opening_and_replacing_the_index_inside_async_code_does_not_panic() {
+        // `open_vault` is an async command, and it builds the index. A blocking HTTP client
+        // must never be built on the async runtime: reqwest's debug builds panic there, which
+        // left every `tauri dev` launch on a permanent spinner (#64). Dropping one there — a
+        // vault switch replacing the old index — has to stay safe too.
+        let vault = std::env::temp_dir().join(format!("semantic-async-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&vault).unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let first = SemanticIndex::open(&vault, "http://127.0.0.1:9", None).unwrap();
+            let replacement = SemanticIndex::open(&vault, "http://127.0.0.1:9", None).unwrap();
+            drop(first);
+            drop(replacement);
+        });
+    }
+
     use super::{EmbeddingBackend, OllamaEmbeddingBackend, SemanticIndex};
     use std::io::{Read, Write};
     use std::net::TcpListener;
