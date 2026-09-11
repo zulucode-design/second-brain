@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ticket #64 — pre-merge review</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+      body { max-width: 900px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.55; }
+      h1, h2 { color: #f9fafb; }
+      code { background: #1f2937; padding: .12rem .3rem; border-radius: .25rem; }
+      .status { display: inline-block; border-radius: 999px; padding: .2rem .65rem; font-weight: 700; }
+      .pass { background: #064e3b; color: #a7f3d0; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { text-align: left; border-bottom: 1px solid #374151; padding: .65rem; vertical-align: top; }
+    </style>
+  </head>
+  <body>
+    <p><span class="status pass">Review passed</span></p>
+    <h1>Ticket #64 — semantic-index async-runtime startup hang</h1>
+    <p>Reviewed 2026-09-11 against <code>origin/main...fix/64-semantic-index-async-drop</code>,
+      with <code>origin/main</code> fixed at
+      <code>fba068ccc3903fb1d18543bcd0c11d3912979d2b</code>.</p>
+
+    <h2>Standards review</h2>
+    <p><span class="status pass">0 findings</span> The lazy <code>OnceLock</code> client and
+      regression test introduce no documented-standard violations or credible baseline code
+      smells.</p>
+
+    <h2>Spec review</h2>
+    <p><span class="status pass">0 findings</span> The blocking client is no longer constructed
+      by the async vault-open path. The regression test covers opening, replacing, and dropping
+      the semantic index inside an async runtime. The #12 application click-through supplies the
+      end-to-end startup and vault-switch evidence recorded by the issue.</p>
+
+    <h2>Verification</h2>
+    <table>
+      <thead><tr><th>Check</th><th>Status</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Rust suite</td><td><span class="status pass">Passed</span></td><td>327 passed, 4 environment-dependent tests ignored, 0 failed through <code>pnpm test:rust</code></td></tr>
+        <tr><td>Two-axis review</td><td><span class="status pass">Passed</span></td><td>Standards: 0 findings; Spec: 0 findings</td></tr>
+      </tbody>
+    </table>
+  </body>
+</html>
