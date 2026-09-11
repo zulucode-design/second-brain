@@ -110,10 +110,62 @@ pub enum Action {
     UpToDate { note_id: String },
 }
 
+/// Source and destination state shared by every action that finishes as published.
+pub struct PublishRecord<'a> {
+    pub note_id: &'a str,
+    pub relative_path: &'a str,
+    pub data_source_id: &'a str,
+    pub content_hash: &'a str,
+    pub mtime: i64,
+}
+
 impl Action {
     /// Whether this action calls Notion at all, for reporting how much a run actually did.
     pub fn is_work(&self) -> bool {
         !matches!(self, Action::Skip { .. } | Action::UpToDate { .. })
+    }
+
+    /// The map state written after an action creates, recovers, updates, or moves a page.
+    pub fn publish_record(&self) -> Option<PublishRecord<'_>> {
+        match self {
+            Action::Create {
+                note_id,
+                relative_path,
+                data_source_id,
+                content_hash,
+                mtime,
+            }
+            | Action::ResolveInterrupted {
+                note_id,
+                relative_path,
+                data_source_id,
+                content_hash,
+                mtime,
+            }
+            | Action::UpdateContent {
+                note_id,
+                relative_path,
+                data_source_id,
+                content_hash,
+                mtime,
+                ..
+            }
+            | Action::Move {
+                note_id,
+                relative_path,
+                data_source_id,
+                content_hash,
+                mtime,
+                ..
+            } => Some(PublishRecord {
+                note_id,
+                relative_path,
+                data_source_id,
+                content_hash,
+                mtime: *mtime,
+            }),
+            Action::Trash { .. } | Action::Skip { .. } | Action::UpToDate { .. } => None,
+        }
     }
 }
 

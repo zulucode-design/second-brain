@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, activeVaultConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
-	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, notionStatus, notionConnect, notionDisconnect, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex } from '$lib/api';
+	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, notionStatus, notionConnect, notionDisconnect, notionSetEnabled, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex } from '$lib/api';
 	import type { AiProvider } from '$lib/types';
 	import { AI_PROVIDER_METADATA, AI_PROVIDER_OPTIONS } from '$lib/utils/ai-provider';
 	import { darkThemes, isMobile, isAndroid, isLinux, isWindows } from '$lib/platform';
 	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
+	import { onMount } from 'svelte';
 	import { describeSummary, describeSkipped, nextStep, type NotionStatus, type NotionSummary, type VisiblePage } from '$lib/utils/notion-settings';
 	import { getVersion } from '@tauri-apps/api/app';
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
@@ -573,6 +574,7 @@
 	let notionToken = $state('');
 	let notionShowToken = $state(false);
 	let notionBusy = $state(false);
+	let notionPublishing = $state(false);
 	// Which section produced the message, so it renders under the button that caused it. A
 	// separate section below everything else sat off-screen in a normal-height panel, and a
 	// publish that succeeded looked like one that did nothing.
@@ -583,6 +585,8 @@
 	async function refreshNotion() {
 		try {
 			notion = await notionStatus();
+			notionPublishing = notion.publishing;
+			notionProgress = notion.progress;
 		} catch (e) {
 			notionMessage = { type: 'error', text: String(e), at: 'connection' };
 		}
@@ -590,6 +594,34 @@
 
 	$effect(() => {
 		if (activeTab === 'notion') refreshNotion();
+	});
+
+	onMount(() => {
+		let disposed = false;
+		const unlisteners: Array<() => void> = [];
+		const keep = (unlisten: () => void) => disposed ? unlisten() : unlisteners.push(unlisten);
+
+		void listen<{ done: number; total: number }>('notion-publish-progress', (event) => {
+			notionPublishing = true;
+			notionProgress = event.payload;
+		}).then(keep);
+		void listen<NotionSummary>('notion-publish-finished', async (event) => {
+			notionPublishing = false;
+			notionProgress = null;
+			notionMessage = { type: 'success', text: describeSummary(event.payload), at: 'publish' };
+			await refreshNotion();
+		}).then(keep);
+		void listen<{ error: string; fatal: boolean }>('notion-publish-failed', async (event) => {
+			notionPublishing = false;
+			notionProgress = null;
+			notionMessage = { type: 'error', text: event.payload.error, at: 'publish' };
+			await refreshNotion();
+		}).then(keep);
+
+		return () => {
+			disposed = true;
+			unlisteners.forEach((unlisten) => unlisten());
+		};
 	});
 
 	async function handleNotionConnect() {
@@ -617,6 +649,19 @@
 			await refreshNotion();
 		} catch (e) {
 			notionMessage = { type: 'error', text: String(e), at: 'connection' };
+		}
+	}
+
+	async function handleNotionEnabled(enabled: boolean) {
+		notionBusy = true;
+		notionMessage = null;
+		try {
+			await notionSetEnabled(enabled);
+			await refreshNotion();
+		} catch (e) {
+			notionMessage = { type: 'error', text: String(e), at: 'connection' };
+		} finally {
+			notionBusy = false;
 		}
 	}
 
@@ -660,35 +705,15 @@
 	}
 
 	async function handleNotionPublish() {
-		notionBusy = true;
+		notionPublishing = true;
 		notionMessage = null;
 		notionProgress = null;
-		const unlisteners: Array<() => void> = [];
-		const cleanup = () => {
-			unlisteners.forEach((u) => u());
-			notionBusy = false;
-			notionProgress = null;
-		};
-
-		unlisteners.push(await listen<{ done: number; total: number }>('notion-publish-progress', (event) => {
-			notionProgress = event.payload;
-		}));
-		unlisteners.push(await listen<NotionSummary>('notion-publish-finished', async (event) => {
-			notionMessage = { type: 'success', text: describeSummary(event.payload), at: 'publish' };
-			cleanup();
-			await refreshNotion();
-		}));
-		unlisteners.push(await listen<{ error: string; fatal: boolean }>('notion-publish-failed', async (event) => {
-			notionMessage = { type: 'error', text: event.payload.error, at: 'publish' };
-			cleanup();
-			await refreshNotion();
-		}));
-
 		try {
 			await notionPublishNow();
 		} catch (e) {
 			notionMessage = { type: 'error', text: String(e), at: 'publish' };
-			cleanup();
+			notionPublishing = false;
+			notionProgress = null;
 		}
 	}
 
@@ -2819,6 +2844,21 @@
 								{/if}
 							</div>
 
+							{#if notion?.connected}
+								<div class="settings-section">
+									<h3>Publishing Machine</h3>
+									<label class="setting-toggle">
+										<span class="setting-label">
+											<span class="setting-name">Publish from this machine</span>
+											<span class="setting-desc">Leave this off on every other machine connected to the same vault.</span>
+										</span>
+										<button class="toggle-switch" class:on={notion.enabled} role="switch" aria-checked={notion.enabled} aria-label="Publish to Notion from this machine" disabled={notionBusy || notionPublishing} onclick={() => handleNotionEnabled(!notion!.enabled)}>
+											<span class="toggle-knob"></span>
+										</button>
+									</label>
+								</div>
+							{/if}
+
 							{#if notion && !notion.connected}
 								<div class="settings-section">
 									<h3>Integration Token</h3>
@@ -2873,8 +2913,8 @@
 							{#if notion?.connected && notion.setup_complete}
 								<div class="settings-section">
 									<h3>Publish</h3>
-									<button class="import-btn" onclick={handleNotionPublish} disabled={notionBusy || !notion.enabled}>
-										{#if notionBusy}
+									<button class="import-btn" onclick={handleNotionPublish} disabled={notionBusy || notionPublishing || !notion.enabled}>
+										{#if notionPublishing}
 											<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
 											{#if notionProgress && notionProgress.total}
 												Publishing {notionProgress.done} of {notionProgress.total}...
@@ -2905,7 +2945,7 @@
 							{#if notion?.connected}
 								<div class="settings-section">
 									<h3>Connection</h3>
-									<button class="import-btn" onclick={handleNotionDisconnect} disabled={notionBusy}>Disconnect</button>
+									<button class="import-btn" onclick={handleNotionDisconnect} disabled={notionBusy || notionPublishing}>Disconnect</button>
 									{@render notionResult('connection')}
 									<p class="setting-hint">Forgets the token on this device. Your pages stay in Notion, and reconnecting picks up where it left off.</p>
 								</div>

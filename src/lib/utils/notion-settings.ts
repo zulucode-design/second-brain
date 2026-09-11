@@ -20,6 +20,8 @@ export interface NotionSummary {
 /** Mirrors `notion::commands::NotionStatus`. Never carries the token. */
 export interface NotionStatus {
 	enabled: boolean;
+	publishing: boolean;
+	progress: { done: number; total: number } | null;
 	connected: boolean;
 	connection_name: string | null;
 	setup_complete: boolean;

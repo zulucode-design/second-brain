@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ticket #12 — pre-merge review</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+      body { max-width: 940px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.55; }
+      h1, h2 { color: #f9fafb; }
+      code { background: #1f2937; padding: .12rem .3rem; border-radius: .25rem; }
+      .status { display: inline-block; border-radius: 999px; padding: .2rem .65rem; font-weight: 700; }
+      .resolved { background: #064e3b; color: #a7f3d0; }
+      .open { background: #7c2d12; color: #fed7aa; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { text-align: left; border-bottom: 1px solid #374151; padding: .65rem; vertical-align: top; }
+    </style>
+  </head>
+  <body>
+    <p><span class="status open">One verification gate remains</span></p>
+    <h1>Ticket #12 — Notion one-way PARA publisher</h1>
+    <p>Reviewed 2026-09-11 against <code>origin/main...feat/12-notion-push</code>, with
+      <code>origin/main</code> fixed at
+      <code>c67d102df8d1e0f0b400a9234d06b0c1d8ff40a0</code>.</p>
+
+    <h2>Standards review</h2>
+    <table>
+      <thead><tr><th>Finding</th><th>Status</th><th>Remediation</th></tr></thead>
+      <tbody>
+        <tr><td>Live-test instructions bypassed <code>pnpm test:rust</code></td><td><span class="status resolved">Resolved</span></td><td>Source and report now use the manifest-aware project entry point.</td></tr>
+        <tr><td>Ticket verification was stored as Markdown</td><td><span class="status resolved">Resolved</span></td><td>The complete historical record is now a standalone HTML report.</td></tr>
+        <tr><td>Published-note state was duplicated across executor arms</td><td><span class="status resolved">Resolved</span></td><td><code>PublishRecord</code> owns the shared state and one finalization path writes it.</td></tr>
+        <tr><td>The live-test helper <code>ds</code> was opaque</td><td><span class="status resolved">Resolved</span></td><td>Renamed to <code>data_source_id</code>.</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Spec review</h2>
+    <table>
+      <thead><tr><th>Finding</th><th>Status</th><th>Remediation</th></tr></thead>
+      <tbody>
+        <tr><td>Automatic runs did not expose durable progress</td><td><span class="status resolved">Resolved</span></td><td>Progress is retained in backend state and global Settings listeners cover manual and timer-driven runs.</td></tr>
+        <tr><td>Holding-area notes were absent from the uncategorised count</td><td><span class="status resolved">Resolved</span></td><td>Direct holding-area Markdown files now reach the planner with no category and are counted as skipped.</td></tr>
+        <tr><td>Publishing could not be disabled independently of disconnecting</td><td><span class="status resolved">Resolved</span></td><td>A per-machine toggle now changes <code>enabled</code> without deleting the keyring token.</td></tr>
+        <tr><td>The packaged workflow has not been exercised against a disposable workspace</td><td><span class="status open">Open</span></td><td>Required before this PR merges and #12 closes.</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Verification after remediation</h2>
+    <p>Local <code>pnpm verify</code> passed: 44 JavaScript tests, 470 Rust tests, 6 ignored
+      environment-dependent tests, clean Svelte diagnostics, formatting, strict Clippy, and a
+      successful production web build. Live Linux and Windows API verification and the dev-build
+      setup click-through remain recorded in the companion verification report.</p>
+  </body>
+</html>

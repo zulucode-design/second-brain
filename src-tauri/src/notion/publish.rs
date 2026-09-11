@@ -324,33 +324,21 @@ async fn execute(
         Action::UpToDate { .. } | Action::Skip { .. } => Ok(()),
 
         Action::Create {
-            note_id,
             data_source_id,
-            content_hash,
-            mtime,
-            relative_path,
+            note_id,
+            ..
         } => {
             // Written before the call, so an interrupted create leaves a trace.
             let _ = map::save(vault_path, note_id, &MapEntry::creating());
             let page_id = create_page(client, data_source_id, note).await?;
-            publish_entry(
-                vault_path,
-                note_id,
-                &page_id,
-                data_source_id,
-                content_hash,
-                *mtime,
-                relative_path,
-            );
+            publish_entry(vault_path, action, &page_id);
             Ok(())
         }
 
         Action::ResolveInterrupted {
             note_id,
             data_source_id,
-            content_hash,
-            mtime,
-            relative_path,
+            ..
         } => {
             // Ask Notion before creating anything. The page may exist from the interrupted
             // run; creating blind is how a vault ends up with two pages per note.
@@ -363,65 +351,30 @@ async fn execute(
                     client
                         .update_properties(&page_id, properties::for_note(&note.meta))
                         .await?;
-                    publish_entry(
-                        vault_path,
-                        note_id,
-                        &page_id,
-                        data_source_id,
-                        content_hash,
-                        *mtime,
-                        relative_path,
-                    );
+                    publish_entry(vault_path, action, &page_id);
                     Ok(())
                 }
                 None => {
                     let page_id = create_page(client, data_source_id, note).await?;
-                    publish_entry(
-                        vault_path,
-                        note_id,
-                        &page_id,
-                        data_source_id,
-                        content_hash,
-                        *mtime,
-                        relative_path,
-                    );
+                    publish_entry(vault_path, action, &page_id);
                     Ok(())
                 }
             }
         }
 
-        Action::UpdateContent {
-            note_id,
-            page_id,
-            data_source_id,
-            content_hash,
-            mtime,
-            relative_path,
-        } => {
+        Action::UpdateContent { page_id, .. } => {
             replace_content(client, page_id, note).await?;
             client
                 .update_properties(page_id, properties::for_note(&note.meta))
                 .await?;
-            publish_entry(
-                vault_path,
-                note_id,
-                page_id,
-                data_source_id,
-                content_hash,
-                *mtime,
-                relative_path,
-            );
+            publish_entry(vault_path, action, page_id);
             Ok(())
         }
 
         Action::Move {
-            note_id,
             page_id,
             data_source_id,
-            content_hash,
-            mtime,
             also_update_content,
-            relative_path,
             ..
         } => {
             client.move_page(page_id, data_source_id).await?;
@@ -435,15 +388,7 @@ async fn execute(
             if *also_update_content {
                 replace_content(client, page_id, note).await?;
             }
-            publish_entry(
-                vault_path,
-                note_id,
-                page_id,
-                data_source_id,
-                content_hash,
-                *mtime,
-                relative_path,
-            );
+            publish_entry(vault_path, action, page_id);
             Ok(())
         }
 
@@ -525,29 +470,27 @@ async fn find_existing(
     Ok(None)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn publish_entry(
-    vault_path: &Path,
-    note_id: &str,
-    page_id: &str,
-    data_source_id: &str,
-    content_hash: &str,
-    mtime: i64,
-    relative_path: &str,
-) {
+fn publish_entry(vault_path: &Path, action: &Action, page_id: &str) {
+    let Some(record) = action.publish_record() else {
+        log::error!("Tried to record a non-publishing Notion action as published");
+        return;
+    };
     let entry = MapEntry {
         state: EntryState::Published,
         page_id: Some(page_id.to_string()),
-        data_source_id: Some(data_source_id.to_string()),
-        content_hash: Some(content_hash.to_string()),
-        source_mtime: Some(mtime),
-        relative_path: Some(relative_path.to_string()),
+        data_source_id: Some(record.data_source_id.to_string()),
+        content_hash: Some(record.content_hash.to_string()),
+        source_mtime: Some(record.mtime),
+        relative_path: Some(record.relative_path.to_string()),
         last_error: None,
     };
-    if let Err(error) = map::save(vault_path, note_id, &entry) {
+    if let Err(error) = map::save(vault_path, record.note_id, &entry) {
         // The page exists; only the record of it failed. The next run finds a `Creating`
         // entry or none, asks Notion, and adopts the page rather than duplicating it.
-        log::error!("Published {note_id} to Notion but could not record it: {error}");
+        log::error!(
+            "Published {} to Notion but could not record it: {error}",
+            record.note_id
+        );
     }
 }
 

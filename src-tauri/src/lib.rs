@@ -317,6 +317,7 @@ pub fn run() {
             notion::commands::notion_status,
             notion::commands::notion_connect,
             notion::commands::notion_disconnect,
+            notion::commands::notion_set_enabled,
             notion::commands::notion_visible_pages,
             notion::commands::notion_setup,
             notion::commands::notion_publish_now,

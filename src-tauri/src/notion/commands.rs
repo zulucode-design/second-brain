@@ -36,6 +36,10 @@ use crate::vault::para::ParaCategory;
 pub struct NotionStatus {
     /// Whether this machine is the publisher.
     pub enabled: bool,
+    /// Whether this machine is currently publishing.
+    pub publishing: bool,
+    /// Latest progress, including for a timer-driven run started outside Settings.
+    pub progress: Option<Progress>,
     /// Whether a token is stored. Never carries the token itself.
     pub connected: bool,
     /// The connection's name in Notion, once it has been checked.
@@ -71,7 +75,7 @@ fn settings_of(config: &AppConfig) -> NotionSettings {
 
 fn update_settings(
     state: &State<'_, AppState>,
-    change: impl FnOnce(&mut NotionSettings),
+    change: impl FnOnce(&mut NotionSettings) -> Result<(), String>,
 ) -> Result<(), String> {
     let mut config = state.config.lock().map_err(|error| error.to_string())?;
     let mut candidate = config.clone();
@@ -84,7 +88,7 @@ fn update_settings(
         .iter_mut()
         .find(|vault| vault.path == active)
         .ok_or_else(|| "The active vault is not in the vault list".to_string())?;
-    change(&mut vault.notion);
+    change(&mut vault.notion)?;
     crate::commands::commit_secret_config(&mut config, candidate)
 }
 
@@ -121,6 +125,11 @@ pub fn notion_status(state: State<'_, AppState>) -> Result<NotionStatus, String>
 
     Ok(NotionStatus {
         enabled: settings.enabled,
+        publishing: state.notion_publishing.load(Ordering::SeqCst),
+        progress: *state
+            .notion_progress
+            .lock()
+            .map_err(|error| error.to_string())?,
         connected: settings.token.is_some(),
         connection_name: None,
         setup_complete: registry.is_complete(),
@@ -152,6 +161,7 @@ pub async fn notion_connect(app: AppHandle, token: String) -> Result<String, Str
     update_settings(&state, |settings| {
         settings.token = Some(token);
         settings.enabled = true;
+        Ok(())
     })?;
     Ok(name)
 }
@@ -165,6 +175,19 @@ pub fn notion_disconnect(state: State<'_, AppState>) -> Result<(), String> {
     update_settings(&state, |settings| {
         settings.token = None;
         settings.enabled = false;
+        Ok(())
+    })
+}
+
+/// Choose whether this connected machine is the one that publishes.
+#[tauri::command]
+pub fn notion_set_enabled(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
+    update_settings(&state, |settings| {
+        if enabled && settings.token.is_none() {
+            return Err("Connect Notion before enabling publishing on this machine".into());
+        }
+        settings.enabled = enabled;
+        Ok(())
     })
 }
 
@@ -244,6 +267,9 @@ pub fn notion_publish_now(app: AppHandle) -> Result<(), String> {
     if state.notion_publishing.swap(true, Ordering::SeqCst) {
         return Ok(());
     }
+    if let Ok(mut progress) = state.notion_progress.lock() {
+        *progress = None;
+    }
 
     let prepared = {
         let config = match state.config.lock() {
@@ -282,12 +308,16 @@ pub fn notion_publish_now(app: AppHandle) -> Result<(), String> {
 
         let state = app.state::<AppState>();
         state.notion_publishing.store(false, Ordering::SeqCst);
+        if let Ok(mut progress) = state.notion_progress.lock() {
+            *progress = None;
+        }
 
         match outcome {
             Ok(summary) => {
                 write_last_run(&vault, Some(&summary), None);
                 let _ = update_settings(&state, |settings| {
                     settings.last_run = Some(chrono::Utc::now().to_rfc3339());
+                    Ok(())
                 });
                 let _ = app.emit("notion-publish-finished", &summary);
             }
@@ -325,6 +355,9 @@ async fn publish_once(
                 .ok_or_else(|| format!("{} could not be read", snapshot.relative_path))
         },
         |progress: Progress| {
+            if let Ok(mut current) = app.state::<AppState>().notion_progress.lock() {
+                *current = Some(progress);
+            }
             let _ = app.emit("notion-publish-progress", progress);
         },
     )
@@ -380,60 +413,90 @@ pub(crate) fn enumerate(vault: &Path) -> (Vec<NoteSnapshot>, HashMap<String, Not
             if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("md") {
                 continue;
             }
-            let Ok(relative) = path.strip_prefix(vault) else {
-                continue;
-            };
-            let relative_path = relative.to_string_lossy().replace('\\', "/");
-
-            let mtime = entry
-                .metadata()
-                .ok()
-                .map(|meta| mtime_of(&meta))
-                .unwrap_or(0);
-
-            // Known and unmoved: the note id comes from the map, and the file stays shut.
-            if let Some((note_id, recorded)) = known.get(&relative_path) {
-                if *recorded == Some(mtime) {
-                    snapshots.push(NoteSnapshot {
-                        note_id: note_id.clone(),
-                        relative_path,
-                        category: Some(category),
-                        mtime,
-                    });
-                    continue;
-                }
-            }
-
-            let Ok((meta, body, _)) = publish::read_note(vault, &relative_path) else {
-                continue;
-            };
-            if meta.id.trim().is_empty() {
-                // Nothing can be mapped to a note with no id, and inventing one would mean
-                // writing to a note this feature has no business modifying.
-                log::warn!("Not publishing {relative_path}: the note has no id");
-                continue;
-            }
-
-            let snapshot = NoteSnapshot {
-                note_id: meta.id.clone(),
-                relative_path,
-                // The note's own category is the source of truth, never the folder.
-                category: meta.category,
-                mtime,
-            };
-            snapshots.push(snapshot.clone());
-            prepared.insert(
-                meta.id.clone(),
-                NoteSource {
-                    snapshot,
-                    meta,
-                    body,
-                },
+            collect_snapshot(
+                vault,
+                path,
+                Some(category),
+                &known,
+                &mut snapshots,
+                &mut prepared,
             );
         }
     }
 
+    // The holding area is deliberately not a fifth category. Its direct Markdown files
+    // still have to reach the planner so they are counted as uncategorised and the Settings
+    // panel can explain why they were not published.
+    let holding = vault.join(".helixnotes").join("unfiled");
+    if let Ok(entries) = std::fs::read_dir(holding) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
+                collect_snapshot(vault, &path, None, &known, &mut snapshots, &mut prepared);
+            }
+        }
+    }
+
     (snapshots, prepared)
+}
+
+fn collect_snapshot(
+    vault: &Path,
+    path: &Path,
+    known_category: Option<ParaCategory>,
+    known: &HashMap<String, (String, Option<i64>)>,
+    snapshots: &mut Vec<NoteSnapshot>,
+    prepared: &mut HashMap<String, NoteSource>,
+) {
+    let Ok(relative) = path.strip_prefix(vault) else {
+        return;
+    };
+    let relative_path = relative.to_string_lossy().replace('\\', "/");
+    let mtime = path
+        .metadata()
+        .ok()
+        .map(|meta| mtime_of(&meta))
+        .unwrap_or(0);
+
+    // Known and unmoved: the note id comes from the map, and the file stays shut.
+    if let Some((note_id, recorded)) = known.get(&relative_path) {
+        if *recorded == Some(mtime) {
+            snapshots.push(NoteSnapshot {
+                note_id: note_id.clone(),
+                relative_path,
+                category: known_category,
+                mtime,
+            });
+            return;
+        }
+    }
+
+    let Ok((meta, body, _)) = publish::read_note(vault, &relative_path) else {
+        return;
+    };
+    if meta.id.trim().is_empty() {
+        // Nothing can be mapped to a note with no id, and inventing one would mean
+        // writing to a note this feature has no business modifying.
+        log::warn!("Not publishing {relative_path}: the note has no id");
+        return;
+    }
+
+    let snapshot = NoteSnapshot {
+        note_id: meta.id.clone(),
+        relative_path,
+        // The note's own category is the source of truth, never the folder.
+        category: meta.category,
+        mtime,
+    };
+    snapshots.push(snapshot.clone());
+    prepared.insert(
+        meta.id.clone(),
+        NoteSource {
+            snapshot,
+            meta,
+            body,
+        },
+    );
 }
 
 // ── hooks the vault calls when a note comes or goes ──
@@ -733,10 +796,7 @@ mod tests {
     }
 
     #[test]
-    fn the_holding_area_is_outside_the_walk_entirely() {
-        // Uncategorised notes live under .helixnotes/, which is not one of the four
-        // category folders — so they are excluded by where we look, not by a rule that
-        // could be forgotten.
+    fn holding_notes_reach_the_planner_as_uncategorised() {
         let vault = vault();
         let holding = vault.join(".helixnotes").join("unfiled");
         std::fs::create_dir_all(&holding).unwrap();
@@ -746,7 +806,10 @@ mod tests {
         )
         .unwrap();
 
-        let (snapshots, _) = enumerate(&vault);
-        assert!(snapshots.is_empty());
+        let (snapshots, prepared) = enumerate(&vault);
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].note_id, "id-stray");
+        assert_eq!(snapshots[0].category, None);
+        assert_eq!(prepared.len(), 1);
     }
 }

@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Ticket #12 live verification — 2026-09-10</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Ticket #12 live verification — 2026-09-10</h1>
+</header>
+<h1 id="ticket-12-live-verification--2026-09-10">Ticket #12 live
+verification — 2026-09-10</h1>
+<h2 id="scope">Scope</h2>
+<p>Verify the Notion publisher against a real workspace rather than a
+scripted server. The unit tests prove the code does what it intends;
+they cannot prove Notion behaves as the code assumes, and several
+decisions rest on exactly that.</p>
+<p>Driven by <code>src-tauri/src/notion/live_tests.rs</code>, which
+exercises the same functions the app calls —
+<code>setup_databases</code>, <code>enumerate</code>,
+<code>publish::run</code> — against the live API. Assertions about what
+Notion holds are made through a separate raw HTTP probe, so the
+verification does not trust the client it is verifying.</p>
+<h2 id="environment">Environment</h2>
+<table>
+<tbody>
+<tr>
+<td>Machine</td>
+<td>Linux laptop (Fedora 44) — not the Windows desktop that will publish
+in practice</td>
+</tr>
+<tr>
+<td>Workspace</td>
+<td><code>sb-notion-spike</code>, disposable, free plan</td>
+</tr>
+<tr>
+<td>API version</td>
+<td><code>2026-03-11</code></td>
+</tr>
+<tr>
+<td>Branch</td>
+<td><code>feat/12-notion-push</code> at <code>03091c1</code></td>
+</tr>
+<tr>
+<td>Vault</td>
+<td>120 generated notes across all four categories; every 25th note is
+250 paragraphs, needing three block batches</td>
+</tr>
+</tbody>
+</table>
+<h2 id="results">Results</h2>
+<p>All passed on the second attempt (the first is covered below).</p>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>Result</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Setup creates four databases</td>
+<td>Pass</td>
+<td>4 requests, registry complete</td>
+</tr>
+<tr>
+<td>Large first sync completes without failures</td>
+<td>Pass</td>
+<td>120 created, 0 failed, 134 requests in 122.3 s</td>
+</tr>
+<tr>
+<td>Requests stay within the rate limit</td>
+<td>Pass</td>
+<td>1.10 req/s against a ceiling of 3; no 429 observed</td>
+</tr>
+<tr>
+<td>An unchanged vault costs nothing</td>
+<td>Pass</td>
+<td>120 up to date, <strong>0 requests</strong></td>
+</tr>
+<tr>
+<td>An edit replaces content via <code>erase_content</code></td>
+<td>Pass</td>
+<td>Page reads only the new text; the old "Original paragraph" is gone,
+not appended beside</td>
+</tr>
+<tr>
+<td>A category change moves the page, keeping identity</td>
+<td>Pass</td>
+<td>Same page id, now parented to the Archives data source</td>
+</tr>
+<tr>
+<td>The move's dropped tags are restored</td>
+<td>Pass</td>
+<td>Tags <code>["live", "batch-2"]</code> present after the move</td>
+</tr>
+<tr>
+<td>A deletion trashes the page</td>
+<td>Pass</td>
+<td><code>in_trash = true</code></td>
+</tr>
+<tr>
+<td>An interrupted create is resolved, not duplicated</td>
+<td>Pass</td>
+<td>Exactly one page carries <code>live-0004</code>, with its original
+id</td>
+</tr>
+<tr>
+<td>The whole map lost is rebuilt without duplicates</td>
+<td>Pass</td>
+<td>0 created, 119 updated, 0 failed; spot-checked notes each have
+exactly one page</td>
+</tr>
+<tr>
+<td>Cleanup</td>
+<td>Pass</td>
+<td>All four databases trashed</td>
+</tr>
+</tbody>
+</table>
+<h2 id="findings">Findings</h2>
+<h3 id="the-first-attempt-a-database-creation-hung">The first attempt: a
+database creation hung</h3>
+<p>Three of the four <code>POST /databases</code> calls returned
+promptly; the fourth, Archives, hung until the 30-second client timeout.
+Notion did not create it server-side — checked afterwards, no late
+Archives appeared — so the timeout did not strand a duplicate. The
+second attempt created all four without delay, so this reads as
+transient.</p>
+<p>The product handled it correctly: setup saves each database as it
+succeeds, and a retry creates only what is missing. <strong>The test
+harness did not</strong>: setup ran outside the cleanup guard, so the
+panic left three real databases in the workspace. They were trashed by
+hand and the harness fixed so setup runs inside the guard.</p>
+<p>The same failure exposed that network errors reported only "error
+sending request for url", with the actual cause buried in reqwest's
+source chain. That line is what the Settings panel would have shown a
+user. Errors now carry the full chain.</p>
+<h3 id="throughput-is-bounded-by-latency-not-by-the-pacer">Throughput is
+bounded by latency, not by the pacer</h3>
+<p>The pacer allows three requests a second; the first sync achieved
+<strong>1.10</strong>. Requests are sequential, so each waits for
+Notion's response before the next is sent, and a page create carrying
+its content takes roughly 0.9 s to return. The pacer is almost never the
+thing waiting.</p>
+<p>What that means in practice, extrapolated from 134 requests in 122
+s:</p>
+<table>
+<thead>
+<tr>
+<th>Vault</th>
+<th>First sync, approximately</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>120 notes</td>
+<td>2 minutes</td>
+</tr>
+<tr>
+<td>1,000 notes</td>
+<td>17 minutes</td>
+</tr>
+<tr>
+<td>3,000 notes</td>
+<td>50 minutes</td>
+</tr>
+</tbody>
+</table>
+<p>The acceptance criterion — a large initial sync completes without
+failures — is met: it is slow, not failing, it runs in the background,
+and it reports progress. Sending requests concurrently up to the
+three-a-second ceiling could cut this by roughly two and a half times.
+That is a performance change with its own risks (ordering against a
+single page, retry interaction) and is <strong>not</strong> made
+here.</p>
+<h3 id="rebuilding-a-lost-map-is-expensive-but-correct">Rebuilding a
+lost map is expensive but correct</h3>
+<p>The map-lost run cost 371 requests for 119 notes — one listing sweep,
+then an erase, an append, and a property write per note, since an
+adopted page's content is refreshed rather than trusted. At the observed
+rate that is about five and a half minutes. It is a recovery path for a
+rare event, and it produced no duplicates, which is the property that
+matters.</p>
+<h2 id="faults-this-verification-found-before-it-ran">Faults this
+verification found before it ran</h2>
+<p>Planning the scenarios, rather than running them, surfaced one
+serious fault and three smaller ones, fixed in <code>0591622</code>:</p>
+<ul>
+<li><strong>A lost map duplicated every page.</strong> A note with no
+map entry was treated as never published. It now checks what Notion
+holds first. The run above is the evidence it works.</li>
+<li>Modification times in whole seconds could leave the last edit of an
+autosave burst unpublished. Now nanoseconds.</li>
+<li>Network errors hid their cause.</li>
+<li>"An unchanged vault costs nothing" was inferred, not measured. The
+client now counts.</li>
+</ul>
+<h2 id="windows">Windows</h2>
+<p>The publisher is meant to run on the Windows desktop (#57), so the
+same live test was run there, over <code>ssh sb-windows</code>, on the
+branch after merging <code>main</code> (<code>710d5ba</code>).</p>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>Linux</th>
+<th>Windows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Setup</td>
+<td>Pass, 4 requests</td>
+<td>Pass, 4 requests</td>
+</tr>
+<tr>
+<td>120-note first sync</td>
+<td>134 requests, 122.3 s, 1.10 req/s</td>
+<td>134 requests, 106.9 s, 1.25 req/s</td>
+</tr>
+<tr>
+<td>Unchanged rerun</td>
+<td><strong>0 requests</strong></td>
+<td><strong>0 requests</strong></td>
+</tr>
+<tr>
+<td>Edit, move with tags, delete, interrupted create</td>
+<td>Pass</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Entire map lost</td>
+<td>0 created, 119 updated</td>
+<td>0 created, 119 updated</td>
+</tr>
+</tbody>
+</table>
+<p>The unchanged rerun is the check that mattered. Enumeration rewrites
+<code>\</code> separators to <code>/</code> before matching a note's
+path against its map entry; if that were wrong on Windows, every note
+would look new and the whole vault would republish every five minutes.
+Zero requests means every one of the 120 Windows paths matched.</p>
+<p>All 132 Notion unit tests also pass on Windows, including the
+enumeration tests that walk real files.</p>
+<p>The full Windows suite was <strong>not</strong> clean, in three
+modules this branch doesn't touch. On the branch's original base,
+<code>concurrent_opens_agree_on_one_identity</code> failed every time
+with <code>os error 33</code>. #60 fixed that, and merging
+<code>main</code> picked the fix up. After the merge it still failed
+once under full-suite load, though it passed 5/5 alone. Separately,
+<code>main</code> itself failed two <code>search::external</code> tests
+with <code>Access is denied (os error 5)</code> in one of two runs, and
+a debounce test is timing-sensitive. CI runs only on Ubuntu, so none of
+this was visible. All three are recorded as <strong>#62</strong>.</p>
+<h2 id="setup-click-through--2026-09-11">Setup click-through —
+2026-09-11</h2>
+<p>Operated by hand in <code>pnpm tauri dev</code> on the Linux laptop,
+against a throwaway vault. The app ran under an isolated
+<code>XDG_CONFIG_HOME</code> and <code>XDG_DATA_HOME</code>, so the
+user's real settings and notes were never involved. Evidence is the app
+log, the vault on disk, and direct API reads.</p>
+<table>
+<thead>
+<tr>
+<th>Step</th>
+<th>Result</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Connect with a token</td>
+<td>Pass</td>
+<td><code>Connected as "Second Brain spike".</code> shown; field
+cleared</td>
+</tr>
+<tr>
+<td>Choose a parent page</td>
+<td>Pass</td>
+<td>Picker listed the shared page</td>
+</tr>
+<tr>
+<td>Setup</td>
+<td>Pass</td>
+<td>Four databases under the page, each carrying the #58 marker</td>
+</tr>
+<tr>
+<td>First publish</td>
+<td>Pass</td>
+<td>8 created, 12 requests</td>
+</tr>
+<tr>
+<td>Edit → publish</td>
+<td>Pass</td>
+<td>1 updated; page text replaced</td>
+</tr>
+<tr>
+<td>Tag change → publish</td>
+<td>Pass</td>
+<td>Notion tags changed from <code>clickthrough, projects</code> to
+<code>clickthrough, areas</code></td>
+</tr>
+<tr>
+<td>Category change (Move to…) → publish</td>
+<td>Pass</td>
+<td>1 moved, 4 requests; <strong>same page id</strong>, now in the
+Projects database, tags matching the note</td>
+</tr>
+<tr>
+<td>Delete → publish</td>
+<td>Pass</td>
+<td>1 trashed</td>
+</tr>
+<tr>
+<td>Automatic publish, no click</td>
+<td>Pass</td>
+<td>Edit at 11:41:40 UTC picked up by the timer at 11:42:41; idle runs
+on a 5-minute cadence at <strong>0 requests</strong></td>
+</tr>
+<tr>
+<td>Disconnect</td>
+<td>Pass</td>
+<td>"Disconnected. Your pages stay in Notion."; back to the token
+step</td>
+</tr>
+</tbody>
+</table>
+<h3 id="found-on-the-way-none-in-the-notion-code">Found on the way, none
+in the Notion code</h3>
+<ul>
+<li><strong>#64: every <code>tauri dev</code> launch hung on its
+spinner.</strong> Semantic search (#60) built a blocking HTTP client
+inside the async <code>open_vault</code>, and reqwest's debug tripwire
+panicked. Fixed on <code>fix/64-semantic-index-async-drop</code> with a
+regression test that fails on <code>main</code>, then merged here so the
+click-through could run at all.</li>
+<li><strong>#65: right-click → Tags... did nothing.</strong> Buttons
+that replace the menu's contents closed the menu they had just opened.
+<code>95c184e</code> had patched one of those buttons. Fixed at the menu
+container on <code>fix/note-menu-stays-open</code>, then merged
+here.</li>
+<li><strong>#67: the semantic worker wakes itself about 80 times a
+second</strong> while Ollama is unreachable, which on the laptop is the
+normal state. It pegged the laptop's CPU and rotated the logs away in
+about 12 minutes; the earliest publish runs of this click-through fell
+off the log.</li>
+<li><strong>Not a bug, but a test-data mistake.</strong> The throwaway
+notes were given tags named after their categories
+(<code>#projects</code>, <code>#areas</code>), which made changing a tag
+look like changing the category. The app behaved correctly: a tag isn't
+a category, and a category changes through Move to…. Whether a category
+deserves its own control is recorded on #65 as a UX question.</li>
+</ul>
+<h3 id="one-result-left-unexplained">One result left unexplained</h3>
+<p>The <strong>first</strong> publish (8 created) showed no result
+message, according to the operator. A later publish did show one: the
+screenshot at 06:33 has "Everything is up to date." directly under
+Publish. <code>7570f56</code> moved each result under the button that
+produced it, and its commit message says the box had been off-screen.
+<strong>That rationale is contradicted by the screenshot.</strong> A
+second hypothesis, that map writes triggered the vault watcher and
+re-rendered the panel, is refuted: the watcher skips
+<code>.helixnotes</code>. The placement change is kept because it
+matches the Sync tab, not because it is known to fix anything. The cause
+is unknown.</p>
+<h2 id="not-covered">Not covered</h2>
+<ul>
+<li><strong>The packaged app.</strong> Everything above ran from a test
+binary or a dev build.</li>
+</ul>
+<h2 id="credential-storage-integration--2026-09-11">Credential-storage
+integration — 2026-09-11</h2>
+<p>The original click-through branch temporarily stored the Notion token
+in the machine-local <code>config.json</code>, explicitly pending #56.
+PR #66 has now landed first, and #12 is rebased onto its OS
+credential-store boundary. The token remains on the runtime
+<code>NotionSettings</code> value consumed by the headless publisher,
+but persisted configuration is redacted; storage uses the vault's stable
+identity under the dedicated
+<code>integration:notion:&lt;vault-id&gt;</code> account.</p>
+<p>Automated coverage verifies plaintext migration, redacted
+serialization, and that the token follows the vault identity when its
+folder moves. The live Notion behavior above is unchanged by this
+persistence-only integration and was not repeated against the
+already-trashed disposable databases.</p>
+<h2 id="pre-merge-review-remediation--2026-09-11">Pre-merge review
+remediation — 2026-09-11</h2>
+<p>The first two-axis review found that automatic timer-driven publishes
+had no durable progress state, holding-area notes never reached the
+uncategorised count, and a connected second machine could not disable
+its publisher without forgetting the token. The backend now retains the
+active run's progress for Settings, the panel listens for every run
+rather than only button-triggered runs, direct holding-area Markdown
+files reach the planner as uncategorised, and a machine-local publishing
+toggle is available independently of the connection.</p>
+<p>The same review found duplicated published-note fields across the
+executor and a direct <code>cargo test</code> reproduction command. The
+common state is now represented once by <code>PublishRecord</code>, and
+focused live tests go through <code>pnpm test:rust</code> so the Windows
+test manifest remains in force. The full local verification after these
+changes passed 470 Rust tests (6 environment-dependent tests ignored),
+44 JavaScript tests, Svelte diagnostics, strict Clippy, formatting, and
+the production web build.</p>
+<h2 id="incidental">Incidental</h2>
+<p>One pre-existing test,
+<code>vault::relocation::tests::killing_the_app_mid_notebook_move_still_recovers</code>,
+failed once in eight full-suite runs during this work.</p>
+<p><strong>Update, same day:</strong> a loop set up to catch it failed
+on run 24 of 25, with output. It is not flaky and not a coverage
+shortfall. The <em>correctness</em> assertion failed: recovery could not
+parse an <strong>empty</strong> <code>directory-move.json</code>. The
+manifest is written with <code>create_new</code> followed by
+<code>write_all</code>, so a kill between the two leaves a zero-byte
+file under the final name. Recovery handles a missing manifest but not
+an incomplete one.</p>
+<p>No note is lost, because the manifest precedes the rename. But the
+vault is stuck: every open fails recovery, shows a repair warning the
+user can't clear, and skips category reconciliation, until the file is
+deleted by hand. Filed as <strong>#61</strong>. Nothing on this branch
+touches relocation.</p>
+<h2 id="reproduction">Reproduction</h2>
+<pre class="text"><code>NOTION_TEST_PARENT_PAGE=&lt;page id&gt; pnpm test:rust notion::live_tests -- --ignored --nocapture</code></pre>
+<p>The token is read from
+<code>~/.config/second-brain-notion-test-token</code>. Use a disposable
+workspace, and share the parent page with the connection first — a new
+connection can see nothing until a page is explicitly shared with
+it.</p>
+</body>
+</html>

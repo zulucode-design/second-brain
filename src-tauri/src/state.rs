@@ -24,6 +24,9 @@ pub struct AppState {
     /// Whether a Notion push is in flight. A manual push, the poll timer, and a push at
     /// startup can all collide, and two overlapping runs would race on the same map files.
     pub notion_publishing: AtomicBool,
+    /// Latest progress for the active Notion push. Stored as well as emitted so opening
+    /// Settings midway through an automatic run still shows truthful progress.
+    pub notion_progress: Mutex<Option<crate::notion::publish::Progress>>,
     pub pending_open_file: Mutex<Option<String>>,
     /// Serializes note lifecycle mutations so an older search/index side effect cannot
     /// land after a newer move, delete, restore, or save.
@@ -55,6 +58,7 @@ impl AppState {
             importing: AtomicBool::new(false),
             syncing: AtomicBool::new(false),
             notion_publishing: AtomicBool::new(false),
+            notion_progress: Mutex::new(None),
             pending_open_file: Mutex::new(None),
             note_mutation: Mutex::new(()),
             repair_status: Mutex::new(RepairStatus::default()),

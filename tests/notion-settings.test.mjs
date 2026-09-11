@@ -29,6 +29,8 @@ const summary = (overrides = {}) => ({
 
 const status = (overrides = {}) => ({
   enabled: true,
+  publishing: false,
+  progress: null,
   connected: true,
   connection_name: null,
   setup_complete: true,

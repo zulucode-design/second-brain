@@ -568,6 +568,10 @@ export async function notionDisconnect(): Promise<void> {
   return invoke("notion_disconnect");
 }
 
+export async function notionSetEnabled(enabled: boolean): Promise<void> {
+  return invoke("notion_set_enabled", { enabled });
+}
+
 export async function notionVisiblePages(): Promise<VisiblePage[]> {
   return invoke("notion_visible_pages");
 }

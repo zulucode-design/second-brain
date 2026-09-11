@@ -10,7 +10,7 @@
 //! Ignored by default, because it needs credentials and creates real databases. Run it with
 //!
 //! ```text
-//! NOTION_TEST_PARENT_PAGE=<page id> cargo test --lib notion::live_tests -- --ignored --nocapture
+//! NOTION_TEST_PARENT_PAGE=<page id> pnpm test:rust notion::live_tests -- --ignored --nocapture
 //! ```
 //!
 //! The token is read from `~/.config/second-brain-notion-test-token`, or from the file named
@@ -182,7 +182,7 @@ async fn publish_once(vault: &Path, client: &NotionClient, registry: &DatabaseRe
     .expect("a run against a valid token must not fail outright")
 }
 
-fn ds(registry: &DatabaseRegistry, category: ParaCategory) -> String {
+fn data_source_id(registry: &DatabaseRegistry, category: ParaCategory) -> String {
     registry.link(category).unwrap().data_source_id.clone()
 }
 
@@ -331,7 +331,7 @@ async fn verify(vault: &Path, registry: &DatabaseRegistry, probe: &Probe) {
     );
     assert_eq!(
         page["parent"]["data_source_id"].as_str(),
-        Some(ds(registry, ParaCategory::Archives).as_str()),
+        Some(data_source_id(registry, ParaCategory::Archives).as_str()),
         "the page must now be in the Archives database"
     );
     assert_eq!(
@@ -363,7 +363,10 @@ async fn verify(vault: &Path, registry: &DatabaseRegistry, probe: &Probe) {
     let summary = publish_once(vault, &NotionClient::new(probe.token.clone()), registry).await;
     assert_eq!(summary.failed, 0);
     let copies = probe
-        .pages_carrying(&ds(registry, category_of(interrupted)), "live-0004")
+        .pages_carrying(
+            &data_source_id(registry, category_of(interrupted)),
+            "live-0004",
+        )
         .await;
     println!("interrupted create: {copies} page(s) carry live-0004");
     assert_eq!(
@@ -397,7 +400,7 @@ async fn verify(vault: &Path, registry: &DatabaseRegistry, probe: &Probe) {
     for index in [0, 5, 50, 100] {
         let note_id = format!("live-{index:04}");
         let copies = probe
-            .pages_carrying(&ds(registry, category_of(index)), &note_id)
+            .pages_carrying(&data_source_id(registry, category_of(index)), &note_id)
             .await;
         assert_eq!(
             copies, 1,
