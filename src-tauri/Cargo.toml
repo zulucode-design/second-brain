@@ -54,6 +54,10 @@ same-file = "1"
 legible = "0.5.1"
 fs4 = "0.8"
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))'.dependencies]
+keyring = { version = "4.2", features = ["v1"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = "0.3.2"
 

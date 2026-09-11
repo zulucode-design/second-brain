@@ -245,6 +245,10 @@ pub struct AppConfig {
     pub openai_compatible_base_url: Option<String>,
     #[serde(default)]
     pub openai_compatible_api_key: Option<String>,
+    /// Runtime-only reason credentials could not be loaded from the OS secret store.
+    /// Persisted config is always redacted before serialization, including this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_store_error: Option<String>,
     #[serde(default = "default_ai_model")]
     pub ai_model: String,
     #[serde(default)]
@@ -365,6 +369,7 @@ impl Default for AppConfig {
             ollama_api_key: None,
             openai_compatible_base_url: None,
             openai_compatible_api_key: None,
+            secret_store_error: None,
             ai_model: "claude-sonnet-4-6".to_string(),
             ai_writing_style: None,
             default_view_mode: false,

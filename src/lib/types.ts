@@ -209,6 +209,8 @@ export interface AppConfig {
   ollama_api_key: string | null;
   openai_compatible_base_url: string | null;
   openai_compatible_api_key: string | null;
+  /** Actionable startup failure from the OS credential store, never persisted to disk. */
+  secret_store_error?: string | null;
   ai_model: string;
   ai_writing_style: string | null;
   default_view_mode: boolean;
