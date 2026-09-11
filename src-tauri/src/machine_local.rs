@@ -112,7 +112,12 @@ fn is_lock_contention(error: &std::io::Error) -> bool {
 /// rather than in flight, and can be taken over. Beyond the creator, nothing writes to the
 /// file without holding that lock, which is what keeps two processes opening one vault at
 /// the same time agreeing on one id.
-fn vault_id(vault_path: &Path) -> Result<String, String> {
+pub(crate) fn vault_id(vault_path: &Path) -> Result<String, String> {
+    let metadata = std::fs::metadata(vault_path)
+        .map_err(|error| format!("Could not read the vault directory: {error}"))?;
+    if !metadata.is_dir() {
+        return Err("The vault path is not a directory".to_string());
+    }
     let metadata_dir = helixnotes_dir(vault_path);
     std::fs::create_dir_all(&metadata_dir)
         .map_err(|error| format!("Could not create the vault metadata directory: {error}"))?;

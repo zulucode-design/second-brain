@@ -371,16 +371,22 @@
 
 	async function saveAiSettings() {
 		const baseUrl = aiProviderMetadata?.serverKind === 'ollama' ? (_ollamaBaseUrl || null) : null;
-		await setAiSettings(
-			aiProvider,
-			aiApiKey || null,
-			aiModel,
-			aiWritingStyle || null,
-			baseUrl,
-			_ollamaApiKey || null,
-			_openaiCompatibleBaseUrl || null,
-			_openaiCompatibleKey || null,
-		);
+		try {
+			await setAiSettings(
+				aiProvider,
+				aiApiKey || null,
+				aiModel,
+				aiWritingStyle || null,
+				baseUrl,
+				_ollamaApiKey || null,
+				_openaiCompatibleBaseUrl || null,
+				_openaiCompatibleKey || null,
+			);
+		} catch (e) {
+			aiTestMessage = { type: 'error', text: String(e) };
+			try { $appConfig = await getAppConfig(); } catch {}
+			return;
+		}
 		if ($appConfig) {
 			$appConfig = {
 				...$appConfig,
@@ -473,7 +479,13 @@
 	});
 
 	async function saveSyncSettings() {
-		await setSyncSettings(syncProvider, syncUrl || null, syncUsername || null, syncPassword || null, syncOnOpen, syncOnChange, syncIntervalMinutes);
+		try {
+			await setSyncSettings(syncProvider, syncUrl || null, syncUsername || null, syncPassword || null, syncOnOpen, syncOnChange, syncIntervalMinutes);
+		} catch (e) {
+			syncMessage = { type: 'error', text: String(e) };
+			try { $appConfig = await getAppConfig(); } catch {}
+			return;
+		}
 		// Reflect into the active vault's config in the store so the top-bar button and auto-sync
 		// triggers update live, without an app restart.
 		if ($appConfig) {
@@ -2329,6 +2341,11 @@
 
 					{:else if activeTab === 'ai'}
 						<div class="tab-content">
+							{#if $appConfig?.secret_store_error}
+								<div class="import-result error">
+									<span>{$appConfig.secret_store_error} Unlock the OS credential store, then restart HelixNotes.</span>
+								</div>
+							{/if}
 							<div class="settings-section">
 								<h3>Provider</h3>
 								<div class="setting-options" style="flex-wrap: wrap;">
@@ -2526,6 +2543,11 @@
 
 					{:else if activeTab === 'sync'}
 						<div class="tab-content">
+							{#if $appConfig?.secret_store_error}
+								<div class="import-result error">
+									<span>{$appConfig.secret_store_error} Unlock the OS credential store, then restart HelixNotes.</span>
+								</div>
+							{/if}
 							<div class="settings-section">
 								<h3>Provider</h3>
 								<div class="setting-options">
@@ -2561,7 +2583,7 @@
 											{/if}
 										</button>
 									</div>
-									<p class="setting-hint">Use an app password, not your main one. Stored locally on this device.</p>
+									<p class="setting-hint">Use an app password, not your main one. Stored in this device's OS credential manager.</p>
 								</div>
 
 								<div class="settings-section">

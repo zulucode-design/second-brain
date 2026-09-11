@@ -11,6 +11,7 @@ mod image_proxy;
 mod machine_local;
 mod safe_fetch;
 mod search;
+mod secret_store;
 mod semantic_search;
 mod state;
 mod sync;
