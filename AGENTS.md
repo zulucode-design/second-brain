@@ -30,6 +30,11 @@ also hits the app binary, where a second manifest is a hard linker error (`CVT11
 Issues live in this repo's GitHub Issues (`zulucode-design/second-brain`),
 managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
+### Triage labels
+
+Issues use the configured GitHub triage-state labels. See
+`docs/agents/triage-labels.md`.
+
 ### Domain docs
 
 Single-context: one `CONTEXT.md` at the repo root plus `docs/adr/`.
