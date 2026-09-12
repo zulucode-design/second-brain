@@ -5,7 +5,12 @@ use chrono::{DateTime, Utc};
 
 use crate::types::VersionEntry;
 
-fn safe_path_component<'a>(value: &'a str, label: &str) -> Result<&'a str, String> {
+/// A single, ordinary path component, or an error.
+///
+/// Note ids reach this from frontmatter, which is user-editable and arrives from other
+/// machines, so an id like `../../secret` must never become a path. Shared with the Notion
+/// map, which files state under the same ids for the same reason.
+pub(crate) fn safe_path_component<'a>(value: &'a str, label: &str) -> Result<&'a str, String> {
     let mut components = Path::new(value).components();
     if value.is_empty()
         || !matches!(components.next(), Some(Component::Normal(_)))

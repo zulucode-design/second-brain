@@ -74,6 +74,18 @@ pub struct VaultConfig {
     /// upgrading; see [`crate::sync_config`] for how older settings are read.
     #[serde(default, flatten)]
     pub sync: crate::sync_config::SyncSettings,
+    /// How this vault publishes to Notion.
+    ///
+    /// A sibling of `sync`, deliberately not a value of `sync.provider`: that field names
+    /// the one provider a vault syncs with, so folding Notion into it would mean enabling
+    /// the read-only Notion view disables sync between the machines. The two are unrelated
+    /// (ADR-0002).
+    ///
+    /// Machine-local, because `VaultConfig` is. That is load-bearing rather than
+    /// incidental: `enabled` differing between machines is how exactly one machine ends up
+    /// publishing, which is what stops two machines both creating a page for the same note.
+    #[serde(default)]
+    pub notion: crate::notion::config::NotionSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

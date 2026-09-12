@@ -54,6 +54,7 @@ same-file = "1"
 legible = "0.5.1"
 fs4 = "0.8"
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+pulldown-cmark = { version = "0.13.4", default-features = false }
 
 [target.'cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))'.dependencies]
 keyring = { version = "4.2", features = ["v1"] }

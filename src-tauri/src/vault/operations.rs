@@ -1112,6 +1112,45 @@ pub fn delete_notebook(vault_path: &str, notebook_path: &str) -> Result<(), Stri
     Ok(())
 }
 
+/// Return every Markdown note below a validated notebook path.
+///
+/// This is used by integrations that must durably record descendant lifecycle changes
+/// before a whole notebook is moved into trash.
+pub fn notebook_note_paths(vault_path: &str, notebook_path: &str) -> Result<Vec<String>, String> {
+    let validated = ensure_notebook_path(vault_path, Path::new(notebook_path))?;
+    let mut paths = Vec::new();
+    for entry in WalkDir::new(validated.as_path()).min_depth(1) {
+        let entry = entry.map_err(|error| format!("Could not scan notebook: {error}"))?;
+        if entry.file_type().is_file()
+            && entry.path().extension().and_then(|value| value.to_str()) == Some("md")
+        {
+            paths.push(entry.path().to_string_lossy().to_string());
+        }
+    }
+    Ok(paths)
+}
+
+/// Return every Markdown note below a validated trashed notebook.
+pub fn trash_notebook_note_paths(
+    vault_path: &str,
+    trash_path: &str,
+) -> Result<Vec<String>, String> {
+    let validated = ensure_trash_entry(vault_path, Path::new(trash_path))?;
+    if !validated.as_path().is_dir() {
+        return Err("Trashed notebook does not exist".to_string());
+    }
+    let mut paths = Vec::new();
+    for entry in WalkDir::new(validated.as_path()).min_depth(1) {
+        let entry = entry.map_err(|error| format!("Could not scan trashed notebook: {error}"))?;
+        if entry.file_type().is_file()
+            && entry.path().extension().and_then(|value| value.to_str()) == Some("md")
+        {
+            paths.push(entry.path().to_string_lossy().to_string());
+        }
+    }
+    Ok(paths)
+}
+
 #[cfg(test)]
 pub fn rename_note(path: &str, new_title: &str, vault_path: &str) -> Result<String, String> {
     rename_note_with_outcome(path, new_title, vault_path).map(|outcome| outcome.path)
@@ -3865,6 +3904,39 @@ mod tests {
 
         assert!(std::path::Path::new(&renamed).is_dir());
         assert!(vault.join("Projects/Relaunch").is_dir());
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn notebook_lifecycle_enumerates_all_descendant_notes() {
+        let vault = scaffolded_vault("notebook-note-paths");
+        let vault_str = vault.to_string_lossy().to_string();
+        let notebook = vault.join("Projects/Launch");
+        fs::create_dir_all(notebook.join("Research")).unwrap();
+        fs::write(notebook.join("Plan.md"), "plan").unwrap();
+        fs::write(notebook.join("Research/Source.md"), "source").unwrap();
+        fs::write(notebook.join("Research/ignore.txt"), "not a note").unwrap();
+
+        let mut paths = super::notebook_note_paths(&vault_str, &notebook.to_string_lossy())
+            .unwrap()
+            .into_iter()
+            .map(|path| {
+                std::path::Path::new(&path)
+                    .strip_prefix(&vault)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect::<Vec<_>>();
+        paths.sort();
+
+        assert_eq!(
+            paths,
+            vec![
+                "Projects/Launch/Plan.md",
+                "Projects/Launch/Research/Source.md"
+            ]
+        );
         fs::remove_dir_all(vault).unwrap();
     }
 

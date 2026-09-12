@@ -159,9 +159,11 @@ pub(crate) fn copy_plaintext_recovery(from: &AppConfig, to: &mut AppConfig) {
         .clone_from(&from.legacy_sync.credentials.webdav.password);
 
     for source in &from.vaults {
-        let Some(password) = source.sync.credentials.webdav.password.as_ref() else {
+        let has_webdav = source.sync.credentials.webdav.password.is_some();
+        let has_notion = source.notion.token.is_some();
+        if !has_webdav && !has_notion {
             continue;
-        };
+        }
         if let Some(target) = to.vaults.iter_mut().find(|target| {
             source
                 .vault_id
@@ -177,7 +179,13 @@ pub(crate) fn copy_plaintext_recovery(from: &AppConfig, to: &mut AppConfig) {
                     && target.bookmark_id.is_none()
                     && source.path == target.path)
         }) {
-            target.sync.credentials.webdav.password = Some(password.clone());
+            target
+                .sync
+                .credentials
+                .webdav
+                .password
+                .clone_from(&source.sync.credentials.webdav.password);
+            target.notion.token.clone_from(&source.notion.token);
         }
     }
 }
@@ -305,14 +313,18 @@ fn credential_bindings(config: &AppConfig) -> Vec<(SecretId, Option<String>)> {
             config.openai_compatible_api_key.clone(),
         ),
     ];
-    bindings.extend(config.vaults.iter().filter_map(|vault| {
-        vault_identity(vault).map(|identity| {
-            (
+    for vault in &config.vaults {
+        if let Some(identity) = vault_identity(vault) {
+            bindings.push((
                 SecretId::WebdavPassword(identity.to_string()),
                 vault.sync.credentials.webdav.password.clone(),
-            )
-        })
-    }));
+            ));
+            bindings.push((
+                SecretId::NotionToken(identity.to_string()),
+                vault.notion.token.clone(),
+            ));
+        }
+    }
     bindings
 }
 
@@ -325,6 +337,7 @@ fn clear_credentials(config: &mut AppConfig) {
     // runtime memory or in the redacted disk projection.
     for vault in &mut config.vaults {
         vault.sync.credentials.webdav.password = None;
+        vault.notion.token = None;
     }
     config.legacy_sync.credentials.webdav.password = None;
 }
@@ -344,13 +357,32 @@ fn assign(config: &mut AppConfig, id: &SecretId, value: Option<String>) {
                 vault.sync.credentials.webdav.password = value;
             }
         }
-        // Reserved for the Notion integration. Its config type lands in issue #12; the
-        // stable key is available now so that branch never needs to persist its token.
-        SecretId::NotionToken(_) => {}
+        SecretId::NotionToken(identity) => {
+            if let Some(vault) = config
+                .vaults
+                .iter_mut()
+                .find(|vault| vault_identity(vault) == Some(identity.as_str()))
+            {
+                vault.notion.token = value;
+            }
+        }
     }
 }
 
 fn unaddressable_plaintext(config: &AppConfig) -> Option<String> {
+    if config.vaults.iter().any(|vault| {
+        vault
+            .notion
+            .token
+            .as_deref()
+            .is_some_and(|token| !token.is_empty())
+            && vault_identity(vault).is_none()
+    }) {
+        return Some(
+            "A Notion token cannot migrate until its vault identity is available".to_string(),
+        );
+    }
+
     if config.vaults.iter().any(|vault| {
         vault
             .sync
@@ -444,6 +476,10 @@ mod tests {
                 path: "/vaults/life".to_string(),
                 name: "Life".to_string(),
                 vault_id: Some("life-vault-id".to_string()),
+                notion: crate::notion::config::NotionSettings {
+                    token: Some("notion-secret".to_string()),
+                    ..Default::default()
+                },
                 sync: SyncSettings {
                     credentials: ProviderCredentials {
                         webdav: WebdavCredentials {
@@ -473,6 +509,10 @@ mod tests {
             config.vaults[0].sync.credentials.webdav.password.as_deref(),
             Some("webdav-secret")
         );
+        assert_eq!(
+            config.vaults[0].notion.token.as_deref(),
+            Some("notion-secret")
+        );
         let stored = store.0.borrow();
         assert_eq!(
             stored.get(&SecretId::AnthropicApiKey).map(String::as_str),
@@ -492,7 +532,17 @@ mod tests {
                 .map(String::as_str),
             Some("compatible-secret")
         );
-        assert_eq!(stored.len(), 5, "the WebDAV password must migrate too");
+        assert_eq!(
+            stored
+                .get(&SecretId::NotionToken("life-vault-id".to_string()))
+                .map(String::as_str),
+            Some("notion-secret")
+        );
+        assert_eq!(
+            stored.len(),
+            6,
+            "the per-vault provider credentials must migrate too"
+        );
     }
 
     #[test]
@@ -506,6 +556,10 @@ mod tests {
                 VaultConfig {
                     path: "/vaults/life".to_string(),
                     vault_id: Some("life-vault-id".to_string()),
+                    notion: crate::notion::config::NotionSettings {
+                        token: Some("notion-secret".to_string()),
+                        ..Default::default()
+                    },
                     sync: SyncSettings {
                         credentials: ProviderCredentials {
                             webdav: WebdavCredentials {
@@ -519,6 +573,10 @@ mod tests {
                 },
                 VaultConfig {
                     path: "/vaults/unidentified".to_string(),
+                    notion: crate::notion::config::NotionSettings {
+                        token: Some("unaddressable-notion-secret".to_string()),
+                        ..Default::default()
+                    },
                     sync: SyncSettings {
                         credentials: ProviderCredentials {
                             webdav: WebdavCredentials {
@@ -543,6 +601,8 @@ mod tests {
             "compatible-secret",
             "webdav-secret",
             "unaddressable-webdav-secret",
+            "notion-secret",
+            "unaddressable-notion-secret",
         ] {
             assert!(!json.contains(secret), "persisted plaintext: {secret}");
         }
@@ -638,6 +698,39 @@ mod tests {
                 .webdav
                 .password
                 .as_deref(),
+            Some("follow-the-vault")
+        );
+    }
+
+    #[test]
+    fn notion_token_follows_the_vault_id_when_the_folder_moves() {
+        let store = MemoryStore::default();
+        let mut before_move = AppConfig {
+            vaults: vec![VaultConfig {
+                path: "/old/location".to_string(),
+                vault_id: Some("stable-vault-id".to_string()),
+                notion: crate::notion::config::NotionSettings {
+                    token: Some("follow-the-vault".to_string()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        hydrate_config(&mut before_move, &store).unwrap();
+        let mut after_move = AppConfig {
+            vaults: vec![VaultConfig {
+                path: "/new/location".to_string(),
+                vault_id: Some("stable-vault-id".to_string()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        hydrate_config(&mut after_move, &store).unwrap();
+
+        assert_eq!(
+            after_move.vaults[0].notion.token.as_deref(),
             Some("follow-the-vault")
         );
     }

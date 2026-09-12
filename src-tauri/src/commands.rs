@@ -1041,6 +1041,13 @@ pub fn move_notebook(
 
 #[tauri::command]
 pub fn delete_notebook(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let _notion_deletions = state.notion_deletions.try_lock().map_err(|_| {
+        "Notion is processing deletions; try the notebook deletion again in a moment".to_string()
+    })?;
     let vault_path = {
         let config = state.config.lock().map_err(|e| e.to_string())?;
         config
@@ -1049,7 +1056,12 @@ pub fn delete_notebook(state: State<'_, AppState>, path: String) -> Result<(), S
             .ok_or("No active vault")?
             .clone()
     };
-    operations::delete_notebook(&vault_path, &path)?;
+    let note_paths = operations::notebook_note_paths(&vault_path, &path)?;
+    crate::notion::commands::with_notes_deleted(
+        std::path::Path::new(&vault_path),
+        &note_paths,
+        || operations::delete_notebook(&vault_path, &path),
+    )?;
     reconcile_semantic_now(&state, &vault_path);
     Ok(())
 }
@@ -1395,9 +1407,20 @@ pub fn delete_note(state: State<'_, AppState>, path: String) -> Result<(), Strin
         .note_mutation
         .lock()
         .map_err(|error| error.to_string())?;
+    let _notion_deletions = state.notion_deletions.try_lock().map_err(|_| {
+        "Notion is processing deletions; try the note deletion again in a moment".to_string()
+    })?;
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
-    if let Err(error) = operations::delete_note(vault_path, &path) {
+
+    // Before the file goes: the note id that identifies its Notion page lives inside it,
+    // and once it is deleted there is nothing left to read. Deleting the map entry here
+    // instead would leak the page — it would sit in Notion with no way left to find it.
+    if let Err(error) = crate::notion::commands::with_notes_deleted(
+        std::path::Path::new(vault_path),
+        std::slice::from_ref(&path),
+        || operations::delete_note(vault_path, &path),
+    ) {
         record_transaction_repair_if_needed(
             &state,
             vault_path,
@@ -2157,6 +2180,9 @@ pub fn restore_note(state: State<'_, AppState>, trash_path: String) -> Result<St
         .note_mutation
         .lock()
         .map_err(|error| error.to_string())?;
+    let _notion_deletions = state.notion_deletions.try_lock().map_err(|_| {
+        "Notion is processing deletions; try restoring the note again in a moment".to_string()
+    })?;
     let vault_path = {
         let config = state.config.lock().map_err(|e| e.to_string())?;
         config
@@ -2165,7 +2191,11 @@ pub fn restore_note(state: State<'_, AppState>, trash_path: String) -> Result<St
             .ok_or("No active vault")?
             .clone()
     };
-    let restored = match operations::restore_note(&vault_path, &trash_path) {
+    let restored = match crate::notion::commands::with_notes_restored(
+        std::path::Path::new(&vault_path),
+        std::slice::from_ref(&trash_path),
+        || operations::restore_note(&vault_path, &trash_path),
+    ) {
         Ok(restored) => restored,
         Err(error) => {
             record_transaction_repair_if_needed(
@@ -2185,6 +2215,13 @@ pub fn restore_note(state: State<'_, AppState>, trash_path: String) -> Result<St
 
 #[tauri::command]
 pub fn restore_notebook(state: State<'_, AppState>, trash_path: String) -> Result<String, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let _notion_deletions = state.notion_deletions.try_lock().map_err(|_| {
+        "Notion is processing deletions; try restoring the notebook again in a moment".to_string()
+    })?;
     let vault_path = {
         let config = state.config.lock().map_err(|e| e.to_string())?;
         config
@@ -2193,7 +2230,12 @@ pub fn restore_notebook(state: State<'_, AppState>, trash_path: String) -> Resul
             .ok_or("No active vault")?
             .clone()
     };
-    let restored = operations::restore_notebook(&vault_path, &trash_path)?;
+    let note_paths = operations::trash_notebook_note_paths(&vault_path, &trash_path)?;
+    let restored = crate::notion::commands::with_notes_restored(
+        std::path::Path::new(&vault_path),
+        &note_paths,
+        || operations::restore_notebook(&vault_path, &trash_path),
+    )?;
     reconcile_semantic_now(&state, &vault_path);
     Ok(restored)
 }
@@ -3997,7 +4039,10 @@ fn save_app_config(config: &AppConfig) -> Result<(), String> {
     save_app_config_to(&path, config)
 }
 
-fn commit_secret_config(config: &mut AppConfig, mut candidate: AppConfig) -> Result<(), String> {
+pub(crate) fn commit_secret_config(
+    config: &mut AppConfig,
+    mut candidate: AppConfig,
+) -> Result<(), String> {
     if let Some(error) = &config.secret_store_error {
         return Err(format!(
             "Credentials cannot be changed until the OS secret store is available; restart the app after unlocking it. {error}"

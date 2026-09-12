@@ -9,6 +9,7 @@ mod history;
 mod hotkey;
 mod image_proxy;
 mod machine_local;
+mod notion;
 mod safe_fetch;
 mod search;
 mod secret_store;
@@ -313,6 +314,13 @@ pub fn run() {
             commands::set_sync_settings,
             commands::test_sync_connection,
             commands::sync_now,
+            notion::commands::notion_status,
+            notion::commands::notion_connect,
+            notion::commands::notion_disconnect,
+            notion::commands::notion_set_enabled,
+            notion::commands::notion_visible_pages,
+            notion::commands::notion_setup,
+            notion::commands::notion_publish_now,
             commands::get_install_type,
             commands::is_mobile_platform,
             commands::get_pending_open_file,
