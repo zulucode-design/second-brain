@@ -6,6 +6,7 @@ use rusqlite::{params, Connection, ErrorCode};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -111,6 +112,7 @@ pub struct SemanticIndex {
     database: Mutex<Connection>,
     backend: Arc<dyn EmbeddingBackend>,
     wake_worker: OnceLock<Sender<()>>,
+    embedding_outage_reported: AtomicBool,
     profile: String,
 }
 
@@ -120,6 +122,11 @@ pub struct SemanticStatus {
     pub indexed_notes: usize,
     pub queued_notes: usize,
     pub model: String,
+}
+
+enum RetryOutcome {
+    QueueProcessed,
+    BackendUnavailable,
 }
 
 impl SemanticIndex {
@@ -159,6 +166,7 @@ impl SemanticIndex {
             database: Mutex::new(connection),
             backend,
             wake_worker: OnceLock::new(),
+            embedding_outage_reported: AtomicBool::new(false),
             profile: profile.to_string(),
         })
     }
@@ -228,6 +236,15 @@ fn path_with_suffix(path: &Path, suffix: &str) -> std::path::PathBuf {
 
 impl SemanticIndex {
     pub fn note_changed(&self, path: &Path) -> Result<(), String> {
+        self.refresh_pending_note(path)?;
+        if let Some(wake) = self.wake_worker.get() {
+            let _ = wake.send(());
+        }
+        Ok(())
+    }
+
+    /// Refresh one durable pending row without waking the background worker.
+    fn refresh_pending_note(&self, path: &Path) -> Result<(), String> {
         let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
         let filename = path
             .file_name()
@@ -255,9 +272,6 @@ impl SemanticIndex {
                 params![note_key, path_text, raw_hash, self.profile.as_str()],
             )
             .map_err(|error| error.to_string())?;
-        if let Some(wake) = self.wake_worker.get() {
-            let _ = wake.send(());
-        }
         Ok(())
     }
 
@@ -282,12 +296,16 @@ impl SemanticIndex {
         let embeddings = match self.backend.embed(&inputs) {
             Ok(embeddings) => embeddings,
             Err(error) => {
-                log::info!("Semantic embedding remains queued: {error}");
+                if !self.embedding_outage_reported.swap(true, Ordering::SeqCst) {
+                    log::info!("Semantic embedding remains queued: {error}");
+                }
                 return Ok(false);
             }
         };
         if embeddings.len() != chunks.len() || embeddings.iter().any(Vec::is_empty) {
-            log::warn!("Semantic embedding remains queued: backend returned an unexpected number of vectors");
+            if !self.embedding_outage_reported.swap(true, Ordering::SeqCst) {
+                log::warn!("Semantic embedding remains queued: backend returned an unexpected number of vectors");
+            }
             return Ok(false);
         }
         let dimensions = embeddings[0].len();
@@ -295,9 +313,13 @@ impl SemanticIndex {
             .iter()
             .any(|embedding| embedding.len() != dimensions)
         {
-            log::warn!("Semantic embedding remains queued: backend returned inconsistent vector dimensions");
+            if !self.embedding_outage_reported.swap(true, Ordering::SeqCst) {
+                log::warn!("Semantic embedding remains queued: backend returned inconsistent vector dimensions");
+            }
             return Ok(false);
         }
+        self.embedding_outage_reported
+            .store(false, Ordering::SeqCst);
 
         let mut database = self.database.lock().map_err(|error| error.to_string())?;
         let transaction = database.transaction().map_err(|error| error.to_string())?;
@@ -534,7 +556,7 @@ impl SemanticIndex {
         })
     }
 
-    pub fn retry_pending(&self) -> Result<(), String> {
+    fn retry_pending(&self) -> Result<RetryOutcome, String> {
         let paths = {
             let database = self.database.lock().map_err(|error| error.to_string())?;
             let mut statement = database
@@ -549,15 +571,15 @@ impl SemanticIndex {
         for path in paths {
             let path = std::path::PathBuf::from(path);
             if path.is_file() {
-                self.note_changed(&path)?;
+                self.refresh_pending_note(&path)?;
                 if !self.embed_pending_path(&path)? {
-                    break;
+                    return Ok(RetryOutcome::BackendUnavailable);
                 }
             } else {
                 self.note_removed(&path)?;
             }
         }
-        Ok(())
+        Ok(RetryOutcome::QueueProcessed)
     }
 
     pub fn start_background(self: &Arc<Self>) {
@@ -571,14 +593,38 @@ impl SemanticIndex {
         }
         let index = Arc::downgrade(self);
         std::thread::spawn(move || {
-            while let Ok(()) | Err(mpsc::RecvTimeoutError::Timeout) =
-                receiver.recv_timeout(interval)
-            {
+            let mut offline_until: Option<std::time::Instant> = None;
+            loop {
+                if let Some(deadline) = offline_until {
+                    // Notes are already durable. Coalesce every wake received during an
+                    // outage so reconciliation cannot turn a large vault into a retry burst.
+                    while let Some(remaining) =
+                        deadline.checked_duration_since(std::time::Instant::now())
+                    {
+                        match receiver.recv_timeout(remaining) {
+                            Ok(()) => continue,
+                            Err(mpsc::RecvTimeoutError::Timeout) => break,
+                            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                        }
+                    }
+                } else {
+                    match receiver.recv_timeout(interval) {
+                        Ok(()) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                    }
+                }
                 let Some(index) = index.upgrade() else {
                     break;
                 };
-                if let Err(error) = index.retry_pending() {
-                    log::warn!("Could not process the semantic embedding queue: {error}");
+                match index.retry_pending() {
+                    Ok(RetryOutcome::QueueProcessed) => offline_until = None,
+                    Ok(RetryOutcome::BackendUnavailable) => {
+                        offline_until = Some(std::time::Instant::now() + interval)
+                    }
+                    Err(error) => {
+                        offline_until = None;
+                        log::warn!("Could not process the semantic embedding queue: {error}");
+                    }
                 }
             }
         });
@@ -679,14 +725,24 @@ mod tests {
     use std::net::TcpListener;
     use std::path::Path;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     struct MeaningBackend;
 
     struct UnavailableBackend;
 
+    struct CountingUnavailableBackend {
+        calls: Arc<AtomicUsize>,
+        first_call: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    }
+
     struct RecoveringBackend {
         available: Arc<AtomicBool>,
+    }
+
+    struct ObservedRecoveringBackend {
+        available: Arc<AtomicBool>,
+        first_call: Mutex<Option<std::sync::mpsc::Sender<()>>>,
     }
 
     struct CountingBackend {
@@ -720,9 +776,31 @@ mod tests {
         }
     }
 
+    impl EmbeddingBackend for CountingUnavailableBackend {
+        fn embed(&self, _inputs: &[String]) -> Result<Vec<Vec<f32>>, String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(first_call) = self.first_call.lock().unwrap().take() {
+                let _ = first_call.send(());
+            }
+            Err("desktop is asleep".to_string())
+        }
+    }
+
     impl EmbeddingBackend for RecoveringBackend {
         fn embed(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>, String> {
             if !self.available.load(Ordering::SeqCst) {
+                return Err("desktop is asleep".to_string());
+            }
+            MeaningBackend.embed(inputs)
+        }
+    }
+
+    impl EmbeddingBackend for ObservedRecoveringBackend {
+        fn embed(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>, String> {
+            if !self.available.load(Ordering::SeqCst) {
+                if let Some(first_call) = self.first_call.lock().unwrap().take() {
+                    let _ = first_call.send(());
+                }
                 return Err("desktop is asleep".to_string());
             }
             MeaningBackend.embed(inputs)
@@ -988,21 +1066,27 @@ mod tests {
             "coffee before work",
         );
         let available = Arc::new(AtomicBool::new(false));
+        let (first_call, first_call_received) = std::sync::mpsc::channel();
         let index = Arc::new(
             SemanticIndex::open_at(
                 &root.join("semantic.sqlite3"),
-                Arc::new(RecoveringBackend {
+                Arc::new(ObservedRecoveringBackend {
                     available: available.clone(),
+                    first_call: Mutex::new(Some(first_call)),
                 }),
             )
             .unwrap(),
         );
-        index.start_background_with_interval(std::time::Duration::from_millis(10));
+        let retry_interval = std::time::Duration::from_millis(50);
+        index.start_background_with_interval(retry_interval);
         index.note_changed(&note).unwrap();
+        first_call_received
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the worker should attempt the queued note while offline");
         available.store(true, Ordering::SeqCst);
 
-        // Windows can be heavily loaded while the full suite starts many filesystem and
-        // SQLite tests in parallel; allow the worker a bounded but non-flaky window.
+        // The next scheduled retry should process the durable queue after recovery. Windows
+        // can be heavily loaded, so retain a bounded but generous scheduling window.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while index.status().unwrap().queued_notes != 0 && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -1010,6 +1094,71 @@ mod tests {
 
         assert_eq!(index.status().unwrap().queued_notes, 0);
         assert_eq!(index.status().unwrap().indexed_notes, 1);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn an_unavailable_backend_is_retried_only_at_the_worker_interval() {
+        let root = scratch("background-offline-interval");
+        let note = root.join("Offline.md");
+        write_note(
+            &note,
+            "offline-background-id",
+            "Offline thought",
+            "Projects",
+            "A thought saved while the desktop is asleep.",
+        );
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (first_call, first_call_received) = std::sync::mpsc::channel();
+        let index = Arc::new(
+            SemanticIndex::open_at(
+                &root.join("semantic.sqlite3"),
+                Arc::new(CountingUnavailableBackend {
+                    calls: calls.clone(),
+                    first_call: Mutex::new(Some(first_call)),
+                }),
+            )
+            .unwrap(),
+        );
+        let retry_interval = std::time::Duration::from_millis(200);
+        index.start_background_with_interval(retry_interval);
+        index.note_changed(&note).unwrap();
+
+        // Synchronize on the external change's immediate attempt so a loaded runner cannot
+        // pass the assertion without exercising the worker. Before the first interval elapses,
+        // the worker must not generate a second attempt by waking itself.
+        first_call_received
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the external change should wake the semantic worker");
+        for _ in 0..5 {
+            index.note_changed(&note).unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the worker retried before its configured interval elapsed"
+        );
+
+        let second_attempt_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while calls.load(Ordering::SeqCst) < 2
+            && std::time::Instant::now() < second_attempt_deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "the worker should retry once when the interval elapses"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "queued wakes must stay coalesced during the next retry interval"
+        );
+
         drop(index);
         cleanup(root);
     }
