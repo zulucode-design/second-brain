@@ -27,6 +27,10 @@ pub struct AppState {
     /// Latest progress for the active Notion push. Stored as well as emitted so opening
     /// Settings midway through an automatic run still shows truthful progress.
     pub notion_progress: Mutex<Option<crate::notion::publish::Progress>>,
+    /// Serializes local delete/restore transactions with the publisher's short tombstone
+    /// consumption phase. It is deliberately separate from the full publish run so editing
+    /// remains available during a large first upload.
+    pub notion_deletions: tokio::sync::Mutex<()>,
     pub pending_open_file: Mutex<Option<String>>,
     /// Serializes note lifecycle mutations so an older search/index side effect cannot
     /// land after a newer move, delete, restore, or save.
@@ -59,6 +63,7 @@ impl AppState {
             syncing: AtomicBool::new(false),
             notion_publishing: AtomicBool::new(false),
             notion_progress: Mutex::new(None),
+            notion_deletions: tokio::sync::Mutex::new(()),
             pending_open_file: Mutex::new(None),
             note_mutation: Mutex::new(()),
             repair_status: Mutex::new(RepairStatus::default()),

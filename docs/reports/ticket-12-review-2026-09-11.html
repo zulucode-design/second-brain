@@ -17,7 +17,7 @@
     </style>
   </head>
   <body>
-    <p><span class="status open">One verification gate remains</span></p>
+    <p><span class="status resolved">All review and verification gates resolved</span></p>
     <h1>Ticket #12 — Notion one-way PARA publisher</h1>
     <p>Reviewed 2026-09-11 against <code>origin/main...feat/12-notion-push</code>, with
       <code>origin/main</code> fixed at
@@ -46,15 +46,21 @@
         <tr><td>A failed single-note deletion left a live tombstone</td><td><span class="status resolved">Resolved</span></td><td>Local deletion and its durable marker now share one transactional boundary; a failed delete restores the previous published state.</td></tr>
         <tr><td>Notebook delete and restore bypassed descendant lifecycle hooks</td><td><span class="status resolved">Resolved</span></td><td>Validated recursive note discovery feeds the same transactional tombstone boundary, and notebook restore clears every descendant marker.</td></tr>
         <tr><td>Page creation continued after the pre-create intent write failed</td><td><span class="status resolved">Resolved</span></td><td>The publisher now reports a local-state failure without issuing the page-create request.</td></tr>
-        <tr><td>The packaged workflow has not been exercised against a disposable workspace</td><td><span class="status open">Open</span></td><td>Required before this PR merges and #12 closes.</td></tr>
+        <tr><td>Publisher tombstone consumption raced a local restore</td><td><span class="status resolved">Resolved</span></td><td>Delete, restore, and tombstone consumption now share a lifecycle guard; the publisher reads the map only after acquiring it.</td></tr>
+        <tr><td>Restore moved a note before proving its tombstone could be cleared</td><td><span class="status resolved">Resolved</span></td><td>Restore clears markers while source files remain in trash and reinstates them if the local restore fails.</td></tr>
+        <tr><td>Linux keyring commit panicked inside the async Connect command</td><td><span class="status resolved">Resolved</span></td><td>Async commands now dispatch synchronous credential-store commits to the blocking pool; a nested-runtime regression test covers the boundary.</td></tr>
+        <tr><td>The packaged workflow had not been exercised against a disposable workspace</td><td><span class="status resolved">Resolved</span></td><td>The fresh Debian package created four databases, created and published a Projects note, and recorded a clean summary; the Notion API confirmed the page identity and parent data source. All four databases were then trashed.</td></tr>
       </tbody>
     </table>
 
     <h2>Verification after remediation</h2>
-    <p>Local <code>pnpm verify</code> passed: 44 JavaScript tests, 473 Rust tests, 6 ignored
+    <p>Local <code>pnpm verify</code> passed: 44 JavaScript tests, 476 Rust tests, 6 ignored
       environment-dependent tests, clean Svelte diagnostics, formatting, strict Clippy, and a
       successful production web build. The exact CI command also produced fresh unsigned Debian
-      and RPM packages, whose installed desktop entries passed the package verifier. Live Linux and Windows API verification and the dev-build
+      and RPM packages, whose installed desktop entries passed the package verifier. The packaged
+      run reported <code>created: 1</code> and <code>failed: 0</code>; Notion returned page
+      <code>3d9c83f7-424c-8185-9ec6-cc90ea5a3b92</code> with the local note id and the expected
+      Projects data source. Live Linux and Windows API verification and the earlier dev-build
       setup click-through remain recorded in the companion verification report.</p>
   </body>
 </html>

@@ -92,6 +92,28 @@ fn update_settings(
     crate::commands::commit_secret_config(&mut config, candidate)
 }
 
+/// Commit settings from an async command without running the synchronous Linux keyring
+/// backend on a Tokio worker. That backend drives its own runtime and panics if it is
+/// entered directly from another runtime.
+async fn update_settings_async(
+    app: AppHandle,
+    change: impl FnOnce(&mut NotionSettings) -> Result<(), String> + Send + 'static,
+) -> Result<(), String> {
+    run_sync_from_async(move || {
+        let state = app.state::<AppState>();
+        update_settings(&state, change)
+    })
+    .await
+}
+
+async fn run_sync_from_async<T: Send + 'static>(
+    operation: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(operation)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 fn client_for(config: &AppConfig) -> Result<NotionClient, String> {
     let settings = settings_of(config);
     let token = settings
@@ -157,12 +179,12 @@ pub async fn notion_connect(app: AppHandle, token: String) -> Result<String, Str
         .await
         .map_err(|error| error.message())?;
 
-    let state = app.state::<AppState>();
-    update_settings(&state, |settings| {
+    update_settings_async(app, move |settings| {
         settings.token = Some(token);
         settings.enabled = true;
         Ok(())
-    })?;
+    })
+    .await?;
     Ok(name)
 }
 
@@ -315,10 +337,11 @@ pub fn notion_publish_now(app: AppHandle) -> Result<(), String> {
         match outcome {
             Ok(summary) => {
                 write_last_run(&vault, Some(&summary), None);
-                let _ = update_settings(&state, |settings| {
+                let _ = update_settings_async(app.clone(), |settings| {
                     settings.last_run = Some(chrono::Utc::now().to_rfc3339());
                     Ok(())
-                });
+                })
+                .await;
                 let _ = app.emit("notion-publish-finished", &summary);
             }
             Err(error) => {
@@ -348,6 +371,7 @@ async fn publish_once(
         vault,
         client,
         &registry,
+        &app.state::<AppState>().notion_deletions,
         snapshots,
         |snapshot| {
             prepared
@@ -581,6 +605,50 @@ pub fn notes_restored(vault_path: &Path, note_paths: &[String]) -> Result<(), St
     }
 }
 
+fn notes_deleted(vault_path: &Path, note_paths: &[String]) -> Result<(), String> {
+    let failures: Vec<String> = note_paths
+        .iter()
+        .filter_map(|path| note_deleted(vault_path, path).err())
+        .collect();
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
+/// Run a local restore only after every pending tombstone has been cleared.
+///
+/// Source paths still point into trash while markers change. If the restore fails, those
+/// same files can re-establish every marker before the caller releases the lifecycle lock.
+pub fn with_notes_restored<T>(
+    vault_path: &Path,
+    note_paths: &[String],
+    restore: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let mut cleared: Vec<String> = Vec::new();
+    for path in note_paths {
+        if let Err(error) = note_restored(vault_path, path) {
+            return match notes_deleted(vault_path, &cleared) {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(format!(
+                    "{error}. Could not restore earlier Notion deletion markers: {rollback_error}"
+                )),
+            };
+        }
+        cleared.push(path.clone());
+    }
+    match restore() {
+        Ok(value) => Ok(value),
+        Err(error) => match notes_deleted(vault_path, &cleared) {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(format!(
+                "{error}. Could not restore Notion deletion markers: {rollback_error}"
+            )),
+        },
+    }
+}
+
 fn note_id_at(note_path: &str) -> Option<String> {
     let raw = std::fs::read_to_string(note_path).ok()?;
     let (meta, _) = crate::vault::frontmatter::parse_note(&raw, "");
@@ -633,6 +701,18 @@ fn read_last_error(vault: &Path) -> Option<String> {
 mod tests {
     use super::*;
     use crate::notion::map::{EntryState, MapEntry};
+
+    #[tokio::test]
+    async fn synchronous_runtime_drivers_run_outside_the_command_runtime() {
+        let value = run_sync_from_async(|| {
+            let runtime = tokio::runtime::Runtime::new().map_err(|error| error.to_string())?;
+            Ok(runtime.block_on(async { 42 }))
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(value, 42);
+    }
 
     fn vault() -> PathBuf {
         let path = std::env::temp_dir().join(format!("notion-enumerate-{}", uuid::Uuid::new_v4()));
@@ -724,6 +804,35 @@ mod tests {
         assert_eq!(
             map::load(&vault, "id-2").unwrap().state,
             EntryState::Published
+        );
+    }
+
+    #[test]
+    fn a_failed_local_restore_reinstates_every_tombstone() {
+        let vault = vault();
+        let first = write_note(&vault, "Projects", "One", "id-1", "body");
+        let second = write_note(&vault, "Projects", "Two", "id-2", "body");
+        map::save(&vault, "id-1", &published_entry("Projects/One.md")).unwrap();
+        map::save(&vault, "id-2", &published_entry("Projects/Two.md")).unwrap();
+        note_deleted(&vault, first.to_str().unwrap()).unwrap();
+        note_deleted(&vault, second.to_str().unwrap()).unwrap();
+        let paths = vec![
+            first.to_string_lossy().to_string(),
+            second.to_string_lossy().to_string(),
+        ];
+
+        let result = with_notes_restored(&vault, &paths, || {
+            Err::<(), _>("the local restore failed".to_string())
+        });
+
+        assert_eq!(result.unwrap_err(), "the local restore failed");
+        assert_eq!(
+            map::load(&vault, "id-1").unwrap().state,
+            EntryState::Deleted
+        );
+        assert_eq!(
+            map::load(&vault, "id-2").unwrap().state,
+            EntryState::Deleted
         );
     }
 

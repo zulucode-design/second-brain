@@ -1045,6 +1045,9 @@ pub fn delete_notebook(state: State<'_, AppState>, path: String) -> Result<(), S
         .note_mutation
         .lock()
         .map_err(|error| error.to_string())?;
+    let _notion_deletions = state.notion_deletions.try_lock().map_err(|_| {
+        "Notion is processing deletions; try the notebook deletion again in a moment".to_string()
+    })?;
     let vault_path = {
         let config = state.config.lock().map_err(|e| e.to_string())?;
         config
@@ -1404,6 +1407,9 @@ pub fn delete_note(state: State<'_, AppState>, path: String) -> Result<(), Strin
         .note_mutation
         .lock()
         .map_err(|error| error.to_string())?;
+    let _notion_deletions = state.notion_deletions.try_lock().map_err(|_| {
+        "Notion is processing deletions; try the note deletion again in a moment".to_string()
+    })?;
     let config = state.config.lock().map_err(|e| e.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
 
@@ -2174,6 +2180,9 @@ pub fn restore_note(state: State<'_, AppState>, trash_path: String) -> Result<St
         .note_mutation
         .lock()
         .map_err(|error| error.to_string())?;
+    let _notion_deletions = state.notion_deletions.try_lock().map_err(|_| {
+        "Notion is processing deletions; try restoring the note again in a moment".to_string()
+    })?;
     let vault_path = {
         let config = state.config.lock().map_err(|e| e.to_string())?;
         config
@@ -2182,7 +2191,11 @@ pub fn restore_note(state: State<'_, AppState>, trash_path: String) -> Result<St
             .ok_or("No active vault")?
             .clone()
     };
-    let restored = match operations::restore_note(&vault_path, &trash_path) {
+    let restored = match crate::notion::commands::with_notes_restored(
+        std::path::Path::new(&vault_path),
+        std::slice::from_ref(&trash_path),
+        || operations::restore_note(&vault_path, &trash_path),
+    ) {
         Ok(restored) => restored,
         Err(error) => {
             record_transaction_repair_if_needed(
@@ -2195,10 +2208,6 @@ pub fn restore_note(state: State<'_, AppState>, trash_path: String) -> Result<St
             return Err(error);
         }
     };
-    // Restored before the publisher acted on the tombstone: the page was never touched, so
-    // clearing the tombstone costs nothing and keeps the page's identity.
-    crate::notion::commands::note_restored(std::path::Path::new(&vault_path), &restored)?;
-
     index_note_now(&state, &vault_path, &restored)?;
     queue_semantic_note_now(&state, &restored);
     Ok(restored)
@@ -2210,6 +2219,9 @@ pub fn restore_notebook(state: State<'_, AppState>, trash_path: String) -> Resul
         .note_mutation
         .lock()
         .map_err(|error| error.to_string())?;
+    let _notion_deletions = state.notion_deletions.try_lock().map_err(|_| {
+        "Notion is processing deletions; try restoring the notebook again in a moment".to_string()
+    })?;
     let vault_path = {
         let config = state.config.lock().map_err(|e| e.to_string())?;
         config
@@ -2218,9 +2230,12 @@ pub fn restore_notebook(state: State<'_, AppState>, trash_path: String) -> Resul
             .ok_or("No active vault")?
             .clone()
     };
-    let restored = operations::restore_notebook(&vault_path, &trash_path)?;
-    let note_paths = operations::notebook_note_paths(&vault_path, &restored)?;
-    crate::notion::commands::notes_restored(std::path::Path::new(&vault_path), &note_paths)?;
+    let note_paths = operations::trash_notebook_note_paths(&vault_path, &trash_path)?;
+    let restored = crate::notion::commands::with_notes_restored(
+        std::path::Path::new(&vault_path),
+        &note_paths,
+        || operations::restore_notebook(&vault_path, &trash_path),
+    )?;
     reconcile_semantic_now(&state, &vault_path);
     Ok(restored)
 }

@@ -125,19 +125,23 @@ pub async fn run(
     vault_path: &Path,
     client: &NotionClient,
     registry: &DatabaseRegistry,
+    deletion_guard: &tokio::sync::Mutex<()>,
     snapshots: Vec<NoteSnapshot>,
     mut read: impl FnMut(&NoteSnapshot) -> Result<NoteSource, String>,
     mut report: impl FnMut(Progress),
 ) -> Result<Summary, NotionError> {
     let mut summary = Summary::default();
 
-    // Deletions first. A page whose note is gone should not linger while a long first sync
-    // works through everything else, and trashing is cheap.
+    // A local delete/restore transaction holds the same guard. Keep it only while consuming
+    // tombstones, not through the whole upload: the latter can take minutes on a first run.
+    let tombstone_guard = deletion_guard.lock().await;
+
+    // Deletions first. Read the map only after taking the guard: a restore may have cleared
+    // a tombstone while this run was waiting, and a stale pre-lock snapshot could trash it.
     let outstanding = map::all(vault_path);
     let tombstones = plan::tombstone_actions(&outstanding);
     let total = tombstones.len() + snapshots.len();
     let mut done = 0;
-
     for action in tombstones {
         if let Action::Trash { note_id, page_id } = action {
             match client.trash_page(&page_id).await {
@@ -161,6 +165,7 @@ pub async fn run(
         done += 1;
         report(Progress { done, total });
     }
+    drop(tombstone_guard);
 
     // First pass: decide everything, executing nothing. Deciding first is what lets a run
     // check its creates against Notion in one sweep before any of them happen.
@@ -579,6 +584,7 @@ mod tests {
             vault_path,
             client,
             registry,
+            &tokio::sync::Mutex::new(()),
             snapshots,
             move |snapshot| {
                 by_id
@@ -938,6 +944,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_restore_waiting_ahead_of_the_publisher_cancels_the_tombstone() {
+        let vault = vault();
+        map::save(
+            &vault,
+            "kept",
+            &MapEntry {
+                state: EntryState::Deleted,
+                page_id: Some("page-9".into()),
+                data_source_id: Some("ds-Projects".into()),
+                content_hash: Some("h".into()),
+                source_mtime: Some(1),
+                relative_path: Some("Projects/kept.md".into()),
+                last_error: None,
+            },
+        )
+        .unwrap();
+        let deletion_guard = tokio::sync::Mutex::new(());
+        let local_transaction = deletion_guard.lock().await;
+        let (base, requests) = scripted_server(vec![("200 OK", r#"{"id":"page-9"}"#)]);
+        let notion = client(&base);
+        let databases = registry();
+        let future = run(
+            &vault,
+            &notion,
+            &databases,
+            &deletion_guard,
+            vec![],
+            |_| Err("no note should be read".to_string()),
+            |_| {},
+        );
+        tokio::pin!(future);
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), future.as_mut())
+                .await
+                .is_err(),
+            "the publisher must wait while a local lifecycle transaction owns the guard"
+        );
+        map::restore(&vault, "kept").unwrap();
+        drop(local_transaction);
+
+        let summary = future.await.unwrap();
+        assert_eq!(summary.trashed, 0);
+        assert_eq!(notion.requests_sent(), 0);
+        assert!(requests.try_iter().next().is_none());
+        assert_eq!(
+            map::load(&vault, "kept").unwrap().state,
+            EntryState::Published
+        );
+    }
+
+    #[tokio::test]
     async fn a_page_already_gone_from_notion_clears_its_tombstone_rather_than_retrying_forever() {
         let vault = vault();
         map::save(
@@ -1151,6 +1209,7 @@ mod tests {
             &vault,
             &client(&base),
             &registry(),
+            &tokio::sync::Mutex::new(()),
             vec![snapshot],
             |_| {
                 reads += 1;
@@ -1179,6 +1238,7 @@ mod tests {
             &vault,
             &client(&base),
             &registry(),
+            &tokio::sync::Mutex::new(()),
             vec![unreadable, readable_snapshot],
             |snapshot| {
                 if snapshot.note_id == "fine" {

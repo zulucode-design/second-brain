@@ -170,6 +170,7 @@ async fn publish_once(vault: &Path, client: &NotionClient, registry: &DatabaseRe
         vault,
         client,
         registry,
+        &tokio::sync::Mutex::new(()),
         snapshots,
         |snapshot| {
             prepared

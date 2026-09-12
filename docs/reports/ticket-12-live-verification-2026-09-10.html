@@ -532,11 +532,23 @@ re-rendered the panel, is refuted: the watcher skips
 <code>.helixnotes</code>. The placement change is kept because it
 matches the Sync tab, not because it is known to fix anything. The cause
 is unknown.</p>
-<h2 id="not-covered">Not covered</h2>
-<ul>
-<li><strong>The packaged app.</strong> Everything above ran from a test
-binary or a dev build.</li>
-</ul>
+<h2 id="packaged-app-verification--2026-09-11">Packaged app verification — 2026-09-11</h2>
+<p>A fresh unsigned Debian package was extracted into an isolated test directory and launched
+with isolated configuration, data, and vault paths. Its desktop entry passed the package
+verifier, as did the fresh RPM artifact. The packaged app loaded the Notion credential through
+the #56 OS-keyring boundary, listed the shared parent page, created all four PARA databases,
+created an <code>Untitled</code> note in Projects through the app UI, and published it through
+<strong>Publish Now</strong>.</p>
+<p>The machine-local run record reported <code>created: 1</code>, <code>failed: 0</code>. A direct
+Notion API read then confirmed page <code>3d9c83f7-424c-8185-9ec6-cc90ea5a3b92</code> was live,
+carried local note id <code>cb5ed259-eff9-4d11-971c-90d96d31ae38</code>, and belonged to the
+Projects database and data source recorded by the app. All four disposable databases were
+subsequently moved to Notion trash, and the temporary keyring entry was deleted.</p>
+<p>The first packaged Connect attempt exposed a Linux-only panic: the synchronous Secret Service
+backend tried to drive its own Tokio runtime from Tauri's async command worker. Credential commits
+from async Notion commands now run on the blocking pool, and a regression test proves a nested
+runtime driver succeeds at that boundary. The packaged workflow was then repeated from the fresh
+artifact without that panic.</p>
 <h2 id="credential-storage-integration--2026-09-11">Credential-storage
 integration — 2026-09-11</h2>
 <p>The original click-through branch temporarily stored the Notion token
@@ -580,9 +592,13 @@ and clears them after notebook restore. A failed create-intent write now stops
 before the page-create request. Focused regression tests cover each boundary.</p>
 <p>The same source then produced fresh unsigned Debian and RPM artifacts with
 the exact package command used by CI. Both artifacts passed the repository's
-installed desktop-entry verifier. This proves the release source compiles and
-packages; it does not replace the still-open packaged-app interaction against
-a disposable Notion workspace.</p>
+installed desktop-entry verifier.</p>
+<p>A final Spec pass identified races between local delete/restore transactions and publisher
+tombstone consumption. Both sides now share a lifecycle guard, the publisher reads map state only
+after acquiring it, and restore clears markers while the notes still exist in trash so failures can
+be rolled back. The packaged Connect panic described above was fixed at the same boundary. Final
+local verification passed 476 Rust tests (6 environment-dependent tests ignored), 44 JavaScript
+tests, Svelte diagnostics, strict Clippy, formatting, and the production web build.</p>
 <h2 id="incidental">Incidental</h2>
 <p>One pre-existing test,
 <code>vault::relocation::tests::killing_the_app_mid_notebook_move_still_recovers</code>,
