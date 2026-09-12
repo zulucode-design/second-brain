@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ticket #61 — atomic directory-move manifest review</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+      body { max-width: 900px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.55; }
+      h1, h2 { color: #f9fafb; }
+      code { background: #1f2937; padding: .12rem .3rem; border-radius: .25rem; }
+      .status { display: inline-block; border-radius: 999px; padding: .2rem .65rem; font-weight: 700; }
+      .pass { background: #064e3b; color: #a7f3d0; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { text-align: left; border-bottom: 1px solid #374151; padding: .65rem; vertical-align: top; }
+    </style>
+  </head>
+  <body>
+    <p><span class="status pass">Review passed</span></p>
+    <h1>Ticket #61 — atomic directory-move manifests</h1>
+    <p>Reviewed 2026-09-12 against
+      <code>origin/main...fix/61-atomic-directory-manifest</code>, with
+      <code>origin/main</code> fixed at
+      <code>c401f36df92bd60494a8a69574ef9afbab8be8c6</code> and implementation
+      commit <code>3a8fa3a</code>.</p>
+
+    <h2>Diagnosis and remediation</h2>
+    <p>The final manifest filename used to become visible when the file was still
+      empty. A process killed before <code>write_all</code> completed therefore left
+      an apparent recovery instruction that JSON parsing could not read. Every later
+      vault open reported repair and skipped category reconciliation.</p>
+    <p>The writer now creates <code>directory-move.json.tmp</code>, writes and syncs
+      the complete JSON there, renames it to <code>directory-move.json</code>, and
+      syncs the transaction directory. Only the final name authorizes recovery.
+      Startup removes an orphan temporary file because it never authorized a move.</p>
+    <p>For vaults affected by older binaries, startup discards a zero-byte final
+      manifest. Under the old write order, no directory rename could have started
+      before that manifest gained bytes. Nonempty malformed manifests still fail
+      loudly and remain on disk rather than being guessed away.</p>
+
+    <h2>Verification</h2>
+    <table>
+      <thead><tr><th>Check</th><th>Status</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Deterministic regression</td><td><span class="status pass">Passed</span></td><td><code>startup_recovery_discards_a_legacy_empty_directory_manifest</code> reproduced the EOF repair failure before the fix and passed afterward.</td></tr>
+        <tr><td>Corruption boundary</td><td><span class="status pass">Passed</span></td><td><code>startup_recovery_preserves_a_nonempty_corrupt_directory_manifest</code> confirms that only the known zero-byte legacy state is discarded.</td></tr>
+        <tr><td>Crash stress</td><td><span class="status pass">Passed</span></td><td><code>pnpm test:rust</code> passed 50 consecutive full-suite runs on Linux. Each run executed <code>killing_the_app_mid_notebook_move_still_recovers</code> with a real SIGKILL. Every run passed 481 tests, ignored 6 environment-dependent tests, and failed 0.</td></tr>
+        <tr><td>Project verification</td><td><span class="status pass">Passed</span></td><td><code>pnpm verify</code>: Svelte diagnostics reported 0 errors and 0 warnings; JavaScript passed 44 tests; Rust passed 481 tests with 6 ignored; formatting and strict Clippy passed; the production build completed.</td></tr>
+        <tr><td>Standards review</td><td><span class="status pass">Passed</span></td><td>No implementation violations or code smells. The review requested this durable evidence and the update to the report where #61 was discovered; both are included here.</td></tr>
+        <tr><td>Spec review</td><td><span class="status pass">Passed</span></td><td>No implementation discrepancy or scope creep. The review requested a committed record of the required 50-run loop; this report supplies it.</td></tr>
+      </tbody>
+    </table>
+  </body>
+</html>
