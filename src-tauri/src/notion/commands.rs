@@ -26,7 +26,7 @@ use super::client::{NotionClient, NotionError, VisiblePage};
 use super::config::{self, DatabaseRegistry, NotionSettings};
 use super::map;
 use super::plan::NoteSnapshot;
-use super::publish::{self, NoteSource, Progress, Summary};
+use super::publish::{self, NoteSource, Progress, RunSources, Summary};
 use crate::state::AppState;
 use crate::types::AppConfig;
 use crate::vault::para::ParaCategory;
@@ -364,10 +364,6 @@ async fn publish_once(
     client: &NotionClient,
     vault: &Path,
 ) -> Result<Summary, NotionError> {
-    // Acquire before enumeration: every snapshot remains valid until its Notion request and
-    // durable map transition finish. Delete/restore commands fail fast while a run owns it.
-    let state = app.state::<AppState>();
-    let lifecycle_guard = state.notion_deletions.lock().await;
     let registry = config::load_registry(vault);
     let (snapshots, mut prepared) = enumerate(vault);
 
@@ -375,12 +371,19 @@ async fn publish_once(
         vault,
         client,
         &registry,
-        lifecycle_guard,
-        snapshots,
-        |snapshot| {
-            prepared
-                .remove(&snapshot.note_id)
-                .ok_or_else(|| format!("{} could not be read", snapshot.relative_path))
+        &app.state::<AppState>().notion_deletions,
+        RunSources {
+            snapshots,
+            read: |snapshot: &NoteSnapshot| {
+                prepared
+                    .remove(&snapshot.note_id)
+                    .ok_or_else(|| format!("{} could not be read", snapshot.relative_path))
+            },
+            source_is_current: |note: &NoteSource| {
+                publish::read_note(vault, &note.snapshot.relative_path)
+                    .map(|(meta, _, _)| meta.id == note.snapshot.note_id)
+                    .unwrap_or(false)
+            },
         },
         |progress: Progress| {
             if let Ok(mut current) = app.state::<AppState>().notion_progress.lock() {

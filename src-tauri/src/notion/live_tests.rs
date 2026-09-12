@@ -26,7 +26,8 @@ use super::client::NotionClient;
 use super::commands::{enumerate, note_deleted, setup_databases};
 use super::config::{DatabaseRegistry, API_VERSION};
 use super::map::{self, MapEntry};
-use super::publish::{self, Summary};
+use super::plan::NoteSnapshot;
+use super::publish::{self, NoteSource, Summary};
 use crate::vault::para::ParaCategory;
 
 /// Enough notes that a first sync runs for most of a minute at the paced rate, which is the
@@ -165,19 +166,20 @@ fn body_of(index: usize) -> String {
 }
 
 async fn publish_once(vault: &Path, client: &NotionClient, registry: &DatabaseRegistry) -> Summary {
-    let lifecycle = tokio::sync::Mutex::new(());
-    let lifecycle_guard = lifecycle.lock().await;
     let (snapshots, mut prepared) = enumerate(vault);
     publish::run(
         vault,
         client,
         registry,
-        lifecycle_guard,
-        snapshots,
-        |snapshot| {
-            prepared
-                .remove(&snapshot.note_id)
-                .ok_or_else(|| "not prepared".to_string())
+        &tokio::sync::Mutex::new(()),
+        publish::RunSources {
+            snapshots,
+            read: |snapshot: &NoteSnapshot| {
+                prepared
+                    .remove(&snapshot.note_id)
+                    .ok_or_else(|| "not prepared".to_string())
+            },
+            source_is_current: |_: &NoteSource| true,
         },
         |_| {},
     )

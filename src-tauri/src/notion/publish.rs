@@ -92,6 +92,16 @@ pub struct NoteSource {
     pub body: String,
 }
 
+/// The enumerated notes plus the two deferred filesystem reads the publisher needs.
+///
+/// Keeping these together makes the hot path's contract explicit: a prepared note is read
+/// once for planning, then its live source is checked again immediately before side effects.
+pub(crate) struct RunSources<Read, SourceIsCurrent> {
+    pub snapshots: Vec<NoteSnapshot>,
+    pub read: Read,
+    pub source_is_current: SourceIsCurrent,
+}
+
 pub fn content_hash(raw: &str) -> String {
     let digest = Sha256::digest(raw.as_bytes());
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -121,26 +131,30 @@ pub fn read_note(
 /// `read` is called only for notes that survive the modification-time gate, which is the
 /// point of taking an enumeration rather than the notes themselves: a caller that had to
 /// read every note to call this would have paid the cost the gate exists to avoid.
-/// The caller must acquire `lifecycle_guard` before enumerating those snapshots. Keeping it
-/// through the whole run prevents a local delete from racing stale create/update work and
-/// either orphaning a page or overwriting the deletion tombstone in the durable map.
-pub async fn run(
+/// Local lifecycle commands share `deletion_guard` with each Notion side effect. A short
+/// per-note critical section rechecks the source and map state immediately before it writes
+/// remote or durable state, so a delete cannot race stale create/update work without making a
+/// long initial sync block the rest of the note UI.
+pub async fn run<Read, SourceIsCurrent>(
     vault_path: &Path,
     client: &NotionClient,
     registry: &DatabaseRegistry,
-    _lifecycle_guard: tokio::sync::MutexGuard<'_, ()>,
-    snapshots: Vec<NoteSnapshot>,
-    mut read: impl FnMut(&NoteSnapshot) -> Result<NoteSource, String>,
+    deletion_guard: &tokio::sync::Mutex<()>,
+    mut sources: RunSources<Read, SourceIsCurrent>,
     mut report: impl FnMut(Progress),
-) -> Result<Summary, NotionError> {
+) -> Result<Summary, NotionError>
+where
+    Read: for<'a> FnMut(&'a NoteSnapshot) -> Result<NoteSource, String>,
+    SourceIsCurrent: for<'a> FnMut(&'a NoteSource) -> bool,
+{
     let mut summary = Summary::default();
 
-    // Deletions first. The caller acquired the lifecycle guard before enumeration, so a
-    // restore cannot clear a tombstone and a delete cannot invalidate these snapshots until
-    // every page operation and its durable map transition have finished.
+    // Deletions first. Read the map only after taking the guard: a restore may have cleared
+    // a tombstone while this run was waiting, and a stale pre-lock snapshot could trash it.
+    let tombstone_guard = deletion_guard.lock().await;
     let outstanding = map::all(vault_path);
     let tombstones = plan::tombstone_actions(&outstanding);
-    let total = tombstones.len() + snapshots.len();
+    let total = tombstones.len() + sources.snapshots.len();
     let mut done = 0;
     for action in tombstones {
         if let Action::Trash { note_id, page_id } = action {
@@ -165,10 +179,11 @@ pub async fn run(
         done += 1;
         report(Progress { done, total });
     }
+    drop(tombstone_guard);
     // First pass: decide everything, executing nothing. Deciding first is what lets a run
     // check its creates against Notion in one sweep before any of them happen.
     let mut planned: Vec<(Action, NoteSource)> = Vec::new();
-    for snapshot in snapshots {
+    for snapshot in sources.snapshots {
         let note_id = snapshot.note_id.clone();
         let entry = map::load(vault_path, &note_id);
 
@@ -180,7 +195,7 @@ pub async fn run(
             continue;
         }
 
-        let note = match read(&snapshot) {
+        let note = match (sources.read)(&snapshot) {
             Ok(note) => note,
             Err(error) => {
                 // A note that cannot be read is this note's problem, not the run's — it may
@@ -231,6 +246,16 @@ pub async fn run(
 
     for (action, note) in planned {
         let note_id = note.snapshot.note_id.clone();
+        let lifecycle_guard = deletion_guard.lock().await;
+        if !is_still_publishable(vault_path, &note, (sources.source_is_current)(&note)) {
+            // A delete, restore, or move won the interval since enumeration. Do not let this
+            // stale prepared note recreate a page or overwrite a deletion marker; the next
+            // poll will enumerate its current state.
+            drop(lifecycle_guard);
+            done += 1;
+            report(Progress { done, total });
+            continue;
+        }
         match execute(vault_path, client, registry, &action, &note).await {
             Ok(()) => tally(&mut summary, &action),
             Err(error) if error.is_fatal() => return Err(error),
@@ -239,6 +264,7 @@ pub async fn run(
                 summary.failed += 1;
             }
         }
+        drop(lifecycle_guard);
 
         done += 1;
         report(Progress { done, total });
@@ -256,6 +282,22 @@ pub async fn run(
         client.requests_sent(),
     );
     Ok(summary)
+}
+
+/// Return false when an app lifecycle operation has invalidated a prepared snapshot.
+///
+/// This runs while the shared guard is held. The path-and-id check catches a deleted or moved
+/// file even when it never had a map entry; the map check catches a published note whose
+/// deletion left a tombstone while the publisher was preparing older work.
+fn is_still_publishable(vault_path: &Path, note: &NoteSource, source_is_current: bool) -> bool {
+    source_is_current
+        && !matches!(
+            map::load(vault_path, &note.snapshot.note_id),
+            Some(MapEntry {
+                state: EntryState::Deleted,
+                ..
+            })
+        )
 }
 
 /// Every page this app has published, by note id, as `(page id, data source id)`.
@@ -578,18 +620,19 @@ mod tests {
             .into_iter()
             .map(|n| (n.snapshot.note_id.clone(), n))
             .collect();
-        let lifecycle = tokio::sync::Mutex::new(());
-        let lifecycle_guard = lifecycle.lock().await;
         run(
             vault_path,
             client,
             registry,
-            lifecycle_guard,
-            snapshots,
-            move |snapshot| {
-                by_id
-                    .remove(&snapshot.note_id)
-                    .ok_or_else(|| "no such note".to_string())
+            &tokio::sync::Mutex::new(()),
+            RunSources {
+                snapshots,
+                read: move |snapshot: &NoteSnapshot| {
+                    by_id
+                        .remove(&snapshot.note_id)
+                        .ok_or_else(|| "no such note".to_string())
+                },
+                source_is_current: |_: &NoteSource| true,
             },
             report,
         )
@@ -965,19 +1008,18 @@ mod tests {
         let (base, requests) = scripted_server(vec![("200 OK", r#"{"id":"page-9"}"#)]);
         let notion = client(&base);
         let databases = registry();
-        let future = async {
-            let lifecycle_guard = deletion_guard.lock().await;
-            run(
-                &vault,
-                &notion,
-                &databases,
-                lifecycle_guard,
-                vec![],
-                |_| Err("no note should be read".to_string()),
-                |_| {},
-            )
-            .await
-        };
+        let future = run(
+            &vault,
+            &notion,
+            &databases,
+            &deletion_guard,
+            RunSources {
+                snapshots: vec![],
+                read: |_: &NoteSnapshot| Err("no note should be read".to_string()),
+                source_is_current: |_: &NoteSource| true,
+            },
+            |_| {},
+        );
         tokio::pin!(future);
 
         assert!(
@@ -1010,18 +1052,26 @@ mod tests {
         let snapshot = published.snapshot.clone();
         let mut published = Some(published);
 
-        let lifecycle_guard = deletion_guard.lock().await;
         let summary = run(
             &vault,
             &notion,
             &databases,
-            lifecycle_guard,
-            vec![snapshot],
-            |_| published.take().ok_or_else(|| "already read".to_string()),
+            &deletion_guard,
+            RunSources {
+                snapshots: vec![snapshot],
+                read: |_: &NoteSnapshot| published.take().ok_or_else(|| "already read".to_string()),
+                source_is_current: |_: &NoteSource| {
+                    assert!(
+                        deletion_guard.try_lock().is_err(),
+                        "a delete must not start while stale publish work can still finalize map state"
+                    );
+                    true
+                },
+            },
             |_| {
                 assert!(
-                    deletion_guard.try_lock().is_err(),
-                    "a delete must not start while stale publish work can still finalize map state"
+                    deletion_guard.try_lock().is_ok(),
+                    "the lifecycle guard must be released once this mapping is final"
                 );
             },
         )
@@ -1032,6 +1082,43 @@ mod tests {
         assert!(
             deletion_guard.try_lock().is_ok(),
             "the lifecycle guard must be released when publishing finishes"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_deleted_snapshot_never_creates_an_orphan_page() {
+        // The source-check closure models a deletion that landed after enumeration and
+        // planning but before this note's per-note lifecycle transaction began.
+        let vault = vault();
+        let deletion_guard = tokio::sync::Mutex::new(());
+        let (base, requests) = creating_server(vec![]);
+        let notion = client(&base);
+        let databases = registry();
+        let published = note("note-1", ParaCategory::Projects, "body");
+        let snapshot = published.snapshot.clone();
+        let mut published = Some(published);
+
+        let summary = run(
+            &vault,
+            &notion,
+            &databases,
+            &deletion_guard,
+            RunSources {
+                snapshots: vec![snapshot],
+                read: |_: &NoteSnapshot| published.take().ok_or_else(|| "already read".to_string()),
+                source_is_current: |_: &NoteSource| false,
+            },
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(summary.created, 0);
+        let sent: Vec<String> = requests.try_iter().collect();
+        assert!(
+            sent.iter()
+                .all(|request| !request.starts_with("POST /pages ")),
+            "a deleted local note must not leave an unreachable Notion page behind"
         );
     }
 
@@ -1244,17 +1331,19 @@ mod tests {
         let (base, _r) = scripted_server(vec![]);
         let snapshot = note("note-1", ParaCategory::Projects, "body").snapshot;
         let mut reads = 0;
-        let lifecycle = tokio::sync::Mutex::new(());
 
         let summary = run(
             &vault,
             &client(&base),
             &registry(),
-            lifecycle.lock().await,
-            vec![snapshot],
-            |_| {
-                reads += 1;
-                Err("the file should never have been opened".to_string())
+            &tokio::sync::Mutex::new(()),
+            RunSources {
+                snapshots: vec![snapshot],
+                read: |_: &NoteSnapshot| {
+                    reads += 1;
+                    Err("the file should never have been opened".to_string())
+                },
+                source_is_current: |_: &NoteSource| true,
             },
             |_| {},
         )
@@ -1274,20 +1363,22 @@ mod tests {
         let readable = note("fine", ParaCategory::Projects, "body");
         let readable_snapshot = readable.snapshot.clone();
         let mut readable = Some(readable);
-        let lifecycle = tokio::sync::Mutex::new(());
 
         let summary = run(
             &vault,
             &client(&base),
             &registry(),
-            lifecycle.lock().await,
-            vec![unreadable, readable_snapshot],
-            |snapshot| {
-                if snapshot.note_id == "fine" {
-                    readable.take().ok_or_else(|| "already taken".to_string())
-                } else {
-                    Err("permission denied".to_string())
-                }
+            &tokio::sync::Mutex::new(()),
+            RunSources {
+                snapshots: vec![unreadable, readable_snapshot],
+                read: |snapshot: &NoteSnapshot| {
+                    if snapshot.note_id == "fine" {
+                        readable.take().ok_or_else(|| "already taken".to_string())
+                    } else {
+                        Err("permission denied".to_string())
+                    }
+                },
+                source_is_current: |_: &NoteSource| true,
             },
             |_| {},
         )
