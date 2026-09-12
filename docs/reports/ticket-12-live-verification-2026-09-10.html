@@ -616,6 +616,13 @@ vault is stuck: every open fails recovery, shows a repair warning the
 user can't clear, and skips category reconciliation, until the file is
 deleted by hand. Filed as <strong>#61</strong>. Nothing on this branch
 touches relocation.</p>
+<p><strong>Resolved 2026-09-12:</strong> ticket #61 now writes and syncs the
+manifest under a private temporary name, then renames it to
+<code>directory-move.json</code>. Startup also discards the zero-byte final
+manifests left by older binaries while preserving nonempty corrupt manifests for
+repair. The full Rust suite passed 50 consecutive runs, including the real
+SIGKILL recovery test in every run. See
+<a href="ticket-61-review-2026-09-12.html">the ticket #61 review</a>.</p>
 <h2 id="reproduction">Reproduction</h2>
 <pre class="text"><code>NOTION_TEST_PARENT_PAGE=&lt;page id&gt; pnpm test:rust notion::live_tests -- --ignored --nocapture</code></pre>
 <p>The token is read from

@@ -25,6 +25,9 @@ const CLAIMED_DIR: &str = "claimed";
 /// The manifest whose presence is what authorizes replaying a directory move.
 pub(crate) const DIRECTORY_MANIFEST: &str = "directory-move.json";
 
+/// Private name used until a directory-move manifest is complete and durable.
+const DIRECTORY_MANIFEST_TEMP: &str = "directory-move.json.tmp";
+
 #[derive(Clone)]
 pub struct DirectoryRewrite {
     pub relative_path: PathBuf,
@@ -288,9 +291,21 @@ pub fn recover_directory_relocations(vault_root: &Path) -> Vec<DirectoryRecovery
             // Killed after reserving the directory but before the manifest became durable,
             // so no move was ever authorized and there is nothing to replay. Discard it,
             // or these accumulate for the life of the vault. `remove_dir` refuses to touch
-            // a non-empty directory, so a half-written transaction is left for inspection
-            // rather than deleted.
+            // a non-empty directory, so unknown contents are left for inspection rather
+            // than deleted. The known temporary manifest is safe to remove: its private
+            // name never authorizes recovery.
+            let _ = fs::remove_file(transaction_dir.join(DIRECTORY_MANIFEST_TEMP));
             let _ = fs::remove_dir(&transaction_dir);
+            continue;
+        }
+        if manifest_path
+            .metadata()
+            .is_ok_and(|metadata| metadata.len() == 0)
+        {
+            // Before #61 the final manifest path was created before its bytes were
+            // written. A process killed in that window had not started the directory
+            // rename, so this zero-byte legacy residue authorizes no recovery work.
+            let _ = cleanup_directory_manifest(&transaction_dir);
             continue;
         }
         let mut affected_paths = vec![manifest_path.to_string_lossy().to_string()];
@@ -1097,15 +1112,27 @@ fn write_directory_manifest(
     manifest: &DirectoryMoveManifest,
 ) -> Result<(), String> {
     let path = transaction_dir.join(DIRECTORY_MANIFEST);
+    let temporary_path = transaction_dir.join(DIRECTORY_MANIFEST_TEMP);
     let bytes = serde_json::to_vec(manifest).map_err(|error| error.to_string())?;
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&path)
+        .open(&temporary_path)
         .map_err(|error| format!("Could not reserve directory-move manifest: {error}"))?;
-    file.write_all(&bytes)
-        .and_then(|_| file.sync_all())
-        .map_err(|error| format!("Could not persist directory-move manifest: {error}"))?;
+    if let Err(error) = file.write_all(&bytes).and_then(|_| file.sync_all()) {
+        drop(file);
+        let _ = fs::remove_file(&temporary_path);
+        return Err(format!(
+            "Could not persist directory-move manifest: {error}"
+        ));
+    }
+    drop(file);
+    if let Err(error) = fs::rename(&temporary_path, &path) {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(format!(
+            "Could not publish directory-move manifest: {error}"
+        ));
+    }
     sync_directory(transaction_dir)
         .map_err(|error| format!("Could not sync directory-move manifest: {error}"))
 }
@@ -1822,6 +1849,51 @@ mod tests {
         );
         let manifests = crate::machine_local::relocation_dir(&root).unwrap();
         assert!(fs::read_dir(manifests).unwrap().next().is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// #61: binaries built before manifests were published atomically could be killed
+    /// after creating the final filename but before writing its first byte. The directory
+    /// move had not started, so startup must discard that inert transaction instead of
+    /// leaving the vault permanently blocked on an EOF parse error.
+    #[test]
+    fn startup_recovery_discards_a_legacy_empty_directory_manifest() {
+        let root = vault("empty-directory-manifest");
+        let recovery_root = crate::machine_local::relocation_dir(&root).unwrap();
+        let transaction_dir = recovery_root.join(uuid::Uuid::new_v4().to_string());
+        fs::create_dir(&transaction_dir).unwrap();
+        fs::write(transaction_dir.join(DIRECTORY_MANIFEST), []).unwrap();
+
+        let failures = recover_directory_relocations(&root);
+
+        assert!(failures.is_empty(), "{failures:?}");
+        assert!(
+            !transaction_dir.exists(),
+            "an empty pre-#61 manifest never authorized a directory move"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn startup_recovery_preserves_a_nonempty_corrupt_directory_manifest() {
+        let root = vault("corrupt-directory-manifest");
+        let recovery_root = crate::machine_local::relocation_dir(&root).unwrap();
+        let transaction_dir = recovery_root.join(uuid::Uuid::new_v4().to_string());
+        fs::create_dir(&transaction_dir).unwrap();
+        let manifest_path = transaction_dir.join(DIRECTORY_MANIFEST);
+        fs::write(&manifest_path, b"{").unwrap();
+
+        let failures = recover_directory_relocations(&root);
+
+        assert_eq!(failures.len(), 1);
+        assert!(
+            failures[0]
+                .message
+                .contains("could not parse move manifest"),
+            "{:?}",
+            failures[0]
+        );
+        assert_eq!(fs::read(&manifest_path).unwrap(), b"{");
         fs::remove_dir_all(root).unwrap();
     }
 
