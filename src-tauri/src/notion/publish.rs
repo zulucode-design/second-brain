@@ -121,23 +121,23 @@ pub fn read_note(
 /// `read` is called only for notes that survive the modification-time gate, which is the
 /// point of taking an enumeration rather than the notes themselves: a caller that had to
 /// read every note to call this would have paid the cost the gate exists to avoid.
+/// The caller must acquire `lifecycle_guard` before enumerating those snapshots. Keeping it
+/// through the whole run prevents a local delete from racing stale create/update work and
+/// either orphaning a page or overwriting the deletion tombstone in the durable map.
 pub async fn run(
     vault_path: &Path,
     client: &NotionClient,
     registry: &DatabaseRegistry,
-    deletion_guard: &tokio::sync::Mutex<()>,
+    _lifecycle_guard: tokio::sync::MutexGuard<'_, ()>,
     snapshots: Vec<NoteSnapshot>,
     mut read: impl FnMut(&NoteSnapshot) -> Result<NoteSource, String>,
     mut report: impl FnMut(Progress),
 ) -> Result<Summary, NotionError> {
     let mut summary = Summary::default();
 
-    // A local delete/restore transaction holds the same guard. Keep it only while consuming
-    // tombstones, not through the whole upload: the latter can take minutes on a first run.
-    let tombstone_guard = deletion_guard.lock().await;
-
-    // Deletions first. Read the map only after taking the guard: a restore may have cleared
-    // a tombstone while this run was waiting, and a stale pre-lock snapshot could trash it.
+    // Deletions first. The caller acquired the lifecycle guard before enumeration, so a
+    // restore cannot clear a tombstone and a delete cannot invalidate these snapshots until
+    // every page operation and its durable map transition have finished.
     let outstanding = map::all(vault_path);
     let tombstones = plan::tombstone_actions(&outstanding);
     let total = tombstones.len() + snapshots.len();
@@ -165,8 +165,6 @@ pub async fn run(
         done += 1;
         report(Progress { done, total });
     }
-    drop(tombstone_guard);
-
     // First pass: decide everything, executing nothing. Deciding first is what lets a run
     // check its creates against Notion in one sweep before any of them happen.
     let mut planned: Vec<(Action, NoteSource)> = Vec::new();
@@ -580,11 +578,13 @@ mod tests {
             .into_iter()
             .map(|n| (n.snapshot.note_id.clone(), n))
             .collect();
+        let lifecycle = tokio::sync::Mutex::new(());
+        let lifecycle_guard = lifecycle.lock().await;
         run(
             vault_path,
             client,
             registry,
-            &tokio::sync::Mutex::new(()),
+            lifecycle_guard,
             snapshots,
             move |snapshot| {
                 by_id
@@ -965,15 +965,19 @@ mod tests {
         let (base, requests) = scripted_server(vec![("200 OK", r#"{"id":"page-9"}"#)]);
         let notion = client(&base);
         let databases = registry();
-        let future = run(
-            &vault,
-            &notion,
-            &databases,
-            &deletion_guard,
-            vec![],
-            |_| Err("no note should be read".to_string()),
-            |_| {},
-        );
+        let future = async {
+            let lifecycle_guard = deletion_guard.lock().await;
+            run(
+                &vault,
+                &notion,
+                &databases,
+                lifecycle_guard,
+                vec![],
+                |_| Err("no note should be read".to_string()),
+                |_| {},
+            )
+            .await
+        };
         tokio::pin!(future);
 
         assert!(
@@ -992,6 +996,42 @@ mod tests {
         assert_eq!(
             map::load(&vault, "kept").unwrap().state,
             EntryState::Published
+        );
+    }
+
+    #[tokio::test]
+    async fn the_publisher_keeps_the_lifecycle_guard_until_mapping_is_final() {
+        let vault = vault();
+        let deletion_guard = tokio::sync::Mutex::new(());
+        let (base, _requests) = creating_server(vec![("200 OK", r#"{"id":"page-1"}"#)]);
+        let notion = client(&base);
+        let databases = registry();
+        let published = note("note-1", ParaCategory::Projects, "body");
+        let snapshot = published.snapshot.clone();
+        let mut published = Some(published);
+
+        let lifecycle_guard = deletion_guard.lock().await;
+        let summary = run(
+            &vault,
+            &notion,
+            &databases,
+            lifecycle_guard,
+            vec![snapshot],
+            |_| published.take().ok_or_else(|| "already read".to_string()),
+            |_| {
+                assert!(
+                    deletion_guard.try_lock().is_err(),
+                    "a delete must not start while stale publish work can still finalize map state"
+                );
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(summary.created, 1);
+        assert!(
+            deletion_guard.try_lock().is_ok(),
+            "the lifecycle guard must be released when publishing finishes"
         );
     }
 
@@ -1204,12 +1244,13 @@ mod tests {
         let (base, _r) = scripted_server(vec![]);
         let snapshot = note("note-1", ParaCategory::Projects, "body").snapshot;
         let mut reads = 0;
+        let lifecycle = tokio::sync::Mutex::new(());
 
         let summary = run(
             &vault,
             &client(&base),
             &registry(),
-            &tokio::sync::Mutex::new(()),
+            lifecycle.lock().await,
             vec![snapshot],
             |_| {
                 reads += 1;
@@ -1233,12 +1274,13 @@ mod tests {
         let readable = note("fine", ParaCategory::Projects, "body");
         let readable_snapshot = readable.snapshot.clone();
         let mut readable = Some(readable);
+        let lifecycle = tokio::sync::Mutex::new(());
 
         let summary = run(
             &vault,
             &client(&base),
             &registry(),
-            &tokio::sync::Mutex::new(()),
+            lifecycle.lock().await,
             vec![unreadable, readable_snapshot],
             |snapshot| {
                 if snapshot.note_id == "fine" {

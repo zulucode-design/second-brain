@@ -364,6 +364,10 @@ async fn publish_once(
     client: &NotionClient,
     vault: &Path,
 ) -> Result<Summary, NotionError> {
+    // Acquire before enumeration: every snapshot remains valid until its Notion request and
+    // durable map transition finish. Delete/restore commands fail fast while a run owns it.
+    let state = app.state::<AppState>();
+    let lifecycle_guard = state.notion_deletions.lock().await;
     let registry = config::load_registry(vault);
     let (snapshots, mut prepared) = enumerate(vault);
 
@@ -371,7 +375,7 @@ async fn publish_once(
         vault,
         client,
         &registry,
-        &app.state::<AppState>().notion_deletions,
+        lifecycle_guard,
         snapshots,
         |snapshot| {
             prepared

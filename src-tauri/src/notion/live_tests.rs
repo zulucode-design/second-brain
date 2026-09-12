@@ -165,12 +165,14 @@ fn body_of(index: usize) -> String {
 }
 
 async fn publish_once(vault: &Path, client: &NotionClient, registry: &DatabaseRegistry) -> Summary {
+    let lifecycle = tokio::sync::Mutex::new(());
+    let lifecycle_guard = lifecycle.lock().await;
     let (snapshots, mut prepared) = enumerate(vault);
     publish::run(
         vault,
         client,
         registry,
-        &tokio::sync::Mutex::new(()),
+        lifecycle_guard,
         snapshots,
         |snapshot| {
             prepared
