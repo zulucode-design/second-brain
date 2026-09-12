@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ticket #67 — pre-merge review</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+      body { max-width: 900px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.55; }
+      h1, h2 { color: #f9fafb; }
+      code { background: #1f2937; padding: .12rem .3rem; border-radius: .25rem; }
+      .status { display: inline-block; border-radius: 999px; padding: .2rem .65rem; font-weight: 700; }
+      .pass { background: #064e3b; color: #a7f3d0; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { text-align: left; border-bottom: 1px solid #374151; padding: .65rem; vertical-align: top; }
+    </style>
+  </head>
+  <body>
+    <p><span class="status pass">Review passed</span></p>
+    <h1>Ticket #67 — semantic worker offline retry loop</h1>
+    <p>Reviewed 2026-09-12 against <code>origin/main...fix/67-semantic-worker-backoff</code>,
+      with <code>origin/main</code> fixed at <code>8c4e6741d59895060c9cdf55898898d8ca2d51ee</code>
+      and implementation commit <code>088f248bdbee80f2c8efbca52fbdba0f445109e3</code>.</p>
+
+    <h2>Diagnosis and remediation</h2>
+    <p>The retry worker refreshed pending notes through <code>note_changed</code>, which sent a
+      new wake signal after every failed embedding attempt. A red regression test reproduced an
+      early retry before the configured interval. The worker now refreshes durable pending rows
+      without waking itself, enters an absolute cooldown after an unavailable result, and
+      coalesces all external wakes during that cooldown. This also prevents vault reconciliation
+      from producing one offline request per note.</p>
+    <p>The first outage message is logged once. Further failures remain quiet until a valid
+      embedding confirms recovery and resets the outage state.</p>
+
+    <h2>Standards review</h2>
+    <p><span class="status pass">0 findings</span> The initial review identified a timing-test
+      false positive and a boolean status result. The final test synchronizes on the first backend
+      invocation, and a named <code>RetryOutcome</code> now expresses worker state explicitly.
+      Exact-head re-review found no remaining standards or code-smell findings.</p>
+
+    <h2>Spec review</h2>
+    <p><span class="status pass">0 hard findings</span> The initial review found that accumulated
+      reconciliation wakes could still cause a retry burst. The cooldown now enforces at most one
+      attempt per interval and coalesces those wakes. Tests deterministically cover multiple wakes,
+      successive intervals, a confirmed offline attempt, and recovery on a scheduled retry.</p>
+
+    <h2>Verification</h2>
+    <table>
+      <thead><tr><th>Check</th><th>Status</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>TDD regression</td><td><span class="status pass">Passed</span></td><td>Failed before the fix because the worker retried before the configured interval; passes after remediation with synchronized multi-wake assertions.</td></tr>
+        <tr><td>Frontend checks</td><td><span class="status pass">Passed</span></td><td>Svelte: 0 errors and 0 warnings; JavaScript: 44 passed, 0 failed.</td></tr>
+        <tr><td>Rust suite</td><td><span class="status pass">Passed</span></td><td>479 passed, 6 environment-dependent tests ignored, 0 failed through <code>pnpm test:rust</code>.</td></tr>
+        <tr><td>Rust formatting and lint</td><td><span class="status pass">Passed</span></td><td><code>cargo fmt --check</code> and Clippy with warnings denied.</td></tr>
+        <tr><td>Production build</td><td><span class="status pass">Passed</span></td><td>SvelteKit static production build completed successfully.</td></tr>
+        <tr><td>Two-axis review</td><td><span class="status pass">Passed</span></td><td>Standards: 0 findings; Spec: 0 hard findings.</td></tr>
+      </tbody>
+    </table>
+  </body>
+</html>
