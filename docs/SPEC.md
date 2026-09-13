@@ -1,7 +1,7 @@
 # Second Brain — Specification
 
 Status: **v1 implementation in progress**
-Last updated: 2026-09-03
+Last updated: 2026-09-13
 
 A personal knowledge management desktop app implementing Tiago Forte's *Building a Second
 Brain* (BASB) methodology. Forked from [HelixNotes](https://gitlab.com/ArkHost/HelixNotes)
@@ -19,6 +19,22 @@ implements **Capture and Organize only**.
 Distill (highlighting, progressive summarization) and Express (compiling notes into
 outputs) are explicitly deferred to a later milestone. They are not v1 features.
 
+### Delivery milestones
+
+[ADR-0010](adr/0010-separate-the-external-alpha-from-v1-feature-completeness.md) separates
+the first external test release from v1 feature completeness.
+
+| Milestone | Required product contract |
+| --- | --- |
+| **External alpha** | Safe Markdown capture/editing; PARA organization; web clipping and file attachments; keyword and semantic search; explicit-link graph; trash, history, backup/transactional restore; bundled sidecar sync; optional read-only Notion publication; graceful operation without AI or network services. |
+| **v1 feature-complete beta** | Everything in external alpha plus grounded prompt/Q&A (#8), capture-time similarity (#9), semantic graph edges and user-driven link promotion (#10), and voice memo capture/transcription (#11). |
+
+Semantic search is an external-alpha feature and the public retrieval seam for later AI
+features. It includes keyword/semantic mode switching, PARA filtering, durable background
+indexing, visible status and rebuild controls, convergence after every supported mutation,
+and recorded retrieval-quality and latency measurements. Capture, editing, organization,
+and keyword search remain available when the AI backend is unreachable.
+
 ### Content types
 
 | Type | v1 handling |
@@ -27,6 +43,10 @@ outputs) are explicitly deferred to a later milestone. They are not v1 features.
 | Web clippings | Paste a URL; app fetches and stores readable content. No browser extension. |
 | Files / PDFs / images | Stored locally, referenced from notes. |
 | Audio / voice memos | Recorded/imported, transcribed locally via whisper.cpp. |
+
+Audio and voice memos enter the v1 contract at the feature-complete beta milestone. The
+external alpha supports ordinary file attachments but does not claim recording or
+transcription.
 
 ### Out of scope
 
@@ -47,6 +67,21 @@ outputs) are explicitly deferred to a later milestone. They are not v1 features.
 
 Both run the full app natively. The laptop does **not** run its own inference; it calls
 the desktop's AI backend over the network (see §6).
+
+### Supported platform contract
+
+External alpha supports **Windows 11 x86-64** and **Fedora 44 Workstation x86-64** only.
+A newer Fedora release becomes supported after its package and verification matrix pass.
+Linux CI runs inside a pinned Fedora container; its GitHub-hosted Ubuntu host is build
+infrastructure, not a supported user platform. macOS, Android, iOS, and Ubuntu are
+unsupported, and inherited target-specific paths are removed. Responsive narrow-window
+behavior remains as platform-neutral **compact layout**.
+
+Vaults are supported on local filesystems and directly attached drives. A vault inside a
+folder managed by another synchronization product is unsupported because Second Brain's
+bundled sidecar owns synchronization. NAS storage is deferred for post-v1 investigation,
+not rejected. External-alpha performance is verified with 10,000 notes; this is a tested
+baseline rather than an enforced maximum.
 
 ---
 
@@ -195,6 +230,9 @@ Flow:
 4. **AI similarity check runs**: if a semantically similar note already exists, the app
    surfaces it and offers to merge into / edit that note instead of leaving a duplicate
 
+Step 4 is required for v1 feature-complete beta, not external alpha. External-alpha capture
+ends after the note is safely stored and its semantic indexing work is durably queued.
+
 Requires OS-level global hotkey registration on both Windows and Linux.
 
 ---
@@ -251,6 +289,9 @@ control of organization. AI does exactly three things:
 3. **Suggested links** — semantic similarity surfaces candidate connections which the user
    can promote to explicit links (§7)
 
+External alpha exposes semantic retrieval itself. The Q&A, capture-similarity, and
+suggested-link interaction surfaces arrive in v1 feature-complete beta.
+
 ---
 
 ## 7. Graph / mind-map view
@@ -269,6 +310,9 @@ Two visually distinct edge types:
 AI-similarity edges can be **promoted to explicit links** on user confirmation. Promotion
 is always user-driven; the AI proposes, the user disposes.
 
+External alpha renders explicit links only. Similarity edges and promotion are required for
+v1 feature-complete beta.
+
 The graph includes search, and shows connections between the currently-viewed note and
 related notes.
 
@@ -276,7 +320,9 @@ related notes.
 
 ## 8. Sync
 
-> **Revised 2026-09-03 by [ADR-0002](adr/0002-machine-to-machine-sync-notion-becomes-read-only.md).**
+> **Revised 2026-09-03 by [ADR-0002](adr/0002-machine-to-machine-sync-notion-becomes-read-only.md)**
+> and reaffirmed 2026-09-13 by
+> [ADR-0009](adr/0009-reaffirm-bundled-syncthing-sidecar-over-tailscale.md).
 > Notion was previously the sync hub (**Desktop ⟷ Notion ⟷ Laptop**). It no longer is.
 > That topology made attachments single-machine — Notion is text-only and free-tier caps
 > uploads at 5MB — which is the limitation ticket #6 existed to explain to the user.
@@ -294,9 +340,14 @@ to hand.
 
 ### The sync engine is bundled, not written here
 
-Sync is provided by a **bundled engine run as an app-managed sidecar** (Tauri `externalBin`).
+Sync is provided by **Syncthing bundled as an app-managed sidecar** (Tauri `externalBin`).
 The app owns its lifecycle, configuration, and folder scoping. To the user, sync is a toggle
 in Settings: nothing to install, no second application.
+
+Tailscale is a separate, user-installed prerequisite. The app explains how to verify that
+the paired machines can reach each other, but does not install, configure, or supervise
+Tailscale. The Syncthing sidecar uses app-owned configuration and does not adopt or modify a
+separately installed Syncthing instance.
 
 This project does not author the sync engine. Deletion-versus-absence and move detection are
 where file syncers go wrong, and this vault relocates notes between category folders as an
@@ -323,9 +374,14 @@ the vault entirely, so "sync the vault folder" is correct by construction.
 | `.helixnotes/attachments/` | yes — the reason for this revision |
 | `.helixnotes/trash/` | yes — a deletion that does not propagate is a resurrected note |
 | `.helixnotes/history/` | yes |
+| `.helixnotes/staging/` and `.helixnotes/vault_id` | yes |
+| `.helixnotes/notion/` identity registry and maps | yes |
+| Shared vault settings | yes |
 | Search index (Tantivy) | **no** — machine-local, each machine builds its own |
+| Semantic index | **no** — machine-local, each machine builds its own |
 | Relocation/recovery manifests | **no** — sharing in-flight transaction state is a data-loss bug |
 | Per-machine bookkeeping (sync state, repair issues) | **no** |
+| Credentials, backups, and logs | **no** |
 
 ### Settings: machine-local by default
 
@@ -402,12 +458,27 @@ that an attachment which has not yet arrived reads as *not synced yet*, never as
 ## 9. Project conventions
 
 - **Repo**: public on GitHub from day one
+- **Product identity**: **Second Brain** is the only user-facing name; executable and
+  distributable packages use `second-brain`. The stable application identifier is
+  `io.github.zulucodedesign.SecondBrain`.
+- **Release line**: independent from HelixNotes, beginning at `0.1.0-alpha.1`. Upstream
+  changes are integrated by merit, not by adopting upstream version numbers.
+- **Updater**: disabled until Second Brain owns a GitHub release endpoint and signing key
+  and signed updates pass on supported Windows 11 and Fedora packages. The inherited
+  HelixNotes endpoint and key are never used.
 - **License**: AGPL-3.0-or-later, inherited from HelixNotes. Any distributed modified
   version must remain open source. Upstream attribution must be preserved.
 - **Upstream**: `upstream` remote points at `https://gitlab.com/ArkHost/HelixNotes.git`;
   upstream improvements can be merged in.
 - **Verification**: the inherited `pnpm verify` runs typecheck, JS tests, Rust tests,
   clippy, and build. Keep it green.
+
+HelixNotes is a separate product. Second Brain does not automatically import its
+configuration or credentials. Users may explicitly open an existing Markdown vault.
+Migration covers only mixed-name development builds already stored under the Second Brain
+application identifier; it preserves data and credentials, replaces stale inherited launch
+artifacts, and never deletes a vault. See
+[ADR-0011](adr/0011-establish-an-independent-second-brain-product-identity.md).
 
 ---
 
@@ -448,10 +519,13 @@ Carried forward into ticket breakdown — these are unresolved, not settled:
    properties, including the identity/mapping table that links a local file to a Notion
    page ID. Narrower since ADR-0002 — the mapping is needed to *update* pushed pages, not
    to reconcile edits made in Notion.
-4. **Tailscale**: bundled guidance vs. assumed pre-installed by the user. **Load-bearing
-   since ADR-0002** — it is now the transport for sync between machines, not only the route
-   to the AI backend. Sync between machines is unavailable without it.
-5. **Multi-vault support**: inherited, kept, and unused. See §12.
+4. ~~**Tailscale**: bundled guidance vs. assumed pre-installed by the user.~~ — **resolved**
+   by [ADR-0009](adr/0009-reaffirm-bundled-syncthing-sidecar-over-tailscale.md): Tailscale
+   is a user-installed prerequisite; the app provides setup and reachability guidance but
+   does not install or manage it. Sync between machines is unavailable without it.
+5. ~~**Multi-vault support**: inherited, kept, and unused.~~ — **resolved** by
+   [ADR-0012](adr/0012-support-windows-11-and-fedora-with-one-logical-vault.md): each
+   installation configures one logical vault; inherited multi-vault surfaces are removed.
 6. **Conflict-copy UX**: the bundled engine's conflict semantics are inherited (§8). How the
    paired versions are presented, and whether a merge is ever offered rather than a choice,
    is unresolved.
@@ -474,9 +548,12 @@ without an ignore list (§8).
 Only one vault is open at a time: `active_vault` is a single value, and opening a vault
 replaces the active search index.
 
-**Decided 2026-08-23: keep one vault, leave multi-vault support unused.** There will only
-ever be one second brain, so the extra vaults are dead weight rather than a feature. They
-are also harmless, so removing them is not urgent.
+**Decided 2026-09-13: support one logical vault and remove inherited multi-vault surfaces.**
+Each installation configures one vault. The Windows and Fedora machines hold synchronized
+replicas of that same vault. If an inherited configuration has several entries, migration
+keeps the active entry and drops the other configuration references without modifying or
+deleting any referenced directory. See
+[ADR-0012](adr/0012-support-windows-11-and-fedora-with-one-logical-vault.md).
 
 **Rejected: making each category its own vault.** It reads naturally — four categories,
 four containers — but because only one vault is open at a time it would break features
