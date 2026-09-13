@@ -734,6 +734,7 @@ mod tests {
     struct ObservedUnavailableBackend {
         call_started: std::sync::mpsc::Sender<std::time::Instant>,
         release_first_call: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+        first_call_released: std::sync::mpsc::Sender<std::time::Instant>,
     }
 
     struct RecoveringBackend {
@@ -783,6 +784,7 @@ mod tests {
                 release
                     .recv_timeout(std::time::Duration::from_secs(5))
                     .expect("the test should release the first backend call");
+                let _ = self.first_call_released.send(std::time::Instant::now());
             }
             Err("desktop is asleep".to_string())
         }
@@ -1113,12 +1115,14 @@ mod tests {
         );
         let (call_started, call_observed) = std::sync::mpsc::channel();
         let (release_first_call, first_call_release) = std::sync::mpsc::channel();
+        let (first_call_released, release_observed) = std::sync::mpsc::channel();
         let index = Arc::new(
             SemanticIndex::open_at(
                 &root.join("semantic.sqlite3"),
                 Arc::new(ObservedUnavailableBackend {
                     call_started,
                     release_first_call: Mutex::new(Some(first_call_release)),
+                    first_call_released,
                 }),
             )
             .unwrap(),
@@ -1136,8 +1140,10 @@ mod tests {
         for _ in 0..5 {
             index.note_changed(&note).unwrap();
         }
-        let released_at = std::time::Instant::now();
         release_first_call.send(()).unwrap();
+        let released_at = release_observed
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the backend should acknowledge the first call's release");
 
         let second_call = call_observed
             .recv_timeout(std::time::Duration::from_secs(5))

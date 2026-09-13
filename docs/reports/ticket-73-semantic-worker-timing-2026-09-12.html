@@ -31,10 +31,10 @@
 
     <h2>Remediation</h2>
     <p>The observed test backend now blocks its first call. The test queues all extra wakes while
-      that call is definitely in flight, records when it releases the call, and observes the next
-      backend invocation through a channel. The next call must begin no sooner than one complete
-      retry interval after release. Scheduler delay can only increase this duration, while a wake
-      that bypasses cooldown still fails immediately.</p>
+      that call is definitely in flight, releases it, and waits for the backend itself to report
+      the instant that release was consumed. The next observed call must begin no sooner than one
+      complete retry interval after that backend-side boundary. Scheduler delay can only increase
+      this duration, while a wake that bypasses cooldown still fails immediately.</p>
 
     <h2>Verification</h2>
     <table>
