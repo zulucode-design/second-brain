@@ -6,6 +6,8 @@ use crate::vault::operations::helixnotes_dir;
 use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
+#[cfg(any(windows, test))]
+use std::time::Duration;
 use tantivy::collector::TopDocs;
 #[cfg(desktop)]
 use tantivy::directory::MmapDirectory;
@@ -21,6 +23,46 @@ use walkdir::WalkDir;
 /// wiped and rebuilt once on the next vault open (the index is derived from the
 /// notes, so this never loses data).
 const INDEX_SCHEMA_VERSION: &str = "3-reconciliation-fingerprint";
+
+/// Tantivy publishes a commit by atomically replacing its metadata file. Windows can
+/// briefly refuse that replacement while another handle is releasing the old file, so
+/// retry only that transient condition and keep every other commit failure visible.
+#[cfg(any(windows, test))]
+const INDEX_COMMIT_ATTEMPTS: usize = 5;
+#[cfg(any(windows, test))]
+const INDEX_COMMIT_RETRY_WAIT: Duration = Duration::from_millis(25);
+
+#[cfg(any(windows, test))]
+fn commit_with_permission_retry(
+    mut commit: impl FnMut() -> tantivy::Result<()>,
+    mut wait: impl FnMut(Duration),
+) -> tantivy::Result<()> {
+    for attempt in 1..=INDEX_COMMIT_ATTEMPTS {
+        match commit() {
+            Ok(()) => return Ok(()),
+            Err(tantivy::TantivyError::IoError(error))
+                if error.kind() == std::io::ErrorKind::PermissionDenied
+                    && attempt < INDEX_COMMIT_ATTEMPTS =>
+            {
+                wait(INDEX_COMMIT_RETRY_WAIT);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("the final commit attempt always returns")
+}
+
+fn commit_index(writer: &mut IndexWriter) -> Result<(), String> {
+    #[cfg(windows)]
+    return commit_with_permission_retry(|| writer.commit().map(|_| ()), std::thread::sleep)
+        .map_err(|error| error.to_string());
+
+    #[cfg(not(windows))]
+    writer
+        .commit()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
 
 /// The pre-vault-id index location: keyed by a hash of the vault's path, so it was
 /// orphaned whenever the vault folder moved. Only used to clean up the stale copy.
@@ -387,7 +429,7 @@ impl SearchIndex {
             }
         }
 
-        writer.commit().map_err(|e| e.to_string())?;
+        commit_index(writer)?;
         Ok(())
     }
 
@@ -404,7 +446,7 @@ impl SearchIndex {
         // Add updated
         let _ = writer.add_document(document);
 
-        writer.commit().map_err(|e| e.to_string())?;
+        commit_index(writer)?;
         Ok(())
     }
 
@@ -413,7 +455,7 @@ impl SearchIndex {
         let writer = writer_guard.as_mut().ok_or("Writer not available")?;
         let term = tantivy::Term::from_field_text(self.path_field, path);
         writer.delete_term(term);
-        writer.commit().map_err(|e| e.to_string())?;
+        commit_index(writer)?;
         Ok(())
     }
 
@@ -442,8 +484,7 @@ impl SearchIndex {
                 .add_document(document)
                 .map_err(|error| error.to_string())?;
         }
-        writer.commit().map_err(|error| error.to_string())?;
-        Ok(())
+        commit_index(writer)
     }
 
     /// Every indexed path that sits inside any of `directories`.
@@ -707,6 +748,75 @@ impl SearchIndex {
 mod tests {
     use super::*;
     use uuid::Uuid;
+
+    fn commit_error(kind: std::io::ErrorKind) -> tantivy::TantivyError {
+        std::io::Error::from(kind).into()
+    }
+
+    #[test]
+    fn a_temporarily_denied_commit_is_retried() {
+        let mut commits = 0;
+        let mut waits = Vec::new();
+
+        commit_with_permission_retry(
+            || {
+                commits += 1;
+                if commits == 1 {
+                    Err(commit_error(std::io::ErrorKind::PermissionDenied))
+                } else {
+                    Ok(())
+                }
+            },
+            |duration| waits.push(duration),
+        )
+        .unwrap();
+
+        assert_eq!(commits, 2);
+        assert_eq!(waits, vec![INDEX_COMMIT_RETRY_WAIT]);
+    }
+
+    #[test]
+    fn an_unrelated_commit_error_is_not_retried() {
+        let mut commits = 0;
+        let mut waits = Vec::new();
+
+        let error = commit_with_permission_retry(
+            || {
+                commits += 1;
+                Err(commit_error(std::io::ErrorKind::InvalidData))
+            },
+            |duration| waits.push(duration),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, tantivy::TantivyError::IoError(error)
+            if error.kind() == std::io::ErrorKind::InvalidData));
+        assert_eq!(commits, 1);
+        assert!(waits.is_empty());
+    }
+
+    #[test]
+    fn a_persistently_denied_commit_stops_after_the_retry_budget() {
+        let mut commits = 0;
+        let mut waits = Vec::new();
+
+        let error = commit_with_permission_retry(
+            || {
+                commits += 1;
+                Err(commit_error(std::io::ErrorKind::PermissionDenied))
+            },
+            |duration| waits.push(duration),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, tantivy::TantivyError::IoError(error)
+            if error.kind() == std::io::ErrorKind::PermissionDenied));
+        assert_eq!(commits, INDEX_COMMIT_ATTEMPTS);
+        assert_eq!(
+            waits,
+            vec![INDEX_COMMIT_RETRY_WAIT; INDEX_COMMIT_ATTEMPTS - 1]
+        );
+    }
 
     #[test]
     fn a_path_change_is_visible_as_one_index_batch() {
