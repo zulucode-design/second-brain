@@ -1,4 +1,8 @@
 <script lang="ts">
+	let { onBeforeRestore, onAfterRestore }: {
+		onBeforeRestore?: () => Promise<boolean>;
+		onAfterRestore?: () => Promise<void>;
+	} = $props();
 	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, activeVaultConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
 	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, notionStatus, notionConnect, notionDisconnect, notionSetEnabled, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex } from '$lib/api';
 	import type { AiProvider } from '$lib/types';
@@ -262,12 +266,19 @@
 
 	async function handleRestore(entry: BackupEntry) {
 		restoreConfirm = null;
+		if (onBeforeRestore && !(await onBeforeRestore())) {
+			backupMessage = { type: 'error', text: 'Restore cancelled because the open note could not be saved.' };
+			return;
+		}
 		backupLoading = true;
 		backupMessage = null;
-		const unlisten = await listen<{ success: boolean; error?: string }>('restore-done', (event) => {
+		const unlisten = await listen<{ success: boolean; outcome: 'success' | 'changed-incomplete' | 'failure'; error?: string }>('restore-done', async (event) => {
 			const data = event.payload;
+			if (data.outcome !== 'failure') await onAfterRestore?.();
 			if (data.success) {
-				backupMessage = { type: 'success', text: 'Backup restored. Restart the app to see changes.' };
+				backupMessage = { type: 'success', text: 'Backup restored.' };
+			} else if (data.outcome === 'changed-incomplete') {
+				backupMessage = { type: 'error', text: data.error ?? 'The vault was restored, but some derived views could not be refreshed.' };
 			} else {
 				backupMessage = { type: 'error', text: `Restore failed: ${data.error}` };
 			}

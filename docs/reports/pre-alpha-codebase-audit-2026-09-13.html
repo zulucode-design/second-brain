@@ -270,14 +270,14 @@
       <tbody>
         <tr><td>D-01</td><td><span class="badge p1">P1</span></td><td>Confirmed control flow / strongly inferred loss</td><td>Note navigation or app shutdown can discard recent edits; navigation can also mark rejected saves clean.</td><td><code>Editor.svelte:3022–3049,3295–3315</code>; <code>NoteList.svelte:377–410</code>; <code>AppLayout.svelte:246–295</code>; <code>SearchPanel.svelte:143–172</code>; <code>types.rs:390–395</code>; <code>lib.rs:423–466</code>; other direct navigation paths.</td></tr>
         <tr><td>D-02</td><td><span class="badge p1">P1</span></td><td>Confirmed</td><td>WebDAV server href can traverse outside the vault on local write.</td><td><code>sync.rs:129–151,399–438</code>: decode without component validation → accepts <code>../*.md</code> → <code>vault.join</code>.</td></tr>
-        <tr><td>D-03</td><td><span class="badge p1">P1</span></td><td>Confirmed</td><td>Backup restore destroys current content before complete extraction and has no rollback/coordination.</td><td><code>backup.rs:202–263</code>; <code>commands.rs:3105+</code>.</td></tr>
+        <tr><td>D-03</td><td><span class="badge implemented">Fixed locally — #83</span></td><td>Regression verified</td><td>Restore now validates and fully extracts into sibling staging before mutation, commits through tested rollback, coordinates editor/import/watcher exclusion, reconciles both indexes, refreshes live UI, and distinguishes success, changed-incomplete, and failure.</td><td><code>backup.rs</code> transactional-restore tests; <code>bulk_mutation.rs</code>; <code>commands.rs</code>; <code>AppLayout.svelte</code>.</td></tr>
         <tr><td>D-04</td><td><span class="badge p1">P1</span></td><td>Confirmed design defects / strongly inferred outcomes</td><td>Sync is not mutation-safe or completion-safe: races writes, can convert local scan/read failures into remote deletions, ignores delete/manifest errors, can stop after partial application, leaves semantic search stale, and omits required vault data/pre-backup.</td><td><code>sync.rs:75+,142–170,518–755</code>; absence of <code>note_mutation</code>/semantic reconciliation; SPEC §3/§8.</td></tr>
         <tr><td>D-05</td><td><span class="badge p1">P1</span></td><td>Confirmed</td><td>WebDAV accepts plaintext HTTP while sending Basic Auth and note contents.</td><td><code>sync.rs:198–218,226–330</code>. Can be combined with D-02 remediation.</td></tr>
         <tr><td>D-06</td><td><span class="badge p2">P2</span></td><td>Confirmed</td><td>WebDAV conflict copies evade graph/Notion filters and are treated as normal notes.</td><td><code>sync.rs:116–127,607–611</code> versus <code>commands.rs:1585–1589</code> and <code>notion/plan.rs:172–179</code>.</td></tr>
         <tr><td>D-07</td><td><span class="badge p2">P2</span></td><td>Confirmed</td><td>Obsidian importer reports failed writes as converted and permits overlapping uncoordinated runs.</td><td><code>commands.rs:2647–2695</code>; <code>vault/import.rs:205–208</code>.</td></tr>
         <tr><td>D-08</td><td><span class="badge p2">P2</span></td><td>Confirmed path mismatch</td><td>External Markdown viewer cannot read the external path it is designed to show.</td><td><code>AppLayout.svelte:260–280</code>; <code>vault/operations.rs:66–81</code>.</td></tr>
         <tr><td>D-09</td><td><span class="badge p2">P2</span></td><td>Confirmed</td><td>Startup/config failures can be silently represented as no config/first launch.</td><td><code>+page.svelte:252–281</code>; <code>commands.rs:3698–3713</code>.</td></tr>
-        <tr><td>D-10</td><td><span class="badge p2">P2</span></td><td>Confirmed</td><td>Backup contents do not match “whole-vault” safety claim; traversal errors are omitted.</td><td><code>backup.rs:37–90</code>; SPEC §3.</td></tr>
+        <tr><td>D-10</td><td><span class="badge implemented">Fixed locally — #83</span></td><td>Regression verified</td><td>Backup includes vault-scoped <code>.helixnotes</code> metadata, explicitly retains attachments as the configurable exclusion, and fails on traversal/read errors.</td><td><code>backup.rs</code> backup-scope regression test; SPEC §3/§8.</td></tr>
         <tr><td>D-11</td><td><span class="badge p2">P2</span></td><td>Confirmed</td><td>Crash durability is uneven: ordinary note/config/sync/Notion writes use direct truncate/write rather than temp-write + sync + atomic rename.</td><td><code>vault/operations.rs:618–637</code>; <code>commands.rs:3806–3823</code>; <code>sync.rs:129–135</code>; Notion registry/map writers.</td></tr>
         <tr><td>D-12</td><td><span class="badge p3">P3</span></td><td>Confirmed</td><td>Task due-date shape validation accepts impossible dates.</td><td><code>commands.rs:1957–1976</code>.</td></tr>
         <tr><td>D-13</td><td><span class="badge p3">P3</span></td><td>Confirmed</td><td>Graph/task backend failures masquerade as blank/empty content.</td><td><code>GraphView.svelte:188–191</code>; <code>TasksView.svelte:23–28</code>.</td></tr>
@@ -347,13 +347,13 @@
         <tr><td>Markdown remains canonical and portable</td><td>☑</td><td>Indexes are derived; no lock-in database is canonical.</td></tr>
         <tr><td>Normal note lifecycle updates projections</td><td>☑</td><td>Strong ordinary command path.</td></tr>
         <tr><td>Navigation and shutdown cannot lose unsaved edits</td><td>☒</td><td>P1 D-01.</td></tr>
-        <tr><td>Restore is transactional/recoverable</td><td>☒</td><td>P1 D-03.</td></tr>
+        <tr><td>Restore is transactional/recoverable</td><td>☑</td><td>Implemented and regression-tested by #83; pending PR/hosted verification.</td></tr>
         <tr><td>Remote sync cannot escape the vault</td><td>☒</td><td>P1 D-02.</td></tr>
         <tr><td>Remote credentials/content require secure transport</td><td>☒</td><td>P1 D-05.</td></tr>
-        <tr><td>Bulk mutations coordinate with editor/indexes</td><td>☒</td><td>Sync/import/restore exceptions remain.</td></tr>
+        <tr><td>Bulk mutations coordinate with editor/indexes</td><td>Partial</td><td>#83 coordinates restore and import through the shared lease and projection hook; the selected sidecar sync implementation must adopt it in package D.</td></tr>
         <tr><td>Sync design agrees with SPEC/ADR</td><td>☒</td><td>G1 is decided in ADR-0009, but the build still exposes WebDAV and does not yet bundle the required sidecar; packages B/D remain open.</td></tr>
         <tr><td>Conflict copies are paired and excluded from ordinary views</td><td>☒</td><td>Pattern mismatch; choice UI absent.</td></tr>
-        <tr><td>Backup scope matches safety claim</td><td>☒</td><td>Trash/history/most metadata omitted.</td></tr>
+        <tr><td>Backup scope matches safety claim</td><td>☑</td><td>#83 includes vault-scoped metadata and tests the explicit optional attachment exclusion.</td></tr>
         <tr><td>Startup failures are visible/actionable</td><td>☒</td><td>Several catches default/no-op.</td></tr>
         <tr><td>External-alpha semantic search seam</td><td>☒</td><td>Implemented foundation; projection convergence and verification evidence remain open.</td></tr>
         <tr><td>Voice, capture similarity, semantic graph, and grounded Q&amp;A</td><td>Deferred from alpha</td><td>ADR-0010 assigns #8–#11 to v1 feature-complete beta.</td></tr>
@@ -369,7 +369,7 @@
     <h2 id="remediation">11. Prioritized Remediation Plan</h2>
     <h3>Phase 0 — Freeze risky alpha surfaces (immediate)</h3>
     <ol>
-      <li>Disable or clearly hide WebDAV and backup restore in any build shared outside the development team until P1 fixes land.</li>
+      <li>Disable or clearly hide WebDAV in any build shared outside the development team until package B lands; keep restore gated on #83 PR and hosted verification.</li>
       <li>Use disposable vault copies for sync/restore/import testing; preserve a manual external backup.</li>
       <li>Open tracked issues for D-01 through D-06 with the evidence and exit criteria above. Do not bundle unrelated UI polish into these fixes.</li>
     </ol>
