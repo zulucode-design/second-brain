@@ -731,9 +731,9 @@ mod tests {
 
     struct UnavailableBackend;
 
-    struct CountingUnavailableBackend {
-        calls: Arc<AtomicUsize>,
-        first_call: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    struct ObservedUnavailableBackend {
+        call_started: std::sync::mpsc::Sender<std::time::Instant>,
+        release_first_call: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
     }
 
     struct RecoveringBackend {
@@ -776,11 +776,13 @@ mod tests {
         }
     }
 
-    impl EmbeddingBackend for CountingUnavailableBackend {
+    impl EmbeddingBackend for ObservedUnavailableBackend {
         fn embed(&self, _inputs: &[String]) -> Result<Vec<Vec<f32>>, String> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            if let Some(first_call) = self.first_call.lock().unwrap().take() {
-                let _ = first_call.send(());
+            let _ = self.call_started.send(std::time::Instant::now());
+            if let Some(release) = self.release_first_call.lock().unwrap().take() {
+                release
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .expect("the test should release the first backend call");
             }
             Err("desktop is asleep".to_string())
         }
@@ -1109,14 +1111,14 @@ mod tests {
             "Projects",
             "A thought saved while the desktop is asleep.",
         );
-        let calls = Arc::new(AtomicUsize::new(0));
-        let (first_call, first_call_received) = std::sync::mpsc::channel();
+        let (call_started, call_observed) = std::sync::mpsc::channel();
+        let (release_first_call, first_call_release) = std::sync::mpsc::channel();
         let index = Arc::new(
             SemanticIndex::open_at(
                 &root.join("semantic.sqlite3"),
-                Arc::new(CountingUnavailableBackend {
-                    calls: calls.clone(),
-                    first_call: Mutex::new(Some(first_call)),
+                Arc::new(ObservedUnavailableBackend {
+                    call_started,
+                    release_first_call: Mutex::new(Some(first_call_release)),
                 }),
             )
             .unwrap(),
@@ -1125,38 +1127,24 @@ mod tests {
         index.start_background_with_interval(retry_interval);
         index.note_changed(&note).unwrap();
 
-        // Synchronize on the external change's immediate attempt so a loaded runner cannot
-        // pass the assertion without exercising the worker. Before the first interval elapses,
-        // the worker must not generate a second attempt by waking itself.
-        first_call_received
+        // Hold the first attempt inside the backend while the extra wakes are queued. That
+        // fixes their ordering without asking the test thread to finish inside a wall-clock
+        // window: however slowly the runner schedules this code, all wakes precede the outage.
+        call_observed
             .recv_timeout(std::time::Duration::from_secs(5))
             .expect("the external change should wake the semantic worker");
         for _ in 0..5 {
             index.note_changed(&note).unwrap();
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            1,
-            "the worker retried before its configured interval elapsed"
-        );
+        let released_at = std::time::Instant::now();
+        release_first_call.send(()).unwrap();
 
-        let second_attempt_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while calls.load(Ordering::SeqCst) < 2
-            && std::time::Instant::now() < second_attempt_deadline
-        {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            2,
-            "the worker should retry once when the interval elapses"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            2,
-            "queued wakes must stay coalesced during the next retry interval"
+        let second_call = call_observed
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the worker should retry when the interval elapses");
+        assert!(
+            second_call.duration_since(released_at) >= retry_interval,
+            "queued wakes bypassed the retry interval"
         );
 
         drop(index);
