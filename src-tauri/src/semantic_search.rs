@@ -587,6 +587,14 @@ impl SemanticIndex {
     }
 
     fn start_background_with_interval(self: &Arc<Self>, interval: Duration) {
+        self.start_background_worker(interval, || {});
+    }
+
+    fn start_background_worker(
+        self: &Arc<Self>,
+        interval: Duration,
+        mut offline_interval_elapsed: impl FnMut() + Send + 'static,
+    ) {
         let (sender, receiver) = mpsc::channel();
         if self.wake_worker.set(sender).is_err() {
             return;
@@ -606,6 +614,9 @@ impl SemanticIndex {
                             Err(mpsc::RecvTimeoutError::Timeout) => break,
                             Err(mpsc::RecvTimeoutError::Disconnected) => return,
                         }
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        offline_interval_elapsed();
                     }
                 } else {
                     match receiver.recv_timeout(interval) {
@@ -731,9 +742,15 @@ mod tests {
 
     struct UnavailableBackend;
 
-    struct CountingUnavailableBackend {
-        calls: Arc<AtomicUsize>,
-        first_call: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    #[derive(Debug, PartialEq)]
+    enum OfflineWorkerEvent {
+        BackendCallStarted,
+        RetryIntervalElapsed,
+    }
+
+    struct ObservedUnavailableBackend {
+        events: std::sync::mpsc::Sender<OfflineWorkerEvent>,
+        release_first_call: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
     }
 
     struct RecoveringBackend {
@@ -776,11 +793,13 @@ mod tests {
         }
     }
 
-    impl EmbeddingBackend for CountingUnavailableBackend {
+    impl EmbeddingBackend for ObservedUnavailableBackend {
         fn embed(&self, _inputs: &[String]) -> Result<Vec<Vec<f32>>, String> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            if let Some(first_call) = self.first_call.lock().unwrap().take() {
-                let _ = first_call.send(());
+            let _ = self.events.send(OfflineWorkerEvent::BackendCallStarted);
+            if let Some(release) = self.release_first_call.lock().unwrap().take() {
+                release
+                    .recv()
+                    .expect("the test should release the first backend call");
             }
             Err("desktop is asleep".to_string())
         }
@@ -1109,54 +1128,50 @@ mod tests {
             "Projects",
             "A thought saved while the desktop is asleep.",
         );
-        let calls = Arc::new(AtomicUsize::new(0));
-        let (first_call, first_call_received) = std::sync::mpsc::channel();
+        let (events, observed_events) = std::sync::mpsc::channel();
+        let (release_first_call, first_call_release) = std::sync::mpsc::channel();
         let index = Arc::new(
             SemanticIndex::open_at(
                 &root.join("semantic.sqlite3"),
-                Arc::new(CountingUnavailableBackend {
-                    calls: calls.clone(),
-                    first_call: Mutex::new(Some(first_call)),
+                Arc::new(ObservedUnavailableBackend {
+                    events: events.clone(),
+                    release_first_call: Mutex::new(Some(first_call_release)),
                 }),
             )
             .unwrap(),
         );
         let retry_interval = std::time::Duration::from_millis(200);
-        index.start_background_with_interval(retry_interval);
+        index.start_background_worker(retry_interval, move || {
+            let _ = events.send(OfflineWorkerEvent::RetryIntervalElapsed);
+        });
         index.note_changed(&note).unwrap();
 
-        // Synchronize on the external change's immediate attempt so a loaded runner cannot
-        // pass the assertion without exercising the worker. Before the first interval elapses,
-        // the worker must not generate a second attempt by waking itself.
-        first_call_received
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .expect("the external change should wake the semantic worker");
+        // Hold the first attempt inside the backend while the extra wakes are queued. That
+        // fixes their ordering without asking the test thread to finish inside a wall-clock
+        // window: however slowly the runner schedules this code, all wakes precede the outage.
+        assert_eq!(
+            observed_events
+                .recv_timeout(std::time::Duration::from_secs(30))
+                .expect("the external change should wake the semantic worker"),
+            OfflineWorkerEvent::BackendCallStarted
+        );
         for _ in 0..5 {
             index.note_changed(&note).unwrap();
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            1,
-            "the worker retried before its configured interval elapsed"
-        );
+        release_first_call.send(()).unwrap();
 
-        let second_attempt_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while calls.load(Ordering::SeqCst) < 2
-            && std::time::Instant::now() < second_attempt_deadline
-        {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
         assert_eq!(
-            calls.load(Ordering::SeqCst),
-            2,
-            "the worker should retry once when the interval elapses"
+            observed_events
+                .recv_timeout(std::time::Duration::from_secs(30))
+                .expect("the retry interval should elapse"),
+            OfflineWorkerEvent::RetryIntervalElapsed,
+            "queued wakes bypassed the retry interval"
         );
-        std::thread::sleep(std::time::Duration::from_millis(100));
         assert_eq!(
-            calls.load(Ordering::SeqCst),
-            2,
-            "queued wakes must stay coalesced during the next retry interval"
+            observed_events
+                .recv_timeout(std::time::Duration::from_secs(30))
+                .expect("the worker should retry when the interval elapses"),
+            OfflineWorkerEvent::BackendCallStarted
         );
 
         drop(index);
