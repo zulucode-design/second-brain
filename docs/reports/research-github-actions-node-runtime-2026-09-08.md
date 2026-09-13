@@ -52,6 +52,12 @@ compatibility caveat for the new action majors does not apply. The new Windows j
 also runs the repository's required `pnpm test:rust` entrypoint, preserving the test
 binary manifest setup documented in `AGENTS.md`.
 
+The first hosted Windows run exposed a separate MSRV regression that Linux did not
+compile: the locked Windows-only `notify-rust` 4.18.0 dependency requires Rust 1.89.
+The project remains on its specified Rust 1.88 MSRV by locking `notify-rust` to 4.17.0,
+whose published `rust-version` is 1.63. This is exactly the cross-platform dependency
+drift the added job is intended to catch.
+
 Final hosted-run evidence is recorded on the implementing pull request.
 
 ## Sources
