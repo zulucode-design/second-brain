@@ -24,7 +24,6 @@
 	import {
 		getNotes,
 		readNote,
-		readUnfiledNote,
 		createNote,
 		duplicateNote,
 		deleteNote,
@@ -50,17 +49,20 @@
 	import { noteRowPolicy } from '$lib/utils/note-row-policy';
 	import { noteListWindow } from '$lib/utils/note-list-virtualization';
 	import { showToast } from '$lib/utils/toast';
-	import type { NoteEntry, TrashNotebookEntry, SortMode, TaskItem, ParaCategory } from '$lib/types';
+	import type { NoteEntry, TrashNotebookEntry, SortMode, TaskItem, ParaCategory, NoteMeta, RelocationOutcome } from '$lib/types';
 	import { PARA_CATEGORIES } from '$lib/types';
 	import TasksView from './TasksView.svelte';
 	import TagSuggestInput from './TagSuggestInput.svelte';
 	import { isMobile, isAndroid } from '$lib/platform';
 
-	let { onNoteSelected = (_path: string, _content: string, _task?: TaskItem, _holding?: boolean) => {}, onNoteMoved = () => {}, onBeforeNoteSwitch = () => {}, onBeforeNoteDuplicate = async () => true, onNoteCreated = () => {}, onRequestCreateNote = () => {}, onToggleTask = async (_t: TaskItem) => {}, onSetTaskPriority = async (_t: TaskItem, _p: string | null) => {}, onSetTaskDue = async (_t: TaskItem, _d: string | null) => {} }: {
-		onNoteSelected?: (path: string, content: string, task?: TaskItem, holding?: boolean) => void;
+	let { onOpenNote = async (_path: string, _task?: TaskItem, _holding?: boolean) => false, onNoteMoved = () => {}, onBeforeNoteSwitch = async () => true, onBeforeNoteDuplicate = async () => true, onBeforeOpenWindow = async () => true, onRelocateActiveDocument = async (_path: string, _reason: string, _mutation: () => Promise<RelocationOutcome>) => null, onUpdateActiveMetadata = async (_path: string, _patch: Partial<NoteMeta>, _reason: string) => false, onNoteCreated = () => {}, onRequestCreateNote = () => {}, onToggleTask = async (_t: TaskItem) => {}, onSetTaskPriority = async (_t: TaskItem, _p: string | null) => {}, onSetTaskDue = async (_t: TaskItem, _d: string | null) => {} }: {
+		onOpenNote?: (path: string, task?: TaskItem, holding?: boolean) => Promise<boolean>;
 		onNoteMoved?: () => void;
-		onBeforeNoteSwitch?: () => void;
+		onBeforeNoteSwitch?: () => Promise<boolean>;
 		onBeforeNoteDuplicate?: () => Promise<boolean>;
+		onBeforeOpenWindow?: () => Promise<boolean>;
+		onRelocateActiveDocument?: (path: string, reason: string, mutation: () => Promise<RelocationOutcome>) => Promise<string | null>;
+		onUpdateActiveMetadata?: (path: string, patch: Partial<NoteMeta>, reason: string) => Promise<boolean>;
 		onNoteCreated?: () => void;
 		onRequestCreateNote?: () => void;
 		onToggleTask?: (t: TaskItem) => Promise<void>;
@@ -381,27 +383,15 @@
 		}
 		try {
 			const holding = rowPolicy.holdingPreview;
-			const content = holding
-				? await readUnfiledNote(note.path)
-				: await readNote(note.path);
-			onBeforeNoteSwitch();
-			$activeNote = content;
-			$activeNotePath = note.path;
-			$editorDirty = false;
-			onNoteSelected(note.path, content.content, undefined, holding);
+			await onOpenNote(note.path, undefined, holding);
 		} catch (e) {
-			console.error('Failed to read note:', e);
+			console.error('Failed to open note:', e);
 		}
 	}
 
 	async function openTask(task: TaskItem) {
 		try {
-			const content = await readNote(task.note_path);
-			onBeforeNoteSwitch();
-			$activeNote = content;
-			$activeNotePath = task.note_path;
-			$editorDirty = false;
-			onNoteSelected(task.note_path, content.content, task);
+			await onOpenNote(task.note_path, task);
 		} catch (e) {
 			console.error('Failed to open task note:', e);
 		}
@@ -416,15 +406,12 @@
 
 	export async function createNoteAfterConfirmation(nbRelative: string) {
 		try {
+			if (!(await onBeforeNoteSwitch())) throw new Error('Could not save the current note.');
 			const entry = await createNote(nbRelative, 'Untitled');
 			if ($sortMode === 'custom') appendManualNoteOrder(entry.path);
 			noteCache.clear();
 			$notes = [entry, ...$notes];
-			onBeforeNoteSwitch();
-			$activeNote = { path: entry.path, meta: entry.meta, content: '\n', raw: '' };
-			$activeNotePath = entry.path;
-			$editorDirty = false;
-			onNoteSelected(entry.path, '\n');
+			if (!(await onOpenNote(entry.path))) throw new Error('Could not open the new note.');
 			onNoteCreated();
 		} catch (e) {
 			console.error('Failed to create note:', e);
@@ -469,7 +456,11 @@
 		}
 		try {
 			const newTitle = editValue.trim();
-			const newPath = await renameNote(note.path, newTitle);
+			const wasActive = $activeNotePath === note.path;
+			const newPath = wasActive
+				? await onRelocateActiveDocument(note.path, 'Renaming the note', () => renameNote(note.path, newTitle))
+				: (await renameNote(note.path, newTitle)).path;
+			if (!newPath) return;
 			renameManualNoteOrderPath(note.path, newPath);
 			noteCache.clear();
 			editingNote = null;
@@ -479,10 +470,6 @@
 					? { ...n, path: newPath, relative_path: n.relative_path.replace(/[^/]+$/, newTitle + '.md'), meta: { ...n.meta, title: newTitle } }
 					: n
 			);
-			if ($activeNotePath === note.path) {
-				$activeNotePath = newPath;
-				$activeNote = await readNote(newPath);
-			}
 		} catch (e) {
 			console.error('Failed to rename:', e);
 		}
@@ -562,16 +549,20 @@
 	async function handleTogglePin(note: NoteEntry) {
 		contextMenu = null;
 		try {
-			const content = await readNote(note.path);
-			content.meta.pinned = !content.meta.pinned;
-			await saveNote(note.path, content.meta, content.content);
+			const pinned = !($activeNotePath === note.path && $activeNote
+				? $activeNote.meta.pinned
+				: note.meta.pinned);
+			if ($activeNotePath === note.path) {
+				if (!(await onUpdateActiveMetadata(note.path, { pinned }, 'Updating note metadata'))) return;
+			} else {
+				const content = await readNote(note.path);
+				content.meta.pinned = pinned;
+				content.revision = (await saveNote(note.path, content.meta, content.content, content.revision)).revision;
+			}
 			// Update local store immediately
 			$notes = $notes.map(n =>
-				n.path === note.path ? { ...n, meta: { ...n.meta, pinned: content.meta.pinned } } : n
+				n.path === note.path ? { ...n, meta: { ...n.meta, pinned } } : n
 			);
-			if ($activeNotePath === note.path) {
-				$activeNote = content;
-			}
 		} catch (e) {
 			console.error('Failed to toggle pin:', e);
 		}
@@ -599,15 +590,16 @@
 
 	async function saveTagsForNote(note: NoteEntry, newTags: string[]) {
 		try {
-			const content = await readNote(note.path);
-			content.meta.tags = newTags;
-			await saveNote(note.path, content.meta, content.content);
+			if ($activeNotePath === note.path) {
+				if (!(await onUpdateActiveMetadata(note.path, { tags: newTags }, 'Updating note tags'))) return;
+			} else {
+				const content = await readNote(note.path);
+				content.meta.tags = newTags;
+				content.revision = (await saveNote(note.path, content.meta, content.content, content.revision)).revision;
+			}
 			$notes = $notes.map(n =>
 				n.path === note.path ? { ...n, meta: { ...n.meta, tags: newTags } } : n
 			);
-			if ($activeNotePath === note.path && $activeNote) {
-				$activeNote = { ...$activeNote, meta: { ...$activeNote.meta, tags: newTags } };
-			}
 			await refreshTags();
 		} catch (e) {
 			console.error('Failed to save tags:', e);
@@ -631,16 +623,22 @@
 		if (!tagEditTags.includes(cleaned)) tagEditTags = [...tagEditTags, cleaned];
 		try {
 			for (const path of selectedPaths) {
+				if ($activeNotePath === path && $activeNote) {
+					if ($activeNote.meta.tags.includes(cleaned)) continue;
+					const tags = [...$activeNote.meta.tags, cleaned];
+					if (!(await onUpdateActiveMetadata(path, { tags }, 'Updating note tags'))) continue;
+					$notes = $notes.map(n =>
+						n.path === path ? { ...n, meta: { ...n.meta, tags } } : n
+					);
+					continue;
+				}
 				const content = await readNote(path);
 				if (!content.meta.tags.includes(cleaned)) {
 					content.meta.tags = [...content.meta.tags, cleaned];
-					await saveNote(path, content.meta, content.content);
+					content.revision = (await saveNote(path, content.meta, content.content, content.revision)).revision;
 					$notes = $notes.map(n =>
 						n.path === path ? { ...n, meta: { ...n.meta, tags: content.meta.tags } } : n
 					);
-					if ($activeNotePath === path) {
-						$activeNote = content;
-					}
 				}
 			}
 			await refreshTags();
@@ -653,16 +651,22 @@
 		tagEditTags = tagEditTags.filter(t => t !== tag);
 		try {
 			for (const path of selectedPaths) {
+				if ($activeNotePath === path && $activeNote) {
+					if (!$activeNote.meta.tags.includes(tag)) continue;
+					const tags = $activeNote.meta.tags.filter((value) => value !== tag);
+					if (!(await onUpdateActiveMetadata(path, { tags }, 'Updating note tags'))) continue;
+					$notes = $notes.map(n =>
+						n.path === path ? { ...n, meta: { ...n.meta, tags } } : n
+					);
+					continue;
+				}
 				const content = await readNote(path);
 				if (content.meta.tags.includes(tag)) {
-					content.meta.tags = content.meta.tags.filter((t: string) => t !== tag);
-					await saveNote(path, content.meta, content.content);
+					content.meta.tags = content.meta.tags.filter((value: string) => value !== tag);
+					content.revision = (await saveNote(path, content.meta, content.content, content.revision)).revision;
 					$notes = $notes.map(n =>
 						n.path === path ? { ...n, meta: { ...n.meta, tags: content.meta.tags } } : n
 					);
-					if ($activeNotePath === path) {
-						$activeNote = content;
-					}
 				}
 			}
 			await refreshTags();
@@ -767,14 +771,14 @@
 		contextMenu = null;
 		movePickerNote = null;
 		try {
-			const newPath = await moveNote(note.path, destPath);
+			const wasActive = $activeNotePath === note.path;
+			const newPath = wasActive
+				? await onRelocateActiveDocument(note.path, 'Moving the note', () => moveNote(note.path, destPath))
+				: (await moveNote(note.path, destPath)).path;
+			if (!newPath) return;
 			renameManualNoteOrderPath(note.path, newPath);
 			noteCache.clear();
 			$notes = $notes.filter(n => n.path !== note.path);
-			if ($activeNotePath === note.path) {
-				$activeNotePath = newPath;
-				$activeNote = await readNote(newPath);
-			}
 			onNoteMoved();
 		} catch (e) {
 			console.error('Failed to move note:', e);
@@ -889,14 +893,29 @@
 
 	async function handleBatchMove(destPath: string) {
 		const toMove = new Set(selectedPaths);
-		noteCache.clear();
-		$notes = $notes.filter(n => !toMove.has(n.path));
-		if ($activeNotePath && toMove.has($activeNotePath)) {
-			$activeNote = null;
-			$activeNotePath = null;
+		const moved = new Set<string>();
+		const activePath = $activeNotePath && toMove.has($activeNotePath) ? $activeNotePath : null;
+		if (activePath) {
+			const newPath = await onRelocateActiveDocument(
+				activePath,
+				'Moving the selected notes',
+				() => moveNote(activePath, destPath),
+			);
+			if (!newPath) return;
+			moved.add(activePath);
 		}
+		for (const path of toMove) {
+			if (path === activePath) continue;
+			try {
+				await moveNote(path, destPath);
+				moved.add(path);
+			} catch (e) {
+				console.error('Failed to move:', path, e);
+			}
+		}
+		noteCache.clear();
+		$notes = $notes.filter(n => !moved.has(n.path));
 		clearSelection();
-		await Promise.all([...toMove].map(p => moveNote(p, destPath).catch(e => console.error('Failed to move:', p, e))));
 		onNoteMoved();
 	}
 
@@ -1510,7 +1529,7 @@
 					Add to Quick Access
 				</button>
 			{/if}
-			<button onclick={() => { const n = contextMenu!.note; contextMenu = null; openNoteWindow(n.path, n.meta.title); }}>
+			<button onclick={async () => { const n = contextMenu!.note; contextMenu = null; if (await onBeforeOpenWindow()) await openNoteWindow(n.path, n.meta.title); }}>
 				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
 				</svg>

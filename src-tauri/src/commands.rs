@@ -116,6 +116,31 @@ pub(crate) fn rebuild_after_failed_index_update(
     )
 }
 
+fn record_projection_warning(
+    warnings: &mut Vec<String>,
+    projection: &str,
+    result: Result<(), String>,
+) {
+    if let Err(error) = result {
+        let warning = format!("{projection} is pending repair: {error}");
+        log::error!("{warning}");
+        warnings.push(warning);
+    }
+}
+
+/// The canonical Markdown commit is authoritative. Projection work is deliberately
+/// downgraded to a repair warning after that boundary so callers always adopt the new CAS.
+fn committed_save_outcome(
+    revision: String,
+    projections: impl IntoIterator<Item = (&'static str, Result<(), String>)>,
+) -> SaveCommitOutcome {
+    let mut warnings = Vec::new();
+    for (name, result) in projections {
+        record_projection_warning(&mut warnings, name, result);
+    }
+    SaveCommitOutcome { revision, warnings }
+}
+
 fn index_note_now(state: &State<'_, AppState>, vault_path: &str, path: &str) -> Result<(), String> {
     let Some(search) = state.search_index.lock().ok().and_then(|g| g.clone()) else {
         return Ok(());
@@ -989,12 +1014,39 @@ pub fn rename_notebook(
     state: State<'_, AppState>,
     path: String,
     new_name: String,
-) -> Result<String, String> {
+    active_note_path: Option<String>,
+) -> Result<RelocationOutcome, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let config = state.config.lock().map_err(|error| error.to_string())?;
     let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let active_note = match active_note_path.as_ref() {
+        Some(active) => {
+            let suffix = active
+                .strip_prefix(&path)
+                .ok_or("Active note is not inside the notebook being renamed")?
+                .to_string();
+            Some((suffix, operations::read_note(vault_path, active)?))
+        }
+        None => None,
+    };
     let renamed = operations::rename_notebook(vault_path, &path, &new_name)?;
     reconcile_semantic_now(&state, vault_path);
-    Ok(renamed)
+    let note = active_note.map(|(suffix, mut note)| {
+        note.path = format!("{renamed}{suffix}");
+        note
+    });
+    let authoritative_path = note
+        .as_ref()
+        .map(|value| value.path.clone())
+        .unwrap_or(renamed);
+    Ok(RelocationOutcome {
+        path: authoritative_path,
+        note,
+        warnings: Vec::new(),
+    })
 }
 
 #[tauri::command]
@@ -1002,7 +1054,8 @@ pub fn move_notebook(
     state: State<'_, AppState>,
     notebook_path: String,
     dest_parent: String,
-) -> Result<String, String> {
+    active_note_path: Option<String>,
+) -> Result<RelocationOutcome, String> {
     let _mutation = state
         .note_mutation
         .lock()
@@ -1016,27 +1069,47 @@ pub fn move_notebook(
             .clone()
     };
 
-    let new_full_path = match operations::move_notebook(&vault_path, &notebook_path, &dest_parent) {
-        Ok(path) => path,
+    let moved = match operations::move_notebook_with_active(
+        &vault_path,
+        &notebook_path,
+        &dest_parent,
+        active_note_path.as_deref(),
+    ) {
+        Ok(outcome) => outcome,
         Err(error) => {
             record_transaction_repair_if_needed(
                 &state,
                 &vault_path,
                 "move-notebook",
-                vec![notebook_path, dest_parent],
+                vec![notebook_path.clone(), dest_parent],
                 &error,
             );
             return Err(error);
         }
     };
-    rebuild_search_now(
-        &state,
-        &vault_path,
-        vec![notebook_path, new_full_path.clone()],
-    )?;
+    let new_full_path = moved.path;
+    let note = moved.active_note;
+    let mut warnings = Vec::new();
+    record_projection_warning(
+        &mut warnings,
+        "Search projection",
+        rebuild_search_now(
+            &state,
+            &vault_path,
+            vec![notebook_path, new_full_path.clone()],
+        ),
+    );
     reconcile_semantic_now(&state, &vault_path);
+    let authoritative_path = note
+        .as_ref()
+        .map(|value| value.path.clone())
+        .unwrap_or(new_full_path);
 
-    Ok(new_full_path)
+    Ok(RelocationOutcome {
+        path: authoritative_path,
+        note,
+        warnings,
+    })
 }
 
 #[tauri::command]
@@ -1099,7 +1172,8 @@ pub fn save_note(
     path: String,
     meta: NoteMeta,
     body: String,
-) -> Result<(), String> {
+    expected_revision: String,
+) -> Result<SaveCommitOutcome, String> {
     let _mutation = state
         .note_mutation
         .lock()
@@ -1111,21 +1185,24 @@ pub fn save_note(
         .ok_or("No active vault")?
         .clone();
     let max_versions = config.max_versions_per_note;
-    let old_raw = operations::read_vault_note(&vault_path, &path)?.raw;
     drop(config);
 
+    let outcome =
+        operations::save_note_if_revision(&vault_path, &path, &meta, &body, &expected_revision)?;
     let note_id = meta.id.clone();
     let snapshot_vault = vault_path.clone();
+    let old_raw = outcome.old_raw;
     std::thread::spawn(move || {
         crate::history::maybe_snapshot(&snapshot_vault, &note_id, &old_raw, max_versions);
     });
 
-    operations::save_note(&vault_path, &path, &meta, &body)?;
-
-    index_note_now(&state, &vault_path, &path)?;
+    let index_result = index_note_now(&state, &vault_path, &path);
     queue_semantic_note_now(&state, &path);
 
-    Ok(())
+    Ok(committed_save_outcome(
+        outcome.revision,
+        [("Search projection", index_result)],
+    ))
 }
 
 #[tauri::command]
@@ -1199,11 +1276,23 @@ pub fn quick_capture_note(
         return Ok(entry);
     }
 
+    let current_revision = operations::read_vault_note(
+        &state
+            .config
+            .lock()
+            .map_err(|error| error.to_string())?
+            .active_vault
+            .clone()
+            .ok_or("No active vault")?,
+        &entry.path,
+    )?
+    .revision;
     save_note(
         state,
         entry.path.clone(),
         entry.meta.clone(),
         capture.body.clone(),
+        current_revision,
     )?;
 
     Ok(NoteEntry {
@@ -1365,7 +1454,7 @@ pub fn rename_note(
     state: State<'_, AppState>,
     path: String,
     new_title: String,
-) -> Result<String, String> {
+) -> Result<RelocationOutcome, String> {
     let _mutation = state
         .note_mutation
         .lock()
@@ -1390,15 +1479,25 @@ pub fn rename_note(
             return Err(error);
         }
     };
-    reindex_moved_note_now(
-        &state,
-        &vault_path,
-        &path,
-        &outcome.path,
-        &outcome.rewritten_paths,
-    )?;
+    let mut warnings = Vec::new();
+    record_projection_warning(
+        &mut warnings,
+        "Search projection",
+        reindex_moved_note_now(
+            &state,
+            &vault_path,
+            &path,
+            &outcome.path,
+            &outcome.rewritten_paths,
+        ),
+    );
     queue_moved_semantic_notes_now(&state, &path, &outcome.path, &outcome.rewritten_paths);
-    Ok(outcome.path)
+    let note = outcome.note;
+    Ok(RelocationOutcome {
+        path: outcome.path,
+        note: Some(note),
+        warnings,
+    })
 }
 
 #[tauri::command]
@@ -1442,7 +1541,7 @@ pub fn move_note(
     state: State<'_, AppState>,
     note_path: String,
     dest_notebook: String,
-) -> Result<String, String> {
+) -> Result<RelocationOutcome, String> {
     let _mutation = state
         .note_mutation
         .lock()
@@ -1452,16 +1551,26 @@ pub fn move_note(
 
     let outcome = operations::move_note_with_outcome(vault_path, &note_path, &dest_notebook)?;
 
-    reindex_moved_note_now(
-        &state,
-        vault_path,
-        &note_path,
-        &outcome.path,
-        &outcome.rewritten_paths,
-    )?;
+    let mut warnings = Vec::new();
+    record_projection_warning(
+        &mut warnings,
+        "Search projection",
+        reindex_moved_note_now(
+            &state,
+            vault_path,
+            &note_path,
+            &outcome.path,
+            &outcome.rewritten_paths,
+        ),
+    );
     queue_moved_semantic_notes_now(&state, &note_path, &outcome.path, &outcome.rewritten_paths);
+    let note = outcome.note;
 
-    Ok(outcome.path)
+    Ok(RelocationOutcome {
+        path: outcome.path,
+        note: Some(note),
+        warnings,
+    })
 }
 
 // ── Tags ──
@@ -1852,7 +1961,7 @@ pub fn set_task_done(
     line: usize,
     raw_line: String,
     done: bool,
-) -> Result<(), String> {
+) -> Result<NoteContent, String> {
     let _mutation = state
         .note_mutation
         .lock()
@@ -1871,18 +1980,20 @@ pub fn set_task_done(
 
     let toggled = toggle_checkbox_line(&lines[idx], done);
     if toggled == lines[idx] {
-        return Ok(()); // already in the desired state
+        return operations::read_note(&vault_path, &note_path); // already in the desired state
     }
     lines[idx] = toggled;
     let mut new_body = lines.join("\n");
     if body.ends_with('\n') && !new_body.ends_with('\n') {
         new_body.push('\n');
     }
-    operations::save_note(&vault_path, &note_path, &meta, &new_body)?;
+    let save_outcome = operations::save_note(&vault_path, &note_path, &meta, &new_body)?;
 
-    index_note_now(&state, &vault_path, &note_path)?;
+    if let Err(error) = index_note_now(&state, &vault_path, &note_path) {
+        log::error!("Task Markdown committed but search projection needs repair: {error}");
+    }
     queue_semantic_note_now(&state, &note_path);
-    Ok(())
+    Ok(save_outcome.note)
 }
 
 fn set_priority_on_line(line: &str, priority: Option<&str>) -> String {
@@ -1902,7 +2013,7 @@ pub fn set_task_priority(
     line: usize,
     raw_line: String,
     priority: Option<String>,
-) -> Result<(), String> {
+) -> Result<NoteContent, String> {
     let _mutation = state
         .note_mutation
         .lock()
@@ -1929,18 +2040,20 @@ pub fn set_task_priority(
 
     let updated = set_priority_on_line(&lines[idx], prio);
     if updated == lines[idx] {
-        return Ok(());
+        return operations::read_note(&vault_path, &note_path);
     }
     lines[idx] = updated;
     let mut new_body = lines.join("\n");
     if body.ends_with('\n') && !new_body.ends_with('\n') {
         new_body.push('\n');
     }
-    operations::save_note(&vault_path, &note_path, &meta, &new_body)?;
+    let save_outcome = operations::save_note(&vault_path, &note_path, &meta, &new_body)?;
 
-    index_note_now(&state, &vault_path, &note_path)?;
+    if let Err(error) = index_note_now(&state, &vault_path, &note_path) {
+        log::error!("Task Markdown committed but search projection needs repair: {error}");
+    }
     queue_semantic_note_now(&state, &note_path);
-    Ok(())
+    Ok(save_outcome.note)
 }
 
 fn set_due_on_line(line: &str, due: Option<&str>) -> String {
@@ -1960,7 +2073,7 @@ pub fn set_task_due(
     line: usize,
     raw_line: String,
     due: Option<String>,
-) -> Result<(), String> {
+) -> Result<NoteContent, String> {
     let _mutation = state
         .note_mutation
         .lock()
@@ -1986,18 +2099,20 @@ pub fn set_task_due(
 
     let updated = set_due_on_line(&lines[idx], due_val);
     if updated == lines[idx] {
-        return Ok(());
+        return operations::read_note(&vault_path, &note_path);
     }
     lines[idx] = updated;
     let mut new_body = lines.join("\n");
     if body.ends_with('\n') && !new_body.ends_with('\n') {
         new_body.push('\n');
     }
-    operations::save_note(&vault_path, &note_path, &meta, &new_body)?;
+    let save_outcome = operations::save_note(&vault_path, &note_path, &meta, &new_body)?;
 
-    index_note_now(&state, &vault_path, &note_path)?;
+    if let Err(error) = index_note_now(&state, &vault_path, &note_path) {
+        log::error!("Task Markdown committed but search projection needs repair: {error}");
+    }
     queue_semantic_note_now(&state, &note_path);
-    Ok(())
+    Ok(save_outcome.note)
 }
 
 // ── Search ──
@@ -4138,5 +4253,23 @@ pub fn get_install_type() -> String {
         "appimage".to_string()
     } else {
         "native".to_string()
+    }
+}
+
+#[cfg(test)]
+mod commit_policy_tests {
+    use super::committed_save_outcome;
+
+    #[test]
+    fn canonical_revision_survives_every_projection_failure() {
+        let outcome = committed_save_outcome(
+            "new-revision".to_string(),
+            [
+                ("Search projection", Err("index unavailable".to_string())),
+                ("Repair ledger", Err("ledger unavailable".to_string())),
+            ],
+        );
+        assert_eq!(outcome.revision, "new-revision");
+        assert_eq!(outcome.warnings.len(), 2);
     }
 }

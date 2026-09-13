@@ -135,6 +135,10 @@ export const editorDirty = writable(false);
 export const sourceMode = writable(false);
 export const focusMode = writable(false);
 export const readOnly = writable(false);
+// Set while the native close/quit handshake is draining saves. Unlike readOnly, this
+// cannot be toggled by view-mode controls and keeps every editor mutation path frozen
+// until native code explicitly releases a cancelled or timed-out shutdown.
+export const shutdownPending = writable(false);
 // A validated note in `.helixnotes/unfiled` is always preview-only.
 export const holdingPreview = writable(false);
 

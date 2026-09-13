@@ -14,6 +14,7 @@ mod safe_fetch;
 mod search;
 mod secret_store;
 mod semantic_search;
+mod shutdown;
 mod state;
 mod sync;
 mod sync_config;
@@ -25,6 +26,227 @@ use state::AppState;
 #[allow(unused_imports)]
 use tauri::{Emitter, Manager};
 use tauri_plugin_fs::FsExt;
+
+fn release_shutdown(app: &tauri::AppHandle, request_id: &str) {
+    let _ = app.emit(
+        "save-close-released",
+        shutdown::SaveBeforeCloseRequest {
+            request_id: request_id.to_string(),
+        },
+    );
+}
+
+fn cancel_shutdown(app: &tauri::AppHandle, request_id: &str) {
+    let cancelled = app
+        .state::<AppState>()
+        .shutdown
+        .lock()
+        .map(|mut state| state.cancel(request_id))
+        .unwrap_or(false);
+    if cancelled {
+        release_shutdown(app, request_id);
+    }
+}
+
+fn cancel_shutdown_timeout(app: &tauri::AppHandle, request_id: &str, timeout_generation: u64) {
+    let cancelled = app
+        .state::<AppState>()
+        .shutdown
+        .lock()
+        .map(|mut state| state.cancel_if_generation(request_id, timeout_generation))
+        .unwrap_or(false);
+    if cancelled {
+        release_shutdown(app, request_id);
+    }
+}
+
+fn perform_shutdown(app: &tauri::AppHandle, intent: shutdown::ShutdownIntent) {
+    match intent {
+        shutdown::ShutdownIntent::HideMain => {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.hide();
+            }
+        }
+        shutdown::ShutdownIntent::CloseWindow(label) => {
+            if let Ok(mut state) = app.state::<AppState>().shutdown.lock() {
+                state.authorize_close(label.clone());
+            }
+            if let Some(window) = app.get_webview_window(&label) {
+                let _ = window.close();
+            }
+        }
+        shutdown::ShutdownIntent::ExitApp => {
+            if let Ok(mut state) = app.state::<AppState>().shutdown.lock() {
+                state.authorize_exit();
+            }
+            app.exit(0);
+        }
+    }
+}
+
+fn begin_shutdown(app: &tauri::AppHandle, intent: shutdown::ShutdownIntent) {
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let app_state = app.state::<AppState>();
+    let outcome = {
+        let Ok(mut state) = app_state.shutdown.lock() else {
+            log::error!("Could not acquire shutdown state");
+            return;
+        };
+        let participants = match &intent {
+            shutdown::ShutdownIntent::HideMain => {
+                if state.is_registered("main") {
+                    ["main".to_string()].into_iter().collect()
+                } else {
+                    Default::default()
+                }
+            }
+            shutdown::ShutdownIntent::CloseWindow(label) => {
+                if state.is_registered(label) {
+                    [label.clone()].into_iter().collect()
+                } else {
+                    Default::default()
+                }
+            }
+            shutdown::ShutdownIntent::ExitApp => state.all_participants(),
+        };
+        if participants.is_empty() {
+            drop(state);
+            perform_shutdown(app, intent);
+            return;
+        }
+        state.begin(request_id, intent, participants)
+    };
+
+    let (active_request_id, notify, timeout_generation) = match outcome {
+        shutdown::BeginOutcome::Started {
+            request_id,
+            notify,
+            timeout_generation,
+        }
+        | shutdown::BeginOutcome::Upgraded {
+            request_id,
+            notify,
+            timeout_generation,
+        } => (request_id, notify, timeout_generation),
+        shutdown::BeginOutcome::Joined { .. } => return,
+    };
+    let registered = app_state
+        .shutdown
+        .lock()
+        .map(|state| state.registered())
+        .unwrap_or_default();
+    let payload = shutdown::SaveBeforeCloseRequest {
+        request_id: active_request_id.clone(),
+    };
+    let mut delivery_failed = false;
+    for label in notify.intersection(&registered) {
+        if let Err(error) = app.emit_to(label, "save-before-close", payload.clone()) {
+            log::error!("Could not request a save from {label}: {error}");
+            delivery_failed = true;
+        }
+    }
+    if delivery_failed {
+        cancel_shutdown(app, &active_request_id);
+        return;
+    }
+
+    let timeout_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        cancel_shutdown_timeout(&timeout_app, &active_request_id, timeout_generation);
+    });
+}
+
+#[tauri::command]
+fn reserve_note_window(app: tauri::AppHandle) -> Result<shutdown::WindowReservation, String> {
+    let reservation = shutdown::WindowReservation {
+        label: format!("note-{}", uuid::Uuid::new_v4()),
+        token: uuid::Uuid::new_v4().to_string(),
+    };
+    app.state::<AppState>()
+        .shutdown
+        .lock()
+        .map_err(|error| error.to_string())?
+        .reserve_note_window(reservation.label.clone(), reservation.token.clone())?;
+    Ok(reservation)
+}
+
+#[tauri::command]
+fn cancel_note_window_reservation(app: tauri::AppHandle, label: String, token: String) {
+    let outcome = app
+        .state::<AppState>()
+        .shutdown
+        .lock()
+        .map(|mut state| state.cancel_reservation(&label, &token))
+        .unwrap_or(shutdown::AcknowledgeOutcome::Ignored);
+    if let shutdown::AcknowledgeOutcome::Complete(intent) = outcome {
+        perform_shutdown(&app, intent);
+    }
+}
+
+#[tauri::command]
+fn begin_vault_switch(app: tauri::AppHandle) -> Result<(), String> {
+    app.state::<AppState>()
+        .shutdown
+        .lock()
+        .map_err(|error| error.to_string())?
+        .begin_vault_switch()
+}
+
+#[tauri::command]
+fn end_vault_switch(app: tauri::AppHandle) {
+    if let Ok(mut state) = app.state::<AppState>().shutdown.lock() {
+        state.end_vault_switch();
+    }
+}
+
+#[tauri::command]
+fn register_save_participant(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    reservation_token: Option<String>,
+) -> Result<Option<shutdown::SaveBeforeCloseRequest>, String> {
+    app.state::<AppState>()
+        .shutdown
+        .lock()
+        .map_err(|error| error.to_string())?
+        .register_participant(window.label(), reservation_token.as_deref())
+        .map_err(|error| format!("Participant registration rejected: {error:?}"))
+}
+
+#[tauri::command]
+fn acknowledge_save_before_close(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    request_id: String,
+    saved: bool,
+) {
+    let window_label = window.label().to_string();
+    let outcome = app
+        .state::<AppState>()
+        .shutdown
+        .lock()
+        .map(|mut state| state.acknowledge(&request_id, &window_label, saved))
+        .unwrap_or(shutdown::AcknowledgeOutcome::Cancelled);
+
+    match outcome {
+        shutdown::AcknowledgeOutcome::Complete(intent) => {
+            if intent == shutdown::ShutdownIntent::HideMain {
+                release_shutdown(&app, &request_id);
+            }
+            perform_shutdown(&app, intent);
+        }
+        shutdown::AcknowledgeOutcome::Cancelled => {
+            release_shutdown(&app, &request_id);
+            if let Some(window) = app.get_webview_window(&window_label) {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }
+        shutdown::AcknowledgeOutcome::Ignored | shutdown::AcknowledgeOutcome::Pending => {}
+    }
+}
 
 #[cfg(desktop)]
 use tauri::{
@@ -216,6 +438,12 @@ pub fn run() {
         })
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
+            register_save_participant,
+            acknowledge_save_before_close,
+            reserve_note_window,
+            cancel_note_window_reservation,
+            begin_vault_switch,
+            end_vault_switch,
             commands::open_vault,
             commands::choose_external_vault,
             commands::restore_external_vault,
@@ -422,43 +650,64 @@ pub fn run() {
 
             match event {
                 tauri::WindowEvent::CloseRequested { api, .. } => {
-                    // Read at close time, not at launch. Captured once, toggling the setting
-                    // did nothing until the app was relaunched — and the toggle said so, but
-                    // "requires restart" is a poor answer for a preference the app can simply
-                    // consult when it matters.
-                    //
-                    // Still gated on a tray icon actually existing: that is built once in
-                    // `setup` and genuinely cannot appear without a restart, so hiding to a
-                    // tray that is not there would leave the window unreachable.
-                    let hide_to_tray = tray_exists
-                        && window
-                            .app_handle()
-                            .state::<AppState>()
-                            .config
-                            .lock()
-                            .map(|config| config.close_to_tray)
-                            .unwrap_or(false);
-
-                    // Only hide to tray for the main window
-                    if hide_to_tray && window.label() == "main" {
-                        api.prevent_close();
-                        let _ = window.hide();
+                    let authorized = window
+                        .app_handle()
+                        .state::<AppState>()
+                        .shutdown
+                        .lock()
+                        .map(|mut state| state.consume_authorized_close(window.label()))
+                        .unwrap_or(false);
+                    if authorized {
+                        return;
                     }
+
+                    let intent = if window.label() == "main" {
+                        // A tray can only be created at startup, while the hide preference is
+                        // intentionally read live for every close request.
+                        let hide_to_tray = tray_exists
+                            && window
+                                .app_handle()
+                                .state::<AppState>()
+                                .config
+                                .lock()
+                                .map(|config| config.close_to_tray)
+                                .unwrap_or(false);
+                        if hide_to_tray {
+                            shutdown::ShutdownIntent::HideMain
+                        } else {
+                            shutdown::ShutdownIntent::ExitApp
+                        }
+                    } else if window.label().starts_with("note-") {
+                        shutdown::ShutdownIntent::CloseWindow(window.label().to_string())
+                    } else {
+                        return;
+                    };
+
+                    // Never destroy or hide an editable window until its frontend has drained
+                    // debounce and every in-flight save through the shared coordinator.
+                    api.prevent_close();
+                    begin_shutdown(window.app_handle(), intent);
                 }
-                tauri::WindowEvent::Destroyed
+                tauri::WindowEvent::Destroyed => {
+                    let completed = window
+                        .app_handle()
+                        .state::<AppState>()
+                        .shutdown
+                        .lock()
+                        .ok()
+                        .and_then(
+                            |mut state| match state.unregister_participant(window.label()) {
+                                shutdown::AcknowledgeOutcome::Complete(intent) => Some(intent),
+                                _ => None,
+                            },
+                        );
+                    if let Some(intent) = completed {
+                        perform_shutdown(window.app_handle(), intent);
+                    }
                     // When the main window is destroyed, close every other window this app
                     // owns. They exist only in service of it: note windows, and the hidden
                     // quick-capture overlay.
-                    //
-                    // Listing `note-` alone was enough until the capture window existed,
-                    // because a window left open here does not just linger — it keeps the
-                    // process alive, since Tauri exits when the last window closes. With
-                    // the overlay unlisted and permanently hidden, closing the main window
-                    // without close-to-tray left an invisible process no tray icon or
-                    // relaunch could reach, ending only in Task Manager. Confirmed on
-                    // Windows 2026-09-05; the same was latent on Linux from the moment the
-                    // overlay was added there.
-                    if window.label() == "main" => {
+                    if window.label() == "main" {
                         let app = window.app_handle();
                         for (label, win) in app.webview_windows() {
                             if label != "main" {
@@ -466,14 +715,29 @@ pub fn run() {
                             }
                         }
                     }
+                }
                 _ => {}
             }
         });
     }
 
-    builder
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+    let app = builder
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            let authorized = app_handle
+                .state::<AppState>()
+                .shutdown
+                .lock()
+                .map(|mut state| state.consume_authorized_exit())
+                .unwrap_or(false);
+            if !authorized {
+                api.prevent_exit();
+                begin_shutdown(app_handle, shutdown::ShutdownIntent::ExitApp);
+            }
+        }
+    });
 }
 
 /// Bring the main window back, rebuilding it if it no longer exists.
@@ -537,9 +801,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .tooltip("HelixNotes")
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => show_main_window(app),
-            "quit" => {
-                app.exit(0);
-            }
+            "quit" => begin_shutdown(app, shutdown::ShutdownIntent::ExitApp),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {

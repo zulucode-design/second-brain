@@ -13,8 +13,10 @@ bun.lockb
 /.svelte-kit
 /build
 
-# Local tests
-/tests/
+# Local tests (keep issue #81's pure regression suites)
+/tests/*
+!/tests/save-coordinator.test.mjs
+!/tests/document-lifecycle.test.mjs
 
 # Nix
 /result

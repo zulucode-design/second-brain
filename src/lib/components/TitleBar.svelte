@@ -1,17 +1,21 @@
 <script lang="ts">
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { vaultReady, focusMode, readOnly, holdingPreview, updateAvailable, showSettings, settingsTab, appConfig, activeVaultConfig, syncState } from '$lib/stores/app';
+	import { focusMode, readOnly, shutdownPending, holdingPreview, updateAvailable, showSettings, settingsTab, appConfig, activeVaultConfig, syncState } from '$lib/stores/app';
 	import { syncNow } from '$lib/api';
 	import NoteSwitcher from './NoteSwitcher.svelte';
 
 	let {
 		onNewNote = () => {},
 		onClipWeb = () => {},
-		onSelectNote
+		onSelectNote,
+		onOpenWindow,
+		onRequestVaultSwitch = async () => false,
 	}: {
 		onNewNote?: () => void;
 		onClipWeb?: () => void;
 		onSelectNote?: (path: string) => Promise<boolean>;
+		onOpenWindow?: (path: string, title: string) => Promise<boolean>;
+		onRequestVaultSwitch?: () => Promise<boolean>;
 	} = $props();
 
 	const appWindow = getCurrentWindow();
@@ -89,21 +93,21 @@
 	</div>
 	{#if $appConfig?.show_note_switcher}
 		<div class="titlebar-note-switcher">
-			<NoteSwitcher {onSelectNote} />
+			<NoteSwitcher {onSelectNote} {onOpenWindow} />
 		</div>
 	{/if}
 	<div class="titlebar-actions">
-		<button class="switch-vault-btn" onclick={() => ($vaultReady = false)} title="Switch Vault">
+		<button class="switch-vault-btn" onclick={onRequestVaultSwitch} disabled={$shutdownPending} title="Switch Vault">
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
 			</svg>
 		</button>
-		{#if !$holdingPreview}<button class="switch-vault-btn" onclick={() => ($focusMode = true)} title="Focus mode">
+		{#if !$holdingPreview}<button class="switch-vault-btn" onclick={() => ($focusMode = true)} disabled={$shutdownPending} title="Focus mode">
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/>
 			</svg>
 		</button>{/if}
-		{#if !$holdingPreview}<button class="switch-vault-btn" class:active={$readOnly} onclick={() => ($readOnly = !$readOnly)} title={$readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}>
+		{#if !$holdingPreview}<button class="switch-vault-btn" class:active={$readOnly} onclick={() => { if (!$shutdownPending) $readOnly = !$readOnly; }} disabled={$shutdownPending} title={$readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}>
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				{#if $readOnly}
 					<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
@@ -122,13 +126,13 @@
 				</svg>
 			</button>
 		{/if}
-		<button class="switch-vault-btn" onclick={onClipWeb} title="Clip web page">
+		<button class="switch-vault-btn" onclick={onClipWeb} disabled={$shutdownPending} title="Clip web page">
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
 				<path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
 			</svg>
 		</button>
-		<button class="new-note-btn" onclick={onNewNote} title={`New Note (${modKey}+N)`}>
+		<button class="new-note-btn" onclick={onNewNote} disabled={$shutdownPending} title={`New Note (${modKey}+N)`}>
 			<svg width="14" height="14" viewBox="0 0 14 14" fill="none">
 				<path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
 			</svg>
