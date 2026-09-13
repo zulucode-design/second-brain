@@ -611,13 +611,11 @@ impl SemanticIndex {
                     {
                         match receiver.recv_timeout(remaining) {
                             Ok(()) => continue,
-                            Err(mpsc::RecvTimeoutError::Timeout) => {
-                                offline_interval_elapsed();
-                                break;
-                            }
+                            Err(mpsc::RecvTimeoutError::Timeout) => break,
                             Err(mpsc::RecvTimeoutError::Disconnected) => return,
                         }
                     }
+                    offline_interval_elapsed();
                 } else {
                     match receiver.recv_timeout(interval) {
                         Ok(()) | Err(mpsc::RecvTimeoutError::Timeout) => {}
