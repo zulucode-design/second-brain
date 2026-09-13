@@ -2795,6 +2795,7 @@ mod tests {
     fn scaffolded_vault(label: &str) -> std::path::PathBuf {
         let vault = std::env::temp_dir().join(format!("para-ops-{}-{}", label, Uuid::new_v4()));
         fs::create_dir_all(&vault).unwrap();
+        let vault = vault.canonicalize().unwrap();
         ensure_vault_structure(&vault.to_string_lossy()).unwrap();
         vault
     }
@@ -4318,6 +4319,8 @@ mod tests {
             std::env::temp_dir().join(format!("helixnotes-duplicate-note-test-{}", Uuid::new_v4()));
         let notebook = vault.join("Projects");
         fs::create_dir_all(&notebook).unwrap();
+        let vault = vault.canonicalize().unwrap();
+        let notebook = vault.join("Projects");
         let source_path = notebook.join("Project.md");
         let source_raw = "---\nid: source-id\ntitle: Project\ntags:\n  - work\npinned: true\ncreated: 2020-01-01T00:00:00Z\nmodified: 2020-01-02T00:00:00Z\naliases:\n  - Plan\n---\n# Project\n\nOriginal body.\n";
         fs::write(&source_path, source_raw).unwrap();
