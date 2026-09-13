@@ -18,7 +18,7 @@ import type {
 // App state
 export const appConfig = writable<AppConfig | null>(null);
 
-// The active vault's config entry (where per-vault WebDAV sync settings live).
+// Resolve the active vault's machine-local configuration entry.
 export function activeVaultConfig(c: AppConfig | null): VaultConfig | null {
   if (!c?.active_vault) return null;
   if (c.active_bookmark_id) {
@@ -168,13 +168,6 @@ export const resolvedTheme = derived(
     return paired;
   },
 );
-
-// Sync (WebDAV) - global status so the top-bar button reflects any sync,
-// whoever triggered it (manual button, settings, interval, on-change).
-export const syncState = writable<{ running: boolean; error: string | null }>({
-  running: false,
-  error: null,
-});
 
 // Update state
 export const updateAvailable = writable<{

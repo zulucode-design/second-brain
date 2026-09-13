@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, activeVaultConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
-	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, notionStatus, notionConnect, notionDisconnect, notionSetEnabled, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex } from '$lib/api';
+	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
+	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, notionStatus, notionConnect, notionDisconnect, notionSetEnabled, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex } from '$lib/api';
 	import type { AiProvider } from '$lib/types';
 	import { AI_PROVIDER_METADATA, AI_PROVIDER_OPTIONS } from '$lib/utils/ai-provider';
 	import { darkThemes, isMobile, isAndroid, isLinux, isWindows } from '$lib/platform';
@@ -14,7 +14,6 @@
 	import type { OrphanAttachment } from '$lib/api';
 	import type { ImportResult, BackupEntry, CustomTheme, CustomThemeColors, StartupView, VaultStats, SemanticStatus } from '$lib/types';
 	import { normalizeStartupView } from '$lib/utils/startup-view';
-	import { withSyncSettings } from '$lib/utils/sync-settings';
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
 
@@ -24,7 +23,7 @@
 		onAfterRestore?: () => Promise<void>;
 	} = $props();
 
-	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'maintenance' | 'ai' | 'sync' | 'notion' | 'updates';
+	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'maintenance' | 'ai' | 'notion' | 'updates';
 	let activeTab = $state<Tab>('styling');
 
 	// Updates state
@@ -456,126 +455,6 @@
 			console.error('Failed to check the AI backend:', e);
 		} finally {
 			aiStatusChecking = false;
-		}
-	}
-
-	// ── WebDAV sync ──
-	let syncProvider = $state<string | null>(activeVaultConfig($appConfig)?.sync_provider ?? null);
-	let syncUrl = $state(activeVaultConfig($appConfig)?.credentials?.webdav?.url ?? '');
-	let syncUsername = $state(activeVaultConfig($appConfig)?.credentials?.webdav?.username ?? '');
-	let syncPassword = $state(activeVaultConfig($appConfig)?.credentials?.webdav?.password ?? '');
-	let syncShowPassword = $state(false);
-	let syncTestLoading = $state(false);
-	let syncTestMessage = $state<{ type: 'success' | 'error'; text: string } | null>(null);
-	let syncRunning = $state(false);
-	let syncMessage = $state<{ type: 'success' | 'error'; text: string } | null>(null);
-	let syncOnOpen = $state(activeVaultConfig($appConfig)?.schedule?.on_open ?? false);
-	let syncOnChange = $state(activeVaultConfig($appConfig)?.schedule?.on_change ?? false);
-	let syncIntervalMinutes = $state(activeVaultConfig($appConfig)?.schedule?.interval_minutes ?? 0);
-
-	// Re-seed the sync form when the active vault changes, so Settings reflects the current vault.
-	let lastSyncVault: string | null = null;
-	$effect(() => {
-		const identity = $appConfig?.active_bookmark_id
-			? `bookmark:${$appConfig.active_bookmark_id}`
-			: $appConfig?.active_vault
-				? `path:${$appConfig.active_vault}`
-				: null;
-		if (identity === lastSyncVault) return;
-		lastSyncVault = identity;
-		const vc = activeVaultConfig($appConfig);
-		syncProvider = vc?.sync_provider ?? null;
-		syncUrl = vc?.credentials?.webdav?.url ?? '';
-		syncUsername = vc?.credentials?.webdav?.username ?? '';
-		syncPassword = vc?.credentials?.webdav?.password ?? '';
-		syncOnOpen = vc?.schedule?.on_open ?? false;
-		syncOnChange = vc?.schedule?.on_change ?? false;
-		syncIntervalMinutes = vc?.schedule?.interval_minutes ?? 0;
-	});
-
-	async function saveSyncSettings() {
-		try {
-			await setSyncSettings(syncProvider, syncUrl || null, syncUsername || null, syncPassword || null, syncOnOpen, syncOnChange, syncIntervalMinutes);
-		} catch (e) {
-			syncMessage = { type: 'error', text: String(e) };
-			try { $appConfig = await getAppConfig(); } catch {}
-			return;
-		}
-		// Reflect into the active vault's config in the store so the top-bar button and auto-sync
-		// triggers update live, without an app restart.
-		if ($appConfig) {
-			const cur = $appConfig;
-			const active = activeVaultConfig(cur);
-			$appConfig = {
-				...cur,
-				vaults: cur.vaults.map((vault) => vault === active ? withSyncSettings(vault, {
-					provider: syncProvider,
-					url: syncUrl || null,
-					username: syncUsername || null,
-					password: syncPassword || null,
-					onOpen: syncOnOpen,
-					onChange: syncOnChange,
-					intervalMinutes: syncIntervalMinutes,
-				}) : vault),
-			};
-		}
-	}
-
-	async function handleTestSync() {
-		syncTestLoading = true;
-		syncTestMessage = null;
-		const unlisten = await listen<{ success: boolean; message?: string; error?: string }>('sync-test-result', (event) => {
-			const data = event.payload;
-			syncTestMessage = data.success
-				? { type: 'success', text: data.message ?? 'Connection successful' }
-				: { type: 'error', text: data.error ?? 'Connection failed' };
-			syncTestLoading = false;
-			unlisten();
-		});
-		try {
-			await saveSyncSettings();
-			await testSyncConnection();
-		} catch (e) {
-			syncTestMessage = { type: 'error', text: String(e) };
-			syncTestLoading = false;
-			unlisten();
-		}
-	}
-
-	async function handleSyncNow() {
-		syncRunning = true;
-		syncMessage = null;
-		const unlisteners: Array<() => void> = [];
-		const cleanup = () => { unlisteners.forEach((u) => u()); };
-		unlisteners.push(await listen<{ success: boolean; summary?: { uploaded?: number; downloaded?: number; deleted_local?: number; deleted_remote?: number; conflicts?: number }; last_sync_time?: string }>('sync-done', async (event) => {
-			const s = event.payload.summary ?? {};
-			const parts: string[] = [];
-			if (s.uploaded) parts.push(`${s.uploaded} uploaded`);
-			if (s.downloaded) parts.push(`${s.downloaded} downloaded`);
-			const deleted = (s.deleted_local ?? 0) + (s.deleted_remote ?? 0);
-			if (deleted) parts.push(`${deleted} deleted`);
-			if (s.conflicts) parts.push(`${s.conflicts} conflict copies`);
-			syncMessage = { type: 'success', text: parts.length ? `Synced: ${parts.join(', ')}.` : 'Already up to date.' };
-			syncRunning = false;
-			if (event.payload.last_sync_time) {
-				try {
-					$appConfig = await getAppConfig();
-				} catch {}
-			}
-			cleanup();
-		}));
-		unlisteners.push(await listen<{ error?: string }>('sync-error', (event) => {
-			syncMessage = { type: 'error', text: event.payload.error ?? 'Sync failed' };
-			syncRunning = false;
-			cleanup();
-		}));
-		try {
-			await saveSyncSettings();
-			await syncNow();
-		} catch (e) {
-			syncMessage = { type: 'error', text: String(e) };
-			syncRunning = false;
-			cleanup();
 		}
 	}
 
@@ -1482,12 +1361,6 @@
 							<path d="M12 8V4l-2-2"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M9 13v2"/><path d="M15 13v2"/>
 						</svg>
 						AI
-					</button>
-					<button class="tab-btn" class:active={activeTab === 'sync'} onclick={() => activeTab = 'sync'}>
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/>
-						</svg>
-						Sync
 					</button>
 					<button class="tab-btn" class:active={activeTab === 'notion'} onclick={() => activeTab = 'notion'}>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2709,126 +2582,6 @@
 								{:else}
 									<p class="import-desc">Select text in the editor and right-click to access AI writing tools: improve, fix grammar, rewrite, summarize, translate, and more.</p>
 								{/if}
-								</div>
-							{/if}
-						</div>
-
-					{:else if activeTab === 'sync'}
-						<div class="tab-content">
-							{#if $appConfig?.secret_store_error}
-								<div class="import-result error">
-									<span>{$appConfig.secret_store_error} Unlock the OS credential store, then restart HelixNotes.</span>
-								</div>
-							{/if}
-							<div class="settings-section">
-								<h3>Provider</h3>
-								<div class="setting-options">
-									<button class="option-btn" class:active={!syncProvider} onclick={() => { syncProvider = null; syncMessage = null; syncTestMessage = null; saveSyncSettings(); }}>Disabled</button>
-									<button class="option-btn" class:active={syncProvider === 'webdav'} onclick={() => { syncProvider = 'webdav'; syncMessage = null; syncTestMessage = null; saveSyncSettings(); }}>WebDAV</button>
-								</div>
-								<p class="setting-hint">Sync your vault to your own WebDAV server (Nextcloud, ownCloud, a NAS).</p>
-							</div>
-
-							{#if syncProvider === 'webdav'}
-								<div class="settings-section">
-									<h3>Server URL</h3>
-									<div class="ai-key-row">
-										<input type="text" class="ai-key-input" placeholder="https://cloud.example.com/remote.php/dav/files/USER/HelixNotes" value={syncUrl} oninput={(e) => { syncUrl = (e.target as HTMLInputElement).value; }} onblur={saveSyncSettings} />
-									</div>
-									<p class="setting-hint" style="overflow-x: auto;">WebDAV folder URL, e.g. <code style="white-space: nowrap;">https://your-server/remote.php/dav/files/USER/Folder</code></p>
-								</div>
-								<div class="settings-section">
-									<h3>Username</h3>
-									<div class="ai-key-row">
-										<input type="text" class="ai-key-input" placeholder="your username" value={syncUsername} oninput={(e) => { syncUsername = (e.target as HTMLInputElement).value; }} onblur={saveSyncSettings} />
-									</div>
-								</div>
-								<div class="settings-section">
-									<h3>Password</h3>
-									<div class="ai-key-row">
-										<input type={syncShowPassword ? 'text' : 'password'} class="ai-key-input" placeholder="app password" value={syncPassword} oninput={(e) => { syncPassword = (e.target as HTMLInputElement).value; }} onblur={saveSyncSettings} />
-										<button class="ai-key-toggle" onclick={() => syncShowPassword = !syncShowPassword} title={syncShowPassword ? 'Hide' : 'Show'}>
-											{#if syncShowPassword}
-												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-											{:else}
-												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-											{/if}
-										</button>
-									</div>
-									<p class="setting-hint">Use an app password, not your main one. Stored in this device's OS credential manager.</p>
-								</div>
-
-								<div class="settings-section">
-									<h3>Connection</h3>
-									<button class="import-btn" onclick={handleTestSync} disabled={syncTestLoading || !syncUrl}>
-										{#if syncTestLoading}
-											<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
-											Testing...
-										{:else}
-											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
-											Test Connection
-										{/if}
-									</button>
-									{#if syncTestMessage}
-										<div class="import-result {syncTestMessage.type}">
-											{#if syncTestMessage.type === 'success'}
-												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
-											{:else}
-												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
-											{/if}
-											<span>{syncTestMessage.text}</span>
-										</div>
-									{/if}
-								</div>
-
-								<div class="settings-section">
-									<h3>Sync</h3>
-									<button class="import-btn" onclick={handleSyncNow} disabled={syncRunning || !syncUrl}>
-										{#if syncRunning}
-											<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
-											Syncing...
-										{:else}
-											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>
-											Sync Now
-										{/if}
-									</button>
-									{#if syncMessage}
-										<div class="import-result {syncMessage.type}">
-											{#if syncMessage.type === 'success'}
-												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
-											{:else}
-												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
-											{/if}
-											<span>{syncMessage.text}</span>
-										</div>
-									{/if}
-									{#if activeVaultConfig($appConfig)?.schedule?.last_sync_time}
-										<p class="setting-hint">Last sync: {new Date(activeVaultConfig($appConfig)!.schedule?.last_sync_time!).toLocaleString()}</p>
-									{/if}
-									<p class="setting-hint">If a note is edited on two devices, both are kept (one as a "(conflict)" copy).</p>
-								</div>
-								<div class="settings-section">
-									<h3>Automatic Sync</h3>
-									<div class="setting-options">
-										{#each [{ v: 0, l: 'Off' }, { v: 5, l: '5 min' }, { v: 15, l: '15 min' }, { v: 30, l: '30 min' }, { v: 60, l: '60 min' }] as opt}
-											<button class="option-btn" class:active={syncIntervalMinutes === opt.v} onclick={() => { syncIntervalMinutes = opt.v; saveSyncSettings(); }}>{opt.l}</button>
-										{/each}
-									</div>
-									<p class="setting-hint">How often to sync in the background.</p>
-									<label class="setting-toggle" style="margin-top: 12px;">
-										<span class="setting-label">
-											<span class="setting-name">Sync when a note changes</span>
-											<span class="setting-desc">Sync shortly after you edit a note.</span>
-										</span>
-										<button class="toggle-switch" class:on={syncOnChange} role="switch" aria-checked={syncOnChange} aria-label="Sync when a note changes" onclick={() => { syncOnChange = !syncOnChange; saveSyncSettings(); }}><span class="toggle-knob"></span></button>
-									</label>
-									<label class="setting-toggle">
-										<span class="setting-label">
-											<span class="setting-name">Sync when the vault opens</span>
-											<span class="setting-desc">Sync once when the app starts.</span>
-										</span>
-										<button class="toggle-switch" class:on={syncOnOpen} role="switch" aria-checked={syncOnOpen} aria-label="Sync when the vault opens" onclick={() => { syncOnOpen = !syncOnOpen; saveSyncSettings(); }}><span class="toggle-knob"></span></button>
-									</label>
 								</div>
 							{/if}
 						</div>

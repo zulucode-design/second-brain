@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { focusMode, readOnly, shutdownPending, holdingPreview, updateAvailable, showSettings, settingsTab, appConfig, activeVaultConfig, syncState } from '$lib/stores/app';
-	import { syncNow } from '$lib/api';
+	import { focusMode, readOnly, shutdownPending, holdingPreview, updateAvailable, showSettings, settingsTab, appConfig } from '$lib/stores/app';
 	import NoteSwitcher from './NoteSwitcher.svelte';
 
 	let {
@@ -119,13 +118,6 @@
 				{/if}
 			</svg>
 		</button>{/if}
-		{#if activeVaultConfig($appConfig)?.sync_provider === 'webdav'}
-			<button class="switch-vault-btn" class:active={$syncState.running} onclick={() => { if (!$syncState.running) syncNow().catch(() => {}); }} disabled={$syncState.running} title={$syncState.error ? `Sync error: ${$syncState.error}` : ($syncState.running ? 'Syncing vault...' : 'Sync vault now')}>
-				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class:sync-spin={$syncState.running}>
-					<path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/>
-				</svg>
-			</button>
-		{/if}
 		<button class="switch-vault-btn" onclick={onClipWeb} disabled={$shutdownPending} title="Clip web page">
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />

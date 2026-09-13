@@ -17,7 +17,6 @@ mod secret_store;
 mod semantic_search;
 mod shutdown;
 mod state;
-mod sync;
 mod sync_config;
 mod types;
 mod vault;
@@ -540,9 +539,6 @@ pub fn run() {
             commands::set_ai_settings,
             commands::test_ai_connection,
             commands::ai_ask,
-            commands::set_sync_settings,
-            commands::test_sync_connection,
-            commands::sync_now,
             notion::commands::notion_status,
             notion::commands::notion_connect,
             notion::commands::notion_disconnect,

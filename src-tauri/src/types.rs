@@ -93,10 +93,6 @@ pub struct VaultConfig {
     /// must still work before or after the vault folder moves.
     #[serde(default)]
     pub vault_id: Option<String>,
-    /// How this vault syncs. Flattened, so the stored layout is unchanged for anyone
-    /// upgrading; see [`crate::sync_config`] for how older settings are read.
-    #[serde(default, flatten)]
-    pub sync: crate::sync_config::SyncSettings,
     /// How this vault publishes to Notion.
     ///
     /// A sibling of `sync`, deliberately not a value of `sync.provider`: that field names
@@ -306,14 +302,6 @@ pub struct AppConfig {
     pub startup_view: StartupView,
     #[serde(default)]
     pub restore_last_session: bool,
-    /// DEPRECATED: sync moved to per-vault [`VaultConfig`]. Kept for one release so a
-    /// config written before that move still migrates.
-    ///
-    /// Read once by `migrate_global_sync_to_vault`; nothing in the app assigns to it. What
-    /// is already on disk does round-trip through a save, so an old config keeps its
-    /// fallback copy until the field is dropped for good.
-    #[serde(default, flatten)]
-    pub legacy_sync: crate::sync_config::SyncSettings,
     #[serde(default)]
     pub custom_themes: Vec<CustomTheme>,
 }
@@ -418,7 +406,6 @@ impl Default for AppConfig {
             enable_wiki_links: true,
             startup_view: StartupView::All,
             restore_last_session: false,
-            legacy_sync: Default::default(),
             custom_themes: Vec::new(),
         }
     }

@@ -31,10 +31,12 @@
   <body>
     <h1>Pre-Alpha Remediation Execution Plan</h1>
     <p class="meta"><strong>Repository:</strong> <code>zulucode-design/second-brain</code> · <strong>Created:</strong> 2026-09-13 · <strong>Source audit:</strong> <code>docs/reports/pre-alpha-codebase-audit-2026-09-13.html</code></p>
-    <p class="meta"><strong>Status refresh — PR #90:</strong> work package A / D-01 is complete and verified on <a href="https://github.com/zulucode-design/second-brain/pull/90">PR #90</a>; implementation commit before this report refresh: <code>0e558cb4e6c4b84df9e63ae0ccad11b6fa8467ef</code>. Issue #81 closes when the PR merges.</p>
+    <p class="meta"><strong>Status refresh — merged PR #90:</strong> work package A / D-01 is complete and verified by <a href="https://github.com/zulucode-design/second-brain/pull/90">PR #90</a>; implementation commit before its report refresh: <code>0e558cb4e6c4b84df9e63ae0ccad11b6fa8467ef</code>.</p>
+    <p class="meta"><strong>Status refresh — merged PR #93:</strong> work package C / D-03 / D-10 is complete and verified by <a href="https://github.com/zulucode-design/second-brain/pull/93">PR #93</a>; transactional restore, shared restore/import coordination, projection reconciliation, and backup-scope regressions are merged.</p>
+    <p class="meta"><strong>Status refresh — PR #94:</strong> work package B / D-02 / D-05 is complete and verified on <a href="https://github.com/zulucode-design/second-brain/pull/94">PR #94</a>; the rebased package A/B/C tree must pass <code>pnpm verify</code> and hosted checks before merge.</p>
 
     <div class="callout danger">
-      <strong>Release gate:</strong> work package A is complete and verified by PR #90. No external alpha until work packages B–D and H are complete, decision gates G1–G4 are recorded and their required outcomes implemented, no P0/P1 remains open, and H’s versioned verification-matrix record is green. That record must name commands, supported platforms, fixtures, manual protocols, expected outcomes, and evidence for packaged install/launch plus data-safety scenarios. Internal testing must use a disposable vault with WebDAV and restore disabled until their P1 packages close.
+      <strong>Release gate:</strong> work packages A, B, and C are complete and verified. No external alpha until work packages D and H are complete, decision gates G1–G4 are recorded and their required outcomes implemented, no P0/P1 remains open, and H’s versioned verification-matrix record is green. That record must name commands, supported platforms, fixtures, manual protocols, expected outcomes, and evidence for packaged install/launch plus data-safety scenarios. Internal testing must use a disposable vault; WebDAV is removed rather than gated, and transactional restore is merged.
     </div>
 
     <h2>1. Operating model</h2>
@@ -51,7 +53,7 @@
     <table>
       <thead><tr><th>Gate</th><th>Decision required</th><th>Why it blocks work</th><th>Output</th></tr></thead>
       <tbody>
-        <tr><td><span class="badge decision">G1 Sync architecture — decided</span></td><td>ADR-0009 reaffirms ADR-0002: bundle an app-managed Syncthing sidecar over user-installed Tailscale with explicit device pairing; remove WebDAV from production.</td><td>The decision is recorded; packages B and D still own WebDAV removal, migration, sidecar lifecycle, conflict handling, and verification.</td><td>ADR-0009, SPEC §8, #82, #84, and #28.</td></tr>
+        <tr><td><span class="badge decision">G1 Sync architecture — decided; removal complete</span></td><td>ADR-0009 reaffirms ADR-0002: bundle an app-managed Syncthing sidecar over user-installed Tailscale with explicit device pairing; remove WebDAV from production.</td><td>Package B has completed WebDAV removal and durable config/credential retirement. Package D still owns sidecar lifecycle, pairing, conflict handling, and its verification.</td><td>ADR-0009, SPEC §8, #82, #84, and #28.</td></tr>
         <tr><td><span class="badge decision">G2 Alpha scope — decided</span></td><td>ADR-0010 makes semantic search part of the external-alpha retrieval contract and moves #8–#11 to the v1 feature-complete beta.</td><td>The absent interaction surfaces remain v1 commitments without blocking safety-focused external testing.</td><td>ADR-0010, SPEC delivery milestones, README, and #8–#11.</td></tr>
         <tr><td><span class="badge decision">G3 Product identity — decided</span></td><td>ADR-0011 makes Second Brain the sole user-facing identity, keeps the existing Second Brain application identifier, starts at <code>0.1.0-alpha.1</code>, treats HelixNotes as separate, and disables the inherited updater.</td><td>Package I still owns the rename and narrow mixed-build migration; H/#49 own package and future signed-update evidence.</td><td>ADR-0011, SPEC §9, #89, and #49.</td></tr>
         <tr><td><span class="badge decision">G4 Platform/vault contract — decided</span></td><td>ADR-0012 supports Windows 11 x86-64 and Fedora 44 Workstation x86-64 with one logical vault replicated between the two machines.</td><td>Package I removes inherited unsupported-platform and multi-vault paths; H verifies only the supported matrix and the 10,000-note baseline.</td><td>ADR-0012, SPEC §2/§12, #89, and #88.</td></tr>
@@ -74,27 +76,26 @@
             </ul>
           </td>
           <td>D-01; historical alpha blocker 1. Fixed and verified by <a href="https://github.com/zulucode-design/second-brain/pull/90">PR #90</a>.</td>
-          <td>Complete. Final semantic review approved with no blocking findings; full OCI <code>pnpm verify</code> passed. Issue #81 closes on merge.</td>
+          <td>Complete. Final semantic review approved with no blocking findings; full OCI <code>pnpm verify</code> passed. Issue #81 is closed by merged PR #90.</td>
         </tr>
         <tr>
-          <td><strong>B</strong><br><span class="badge p1">P1 WebDAV boundary</span></td>
-          <td>Prevent remote path escape and insecure credential/content transport.</td>
+          <td><strong>B</strong><br><span class="badge implemented">Complete — WebDAV removed</span></td>
+          <td>Remove the reachable remote path and insecure transport boundary selected by G1.</td>
           <td>
             <ul>
-              <li>If G1 removes WebDAV, remove or permanently gate all WebDAV commands/settings and prove no production call path can instantiate the client; migration preserves user data without retaining credentials unnecessarily.</li>
-              <li>If G1 retains WebDAV, decoded hrefs accept only normal relative components under an exact base-path boundary.</li>
-              <li>If retained, reject parent/root/prefix/backslash and encoded-separator/traversal variants before local I/O.</li>
-              <li>If retained, every sync read/write/delete verifies vault containment.</li>
-              <li>If retained, HTTPS is required; any loopback exception is explicit and tested.</li>
-              <li>Removal/unreachability tests or adversarial server-response tests prove the selected outcome.</li>
+              <li><strong>Selected removal outcome complete:</strong> WebDAV client construction, commands, production registration, wrappers, configuration contracts, settings, controls, and automatic scheduling are absent.</li>
+              <li><strong>Migration complete:</strong> old flat/global/nested fields are stripped without vault or remote I/O; stable credential IDs are recorded durably before idempotent keyring deletion and interrupted cleanup retries.</li>
+              <li>Retained-provider href validation, containment, and HTTPS branches are not applicable because no production transport remains.</li>
+              <li>Rust migration tests and JavaScript source-policy tests prove config-first deletion ordering, retry behavior, no vault access, and production client unreachability.</li>
+              <li><code>pnpm verify</code> passes under Node 22, pnpm 10.28.1, and Rust 1.88 in the CI-equivalent Debian Bookworm/WebKitGTK environment.</li>
             </ul>
           </td>
-          <td>D-02, D-05; alpha blocker 2.</td>
-          <td>G1 selects hardening versus removal; either outcome must close the reachable security boundary.</td>
+          <td>D-02 and D-05 resolved; alpha blocker 2 closed.</td>
+          <td>G1 selected removal. Package D remains independent work for the bundled sidecar.</td>
         </tr>
         <tr>
-          <td><strong>C</strong><br><span class="badge p1">P1 restore/backup — implemented locally in #83</span></td>
-          <td>Make restore transactional and make backup scope/claims accurate.</td>
+          <td><strong>C</strong><br><span class="badge p1">P1 historical severity</span><br><span class="badge ready">Complete / verified — transactional restore</span></td>
+          <td><strong>Completed by PR #93:</strong> transactional restore, accurate backup scope, and the shared bulk-mutation coordinator used by restore and import.</td>
           <td>
             <ul>
               <li>Preflight all archive entries, containment, size, and extractability.</li>
@@ -106,26 +107,25 @@
               <li>Traversal/read errors fail backup rather than silently omit content.</li>
             </ul>
           </td>
-          <td>D-03, D-10; alpha blocker 3; existing #14.</td>
-          <td>None. C owns the shared coordinator primitive and its contract tests; D and E consume it.</td>
+          <td>D-03 and D-10 fixed/verified; alpha blocker 3 closed by <a href="https://github.com/zulucode-design/second-brain/pull/93">PR #93</a>.</td>
+          <td>Complete. C owns the merged shared coordinator primitive and contract tests; D must consume it for the sidecar, while E retains import result-accuracy work.</td>
         </tr>
         <tr>
           <td><strong>D</strong><br><span class="badge p1">P1 sync integrity</span></td>
-          <td>Resolve sync architecture and make incoming/bulk changes interruption-safe and projection-complete.</td>
+          <td>Implement the selected sidecar architecture and make its incoming/bulk changes interruption-safe and projection-complete.</td>
           <td>
             <ul>
-              <li>All implementations consume C’s bulk-mutation coordinator for single-run exclusion, pre-incoming backup policy, watcher cleanup, terminal outcomes, and projection convergence.</li>
+              <li>The sidecar integration consumes C’s bulk-mutation coordinator for single-run exclusion, pre-incoming backup policy, watcher cleanup, terminal outcomes, and projection convergence.</li>
               <li>Synced paths match the chosen boundary, including explicit decisions for trash/history/Notion/shared settings.</li>
               <li>One conflict convention and paired choice UI; unresolved conflicts are excluded from ordinary indexes, counts, views, and publication.</li>
-              <li><strong>WebDAV branch:</strong> scan/read errors are unknown/fatal rather than deletion; delete and manifest failures are checked; manifest writes are atomic; partial application is recoverable and always reconciled.</li>
-              <li><strong>Sidecar/Tailscale branch:</strong> pin and bundle the engine through <code>externalBin</code>; define app-owned install/start/stop/restart/upgrade behavior and process supervision.</li>
-              <li><strong>Sidecar/Tailscale branch:</strong> implement explicit device identity and authenticated one-time pairing, scoped folder configuration, Tailscale reachability guidance/detection, and no auto-pairing from network membership.</li>
-              <li><strong>Sidecar/Tailscale branch:</strong> define ownership boundaries between sidecar and app, including conflict discovery, delayed arrivals, failure/restart recovery, and index/watcher convergence.</li>
-              <li>Two-machine interruption, delete, move, delayed-arrival, pairing/authentication, and conflict fixtures pass for the selected branch.</li>
+              <li>Pin and bundle the engine through <code>externalBin</code>; define app-owned install/start/stop/restart/upgrade behavior and process supervision.</li>
+              <li>Implement explicit device identity and authenticated one-time pairing, scoped folder configuration, Tailscale reachability guidance/detection, and no auto-pairing from network membership.</li>
+              <li>Define ownership boundaries between sidecar and app, including conflict discovery, delayed arrivals, failure/restart recovery, and index/watcher convergence.</li>
+              <li>Two-machine interruption, delete, move, delayed-arrival, pairing/authentication, and conflict fixtures pass for the selected sidecar.</li>
             </ul>
           </td>
-          <td>D-04, D-06; blockers 4–5; existing #28 and #14.</td>
-          <td>G1; C’s coordinator/backup primitives; B’s selected remove-or-harden outcome.</td>
+          <td>Future-sidecar obligations derived from historical D-04/D-06; blockers 4–5; existing #28 and #14.</td>
+          <td>G1; C’s coordinator/backup primitives; B’s completed WebDAV removal boundary.</td>
         </tr>
         <tr>
           <td><strong>E</strong><br><span class="badge p2">P2 import/external files</span></td>
@@ -147,14 +147,14 @@
           <td>
             <ul>
               <li>Shared same-directory temporary-write, flush/sync policy, atomic-replace helper.</li>
-              <li>Apply to notes, app config, sync manifest/downloads, and Notion identity state according to risk.</li>
+              <li>Apply to notes, app config, and Notion identity state according to risk. Package B’s retirement files already use atomic durable replacement.</li>
               <li>Malformed, unreadable, and absent config are distinct outcomes with recovery UI.</li>
               <li>Non-iOS vault-open errors are visible and actionable.</li>
               <li>Failure-injection tests preserve previous good content.</li>
             </ul>
           </td>
           <td>D-09, D-11.</td>
-          <td>Coordinate manifest helper with D.</td>
+          <td>Sidecar-specific durable state remains package D’s responsibility.</td>
         </tr>
         <tr>
           <td><strong>G</strong><br><span class="badge p2">P2/P3 UX correctness</span></td>
@@ -176,7 +176,7 @@
             <ul>
               <li>Own a versioned alpha-verification matrix under <code>docs/reports/</code> naming commands, supported platforms, fixtures/vaults, manual protocols, expected outcomes, evidence links, and responsible ticket for every gap.</li>
               <li>Windows CI uses <code>pnpm test:rust</code>; hosted Ubuntu verification/package jobs remain green.</li>
-              <li>Gating component/IPC/E2E coverage includes edit→immediate navigate, edit→close, hostile href or WebDAV unreachability, interrupted sync, and restore rollback.</li>
+              <li>Gating component/IPC/E2E coverage retains package B’s WebDAV-unreachability policy checks and separately covers future sidecar interruption plus edit→immediate navigate, edit→close, and restore rollback.</li>
               <li>The matrix carries failed-import, startup/config, due-date/error-state, and semantic-schema rows owned by E–G; they may be explicitly deferred with target milestones and expected current outcomes without blocking H.</li>
               <li>Deb/rpm and the supported Windows package are installed and smoke-launched, not only built or inspected.</li>
               <li>Define log privacy/redaction rules and provide a user-controlled diagnostic export that excludes note contents and secrets by default.</li>
@@ -186,7 +186,7 @@
             </ul>
           </td>
           <td>Test assessment gaps; existing #24 and #49.</td>
-          <td>A now provides focused save/navigation/shutdown regressions. B–D still must provide the remaining gating scenarios; E–G are non-gating matrix rows unless separately promoted. CI scaffolding can continue immediately.</td>
+          <td>A and C now provide focused save/navigation/shutdown, restore rollback, and bulk-coordination regressions; B provides WebDAV-unreachability policy checks. D must still provide the sidecar scenarios; E–G are non-gating matrix rows unless separately promoted. CI scaffolding can continue immediately.</td>
         </tr>
         <tr>
           <td><strong>I</strong><br><span class="badge p3">P3 product/cleanup</span></td>
@@ -224,7 +224,7 @@
     <h2>4. Recommended execution order</h2>
     <ol>
       <li><strong>Wave 0 — decisions and containment:</strong> disable risky external-alpha surfaces; resolve G1–G4. Start H’s Windows/CI scaffolding.</li>
-      <li><strong>Wave 1 — independent P1s in parallel:</strong> <span class="badge ready">A complete / verified</span> Save lifecycle is complete in PR #90; B (WebDAV boundary) and C (transactional restore foundation) remain.</li>
+      <li><strong>Wave 1 — independent P1s complete:</strong> <span class="badge ready">A/B/C complete / verified</span> PR #90 fixed save lifecycle, PR #93 delivered transactional restore and the shared coordinator, and PR #94 removes WebDAV.</li>
       <li><strong>Wave 2 — coordinated mutation adoption:</strong> D adopts C’s coordinator for the selected sync architecture, then E adopts it for import. Keep each PR independently reviewable.</li>
       <li><strong>Wave 3 — durability and visible correctness:</strong> F and G.</li>
       <li><strong>Wave 4 — verification closure:</strong> complete H against the implemented failure scenarios, including package installation/smoke evidence.</li>
@@ -245,7 +245,7 @@
 
     <h2>6. Definition of external-alpha ready</h2>
     <ul>
-      <li><span class="badge ready">A complete / verified</span> B–D and H remain; no open P0/P1 data-integrity or security issue at release.</li>
+      <li><span class="badge ready">A/B/C complete / verified</span> D and H remain; no open P0/P1 data-integrity or security issue at release.</li>
       <li>G1–G4 are recorded and their required outcomes are implemented in SPEC, README, settings, packaging, migrations, and executable tickets.</li>
       <li>H’s versioned verification-matrix record is complete and green: commands, supported Linux/Windows platforms, fixtures, manual protocols, expected outcomes, evidence links, performance thresholds, and residual gaps are explicit.</li>
       <li><code>pnpm verify</code> is green at documented Node/pnpm/Rust versions on Linux and Windows.</li>
@@ -257,7 +257,9 @@
 
     <div class="callout good">
       <p><strong>Original verification baseline:</strong> the reviewed audit commit passes <code>pnpm verify</code> in the provisioned WebKitGTK environment at Node 22.23.2, pnpm 10.28.1, and Rust 1.88.0: Svelte 0/0 diagnostics, JavaScript 44/44, Rust 484 passed/0 failed/6 ignored, formatting and Clippy clean, and production build successful. Unsigned deb/rpm builds and both desktop-entry package checks also pass. Hosted GitHub Actions Verify run <a href="https://github.com/zulucode-design/second-brain/actions/runs/34729884375">34729884375</a> independently passed the exact audited HEAD. This remains the historical minimum every remediation wave must preserve.</p>
-      <p><strong>Work package A / PR #90 evidence:</strong> at implementation commit <code>0e558cb</code>, full OCI <code>pnpm verify</code> passed with Svelte 0 errors/0 warnings, 64 frontend tests passed/0 failed, and 500 Rust tests discovered—494 passed, 6 ignored, 0 failed—plus clean rustfmt, Clippy with warnings denied, and production build. Final semantic review: <strong>APPROVED — no remaining blocking findings</strong>. A fresh hosted Verify on the report-refresh head remains the pre-merge gate.</p>
+      <p><strong>Work package A / PR #90 evidence:</strong> at implementation commit <code>0e558cb</code>, full OCI <code>pnpm verify</code> passed with Svelte 0 errors/0 warnings, 64 frontend tests passed/0 failed, and 500 Rust tests discovered—494 passed, 6 ignored, 0 failed—plus clean rustfmt, Clippy with warnings denied, and production build. Final semantic review: <strong>APPROVED — no remaining blocking findings</strong>.</p>
+      <p><strong>Work package C / merged PR #93 evidence:</strong> full <code>pnpm verify</code> passed with 44 frontend tests and 502 Rust tests discovered—496 passed, 6 ignored, 0 failed—plus Svelte check, strict Clippy, formatting, and production build. Transactional restore, rollback, backup scope, shared coordination, and terminal outcomes are covered by regressions.</p>
+      <p><strong>Work package B / PR #94 evidence:</strong> WebDAV production-unreachability and durable retirement tests passed before rebase. The final merge gate is a fresh <code>pnpm verify</code> and hosted Verify/Windows Rust checks on the package A/B/C rebased tree.</p>
     </div>
   </body>
 </html>
