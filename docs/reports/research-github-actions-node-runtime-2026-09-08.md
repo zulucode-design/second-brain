@@ -1,7 +1,8 @@
 # GitHub Actions Node-runtime verification — 2026-09-08
 
-Status: **Preserved finding.** The workflow upgrade remains outstanding as of
-2026-09-12; this report is retained as the evidence and rationale for that maintenance.
+Status: **Implemented in issue #88.** The workflow action wrappers were upgraded to
+their Node 24 major versions on 2026-09-13 while the application's CI runtime remained
+on Node 22. This report is retained as the evidence and rationale for that maintenance.
 
 ## Scope
 
@@ -33,10 +34,10 @@ issue: a deprecated JavaScript runtime inside the workflow actions themselves.
 It is not an application dependency failure and it did not invalidate PR #47's
 successful verification.
 
-## Recommended follow-up
+## Implemented follow-up
 
-Create a maintenance ticket and PR before 2026-09-23 to change only these
-workflow references:
+Issue #88's initial verification-matrix work changed these workflow references before
+2026-09-23:
 
 ```yaml
 actions/checkout@v4  -> actions/checkout@v5
@@ -46,8 +47,12 @@ actions/setup-node@v4 -> actions/setup-node@v5
 
 Keep `node-version: 22` unchanged. Run the normal `pnpm verify` gate and one
 GitHub Actions run after the upgrade. The workflow uses GitHub-hosted
-`ubuntu-22.04`, so the minimum self-hosted-runner compatibility caveat for the
-new action majors does not apply.
+`ubuntu-22.04` and `windows-2022` runners, so the minimum self-hosted-runner
+compatibility caveat for the new action majors does not apply. The new Windows job
+also runs the repository's required `pnpm test:rust` entrypoint, preserving the test
+binary manifest setup documented in `AGENTS.md`.
+
+Final hosted-run evidence is recorded on the implementing pull request.
 
 ## Sources
 
