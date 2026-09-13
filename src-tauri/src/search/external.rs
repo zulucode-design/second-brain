@@ -327,9 +327,9 @@ fn flush(app: &AppHandle, vault_path: &str, search: &Arc<SearchIndex>, settled: 
 mod tests {
     use super::*;
 
-    fn touched(path: &Path, ago: Duration) -> Seen {
+    fn touched_at(path: &Path, now: Instant, ago: Duration) -> Seen {
         Seen {
-            at: Instant::now() - ago,
+            at: now - ago,
             fingerprint: Fingerprint::of(path),
         }
     }
@@ -569,17 +569,18 @@ mod tests {
         let projects = vault.join("Projects");
         let mut pending = HashMap::new();
         let mut expected = Vec::new();
+        let now = Instant::now();
         for i in 0..50 {
             let path = note(&projects, &format!("Burst{i}.md"), "zylophonic burst");
             expected.push(path.to_string_lossy().to_string());
             // The same path touched repeatedly, as an editor writing in chunks would.
             for _ in 0..5 {
-                pending.insert(path.clone(), touched(&path, SETTLE * 2));
+                pending.insert(path.clone(), touched_at(&path, now, SETTLE * 2));
             }
         }
         assert_eq!(pending.len(), 50, "repeat touches must coalesce per path");
 
-        let settled = take_settled(&mut pending, Instant::now());
+        let settled = take_settled(&mut pending, now);
         assert_eq!(settled.len(), 50);
         apply(&index, settled).unwrap();
 
@@ -599,10 +600,11 @@ mod tests {
         let quiet = note(&dir, "Quiet.md", "done");
         let fresh = note(&dir, "Fresh.md", "still going");
         let mut pending = HashMap::new();
-        pending.insert(quiet.clone(), touched(&quiet, SETTLE * 2));
-        pending.insert(fresh.clone(), touched(&fresh, Duration::ZERO));
+        let now = Instant::now();
+        pending.insert(quiet.clone(), touched_at(&quiet, now, SETTLE * 2));
+        pending.insert(fresh.clone(), touched_at(&fresh, now, Duration::ZERO));
 
-        let settled = take_settled(&mut pending, Instant::now());
+        let settled = take_settled(&mut pending, now);
 
         assert_eq!(settled, vec![quiet]);
         assert!(
@@ -618,10 +620,11 @@ mod tests {
         let dir = scratch("half-written");
         let path = note(&dir, "Growing.md", "first chunk");
         let mut pending = HashMap::new();
-        pending.insert(path.clone(), touched(&path, SETTLE * 2));
+        let now = Instant::now();
+        pending.insert(path.clone(), touched_at(&path, now, SETTLE * 2));
 
         std::fs::write(&path, "first chunk and rather more of it").unwrap();
-        let settled = take_settled(&mut pending, Instant::now());
+        let settled = take_settled(&mut pending, now);
 
         assert!(
             settled.is_empty(),
@@ -631,8 +634,8 @@ mod tests {
 
         // Once it stops moving, the next window lets it through.
         let refreshed = pending.get_mut(&path).unwrap();
-        refreshed.at = Instant::now() - SETTLE * 2;
-        assert_eq!(take_settled(&mut pending, Instant::now()), vec![path]);
+        refreshed.at = now - SETTLE * 2;
+        assert_eq!(take_settled(&mut pending, now), vec![path]);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -641,10 +644,11 @@ mod tests {
         let dir = scratch("vanished");
         let path = dir.join("Gone.md");
         let mut pending = HashMap::new();
+        let now = Instant::now();
         // Never existed on disk, so its fingerprint is None and stays None.
-        pending.insert(path.clone(), touched(&path, SETTLE * 2));
+        pending.insert(path.clone(), touched_at(&path, now, SETTLE * 2));
 
-        assert_eq!(take_settled(&mut pending, Instant::now()), vec![path]);
+        assert_eq!(take_settled(&mut pending, now), vec![path]);
         assert!(pending.is_empty());
         std::fs::remove_dir_all(dir).unwrap();
     }

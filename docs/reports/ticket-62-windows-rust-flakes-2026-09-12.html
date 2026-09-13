@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ticket #62 — Windows Rust flake diagnosis</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+      body { max-width: 920px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.55; }
+      h1, h2 { color: #f9fafb; }
+      code { background: #1f2937; padding: .12rem .3rem; border-radius: .25rem; }
+      .status { display: inline-block; border-radius: 999px; padding: .2rem .65rem; font-weight: 700; }
+      .pass { background: #064e3b; color: #a7f3d0; }
+      .decision { background: #1e3a8a; color: #bfdbfe; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { text-align: left; border-bottom: 1px solid #374151; padding: .65rem; vertical-align: top; }
+    </style>
+  </head>
+  <body>
+    <p><span class="status pass">Review passed</span></p>
+    <h1>Ticket #62 — Windows Rust flake diagnosis</h1>
+    <p>Diagnosed and remediated on 2026-09-12 from <code>main</code> at
+      <code>9b7ad65</code>, using the dedicated Windows checkout
+      <code>C:\Users\Nicolas\second-brain-issue62</code>.</p>
+
+    <h2>Findings</h2>
+    <table>
+      <thead><tr><th>Symptom</th><th>Finding</th><th>Disposition</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Vault identity claim timeout</td>
+          <td>Could not be reproduced on current <code>main</code>. The full Rust suite passed 20/20
+            before remediation and 20/20 afterward, exercising
+            <code>concurrent_opens_agree_on_one_identity</code> each time.</td>
+          <td>No speculative timeout change. The Windows contention codes fixed by #60 appear to
+            have resolved the observed failure.</td>
+        </tr>
+        <tr>
+          <td>External-index <code>os error 5</code></td>
+          <td>Eight concurrent test processes reproduced the denial. Temporary stage-specific
+            diagnostics localized it to <code>IndexWriter::commit</code>, not note reads or
+            document insertion. Tantivy publishes commit metadata through an atomic replacement;
+            Windows can briefly deny that operation while another handle releases the file.</td>
+          <td>All index mutations now retry only a Windows
+            <code>PermissionDenied</code> commit, up to four retries spaced 25 ms apart. Other
+            platforms and all other error kinds retain fail-fast behavior.</td>
+        </tr>
+        <tr>
+          <td>Debounce timing test</td>
+          <td>The test sampled <code>Instant::now()</code> separately for setup and evaluation, so
+            scheduler delay could age the fresh path past the settle window.</td>
+          <td>Test setup and evaluation now share one captured instant; the assertion is independent
+            of machine speed.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Windows CI decision</h2>
+    <p><span class="status decision">Add after #73</span> A Windows Rust job should become a branch
+      gate, but not while the complete suite has a known unrelated intermittent failure. Issue #73
+      records the semantic-worker timing test discovered during this work and requires 20 complete
+      Windows runs without exclusions. Add the job immediately after that prerequisite closes.</p>
+
+    <h2>Verification</h2>
+    <table>
+      <thead><tr><th>Check</th><th>Status</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Retry policy unit tests</td><td><span class="status pass">Passed</span></td><td>A transient denial retries and succeeds; an unrelated I/O error is not retried; a persistent denial stops after five total attempts.</td></tr>
+        <tr><td>Debounce regression</td><td><span class="status pass">Passed</span></td><td>The quiet and fresh paths are evaluated against an identical captured instant.</td></tr>
+        <tr><td>Pre-fix reproducer</td><td><span class="status pass">Reproduced</span></td><td>The uninstrumented 8-process workload failed in batch 7. Diagnostics reproduced it in batch 1 at commit.</td></tr>
+        <tr><td>Retry probe</td><td><span class="status pass">Passed</span></td><td>20/20 batches passed; one real permission denial was observed and recovered on the first retry.</td></tr>
+        <tr><td>Clean Windows contention run</td><td><span class="status pass">Passed</span></td><td>20/20 batches × 8 concurrent processes: 160/160 process runs.</td></tr>
+        <tr><td>Windows full-suite loop</td><td><span class="status pass">Passed</span></td><td>20/20 before and 20/20 after remediation, excluding only the separately tracked #73 test.</td></tr>
+        <tr><td>Repository verification</td><td><span class="status pass">Passed</span></td><td><code>pnpm verify</code>: Svelte 0 errors and warnings; JavaScript 44/44; Rust 484 passed with 6 expected ignores; formatting, Clippy with warnings denied, and production build passed.</td></tr>
+        <tr><td>Two-axis review</td><td><span class="status pass">Passed</span></td><td>Standards: 0 findings. Spec: 0 findings; all four #62 acceptance criteria satisfied with no scope creep.</td></tr>
+      </tbody>
+    </table>
+  </body>
+</html>
