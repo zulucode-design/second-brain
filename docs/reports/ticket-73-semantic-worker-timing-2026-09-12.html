@@ -30,11 +30,11 @@
       subsequent calls starting 449 ms and 281 ms later, proving that the cooldown was working.</p>
 
     <h2>Remediation</h2>
-    <p>The observed test backend now blocks its first call. The test queues all extra wakes while
-      that call is definitely in flight, releases it, and waits for the backend itself to report
-      the instant that release was consumed. The next observed call must begin no sooner than one
-      complete retry interval after that backend-side boundary. Scheduler delay can only increase
-      this duration, while a wake that bypasses cooldown still fails immediately.</p>
+    <p>The observed test backend now blocks its first call while the test queues all extra wakes.
+      The worker reports when its offline retry interval actually elapses, and the event stream
+      must contain that boundary before the next backend call. This asserts causal ordering rather
+      than elapsed wall time: scheduler delay cannot change the verdict, while a wake that bypasses
+      cooldown produces a backend-call event in the wrong position and fails immediately.</p>
 
     <h2>Verification</h2>
     <table>

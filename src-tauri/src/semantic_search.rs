@@ -587,6 +587,14 @@ impl SemanticIndex {
     }
 
     fn start_background_with_interval(self: &Arc<Self>, interval: Duration) {
+        self.start_background_worker(interval, || {});
+    }
+
+    fn start_background_worker(
+        self: &Arc<Self>,
+        interval: Duration,
+        mut offline_interval_elapsed: impl FnMut() + Send + 'static,
+    ) {
         let (sender, receiver) = mpsc::channel();
         if self.wake_worker.set(sender).is_err() {
             return;
@@ -603,7 +611,10 @@ impl SemanticIndex {
                     {
                         match receiver.recv_timeout(remaining) {
                             Ok(()) => continue,
-                            Err(mpsc::RecvTimeoutError::Timeout) => break,
+                            Err(mpsc::RecvTimeoutError::Timeout) => {
+                                offline_interval_elapsed();
+                                break;
+                            }
                             Err(mpsc::RecvTimeoutError::Disconnected) => return,
                         }
                     }
@@ -731,10 +742,15 @@ mod tests {
 
     struct UnavailableBackend;
 
+    #[derive(Debug, PartialEq)]
+    enum OfflineWorkerEvent {
+        BackendCallStarted,
+        RetryIntervalElapsed,
+    }
+
     struct ObservedUnavailableBackend {
-        call_started: std::sync::mpsc::Sender<std::time::Instant>,
+        events: std::sync::mpsc::Sender<OfflineWorkerEvent>,
         release_first_call: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
-        first_call_released: std::sync::mpsc::Sender<std::time::Instant>,
     }
 
     struct RecoveringBackend {
@@ -779,12 +795,11 @@ mod tests {
 
     impl EmbeddingBackend for ObservedUnavailableBackend {
         fn embed(&self, _inputs: &[String]) -> Result<Vec<Vec<f32>>, String> {
-            let _ = self.call_started.send(std::time::Instant::now());
+            let _ = self.events.send(OfflineWorkerEvent::BackendCallStarted);
             if let Some(release) = self.release_first_call.lock().unwrap().take() {
                 release
-                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .recv()
                     .expect("the test should release the first backend call");
-                let _ = self.first_call_released.send(std::time::Instant::now());
             }
             Err("desktop is asleep".to_string())
         }
@@ -1113,44 +1128,50 @@ mod tests {
             "Projects",
             "A thought saved while the desktop is asleep.",
         );
-        let (call_started, call_observed) = std::sync::mpsc::channel();
+        let (events, observed_events) = std::sync::mpsc::channel();
         let (release_first_call, first_call_release) = std::sync::mpsc::channel();
-        let (first_call_released, release_observed) = std::sync::mpsc::channel();
         let index = Arc::new(
             SemanticIndex::open_at(
                 &root.join("semantic.sqlite3"),
                 Arc::new(ObservedUnavailableBackend {
-                    call_started,
+                    events: events.clone(),
                     release_first_call: Mutex::new(Some(first_call_release)),
-                    first_call_released,
                 }),
             )
             .unwrap(),
         );
         let retry_interval = std::time::Duration::from_millis(200);
-        index.start_background_with_interval(retry_interval);
+        index.start_background_worker(retry_interval, move || {
+            let _ = events.send(OfflineWorkerEvent::RetryIntervalElapsed);
+        });
         index.note_changed(&note).unwrap();
 
         // Hold the first attempt inside the backend while the extra wakes are queued. That
         // fixes their ordering without asking the test thread to finish inside a wall-clock
         // window: however slowly the runner schedules this code, all wakes precede the outage.
-        call_observed
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .expect("the external change should wake the semantic worker");
+        assert_eq!(
+            observed_events
+                .recv_timeout(std::time::Duration::from_secs(30))
+                .expect("the external change should wake the semantic worker"),
+            OfflineWorkerEvent::BackendCallStarted
+        );
         for _ in 0..5 {
             index.note_changed(&note).unwrap();
         }
         release_first_call.send(()).unwrap();
-        let released_at = release_observed
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .expect("the backend should acknowledge the first call's release");
 
-        let second_call = call_observed
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .expect("the worker should retry when the interval elapses");
-        assert!(
-            second_call.duration_since(released_at) >= retry_interval,
+        assert_eq!(
+            observed_events
+                .recv_timeout(std::time::Duration::from_secs(30))
+                .expect("the retry interval should elapse"),
+            OfflineWorkerEvent::RetryIntervalElapsed,
             "queued wakes bypassed the retry interval"
+        );
+        assert_eq!(
+            observed_events
+                .recv_timeout(std::time::Duration::from_secs(30))
+                .expect("the worker should retry when the interval elapses"),
+            OfflineWorkerEvent::BackendCallStarted
         );
 
         drop(index);
