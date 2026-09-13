@@ -615,7 +615,9 @@ impl SemanticIndex {
                             Err(mpsc::RecvTimeoutError::Disconnected) => return,
                         }
                     }
-                    offline_interval_elapsed();
+                    if std::time::Instant::now() >= deadline {
+                        offline_interval_elapsed();
+                    }
                 } else {
                     match receiver.recv_timeout(interval) {
                         Ok(()) | Err(mpsc::RecvTimeoutError::Timeout) => {}
