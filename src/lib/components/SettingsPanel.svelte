@@ -18,8 +18,10 @@
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
 
-	let { onRequestVaultSwitch = async () => false }: {
+	let { onRequestVaultSwitch = async () => false, onBeforeRestore, onAfterRestore }: {
 		onRequestVaultSwitch?: () => Promise<boolean>;
+		onBeforeRestore?: () => Promise<boolean>;
+		onAfterRestore?: () => Promise<void>;
 	} = $props();
 
 	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'maintenance' | 'ai' | 'sync' | 'notion' | 'updates';
@@ -266,12 +268,19 @@
 
 	async function handleRestore(entry: BackupEntry) {
 		restoreConfirm = null;
+		if (onBeforeRestore && !(await onBeforeRestore())) {
+			backupMessage = { type: 'error', text: 'Restore cancelled because the open note could not be saved.' };
+			return;
+		}
 		backupLoading = true;
 		backupMessage = null;
-		const unlisten = await listen<{ success: boolean; error?: string }>('restore-done', (event) => {
+		const unlisten = await listen<{ success: boolean; outcome: 'success' | 'changed-incomplete' | 'failure'; error?: string }>('restore-done', async (event) => {
 			const data = event.payload;
+			if (data.outcome !== 'failure') await onAfterRestore?.();
 			if (data.success) {
-				backupMessage = { type: 'success', text: 'Backup restored. Restart the app to see changes.' };
+				backupMessage = { type: 'success', text: 'Backup restored.' };
+			} else if (data.outcome === 'changed-incomplete') {
+				backupMessage = { type: 'error', text: data.error ?? 'The vault was restored, but some derived views could not be refreshed.' };
 			} else {
 				backupMessage = { type: 'error', text: `Restore failed: ${data.error}` };
 			}

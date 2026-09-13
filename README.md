@@ -1,7 +1,7 @@
 # Second Brain
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](./LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)]()
+[![Platform](https://img.shields.io/badge/platform-Windows%2011%20%7C%20Fedora%2044-lightgrey)]()
 
 A personal knowledge management desktop app implementing Tiago Forte's
 *Building a Second Brain* (BASB) methodology — PARA organization, frictionless capture,
@@ -11,30 +11,41 @@ Built with Tauri 2, SvelteKit, and Rust. Notes are plain Markdown files on your
 filesystem. No lock-in.
 
 > **Status: early development.** The design is settled and documented in
-> [`docs/SPEC.md`](./docs/SPEC.md); implementation is in progress.
+> [`docs/SPEC.md`](./docs/SPEC.md); implementation is in progress. The external alpha
+> targets the safe Capture-and-Organize core. Q&A, capture similarity, semantic graph
+> suggestions, and voice transcription remain planned for the v1 feature-complete beta.
+> Second Brain has its own release line beginning at `0.1.0-alpha.1`; the inherited in-app
+> updater is disabled until this project has a signed release channel.
 
 ## What it does
 
 **PARA organization** — every note lives in exactly one of Projects, Areas, Resources, or
 Archives. You choose the category at capture time; the AI never files anything for you.
 
-**Frictionless capture** — a global hotkey opens a capture overlay from anywhere. Markdown
-notes, web clippings (paste a URL), files and PDFs, and voice memos with local
-transcription.
+**Frictionless capture** — a global hotkey opens a capture overlay from anywhere. External
+alpha covers Markdown notes, web clippings (paste a URL), files, and PDFs. Voice recording
+and transcription arrive in the v1 feature-complete beta.
 
-**Knowledge graph** — a scrollable, zoomable map of the vault. Solid edges are links you
-made; dashed edges are AI-detected semantic similarity, which you can promote to real links.
+**Knowledge graph** — a scrollable, zoomable map of the vault. External alpha shows the
+links you made. AI-detected similarity edges and promotion to real links arrive in the v1
+feature-complete beta.
 
-**Local AI, no cloud** — Ollama and whisper.cpp run on your own hardware for semantic
-search, note Q&A, transcription, and similarity detection. A weaker second machine reaches
-the stronger one over a private Tailscale network. Ollama has no authentication of its own,
-so the endpoint must never be bound to a public interface or forwarded on a router —
-Tailscale is the security boundary. When AI is unreachable, everything else keeps working.
+**Local AI, no cloud** — external alpha uses Ollama for semantic search. Grounded note Q&A,
+similarity workflows, and whisper.cpp transcription arrive in the v1 feature-complete beta.
+A weaker second machine reaches the stronger one over a private Tailscale network. Ollama
+has no authentication of its own, so the endpoint must never be bound to a public interface
+or forwarded on a router. Tailscale is the security boundary. When AI is unreachable,
+capture, editing, organization, and keyword search keep working.
 
-**Sync between your machines** — your devices sync directly to each other over the same
-private Tailscale network, carrying notes and attachments both ways. No account, no cloud
-service, and no internet required. When the same note changes in two places, both versions
-are surfaced for you to choose rather than silently overwritten.
+**Sync between your machines** — Second Brain manages a bundled Syncthing sidecar that
+syncs paired devices over your private Tailscale network, carrying notes and attachments
+both ways. Tailscale must already be installed; no sync account or cloud storage is needed.
+When the same note changes in two places, both versions are surfaced for you to choose
+rather than silently overwritten.
+
+Second Brain supports one logical vault replicated across Windows 11 x86-64 and Fedora 44
+Workstation x86-64. Other desktop and mobile operating systems are not supported. A
+10,000-note vault is the external-alpha tested baseline, not a hard limit.
 
 **Notion for reading anywhere** — optionally publish your notes to Notion so they are
 readable from a phone or browser when neither machine is to hand. This is a read-only view:
@@ -61,8 +72,7 @@ hotkey that never fires is the usual one — the reason is here rather than on s
 | Platform | Location |
 | --- | --- |
 | Windows | `%LOCALAPPDATA%\io.github.zulucodedesign.SecondBrain\logs` |
-| Linux | `~/.local/share/io.github.zulucodedesign.SecondBrain/logs` |
-| macOS | `~/Library/Logs/io.github.zulucodedesign.SecondBrain` |
+| Fedora | `~/.local/share/io.github.zulucodedesign.SecondBrain/logs` |
 
 Files roll at 5 MB and the three most recent are kept.
 

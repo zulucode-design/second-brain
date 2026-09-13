@@ -21,6 +21,7 @@ pub struct AppState {
     pub vault_transition: tokio::sync::Mutex<()>,
     pub importing: AtomicBool,
     pub syncing: AtomicBool,
+    pub vault_activity: AtomicBool,
     /// Whether a Notion push is in flight. A manual push, the poll timer, and a push at
     /// startup can all collide, and two overlapping runs would race on the same map files.
     pub notion_publishing: AtomicBool,
@@ -35,6 +36,7 @@ pub struct AppState {
     /// Serializes note lifecycle mutations so an older search/index side effect cannot
     /// land after a newer move, delete, restore, or save.
     pub note_mutation: Mutex<()>,
+    pub bulk_mutation: crate::bulk_mutation::BulkMutationCoordinator,
     pub repair_status: Mutex<RepairStatus>,
     pub app_handle: Mutex<Option<tauri::AppHandle>>,
     /// Coordinates awaited save acknowledgements for hide, close, and app-exit requests.
@@ -63,11 +65,13 @@ impl AppState {
             vault_transition: tokio::sync::Mutex::new(()),
             importing: AtomicBool::new(false),
             syncing: AtomicBool::new(false),
+            vault_activity: AtomicBool::new(false),
             notion_publishing: AtomicBool::new(false),
             notion_progress: Mutex::new(None),
             notion_deletions: tokio::sync::Mutex::new(()),
             pending_open_file: Mutex::new(None),
             note_mutation: Mutex::new(()),
+            bulk_mutation: crate::bulk_mutation::BulkMutationCoordinator::new(),
             repair_status: Mutex::new(RepairStatus::default()),
             app_handle: Mutex::new(None),
             shutdown: Mutex::new(crate::shutdown::ShutdownState::default()),

@@ -4,6 +4,7 @@ mod ai_provider;
 mod asset_scope;
 mod autostart;
 mod backup;
+mod bulk_mutation;
 mod commands;
 mod history;
 mod hotkey;

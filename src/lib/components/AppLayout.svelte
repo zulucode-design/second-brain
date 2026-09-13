@@ -620,6 +620,19 @@
 		if (isMobile) $mobileView = 'notelist';
 	}
 
+	async function prepareForRestore(): Promise<boolean> {
+		if ($activeNotePath && !(await editor?.forceSave())) return false;
+		editor?.flushSave();
+		$activeNote = null;
+		$activeNotePath = null;
+		$editorDirty = false;
+		return true;
+	}
+
+	async function refreshAfterRestore(): Promise<void> {
+		await Promise.all([sidebar?.refresh(), noteList?.refresh(true)]);
+	}
+
 	function requestNoteCreation() {
 		if ($shutdownPending || $viewMode === 'quickaccess' || $viewMode === 'trash' || $viewMode === 'unfiled') return;
 		if (!isMobile && $notelistCollapsed) $notelistCollapsed = false;
@@ -1658,7 +1671,7 @@
 
 <SearchPanel onOpenResult={navigateToPath} />
 <CommandPalette onNavigate={handleViewChanged} />
-<SettingsPanel onRequestVaultSwitch={requestVaultSwitch} />
+<SettingsPanel onRequestVaultSwitch={requestVaultSwitch} onBeforeRestore={prepareForRestore} onAfterRestore={refreshAfterRestore} />
 <InfoPanel />
 
 <style>

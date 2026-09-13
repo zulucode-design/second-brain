@@ -2801,17 +2801,32 @@ pub fn import_obsidian(app: AppHandle) -> Result<(), String> {
 
 fn do_import_obsidian(app: AppHandle, vault_path: &str) -> Result<ImportResult, String> {
     let state = app.state::<AppState>();
-    state
-        .importing
-        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let _lease = state
+        .bulk_mutation
+        .acquire(&state.note_mutation, &state.vault_activity)?;
+    let result = crate::vault::import::import(vault_path)?;
+    reconcile_bulk_projections(&state, vault_path)?;
+    Ok(result)
+}
 
-    let result = crate::vault::import::import(vault_path);
-
-    state
-        .importing
-        .store(false, std::sync::atomic::Ordering::Relaxed);
-
-    result
+fn reconcile_bulk_projections(state: &AppState, vault_path: &str) -> Result<(), String> {
+    if let Some(search) = state
+        .search_index
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+    {
+        search.reconcile(vault_path)?;
+    }
+    if let Some(semantic) = state
+        .semantic_index
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+    {
+        semantic.reconcile_from_notes(Path::new(vault_path))?;
+    }
+    Ok(())
 }
 
 // ── Orphaned attachment cleanup ──
@@ -3229,25 +3244,46 @@ pub fn restore_backup(app: AppHandle, backup_path: String) -> Result<(), String>
 
     std::thread::spawn(move || {
         use tauri::Emitter;
-        match crate::backup::restore_backup(&vault_path, &backup_dir, &backup_path) {
-            Ok(()) => {
-                let _ = app.emit(
-                    "restore-done",
-                    serde_json::json!({
-                        "success": true,
-                    }),
-                );
+        let state = app.state::<AppState>();
+        let terminal = match state
+            .bulk_mutation
+            .acquire(&state.note_mutation, &state.vault_activity)
+        {
+            Err(error) => crate::bulk_mutation::BulkMutationTerminal::failure(error),
+            Ok(_lease) => {
+                match crate::backup::restore_backup(&vault_path, &backup_dir, &backup_path) {
+                    Ok(()) => match reconcile_bulk_projections(&state, &vault_path) {
+                        Ok(()) => crate::bulk_mutation::BulkMutationTerminal::success(),
+                        Err(error) => {
+                            crate::bulk_mutation::BulkMutationTerminal::changed_incomplete(format!(
+                            "Vault restored, but derived views could not be reconciled: {error}"
+                        ))
+                        }
+                    },
+                    Err(error) if error.changed => {
+                        let reconciliation = reconcile_bulk_projections(&state, &vault_path).err();
+                        let message = reconciliation.map_or(error.message.clone(), |reconcile| {
+                            format!(
+                                "{} Derived views also could not be reconciled: {reconcile}",
+                                error.message
+                            )
+                        });
+                        crate::bulk_mutation::BulkMutationTerminal::changed_incomplete(message)
+                    }
+                    Err(error) => {
+                        crate::bulk_mutation::BulkMutationTerminal::failure(error.message)
+                    }
+                }
             }
-            Err(e) => {
-                let _ = app.emit(
-                    "restore-done",
-                    serde_json::json!({
-                        "success": false,
-                        "error": e,
-                    }),
-                );
-            }
-        }
+        };
+        let _ = app.emit(
+            "restore-done",
+            serde_json::json!({
+                "success": terminal.success,
+                "outcome": terminal.outcome,
+                "error": terminal.error,
+            }),
+        );
     });
     Ok(())
 }
@@ -3637,8 +3673,13 @@ pub fn test_sync_connection(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn sync_now(app: AppHandle) -> Result<(), String> {
     use std::sync::atomic::Ordering;
+    let state = app.state::<AppState>();
+    if state.vault_activity.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
     // Guard against overlapping syncs (manual button + interval + on-change can collide).
-    if app.state::<AppState>().syncing.swap(true, Ordering::SeqCst) {
+    if state.syncing.swap(true, Ordering::SeqCst) {
+        state.vault_activity.store(false, Ordering::SeqCst);
         return Ok(()); // a sync is already running
     }
     let (vault, bookmark_id, cfg) = {
@@ -3647,6 +3688,7 @@ pub fn sync_now(app: AppHandle) -> Result<(), String> {
             Ok(c) => c,
             Err(e) => {
                 state.syncing.store(false, Ordering::SeqCst);
+                state.vault_activity.store(false, Ordering::SeqCst);
                 return Err(e.to_string());
             }
         };
@@ -3662,6 +3704,7 @@ pub fn sync_now(app: AppHandle) -> Result<(), String> {
             Err(e) => {
                 drop(config);
                 state.syncing.store(false, Ordering::SeqCst);
+                state.vault_activity.store(false, Ordering::SeqCst);
                 return Err(e);
             }
         }
@@ -3671,6 +3714,9 @@ pub fn sync_now(app: AppHandle) -> Result<(), String> {
         let result = crate::sync::run_sync(app.clone(), vault.clone(), cfg);
         app.state::<AppState>()
             .syncing
+            .store(false, Ordering::SeqCst);
+        app.state::<AppState>()
+            .vault_activity
             .store(false, Ordering::SeqCst);
         match result {
             Ok(summary) => {

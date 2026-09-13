@@ -102,6 +102,12 @@ pub fn start_watcher(
         while let Ok(result) = rx.recv() {
             match result {
                 Ok(event) => {
+                    let state = app.state::<AppState>();
+                    // A bulk consumer owns reconciliation. Dropping all watcher work here
+                    // prevents stale incremental index writes as well as UI event storms.
+                    if state.bulk_mutation.watcher_suppressed() {
+                        continue;
+                    }
                     // Skip .helixnotes directory events
                     let dominated_by_hn = event.paths.iter().all(|p| p.starts_with(&hn_dir));
                     if dominated_by_hn {
@@ -137,7 +143,6 @@ pub fn start_watcher(
 
                     // The UI event is what floods the IPC channel during a bulk write, so
                     // that is what the importing flag suppresses.
-                    let state = app.state::<AppState>();
                     if state.importing.load(std::sync::atomic::Ordering::Relaxed) {
                         continue;
                     }
