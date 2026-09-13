@@ -1,9 +1,13 @@
 <script lang="ts">
-	import { showSearch, activeNote, activeNotePath, editorDirty, appConfig, mobileView, notebooks, activeNotebook, activeTag, viewMode } from '$lib/stores/app';
-	import { searchNotes, semanticSearch, readNote } from '$lib/api';
+	import { showSearch, appConfig, mobileView, notebooks, activeNotebook, activeTag, viewMode } from '$lib/stores/app';
+	import { searchNotes, semanticSearch } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
 	import { PARA_CATEGORIES, type SearchResult, type NotebookEntry, type ParaCategory } from '$lib/types';
 	import { isMobile } from '$lib/platform';
+
+	let { onOpenResult = async (_path: string) => false }: {
+		onOpenResult?: (path: string) => Promise<boolean>;
+	} = $props();
 
 	let query = $state('');
 	let results = $state<SearchResult[]>([]);
@@ -143,10 +147,7 @@
 
 	async function openResult(result: SearchResult) {
 		try {
-			const content = await readNote(result.path);
-			$activeNote = content;
-			$activeNotePath = result.path;
-			$editorDirty = false;
+			if (!(await onOpenResult(result.path))) return;
 			$showSearch = false;
 			// Reveal the note in the notes list: switch to its notebook (or All Notes).
 			const sep = result.path.includes('\\') ? '\\' : '/';

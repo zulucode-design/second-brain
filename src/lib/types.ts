@@ -99,11 +99,24 @@ export interface NotebookEntry {
   note_count: number;
 }
 
+export interface SaveCommitOutcome {
+  revision: string;
+  warnings: string[];
+}
+
+export interface RelocationOutcome {
+  path: string;
+  note: NoteContent | null;
+  warnings: string[];
+}
+
 export interface NoteContent {
   path: string;
   meta: NoteMeta;
   content: string;
   raw: string;
+  /** Opaque token for the exact bytes returned by readNote. */
+  revision: string;
 }
 
 export interface WebdavCredentials {

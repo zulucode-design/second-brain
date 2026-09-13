@@ -1,9 +1,5 @@
 <script lang="ts">
-	let { onBeforeRestore, onAfterRestore }: {
-		onBeforeRestore?: () => Promise<boolean>;
-		onAfterRestore?: () => Promise<void>;
-	} = $props();
-	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, activeVaultConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, vaultReady, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
+	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, activeVaultConfig, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
 	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, setSyncSettings, testSyncConnection, syncNow, notionStatus, notionConnect, notionDisconnect, notionSetEnabled, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex } from '$lib/api';
 	import type { AiProvider } from '$lib/types';
 	import { AI_PROVIDER_METADATA, AI_PROVIDER_OPTIONS } from '$lib/utils/ai-provider';
@@ -21,6 +17,12 @@
 	import { withSyncSettings } from '$lib/utils/sync-settings';
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
+
+	let { onRequestVaultSwitch = async () => false, onBeforeRestore, onAfterRestore }: {
+		onRequestVaultSwitch?: () => Promise<boolean>;
+		onBeforeRestore?: () => Promise<boolean>;
+		onAfterRestore?: () => Promise<void>;
+	} = $props();
 
 	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'maintenance' | 'ai' | 'sync' | 'notion' | 'updates';
 	let activeTab = $state<Tab>('styling');
@@ -1631,7 +1633,7 @@
 							<div class="settings-section">
 								<h3>Vault</h3>
 								<p class="setting-desc" style="margin-bottom: 12px; color: var(--text-tertiary); font-size: 13px;">Current: <strong style="color: var(--text-primary);">{$appConfig?.active_vault?.split('/').pop() ?? 'Unknown'}</strong></p>
-								<button class="import-btn" onclick={() => { $showSettings = false; $vaultReady = false; }}>
+								<button class="import-btn" onclick={onRequestVaultSwitch}>
 									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 										<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
 									</svg>

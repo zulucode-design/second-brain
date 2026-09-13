@@ -39,6 +39,8 @@ pub struct AppState {
     pub bulk_mutation: crate::bulk_mutation::BulkMutationCoordinator,
     pub repair_status: Mutex<RepairStatus>,
     pub app_handle: Mutex<Option<tauri::AppHandle>>,
+    /// Coordinates awaited save acknowledgements for hide, close, and app-exit requests.
+    pub shutdown: Mutex<crate::shutdown::ShutdownState>,
     /// Last known reachability of the AI backend, kept current by a background poller so
     /// features can be shown as unavailable without each one having to find out itself.
     /// Reachability and its settings generation change under one lock, so invalidation
@@ -72,6 +74,7 @@ impl AppState {
             bulk_mutation: crate::bulk_mutation::BulkMutationCoordinator::new(),
             repair_status: Mutex::new(RepairStatus::default()),
             app_handle: Mutex::new(None),
+            shutdown: Mutex::new(crate::shutdown::ShutdownState::default()),
             ai_health: Mutex::new(AiHealthState {
                 generation: 0,
                 status: AiStatus::unknown(),

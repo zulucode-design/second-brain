@@ -2,7 +2,6 @@
 	import { tick } from 'svelte';
 	import { activeNote, activeNotePath, appConfig, navHistory } from '$lib/stores/app';
 	import { getNoteSwitcherTitles, getQuickAccess } from '$lib/api';
-	import { openNoteWindow } from '$lib/utils/window';
 	import {
 		buildNoteSwitcherRequestPaths,
 		buildNoteSwitcherSections,
@@ -12,8 +11,9 @@
 	} from '$lib/utils/note-switcher';
 	import type { NoteEntry, NoteTitleEntry } from '$lib/types';
 
-	let { onSelectNote = async () => false }: {
+	let { onSelectNote = async () => false, onOpenWindow = async () => false }: {
 		onSelectNote?: (path: string) => Promise<boolean>;
+		onOpenWindow?: (path: string, title: string) => Promise<boolean>;
 	} = $props();
 
 	let wrapper: HTMLDivElement;
@@ -270,7 +270,7 @@
 										type="button"
 										aria-label={`Open ${row.title} in new window`}
 										title={`Open ${row.title} in new window`}
-										onclick={() => openNoteWindow(row.path, row.title)}
+										onclick={() => onOpenWindow(row.path, row.title)}
 									>
 										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 											<rect x="4" y="4" width="13" height="13" rx="2" />
