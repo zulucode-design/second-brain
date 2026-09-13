@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Second Brain — Pre-Alpha Remediation Execution Plan</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #0b1020; color: #dbe5f3; }
+      body { max-width: 1120px; margin: 2.5rem auto; padding: 0 1.25rem 5rem; line-height: 1.55; }
+      h1, h2, h3 { color: #f8fafc; line-height: 1.2; }
+      h2 { margin-top: 2.3rem; border-top: 1px solid #2b3951; padding-top: .8rem; }
+      code { background: #172033; padding: .1rem .3rem; border-radius: .25rem; overflow-wrap: anywhere; }
+      table { border-collapse: collapse; width: 100%; margin: .8rem 0 1.3rem; font-size: .93rem; }
+      th, td { text-align: left; border: 1px solid #2b3951; padding: .55rem .65rem; vertical-align: top; }
+      th { background: #162238; color: #f8fafc; }
+      tr:nth-child(even) td { background: #0e1728; }
+      .meta { color: #94a3b8; }
+      .callout { background: #101a2d; border: 1px solid #334155; border-left: 5px solid #38bdf8; border-radius: .4rem; padding: .8rem 1rem; margin: 1rem 0; }
+      .danger { border-left-color: #ef4444; }
+      .good { border-left-color: #22c55e; }
+      .badge { display: inline-block; border-radius: 999px; padding: .12rem .5rem; font-size: .78rem; font-weight: 750; white-space: nowrap; }
+      .p1 { color: #fee2e2; background: #991b1b; }
+      .p2 { color: #fef3c7; background: #78350f; }
+      .p3 { color: #dbeafe; background: #1e3a8a; }
+      .decision { color: #ede9fe; background: #5b21b6; }
+      .ready { color: #dcfce7; background: #14532d; }
+      li { margin: .28rem 0; }
+      @media (max-width: 760px) { table { display: block; overflow-x: auto; } }
+    </style>
+  </head>
+  <body>
+    <h1>Pre-Alpha Remediation Execution Plan</h1>
+    <p class="meta"><strong>Repository:</strong> <code>zulucode-design/second-brain</code> · <strong>Created:</strong> 2026-09-13 · <strong>Source audit:</strong> <code>docs/reports/pre-alpha-codebase-audit-2026-09-13.html</code></p>
+
+    <div class="callout danger">
+      <strong>Release gate:</strong> no external alpha until work packages A–D and H are complete, decision gates G1–G4 are recorded and their required outcomes implemented, no P0/P1 remains open, and H’s versioned verification-matrix record is green. That record must name commands, supported platforms, fixtures, manual protocols, expected outcomes, and evidence for packaged install/launch plus data-safety scenarios. Internal testing must use a disposable vault with WebDAV and restore disabled until their P1 packages close.
+    </div>
+
+    <h2>1. Operating model</h2>
+    <ol>
+      <li>This plan is the stable map. GitHub issues are the executable tickets and must link back to this report and the audit finding IDs.</li>
+      <li>Each work package lands in its own focused pull request unless its ticket is documentation-only. Do not combine independent P1 fixes.</li>
+      <li>For behavioral fixes, reproduce the defect with a failing test first wherever the boundary is testable. Preserve the regression test after remediation.</li>
+      <li>Every mutation-related PR states its transaction boundary, failure behavior, watcher behavior, keyword-index effect, semantic-index effect, and UI refresh effect.</li>
+      <li>Every completed ticket updates the audit status instead of deleting historical findings. The report remains the evidence record.</li>
+      <li>Use <code>pnpm test:rust</code>, never bare <code>cargo test</code>. The merge gate is <code>pnpm verify</code> plus relevant package/platform checks.</li>
+    </ol>
+
+    <h2>2. Decision gates</h2>
+    <table>
+      <thead><tr><th>Gate</th><th>Decision required</th><th>Why it blocks work</th><th>Output</th></tr></thead>
+      <tbody>
+        <tr><td><span class="badge decision">G1 Sync architecture</span></td><td>Keep ADR-0002’s bundled sidecar/Tailscale design, or formally replace it with hardened WebDAV.</td><td>Conflict semantics, pairing, synced boundary, transport security, and implementation ownership differ materially.</td><td>New ADR superseding or reaffirming ADR-0002; update SPEC and ticket #28.</td></tr>
+        <tr><td><span class="badge decision">G2 Alpha scope</span></td><td>Decide whether voice (#11), capture similarity (#9), semantic graph links (#10), and prompt window (#8) are external-alpha requirements or named post-alpha work.</td><td>The audit cannot declare feature readiness while current v1 commitments remain absent.</td><td>SPEC milestone table and README claims aligned to the decision.</td></tr>
+        <tr><td><span class="badge decision">G3 Product identity</span></td><td>Choose the installed product/package/binary/window/updater identity and migration strategy.</td><td>Second Brain and HelixNotes identifiers currently diverge; changes affect config directories, keyring accounts, desktop entries, and updater continuity.</td><td>Identity ADR/migration checklist; package and updater acceptance tests.</td></tr>
+        <tr><td><span class="badge decision">G4 Platform contract</span></td><td>Desktop-only versus supported mobile; one-vault-only versus retained multi-vault.</td><td>Inherited surfaces expand testing and maintenance while contradicting the current SPEC.</td><td>Scope statement followed by removal or support tickets.</td></tr>
+      </tbody>
+    </table>
+
+    <h2>3. Executable work packages</h2>
+    <table>
+      <thead><tr><th>ID / priority</th><th>Scope</th><th>Acceptance criteria</th><th>Audit coverage</th><th>Dependencies</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>A</strong><br><span class="badge p1">P1 save lifecycle</span></td>
+          <td>Unify editor navigation and app/window shutdown behind an awaited save coordinator.</td>
+          <td>
+            <ul>
+              <li>One API drains the save queue, serializes captured content/path, and returns success/failure.</li>
+              <li>All list, search, history, wiki/editor, graph, OS-open, second-window, and close paths await it.</li>
+              <li>Dirty state clears only after persistence succeeds; failed save blocks or confirms discard.</li>
+              <li>Close during debounce and in-flight save is tested.</li>
+            </ul>
+          </td>
+          <td>D-01; alpha blocker 1.</td>
+          <td>None. First implementation ticket.</td>
+        </tr>
+        <tr>
+          <td><strong>B</strong><br><span class="badge p1">P1 WebDAV boundary</span></td>
+          <td>Prevent remote path escape and insecure credential/content transport.</td>
+          <td>
+            <ul>
+              <li>If G1 removes WebDAV, remove or permanently gate all WebDAV commands/settings and prove no production call path can instantiate the client; migration preserves user data without retaining credentials unnecessarily.</li>
+              <li>If G1 retains WebDAV, decoded hrefs accept only normal relative components under an exact base-path boundary.</li>
+              <li>If retained, reject parent/root/prefix/backslash and encoded-separator/traversal variants before local I/O.</li>
+              <li>If retained, every sync read/write/delete verifies vault containment.</li>
+              <li>If retained, HTTPS is required; any loopback exception is explicit and tested.</li>
+              <li>Removal/unreachability tests or adversarial server-response tests prove the selected outcome.</li>
+            </ul>
+          </td>
+          <td>D-02, D-05; alpha blocker 2.</td>
+          <td>G1 selects hardening versus removal; either outcome must close the reachable security boundary.</td>
+        </tr>
+        <tr>
+          <td><strong>C</strong><br><span class="badge p1">P1 restore/backup</span></td>
+          <td>Make restore transactional and make backup scope/claims accurate.</td>
+          <td>
+            <ul>
+              <li>Preflight all archive entries, containment, size, and extractability.</li>
+              <li>Extract to staging; preserve the live vault until success; atomic swap or tested rollback.</li>
+              <li>Introduce and own the minimal shared bulk-mutation coordinator: exclusive mutation lease, RAII watcher suppression/cleanup, preflight/commit phases, projection reconciliation hook, and terminal success/changed-incomplete/failure event contract.</li>
+              <li>Restore is the first coordinator consumer and cannot bypass the lease.</li>
+              <li>Reconcile Tantivy, semantic index, and UI after commit.</li>
+              <li>Backup includes the agreed vault-scoped metadata or the UI/spec explicitly names exclusions.</li>
+              <li>Traversal/read errors fail backup rather than silently omit content.</li>
+            </ul>
+          </td>
+          <td>D-03, D-10; alpha blocker 3; existing #14.</td>
+          <td>None. C owns the shared coordinator primitive and its contract tests; D and E consume it.</td>
+        </tr>
+        <tr>
+          <td><strong>D</strong><br><span class="badge p1">P1 sync integrity</span></td>
+          <td>Resolve sync architecture and make incoming/bulk changes interruption-safe and projection-complete.</td>
+          <td>
+            <ul>
+              <li>All implementations consume C’s bulk-mutation coordinator for single-run exclusion, pre-incoming backup policy, watcher cleanup, terminal outcomes, and projection convergence.</li>
+              <li>Synced paths match the chosen boundary, including explicit decisions for trash/history/Notion/shared settings.</li>
+              <li>One conflict convention and paired choice UI; unresolved conflicts are excluded from ordinary indexes, counts, views, and publication.</li>
+              <li><strong>WebDAV branch:</strong> scan/read errors are unknown/fatal rather than deletion; delete and manifest failures are checked; manifest writes are atomic; partial application is recoverable and always reconciled.</li>
+              <li><strong>Sidecar/Tailscale branch:</strong> pin and bundle the engine through <code>externalBin</code>; define app-owned install/start/stop/restart/upgrade behavior and process supervision.</li>
+              <li><strong>Sidecar/Tailscale branch:</strong> implement explicit device identity and authenticated one-time pairing, scoped folder configuration, Tailscale reachability guidance/detection, and no auto-pairing from network membership.</li>
+              <li><strong>Sidecar/Tailscale branch:</strong> define ownership boundaries between sidecar and app, including conflict discovery, delayed arrivals, failure/restart recovery, and index/watcher convergence.</li>
+              <li>Two-machine interruption, delete, move, delayed-arrival, pairing/authentication, and conflict fixtures pass for the selected branch.</li>
+            </ul>
+          </td>
+          <td>D-04, D-06; blockers 4–5; existing #28 and #14.</td>
+          <td>G1; C’s coordinator/backup primitives; B’s selected remove-or-harden outcome.</td>
+        </tr>
+        <tr>
+          <td><strong>E</strong><br><span class="badge p2">P2 import/external files</span></td>
+          <td>Coordinate Obsidian import and repair external Markdown viewing.</td>
+          <td>
+            <ul>
+              <li>Import runs are deduplicated and guarded by bulk mutation coordination.</li>
+              <li>Failed writes fail/count accurately; cleanup is RAII-safe.</li>
+              <li>UI, keyword, and semantic state reconcile after import or partial failure.</li>
+              <li>External Markdown uses a dedicated scope-aware read-only command with inside/outside-vault tests.</li>
+            </ul>
+          </td>
+          <td>D-07, D-08.</td>
+          <td>C’s bulk coordinator API; external viewer fix can land independently.</td>
+        </tr>
+        <tr>
+          <td><strong>F</strong><br><span class="badge p2">P2 durability/startup</span></td>
+          <td>Make canonical and critical metadata writes crash-safe; expose config/startup corruption.</td>
+          <td>
+            <ul>
+              <li>Shared same-directory temporary-write, flush/sync policy, atomic-replace helper.</li>
+              <li>Apply to notes, app config, sync manifest/downloads, and Notion identity state according to risk.</li>
+              <li>Malformed, unreadable, and absent config are distinct outcomes with recovery UI.</li>
+              <li>Non-iOS vault-open errors are visible and actionable.</li>
+              <li>Failure-injection tests preserve previous good content.</li>
+            </ul>
+          </td>
+          <td>D-09, D-11.</td>
+          <td>Coordinate manifest helper with D.</td>
+        </tr>
+        <tr>
+          <td><strong>G</strong><br><span class="badge p2">P2/P3 UX correctness</span></td>
+          <td>Stop backend failures masquerading as empty state; validate dates semantically; version semantic schema.</td>
+          <td>
+            <ul>
+              <li>Graph and tasks distinguish loading, empty, and failed states with retry.</li>
+              <li>Task due dates use calendar validation and reject impossible dates.</li>
+              <li>Semantic projection has explicit schema/profile version handling and rebuild migration behavior.</li>
+            </ul>
+          </td>
+          <td>D-12, D-13, D-14.</td>
+          <td>None.</td>
+        </tr>
+        <tr>
+          <td><strong>H</strong><br><span class="badge p2">P2 verification gate</span></td>
+          <td>Turn data-safety and supported-platform behavior into repeatable merge/release evidence.</td>
+          <td>
+            <ul>
+              <li>Own a versioned alpha-verification matrix under <code>docs/reports/</code> naming commands, supported platforms, fixtures/vaults, manual protocols, expected outcomes, evidence links, and responsible ticket for every gap.</li>
+              <li>Windows CI uses <code>pnpm test:rust</code>; hosted Ubuntu verification/package jobs remain green.</li>
+              <li>Gating component/IPC/E2E coverage includes edit→immediate navigate, edit→close, hostile href or WebDAV unreachability, interrupted sync, and restore rollback.</li>
+              <li>The matrix carries failed-import, startup/config, due-date/error-state, and semantic-schema rows owned by E–G; they may be explicitly deferred with target milestones and expected current outcomes without blocking H.</li>
+              <li>Deb/rpm and the supported Windows package are installed and smoke-launched, not only built or inspected.</li>
+              <li>Define log privacy/redaction rules and provide a user-controlled diagnostic export that excludes note contents and secrets by default.</li>
+              <li>Measure cold startup, editor interaction, graph rendering, and semantic retrieval on the primary Windows desktop and target Linux laptop; record thresholds and regressions in the matrix.</li>
+              <li>Dependency vulnerability/license audit and updater signing checks exist.</li>
+              <li><code>packageManager</code>/engines are pinned; prepare no longer swallows failure; test ignore rule removed.</li>
+            </ul>
+          </td>
+          <td>Test assessment gaps; existing #24 and #49.</td>
+          <td>A–D provide the gating regression scenarios; E–G are non-gating matrix rows unless separately promoted. CI scaffolding can begin immediately.</td>
+        </tr>
+        <tr>
+          <td><strong>I</strong><br><span class="badge p3">P3 product/cleanup</span></td>
+          <td>Align identity, documentation, scope, and disconnected/duplicated code.</td>
+          <td>
+            <ul>
+              <li>Second Brain/HelixNotes package, window, binary, identifier, homepage, keyring, and updater decisions are consistently applied with migration coverage.</li>
+              <li>README distinguishes local semantic search from optional cloud writing providers.</li>
+              <li>Mobile/multi-vault surfaces match G4.</li>
+              <li>Remove disconnected <code>vaultState</code>, stale Notion comment, duplicated theme/platform constants, and obsolete test ignore.</li>
+              <li>Centralize typed Tauri event names/payloads and add a generated/shared contract or parity test for persisted Rust/TypeScript models.</li>
+              <li>Characterize and split <code>AppLayout</code>/<code>Editor</code> responsibilities where it reduces mutation/navigation risk; any remaining concentration is recorded as accepted post-alpha debt with a milestone.</li>
+              <li>Command palette scope is explicitly defined.</li>
+            </ul>
+          </td>
+          <td>Cross-cutting identity/contract findings and incomplete inventory.</td>
+          <td>G3/G4; avoid identity migration during P1 mutation work.</td>
+        </tr>
+        <tr>
+          <td><strong>J</strong><br><span class="badge decision">Feature commitments</span></td>
+          <td>Implement or explicitly defer absent v1 commitments.</td>
+          <td>
+            <ul>
+              <li>#9 capture similarity produces candidate and merge/edit flow if in alpha.</li>
+              <li>#10 semantic graph edges and user-driven promotion if in alpha.</li>
+              <li>#11 durable voice capture/transcription reconnect queue if in alpha.</li>
+              <li>#8 prompt/Q&amp;A scope is reconciled with existing writing actions.</li>
+              <li>SPEC, README, feature matrix, and release notes tell one consistent story.</li>
+            </ul>
+          </td>
+          <td>Not-implemented v1 features.</td>
+          <td>G2; semantic features depend on stable projection behavior from D/G.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>4. Recommended execution order</h2>
+    <ol>
+      <li><strong>Wave 0 — decisions and containment:</strong> disable risky external-alpha surfaces; resolve G1–G4. Start H’s Windows/CI scaffolding.</li>
+      <li><strong>Wave 1 — independent P1s in parallel:</strong> A (save lifecycle), B (WebDAV boundary), and C (transactional restore foundation).</li>
+      <li><strong>Wave 2 — coordinated mutation adoption:</strong> D adopts C’s coordinator for the selected sync architecture, then E adopts it for import. Keep each PR independently reviewable.</li>
+      <li><strong>Wave 3 — durability and visible correctness:</strong> F and G.</li>
+      <li><strong>Wave 4 — verification closure:</strong> complete H against the implemented failure scenarios, including package installation/smoke evidence.</li>
+      <li><strong>Wave 5 — product alignment:</strong> I and G3/G4 migrations.</li>
+      <li><strong>Wave 6 — scoped feature completion:</strong> J according to G2, followed by a fresh audit delta and alpha sign-off.</li>
+    </ol>
+
+    <h2>5. Per-ticket workflow</h2>
+    <ol>
+      <li><strong>Claim:</strong> assign one ready ticket and state the intended invariant.</li>
+      <li><strong>Reproduce:</strong> add the smallest failing test or a deterministic verification fixture. For platform-only behavior, record a manual protocol before implementation.</li>
+      <li><strong>Implement:</strong> preserve Markdown as canonical; indexes remain disposable projections. Avoid introducing a second mutation path.</li>
+      <li><strong>Verify locally:</strong> targeted test first, then <code>pnpm verify</code>. Run deb/rpm verification for packaging/platform changes.</li>
+      <li><strong>Review:</strong> require both behavioral/spec review and code-quality review. Data mutation PRs include failure and interruption analysis.</li>
+      <li><strong>Publish:</strong> one focused PR linking the ticket and this plan. Do not merge with unresolved P1 review findings.</li>
+      <li><strong>Close the loop:</strong> update the source audit finding to fixed/accepted/deferred with commit and verification evidence; close the ticket only after CI.</li>
+    </ol>
+
+    <h2>6. Definition of external-alpha ready</h2>
+    <ul>
+      <li>A–D and H complete; no open P0/P1 data-integrity or security issue.</li>
+      <li>G1–G4 are recorded and their required outcomes are implemented in SPEC, README, settings, packaging, migrations, and executable tickets.</li>
+      <li>H’s versioned verification-matrix record is complete and green: commands, supported Linux/Windows platforms, fixtures, manual protocols, expected outcomes, evidence links, performance thresholds, and residual gaps are explicit.</li>
+      <li><code>pnpm verify</code> is green at documented Node/pnpm/Rust versions on Linux and Windows.</li>
+      <li>Package build and install/launch smoke pass for every supported Linux format and Windows package.</li>
+      <li>Automated end-to-end tests prove edit/navigation/close durability, restore rollback, hostile sync-path rejection or WebDAV unreachability, and interrupted bulk reconciliation.</li>
+      <li>A clean disposable-vault manual protocol covers capture, editing, search, tasks, trash/history, backup/restore, clipping, AI-offline degradation, the selected two-machine sync/conflict flow, and Notion publication.</li>
+      <li>Audit checklist has no unresolved blocker; every deferred v1 item and accepted architecture debt names its target milestone.</li>
+    </ul>
+
+    <div class="callout good">
+      <strong>Current verification baseline:</strong> the reviewed commit passes <code>pnpm verify</code> in the provisioned WebKitGTK environment at Node 22.23.2, pnpm 10.28.1, and Rust 1.88.0: Svelte 0/0 diagnostics, JavaScript 44/44, Rust 484 passed/0 failed/6 ignored, formatting and Clippy clean, and production build successful. Unsigned deb/rpm builds and both desktop-entry package checks also pass. Hosted GitHub Actions Verify run <a href="https://github.com/zulucode-design/second-brain/actions/runs/34729884375">34729884375</a> independently passed the exact audited HEAD. This baseline is the minimum every remediation wave must preserve.
+    </div>
+  </body>
+</html>

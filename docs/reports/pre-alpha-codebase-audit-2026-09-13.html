@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Second Brain — Pre-Alpha Codebase Functionality &amp; Implementation Audit</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #0b1020; color: #dbe5f3; }
+      body { max-width: 1160px; margin: 2.5rem auto; padding: 0 1.25rem 5rem; line-height: 1.55; }
+      h1, h2, h3, h4 { color: #f8fafc; line-height: 1.2; }
+      h1 { margin-bottom: .35rem; }
+      h2 { margin-top: 2.4rem; padding-top: .4rem; border-top: 1px solid #27354d; }
+      h3 { margin-top: 1.6rem; }
+      a { color: #7dd3fc; }
+      code { background: #172033; padding: .1rem .3rem; border-radius: .25rem; overflow-wrap: anywhere; }
+      pre { background: #111a2c; border: 1px solid #27354d; padding: 1rem; overflow: auto; border-radius: .45rem; white-space: pre-wrap; }
+      table { border-collapse: collapse; width: 100%; margin: .75rem 0 1.25rem; font-size: .94rem; }
+      th, td { text-align: left; border: 1px solid #2b3951; padding: .55rem .65rem; vertical-align: top; }
+      th { background: #162238; color: #f8fafc; position: sticky; top: 0; }
+      tr:nth-child(even) td { background: #0e1728; }
+      .meta, .muted { color: #94a3b8; }
+      .callout { border: 1px solid #334155; border-left-width: 5px; background: #101a2d; padding: .8rem 1rem; border-radius: .4rem; margin: 1rem 0; }
+      .danger { border-left-color: #ef4444; }
+      .warn { border-left-color: #f59e0b; }
+      .good { border-left-color: #22c55e; }
+      .info { border-left-color: #38bdf8; }
+      .badge { display: inline-block; border-radius: 999px; padding: .12rem .52rem; font-size: .78rem; font-weight: 750; white-space: nowrap; }
+      .p0, .broken { color: #fecaca; background: #7f1d1d; }
+      .p1 { color: #fee2e2; background: #991b1b; }
+      .p2, .partial { color: #fef3c7; background: #78350f; }
+      .p3, .unclear { color: #dbeafe; background: #1e3a8a; }
+      .implemented { color: #dcfce7; background: #14532d; }
+      .mostly { color: #d1fae5; background: #065f46; }
+      .missing { color: #ede9fe; background: #5b21b6; }
+      .legacy { color: #e2e8f0; background: #475569; }
+      .confidence { color: #cffafe; background: #155e75; }
+      .toc { columns: 2; padding-left: 1.25rem; }
+      .compact li { margin: .25rem 0; }
+      .nowrap { white-space: nowrap; }
+      @media (max-width: 760px) { .toc { columns: 1; } table { display: block; overflow-x: auto; } }
+    </style>
+  </head>
+  <body>
+    <h1>Pre-Alpha Codebase Functionality &amp; Implementation Audit</h1>
+    <p class="meta"><strong>Repository:</strong> <code>zulucode-design/second-brain</code> · <strong>Branch:</strong> <code>main</code> · <strong>Commit:</strong> <code>1c6f83887595f56c372c86d03a68558e97cbc23b</code> · <strong>Reviewed:</strong> 2026-09-13</p>
+    <p class="meta"><strong>Method:</strong> repository-wide static trace plus available local verification. Application code was not changed; the audit and linked remediation plan are the only added documentation artifacts. <strong>Execution plan:</strong> <a href="pre-alpha-remediation-plan-2026-09-13.html">pre-alpha remediation workflow</a>.</p>
+
+    <div class="callout danger">
+      <strong>Verdict: not ready for an external alpha.</strong> The application has a substantial, coherent implementation and many strong persistence/security foundations, but three directly evidenced paths can lose or overwrite user data, WebDAV accepts a server-controlled path traversal, and the implemented sync design materially disagrees with the authoritative specification. There are no identified P0 failures; there are four P1 engineering blockers plus one P1 product/scope decision.
+    </div>
+
+    <h3>Evidence vocabulary</h3>
+    <ul class="compact">
+      <li><span class="badge confidence">Confirmed</span> Directly established from code, configuration, or a command result.</li>
+      <li><span class="badge p2">Strong inference</span> The complete static path supports the conclusion, but the behavior was not reproduced in a running desktop app.</li>
+      <li><span class="badge unclear">Unverified</span> Platform, service, or environment behavior that could not be exercised here.</li>
+    </ul>
+
+    <h3>Contents</h3>
+    <ol class="toc">
+      <li><a href="#executive-summary">Executive Summary</a></li>
+      <li><a href="#architecture">Architecture &amp; System Map</a></li>
+      <li><a href="#matrix">Feature Implementation Matrix</a></li>
+      <li><a href="#detailed-reviews">Detailed Feature Reviews</a></li>
+      <li><a href="#cross-cutting">Cross-Cutting Findings</a></li>
+      <li><a href="#incomplete">Incomplete / Stubbed / Disconnected Work</a></li>
+      <li><a href="#defects">Confirmed Defects and Likely Defects</a></li>
+      <li><a href="#verification">Test &amp; Verification Assessment</a></li>
+      <li><a href="#blockers">Alpha Blockers</a></li>
+      <li><a href="#checklist">Alpha Readiness Checklist</a></li>
+      <li><a href="#remediation">Prioritized Remediation Plan</a></li>
+      <li><a href="#questions">Open Questions / Unverified Assumptions</a></li>
+    </ol>
+
+    <h2 id="executive-summary">1. Executive Summary</h2>
+    <p>The repository is one desktop application rather than a meaningful multi-package monorepo: SvelteKit/Svelte 5 renders the UI inside Tauri 2, a typed TypeScript facade invokes 108 Rust commands, Markdown files are canonical, and Tantivy plus SQLite embeddings are rebuildable local projections. The intended product is a local-first BASB Capture/Organize app with strict PARA filing. That core model is visible end to end and is not merely scaffolded.</p>
+    <p>The strongest areas are vault identity and relocation recovery, PARA reconciliation, ordinary note lifecycle indexing, credential migration into the OS keyring, SSRF-aware clipping/image retrieval, Notion publishing state, and narrow Tauri capabilities. All 19 Svelte components have a reachable render/import path. The frontend’s 108 invoke names exactly match the 108 backend registrations, and every API wrapper has a frontend source reference.</p>
+    <p>The largest risk is not missing breadth but inconsistent mutation safety. Ordinary note commands usually serialize through <code>AppState.note_mutation</code>, update Tantivy immediately, and enqueue semantic work. Backup restore, WebDAV sync, and Obsidian import bypass portions of that contract. In parallel, editor navigation marks content clean before a save has succeeded, and app shutdown does not wait for debounced or in-flight saves. These exceptions sit exactly on bulk or navigation boundaries where data loss is most costly.</p>
+    <p>Implementation also leads or diverges from product intent. Authored WebDAV synchronization exists, while <code>docs/SPEC.md</code> and ADR-0002 require a bundled, app-managed sidecar over Tailscale with explicit pairing and paired conflict-choice UX. Voice capture/transcription, capture-time similarity, semantic graph edges, suggested-link promotion, and the sidecar/pairing flow are not implemented. Distill and Express are correctly deferred.</p>
+
+    <h3>Readiness at a glance</h3>
+    <table>
+      <thead><tr><th>Dimension</th><th>Assessment</th><th>Reason</th></tr></thead>
+      <tbody>
+        <tr><td>Functional breadth</td><td><span class="badge mostly">Mostly implemented</span></td><td>Editing, PARA, capture, search, tasks, attachments, history, backups, clipping, AI writing, Notion, and authored sync all have real implementations.</td></tr>
+        <tr><td>Core data safety</td><td><span class="badge broken">Broken/inconsistent</span></td><td>Pre-switch save is fire-and-forget; restore is destructive before full extraction; sync/import bypass normal mutation/reconciliation guarantees.</td></tr>
+        <tr><td>Security boundary</td><td><span class="badge partial">Partially implemented</span></td><td>Strong local path/URL/capability controls are undermined by WebDAV href traversal and permitted plaintext HTTP Basic Auth.</td></tr>
+        <tr><td>Specification alignment</td><td><span class="badge partial">Partially implemented</span></td><td>Capture/Organize and Markdown/PARA align; sync topology and several AI/audio/graph commitments do not.</td></tr>
+        <tr><td>Verification</td><td><span class="badge mostly">Mostly implemented</span></td><td>Full <code>pnpm verify</code> passes at Node 22/Rust 1.88, including 44 JavaScript and 484 passing Rust tests; unsigned deb/rpm builds pass. CI remains Linux-only and there is no UI/E2E suite.</td></tr>
+        <tr><td>External alpha</td><td><span class="badge p1">Not ready</span></td><td>Resolve P1 data-integrity/security findings and settle the alpha sync/scope contract first.</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="architecture">2. Architecture &amp; System Map</h2>
+    <h3>Runtime structure</h3>
+    <pre>User / OS event
+  → SvelteKit route: src/routes/+page.svelte or src/routes/capture/+page.svelte
+  → composition/controller: src/lib/components/AppLayout.svelte
+  → Svelte stores: src/lib/stores/app.ts
+  → typed invoke facade: src/lib/api.ts (108 wrappers)
+  → Tauri registry: src-tauri/src/lib.rs:218–326 (108 registrations)
+  → orchestration: src-tauri/src/commands.rs and src-tauri/src/notion/commands.rs
+  → domain/persistence: src-tauri/src/vault/*, backup.rs, sync.rs, semantic_search.rs
+  → canonical Markdown vault / OS keyring / external provider
+  → Tantivy + machine-local SQLite projections / emitted Tauri events
+  → Svelte store and visible UI update</pre>
+
+    <h3>Principal modules and responsibilities</h3>
+    <table>
+      <thead><tr><th>Layer</th><th>Primary locations</th><th>Responsibility</th><th>Assessment</th></tr></thead>
+      <tbody>
+        <tr><td>Routes/shell</td><td><code>src/routes/+layout.svelte</code>, <code>+page.svelte</code>, <code>capture/+page.svelte</code></td><td>Startup, global open-file/URL handling, main and quick-capture windows.</td><td>Small route surface; startup errors are over-suppressed.</td></tr>
+        <tr><td>UI composition</td><td><code>src/lib/components/AppLayout.svelte</code></td><td>Navigation, timers, event listeners, repair/sync/Notion/backup orchestration, desktop/mobile layout.</td><td>Connected but overly central; broad responsibilities amplify coupling.</td></tr>
+        <tr><td>Feature UI</td><td><code>src/lib/components/*.svelte</code></td><td>Editor, list/sidebar, search, graph, tasks, settings, windows, capture support.</td><td>All 19 components reachable; failure-state quality varies.</td></tr>
+        <tr><td>Shared state</td><td><code>src/lib/stores/app.ts</code>, <code>src/lib/types.ts</code></td><td>Writable/derived stores, persisted view state, TypeScript contracts.</td><td>Broad state coverage; one derived <code>vaultState</code> is disconnected.</td></tr>
+        <tr><td>IPC contract</td><td><code>src/lib/api.ts</code>, <code>src-tauri/src/lib.rs:218–326</code></td><td>Typed wrappers and command registration.</td><td>Names are fully aligned; event payloads remain stringly typed.</td></tr>
+        <tr><td>Backend orchestration</td><td><code>src-tauri/src/commands.rs</code>, <code>state.rs</code></td><td>Mutation lock, indexing, config, service lifecycle, Tauri events.</td><td>Strong normal path; bulk paths inconsistently participate.</td></tr>
+        <tr><td>Canonical domain</td><td><code>src-tauri/src/vault/</code></td><td>Markdown/frontmatter, PARA structure, note/folder/trash/history/import operations.</td><td>Mature and test-rich; some writes remain direct truncation.</td></tr>
+        <tr><td>Derived search</td><td>Tantivy modules; <code>semantic_search.rs</code></td><td>Keyword index and versioned <code>embeddinggemma</code> chunk embeddings in SQLite.</td><td>Correct source-of-truth model; bulk arrival paths can leave semantic projection stale.</td></tr>
+        <tr><td>External integrations</td><td><code>sync.rs</code>, <code>notion/</code>, <code>ai*.rs</code>, safe-fetch/image-proxy modules</td><td>WebDAV, read-only Notion publication, AI writing/embeddings, clipping, image retrieval.</td><td>Substantial implementations; WebDAV is the critical weak boundary.</td></tr>
+        <tr><td>Packaging/platform</td><td><code>src-tauri/tauri.conf.json</code>, capabilities, generated Android project, CI</td><td>Desktop/mobile packaging, permissions, updater, hotkeys, tray/autostart.</td><td>Desktop intent is mixed with inherited mobile code and stale HelixNotes identity.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>State and persistence boundaries</h3>
+    <ul>
+      <li><strong>Canonical:</strong> Markdown notes and selected in-vault metadata. <code>CONTEXT.md</code> explicitly defines Markdown as the source of truth.</li>
+      <li><strong>Rebuildable projections:</strong> Tantivy keyword index and SQLite semantic chunks/pending queue; these are machine-local by design.</li>
+      <li><strong>Machine-local:</strong> app config, AI endpoints, WebDAV bookkeeping, repair/relocation state, and indexes.</li>
+      <li><strong>Vault-scoped:</strong> attachments, trash, history, holding area, notebook icon map, and Notion registry/maps according to the domain documents. Current backup and WebDAV boundaries do not include all of these.</li>
+      <li><strong>Secrets:</strong> provider keys and WebDAV/Notion credentials migrate to the OS keyring through <code>secret_store.rs</code>. Config is redacted and owner-only on Unix.</li>
+    </ul>
+
+    <h2 id="matrix">3. Feature Implementation Matrix</h2>
+    <table>
+      <thead><tr><th>Feature</th><th>Status</th><th>Evidence / working path</th><th>Principal gap or risk</th></tr></thead>
+      <tbody>
+        <tr><td>Startup and vault selection</td><td><span class="badge mostly">Mostly implemented</span></td><td><code>+page.svelte</code> restores config; <code>VaultPicker.svelte</code>; <code>commands.rs::open_vault_path</code> initializes, reconciles, indexes, watches, and registers hotkey.</td><td>Non-iOS open errors are swallowed; config corruption can look like first launch.</td></tr>
+        <tr><td>Strict PARA structure/reconciliation</td><td><span class="badge implemented">Implemented</span></td><td><code>vault/operations.rs</code> structure, category reconciliation, holding area, protected roots, folder moves.</td><td>No major static defect found; live large-vault reconciliation not measured here.</td></tr>
+        <tr><td>Markdown rich/source editor</td><td><span class="badge mostly">Mostly implemented</span></td><td>TipTap/source mode, Markdown conversion, links, tables, math, diagrams, callouts, attachments, secrets, version snapshots.</td><td>Navigation and app shutdown can discard recent edits.</td></tr>
+        <tr><td>Ordinary note/folder lifecycle</td><td><span class="badge mostly">Mostly implemented</span></td><td>Commands serialize mutations, update Tantivy, enqueue semantic work, relocate identity/links/quick access.</td><td>Direct file writes are not crash-atomic; some UI errors are console-only.</td></tr>
+        <tr><td>Quick capture overlay</td><td><span class="badge mostly">Mostly implemented</span></td><td><code>capture/+page.svelte</code> → <code>quick_capture_note</code>; requires explicit PARA choice and preserves failed text.</td><td>Required post-capture semantic duplicate/merge suggestion is absent.</td></tr>
+        <tr><td>Global hotkey</td><td><span class="badge mostly">Mostly implemented</span></td><td>Windows plugin and Linux portal paths; status surfaced in settings.</td><td>X11 remains unverified/not promised; platform runtime not exercised here.</td></tr>
+        <tr><td>Web clipping</td><td><span class="badge implemented">Implemented</span></td><td>URL capture, backend readability extraction, safe fetch, image proxy, category filing, frontend fallback/error messaging.</td><td>Public-network live tests are ignored; service variability remains.</td></tr>
+        <tr><td>Attachments/images/PDF</td><td><span class="badge mostly">Mostly implemented</span></td><td>Save/copy/export, asset URL conversion, orphan detection/trashing, optional backup inclusion.</td><td>Android clipboard image commands explicitly return unsupported.</td></tr>
+        <tr><td>Keyword search</td><td><span class="badge implemented">Implemented</span></td><td><code>SearchPanel.svelte</code> → <code>search_notes</code> → Tantivy; generation guard, loading, and error UI.</td><td>No UI/IPC integration test; externally arrived updates depend on watcher/reindex paths.</td></tr>
+        <tr><td>Semantic search</td><td><span class="badge mostly">Mostly implemented</span></td><td>Versioned <code>ollama:embeddinggemma:chunks-v1</code>, durable pending queue, background worker, category filtering, rebuild/status UI.</td><td>WebDAV/import paths can leave SQLite stale; no explicit DB schema version/migration.</td></tr>
+        <tr><td>AI writing tools/Q&amp;A actions</td><td><span class="badge mostly">Mostly implemented</span></td><td>Streaming requests and health checks for Anthropic, OpenAI, Ollama, and OpenAI-compatible providers.</td><td>README’s “local AI” positioning is incomplete; provider event contracts are loosely typed.</td></tr>
+        <tr><td>Voice memo/transcription</td><td><span class="badge missing">Not implemented</span></td><td>Specified in <code>docs/SPEC.md</code> §1/§6.</td><td>No recorder/import, audio queue, whisper.cpp boundary, reconnect processing, or transcript flow found.</td></tr>
+        <tr><td>Capture-time similarity</td><td><span class="badge missing">Not implemented</span></td><td>Specified in <code>docs/SPEC.md</code> §5.</td><td>Quick capture ends after creating/indexing a note; no duplicate candidate/merge UI.</td></tr>
+        <tr><td>Graph: explicit links</td><td><span class="badge mostly">Mostly implemented</span></td><td><code>GraphView.svelte</code> canvas and <code>get_graph_data</code> explicit-link extraction.</td><td>Load errors become a blank graph with console logging only.</td></tr>
+        <tr><td>Graph: semantic edges/suggested links</td><td><span class="badge missing">Not implemented</span></td><td>Specified in <code>docs/SPEC.md</code> §6/§7.</td><td>No dashed similarity edge model, suggestion workflow, or user-driven promotion.</td></tr>
+        <tr><td>Tasks</td><td><span class="badge mostly">Mostly implemented</span></td><td>Markdown task scanning, list/calendar layouts, completion/priority/due mutation, event refresh.</td><td>Load failure appears as empty tasks; due date validates shape, not calendar reality.</td></tr>
+        <tr><td>Tags, notebooks, Quick Access</td><td><span class="badge implemented">Implemented</span></td><td>Creation, rename/move/delete, icons, tag aggregation/suggestions, ordering and path repair.</td><td>Some UI state/config concerns are duplicated.</td></tr>
+        <tr><td>Trash and restore</td><td><span class="badge implemented">Implemented</span></td><td>Soft deletion, notebook/note restore, permanent delete, empty trash, path containment.</td><td>Trash is omitted from current WebDAV sync and backup archive.</td></tr>
+        <tr><td>Per-note version history</td><td><span class="badge mostly">Mostly implemented</span></td><td>Timed snapshots, list/read/restore-related editor paths, retention.</td><td>History is omitted from current WebDAV sync and whole-vault backup; retention remains machine-local.</td></tr>
+        <tr><td>Backup creation/scheduling</td><td><span class="badge partial">Partially implemented</span></td><td><code>AppLayout.svelte:168–220</code> schedules; <code>backup.rs::create_backup</code> writes ZIP and prunes.</td><td>Archive excludes almost all <code>.helixnotes</code>; traversal errors are skipped.</td></tr>
+        <tr><td>Backup restore</td><td><span class="badge broken">Broken/inconsistent</span></td><td>Settings invokes detached restore command and receives progress/result event.</td><td>Deletes live data before extraction succeeds; no staging, rollback, lock, or projection refresh.</td></tr>
+        <tr><td>Machine-to-machine sync</td><td><span class="badge broken">Broken/inconsistent</span></td><td>Real WebDAV manifest/reconcile/client implementation and on-open/on-change/interval scheduling.</td><td>Security/integrity defects and major SPEC/ADR mismatch; not the required sidecar/pairing topology.</td></tr>
+        <tr><td>Notion read-only publication</td><td><span class="badge mostly">Mostly implemented</span></td><td>Credential flow, four-database setup, planner, page map/registry, tombstones, polling, publish events.</td><td>WebDAV omits the vault-scoped Notion map/registry; conflict naming mismatch can publish conflict copies.</td></tr>
+        <tr><td>Obsidian import</td><td><span class="badge partial">Partially implemented</span></td><td>Frontmatter/link conversion and event-reported counts.</td><td>Overlapping runs, ignored writes counted as success, no normal mutation lock or semantic reconciliation.</td></tr>
+        <tr><td>External Markdown open/viewer</td><td><span class="badge broken">Disconnected</span></td><td>OS open-file events and viewer UI exist.</td><td>Frontend calls <code>read_note</code>, whose domain guard only accepts active-vault or trash paths.</td></tr>
+        <tr><td>Settings/themes/updater</td><td><span class="badge mostly">Mostly implemented</span></td><td>Broad connected Settings UI, custom themes, updater, backup/sync/AI/Notion controls.</td><td>Theme constants duplicated; updater points to inherited HelixNotes endpoint; product naming mixed.</td></tr>
+        <tr><td>Mobile support</td><td><span class="badge legacy">Legacy/superseded</span></td><td>Responsive/mobile branches and generated Android/iOS-related paths remain.</td><td>Authoritative SPEC declares mobile out of scope; support contract is unclear.</td></tr>
+        <tr><td>Daily notes</td><td><span class="badge legacy">Legacy fallback only</span></td><td>Feature UI is removed; deserialization/startup normalization safely handles old values.</td><td>Task calendar is not daily notes; no active daily-note workflow found.</td></tr>
+        <tr><td>Multi-vault</td><td><span class="badge legacy">Legacy/unused</span></td><td>Picker/config support multiple entries while only one is active.</td><td>SPEC explicitly says one vault and inherited multi-vault support is unused dead weight.</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="detailed-reviews">4. Detailed Feature Reviews</h2>
+    <h3>4.1 Startup and vault open</h3>
+    <p><strong>Trace:</strong> <code>+page.svelte</code> loads machine config and resolves the active vault → <code>api.openVault</code> → <code>commands::open_vault</code>/<code>open_vault_path</code> (<code>commands.rs:307+</code>) → vault structure and stable identity claim → relocation recovery/category reconciliation → Tantivy and semantic index open/reconciliation → watcher and semantic worker startup → config persistence/hotkey registration → <code>vaultReady</code> → <code>AppLayout</code>.</p>
+    <p><span class="badge implemented">Strength</span> This is a genuine recovery-oriented bootstrap, not a folder-open shortcut. Vault identity locking, relocation repair, category reconciliation, and rebuildable projections are conceptually aligned.</p>
+    <p><span class="badge p2">Finding</span> <code>+page.svelte:252–278</code> only exposes an active-vault restoration error on iOS; other failures are swallowed. The outer catch at <code>+page.svelte:279–281</code> treats any config/startup exception as “First launch or no config.” Separately, <code>commands.rs:3698–3713</code> defaults on unreadable or malformed JSON. This can hide corruption or permission failure behind an apparently fresh setup. <strong>Confidence: confirmed code path; user-visible result strongly inferred.</strong></p>
+
+    <h3>4.2 Capture and clipping</h3>
+    <p><strong>Quick capture trace:</strong> global hotkey/platform event → capture window → user text plus required PARA category → <code>quick_capture_note</code> → canonical Markdown creation → immediate keyword index + semantic enqueue → returned <code>NoteEntry</code> → window closes. A failed save leaves text in place.</p>
+    <p><strong>Clipping trace:</strong> URL/category prompt in <code>AppLayout</code> → <code>clip_web_page</code> → backend URL validation and SSRF-safe fetch → readability/Markdown conversion and safe image proxy references → normal note persistence/indexing → active list refresh. The frontend test suite covers URL gating and visible backend failure text.</p>
+    <p><span class="badge missing">Missing</span> The SPEC requires a semantic similarity check after capture with merge/edit choice. There is no such API, state, or UI path. Voice capture/transcription is also absent.</p>
+
+    <h3>4.3 Editing, saving, and navigation</h3>
+    <p><strong>Normal save trace:</strong> editor transaction/source input sets <code>editorDirty</code> → 500 ms desktop / 1500 ms mobile debounce → serialize TipTap/source Markdown → <code>queueSave</code> → <code>save_note</code> → mutation lock → version/canonical Markdown update → Tantivy update and semantic enqueue → clear dirty only when the same path remains active. <code>forceSave</code> correctly awaits the queue and returns success. <code>moveOpenNoteToTrash</code> correctly drains pending saves first.</p>
+    <div class="callout danger"><strong>Confirmed design breaks at navigation and shutdown boundaries.</strong> <code>Editor.svelte:3295–3315</code> implements <code>flushSave</code> by calling <code>saveNote(...)</code> without awaiting it or entering <code>saveQueue</code>, catches only synchronous errors, then always clears <code>editorDirty</code>. <code>NoteList.svelte:377–410</code> calls the callback synchronously after reading the destination. <code>AppLayout.svelte:246–295</code> does the same. <code>SearchPanel.svelte:143–172</code> does not flush at all. Global/editor/wiki/graph navigation contains additional direct active-path changes. The active-note reaction then loads the destination. Separately, autosave is delayed by 500 ms on desktop or 1500 ms on mobile, default <code>close_to_tray</code> is false (<code>types.rs:390–395</code>), and the Tauri close/destroy handler does not request or await an editor save (<code>lib.rs:423–466</code>). A recent edit can therefore be replaced before durable save or the process can exit before a debounce/in-flight save completes; in the navigation case, a rejected save may already be marked clean. <strong>Confidence: confirmed async/lifecycle control-flow defects; data loss is a strong inference until reproduced in a packaged app.</strong></div>
+
+    <h3>4.4 Search, graph, and derived state</h3>
+    <p>Keyword and semantic search are separate and correctly named. <code>SearchPanel</code> uses a request generation guard to prevent stale result races and has explicit loading/error states. The semantic worker records durable pending notes, degrades when Ollama is unavailable, and uses a fixed versioned profile. <code>semantic_search.rs:177–200</code> creates tables with <code>IF NOT EXISTS</code> but has no explicit schema/user version; because this DB is derived, deletion/rebuild is a viable recovery, making this a maintainability issue rather than an immediate blocker.</p>
+    <p>Graph data is built from explicit links only. Semantic edges, related-note suggestions, and promotion to explicit links do not exist. <code>GraphView.svelte:188–191</code> only logs a load failure, leaving a blank graph. Sync conflict files are filtered using <code>.sync-conflict-</code> in <code>commands.rs:1585–1589</code>, but the authored WebDAV engine uses another naming scheme.</p>
+
+    <h3>4.5 Tasks and organization</h3>
+    <p>Tasks are parsed from Markdown and remain part of their source notes. Completion, priority, and due-date updates identify both line and raw text to avoid blind mutation, then feed normal index/update behavior. The list and calendar layouts are real task views, not remnants of removed daily notes. <code>TasksView.svelte:23–28</code> converts load failure to an empty array, so “backend failed” is visually indistinguishable from “no tasks.” Backend due-date validation at <code>commands.rs:1957–1976</code> accepts any digit-shaped <code>YYYY-MM-DD</code>, including impossible calendar dates.</p>
+
+    <h3>4.6 Trash, history, and backup</h3>
+    <p>Deletion normally moves notes into <code>.helixnotes/trash</code>; note history is retained separately. History and trash are strong local safeguards. Backup scheduling is implemented in <code>AppLayout.svelte:168–220</code>, and creation/pruning is real.</p>
+    <p>“Whole-vault backup” is inaccurate: <code>backup.rs:63–90</code> skips <code>.helixnotes</code> except optionally attachments, so trash, history, holding/shared metadata, and Notion maps are absent. <code>WalkDir::filter_map(|e| e.ok())</code> silently omits traversal failures.</p>
+    <div class="callout danger"><strong>Restore is non-transactional.</strong> <code>backup.rs:202–263</code> validates that the selected path is a ZIP in the configured directory and opens its central directory, but then deletes all visible vault content and attachments before iterating/extracting every member. A corrupt later member, disk-full condition, permission error, or process interruption leaves a partial vault with no rollback. The detached command at <code>commands.rs:3105+</code> does not acquire <code>note_mutation</code>, stage/rename, rebuild projections, or refresh live UI state. Concurrent editor/sync/watcher activity can compound the damage. <strong>Confidence: confirmed ordering and missing coordination; failure outcome strongly inferred.</strong></div>
+
+    <h3>4.7 WebDAV sync</h3>
+    <p><strong>Implemented trace:</strong> settings store per-vault provider/URL/user/password → password keyring → <code>AppLayout</code> schedules on-open/on-change/interval calls → <code>sync_now</code> spawns a run → local scan + WebDAV PROPFIND → three-way comparison against a machine-local manifest → upload/download/delete/conflict copy → save manifest → rebuild keyword index → emit completion → frontend refresh behavior.</p>
+    <p>This is significant authored sync logic, but it is neither the sidecar design nor safe enough for alpha:</p>
+    <ul>
+      <li><strong>Traversal:</strong> <code>href_to_relpath</code> (<code>sync.rs:399–438</code>) percent-decodes a server-controlled href and returns the suffix without component validation. <code>is_synced_relpath</code> accepts values such as <code>../outside.md</code>; <code>write_local</code> at <code>sync.rs:129–135</code> calls <code>vault.join(relpath)</code>. A malicious/compromised server—or a network attacker when HTTP is used—can write outside the vault.</li>
+      <li><strong>Transport:</strong> <code>WebdavClient::new</code> at <code>sync.rs:198–218</code> explicitly accepts <code>http://</code>; requests attach Basic Auth and note bytes (<code>sync.rs:226–330</code>). Credentials and content can cross the network in plaintext.</li>
+      <li><strong>Coordination:</strong> sync does not acquire the normal <code>note_mutation</code> lock and is not transactional across files. It can race editor saves, import, restore, or reconciliation.</li>
+      <li><strong>False success:</strong> local delete failure is discarded while the deleted count increments (<code>sync.rs:650–653</code>); <code>save_manifest</code> does not return a result and its failure cannot fail the run (<code>sync.rs:75+</code>, <code>747–748</code>).</li>
+      <li><strong>Unreadable can become deleted:</strong> <code>scan_local</code> silently skips directory-walk and file-read failures (<code>sync.rs:153–170</code>). A path present in the previous manifest but omitted from the scan is treated as locally deleted; if its remote ETag is unchanged, sync deletes the remote copy (<code>sync.rs:657–687</code>), allowing a transient local read failure to propagate as deletion.</li>
+      <li><strong>Partial failure:</strong> a later operation can error after earlier writes. Normal completion/reindex/event behavior is then skipped, even though the vault changed.</li>
+      <li><strong>Stale semantics:</strong> completion rebuilds Tantivy but does not reconcile semantic SQLite. Watcher muting prevents that projection from reliably learning incoming files through the normal external-change path.</li>
+      <li><strong>Boundary drift:</strong> <code>is_synced_relpath</code> (<code>sync.rs:142–151</code>) includes Markdown, attachments, and notebook icons only. It omits trash, history, and <code>.helixnotes/notion</code>, contradicting SPEC §8 and undermining Notion’s vault-scoped registry/map model.</li>
+      <li><strong>Conflict drift:</strong> WebDAV writes <code>Name (conflict timestamp).md</code> (<code>sync.rs:116–127</code>), while graph/Notion filters only recognize <code>.sync-conflict-</code> (<code>commands.rs:1585–1589</code>, <code>notion/plan.rs:172–179</code>). WebDAV conflict copies become ordinary indexed/publishable notes.</li>
+      <li><strong>Missing safety promise:</strong> no forced backup runs before incoming bulk changes despite <code>docs/SPEC.md</code> §3.</li>
+    </ul>
+
+    <h3>4.8 Notion publication</h3>
+    <p>The Notion implementation is materially stronger than a stub: token validation/storage, visible-page selection, four PARA databases, local identity maps, planning, moves/deletes/tombstones, paced publishing, progress summaries, polling, and reinstall page-adoption behavior are present. It is correctly one-way local-to-Notion.</p>
+    <p>Current WebDAV excludes the Notion registry/map even though the code treats it as vault-scoped. That risks each machine having an incomplete publication identity view. Conflict naming drift can also admit authored WebDAV conflict copies into Notion. The marker written into Notion is not yet used for full database reclamation; comments describe this as deferred rather than pretending it is complete.</p>
+
+    <h3>4.9 Import and external-file opening</h3>
+    <p><code>import_obsidian</code> starts a detached run without a compare-and-swap guard. <code>do_import_obsidian</code> toggles shared importing state but does not take <code>note_mutation</code> with RAII cleanup. <code>vault/import.rs:205–208</code> ignores a failed write and increments <code>files_converted</code>. A successful event can therefore overstate conversion, and overlapping imports can race. There is no explicit semantic reconciliation or reliable live list refresh after watcher muting.</p>
+    <p>The external Markdown viewer is connected at the UI/event level but disconnected at the domain boundary. <code>AppLayout.svelte:260–280</code> calls <code>readNote(filePath)</code> for an external path, while <code>vault/operations.rs:66–81</code> permits only active-vault notes or trash entries. Tauri’s FS scope is expanded for OS-opened files, but <code>read_note</code> does not consume that scope-aware validator. Expected result: the viewer logs “Failed to open external file.”</p>
+
+    <h2 id="cross-cutting">5. Cross-Cutting Findings</h2>
+    <h3>5.1 Data integrity and transaction boundaries</h3>
+    <p>The normal note command contract is good: serialize mutation, persist Markdown, update keyword index, enqueue semantic projection, and emit/refresh. The highest-severity defects are exceptions to that contract. Establishing one shared bulk-mutation coordinator—with mutation lock, preflight/staging, backup policy, projection reconciliation, and completion event semantics—would address several findings together.</p>
+
+    <h3>5.2 Security posture</h3>
+    <p>Positive evidence includes limited Tauri capabilities (the capture window receives a narrow set), OS-keyring credential handling, owner-only redacted config, safe external URL schemes, SSRF defenses for clipping/image proxy, vault/trash path containment, and stable vault identity locking. Lack of user authentication is appropriate for a local single-user desktop app and is not classified as a defect.</p>
+    <p>The WebDAV traversal and plaintext transport allowance are exceptions at a remote trust boundary and therefore disproportionately important. They should be resolved before asking alpha users to configure sync.</p>
+
+    <h3>5.3 Error handling and observability</h3>
+    <p>Search, settings operations, clipping, repair status, and quick capture generally surface useful state. Graph/tasks/startup/navigation often reduce errors to console logs, empty state, or no-op catches. Detached restore/import/sync commands rely on events, but partial failures do not consistently carry “vault changed; refresh/reconcile required” semantics. Logs exist, but there is no documented privacy/redaction policy or user-exportable diagnostic bundle.</p>
+
+    <h3>5.4 Contract and type consistency</h3>
+    <p>Command names are unusually clean: 108 TypeScript wrappers exactly match 108 Tauri registrations, with no wrapper lacking a frontend source reference. The weaker contract is event-based IPC: string event names and several <code>any</code>-typed payloads are repeated across components/backend emitters with no generated/shared schema. Persisted Rust/TypeScript models are manually mirrored, increasing drift risk.</p>
+
+    <h3>5.5 Product/specification consistency</h3>
+    <p><code>docs/SPEC.md</code> is explicit and internally detailed, but current code and user-facing identity have moved independently:</p>
+    <ul>
+      <li>WebDAV authored in this repository versus a bundled sidecar/Tailscale topology that explicitly rejects authored sync.</li>
+      <li>Second Brain repository/identifier versus HelixNotes package/product/window names and <code>https://helixnotes.com/latest.json</code> updater (<code>tauri.conf.json:3–15,39–43</code>).</li>
+      <li>README’s local-AI positioning versus supported Anthropic/OpenAI/OpenAI-compatible writing providers (<code>types.rs:127–143</code>); semantic search itself remains Ollama-only.</li>
+      <li>Mobile code remains despite mobile being out of scope; multi-vault UI remains despite the one-vault decision.</li>
+    </ul>
+
+    <h3>5.6 Maintainability and performance</h3>
+    <p><code>AppLayout.svelte</code> and especially <code>Editor.svelte</code> concentrate many responsibilities. Theme lists/accent options/platform checks are duplicated between route layout/page, settings, command palette, and platform utilities. The production build succeeds but emits a chunk-size warning; the largest JS chunk is approximately 1.585 MB (476.77 kB gzip). This is not an alpha blocker for a desktop app, but editor/diagram code splitting should be measured on the target laptop.</p>
+
+    <h2 id="incomplete">6. Incomplete / Stubbed / Disconnected Work</h2>
+    <table>
+      <thead><tr><th>Classification</th><th>Item</th><th>Evidence and consequence</th></tr></thead>
+      <tbody>
+        <tr><td><span class="badge missing">Not implemented</span></td><td>Voice recording/import/transcription queue</td><td>Promised by SPEC §1/§6; no whisper.cpp service, audio capture UI, durable reconnect queue, or transcript pipeline.</td></tr>
+        <tr><td><span class="badge missing">Not implemented</span></td><td>Capture-time semantic duplicate handling</td><td>Promised by SPEC §5; no post-capture candidate/merge path.</td></tr>
+        <tr><td><span class="badge missing">Not implemented</span></td><td>Semantic graph/suggested-link promotion</td><td>Promised by SPEC §6/§7; graph is explicit-link only.</td></tr>
+        <tr><td><span class="badge missing">Not implemented</span></td><td>Bundled sync sidecar, lifecycle, Tailscale pairing</td><td>No <code>externalBin</code> in <code>tauri.conf.json</code>; no device identity/pairing UI. Authored WebDAV is a different design.</td></tr>
+        <tr><td><span class="badge partial">Partially implemented</span></td><td>Conflict UX</td><td>Filters for sidecar-style names exist, but no paired versions/choice workflow; WebDAV emits an incompatible pattern.</td></tr>
+        <tr><td><span class="badge broken">Disconnected</span></td><td>External Markdown viewer</td><td>OS/UI path exists, but <code>read_note</code> rejects the external path.</td></tr>
+        <tr><td><span class="badge broken">Disconnected</span></td><td>Derived <code>vaultState</code> store</td><td><code>src/lib/stores/app.ts:314–352</code> exports it; no consumer exists. <code>AppLayout</code> manually builds a richer <code>VaultState</code>.</td></tr>
+        <tr><td><span class="badge partial">Incomplete surface</span></td><td>Command palette</td><td>Connected and useful, but covers a small subset of the app and duplicates theme command logic.</td></tr>
+        <tr><td><span class="badge legacy">Legacy/superseded</span></td><td>Daily-note values</td><td>Only safe deserialization/startup fallback remains; active daily-note functionality is removed as intended.</td></tr>
+        <tr><td><span class="badge legacy">Legacy/unused</span></td><td>Multi-vault and mobile breadth</td><td>Inherited implementation remains despite one-vault/desktop scope. It expands maintenance and test matrices without a settled product promise.</td></tr>
+        <tr><td><span class="badge p3">Stale marker</span></td><td><code>SecretId::NotionToken</code> dead-code comment</td><td><code>secret_store.rs:11–12</code> says it belongs to an in-flight issue branch, but the variant is actively used in migration and tests.</td></tr>
+        <tr><td><span class="badge p3">Repository hygiene</span></td><td><code>/tests/</code> ignored</td><td><code>.gitignore</code> labels <code>/tests/</code> “Local tests” even though 11 test files are tracked. New tests under the directory can be silently ignored.</td></tr>
+        <tr><td><span class="badge p3">No stub markers</span></td><td>Maintained-source TODO/FIXME/HACK inventory</td><td>No substantive <code>TODO</code>, <code>FIXME</code>, <code>HACK</code>, <code>todo!</code>, or <code>unimplemented!</code> was found. “todo” grep hits are callout/task terminology; test doubles are scoped to tests.</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="defects">7. Confirmed Defects and Likely Defects</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Severity</th><th>Confidence</th><th>Finding</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>D-01</td><td><span class="badge p1">P1</span></td><td>Confirmed control flow / strongly inferred loss</td><td>Note navigation or app shutdown can discard recent edits; navigation can also mark rejected saves clean.</td><td><code>Editor.svelte:3022–3049,3295–3315</code>; <code>NoteList.svelte:377–410</code>; <code>AppLayout.svelte:246–295</code>; <code>SearchPanel.svelte:143–172</code>; <code>types.rs:390–395</code>; <code>lib.rs:423–466</code>; other direct navigation paths.</td></tr>
+        <tr><td>D-02</td><td><span class="badge p1">P1</span></td><td>Confirmed</td><td>WebDAV server href can traverse outside the vault on local write.</td><td><code>sync.rs:129–151,399–438</code>: decode without component validation → accepts <code>../*.md</code> → <code>vault.join</code>.</td></tr>
+        <tr><td>D-03</td><td><span class="badge p1">P1</span></td><td>Confirmed</td><td>Backup restore destroys current content before complete extraction and has no rollback/coordination.</td><td><code>backup.rs:202–263</code>; <code>commands.rs:3105+</code>.</td></tr>
+        <tr><td>D-04</td><td><span class="badge p1">P1</span></td><td>Confirmed design defects / strongly inferred outcomes</td><td>Sync is not mutation-safe or completion-safe: races writes, can convert local scan/read failures into remote deletions, ignores delete/manifest errors, can stop after partial application, leaves semantic search stale, and omits required vault data/pre-backup.</td><td><code>sync.rs:75+,142–170,518–755</code>; absence of <code>note_mutation</code>/semantic reconciliation; SPEC §3/§8.</td></tr>
+        <tr><td>D-05</td><td><span class="badge p1">P1</span></td><td>Confirmed</td><td>WebDAV accepts plaintext HTTP while sending Basic Auth and note contents.</td><td><code>sync.rs:198–218,226–330</code>. Can be combined with D-02 remediation.</td></tr>
+        <tr><td>D-06</td><td><span class="badge p2">P2</span></td><td>Confirmed</td><td>WebDAV conflict copies evade graph/Notion filters and are treated as normal notes.</td><td><code>sync.rs:116–127,607–611</code> versus <code>commands.rs:1585–1589</code> and <code>notion/plan.rs:172–179</code>.</td></tr>
+        <tr><td>D-07</td><td><span class="badge p2">P2</span></td><td>Confirmed</td><td>Obsidian importer reports failed writes as converted and permits overlapping uncoordinated runs.</td><td><code>commands.rs:2647–2695</code>; <code>vault/import.rs:205–208</code>.</td></tr>
+        <tr><td>D-08</td><td><span class="badge p2">P2</span></td><td>Confirmed path mismatch</td><td>External Markdown viewer cannot read the external path it is designed to show.</td><td><code>AppLayout.svelte:260–280</code>; <code>vault/operations.rs:66–81</code>.</td></tr>
+        <tr><td>D-09</td><td><span class="badge p2">P2</span></td><td>Confirmed</td><td>Startup/config failures can be silently represented as no config/first launch.</td><td><code>+page.svelte:252–281</code>; <code>commands.rs:3698–3713</code>.</td></tr>
+        <tr><td>D-10</td><td><span class="badge p2">P2</span></td><td>Confirmed</td><td>Backup contents do not match “whole-vault” safety claim; traversal errors are omitted.</td><td><code>backup.rs:37–90</code>; SPEC §3.</td></tr>
+        <tr><td>D-11</td><td><span class="badge p2">P2</span></td><td>Confirmed</td><td>Crash durability is uneven: ordinary note/config/sync/Notion writes use direct truncate/write rather than temp-write + sync + atomic rename.</td><td><code>vault/operations.rs:618–637</code>; <code>commands.rs:3806–3823</code>; <code>sync.rs:129–135</code>; Notion registry/map writers.</td></tr>
+        <tr><td>D-12</td><td><span class="badge p3">P3</span></td><td>Confirmed</td><td>Task due-date shape validation accepts impossible dates.</td><td><code>commands.rs:1957–1976</code>.</td></tr>
+        <tr><td>D-13</td><td><span class="badge p3">P3</span></td><td>Confirmed</td><td>Graph/task backend failures masquerade as blank/empty content.</td><td><code>GraphView.svelte:188–191</code>; <code>TasksView.svelte:23–28</code>.</td></tr>
+        <tr><td>D-14</td><td><span class="badge p3">P3</span></td><td>Confirmed maintainability concern</td><td>Semantic derived DB lacks explicit schema version/migration.</td><td><code>semantic_search.rs:177–200</code>.</td></tr>
+      </tbody>
+    </table>
+    <p><strong>No P0 defect was found.</strong> P1 means “must resolve before external alpha,” not “the app never starts.” D-05 may be reduced to P2 only if alpha sync is disabled and HTTP is explicitly unsupported before exposure.</p>
+
+    <h2 id="verification">8. Test &amp; Verification Assessment</h2>
+    <h3>Commands and outcomes</h3>
+    <table>
+      <thead><tr><th>Command</th><th>Outcome</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td><code>pnpm check</code> (first attempt)</td><td><span class="badge unclear">Environment setup failure</span></td><td><code>svelte-kit: command not found</code>; repository had no <code>node_modules</code>.</td></tr>
+        <tr><td><code>pnpm install --frozen-lockfile</code></td><td><span class="badge implemented">Passed</span></td><td>277 packages installed; lockfile already up to date; no tracked change.</td></tr>
+        <tr><td><code>pnpm check</code> (after install)</td><td><span class="badge implemented">Passed</span></td><td>Svelte check: 0 errors, 0 warnings.</td></tr>
+        <tr><td><code>pnpm test</code></td><td><span class="badge implemented">Passed</span></td><td>44 passed, 0 failed, 0 skipped/cancelled/todo across 11 tracked <code>*.test.mjs</code> files.</td></tr>
+        <tr><td><code>pnpm test:rust</code></td><td><span class="badge implemented">Passed</span></td><td>In the provisioned Bookworm/WebKitGTK environment at Rust 1.88: 490 discovered, 484 passed, 0 failed, 6 ignored.</td></tr>
+        <tr><td><code>pnpm lint:rust</code></td><td><span class="badge implemented">Passed</span></td><td><code>cargo fmt --check</code> and Clippy across all targets with warnings denied completed successfully at Rust 1.88.</td></tr>
+        <tr><td><code>cargo fmt --manifest-path src-tauri/Cargo.toml --check</code></td><td><span class="badge implemented">Passed</span></td><td>No output; exit 0.</td></tr>
+        <tr><td><code>pnpm build</code></td><td><span class="badge implemented">Passed with warning</span></td><td>SvelteKit static build completed. Vite warned about chunks over 500 kB; largest JS chunk about 1,584.62 kB / 476.77 kB gzip.</td></tr>
+        <tr><td><code>pnpm verify</code></td><td><span class="badge implemented">Passed</span></td><td>Full aggregate passed in an isolated Debian Bookworm environment with WebKitGTK 4.1/Ayatana AppIndicator, Node 22.23.2, pnpm 10.28.1, and Rust 1.88.0.</td></tr>
+        <tr><td>Tauri deb/rpm build and package script</td><td><span class="badge implemented">Passed</span></td><td>Unsigned release build produced <code>HelixNotes_1.3.4_amd64.deb</code> and <code>HelixNotes-1.3.4-1.x86_64.rpm</code>; <code>verify-linux-package.sh</code> confirmed the expected desktop entry in both.</td></tr>
+        <tr><td>Hosted GitHub Actions Verify</td><td><span class="badge implemented">Passed</span></td><td><a href="https://github.com/zulucode-design/second-brain/actions/runs/34729884375">Run 34729884375</a> passed at exact audited HEAD, executing <code>pnpm verify</code>, unsigned deb/rpm builds, and both package desktop-entry checks.</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Environment:</strong> The host is Amazon Linux 2023, which does not offer the required WebKitGTK/AppIndicator development packages. Full verification was therefore run in an isolated Debian Bookworm OCI environment with WebKitGTK 4.1, Ayatana AppIndicator, Node 22.23.2, pnpm 10.28.1, and the documented Rust 1.88.0 MSRV. This matches the CI runtime/toolchain intent while leaving project dependency files unchanged.</p>
+
+    <h3>Coverage assessment</h3>
+    <ul>
+      <li><strong>JavaScript:</strong> 11 pure utility/policy suites (44 tests). Good focused coverage for Markdown marks, path conversion, virtual rows, PARA behavior, startup normalization, Notion presentation, sync-setting edits, and clipping UX helpers.</li>
+      <li><strong>Rust:</strong> broad embedded unit/integration-style coverage across 51 source files. The provisioned Rust 1.88 run discovered 490 tests: 484 passed, 0 failed, and 6 environment-dependent tests were ignored.</li>
+      <li><strong>Ignored/live:</strong> environment-dependent Notion, public clipping, Linux portal, and semantic benchmark paths are not routine deterministic verification.</li>
+      <li><strong>Absent:</strong> no Svelte component tests, store tests, route tests, Tauri IPC contract tests, browser automation, packaged desktop smoke test, or end-to-end vault workflow suite.</li>
+      <li><strong>CI scope:</strong> Ubuntu 22.04 only. No Windows job despite Windows being the primary machine and requiring specialized test manifest handling; no macOS/mobile job.</li>
+      <li><strong>Quality gates absent:</strong> no coverage threshold, dependency vulnerability/license audit, signed release/updater verification, or runtime performance budget.</li>
+      <li><strong>CI packaging:</strong> deb/rpm are built and desktop-entry content is inspected, but packages are not installed and launched.</li>
+    </ul>
+
+    <h3>Setup/reproducibility concerns</h3>
+    <ul>
+      <li><code>package.json</code> has no <code>packageManager</code> or <code>engines</code>; <code>.npmrc</code> <code>engine-strict=true</code> therefore provides limited enforcement.</li>
+      <li><code>prepare</code> suppresses <code>svelte-kit sync</code> failure with <code>|| echo ''</code>, allowing install to appear healthy when generated types fail.</li>
+      <li><code>.gitignore</code> ignores the tracked test directory path, making new test discovery/staging error-prone.</li>
+      <li>The Nix flake provides a package build but no development shell for reproducing CI’s native dependencies.</li>
+    </ul>
+
+    <h2 id="blockers">9. Alpha Blockers</h2>
+    <table>
+      <thead><tr><th>Priority</th><th>Blocker</th><th>Exit criterion</th></tr></thead>
+      <tbody>
+        <tr><td><span class="badge p1">P1</span></td><td>Editor navigation save/data-loss defect (D-01).</td><td>Every active-note transition and application shutdown path uses one awaited guard that drains/serializes save, preserves dirty state on failure, and blocks or asks before navigation/exit. Regression tests cover list, search, history, link/graph, OS-open, window paths, and closing during debounce/in-flight save.</td></tr>
+        <tr><td><span class="badge p1">P1</span></td><td>WebDAV remote path traversal and plaintext credential/content transport (D-02/D-05).</td><td>Normalize and validate relative path components; canonical/lexical containment before every local read/write/delete; reject encoded separators/traversal; require HTTPS except an explicit safe loopback exception; adversarial tests pass.</td></tr>
+        <tr><td><span class="badge p1">P1</span></td><td>Destructive backup restore (D-03).</td><td>Archive-wide preflight and extraction to staging, atomic/coordinated swap or rollback, mutation exclusion, disk/error tests, projection reconciliation, and deterministic live UI state.</td></tr>
+        <tr><td><span class="badge p1">P1</span></td><td>Sync bulk-mutation correctness (D-04/D-06).</td><td>Serialized run/mutation contract, pre-incoming backup, checked delete/manifest writes, resumable or clearly reconciled partial failure, semantic + keyword reconciliation, one conflict convention/UX, and a documented synced boundary matching the chosen product contract.</td></tr>
+        <tr><td><span class="badge p1">P1 product decision</span></td><td>Authoritative sync/scope contract does not match implementation.</td><td>Either implement the accepted sidecar/Tailscale/pairing design or formally revise SPEC/ADR to WebDAV after design/security review. Explicitly decide whether voice, capture similarity, and semantic links block the first alpha or move to a named later milestone; update README/UI claims accordingly.</td></tr>
+      </tbody>
+    </table>
+    <p><strong>No P0 blocker:</strong> static and frontend verification do not show universal startup/build failure. <strong>Conditional internal alpha:</strong> a developer-only build could be used with WebDAV and restore disabled, an explicit warning to wait for autosave before navigation or closing, and a disposable/test vault. That is not an acceptable external-alpha posture.</p>
+
+    <h2 id="checklist">10. Alpha Readiness Checklist</h2>
+    <table>
+      <thead><tr><th>Criterion</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Core vault opens and remains local-first</td><td>☑</td><td>Implemented with recovery/reconciliation architecture.</td></tr>
+        <tr><td>Strict PARA capture/organization</td><td>☑</td><td>Implemented; holding area handles invalid legacy/external notes.</td></tr>
+        <tr><td>Markdown remains canonical and portable</td><td>☑</td><td>Indexes are derived; no lock-in database is canonical.</td></tr>
+        <tr><td>Normal note lifecycle updates projections</td><td>☑</td><td>Strong ordinary command path.</td></tr>
+        <tr><td>Navigation and shutdown cannot lose unsaved edits</td><td>☒</td><td>P1 D-01.</td></tr>
+        <tr><td>Restore is transactional/recoverable</td><td>☒</td><td>P1 D-03.</td></tr>
+        <tr><td>Remote sync cannot escape the vault</td><td>☒</td><td>P1 D-02.</td></tr>
+        <tr><td>Remote credentials/content require secure transport</td><td>☒</td><td>P1 D-05.</td></tr>
+        <tr><td>Bulk mutations coordinate with editor/indexes</td><td>☒</td><td>Sync/import/restore exceptions remain.</td></tr>
+        <tr><td>Sync design agrees with SPEC/ADR</td><td>☒</td><td>WebDAV versus sidecar/Tailscale/pairing.</td></tr>
+        <tr><td>Conflict copies are paired and excluded from ordinary views</td><td>☒</td><td>Pattern mismatch; choice UI absent.</td></tr>
+        <tr><td>Backup scope matches safety claim</td><td>☒</td><td>Trash/history/most metadata omitted.</td></tr>
+        <tr><td>Startup failures are visible/actionable</td><td>☒</td><td>Several catches default/no-op.</td></tr>
+        <tr><td>Required v1 voice flow</td><td>☒ / decide</td><td>Not implemented; may be explicitly deferred from alpha.</td></tr>
+        <tr><td>Required capture similarity flow</td><td>☒ / decide</td><td>Not implemented; may be explicitly deferred from alpha.</td></tr>
+        <tr><td>Required semantic graph/suggested links</td><td>☒ / decide</td><td>Not implemented; may be explicitly deferred from alpha.</td></tr>
+        <tr><td>Frontend typecheck/build/tests green</td><td>☑</td><td>0 diagnostics, 44/44 tests, production build passed.</td></tr>
+        <tr><td>Rust suite and Clippy green at reviewed commit</td><td>☑</td><td>484 passed, 0 failed, 6 ignored at Rust 1.88; formatting and Clippy with warnings denied passed.</td></tr>
+        <tr><td>Primary Windows target covered in CI</td><td>☒</td><td>Only Ubuntu workflow exists.</td></tr>
+        <tr><td>End-to-end core workflow tests</td><td>☒</td><td>No component/browser/Tauri E2E coverage.</td></tr>
+        <tr><td>Product identity/updater endpoint finalized</td><td>☒</td><td>Second Brain and HelixNotes identity mixed.</td></tr>
+        <tr><td>No known P0/P1 issues</td><td>☒</td><td>No P0; five P1 blocker rows including scope decision.</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="remediation">11. Prioritized Remediation Plan</h2>
+    <h3>Phase 0 — Freeze risky alpha surfaces (immediate)</h3>
+    <ol>
+      <li>Disable or clearly hide WebDAV and backup restore in any build shared outside the development team until P1 fixes land.</li>
+      <li>Use disposable vault copies for sync/restore/import testing; preserve a manual external backup.</li>
+      <li>Open tracked issues for D-01 through D-06 with the evidence and exit criteria above. Do not bundle unrelated UI polish into these fixes.</li>
+    </ol>
+
+    <h3>Phase 1 — Eliminate P1 data loss and security risk</h3>
+    <ol>
+      <li><strong>Unify navigation and shutdown:</strong> replace <code>flushSave</code> with an awaited <code>beforeActiveNoteChange</code> coordinator that drains <code>saveQueue</code>, uses captured path/content, retains dirty state on error, and is required by every navigation source. Add a close handshake that waits for the same queue before allowing main-window destruction. Add focused navigation and close-during-debounce/in-flight regression tests.</li>
+      <li><strong>Harden WebDAV paths:</strong> parse decoded paths into normal components only, reject parent/root/prefix/backslash/encoded-separator forms, enforce component-boundary base mapping, and verify the final path remains under the canonical vault root. Apply the same helper to reads, writes, and deletes.</li>
+      <li><strong>Require protected transport:</strong> HTTPS-only WebDAV by default, with any loopback development exception explicit and credential-free or visibly warned.</li>
+      <li><strong>Make restore transactional:</strong> preflight every ZIP entry and size, extract to sibling staging, preserve existing vault until success, acquire bulk mutation exclusion, atomically swap where supported or implement tested rollback, then reconcile all projections and UI state.</li>
+      <li><strong>Create a bulk mutation service:</strong> one runner for sync/import/restore that handles lock/run deduplication, optional mandatory backup, watcher suppression with guaranteed cleanup, change summary, Tantivy/semantic reconciliation, and completion/failure events even after partial application.</li>
+    </ol>
+
+    <h3>Phase 2 — Resolve sync architecture and correctness</h3>
+    <ol>
+      <li>Record a product/architecture decision: sidecar/Tailscale as currently specified, or WebDAV as the supported engine. Do not leave both documents and code authoritative.</li>
+      <li>If WebDAV remains: make every operation checked, make local scan/read errors abort or mark paths unknown rather than absent, make manifest save fallible/atomic, define interruption recovery, prevent concurrent runs, add adversarial server tests, and use one conflict naming/recognition contract.</li>
+      <li>Implement conflict pairing/choice UI and exclude conflict copies consistently from list counts, search, graph, semantic index, and Notion until resolved.</li>
+      <li>Define the complete synchronized vault set. Reconcile trash/history/Notion/shared settings with the machine-local boundary and add two-machine fixtures.</li>
+      <li>Force and verify a backup immediately before applying incoming batches if that remains the SPEC safety strategy.</li>
+    </ol>
+
+    <h3>Phase 3 — Close correctness and observability gaps</h3>
+    <ol>
+      <li>Fix Obsidian import write accounting, deduplicate runs, participate in bulk mutation coordination, and refresh both indexes/UI.</li>
+      <li>Route external Markdown through a dedicated scope-aware read-only command; add inside/outside-vault tests.</li>
+      <li>Make malformed config/startup/vault-open errors explicit and recoverable; distinguish missing config from unreadable/invalid config.</li>
+      <li>Adopt atomic durable-write helpers for canonical notes and critical metadata. At minimum use same-directory temporary file, flush/sync as appropriate, atomic rename, and tested failure cleanup.</li>
+      <li>Add visible graph/tasks errors and validate task due dates with a calendar parser.</li>
+      <li>Correct backup wording/scope and surface skipped traversal failures.</li>
+    </ol>
+
+    <h3>Phase 4 — Establish an alpha verification gate</h3>
+    <ol>
+      <li>Add Windows CI using the required <code>pnpm test:rust</code> wrapper; retain Ubuntu package verification. Pin package manager and runtime expectations.</li>
+      <li>Add a small Tauri integration/E2E suite around: open vault → create/edit → immediate navigation → restart/read; search; trash/restore; transactional backup restore; hostile WebDAV href; interrupted sync; import failure.</li>
+      <li>Generate or centrally define command/event names and payload types. Add IPC registration parity as an automated test.</li>
+      <li>Add dependency/security/license checks and a packaged install/launch smoke test. Verify signed updater/release behavior before enabling the updater.</li>
+      <li>Measure cold startup, editor interaction, and semantic search on the Linux laptop target; address the emitted bundle chunk warning only where measurements justify it.</li>
+    </ol>
+
+    <h3>Phase 5 — Align alpha scope and identity</h3>
+    <ol>
+      <li>Decide whether voice, capture similarity, and semantic suggested links are alpha requirements. Implement them or move them to an explicitly named post-alpha milestone without implying completion.</li>
+      <li>Finalize Second Brain versus HelixNotes product/package/binary/window naming, app identifier migration implications, homepage, and updater endpoint/key.</li>
+      <li>Remove or formally support inherited mobile/multi-vault surfaces. Remove disconnected <code>vaultState</code>, stale comments, duplicated constants, and the <code>/tests/</code> ignore rule.</li>
+    </ol>
+
+    <h2 id="questions">12. Open Questions / Unverified Assumptions</h2>
+    <ol>
+      <li><strong>What is the first alpha’s declared feature contract?</strong> Is it a narrow Capture/Organize desktop alpha, or must it satisfy every current v1 commitment including voice, duplicate detection, suggested links, and two-machine sync?</li>
+      <li><strong>Which sync decision is authoritative?</strong> If WebDAV superseded ADR-0002, where is that decision recorded, and what threat/conflict model was accepted? If ADR-0002 remains authoritative, should WebDAV be removed as experimental code?</li>
+      <li><strong>Is sync mandatory for alpha?</strong> If not, it can be feature-gated while core editing is tested. If yes, D-02/D-04/D-05 and conflict UX are unconditional blockers.</li>
+      <li><strong>What is the exact synced metadata boundary?</strong> In particular: trash, history, Notion identity maps, holding area, notebook icons, and shared retention settings.</li>
+      <li><strong>How should partial bulk failure be presented and recovered?</strong> A resumable journal, staging transaction, or explicit “changed but incomplete; reconciliation performed” contract is needed.</li>
+      <li><strong>What product identity should alpha install?</strong> Changing identifier/package name may affect config directories, keyring service names, desktop entries, updater continuity, and existing vault users.</li>
+      <li><strong>Are cloud writing providers intentional?</strong> If yes, README/privacy/offline claims should distinguish writing tools from Ollama-only semantic search and disclose data leaving the machine.</li>
+      <li><strong>Is mobile supported or merely inherited?</strong> Android-specific commands and UI exist, but mobile is out of SPEC scope and desktop is the advertised target.</li>
+      <li><strong>Does current hosted Linux CI pass at this exact commit?</strong> Yes. GitHub Actions Verify run <a href="https://github.com/zulucode-design/second-brain/actions/runs/34729884375">34729884375</a> passed for exact audited HEAD <code>1c6f83887595f56c372c86d03a68558e97cbc23b</code>, including <code>pnpm verify</code>, unsigned deb/rpm builds, and both desktop-entry checks. Windows CI, package install/launch smoke, and live platform behavior remain unverified.</li>
+      <li><strong>How do Windows and Linux packaged builds behave live?</strong> Hotkeys, keyring, updater, tray/autostart, file associations, external viewer, WebDAV, and restore require packaged runtime verification.</li>
+      <li><strong>What vault size is an alpha target?</strong> Semantic brute-force search is intentional for approximately 1k–10k notes, but startup/reconciliation/import/sync and graph performance need representative measurements.</li>
+      <li><strong>What durability guarantee is promised?</strong> If “local-first” implies crash-safe note writes, direct truncating writes should be elevated; if only application-level error recovery is promised, document that limitation.</li>
+    </ol>
+
+    <h3>Final assessment</h3>
+    <div class="callout info">
+      <p><strong>This is a real pre-alpha application, not a prototype shell.</strong> Its core architecture and a large portion of the intended workflow are implemented, and the code shows sustained attention to repair, security, and local-first design. The blockers are concentrated enough to remediate, but they sit on trust-critical boundaries and should not be waived.</p>
+      <p><strong>Recommended gate:</strong> no external alpha until work packages A–D and H are complete, decision gates G1–G4 are recorded and their required outcomes implemented, no P0/P1 remains open, and H’s versioned verification-matrix record is green with named commands, platforms, fixtures, manual protocols, expected outcomes, and packaged install/launch evidence. Hosted Linux CI already passes the audited HEAD; Windows and live package evidence remain open. Findings E–G may be explicitly deferred only with responsible tickets, expected current outcomes, and target milestones recorded in that matrix.</p>
+    </div>
+  </body>
+</html>
