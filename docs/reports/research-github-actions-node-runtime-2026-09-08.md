@@ -61,8 +61,10 @@ drift the added job is intended to catch.
 After compilation, that same first gate also exposed 11 false failures caused by the
 hosted runner spelling its temp directory as both the DOS 8.3 alias `RUNNER~1` and the
 canonical user directory `runneradmin`. The shared vault-operation and relocation test
-fixtures now canonicalize their roots after creation, so their inputs and expected paths
-use the same filesystem identity. No production path policy was relaxed.
+fixtures now canonicalize their roots after creation through the same `dunce`-based path
+boundary as production. This resolves the alias without retaining the standard library's
+Windows-only `\\?\\` verbatim prefix, so fixture inputs and expected paths use the same
+filesystem identity. No production path policy was relaxed.
 
 Final hosted-run evidence is recorded on the implementing pull request.
 
