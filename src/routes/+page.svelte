@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { appConfig, vaultReady, theme } from '$lib/stores/app';
-	import { getAppConfig, openVault, restoreExternalVault, setFontSize } from '$lib/api';
+	import { getAppConfig, openVault, restoreExternalVault, setFontSize, registerSaveParticipant, acknowledgeSaveBeforeClose } from '$lib/api';
 	import { darkThemes, isIOS, isMobile } from '$lib/platform';
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import { listen } from '@tauri-apps/api/event';
@@ -9,6 +9,7 @@
 	import VaultPicker from '$lib/components/VaultPicker.svelte';
 	import AppLayout from '$lib/components/AppLayout.svelte';
 	import NoteWindow from '$lib/components/NoteWindow.svelte';
+	import { GenerationGate } from '$lib/utils/generation-gate';
 
 	let loading = $state(true);
 	let noteWindowPath = $state<string | null>(null);
@@ -18,17 +19,26 @@
 	let removeFontSizeListener: (() => void) | null = null;
 	let startupRevealTimer: ReturnType<typeof setTimeout> | null = null;
 	let startupWindowRevealed = false;
+	let appLayout = $state<AppLayout>();
+	let noteWindow = $state<NoteWindow>();
+	let closingRequestId: string | null = null;
+	let unlistenSaveBeforeClose: (() => void) | null = null;
+	let unlistenCloseRelease: (() => void) | null = null;
+	const lifetimeGate = new GenerationGate();
 
 	const STARTUP_REVEAL_FAILSAFE_MS = 4000;
 
 	async function revealStartupWindow() {
 		if (isMobile || startupWindowRevealed) return;
+		const lifetime = lifetimeGate.capture();
 		await tick();
+		if (!lifetimeGate.isCurrent(lifetime)) return;
 		// Force style resolution while the native window is still hidden so its first
 		// compositor frame already uses the selected theme.
 		getComputedStyle(document.body).backgroundColor;
 		try {
 			await getCurrentWindow().show();
+			if (!lifetimeGate.isCurrent(lifetime)) return;
 			startupWindowRevealed = true;
 			if (startupRevealTimer) {
 				clearTimeout(startupRevealTimer);
@@ -137,22 +147,74 @@
 	}
 
 	onMount(async () => {
+		const lifetime = lifetimeGate.capture();
+		const alive = () => lifetimeGate.isCurrent(lifetime);
 		if (!isMobile) {
 			startupRevealTimer = setTimeout(() => void revealStartupWindow(), STARTUP_REVEAL_FAILSAFE_MS);
 		}
 		// Check for note window mode
 		const params = new URLSearchParams(window.location.search);
 		const notePath = params.get('note');
-		if (notePath) {
-			noteWindowPath = notePath;
+		if (notePath) noteWindowPath = notePath;
+
+		// Every editable webview owns shutdown acknowledgement from the page root, before
+		// AppLayout or NoteWindow mounts. Delegate when an editor exists; during startup or
+		// VaultPicker there is no note persistence to drain, so acknowledgement is immediate.
+		const closeReleaseUnlisten = await listen<{ requestId: string }>('save-close-released', (event) => {
+			if (!alive() || closingRequestId !== event.payload.requestId) return;
+			appLayout?.releaseClose(event.payload.requestId);
+			noteWindow?.releaseClose(event.payload.requestId);
+			closingRequestId = null;
+		});
+		if (!alive()) { closeReleaseUnlisten(); return; }
+		unlistenCloseRelease = closeReleaseUnlisten;
+		const handleSaveBeforeClose = async (requestId: string) => {
+			if (closingRequestId) return;
+			closingRequestId = requestId;
+			let saved = true;
+			try {
+				if (notePath) {
+					saved = noteWindow ? await noteWindow.prepareForClose(requestId) : true;
+				} else {
+					saved = appLayout ? await appLayout.prepareForClose(requestId) : true;
+				}
+			} catch (error) {
+				saved = false;
+				console.error('Failed to prepare the window for close:', error);
+			}
+			try {
+				await acknowledgeSaveBeforeClose(requestId, saved);
+			} catch (error) {
+				console.error('Failed to acknowledge window close:', error);
+			}
+		};
+		const saveBeforeCloseUnlisten = await listen<{ requestId: string }>('save-before-close', (event) => {
+			if (alive()) void handleSaveBeforeClose(event.payload.requestId);
+		});
+		if (!alive()) { saveBeforeCloseUnlisten(); return; }
+		unlistenSaveBeforeClose = saveBeforeCloseUnlisten;
+		try {
+			const reservationToken = params.get('reservation');
+			const pending = await registerSaveParticipant(reservationToken);
+			if (!alive()) return;
+			// A reserved window can register after exit began. Its listener now exists, so
+			// consume the joined request directly instead of relying on a lost earlier event.
+			if (pending) await handleSaveBeforeClose(pending.requestId);
+		} catch (error) {
+			if (!alive()) return;
+			console.error('Failed to register save-before-close participation:', error);
+			if (notePath) await getCurrentWindow().close();
 		}
 
 		try {
 			const config = await getAppConfig();
+			if (!alive()) return;
 			$appConfig = config;
-			removeFontSizeListener = await listen<number>('editor-font-size-changed', (event) => {
-				if ($appConfig?.font_size !== event.payload) applyEditorFontSize(event.payload);
+			const fontSizeUnlisten = await listen<number>('editor-font-size-changed', (event) => {
+				if (alive() && $appConfig?.font_size !== event.payload) applyEditorFontSize(event.payload);
 			});
+			if (!alive()) { fontSizeUnlisten(); return; }
+			removeFontSizeListener = fontSizeUnlisten;
 			$theme = config.theme || 'system';
 
 			// Apply theme immediately to prevent flash. Runs before the stores settle, so resolve
@@ -239,8 +301,10 @@
 				} catch (e) {
 					console.error('Failed to apply interface scale:', e);
 				}
+				if (!alive()) return;
 			}
 			await revealStartupWindow();
+			if (!alive()) return;
 			removeEditorZoomShortcuts = installEditorZoomShortcuts();
 
 			// Auto-open last vault if available
@@ -255,11 +319,15 @@
 					if (!noteWindowPath) {
 						if (isIOS && activeVault?.bookmark_id) {
 							await restoreExternalVault(activeVault.bookmark_id);
+							if (!alive()) return;
 							$appConfig = await getAppConfig();
+							if (!alive()) return;
 						} else {
 							await openVault(config.active_vault);
+							if (!alive()) return;
 						}
 					}
+					if (!alive()) return;
 					$vaultReady = true;
 				} catch (e) {
 					if (isIOS && activeVault?.bookmark_id) {
@@ -275,8 +343,10 @@
 		} catch {
 			// First launch or no config
 		} finally {
+			if (!alive()) return;
 			loading = false;
 			await revealStartupWindow();
+			if (!alive()) return;
 			if (startupRevealTimer) {
 				clearTimeout(startupRevealTimer);
 				startupRevealTimer = null;
@@ -285,8 +355,11 @@
 	});
 
 	onDestroy(() => {
+		lifetimeGate.cancel();
 		removeEditorZoomShortcuts?.();
 		removeFontSizeListener?.();
+		unlistenSaveBeforeClose?.();
+		unlistenCloseRelease?.();
 		if (fontSizeSaveTimer) clearTimeout(fontSizeSaveTimer);
 		if (startupRevealTimer) clearTimeout(startupRevealTimer);
 	});
@@ -297,9 +370,9 @@
 		<div class="spinner"></div>
 	</div>
 {:else if noteWindowPath}
-	<NoteWindow notePath={noteWindowPath} />
+	<NoteWindow bind:this={noteWindow} notePath={noteWindowPath} />
 {:else if $vaultReady}
-	<AppLayout />
+	<AppLayout bind:this={appLayout} />
 {:else}
 	<VaultPicker initialError={startupVaultError} />
 {/if}

@@ -25,6 +25,8 @@
 		customThemes,
 		focusMode,
 		readOnly,
+		shutdownPending,
+		vaultReady,
 		holdingPreview,
 		activeNote,
 		activeNotePath,
@@ -74,13 +76,17 @@
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
 	const isMobile = $derived($platformIsMobile);
-	import { loadVaultState, saveVaultState, readNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, notionStatus, notionPublishNow, getAppConfig, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus, getHotkeyStatus, getRepairStatus, retryRepairs, clipWebPage } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote, readUnfiledNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, syncNow, notionStatus, notionPublishNow, getAppConfig, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus, getHotkeyStatus, getRepairStatus, retryRepairs, clipWebPage, beginVaultSwitch, endVaultSwitch } from '$lib/api';
 	import { darkThemes, isAndroid } from '$lib/platform';
 	import { debounce } from '$lib/utils/debounce';
-	import { openNoteWindow } from '$lib/utils/window';
+	import { openNoteWindow, closeSecondaryWindowsForVaultSwitch } from '$lib/utils/window';
 	import { normalizeStartupView, resolveStartupTarget } from '$lib/utils/startup-view';
+	import { NAVIGATE_NOTE_EVENT, type NavigateNoteRequest, type NoteNavigationResult } from '$lib/utils/navigation';
+	import { relocateDocument, runSaveGatedAction } from '$lib/utils/document-lifecycle';
+	import { GenerationGate } from '$lib/utils/generation-gate';
+	import { runActiveDocumentMutation } from '$lib/utils/document-mutation';
 	import { get } from 'svelte/store';
-	import type { VaultState, FileEvent, NotebookEntry, TaskItem, AiStatus, HotkeyStatus, RepairStatus, ParaCategory } from '$lib/types';
+	import type { VaultState, FileEvent, NotebookEntry, TaskItem, AiStatus, HotkeyStatus, RepairStatus, ParaCategory, NoteContent } from '$lib/types';
 	import type { StartupTarget } from '$lib/utils/startup-view';
 
 	function findNotebookByPath(list: NotebookEntry[], relPath: string): NotebookEntry | null {
@@ -161,6 +167,10 @@
 	}
 
 	let unlistenOpenFile: (() => void) | null = null;
+	let closingRequestId: string | null = null;
+	let releaseCloseMutationLock: (() => void) | null = null;
+	let readOnlyBeforeClose = false;
+	let removeNavigationRequest: (() => void) | null = null;
 
 	// Mobile editor header helpers
 	let noteRelativePath = $derived($activeNotePath && $appConfig?.active_vault ? $activeNotePath.replace($appConfig.active_vault + '/', '') : '');
@@ -171,7 +181,21 @@
 	let unlistenSync: Array<() => void> = [];
 	let unsubDirty: (() => void) | null = null;
 	let onChangeSyncTimer: ReturnType<typeof setTimeout> | null = null;
+	let orphanScanTimer: ReturnType<typeof setTimeout> | null = null;
 	let prevDirty = false;
+	const startupGate = new GenerationGate();
+	const lifetimeGate = new GenerationGate();
+	let ownsVaultSwitchGate = false;
+
+	async function releaseOwnedVaultSwitchGate() {
+		if (!ownsVaultSwitchGate) return;
+		ownsVaultSwitchGate = false;
+		try {
+			await endVaultSwitch();
+		} catch (error) {
+			console.error('Could not release vault-switch gate:', error);
+		}
+	}
 
 
 
@@ -185,18 +209,23 @@
 	}
 
 	async function checkScheduledBackup() {
+		const lifetime = lifetimeGate.capture();
 		const config = get(appConfig);
 		if (!config?.backup_enabled) return;
 		const interval = parseFrequencyMs(config.backup_frequency);
 		const last = config.last_backup_time ? new Date(config.last_backup_time).getTime() : 0;
 		if (Date.now() - last >= interval) {
 			const unlisten = await listen('backup-done', (event: any) => {
-				if (event.payload?.success) {
+				if (lifetimeGate.isCurrent(lifetime) && event.payload?.success) {
 					const cur = get(appConfig);
 					if (cur) appConfig.set({ ...cur, last_backup_time: new Date().toISOString() });
 				}
 				unlisten();
 			});
+			if (!lifetimeGate.isCurrent(lifetime)) {
+				unlisten();
+				return;
+			}
 			try { await createBackup(); } catch (_) { unlisten(); }
 		}
 	}
@@ -242,18 +271,233 @@
 	$effect(() => {
 		const path = $activeNotePath;
 		if (path && !$holdingPreview) navHistory.push(path);
+		if (path) startupGate.invalidate();
 	});
 
-	function navigateHistory(direction: -1 | 1) {
-		const path = navHistory.go(direction);
-		if (!path) return;
-		readNote(path).then((content) => {
-			editor?.flushSave();
-			$activeNote = content;
-			$activeNotePath = path;
-			$editorDirty = false;
-			editor?.loadNote(path, content.content);
-		}).catch(() => {});
+	$effect(() => {
+		if ($editorDirty) startupGate.invalidate();
+	});
+
+	let navigationQueue: Promise<void> = Promise.resolve();
+
+	async function reportSaveResult(reason: string, result: Awaited<ReturnType<Editor['flushSave']>> | undefined): Promise<boolean> {
+		if (!result || result.ok) return true;
+		console.error(`Save failed before ${reason}:`, result.error);
+		window.alert(`Could not save the current note. ${reason} was cancelled so your edits remain open.\n\n${String(result.error)}`);
+		return false;
+	}
+
+	async function ensureCurrentNoteSaved(reason: string): Promise<boolean> {
+		let release: (() => void) | null = null;
+		try {
+			release = editor ? await editor.lockMutations() : null;
+			return reportSaveResult(reason, await editor?.flushSave());
+		} catch (error) {
+			return reportSaveResult(reason, { ok: false, status: 'failed', revision: 0, error });
+		} finally {
+			release?.();
+		}
+	}
+
+	export async function prepareForClose(requestId: string): Promise<boolean> {
+		if (closingRequestId && closingRequestId !== requestId) return false;
+		if (!closingRequestId) {
+			closingRequestId = requestId;
+			readOnlyBeforeClose = $readOnly;
+			$shutdownPending = true;
+			$readOnly = true;
+			await tick();
+			try {
+				releaseCloseMutationLock = editor ? await editor.lockMutations() : null;
+			} catch (error) {
+				return reportSaveResult('Closing the application', { ok: false, status: 'failed', revision: 0, error });
+			}
+		}
+		return reportSaveResult('Closing the application', await editor?.flushSave());
+	}
+
+	export function releaseClose(requestId: string) {
+		if (closingRequestId !== requestId) return;
+		releaseCloseMutationLock?.();
+		releaseCloseMutationLock = null;
+		$readOnly = readOnlyBeforeClose;
+		$shutdownPending = false;
+		closingRequestId = null;
+	}
+
+	function afterCurrentNoteSaved(reason: string, action: () => Promise<boolean>): Promise<boolean> {
+		if ($shutdownPending) return Promise.resolve(false);
+		const run = navigationQueue.then(async () => {
+			if ($shutdownPending) return false;
+			return runSaveGatedAction(
+				() => ensureCurrentNoteSaved(reason),
+				async () => $shutdownPending ? false : action(),
+			);
+		});
+		navigationQueue = run.then(() => {}, () => {});
+		return run;
+	}
+
+	async function relocateActiveDocument(
+		expectedPath: string,
+		reason: string,
+		mutation: () => Promise<import('$lib/types').RelocationOutcome>,
+	): Promise<string | null> {
+		if ($shutdownPending) return null;
+		const run = navigationQueue.then(async (): Promise<string | null> => {
+			if ($shutdownPending || !editor) return null;
+			try {
+				return await relocateDocument({
+					expectedPath,
+					currentPath: () => $activeNotePath,
+					prepare: () => editor!.lockMutations(),
+					flush: async () => {
+						const result = await editor!.flushSave();
+						await reportSaveResult(reason, result);
+						return result;
+					},
+					mutate: mutation,
+					rebase: (oldPath, newPath, content) => editor!.rebaseDocument(oldPath, newPath, content),
+				});
+			} catch (error) {
+				console.error(`${reason} failed:`, error);
+				return null;
+			}
+		});
+		navigationQueue = run.then(() => {}, () => {});
+		return run;
+	}
+
+	async function updateActiveMetadata(
+		expectedPath: string,
+		patch: Partial<NoteContent['meta']>,
+		reason: string,
+	): Promise<boolean> {
+		if ($shutdownPending) return false;
+		const run = navigationQueue.then(async (): Promise<boolean> => {
+			if ($shutdownPending || !editor || $activeNotePath !== expectedPath) return false;
+			let release: (() => void) | null = null;
+			try {
+				release = await editor.lockMutations();
+				if (!(await reportSaveResult(reason, await editor.flushSave()))) return false;
+				if ($shutdownPending || $activeNotePath !== expectedPath) return false;
+				return reportSaveResult(reason, await editor.updateMetadata(expectedPath, patch));
+			} catch (error) {
+				return reportSaveResult(reason, { ok: false, status: 'failed', revision: 0, error });
+			} finally {
+				release?.();
+			}
+		});
+		navigationQueue = run.then(() => {}, () => {});
+		return run;
+	}
+
+	export async function requestVaultSwitch(): Promise<boolean> {
+		if ($shutdownPending) return false;
+		try {
+			await beginVaultSwitch();
+			ownsVaultSwitchGate = true;
+		} catch (error) {
+			console.error('Could not begin vault switch:', error);
+			return false;
+		}
+
+		const previousReadOnly = $readOnly;
+		const run = navigationQueue.then(async (): Promise<boolean> => {
+			if ($shutdownPending) return false;
+			let release: (() => void) | null = null;
+			try {
+				// Keep the main editor immutable from its first save through secondary-window
+				// shutdown and the final save immediately before teardown.
+				$readOnly = true;
+				await tick();
+				release = editor ? await editor.lockMutations() : null;
+				if (!(await reportSaveResult('Switching vaults', await editor?.flushSave()))) return false;
+				if (!(await closeSecondaryWindowsForVaultSwitch())) {
+					console.error('Vault switch cancelled because a secondary note window did not save and close.');
+					return false;
+				}
+				if (!(await reportSaveResult('Switching vaults', await editor?.flushSave()))) return false;
+				$showSettings = false;
+				// VaultPicker now owns the gate and releases it after open, cancellation, or teardown.
+				ownsVaultSwitchGate = false;
+				$vaultReady = false;
+				return true;
+			} catch (error) {
+				console.error('Vault switch failed:', error);
+				return false;
+			} finally {
+				release?.();
+				$readOnly = previousReadOnly;
+			}
+		});
+		navigationQueue = run.then(() => {}, () => {});
+		const switched = await run;
+		if (!switched) await releaseOwnedVaultSwitchGate();
+		return switched;
+	}
+
+	function commitNote(path: string, content: Awaited<ReturnType<typeof readNote>>, task?: TaskItem, holding = false): boolean {
+		if ($shutdownPending) return false;
+		$viewerNote = null;
+		$activeNote = content;
+		$activeNotePath = path;
+		handleNoteSelected(path, content, task, holding);
+		return true;
+	}
+
+	async function navigateToPathResult(path: string, task?: TaskItem, holding = false): Promise<NoteNavigationResult> {
+		if (!path || $shutdownPending) return 'blocked';
+		if ($activeNotePath === path && !$viewerNote) {
+			if (isMobile) $mobileView = 'editor';
+			return 'navigated';
+		}
+
+		const run = navigationQueue.then(async (): Promise<NoteNavigationResult> => {
+			if ($shutdownPending) return 'blocked';
+			if (!(await ensureCurrentNoteSaved('Navigation'))) return 'save-failed';
+			if ($shutdownPending) return 'blocked';
+
+			let content: Awaited<ReturnType<typeof readNote>>;
+			try {
+				content = holding ? await readUnfiledNote(path) : await readNote(path);
+			} catch (error) {
+				console.error('Failed to navigate to note:', error);
+				return 'not-found';
+			}
+
+			// The destination read yielded to the event loop; drain any edit made in that
+			// interval before synchronously replacing the document.
+			if ($shutdownPending) return 'blocked';
+			if (!(await ensureCurrentNoteSaved('Navigation'))) return 'save-failed';
+			if ($shutdownPending) return 'blocked';
+			return commitNote(path, content, task, holding) ? 'navigated' : 'blocked';
+		});
+		navigationQueue = run.then(() => {}, () => {});
+		return run;
+	}
+
+	async function navigateToPath(path: string, task?: TaskItem, holding = false): Promise<boolean> {
+		return (await navigateToPathResult(path, task, holding)) === 'navigated';
+	}
+
+	async function navigateHistory(direction: -1 | 1): Promise<boolean> {
+		return afterCurrentNoteSaved('History navigation', async () => {
+			// Resolve the directional intent only when its serialized turn begins so rapid
+			// Back/Forward requests cannot act on a stale cursor.
+			const history = get(navHistory);
+			const path = history.stack[history.index + direction];
+			if (!path) return false;
+			try {
+				const content = await readNote(path);
+				if ($shutdownPending || !(await ensureCurrentNoteSaved('History navigation')) || $shutdownPending) return false;
+				if (navHistory.go(direction) !== path) return false;
+				return commitNote(path, content);
+			} catch (error) {
+				console.error('Failed to navigate history:', error);
+				return false;
+			}
+		});
 	}
 
 	async function handleOpenFile(filePath: string) {
@@ -262,37 +506,28 @@
 		const vaultRoot = config?.active_vault;
 		const isExternal = !vaultRoot || !filePath.startsWith(vaultRoot + '/');
 
-		// External .md → viewer mode (skipped on Android)
 		if (isExternal) {
 			if (isAndroid) return;
-			try {
-				const content = await readNote(filePath);
-				editor?.flushSave();
-				$viewerNote = { path: filePath, content: content.content };
-				$activeNote = content;
-				$activeNotePath = filePath;
-				$editorDirty = false;
-				$readOnly = true;
-				$focusMode = true;
-				editor?.loadNote(filePath, content.content);
-			} catch (e) {
-				console.error('Failed to open external file:', e);
-			}
+			await afterCurrentNoteSaved('Opening the file', async () => {
+				try {
+					const content = await readNote(filePath);
+					if ($shutdownPending || !(await ensureCurrentNoteSaved('Opening the file')) || $shutdownPending) return false;
+					$viewerNote = { path: filePath, content: content.content };
+					$activeNote = content;
+					$activeNotePath = filePath;
+					$readOnly = true;
+					$focusMode = true;
+					editor?.loadNote(filePath, content.content, undefined, false, content.revision);
+					return true;
+				} catch (error) {
+					console.error('Failed to open external file:', error);
+					return false;
+				}
+			});
 			return;
 		}
 
-		// Vault file: normal flow
-		try {
-			const content = await readNote(filePath);
-			editor?.flushSave();
-			$viewerNote = null;
-			$activeNote = content;
-			$activeNotePath = filePath;
-			$editorDirty = false;
-			editor?.loadNote(filePath, content.content);
-		} catch (e) {
-			console.error('Failed to open file:', e);
-		}
+		await navigateToPath(filePath);
 	}
 
 	const persistState = debounce(async () => {
@@ -348,30 +583,28 @@
 	// Tasks view: the editor pane shows a placeholder until a task is opened from the list.
 	let taskNoteOpened = $state(false);
 
-	function handleNoteSelected(path: string, content: string, task?: TaskItem, holding = false) {
+	function handleNoteSelected(path: string, content: NoteContent, task?: TaskItem, holding = false) {
 		// Selecting a real vault note exits viewer mode
 		$viewerNote = null;
 		taskNoteOpened = true;
-		editor?.loadNote(path, content, task, holding);
+		editor?.loadNote(path, content.content, task, holding, content.revision);
 		if (isMobile) $mobileView = 'editor';
 	}
 
 	async function selectNoteFromSwitcher(path: string): Promise<boolean> {
-		const currentPath = $activeNotePath;
-		if (currentPath && currentPath.replace(/\\/g, '/') === path.replace(/\\/g, '/')) return true;
-		editor?.flushSave();
-		try {
-			const content = await readNote(path);
-			$viewerNote = null;
-			$activeNote = content;
-			$activeNotePath = path;
-			$editorDirty = false;
-			handleNoteSelected(path, content.content);
-			return true;
-		} catch (e) {
-			console.error('Failed to switch note:', e);
-			return false;
-		}
+		return navigateToPath(path);
+	}
+
+	async function openNoteInSecondaryWindow(path: string, title: string): Promise<boolean> {
+		return afterCurrentNoteSaved('Opening a secondary window', async () => {
+			try {
+				await openNoteWindow(path, title);
+				return true;
+			} catch (error) {
+				console.error('Failed to open note window:', error);
+				return false;
+			}
+		});
 	}
 
 	function handleViewChanged() {
@@ -388,7 +621,7 @@
 	}
 
 	function requestNoteCreation() {
-		if ($viewMode === 'quickaccess' || $viewMode === 'trash' || $viewMode === 'unfiled') return;
+		if ($shutdownPending || $viewMode === 'quickaccess' || $viewMode === 'trash' || $viewMode === 'unfiled') return;
 		if (!isMobile && $notelistCollapsed) $notelistCollapsed = false;
 		noteCreationTitle = 'Untitled';
 		noteCreationSource = 'list';
@@ -396,6 +629,7 @@
 	}
 
 	function requestLinkedNoteCreation(title: string) {
+		if ($shutdownPending) return;
 		noteCreationTitle = title;
 		noteCreationSource = 'wiki-link';
 		openNoteCreationDialog();
@@ -416,7 +650,7 @@
 	}
 
 	function requestWebClip() {
-		if ($viewMode === 'quickaccess' || $viewMode === 'trash' || $viewMode === 'unfiled') return;
+		if ($shutdownPending || $viewMode === 'quickaccess' || $viewMode === 'trash' || $viewMode === 'unfiled') return;
 		if (!isMobile && $notelistCollapsed) $notelistCollapsed = false;
 		suggestedWebClipNotebook = suggestedNotebookForCreation(
 			$viewMode,
@@ -429,20 +663,17 @@
 	}
 
 	async function confirmWebClipCategory(category: ParaCategory) {
-		if (webClipBusy || !canSubmitWebClip(webClipUrl)) return;
+		if ($shutdownPending || webClipBusy || !canSubmitWebClip(webClipUrl)) return;
 		webClipBusy = true;
 		webClipError = '';
 		try {
+			if (!(await ensureCurrentNoteSaved('Web clipping'))) return;
 			const destination = destinationForCategory(category, suggestedWebClipNotebook);
 			const entry = await clipWebPage(destination, cleanClipUrlInput(webClipUrl));
 			await Promise.all([sidebar?.refresh(), noteList?.refresh(true)]);
 			const content = await readNote(entry.path);
-			editor?.flushSave();
-			$viewerNote = null;
-			$activeNote = content;
-			$activeNotePath = entry.path;
-			$editorDirty = false;
-			handleNoteSelected(entry.path, content.content);
+			if ($shutdownPending || !(await ensureCurrentNoteSaved('Opening the clipped note')) || $shutdownPending) return;
+			if (!commitNote(entry.path, content)) return;
 			webClipOpen = false;
 			if (isMobile) $mobileView = 'editor';
 		} catch (error) {
@@ -453,7 +684,7 @@
 	}
 
 	async function confirmNoteCategory(category: ParaCategory) {
-		if (noteCreationBusy) return;
+		if ($shutdownPending || noteCreationBusy) return;
 		noteCreationBusy = true;
 		noteCreationError = '';
 		try {
@@ -474,61 +705,68 @@
 		}
 	}
 
-	// Toggle a task done from the Tasks view. If the task's note is open in the editor,
-	// flush first then reload after the file edit (so we never clobber unsaved edits).
-	async function toggleTask(task: TaskItem) {
-		const done = !task.completed;
-		const isActive = task.note_path === $activeNotePath;
-		if (isActive) await editor?.forceSave();
-		try {
-			await setTaskDone(task.note_path, task.line, task.raw_line, done);
-		} catch (e) {
-			console.error('Failed to toggle task:', e);
-		}
-		if (isActive) {
+	async function mutateTask(
+		task: TaskItem,
+		mutation: () => Promise<NoteContent>,
+		errorMessage: string,
+	): Promise<void> {
+		if ($shutdownPending) return;
+		const run = navigationQueue.then(async () => {
+			if ($shutdownPending) return;
+			const sourcePath = task.note_path;
+			const wasActive = sourcePath === $activeNotePath;
 			try {
-				const content = await readNote(task.note_path);
-				$activeNote = content;
-				$editorDirty = false;
-				editor?.loadNote(task.note_path, content.content);
-			} catch (_) {}
-		}
+				if (!wasActive) {
+					await mutation();
+					return;
+				}
+				if (!editor) return;
+				await runActiveDocumentMutation({
+					expectedPath: sourcePath,
+					currentPath: () => $activeNotePath,
+					isBlocked: () => $shutdownPending,
+					prepare: () => editor!.lockMutations(),
+					flush: async () => {
+						const result = await editor!.flushSave();
+						await reportSaveResult('Updating the task', result);
+						return result;
+					},
+					mutate: mutation,
+					commit: (content) => {
+						$activeNote = content;
+						editor?.loadNote(sourcePath, content.content, undefined, false, content.revision);
+					},
+				});
+			} catch (error) {
+				console.error(errorMessage, error);
+			}
+		});
+		navigationQueue = run.then(() => {}, () => {});
+		await run;
+	}
+
+	async function toggleTask(task: TaskItem) {
+		await mutateTask(
+			task,
+			() => setTaskDone(task.note_path, task.line, task.raw_line, !task.completed),
+			'Failed to toggle task:',
+		);
 	}
 
 	async function changeTaskPriority(task: TaskItem, priority: string | null) {
-		const isActive = task.note_path === $activeNotePath;
-		if (isActive) await editor?.forceSave();
-		try {
-			await setTaskPriority(task.note_path, task.line, task.raw_line, priority);
-		} catch (e) {
-			console.error('Failed to set task priority:', e);
-		}
-		if (isActive) {
-			try {
-				const content = await readNote(task.note_path);
-				$activeNote = content;
-				$editorDirty = false;
-				editor?.loadNote(task.note_path, content.content);
-			} catch (_) {}
-		}
+		await mutateTask(
+			task,
+			() => setTaskPriority(task.note_path, task.line, task.raw_line, priority),
+			'Failed to set task priority:',
+		);
 	}
 
 	async function changeTaskDue(task: TaskItem, due: string | null) {
-		const isActive = task.note_path === $activeNotePath;
-		if (isActive) await editor?.forceSave();
-		try {
-			await setTaskDue(task.note_path, task.line, task.raw_line, due);
-		} catch (e) {
-			console.error('Failed to set task due date:', e);
-		}
-		if (isActive) {
-			try {
-				const content = await readNote(task.note_path);
-				$activeNote = content;
-				$editorDirty = false;
-				editor?.loadNote(task.note_path, content.content);
-			} catch (_) {}
-		}
+		await mutateTask(
+			task,
+			() => setTaskDue(task.note_path, task.line, task.raw_line, due),
+			'Failed to set task due date:',
+		);
 	}
 
 	/**
@@ -537,11 +775,12 @@
 	 * Called after opening a vault, because reconciliation on open may have set notes
 	 * aside, and after filing one, so the count reflects what is left.
 	 */
-	async function refreshUnfiled() {
+	async function refreshUnfiled(isCurrent: () => boolean = () => true) {
 		try {
-			$unfiledNotes = await listUnfiledNotes();
+			const nextUnfiledNotes = await listUnfiledNotes();
+			if (isCurrent()) $unfiledNotes = nextUnfiledNotes;
 		} catch (e) {
-			console.error('Failed to load unfiled notes:', e);
+			if (isCurrent()) console.error('Failed to load unfiled notes:', e);
 		}
 	}
 
@@ -607,7 +846,7 @@
 	}
 
 	async function trashOpenNote(path: string): Promise<boolean> {
-		if (path !== $activeNotePath || $viewerNote || $viewMode === 'trash') return false;
+		if ($shutdownPending || path !== $activeNotePath || $viewerNote || $viewMode === 'trash') return false;
 		try {
 			await deleteNote(path);
 			if (Object.hasOwn($noteOrder, path)) {
@@ -634,6 +873,10 @@
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
+		if ($shutdownPending) {
+			e.preventDefault();
+			return;
+		}
 		if (noteCreationOpen) {
 			if (e.code === 'Escape' && !noteCreationBusy) {
 				e.preventDefault();
@@ -707,7 +950,7 @@
 					return;
 				case 'open-new-window':
 					if ($activeNotePath && $activeNote && !$holdingPreview) {
-						openNoteWindow($activeNotePath, $activeNote.meta.title);
+						void openNoteInSecondaryWindow($activeNotePath, $activeNote.meta.title);
 					}
 					return;
 				case 'toggle-sidebar':
@@ -785,12 +1028,23 @@
 	});
 
 	onMount(async () => {
+		const lifetime = lifetimeGate.capture();
+		const restoration = startupGate.capture();
+		const alive = () => lifetimeGate.isCurrent(lifetime);
+		const handleNavigationRequest = (event: Event) => {
+			const path = (event as CustomEvent<NavigateNoteRequest>).detail?.path;
+			if (path) void navigateToPath(path);
+		};
+		window.addEventListener(NAVIGATE_NOTE_EVENT, handleNavigationRequest);
+		removeNavigationRequest = () => window.removeEventListener(NAVIGATE_NOTE_EVENT, handleNavigationRequest);
+
 		let lastNotePath: string | null = null;
 		let lastViewMode = '';
 		let lastNotebook: string | null = null;
 		let lastTag: string | null = null;
 		try {
 			const state = await loadVaultState();
+			if (!alive()) return;
 			$sidebarWidth = state.sidebar_width;
 			$notelistWidth = state.notelist_width;
 			if (typeof state.outline_width === 'number') $outlineWidth = state.outline_width;
@@ -811,19 +1065,25 @@
 			lastNotebook = state.last_notebook ?? null;
 			lastTag = state.last_tag ?? null;
 		} catch (_) {}
+		if (!alive()) return;
 
 		// Opening the vault reconciles note locations against their categories, which may
 		// have set notes aside for want of one. Load them so the user is told.
-		await refreshUnfiled();
+		await refreshUnfiled(alive);
+		if (!alive()) return;
 		try {
 			repairStatus = await getRepairStatus();
 		} catch (error) {
 			repairError = String(error);
 		}
-		unlistenRepairStatus = await listen<RepairStatus>('repair-status-changed', (event) => {
+		if (!alive()) return;
+		const repairUnlisten = await listen<RepairStatus>('repair-status-changed', (event) => {
+			if (!alive()) return;
 			repairStatus = event.payload;
 			repairError = '';
 		});
+		if (!alive()) { repairUnlisten(); return; }
+		unlistenRepairStatus = repairUnlisten;
 
 		const restoreLastSession = $appConfig?.restore_last_session === true;
 
@@ -835,14 +1095,16 @@
 
 		// Run sidebar and note list refresh in parallel
 		await Promise.all([sidebar?.refresh(), noteList?.refresh()]);
+		if (!alive()) return;
 
 		// Full-vault attachment scans cause navigation stalls on mobile storage.
 		// Mobile users can run the same cleanup explicitly from the Info panel.
 		if (!isMobile) {
-			setTimeout(async () => {
-				if (get(editorDirty)) return; // skip if user is actively editing
+			orphanScanTimer = setTimeout(async () => {
+				if (!alive() || get(editorDirty)) return; // skip if user is actively editing
 				try {
 					const orphans = await findOrphanedAttachments();
+					if (!alive()) return;
 					if (orphans.length > 0) {
 						if (get(editorDirty)) return; // re-check after async scan
 						const moved = await trashOrphanedAttachments(orphans.map((o) => o.name));
@@ -866,20 +1128,30 @@
 			lastNotebook,
 			lastTag
 		});
-		if (!(await applyStartupTarget(startupTarget))) {
-			await applyStartupTarget({ mode: normalizeStartupView($appConfig?.startup_view) });
+		if (startupGate.isCurrent(restoration) && alive()) {
+			if (!(await applyStartupTarget(startupTarget)) && startupGate.isCurrent(restoration) && alive()) {
+				await applyStartupTarget({ mode: normalizeStartupView($appConfig?.startup_view) });
+			}
 		}
+		if (!alive()) return;
 
-		// Reopen the last note only when session restoration is enabled.
-		if (restoreLastSession && !isMobile && lastNotePath) {
-			try {
-				const content = await readNote(lastNotePath);
-				$activeNote = content;
-				$activeNotePath = lastNotePath;
-				$editorDirty = false;
-				editor?.loadNote(lastNotePath, content.content);
-			} catch (_) {}
+		// Reopen the last note only when session restoration is enabled and no interaction
+		// has advanced the startup generation. Commit through the navigation queue.
+		if (restoreLastSession && !isMobile && lastNotePath && startupGate.isCurrent(restoration)) {
+			const restoreRun = navigationQueue.then(async () => {
+				if (!alive() || !startupGate.isCurrent(restoration) || $activeNotePath || $editorDirty || $shutdownPending) return;
+				try {
+					const content = await readNote(lastNotePath!);
+					if (!alive() || !startupGate.isCurrent(restoration) || $activeNotePath || $editorDirty || $shutdownPending) return;
+					$activeNote = content;
+					$activeNotePath = lastNotePath;
+					editor?.loadNote(lastNotePath!, content.content, undefined, false, content.revision);
+				} catch (_) {}
+			});
+			navigationQueue = restoreRun.then(() => {}, () => {});
+			await restoreRun;
 		}
+		if (!alive()) return;
 
 		// On mobile, derive tags from the scanned notes (avoids a separate full-scan Rust call)
 		if (isMobile) {
@@ -895,11 +1167,11 @@
 		// On mobile, auto-load the last-opened note so it's ready when the user taps it
 		if (isMobile && prefetchPromise) {
 			prefetchPromise.then((noteContent) => {
-				if (noteContent && lastNotePath && !$activeNotePath) {
+				if (alive() && startupGate.isCurrent(restoration) && noteContent && lastNotePath && !$activeNotePath && !$editorDirty) {
 					$activeNote = noteContent;
 					$activeNotePath = lastNotePath;
 					$editorDirty = false;
-					editor?.loadNote(lastNotePath, noteContent.content);
+					editor?.loadNote(lastNotePath, noteContent.content, undefined, false, noteContent.revision);
 				}
 			});
 		}
@@ -920,25 +1192,29 @@
 				tags.set(Array.from(tagMap.entries()).sort((a, b) => a[0].localeCompare(b[0])));
 		}, 10000);
 			unlistenFileChange = await listen<FileEvent>('file-changed', () => {
-				debouncedRefresh();
+				if (alive()) debouncedRefresh();
 			});
 		} else {
 			const debouncedDesktopRefresh = debounce(async () => {
 				await Promise.all([sidebar?.refresh(), noteList?.refresh(true)]);
 			}, 300);
 			unlistenFileChange = await listen<FileEvent>('file-changed', () => {
-				debouncedDesktopRefresh();
+				if (alive()) debouncedDesktopRefresh();
 			});
 		}
+		if (!alive()) { unlistenFileChange?.(); return; }
 
 
 		// The backend polls for reachability and announces changes, so AI features come
 		// back on their own when the other machine wakes, with no restart.
 		unlistenAiStatus = await listen<AiStatus>('ai-status-changed', (event) => {
-			$aiStatus = event.payload;
+			if (alive()) $aiStatus = event.payload;
 		});
+		if (!alive()) { unlistenAiStatus(); unlistenAiStatus = null; return; }
 		try {
-			$aiStatus = await getAiStatus();
+			const status = await getAiStatus();
+			if (!alive()) return;
+			$aiStatus = status;
 		} catch (e) {
 			console.error('Failed to read AI status:', e);
 		}
@@ -946,22 +1222,28 @@
 		// Registration happens once at startup and can take a moment (the very first launch
 		// may prompt), so the panel needs to hear about it rather than poll for it.
 		unlistenHotkeyStatus = await listen<HotkeyStatus>('hotkey-status-changed', (event) => {
-			$hotkeyStatus = event.payload;
+			if (alive()) $hotkeyStatus = event.payload;
 		});
+		if (!alive()) { unlistenHotkeyStatus(); unlistenHotkeyStatus = null; return; }
 		try {
-			$hotkeyStatus = await getHotkeyStatus();
+			const status = await getHotkeyStatus();
+			if (!alive()) return;
+			$hotkeyStatus = status;
 		} catch (e) {
 			console.error('Failed to read hotkey status:', e);
 		}
 
 		unlistenOpenFile = await listen<string>('open-file', async (event) => {
-			await handleOpenFile(event.payload);
+			if (alive()) await handleOpenFile(event.payload);
 		});
+		if (!alive()) { unlistenOpenFile(); unlistenOpenFile = null; return; }
 
 		// Check for pending file from first-launch CLI args
 		try {
 			const pending = await getPendingOpenFile();
+			if (!alive()) return;
 			if (pending) await handleOpenFile(pending);
+			if (!alive()) return;
 		} catch (_) {}
 
 		// Scheduled backup: check on startup and every 5 minutes
@@ -969,18 +1251,31 @@
 		backupInterval = setInterval(checkScheduledBackup, 5 * 60 * 1000);
 
 		// ── WebDAV sync: global status + auto-sync triggers ──
-		unlistenSync.push(await listen('sync-progress', () => syncState.set({ running: true, error: null })));
-		unlistenSync.push(await listen('sync-done', async () => {
+		const syncProgressUnlisten = await listen('sync-progress', () => {
+			if (alive()) syncState.set({ running: true, error: null });
+		});
+		if (!alive()) { syncProgressUnlisten(); return; }
+		unlistenSync.push(syncProgressUnlisten);
+		const syncDoneUnlisten = await listen('sync-done', async () => {
+			if (!alive()) return;
 			syncState.set({ running: false, error: null });
 			try {
-				appConfig.set(await getAppConfig());
+				const config = await getAppConfig();
+				if (alive()) appConfig.set(config);
 			} catch {}
-		}));
-		unlistenSync.push(await listen('sync-error', (event: any) => syncState.set({ running: false, error: event.payload?.error ?? 'Sync failed' })));
+		});
+		if (!alive()) { syncDoneUnlisten(); return; }
+		unlistenSync.push(syncDoneUnlisten);
+		const syncErrorUnlisten = await listen('sync-error', (event: any) => {
+			if (alive()) syncState.set({ running: false, error: event.payload?.error ?? 'Sync failed' });
+		});
+		if (!alive()) { syncErrorUnlisten(); return; }
+		unlistenSync.push(syncErrorUnlisten);
 
 		// Sync when the vault opens (if enabled)
 		if (syncConfigured() && activeVaultConfig(get(appConfig))?.schedule?.on_open) {
 			try { await syncNow(); } catch (_) {}
+			if (!alive()) return;
 		}
 
 		// Auto-sync interval: check on startup and every minute
@@ -994,8 +1289,10 @@
 		// number.
 		try {
 			const status = await notionStatus();
+			if (!alive()) return;
 			notionPollMs = Math.max(1, status.poll_minutes) * 60 * 1000;
 		} catch (_) {}
+		if (!alive()) return;
 		checkScheduledNotion();
 		notionInterval = setInterval(checkScheduledNotion, 60 * 1000);
 
@@ -1011,21 +1308,30 @@
 	});
 
 	onDestroy(() => {
+		lifetimeGate.cancel();
+		startupGate.cancel();
+		void releaseOwnedVaultSwitchGate();
 		unlistenFileChange?.();
 		unlistenAiStatus?.();
 		unlistenHotkeyStatus?.();
 		unlistenRepairStatus?.();
 		unlistenOpenFile?.();
+		removeNavigationRequest?.();
 		if (backupInterval) clearInterval(backupInterval);
 		if (syncInterval) clearInterval(syncInterval);
 		if (notionInterval) clearInterval(notionInterval);
 		if (onChangeSyncTimer) clearTimeout(onChangeSyncTimer);
+		if (orphanScanTimer) clearTimeout(orphanScanTimer);
 		unsubDirty?.();
 		unlistenSync.forEach((u) => u());
 	});
 </script>
 
 <svelte:window onkeydown={handleKeydown} onmousedown={isMobile ? undefined : handleMouseDown} />
+
+{#if $shutdownPending}
+	<div class="shutdown-lock" aria-label="Saving before close" aria-busy="true"></div>
+{/if}
 
 {#if noteCreationOpen}
 	<div class="creation-backdrop">
@@ -1151,7 +1457,7 @@
 			{/if}
 			<div class="mobile-header-actions">
 				{#if $mobileView === 'editor' && !$holdingPreview}
-					<button class="mobile-header-btn" class:active={$readOnly} onclick={() => ($readOnly = !$readOnly)} title={$readOnly ? 'Edit' : 'View'}>
+					<button class="mobile-header-btn" class:active={$readOnly} onclick={() => { if (!$shutdownPending) $readOnly = !$readOnly; }} disabled={$shutdownPending} title={$readOnly ? 'Edit' : 'View'}>
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							{#if $readOnly}
 								<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
@@ -1167,7 +1473,7 @@
 							<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
 						</svg>
 					</button>
-					<button class="mobile-header-btn" class:active={$activeNote?.meta.pinned} onclick={() => { if ($activeNote) { $activeNote.meta.pinned = !$activeNote.meta.pinned; $editorDirty = true; } }} title="Pin">
+					<button class="mobile-header-btn" class:active={$activeNote?.meta.pinned} onclick={() => editor?.togglePinned()} disabled={$shutdownPending} title="Pin">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M12 17v5"/><path d="M9 2h6l-1 7h4l-2 4H8l-2-4h4L9 2z"/>
 						</svg>
@@ -1253,13 +1559,13 @@
 		<!-- Mobile Content -->
 		<div class="mobile-content">
 			<div class="mobile-panel" class:active={$mobileView === 'sidebar'}>
-				<Sidebar bind:this={sidebar} onViewChanged={handleViewChanged} />
+				<Sidebar bind:this={sidebar} onViewChanged={handleViewChanged} onRelocateActiveDocument={relocateActiveDocument} />
 			</div>
 			<div class="mobile-panel" class:active={$mobileView === 'notelist'}>
-				<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onBeforeNoteDuplicate={() => editor?.forceSave() ?? Promise.resolve(true)} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); }} onRequestCreateNote={requestNoteCreation} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
+				<NoteList bind:this={noteList} onOpenNote={navigateToPath} onBeforeNoteSwitch={() => ensureCurrentNoteSaved('Navigation')} onBeforeNoteDuplicate={() => ensureCurrentNoteSaved('Duplicating the note')} onBeforeOpenWindow={() => ensureCurrentNoteSaved('Opening a secondary window')} onRelocateActiveDocument={relocateActiveDocument} onUpdateActiveMetadata={updateActiveMetadata} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); }} onRequestCreateNote={requestNoteCreation} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
 			</div>
 			<div class="mobile-panel" class:active={$mobileView === 'editor'}>
-				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} />
+				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} onNavigateNote={navigateToPath} onNavigateWikiNote={navigateToPathResult} onNavigateHistory={navigateHistory} />
 			</div>
 		</div>
 
@@ -1303,12 +1609,12 @@
 				</div>
 			</div>
 		{:else}
-			<TitleBar onNewNote={createAndFocusNote} onClipWeb={requestWebClip} onSelectNote={selectNoteFromSwitcher} />
+			<TitleBar onNewNote={createAndFocusNote} onClipWeb={requestWebClip} onSelectNote={selectNoteFromSwitcher} onOpenWindow={openNoteInSecondaryWindow} onRequestVaultSwitch={requestVaultSwitch} />
 		{/if}
 		<div class="app-layout">
 			{#if !$focusMode}
 				<div class="sidebar-panel" style="width: {$sidebarCollapsed ? 44 : $sidebarWidth}px">
-					<Sidebar bind:this={sidebar} onViewChanged={handleViewChanged} />
+					<Sidebar bind:this={sidebar} onViewChanged={handleViewChanged} onRelocateActiveDocument={relocateActiveDocument} />
 				</div>
 
 				{#if !$sidebarCollapsed}
@@ -1317,7 +1623,7 @@
 
 				{#if !$notelistCollapsed}
 					<div class="notelist-panel" style="width: {$notelistWidth}px">
-						<NoteList bind:this={noteList} onNoteSelected={handleNoteSelected} onBeforeNoteSwitch={() => editor?.flushSave()} onBeforeNoteDuplicate={() => editor?.forceSave() ?? Promise.resolve(true)} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); }} onRequestCreateNote={requestNoteCreation} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
+						<NoteList bind:this={noteList} onOpenNote={navigateToPath} onBeforeNoteSwitch={() => ensureCurrentNoteSaved('Navigation')} onBeforeNoteDuplicate={() => ensureCurrentNoteSaved('Duplicating the note')} onBeforeOpenWindow={() => ensureCurrentNoteSaved('Opening a secondary window')} onRelocateActiveDocument={relocateActiveDocument} onUpdateActiveMetadata={updateActiveMetadata} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); }} onRequestCreateNote={requestNoteCreation} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
 					</div>
 
 					<ResizeHandle onResize={handleNotelistResize} />
@@ -1336,7 +1642,7 @@
 			{/if}
 
 			<div class="editor-panel">
-				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} />
+				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} onNavigateNote={navigateToPath} onNavigateWikiNote={navigateToPathResult} onNavigateHistory={navigateHistory} />
 				{#if $viewMode === 'tasks' && !taskNoteOpened}
 					<div class="tasks-editor-placeholder">
 						<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -1350,9 +1656,9 @@
 	</div>
 {/if}
 
-<SearchPanel />
+<SearchPanel onOpenResult={navigateToPath} />
 <CommandPalette onNavigate={handleViewChanged} />
-<SettingsPanel />
+<SettingsPanel onRequestVaultSwitch={requestVaultSwitch} />
 <InfoPanel />
 
 <style>
@@ -1777,6 +2083,13 @@
 	.mobile-panel.active {
 		visibility: visible;
 		pointer-events: auto;
+	}
+
+	.shutdown-lock {
+		position: fixed;
+		inset: 0;
+		z-index: 2147483647;
+		cursor: wait;
 	}
 
 </style>

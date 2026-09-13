@@ -1,8 +1,9 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { open } from '@tauri-apps/plugin-dialog';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { documentDir } from '@tauri-apps/api/path';
-	import { chooseExternalVault, getAppConfig, openVault, removeVault, restoreExternalVault } from '$lib/api';
+	import { chooseExternalVault, getAppConfig, openVault, removeVault, restoreExternalVault, endVaultSwitch } from '$lib/api';
 	import { appConfig, vaultReady } from '$lib/stores/app';
 	import { isAndroid, isIOS, isMobile } from '$lib/platform';
 	import type { VaultConfig } from '$lib/types';
@@ -17,6 +18,23 @@
 	let vaultName = $state('HelixNotes');
 	let hasPermission = $state(!isAndroid);
 	let selectedLocation = $state('Documents');
+	let switchReleaseStarted = false;
+
+	async function releaseVaultSwitch() {
+		if (switchReleaseStarted) return;
+		switchReleaseStarted = true;
+		try {
+			await endVaultSwitch();
+		} catch (releaseError) {
+			console.error('Could not release vault-switch gate:', releaseError);
+		}
+	}
+
+	async function returnToActiveVault() {
+		if (loading) return;
+		await releaseVaultSwitch();
+		$vaultReady = true;
+	}
 
 	$effect(() => {
 		if (initialError && !error) error = initialError;
@@ -110,6 +128,7 @@
 				error = msg;
 			}
 		} finally {
+			await releaseVaultSwitch();
 			loading = false;
 		}
 	}
@@ -125,6 +144,7 @@
 		} catch (e) {
 			error = String(e);
 		} finally {
+			await releaseVaultSwitch();
 			loading = false;
 		}
 	}
@@ -145,6 +165,7 @@
 		} catch (e) {
 			error = String(e);
 		} finally {
+			await releaseVaultSwitch();
 			loading = false;
 		}
 	}
@@ -171,6 +192,10 @@
 		}
 		return !$appConfig?.active_bookmark_id && vault.path === $appConfig?.active_vault;
 	}
+
+	onDestroy(() => {
+		void releaseVaultSwitch();
+	});
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -270,7 +295,7 @@
 		{/if}
 
 		{#if $appConfig?.active_vault}
-			<button class="btn-back" onclick={() => ($vaultReady = true)}>
+			<button class="btn-back" onclick={returnToActiveVault} disabled={loading}>
 				Back
 			</button>
 		{/if}

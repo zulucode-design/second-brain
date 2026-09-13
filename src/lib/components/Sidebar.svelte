@@ -22,11 +22,11 @@
 		notebookOrder,
 		unfiledNotes
 	} from '$lib/stores/app';
-	import { getNotebooks, getAllTags, createNotebook, deleteNotebook, renameNotebook, moveNotebook, getNotebookIcons, setNotebookIcon, saveAttachment, getQuickAccess, addQuickAccess, removeQuickAccess, emptyTrash, moveNote, readNote, countRootNotes } from '$lib/api';
+	import { getNotebooks, getAllTags, createNotebook, deleteNotebook, renameNotebook, moveNotebook, getNotebookIcons, setNotebookIcon, saveAttachment, getQuickAccess, addQuickAccess, removeQuickAccess, emptyTrash, moveNote, countRootNotes } from '$lib/api';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { readFile } from '@tauri-apps/plugin-fs';
 	import { convertFileSrc } from '@tauri-apps/api/core';
-	import type { NotebookEntry } from '$lib/types';
+	import type { NotebookEntry, RelocationOutcome } from '$lib/types';
 	import { isMobile } from '$lib/platform';
 	import { decodeNoteDragPaths } from '$lib/utils/note-drag';
 	import {
@@ -44,8 +44,9 @@
 		type NotebookIconId
 	} from '$lib/utils/notebook-icons';
 
-	let { onViewChanged = () => {} }: {
+	let { onViewChanged = () => {}, onRelocateActiveDocument = async (_path: string, _reason: string, _mutation: () => Promise<RelocationOutcome>) => null }: {
 		onViewChanged?: () => void;
+		onRelocateActiveDocument?: (path: string, reason: string, mutation: () => Promise<RelocationOutcome>) => Promise<string | null>;
 	} = $props();
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
@@ -335,7 +336,16 @@
 			return;
 		}
 		try {
-			await renameNotebook(nb.path, editValue.trim());
+			const activePath = $activeNotePath;
+			const relocatesActive = !!activePath && isDescendant(activePath, nb.path);
+			const renamedPath = relocatesActive
+				? await onRelocateActiveDocument(
+					activePath!,
+					'Renaming the notebook',
+					() => renameNotebook(nb.path, editValue.trim(), activePath),
+				)
+				: (await renameNotebook(nb.path, editValue.trim())).path;
+			if (!renamedPath) return;
 			editingNotebook = null;
 			await refresh();
 		} catch (e) {
@@ -381,9 +391,20 @@
 		if (notePaths.length === 0) return;
 
 		const movedPaths = new Map<string, string>();
+		const activePath = $activeNotePath && notePaths.includes($activeNotePath) ? $activeNotePath : null;
+		if (activePath) {
+			const newPath = await onRelocateActiveDocument(
+				activePath,
+				'Moving the note',
+				() => moveNote(activePath, nb.path),
+			);
+			if (!newPath) return;
+			movedPaths.set(activePath, newPath);
+		}
 		for (const notePath of notePaths) {
+			if (notePath === activePath) continue;
 			try {
-				movedPaths.set(notePath, await moveNote(notePath, nb.path));
+				movedPaths.set(notePath, (await moveNote(notePath, nb.path)).path);
 			} catch (e) {
 				console.error('Failed to move note:', notePath, e);
 			}
@@ -391,15 +412,6 @@
 		if (movedPaths.size === 0) return;
 
 		$notes = $notes.filter((note) => !movedPaths.has(note.path));
-		const activeNewPath = $activeNotePath ? movedPaths.get($activeNotePath) : undefined;
-		if (activeNewPath) {
-			$activeNotePath = activeNewPath;
-			try {
-				$activeNote = await readNote(activeNewPath);
-			} catch (e) {
-				console.error('Failed to reload moved note:', e);
-			}
-		}
 		await refresh();
 	}
 
@@ -421,8 +433,23 @@
 		if (parentDir === destPath) return;
 		try {
 			const oldName = baseOf(srcPath);
-			const newBasePath = joinPath(destPath, oldName);
-			await moveNotebook(srcPath, destPath);
+			const plannedBasePath = joinPath(destPath, oldName);
+			const activePath = $activeNotePath;
+			const activeSuffix = activePath && isDescendant(activePath, srcPath)
+				? activePath.slice(srcPath.length)
+				: null;
+			let newBasePath = plannedBasePath;
+			if (activePath && activeSuffix !== null) {
+				const newNotePath = await onRelocateActiveDocument(
+					activePath,
+					'Moving the notebook',
+					() => moveNotebook(srcPath, destPath, activePath),
+				);
+				if (!newNotePath) return;
+				newBasePath = newNotePath.slice(0, -activeSuffix.length);
+			} else {
+				newBasePath = (await moveNotebook(srcPath, destPath)).path;
+			}
 			// Update collapsedNotebooks paths
 			$collapsedNotebooks = $collapsedNotebooks.map(p => {
 				if (p === srcPath) return newBasePath;
@@ -432,11 +459,6 @@
 			// Update active notebook/note if inside the moved notebook
 			if ($activeNotebook?.path === srcPath || isDescendant($activeNotebook?.path ?? '', srcPath)) {
 				selectAllNotes();
-			}
-			if ($activeNotePath && isDescendant($activeNotePath, srcPath)) {
-				const newNotePath = newBasePath + $activeNotePath.slice(srcPath.length);
-				$activeNotePath = newNotePath;
-				$activeNote = await readNote(newNotePath);
 			}
 			$notebookIcons = await getNotebookIcons();
 			await refresh();
@@ -540,8 +562,22 @@
 			// Step 1: if different parents, move src into target's parent first
 			if (srcParent !== targetParent) {
 				const oldName = baseOf(srcPath);
-				const newPath = joinPath(targetParent, oldName);
-				await moveNotebook(srcPath, targetParent);
+				let newPath = joinPath(targetParent, oldName);
+				const activePath = $activeNotePath;
+				const activeSuffix = activePath && isDescendant(activePath, srcPath)
+					? activePath.slice(srcPath.length)
+					: null;
+				if (activePath && activeSuffix !== null) {
+					const newNotePath = await onRelocateActiveDocument(
+						activePath,
+						'Reordering the notebook',
+						() => moveNotebook(srcPath, targetParent, activePath),
+					);
+					if (!newNotePath) return;
+					newPath = newNotePath.slice(0, -activeSuffix.length);
+				} else {
+					newPath = (await moveNotebook(srcPath, targetParent)).path;
+				}
 				// Migrate paths in collapsedNotebooks
 				$collapsedNotebooks = $collapsedNotebooks.map(p => {
 					if (p === srcPath) return newPath;
@@ -559,11 +595,6 @@
 				// Update active notebook/note
 				if ($activeNotebook?.path === srcPath || isDescendant($activeNotebook?.path ?? '', srcPath)) {
 					selectAllNotes();
-				}
-				if ($activeNotePath && isDescendant($activeNotePath, srcPath)) {
-					const newNotePath = newPath + $activeNotePath.slice(srcPath.length);
-					$activeNotePath = newNotePath;
-					$activeNote = await readNote(newNotePath);
 				}
 				$notebookIcons = await getNotebookIcons();
 				await refresh();

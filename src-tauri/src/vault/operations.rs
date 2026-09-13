@@ -577,6 +577,18 @@ pub fn read_unfiled_note(vault_path: &str, path: &str) -> Result<NoteContent, St
     read_note_content(&validated, path)
 }
 
+fn note_content_from_raw(reported_path: &str, raw: String, filename: &str) -> NoteContent {
+    let (meta, content) = frontmatter::parse_note(&raw, filename);
+    let revision = content_sha256(raw.as_bytes());
+    NoteContent {
+        path: reported_path.to_string(),
+        meta,
+        content,
+        raw,
+        revision,
+    }
+}
+
 fn read_note_content(validated: &Path, reported_path: &str) -> Result<NoteContent, String> {
     let p = validated;
     let raw = fs::read_to_string(p).map_err(|e| e.to_string())?;
@@ -607,15 +619,31 @@ fn read_note_content(validated: &Path, reported_path: &str) -> Result<NoteConten
         }
     }
 
+    let revision = content_sha256(raw.as_bytes());
     Ok(NoteContent {
         path: reported_path.to_string(),
         meta,
         content,
         raw,
+        revision,
     })
 }
 
-pub fn save_note(vault_path: &str, path: &str, meta: &NoteMeta, body: &str) -> Result<(), String> {
+#[derive(Debug)]
+pub struct SaveNoteOutcome {
+    pub revision: String,
+    pub old_raw: String,
+    pub note: NoteContent,
+}
+
+pub fn save_note_if_revision(
+    vault_path: &str,
+    path: &str,
+    meta: &NoteMeta,
+    body: &str,
+    expected_revision: &str,
+) -> Result<SaveNoteOutcome, String> {
+    let reported_path = path.to_string();
     let path = ensure_note_path(vault_path, Path::new(path))?;
     let mut updated_meta = meta.clone();
     updated_meta.modified = Utc::now();
@@ -625,16 +653,36 @@ pub fn save_note(vault_path: &str, path: &str, meta: &NoteMeta, body: &str) -> R
         updated_meta.id = Uuid::new_v4().to_string();
     }
 
-    // Read existing file to preserve unknown frontmatter fields
-    let existing = fs::read_to_string(&path).unwrap_or_default();
-    let raw = if existing.is_empty() {
-        frontmatter::update_note_raw(&updated_meta, body)
-    } else {
-        frontmatter::merge_frontmatter(&existing, &updated_meta, body)
-    };
+    // Compare the exact bytes read by this editor before deriving or publishing a replacement.
+    let existing = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let current_revision = content_sha256(existing.as_bytes());
+    if current_revision != expected_revision {
+        return Err(
+            "Save conflict: this note changed after it was opened. Reload it before saving again."
+                .to_string(),
+        );
+    }
+    let raw = frontmatter::merge_frontmatter(&existing, &updated_meta, body);
+    let revision = content_sha256(raw.as_bytes());
+    let filename = path.file_name().unwrap_or_default().to_string_lossy();
+    let note = note_content_from_raw(&reported_path, raw.clone(), &filename);
 
     fs::write(path, raw).map_err(|e| e.to_string())?;
-    Ok(())
+    Ok(SaveNoteOutcome {
+        revision,
+        old_raw: existing,
+        note,
+    })
+}
+
+pub fn save_note(
+    vault_path: &str,
+    path: &str,
+    meta: &NoteMeta,
+    body: &str,
+) -> Result<SaveNoteOutcome, String> {
+    let current = read_vault_note(vault_path, path)?;
+    save_note_if_revision(vault_path, path, meta, body, &current.revision)
 }
 
 pub fn create_note(
@@ -1214,8 +1262,9 @@ fn rename_note_with_outcome_inner(
     }
     if same_file_target && new_title == old_title {
         return Ok(NoteMoveOutcome {
-            path: old_path_str,
+            path: old_path_str.clone(),
             rewritten_paths: Vec::new(),
+            note: note_content_from_raw(&old_path_str, updated, &filename),
         });
     }
     preflight_wikilink_reads(&canonical_vault, src)?;
@@ -1280,9 +1329,18 @@ fn rename_note_with_outcome_inner(
         }
     };
 
+    let authoritative_note = note_content_from_raw(
+        &new_path_str,
+        updated,
+        &published_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy(),
+    );
     Ok(NoteMoveOutcome {
         path: new_path_str,
         rewritten_paths: link_update.rewritten_paths,
+        note: authoritative_note,
     })
 }
 
@@ -1556,10 +1614,11 @@ pub fn rename_notebook(vault_path: &str, path: &str, new_name: &str) -> Result<S
     Ok(new_path.to_string_lossy().to_string())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct NoteMoveOutcome {
     pub path: String,
     pub rewritten_paths: Vec<String>,
+    pub note: NoteContent,
 }
 
 #[cfg(test)]
@@ -1612,6 +1671,7 @@ fn move_note_with_outcome_inner(
     let filename = src.file_name().unwrap_or_default();
     let title = std::cell::RefCell::new(None);
     let original_bytes = std::cell::RefCell::new(None);
+    let published_bytes = std::cell::RefCell::new(None);
     let old_path = src.to_string_lossy().to_string();
     let dest =
         crate::vault::relocation::relocate_file(&vault_root, src, &dest_dir, filename, |raw| {
@@ -1623,7 +1683,9 @@ fn move_note_with_outcome_inner(
                 frontmatter::extract_title(raw)
                     .unwrap_or_else(|| frontmatter::filename_to_title(&filename)),
             ));
-            frontmatter::set_category(raw, category).map(String::into_bytes)
+            let bytes = frontmatter::set_category(raw, category)?.into_bytes();
+            published_bytes.replace(Some(bytes.clone()));
+            Ok(bytes)
         })?;
     let title = title
         .into_inner()
@@ -1631,6 +1693,12 @@ fn move_note_with_outcome_inner(
     let original_bytes = original_bytes
         .into_inner()
         .ok_or_else(|| "Could not retain the original note for rollback".to_string())?;
+    let published_raw = String::from_utf8(
+        published_bytes
+            .into_inner()
+            .ok_or_else(|| "Could not retain authoritative moved note content".to_string())?,
+    )
+    .map_err(|error| format!("Moved note is not valid UTF-8: {error}"))?;
     let new_path = dest.to_string_lossy().to_string();
     let link_update = match update_wikilinks_after_rename_with_fault(
         &canonical_vault,
@@ -1680,9 +1748,15 @@ fn move_note_with_outcome_inner(
             ));
         }
     }
+    let authoritative_note = note_content_from_raw(
+        &new_path,
+        published_raw,
+        &dest.file_name().unwrap_or_default().to_string_lossy(),
+    );
     Ok(NoteMoveOutcome {
-        path: dest.to_string_lossy().to_string(),
+        path: new_path,
         rewritten_paths: link_update.rewritten_paths,
+        note: authoritative_note,
     })
 }
 
@@ -1875,14 +1949,30 @@ fn reject_category_root(vault_path: &str, target: &Path, verb: &str) -> Result<(
     Ok(())
 }
 
-pub fn move_notebook(
+pub struct MoveNotebookOutcome {
+    pub path: String,
+    pub active_note: Option<NoteContent>,
+}
+
+pub fn move_notebook_with_active(
     vault_path: &str,
     notebook_path: &str,
     dest_parent: &str,
-) -> Result<String, String> {
+    active_note_path: Option<&str>,
+) -> Result<MoveNotebookOutcome, String> {
     let validated = ensure_notebook_path(vault_path, Path::new(notebook_path))?;
     reject_category_root(vault_path, validated.as_path(), "moved")?;
     let src = validated.as_path().to_path_buf();
+    let active_relative = active_note_path
+        .map(|active_path| {
+            let active = ensure_note_path(vault_path, Path::new(active_path))?;
+            active
+                .as_path()
+                .strip_prefix(&src)
+                .map(Path::to_path_buf)
+                .map_err(|_| "Active note is not inside the notebook being moved".to_string())
+        })
+        .transpose()?;
 
     let (dest_parent_path, destination_category) =
         ensure_para_destination_dir(vault_path, Path::new(dest_parent))?;
@@ -2029,9 +2119,38 @@ pub fn move_notebook(
         }
     }
 
-    transaction
-        .commit()
-        .map(|path| path.to_string_lossy().to_string())
+    // Acquire the active document's final category/backlink-rewritten bytes while the
+    // directory transaction can still roll back. After commit, commands must not fail in a
+    // way that strands the frontend on the vanished source path.
+    let active_note = match active_relative {
+        Some(relative) => {
+            let active_path = dest.join(relative);
+            let reported_path = active_path.to_string_lossy().to_string();
+            match read_note(vault_path, &reported_path) {
+                Ok(note) => Some(note),
+                Err(error) => {
+                    let rollback = rollback_notebook_move(
+                        vault_path,
+                        transaction,
+                        &link_updates,
+                        &original_quick_access,
+                        &original_icons,
+                    );
+                    return Err(notebook_move_failure(
+                        format!("Could not acquire the moved active note: {error}"),
+                        rollback,
+                        false,
+                    ));
+                }
+            }
+        }
+        None => None,
+    };
+
+    transaction.commit().map(|path| MoveNotebookOutcome {
+        path: path.to_string_lossy().to_string(),
+        active_note,
+    })
 }
 
 struct NotebookMoveNote {
@@ -2783,8 +2902,8 @@ mod tests {
         compare_natural_names, create_note, create_notebook, create_web_clipping, duplicate_note,
         ensure_vault_structure, get_note_switcher_titles, helixnotes_dir, load_notebook_icons,
         load_quick_access, move_note, move_note_with_outcome, permanent_delete, read_note,
-        restore_notebook, save_note, save_quick_access, scan_notebooks, set_notebook_icon,
-        ParaCategory,
+        restore_notebook, save_note, save_note_if_revision, save_quick_access, scan_notebooks,
+        set_notebook_icon, ParaCategory,
     };
     use crate::search::SearchIndex;
     use crate::vault::frontmatter;
@@ -2902,6 +3021,48 @@ mod tests {
             read_note(&vault_str, &renamed_path).unwrap().content,
             authored_body
         );
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn compare_and_swap_rejects_both_stale_writer_orders() {
+        let vault = scaffolded_vault("save-conflict");
+        let vault_str = vault.to_string_lossy().to_string();
+
+        for (first_body, stale_body) in [
+            ("main window wins", "secondary window is stale"),
+            ("secondary window wins", "main window is stale"),
+        ] {
+            let note = create_note(&vault_str, Some("Areas"), first_body).unwrap();
+            let first_read = read_note(&vault_str, &note.path).unwrap();
+            let stale_read = read_note(&vault_str, &note.path).unwrap();
+            assert_eq!(first_read.revision, stale_read.revision);
+
+            let saved = save_note_if_revision(
+                &vault_str,
+                &note.path,
+                &first_read.meta,
+                first_body,
+                &first_read.revision,
+            )
+            .unwrap();
+            assert_ne!(saved.revision, first_read.revision);
+
+            let conflict = save_note_if_revision(
+                &vault_str,
+                &note.path,
+                &stale_read.meta,
+                stale_body,
+                &stale_read.revision,
+            )
+            .unwrap_err();
+            assert!(conflict.contains("Save conflict"));
+            assert_eq!(
+                read_note(&vault_str, &note.path).unwrap().content,
+                first_body
+            );
+        }
+
         fs::remove_dir_all(vault).unwrap();
     }
 
@@ -3885,7 +4046,7 @@ mod tests {
         assert!(super::rename_notebook(&vault_str, &projects, "Stuff").is_err());
         assert!(super::delete_notebook(&vault_str, &projects).is_err());
         let areas = vault.join("Areas").to_string_lossy().to_string();
-        assert!(super::move_notebook(&vault_str, &projects, &areas).is_err());
+        assert!(super::move_notebook_with_active(&vault_str, &projects, &areas, None).is_err());
         assert!(create_notebook(&vault_str, None, "Inbox").is_err());
 
         // Still there, and still a category.
@@ -3966,15 +4127,33 @@ mod tests {
         let search = SearchIndex::new_in_memory().unwrap();
         search.rebuild(&vault_str).unwrap();
 
-        let moved = super::move_notebook(
+        let plan_before_move = super::read_note(&vault_str, &plan.path).unwrap();
+        let moved_outcome = super::move_notebook_with_active(
             &vault_str,
             &vault.join("Projects/Launch").to_string_lossy(),
             &vault.join("Archives").to_string_lossy(),
+            Some(&plan.path),
         )
         .unwrap();
+        let moved = moved_outcome.path;
+        let moved_active_note = moved_outcome.active_note.unwrap();
         let moved_root = std::path::Path::new(&moved);
         let moved_plan = moved_root.join("Plan.md");
         let moved_draft = moved_root.join("Drafts/Draft.md");
+        assert_eq!(
+            moved_active_note.path,
+            moved_plan.to_string_lossy().to_string(),
+            "the command-facing move outcome must identify the committed destination"
+        );
+        assert_eq!(
+            moved_active_note.meta.category,
+            Some(ParaCategory::Archives),
+            "the authoritative active note must include the category rewrite"
+        );
+        assert_ne!(
+            moved_active_note.revision, plan_before_move.revision,
+            "the authoritative active note must carry the post-rewrite CAS revision"
+        );
 
         assert_eq!(
             category_recorded_in(&moved_plan),

@@ -58,6 +58,29 @@ pub struct NoteContent {
     pub meta: NoteMeta,
     pub content: String,
     pub raw: String,
+    /// Opaque hash of the exact bytes read. Saves must compare this before replacing them.
+    pub revision: String,
+}
+
+/// Authoritative result of a canonical Markdown commit. Projection failures are warnings:
+/// search, semantic indexing, and history can be repaired and must never hide this revision.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveCommitOutcome {
+    pub revision: String,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+/// Authoritative result of a path mutation. `note` is present whenever the operation
+/// relocates the active document, allowing the frontend to rebase without another read.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelocationOutcome {
+    pub path: String,
+    pub note: Option<NoteContent>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

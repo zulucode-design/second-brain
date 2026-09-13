@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { listen } from '@tauri-apps/api/event';
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -10,9 +10,13 @@
 		activeNotePath,
 		editorDirty,
 		readOnly,
+		shutdownPending,
 		sourceMode
 	} from '$lib/stores/app';
 	import { readNote } from '$lib/api';
+	import { NAVIGATE_NOTE_EVENT, type NavigateNoteRequest, type NoteNavigationResult } from '$lib/utils/navigation';
+	import { SerializedNavigationController } from '$lib/utils/navigation-controller';
+	import { GenerationGate } from '$lib/utils/generation-gate';
 	import { keybindings, matchAction } from '$lib/keybindings';
 	import type { FileEvent } from '$lib/types';
 
@@ -24,8 +28,15 @@
 	let editor = $state<Editor>(null!);
 	let unlistenFileChange: (() => void) | null = null;
 	let unlistenUiScale: (() => void) | null = null;
+	let removeNavigationRequest: (() => void) | null = null;
+	let closingRequestId: string | null = null;
+	let releaseCloseMutationLock: (() => void) | null = null;
+	let readOnlyBeforeClose = false;
+	let currentPath = $state('');
 	let maximized = $state(false);
 	let loadError = $state<string | null>(null);
+	const lifetimeGate = new GenerationGate();
+	const initialLoadGate = new GenerationGate();
 
 	async function checkMaximized() {
 		maximized = await appWindow.isMaximized();
@@ -60,7 +71,43 @@
 		appWindow.startDragging();
 	}
 
+	const navigationController = new SerializedNavigationController<Awaited<ReturnType<typeof readNote>>>({
+		isBlocked: () => $shutdownPending,
+		prepare: async () => editor ? editor.lockMutations() : () => {},
+		flush: async () => editor?.flushSave() ?? { ok: true, status: 'clean', revision: 0 },
+		read: readNote,
+		commit: (path, content) => {
+			if ($shutdownPending) return false;
+			currentPath = path;
+			$activeNote = content;
+			$activeNotePath = path;
+			$editorDirty = false;
+			editor?.loadNote(path, content.content, undefined, false, content.revision);
+			void appWindow.setTitle(`${content.meta.title} - HelixNotes`);
+			return true;
+		},
+		onSaveFailure: (error) => {
+			console.error('Save failed before note-window navigation:', error);
+			window.alert(`Could not save this note. Navigation was cancelled so your edits remain open.\n\n${String(error)}`);
+		},
+		onReadFailure: (error) => console.error('Failed to navigate note window:', error),
+	});
+
+	async function navigateToPathResult(path: string): Promise<NoteNavigationResult> {
+		initialLoadGate.invalidate();
+		if (path === currentPath) return 'navigated';
+		return navigationController.navigate(path);
+	}
+
+	async function navigateToPath(path: string): Promise<boolean> {
+		return (await navigateToPathResult(path)) === 'navigated';
+	}
+
 	function handleKeydown(e: KeyboardEvent) {
+		if ($shutdownPending) {
+			e.preventDefault();
+			return;
+		}
 		const action = matchAction(e, $keybindings);
 		if (action === 'save') {
 			e.preventDefault();
@@ -79,50 +126,113 @@
 		}
 	}
 
+	export async function prepareForClose(requestId: string): Promise<boolean> {
+		if (closingRequestId && closingRequestId !== requestId) return false;
+		if (!closingRequestId) {
+			closingRequestId = requestId;
+			readOnlyBeforeClose = $readOnly;
+			$shutdownPending = true;
+			$readOnly = true;
+			await tick();
+			try {
+				releaseCloseMutationLock = editor ? await editor.lockMutations() : null;
+			} catch (error) {
+				console.error('Could not prepare note window for close:', error);
+				return false;
+			}
+		}
+		const result = await editor?.flushSave();
+		const saved = !result || result.ok;
+		if (!saved) {
+			console.error('Save failed before closing note window:', result.error);
+			window.alert(`Could not save this note. The window will remain open so your edits are not lost.\n\n${String(result.error)}`);
+		}
+		return saved;
+	}
+
+	export function releaseClose(requestId: string) {
+		if (closingRequestId !== requestId) return;
+		releaseCloseMutationLock?.();
+		releaseCloseMutationLock = null;
+		$readOnly = readOnlyBeforeClose;
+		$shutdownPending = false;
+		closingRequestId = null;
+	}
+
 	onMount(async () => {
-		unlistenUiScale = await listen<number>('ui-scale-changed', (event) => {
-			void applyUiScale(event.payload);
+		const lifetime = lifetimeGate.capture();
+		const initialLoad = initialLoadGate.capture();
+		const alive = () => lifetimeGate.isCurrent(lifetime);
+		const initialIsCurrent = () => alive() && initialLoadGate.isCurrent(initialLoad);
+		const handleNavigationRequest = (event: Event) => {
+			const path = (event as CustomEvent<NavigateNoteRequest>).detail?.path;
+			if (path) void navigateToPath(path);
+		};
+		window.addEventListener(NAVIGATE_NOTE_EVENT, handleNavigationRequest);
+		removeNavigationRequest = () => window.removeEventListener(NAVIGATE_NOTE_EVENT, handleNavigationRequest);
+
+		const uiScaleUnlisten = await listen<number>('ui-scale-changed', (event) => {
+			if (alive()) void applyUiScale(event.payload);
 		});
+		if (!alive()) { uiScaleUnlisten(); return; }
+		unlistenUiScale = uiScaleUnlisten;
 		await applyUiScale($appConfig?.ui_scale ?? 1);
+		if (!alive()) return;
 
 		try {
 			const content = await readNote(notePath);
+			if (!initialIsCurrent()) return;
+			currentPath = notePath;
 			$activeNote = content;
 			$activeNotePath = notePath;
 			$editorDirty = false;
-			setTimeout(() => {
-				editor?.loadNote(notePath, content.content);
-				appWindow.setTitle(`${content.meta.title} - HelixNotes`);
-			}, 50);
+			await tick();
+			if (!initialIsCurrent() || currentPath !== notePath) return;
+			editor?.loadNote(notePath, content.content, undefined, false, content.revision);
+			void appWindow.setTitle(`${content.meta.title} - HelixNotes`);
 		} catch (e) {
-			loadError = String(e);
+			if (initialIsCurrent()) loadError = String(e);
 		}
+		if (!alive()) return;
 
-		unlistenFileChange = await listen<FileEvent>('file-changed', async (event) => {
-			if (event.payload.path === notePath && event.payload.event_type === 'modify') {
-				if (!$editorDirty) {
-					try {
-						const content = await readNote(notePath);
-						// Ignore the file-watcher echo of our own save; only reload genuine external edits.
-						if (content.content.trim() !== (editor?.getCurrentBody() ?? '').trim()) {
-							$activeNote = content;
-							editor?.loadNote(notePath, content.content);
-						}
-					} catch (_) {}
+		const fileChangeUnlisten = await listen<FileEvent>('file-changed', async (event) => {
+			if (!alive() || event.payload.path !== currentPath || event.payload.event_type !== 'modify' || $editorDirty) return;
+			const watchedPath = currentPath;
+			try {
+				const content = await readNote(watchedPath);
+				if (!alive() || currentPath !== watchedPath || $editorDirty) return;
+				// Ignore the file-watcher echo of our own save; only reload genuine external edits.
+				if (content.content.trim() === (editor?.getCurrentBody() ?? '').trim()) return;
+				let release: (() => void) | null = null;
+				try {
+					release = editor ? await editor.lockMutations() : null;
+					if (!alive() || currentPath !== watchedPath || $editorDirty || $shutdownPending) return;
+					$activeNote = content;
+					editor?.loadNote(watchedPath, content.content, undefined, false, content.revision);
+				} finally {
+					release?.();
 				}
-			}
+			} catch (_) {}
 		});
+		if (!alive()) { fileChangeUnlisten(); return; }
+		unlistenFileChange = fileChangeUnlisten;
 	});
 
 	onDestroy(() => {
+		lifetimeGate.cancel();
+		initialLoadGate.cancel();
 		unlistenFileChange?.();
 		unlistenUiScale?.();
+		removeNavigationRequest?.();
 	});
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
 
 <div class="note-window">
+	{#if $shutdownPending}
+		<div class="shutdown-lock" aria-label="Saving before close" aria-busy="true"></div>
+	{/if}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="nw-titlebar" class:macos={isMac} onmousedown={handleMouseDown}>
 		<div class="nw-titlebar-brand">
@@ -141,12 +251,12 @@
 			{/if}
 		</div>
 		<div class="titlebar-actions">
-			<button class="nw-btn" class:active={$sourceMode} onclick={() => ($sourceMode = !$sourceMode)} title="Toggle Source Mode">
+			<button class="nw-btn" class:active={$sourceMode} onclick={() => { if (!$shutdownPending) $sourceMode = !$sourceMode; }} disabled={$shutdownPending} title="Toggle Source Mode">
 				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
 				</svg>
 			</button>
-			<button class="nw-btn" class:active={$readOnly} onclick={() => ($readOnly = !$readOnly)} title={$readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}>
+			<button class="nw-btn" class:active={$readOnly} onclick={() => { if (!$shutdownPending) $readOnly = !$readOnly; }} disabled={$shutdownPending} title={$readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}>
 				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					{#if $readOnly}
 						<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
@@ -195,7 +305,7 @@
 		</div>
 	{:else}
 		<div class="nw-editor">
-			<Editor bind:this={editor} />
+			<Editor bind:this={editor} onNavigateNote={navigateToPath} onNavigateWikiNote={navigateToPathResult} />
 		</div>
 	{/if}
 </div>
@@ -206,6 +316,13 @@
 		flex-direction: column;
 		height: 100vh;
 		background: var(--bg-primary);
+	}
+
+	.shutdown-lock {
+		position: fixed;
+		inset: 0;
+		z-index: 2147483647;
+		cursor: wait;
 	}
 
 	.nw-titlebar {

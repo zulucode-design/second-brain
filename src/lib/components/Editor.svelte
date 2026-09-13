@@ -41,11 +41,14 @@
 	import { readFile } from '@tauri-apps/plugin-fs';
 	import { openFile, openUrl, copyFileTo, copyImageToClipboard as copyImageToClipboardCmd, writeBytesTo, copyPngToClipboard, copyTextToClipboard } from '$lib/api';
 	import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, readOnly, holdingPreview, quickAccessPaths, notes, navHistory, canGoBack, canGoForward, viewerNote, viewMode, notebooks, outlineWidth, aiStatus, aiUsable } from '$lib/stores/app';
+	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, readOnly, shutdownPending, holdingPreview, quickAccessPaths, notes, canGoBack, canGoForward, viewerNote, viewMode, notebooks, outlineWidth, aiStatus, aiUsable } from '$lib/stores/app';
 	import { saveNote, saveImage, saveAttachment, readClipboardImage, addQuickAccess, removeQuickAccess, getQuickAccess, getNoteVersions, getNoteVersionContent, createVersion, aiAsk, getAllNoteTitles, readNote, renameNote } from '$lib/api';
-	import type { VersionEntry, AiStreamEvent, NoteTitleEntry, TaskItem as TaskRecord } from '$lib/types';
+	import type { VersionEntry, AiStreamEvent, NoteTitleEntry, TaskItem as TaskRecord, NoteMeta, NoteContent } from '$lib/types';
 	import { listen } from '@tauri-apps/api/event';
 	import { debounce } from '$lib/utils/debounce';
+	import { SaveCoordinator, type SaveResult } from '$lib/utils/save-coordinator';
+	import { EditorMutationBarrier, type EditorDocumentIdentity } from '$lib/utils/editor-mutation-barrier';
+	import type { NoteNavigationResult } from '$lib/utils/navigation';
 	import { encryptSecretText, decryptSecretText, readSecretTitle } from '$lib/utils/secrets';
 	import { WrapSelectedText } from '$lib/editor/extensions/wrapSelectedText';
 	import { CodeBlockInputScroll } from '$lib/editor/extensions/codeBlockInputScroll';
@@ -62,9 +65,18 @@
 	import { isMobile, isAndroid } from '$lib/platform';
 	import ResizeHandle from './ResizeHandle.svelte';
 
-	let { onMoveToTrash, onRequestCreateLinkedNote = (_title: string) => {} }: {
+	let {
+		onMoveToTrash,
+		onRequestCreateLinkedNote = (_title: string) => {},
+		onNavigateNote = async (_path: string) => false,
+		onNavigateWikiNote = async (_path: string): Promise<NoteNavigationResult> => 'blocked',
+		onNavigateHistory = async (_direction: -1 | 1) => false,
+	}: {
 		onMoveToTrash?: (path: string) => Promise<boolean>;
 		onRequestCreateLinkedNote?: (title: string) => void;
+		onNavigateNote?: (path: string) => Promise<boolean>;
+		onNavigateWikiNote?: (path: string) => Promise<NoteNavigationResult>;
+		onNavigateHistory?: (direction: -1 | 1) => Promise<boolean>;
 	} = $props();
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
@@ -107,12 +119,15 @@
 	let sourceHistoryIndex = -1;
 	let sourceHistoryTimer: ReturnType<typeof setTimeout> | null = null;
 	let loadedPath = '';
+	let loadedRevision = '';
+	const mutationBarrier = new EditorMutationBarrier();
 	type NoteScrollPosition = { rich: number; source: number };
 	const MAX_NOTE_SCROLL_POSITIONS = 200;
 	const noteScrollPositions = new Map<string, NoteScrollPosition>();
 	let pendingContent = $state<string | null>(null);
 	let ignoreNextUpdate = false;
 	let isLoadingNote = false;
+	let componentDestroyed = false;
 	let trashingNote = $state(false);
 	let fixingBlobsPromise: Promise<void> = Promise.resolve();
 	let hasPendingBlobs = false;
@@ -292,7 +307,7 @@
 			pushSourceHistoryImmediate();
 		});
 		$editorDirty = true;
-		autoSave();
+		markDirty();
 		return true;
 	}
 
@@ -593,11 +608,20 @@
 		}
 		secretModal.busy = true;
 		secretModal.error = '';
+		const request = { ...secretModal };
 		try {
-			const payload = await encryptSecretText(secretModal.text, secretModal.passphrase, secretModal.title);
-			const { from, to } = secretModal;
-			secretModal = null;
-			editor.chain().focus().setTextSelection({ from, to }).insertContent({ type: 'secretBlock', attrs: { payload } }).run();
+			const applied = await mutationBarrier.runAfter(
+				() => encryptSecretText(request.text, request.passphrase, request.title),
+				(payload, identity) => {
+					if (!editor || !mutationBarrier.isCurrent(identity)) return;
+					secretModal = null;
+					editor.chain().focus().setTextSelection({ from: request.from, to: request.to }).insertContent({ type: 'secretBlock', attrs: { payload } }).run();
+				},
+			);
+			if (!applied && secretModal) {
+				secretModal.busy = false;
+				secretModal.error = 'The note changed before the encrypted block could be inserted.';
+			}
 		} catch (e: any) {
 			if (secretModal) {
 				secretModal.error = e?.message || 'Could not encrypt secret.';
@@ -679,34 +703,39 @@
 	async function viewerImportTo(folderPath: string) {
 		const v = $viewerNote;
 		const vaultRoot = $appConfig?.active_vault;
-		if (!v || !vaultRoot || viewerImportBusy) return;
+		if (!v || !vaultRoot || viewerImportBusy || $shutdownPending) return;
 		viewerImportBusy = true;
 		try {
-			const filename = v.path.split('/').pop() || 'imported.md';
-			const baseName = filename.replace(/\.md$/i, '');
-			const folder = folderPath ? `${vaultRoot}/${folderPath}` : vaultRoot;
-			let dest = `${folder}/${filename}`;
-			// Conflict resolution: append (2), (3)... if file exists
-			let n = 2;
-			// readNote throws if file doesn't exist; use it as an existence probe
-			while (true) {
-				try { await readNote(dest); } catch { break; }
-				dest = `${folder}/${baseName} (${n}).md`;
-				n++;
-				if (n > 100) throw new Error('Could not find a free filename');
-			}
-			await copyFileTo(v.path, dest);
-			// Switch to the imported note as a real vault note
-			$viewerNote = null;
-			$readOnly = false;
-			$focusMode = false;
-			viewerImportPickerOpen = false;
-			const content = await readNote(dest);
-			$activeNote = content;
-			$activeNotePath = dest;
-			$editorDirty = false;
-			loadNote(dest, content.content);
-			viewerFlash('Imported');
+			const admitted = await mutationBarrier.run(async (identity) => {
+				const filename = v.path.split('/').pop() || 'imported.md';
+				const baseName = filename.replace(/\.md$/i, '');
+				const folder = folderPath ? `${vaultRoot}/${folderPath}` : vaultRoot;
+				let dest = `${folder}/${filename}`;
+				// Conflict resolution: append (2), (3)... if file exists
+				let n = 2;
+				// readNote throws if file doesn't exist; use it as an existence probe
+				while (true) {
+					try { await readNote(dest); } catch { break; }
+					dest = `${folder}/${baseName} (${n}).md`;
+					n++;
+					if (n > 100) throw new Error('Could not find a free filename');
+				}
+				await copyFileTo(v.path, dest);
+				const content = await readNote(dest);
+				if (!canApplyMutation(identity) || $viewerNote?.path !== v.path || $shutdownPending) return;
+				// Switch to the imported note as a real vault note only while the source
+				// viewer document still owns this tracked mutation.
+				$viewerNote = null;
+				$readOnly = false;
+				$focusMode = false;
+				viewerImportPickerOpen = false;
+				$activeNote = content;
+				$activeNotePath = dest;
+				$editorDirty = false;
+				loadNote(dest, content.content, undefined, false, content.revision);
+				viewerFlash('Imported');
+			});
+			if (!admitted) viewerFlash('Import cancelled while the note is closing');
 		} catch (e: any) {
 			console.error('[Viewer] import failed', e);
 			viewerFlash('Import failed: ' + (e?.message || String(e)));
@@ -2519,31 +2548,36 @@
 
 		if (toRename.length === 0) return;
 
-		// Save the current note before renaming so the Rust backend has the latest content
-		await forceSave();
-
-		for (const item of toRename) {
-			try {
-				const absPath = resolveNotePath(item.mark.attrs.path);
-				const newPath = await renameNote(absPath, item.newTitle);
-				// Update the mark attrs in the editor (title + path) so the next save
-				// serialises [[NewTitle]] and doesn't re-trigger the rename check
-				if (editor) {
-					const wikiMarkType = editor.schema.marks.wikiLink;
-					const tr = editor.state.tr;
-					tr.addMark(
-						item.pos,
-						item.pos + item.size,
-						wikiMarkType.create({ title: item.newTitle, path: newPath, aliased: false }),
-					);
-					ignoreNextUpdate = true;
-					editor.view.dispatch(tr);
+		await mutationBarrier.runAfter(
+			async () => {
+				if (!(await forceSave())) throw new Error('Could not save before wiki-link rename.');
+				return toRename;
+			},
+			async (items, identity) => {
+				for (const item of items) {
+					if (!editor || !mutationBarrier.isCurrent(identity)) return;
+					try {
+						const currentText = editor.state.doc.textBetween(item.pos, item.pos + item.size).trim();
+						if (currentText !== item.newTitle) continue;
+						const absPath = resolveNotePath(item.mark.attrs.path);
+						const outcome = await renameNote(absPath, item.newTitle);
+						if (!editor || !mutationBarrier.isCurrent(identity)) return;
+						const wikiMarkType = editor.schema.marks.wikiLink;
+						const tr = editor.state.tr;
+						tr.addMark(
+							item.pos,
+							item.pos + item.size,
+							wikiMarkType.create({ title: item.newTitle, path: outcome.path, aliased: false }),
+						);
+						ignoreNextUpdate = true;
+						editor.view.dispatch(tr);
+						void refreshWikiLinkTitles();
+					} catch (e) {
+						console.error('Failed to rename note from wiki-link edit:', e);
+					}
 				}
-				refreshWikiLinkTitles();
-			} catch (e) {
-				console.error('Failed to rename note from wiki-link edit:', e);
-			}
-		}
+			},
+		);
 	}
 
 	function insertWikiLink(entry: NoteTitleEntry, originalRef?: string) {
@@ -2826,7 +2860,7 @@
 		wikiLinkSelectedIndex = 0;
 	}
 
-	async function navigateToWikiLink(path: string, title: string, clickEvent?: MouseEvent) {
+	async function navigateToWikiLink(path: string, title: string, clickEvent?: MouseEvent, recoverStaleTarget = true) {
 		if ($holdingPreview) return;
 		// Normalize legacy absolute paths in data-path to vault-relative (issue: cross-device sync)
 		path = normalizeWikiPath(path);
@@ -2875,35 +2909,23 @@
 				return;
 			}
 		}
-		try {
-			const absPath = resolveNotePath(path);
-			const content = await readNote(absPath);
-			$activeNote = { ...content, content: content.content };
-			$activeNotePath = absPath;
-		} catch (e) {
-			// Explicit Markdown links do not have a wiki-link title to recreate from.
-			// Do not turn a failed read into an untitled note.
-			if (!noteTitle) {
-				console.error('Failed to navigate to note link:', e);
-				return;
-			}
-			// Note at path no longer exists (deleted/moved). Refresh cache and
-			// retry as unresolved so the user can recreate it from the link.
+		const absPath = resolveNotePath(path);
+		const result = await onNavigateWikiNote(absPath);
+		if (result === 'not-found' && recoverStaleTarget) {
+			// The cached data-path can outlive a move/delete. Refresh and resolve from the
+			// displayed title again; save rejection/closing never enters creation fallback.
 			await refreshWikiLinkTitles();
-			await navigateToWikiLink('', title, clickEvent);
+			await navigateToWikiLink('', title, clickEvent, false);
 		}
 	}
 
 	export async function createLinkedNoteAfterConfirmation(nbRelative: string, title: string) {
 		try {
-			await forceSave();
+			if (!(await forceSave())) throw new Error('Could not save the current note.');
 			const { createNote } = await import('$lib/api');
 			const newNote = await createNote(nbRelative, title);
 			await refreshWikiLinkTitles();
-			const content = await readNote(newNote.path);
-			$activeNote = { ...content, content: content.content };
-			$activeNotePath = newNote.path;
-			$editorDirty = false;
+			if (!(await onNavigateNote(newNote.path))) throw new Error('Could not open the new note.');
 		} catch (error) {
 			console.error('Failed to create note from wiki-link:', error);
 			throw error;
@@ -2912,14 +2934,7 @@
 
 	async function navigateToWikiLinkDirect(entry: NoteTitleEntry) {
 		wikiLinkNavDisambig = null;
-		try {
-			const absPath = resolveNotePath(entry.path);
-			const content = await readNote(absPath);
-			$activeNote = { ...content, content: content.content };
-			$activeNotePath = absPath;
-		} catch (e) {
-			console.error('Failed to navigate to wiki-link:', e);
-		}
+		await onNavigateNote(resolveNotePath(entry.path));
 	}
 
 	const textColors = [
@@ -3011,80 +3026,110 @@
 		return src;
 	}
 
-	let saveQueue: Promise<void> = Promise.resolve();
+	type EditorSaveSnapshot = {
+		path: string;
+		meta: NoteMeta;
+		body: string;
+		expectedRevision: string;
+	};
 
-	function queueSave(task: () => Promise<void>): Promise<void> {
-		const queued = saveQueue.then(task);
-		saveQueue = queued.catch(() => {});
-		return queued;
-	}
-
-	const autoSave = debounce(async () => {
-		if (get(viewerNote) || trashingNote) return; // never autosave external viewer files or a note being trashed
-		if (!$activeNote || !$activeNotePath || !$editorDirty) return;
-		// Only fix blob images if a paste occurred (avoids full doc scan on every save)
+	async function prepareSaveSnapshot() {
+		// Save preparation joins delayed attachment/drop work before capturing a revision.
+		await mutationBarrier.drain();
+		// A paste may have introduced blob URLs after the previous save started. Start and
+		// await repair here so every save entry point observes the same safe content.
 		if (hasPendingBlobs) {
 			hasPendingBlobs = false;
 			fixingBlobsPromise = fixBlobImages();
 		}
 		await fixingBlobsPromise;
-		if (trashingNote || !$activeNote || !$activeNotePath) return;
-		try {
-			const path = $activeNotePath;
-			const note = $activeNote;
-			const body = $sourceMode
-				? restoreTitleH1(sourceContent)
-				: editorToMarkdown();
-			// Safety: never save empty/near-empty body over a note that had real content
-			const trimmed = body.replace(/^#.*\n?/, '').trim();
-			if (!trimmed && note.content && note.content.trim().length > 10) {
-				console.warn('Auto-save blocked: refusing to overwrite note with empty content');
-				return;
-			}
-			await queueSave(() => saveNote(path, note.meta, body));
-			if ($activeNotePath === path) $editorDirty = false;
-		} catch (e) {
-			console.error('Auto-save failed:', e);
-		}
-	}, isMobile ? 1500 : 500);
+	}
 
-	export async function forceSave(allowWhileTrashing = false): Promise<boolean> {
-		if (get(viewerNote) || (trashingNote && !allowWhileTrashing)) return false;
-		if (!$activeNote || !$activeNotePath) return false;
-		await fixingBlobsPromise;
-		if (trashingNote && !allowWhileTrashing) return false;
-		if (!$activeNote || !$activeNotePath) return false;
-		try {
-			const path = $activeNotePath;
-			const note = $activeNote;
-			const body = $sourceMode ? restoreTitleH1(sourceContent) : editorToMarkdown();
-			const trimmed = body.replace(/^#.*\n?/, '').trim();
-			if (!trimmed && note.content && note.content.trim().length > 10) {
-				console.warn('Force-save blocked: refusing to overwrite note with empty content');
-				return false;
-			}
-			await queueSave(() => saveNote(path, note.meta, body));
-			if ($activeNotePath === path) $editorDirty = false;
-			return true;
-		} catch (e) {
-			console.error('Save failed:', e);
-			return false;
+	function captureSaveSnapshot(): EditorSaveSnapshot | null {
+		if (get(viewerNote) || trashingNote || !$activeNote || !$activeNotePath) return null;
+		const path = $activeNotePath;
+		const note = $activeNote;
+		const body = $sourceMode ? restoreTitleH1(sourceContent) : editorToMarkdown();
+		const trimmed = body.replace(/^#.*\n?/, '').trim();
+		if (!trimmed && note.content && note.content.trim().length > 10) {
+			throw new Error('Save blocked: refusing to overwrite a non-empty note with empty content.');
 		}
+		return {
+			path,
+			meta: structuredClone(note.meta),
+			body,
+			expectedRevision: loadedRevision,
+		};
+	}
+
+	const saveCoordinator = new SaveCoordinator<EditorSaveSnapshot>({
+		delayMs: isMobile ? 1500 : 500,
+		prepare: prepareSaveSnapshot,
+		capture: captureSaveSnapshot,
+		persist: async ({ path, meta, body, expectedRevision }) => {
+			const outcome = await saveNote(path, meta, body, expectedRevision);
+			loadedRevision = outcome.revision;
+			if (outcome.warnings.length > 0) console.warn('Note saved with repairable projection warnings:', outcome.warnings);
+		},
+		onDirtyChange: (dirty) => { $editorDirty = dirty; },
+		onAutoSaveError: (error) => console.error('Auto-save failed:', error),
+	});
+
+	function markDirty() {
+		saveCoordinator.markDirty();
+	}
+
+	export async function flushSave(): Promise<SaveResult> {
+		return saveCoordinator.flush();
+	}
+
+	export async function forceSave(): Promise<boolean> {
+		const result = await flushSave();
+		if (!result.ok) console.error('Save failed:', result.error);
+		return result.ok;
+	}
+
+	export async function lockMutations(): Promise<() => void> {
+		return mutationBarrier.lockAndDrain();
+	}
+
+	export function rebaseDocument(expectedPath: string, newPath: string, content: NoteContent): void {
+		if (loadedPath !== expectedPath || $activeNotePath !== expectedPath) {
+			throw new Error(`Active document changed before relocation completed: expected ${expectedPath}.`);
+		}
+		saveCoordinator.rebaseDocument(expectedPath, newPath);
+		loadedPath = newPath;
+		loadedRevision = content.revision;
+		mutationBarrier.setDocument(newPath);
+		$activeNotePath = newPath;
+		$activeNote = content;
+	}
+
+	export async function updateMetadata(expectedPath: string, patch: Partial<NoteMeta>): Promise<SaveResult> {
+		if (loadedPath !== expectedPath || $activeNotePath !== expectedPath || !$activeNote) {
+			return {
+				ok: false,
+				status: 'failed',
+				revision: saveCoordinator.getRevision(),
+				error: new Error(`Active document changed before metadata update: expected ${expectedPath}.`),
+			};
+		}
+		$activeNote = {
+			...$activeNote,
+			meta: { ...$activeNote.meta, ...patch },
+		};
+		markDirty();
+		return flushSave();
 	}
 
 	export async function moveOpenNoteToTrash(): Promise<boolean> {
 		const moveToTrash = onMoveToTrash;
 		if (trashingNote || !$activeNotePath || $viewerNote || $holdingPreview || !moveToTrash) return false;
 		const path = $activeNotePath;
-		const wasDirty = $editorDirty;
+		if (!(await forceSave())) return false;
+		if ($activeNotePath !== path) return false;
 		trashingNote = true;
 		try {
-			// Drain any save already in flight, then persist the latest editor state.
-			await saveQueue;
-			if (wasDirty && !(await forceSave(true))) return false;
-			if ($activeNotePath !== path) return false;
-			// A queued debounce observes this flag and cannot recreate the moved note.
-			$editorDirty = false;
 			return await moveToTrash(path);
 		} finally {
 			trashingNote = false;
@@ -3111,23 +3156,34 @@
 		if (!cleaned || $activeNote.meta.tags.includes(cleaned)) return;
 		$activeNote = { ...$activeNote, meta: { ...$activeNote.meta, tags: [...$activeNote.meta.tags, cleaned] } };
 		$editorDirty = true;
-		autoSave();
+		markDirty();
 	}
 
 	function removeActiveNoteTag(tag: string) {
 		if (!$activeNote) return;
 		$activeNote = { ...$activeNote, meta: { ...$activeNote.meta, tags: $activeNote.meta.tags.filter((t) => t !== tag) } };
 		$editorDirty = true;
-		autoSave();
+		markDirty();
 	}
 
-	// Sync editor editable state when readOnly store changes (from titlebar or editor)
+	export function togglePinned() {
+		if (!$activeNote || $shutdownPending) return;
+		$activeNote = {
+			...$activeNote,
+			meta: { ...$activeNote.meta, pinned: !$activeNote.meta.pinned }
+		};
+		$editorDirty = true;
+		markDirty();
+	}
+
+	// Sync editor editable state when view mode or the non-user-reversible shutdown lock changes.
 	$effect(() => {
 		const ro = $readOnly;
+		const shuttingDown = $shutdownPending;
 		untrack(() => {
 			if (editor) {
-				if (ro && $editorDirty) forceSave();
-				editor.setEditable(!ro);
+				if (ro && !shuttingDown && $editorDirty) forceSave();
+				editor.setEditable(!ro && !shuttingDown);
 			}
 		});
 	});
@@ -3217,19 +3273,24 @@
 
 	async function restoreVersion() {
 		if (!$activeNote || !$activeNotePath || !historySelected) return;
+		const noteId = $activeNote.meta.id;
+		const timestamp = historySelected.timestamp;
 		try {
-			const raw = historyPreview ?? await getNoteVersionContent($activeNote.meta.id, historySelected.timestamp);
-			// The raw content includes frontmatter - parse out the body
-			const fmEnd = raw.indexOf('---', 4);
-			const body = fmEnd > 0 ? raw.substring(raw.indexOf('\n', fmEnd) + 1) : raw;
-			if (editor) {
-				editor.commands.setContent(markdownToHtml(body));
-			}
-			$editorDirty = true;
-			autoSave();
-			historyPreview = null;
-			historySelected = null;
-			showHistory = false;
+			await mutationBarrier.runAfter(
+				async () => historyPreview ?? await getNoteVersionContent(noteId, timestamp),
+				(raw, identity) => {
+					if (!editor || !mutationBarrier.isCurrent(identity)) return;
+					// The raw content includes frontmatter - parse out the body
+					const fmEnd = raw.indexOf('---', 4);
+					const body = fmEnd > 0 ? raw.substring(raw.indexOf('\n', fmEnd) + 1) : raw;
+					editor.commands.setContent(markdownToHtml(body));
+					$editorDirty = true;
+					markDirty();
+					historyPreview = null;
+					historySelected = null;
+					showHistory = false;
+				},
+			);
 		} catch (e) {
 			console.error('Failed to restore version:', e);
 		}
@@ -3289,33 +3350,7 @@
 	}
 
 	async function editorNavigateHistory(direction: -1 | 1) {
-		const path = navHistory.go(direction);
-		if (!path) return;
-		flushSave();
-		try {
-			const content = await readNote(path);
-			$activeNote = content;
-			$activeNotePath = path;
-			$editorDirty = false;
-		} catch {}
-	}
-
-	/** Flush unsaved editor content to disk (synchronous serialize + fire-and-forget save).
-	 *  Call BEFORE updating $activeNote/$activeNotePath stores when switching notes. */
-	export function flushSave() {
-		if (!$editorDirty || !$activeNote || !$activeNotePath) return;
-		try {
-			const body = $sourceMode
-				? restoreTitleH1(sourceContent)
-				: editorToMarkdown();
-			const trimmed = body.replace(/^#.*\n?/, '').trim();
-			if (trimmed || !$activeNote.content || $activeNote.content.trim().length <= 10) {
-				saveNote($activeNotePath, $activeNote.meta, body);
-			}
-		} catch (e) {
-			console.error('Pre-switch save failed:', e);
-		}
-		$editorDirty = false;
+		await onNavigateHistory(direction);
 	}
 
 	function rememberLoadedNoteScroll() {
@@ -3343,13 +3378,16 @@
 		requestAnimationFrame(apply);
 	}
 
-	export function loadNote(path: string, content: string, taskTarget?: TaskRecord, holding = false) {
+	export function loadNote(path: string, content: string, taskTarget?: TaskRecord, holding = false, revision?: string) {
+		saveCoordinator.setDocument(path, true);
+		mutationBarrier.setDocument(path);
 		rememberLoadedNoteScroll();
 		const scrollPosition = taskTarget ? undefined : noteScrollPositions.get(path);
 		clearTaskReveal();
 		const revealRequest = ++taskRevealRequest;
 		const revealTarget = taskTarget ? resolveTaskTarget(taskTarget, content) : null;
 		loadedPath = path;
+		loadedRevision = revision ?? $activeNote?.revision ?? '';
 		isLoadingNote = true;
 		isLargeDoc = content.length > LARGE_DOC_CHARS;
 		// Viewer mode (external file) always forces read-only. New notes stay editable and
@@ -3545,7 +3583,7 @@
 		if (changed) {
 			editor.view.dispatch(tr);
 			$editorDirty = true;
-			autoSave();
+			markDirty();
 		}
 		closeTableContextMenu();
 	}
@@ -3880,6 +3918,7 @@
 		sourceHistoryIndex--;
 		const entry = sourceHistory[sourceHistoryIndex];
 		sourceContent = entry.content;
+		markDirty();
 		tick().then(() => {
 			sourceElement?.setSelectionRange(entry.cursor, entry.cursor);
 		});
@@ -3890,6 +3929,7 @@
 		sourceHistoryIndex++;
 		const entry = sourceHistory[sourceHistoryIndex];
 		sourceContent = entry.content;
+		markDirty();
 		tick().then(() => {
 			sourceElement?.setSelectionRange(entry.cursor, entry.cursor);
 		});
@@ -4336,6 +4376,7 @@
 		if (!path) {
 			// Note was deselected (e.g. deleted) - destroy editor so it reinits on next note
 			destroyEditor();
+			saveCoordinator.setDocument(null, true);
 			loadedPath = '';
 			return;
 		}
@@ -4345,7 +4386,6 @@
 	});
 
 	function destroyEditor() {
-		flushSave();
 		if (editor) {
 			editor.destroy();
 			editor = null;
@@ -4662,7 +4702,7 @@
 					return;
 				}
 				$editorDirty = true;
-				autoSave();
+				markDirty();
 				if (!isMobile && showOutline) scheduleOutline();
 				if (showInfo) scheduleCounts();
 			},
@@ -4845,7 +4885,7 @@
 		editor.view.dispatch(tr);
 		imageToolbar = { ...imageToolbar, size };
 		$editorDirty = true;
-		autoSave();
+		markDirty();
 	}
 
 	function getImageAbsPath(src: string): string {
@@ -4986,9 +5026,18 @@
 		const { from, to } = editor.state.selection;
 		if (from === to) { closeTextContextMenu(); return; }
 		const text = editor.state.doc.textBetween(from, to, '\n');
-		await navigator.clipboard.writeText(text);
-		editor.chain().focus().deleteSelection().run();
-		closeTextContextMenu();
+		try {
+			await mutationBarrier.runAfter(
+				async () => { await navigator.clipboard.writeText(text); return text; },
+				(copied, identity) => {
+					if (!editor || !mutationBarrier.isCurrent(identity)) return;
+					if (editor.state.doc.textBetween(from, to, '\n') !== copied) return;
+					editor.chain().focus().setTextSelection({ from, to }).deleteSelection().run();
+				},
+			);
+		} finally {
+			closeTextContextMenu();
+		}
 	}
 
 	async function ctxCopy() {
@@ -5003,8 +5052,12 @@
 	async function ctxPaste() {
 		if (!editor) return;
 		try {
-			const text = await navigator.clipboard.readText();
-			if (text) editor.chain().focus().insertContent(text).run();
+			await mutationBarrier.runAfter(
+				() => navigator.clipboard.readText(),
+				(text, identity) => {
+					if (text && editor && mutationBarrier.isCurrent(identity)) editor.chain().focus().insertContent(text).run();
+				},
+			);
 		} catch (e) {
 			console.error('Paste failed:', e);
 		}
@@ -5158,17 +5211,18 @@
 	}
 
 	function insertDetails() {
-		if (!editor) return;
+		if (!editor || $shutdownPending || mutationBarrier.isLocked()) return;
 		editor.chain().focus().setDetails().run();
-		requestAnimationFrame(() => {
-			if (!editor) return;
-			const domPos = editor.view.domAtPos(editor.state.selection.from);
+		trackEditorMutation('Could not finish inserting collapsible section', async (identity) => {
+			await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+			if (!canApplyMutation(identity)) return;
+			const domPos = editor!.view.domAtPos(editor!.state.selection.from);
 			let node = domPos.node as HTMLElement;
 			if (node.nodeType === 3) node = node.parentElement as HTMLElement;
 			const detailsEl = node.closest('[data-type="details"]') as HTMLElement | null;
 			if (detailsEl) openDetailsEl(detailsEl);
-			// Sync open: true into the document so it saves with the note
-			editor.chain().updateAttributes('details', { open: true }).run();
+			// Sync open: true into the document so it saves with the note.
+			editor!.chain().updateAttributes('details', { open: true }).run();
 		});
 	}
 
@@ -5437,62 +5491,68 @@
 
 	async function aiApplyResult() {
 		if (!aiResult) return;
-		// Save a version snapshot before applying AI changes
-		if ($activeNotePath && $activeNote && !aiEmptyNote) {
-			try {
-				await forceSave();
-				await createVersion($activeNotePath, $activeNote.meta.id);
-			} catch (e) {
-				console.error('Failed to create version before AI apply:', e);
-			}
-		}
-		if ($sourceMode) {
-			if (aiEmptyNote) {
-				const lines = aiResult.split('\n');
-				let title = lines[0]?.replace(/^#+\s*/, '').trim() || 'Untitled';
-				const body = lines.slice(1).join('\n').replace(/^\n+/, '');
-				if ($activeNote) $activeNote.meta.title = title;
-				sourceContent = body;
-			} else if (aiWholeNote) {
-				sourceContent = stripTitleH1(aiResult);
-			} else {
-				sourceContent = sourceContent.slice(0, aiSelectionFrom) + aiResult + sourceContent.slice(aiSelectionTo);
-			}
-			$editorDirty = true;
-			autoSave();
-			closeAiMenu();
-			return;
-		}
-		if (!editor) return;
-		if (aiEmptyNote) {
-			// Parse title from first line, rest is content
-			const lines = aiResult.split('\n');
-			let title = lines[0]?.replace(/^#+\s*/, '').trim() || 'Untitled';
-			const body = lines.slice(1).join('\n').replace(/^\n+/, '');
-			if ($activeNote) {
-				$activeNote.meta.title = title;
-			}
-			editor.commands.setContent(markdownToHtml(body));
-		} else if (aiWholeNote) {
-			// Restore media placeholders back to original markdown
-			let finalMarkdown = aiResult;
-			for (const [key, original] of aiMediaPlaceholders) {
-				finalMarkdown = finalMarkdown.replace(key, original);
-			}
-			// Replace entire document - convert markdown back to HTML for TipTap
-			editor.commands.setContent(markdownToHtml(finalMarkdown));
-		} else {
-			// Replace the selected range with the AI result (convert markdown → HTML so TipTap renders it properly)
-			const html = markdownToHtml(aiResult);
-			editor.chain().focus()
-				.setTextSelection({ from: aiSelectionFrom, to: aiSelectionTo })
-				.deleteSelection()
-				.insertContent(html)
-				.run();
-		}
-		$editorDirty = true;
-		autoSave();
-		closeAiMenu();
+		const result = aiResult;
+		const emptyNote = aiEmptyNote;
+		const wholeNote = aiWholeNote;
+		const selectionFrom = aiSelectionFrom;
+		const selectionTo = aiSelectionTo;
+		await mutationBarrier.runAfter(
+			async () => {
+				// Save/version prework is intentionally outside the tracked commit phase: flush
+				// drains the barrier and would otherwise wait on this operation itself.
+				if ($activeNotePath && $activeNote && !emptyNote) {
+					try {
+						if (!(await forceSave())) throw new Error('Could not save before AI apply.');
+						await createVersion($activeNotePath, $activeNote.meta.id);
+					} catch (e) {
+						console.error('Failed to create version before AI apply:', e);
+					}
+				}
+				return result;
+			},
+			(value, identity) => {
+				if (!mutationBarrier.isCurrent(identity)) return;
+				if ($sourceMode) {
+					if (emptyNote) {
+						const lines = value.split('\n');
+						const title = lines[0]?.replace(/^#+\s*/, '').trim() || 'Untitled';
+						const body = lines.slice(1).join('\n').replace(/^\n+/, '');
+						if ($activeNote) $activeNote.meta.title = title;
+						sourceContent = body;
+					} else if (wholeNote) {
+						sourceContent = stripTitleH1(value);
+					} else {
+						sourceContent = sourceContent.slice(0, selectionFrom) + value + sourceContent.slice(selectionTo);
+					}
+					$editorDirty = true;
+					markDirty();
+					closeAiMenu();
+					return;
+				}
+				if (!editor) return;
+				if (emptyNote) {
+					const lines = value.split('\n');
+					const title = lines[0]?.replace(/^#+\s*/, '').trim() || 'Untitled';
+					const body = lines.slice(1).join('\n').replace(/^\n+/, '');
+					if ($activeNote) $activeNote.meta.title = title;
+					editor.commands.setContent(markdownToHtml(body));
+				} else if (wholeNote) {
+					let finalMarkdown = value;
+					for (const [key, original] of aiMediaPlaceholders) finalMarkdown = finalMarkdown.replace(key, original);
+					editor.commands.setContent(markdownToHtml(finalMarkdown));
+				} else {
+					const html = markdownToHtml(value);
+					editor.chain().focus()
+						.setTextSelection({ from: selectionFrom, to: selectionTo })
+						.deleteSelection()
+						.insertContent(html)
+						.run();
+				}
+				$editorDirty = true;
+				markDirty();
+				closeAiMenu();
+			},
+		);
 	}
 
 	function aiDiscard() {
@@ -5567,7 +5627,7 @@
 				.unsetLink()
 				.run();
 			$editorDirty = true;
-			autoSave();
+			markDirty();
 		}
 		closeLinkContextMenu();
 	}
@@ -5600,6 +5660,24 @@
 				console.error('Failed to save file:', e);
 			}
 		}
+	}
+
+	function trackEditorMutation(
+		label: string,
+		producer: (identity: EditorDocumentIdentity) => Promise<void>,
+	): boolean {
+		if ($shutdownPending) return false;
+		return mutationBarrier.start(async (identity) => {
+			try {
+				await producer(identity);
+			} catch (error) {
+				console.error(`${label}:`, error);
+			}
+		});
+	}
+
+	function canApplyMutation(identity: EditorDocumentIdentity): boolean {
+		return mutationBarrier.isCurrent(identity) && !!editor && !editor.isDestroyed;
 	}
 
 	function handleFileDrop(event: DragEvent): boolean {
@@ -5649,31 +5727,25 @@
 		return false;
 	}
 
-	async function insertClipboardImage() {
-		try {
+	function insertClipboardImage() {
+		trackEditorMutation('Clipboard image fallback failed', async (identity) => {
 			const data = await readClipboardImage();
 			const relativePath = await saveImage('pasted-image.png', data);
-			if (editor) {
-				const displaySrc = resolveImageSrc(relativePath);
-				editor.chain().focus().setImage({ src: displaySrc }).run();
-			}
-		} catch (e) {
-			console.error('Clipboard image fallback failed:', e);
-		}
+			if (!canApplyMutation(identity)) return;
+			const displaySrc = resolveImageSrc(relativePath);
+			editor!.chain().focus().setImage({ src: displaySrc }).run();
+		});
 	}
 
-	async function insertImage(file: File) {
-		try {
+	function insertImage(file: File) {
+		trackEditorMutation('Failed to insert image', async (identity) => {
 			const buffer = await file.arrayBuffer();
 			const data = Array.from(new Uint8Array(buffer));
 			const relativePath = await saveImage(file.name, data);
-			if (editor) {
-				const displaySrc = resolveImageSrc(relativePath);
-				editor.chain().focus().setImage({ src: displaySrc }).run();
-			}
-		} catch (e) {
-			console.error('Failed to insert image:', e);
-		}
+			if (!canApplyMutation(identity)) return;
+			const displaySrc = resolveImageSrc(relativePath);
+			editor!.chain().focus().setImage({ src: displaySrc }).run();
+		});
 	}
 
 	function handleImageInput(event: Event) {
@@ -5683,28 +5755,26 @@
 		input.value = '';
 	}
 
-	async function insertPdf(file: File) {
-		try {
+	function insertPdf(file: File) {
+		trackEditorMutation('Failed to insert PDF', async (identity) => {
 			const buffer = await file.arrayBuffer();
 			const data = Array.from(new Uint8Array(buffer));
 			const relativePath = await saveAttachment(file.name, data);
-			if (!editor) return;
+			if (!canApplyMutation(identity)) return;
 			const usePdfPreview = !isMobile && ($appConfig?.pdf_preview ?? false);
 			if (usePdfPreview) {
-				editor.chain().focus().insertContent({
+				editor!.chain().focus().insertContent({
 					type: 'pdfEmbed',
 					attrs: { src: relativePath, name: file.name },
 				}).run();
 			} else {
 				const sizeKB = Math.round(file.size / 1024);
 				const label = `${file.name} (${sizeKB} kB)`;
-				editor.chain().focus()
+				editor!.chain().focus()
 					.insertContent(`<a href="${relativePath}">${label}</a> `)
 					.run();
 			}
-		} catch (e) {
-			console.error('Failed to insert PDF:', e);
-		}
+		});
 	}
 
 	async function saveBlobImage(blobUrl: string): Promise<string | null> {
@@ -5725,7 +5795,8 @@
 
 	async function fixBlobImages() {
 		if (!editor) return;
-		const { doc, tr } = editor.state;
+		const identity = mutationBarrier.capture();
+		const { doc } = editor.state;
 		let changed = false;
 		const promises: Array<{ pos: number; blobUrl: string }> = [];
 		doc.descendants((node, pos) => {
@@ -5733,9 +5804,9 @@
 				promises.push({ pos, blobUrl: node.attrs.src });
 			}
 		});
-		for (const { pos, blobUrl } of promises) {
+		for (const { blobUrl } of promises) {
 			const savedSrc = await saveBlobImage(blobUrl);
-			if (savedSrc && editor) {
+			if (savedSrc && canApplyMutation(identity)) {
 				const currentTr = editor.state.tr;
 				// Re-find the node since positions may have shifted
 				let found = false;
@@ -5751,25 +5822,22 @@
 		}
 		if (changed) {
 			$editorDirty = true;
-			autoSave();
+			markDirty();
 		}
 	}
 
-	async function insertFileAttachment(file: File) {
-		try {
+	function insertFileAttachment(file: File) {
+		trackEditorMutation('Failed to insert attachment', async (identity) => {
 			const buffer = await file.arrayBuffer();
 			const data = Array.from(new Uint8Array(buffer));
 			const relativePath = await saveAttachment(file.name, data);
-			if (editor) {
-				const sizeKB = Math.round(file.size / 1024);
-				const label = `${file.name} (${sizeKB} kB)`;
-				editor.chain().focus()
-					.insertContent(`<a href="${relativePath}">${label}</a> `)
-					.run();
-			}
-		} catch (e) {
-			console.error('Failed to insert attachment:', e);
-		}
+			if (!canApplyMutation(identity)) return;
+			const sizeKB = Math.round(file.size / 1024);
+			const label = `${file.name} (${sizeKB} kB)`;
+			editor!.chain().focus()
+				.insertContent(`<a href="${relativePath}">${label}</a> `)
+				.run();
+		});
 	}
 
 	// Source mode toggle - only react to explicit user toggle, not note switches
@@ -5835,51 +5903,42 @@
 	// Tauri drag-drop listener for OS file drops (browser DragEvent doesn't have files in Tauri)
 	let unlistenDragDrop: (() => void) | null = null;
 	$effect(() => {
+		let disposed = false;
 		const appWindow = getCurrentWindow();
 		appWindow.onDragDropEvent((event) => {
-			if (event.payload.type !== 'drop' || !editor || !$activeNote) return;
-			const paths = event.payload.paths;
-			for (const filePath of paths) {
+			if (disposed || event.payload.type !== 'drop' || !editor || !$activeNote || $shutdownPending) return;
+			for (const filePath of event.payload.paths) {
 				const name = filePath.split('/').pop() || 'file';
 				const ext = name.split('.').pop()?.toLowerCase() || '';
-				if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) {
-					readFile(filePath).then((data) => {
-						saveImage(name, Array.from(data)).then((relativePath) => {
-							if (editor) {
-								editor.chain().focus().setImage({ src: resolveImageSrc(relativePath) }).run();
-							}
-						});
-					}).catch((e) => console.error('Failed to drop image:', e));
-				} else if (ext === 'pdf') {
-					readFile(filePath).then((data) => {
-						saveAttachment(name, Array.from(data)).then((relativePath) => {
-							if (!editor) return;
-							const usePdfPreview = !isMobile && ($appConfig?.pdf_preview ?? false);
-							if (usePdfPreview) {
-								editor.chain().focus().insertContent({
-									type: 'pdfEmbed',
-									attrs: { src: relativePath, name },
-								}).run();
-							} else {
-								editor.chain().focus().insertContent(`<a href="${relativePath}">${name}</a> `).run();
-							}
-						});
-					}).catch((e) => console.error('Failed to drop PDF:', e));
-				} else {
-					readFile(filePath).then((data) => {
-						saveAttachment(name, Array.from(data)).then((relativePath) => {
-							if (editor) {
-								editor.chain().focus().insertContent(`<a href="${relativePath}">${name}</a> `).run();
-							}
-						});
-					}).catch((e) => console.error('Failed to drop file:', e));
-				}
+				trackEditorMutation('Failed to drop file', async (identity) => {
+					const data = await readFile(filePath);
+					if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) {
+						const relativePath = await saveImage(name, Array.from(data));
+						if (!canApplyMutation(identity)) return;
+						editor!.chain().focus().setImage({ src: resolveImageSrc(relativePath) }).run();
+						return;
+					}
+
+					const relativePath = await saveAttachment(name, Array.from(data));
+					if (!canApplyMutation(identity)) return;
+					if (ext === 'pdf' && !isMobile && ($appConfig?.pdf_preview ?? false)) {
+						editor!.chain().focus().insertContent({
+							type: 'pdfEmbed',
+							attrs: { src: relativePath, name },
+						}).run();
+					} else {
+						editor!.chain().focus().insertContent(`<a href="${relativePath}">${name}</a> `).run();
+					}
+				});
 			}
 		}).then((unlisten) => {
-			unlistenDragDrop = unlisten;
+			if (disposed || componentDestroyed) unlisten();
+			else unlistenDragDrop = unlisten;
 		});
 		return () => {
+			disposed = true;
 			unlistenDragDrop?.();
+			unlistenDragDrop = null;
 		};
 	});
 
@@ -5888,11 +5947,15 @@
 	let unlistenFileChange: (() => void) | null = null;
 	if ($appConfig?.enable_wiki_links) {
 		listen('file-changed', () => {
-			if ($appConfig?.enable_wiki_links) refreshWikiLinkTitles();
-		}).then(fn => { unlistenFileChange = fn; });
+			if (!componentDestroyed && $appConfig?.enable_wiki_links) refreshWikiLinkTitles();
+		}).then((unlisten) => {
+			if (componentDestroyed) unlisten();
+			else unlistenFileChange = unlisten;
+		});
 	}
 
 	onDestroy(() => {
+		componentDestroyed = true;
 		clearTaskReveal();
 		destroyEditor();
 		unlistenFileChange?.();
@@ -5965,15 +6028,21 @@
 							const filename = oldPath.split('/').pop() ?? '';
 							const stem = filename.replace(/\.md$/, '');
 							if (stem !== newTitle) {
+								const oldTitle = $activeNote.meta.title;
+								let releaseMutations: (() => void) | null = null;
 								try {
+									releaseMutations = await lockMutations();
 									// Save the body before changing metadata. The backend uses the
 									// title currently on disk to update incoming wiki-links.
-									await forceSave();
-									$activeNote.meta.title = newTitle;
+									if (!(await forceSave())) {
+										(e.target as HTMLInputElement).value = oldTitle;
+										return;
+									}
+									const outcome = await renameNote(oldPath, newTitle);
+									if (!outcome.note) throw new Error('Rename committed without authoritative note content.');
+									const newPath = outcome.path;
+									rebaseDocument(oldPath, newPath, outcome.note);
 									if (titleWasStripped) strippedTitle = newTitle;
-									const newPath = await renameNote(oldPath, newTitle);
-									loadedPath = newPath;
-									$activeNotePath = newPath;
 									notes.update(list => list.map(n =>
 										n.path === oldPath
 											? { ...n, path: newPath, relative_path: n.relative_path.replace(/[^/]+$/, newTitle + '.md'), meta: { ...n.meta, title: newTitle } }
@@ -5983,15 +6052,17 @@
 									refreshWikiLinkTitles();
 								} catch (err) {
 									console.error('Failed to rename note file:', err);
-									notes.update(list => list.map(n =>
-										n.path === oldPath ? { ...n, meta: { ...n.meta, title: newTitle } } : n
-									));
+									if ($activeNotePath === oldPath && $activeNote) $activeNote.meta.title = oldTitle;
+									(e.target as HTMLInputElement).value = oldTitle;
+									if (titleWasStripped) strippedTitle = oldTitle;
+								} finally {
+									releaseMutations?.();
 								}
 							} else {
 								$activeNote.meta.title = newTitle;
 								if (titleWasStripped) strippedTitle = newTitle;
-								$editorDirty = true;
-								await forceSave();
+								markDirty();
+								if (!(await forceSave())) return;
 								notes.update(list => list.map(n =>
 									n.path === oldPath ? { ...n, meta: { ...n.meta, title: newTitle } } : n
 								));
@@ -6047,7 +6118,7 @@
 						if ($activeNote) {
 							$activeNote.meta.pinned = !$activeNote.meta.pinned;
 							$editorDirty = true;
-							autoSave();
+							markDirty();
 						}
 					}}
 					title={$activeNote?.meta.pinned ? 'Unpin note' : 'Pin note'}
@@ -6220,10 +6291,10 @@
 						class="source-editor"
 						bind:this={sourceElement}
 						bind:value={sourceContent}
-						readonly={$readOnly}
+						readonly={$readOnly || $shutdownPending}
 						oninput={() => {
 							$editorDirty = true;
-							autoSave();
+							markDirty();
 							pushSourceHistoryDebounced();
 						}}
 						onkeydown={(e) => {
@@ -6242,7 +6313,7 @@
 									ta.setSelectionRange(newPos, newPos);
 								});
 								$editorDirty = true;
-								autoSave();
+								markDirty();
 								pushSourceHistoryDebounced();
 								return;
 							}
@@ -6282,10 +6353,10 @@
 							class:with-line-numbers={$appConfig?.show_line_numbers}
 							bind:this={sourceElement}
 							bind:value={sourceContent}
-							readonly={$readOnly}
+							readonly={$readOnly || $shutdownPending}
 							oninput={() => {
 								$editorDirty = true;
-								autoSave();
+								markDirty();
 								pushSourceHistoryDebounced();
 							}}
 							onkeydown={(e) => {
@@ -6305,7 +6376,7 @@
 										ta.setSelectionRange(newPos, newPos);
 									});
 									$editorDirty = true;
-									autoSave();
+									markDirty();
 									pushSourceHistoryDebounced();
 									return;
 								}
@@ -6357,7 +6428,7 @@
 										});
 									}
 									$editorDirty = true;
-									autoSave();
+									markDirty();
 								}
 							}}
 							onscroll={syncSourceEditorScroll}

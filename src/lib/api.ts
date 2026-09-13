@@ -24,6 +24,8 @@ import type {
   AiProvider,
   RepairStatus,
   SemanticStatus,
+  SaveCommitOutcome,
+  RelocationOutcome,
 } from "./types";
 
 export async function openVault(path: string): Promise<void> {
@@ -112,8 +114,9 @@ export async function createNotebook(
 export async function renameNotebook(
   path: string,
   newName: string,
-): Promise<string> {
-  return invoke("rename_notebook", { path, newName });
+  activeNotePath: string | null = null,
+): Promise<RelocationOutcome> {
+  return invoke("rename_notebook", { path, newName, activeNotePath });
 }
 
 export async function deleteNotebook(path: string): Promise<void> {
@@ -123,8 +126,9 @@ export async function deleteNotebook(path: string): Promise<void> {
 export async function moveNotebook(
   notebookPath: string,
   destParent: string,
-): Promise<string> {
-  return invoke("move_notebook", { notebookPath, destParent });
+  activeNotePath: string | null = null,
+): Promise<RelocationOutcome> {
+  return invoke("move_notebook", { notebookPath, destParent, activeNotePath });
 }
 
 export async function getNotes(
@@ -142,12 +146,40 @@ export async function readUnfiledNote(path: string): Promise<NoteContent> {
   return invoke("read_unfiled_note", { path });
 }
 
+export interface SaveBeforeCloseRequest { requestId: string }
+export interface WindowReservation { label: string; token: string }
+
+export async function reserveNoteWindow(): Promise<WindowReservation> {
+  return invoke("reserve_note_window");
+}
+
+export async function cancelNoteWindowReservation(label: string, token: string): Promise<void> {
+  return invoke("cancel_note_window_reservation", { label, token });
+}
+
+export async function beginVaultSwitch(): Promise<void> { return invoke("begin_vault_switch"); }
+export async function endVaultSwitch(): Promise<void> { return invoke("end_vault_switch"); }
+
+export async function registerSaveParticipant(
+  reservationToken: string | null = null,
+): Promise<SaveBeforeCloseRequest | null> {
+  return invoke("register_save_participant", { reservationToken });
+}
+
+export async function acknowledgeSaveBeforeClose(
+  requestId: string,
+  saved: boolean,
+): Promise<void> {
+  return invoke("acknowledge_save_before_close", { requestId, saved });
+}
+
 export async function saveNote(
   path: string,
   meta: NoteMeta,
   body: string,
-): Promise<void> {
-  return invoke("save_note", { path, meta, body });
+  expectedRevision: string,
+): Promise<SaveCommitOutcome> {
+  return invoke("save_note", { path, meta, body, expectedRevision });
 }
 
 /// File a quick capture. The first line of `text` becomes the title, the rest the body.
@@ -220,7 +252,7 @@ export async function fileUnfiledNote(
 export async function renameNote(
   path: string,
   newTitle: string,
-): Promise<string> {
+): Promise<RelocationOutcome> {
   return invoke("rename_note", { path, newTitle });
 }
 
@@ -231,7 +263,7 @@ export async function deleteNote(path: string): Promise<void> {
 export async function moveNote(
   notePath: string,
   destNotebook: string,
-): Promise<string> {
+): Promise<RelocationOutcome> {
   return invoke("move_note", { notePath, destNotebook });
 }
 
@@ -508,7 +540,7 @@ export async function setTaskDone(
   line: number,
   rawLine: string,
   done: boolean,
-): Promise<void> {
+): Promise<NoteContent> {
   return invoke("set_task_done", { notePath, line, rawLine, done });
 }
 
@@ -517,7 +549,7 @@ export async function setTaskPriority(
   line: number,
   rawLine: string,
   priority: string | null,
-): Promise<void> {
+): Promise<NoteContent> {
   return invoke("set_task_priority", { notePath, line, rawLine, priority });
 }
 
@@ -526,7 +558,7 @@ export async function setTaskDue(
   line: number,
   rawLine: string,
   due: string | null,
-): Promise<void> {
+): Promise<NoteContent> {
   return invoke("set_task_due", { notePath, line, rawLine, due });
 }
 
