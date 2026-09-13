@@ -1306,7 +1306,7 @@ mod tests {
         for category in crate::vault::para::ParaCategory::ALL {
             fs::create_dir(root.join(category.folder_name())).unwrap();
         }
-        root
+        crate::vault::path::canonicalize(&root, "test vault").unwrap()
     }
 
     fn directory_rewrite(path: &str, before: &str, after: &str) -> DirectoryRewrite {
