@@ -31,9 +31,10 @@
   <body>
     <h1>Pre-Alpha Remediation Execution Plan</h1>
     <p class="meta"><strong>Repository:</strong> <code>zulucode-design/second-brain</code> · <strong>Created:</strong> 2026-09-13 · <strong>Source audit:</strong> <code>docs/reports/pre-alpha-codebase-audit-2026-09-13.html</code></p>
+    <p class="meta"><strong>Status refresh — PR #90:</strong> work package A / D-01 is complete and verified on <a href="https://github.com/zulucode-design/second-brain/pull/90">PR #90</a>; implementation commit before this report refresh: <code>0e558cb4e6c4b84df9e63ae0ccad11b6fa8467ef</code>. Issue #81 closes when the PR merges.</p>
 
     <div class="callout danger">
-      <strong>Release gate:</strong> no external alpha until work packages A–D and H are complete, decision gates G1–G4 are recorded and their required outcomes implemented, no P0/P1 remains open, and H’s versioned verification-matrix record is green. That record must name commands, supported platforms, fixtures, manual protocols, expected outcomes, and evidence for packaged install/launch plus data-safety scenarios. Internal testing must use a disposable vault with WebDAV and restore disabled until their P1 packages close.
+      <strong>Release gate:</strong> work package A is complete and verified by PR #90. No external alpha until work packages B–D and H are complete, decision gates G1–G4 are recorded and their required outcomes implemented, no P0/P1 remains open, and H’s versioned verification-matrix record is green. That record must name commands, supported platforms, fixtures, manual protocols, expected outcomes, and evidence for packaged install/launch plus data-safety scenarios. Internal testing must use a disposable vault with WebDAV and restore disabled until their P1 packages close.
     </div>
 
     <h2>1. Operating model</h2>
@@ -62,8 +63,8 @@
       <thead><tr><th>ID / priority</th><th>Scope</th><th>Acceptance criteria</th><th>Audit coverage</th><th>Dependencies</th></tr></thead>
       <tbody>
         <tr>
-          <td><strong>A</strong><br><span class="badge p1">P1 save lifecycle</span></td>
-          <td>Unify editor navigation and app/window shutdown behind an awaited save coordinator.</td>
+          <td><strong>A</strong><br><span class="badge p1">P1 historical severity</span><br><span class="badge ready">Complete / verified</span></td>
+          <td><strong>Completed by PR #90:</strong> unified editor navigation and app/window shutdown behind an awaited, revision/document-aware save coordinator and editor mutation barrier.</td>
           <td>
             <ul>
               <li>One API drains the save queue, serializes captured content/path, and returns success/failure.</li>
@@ -72,8 +73,8 @@
               <li>Close during debounce and in-flight save is tested.</li>
             </ul>
           </td>
-          <td>D-01; alpha blocker 1.</td>
-          <td>None. First implementation ticket.</td>
+          <td>D-01; historical alpha blocker 1. Fixed and verified by <a href="https://github.com/zulucode-design/second-brain/pull/90">PR #90</a>.</td>
+          <td>Complete. Final semantic review approved with no blocking findings; full OCI <code>pnpm verify</code> passed. Issue #81 closes on merge.</td>
         </tr>
         <tr>
           <td><strong>B</strong><br><span class="badge p1">P1 WebDAV boundary</span></td>
@@ -185,7 +186,7 @@
             </ul>
           </td>
           <td>Test assessment gaps; existing #24 and #49.</td>
-          <td>A–D provide the gating regression scenarios; E–G are non-gating matrix rows unless separately promoted. CI scaffolding can begin immediately.</td>
+          <td>A now provides focused save/navigation/shutdown regressions. B–D still must provide the remaining gating scenarios; E–G are non-gating matrix rows unless separately promoted. CI scaffolding can continue immediately.</td>
         </tr>
         <tr>
           <td><strong>I</strong><br><span class="badge p3">P3 product/cleanup</span></td>
@@ -225,7 +226,7 @@
     <h2>4. Recommended execution order</h2>
     <ol>
       <li><strong>Wave 0 — decisions and containment:</strong> disable risky external-alpha surfaces; resolve G1–G4. Start H’s Windows/CI scaffolding.</li>
-      <li><strong>Wave 1 — independent P1s in parallel:</strong> A (save lifecycle), B (WebDAV boundary), and C (transactional restore foundation).</li>
+      <li><strong>Wave 1 — independent P1s in parallel:</strong> <span class="badge ready">A complete / verified</span> Save lifecycle is complete in PR #90; B (WebDAV boundary) and C (transactional restore foundation) remain.</li>
       <li><strong>Wave 2 — coordinated mutation adoption:</strong> D adopts C’s coordinator for the selected sync architecture, then E adopts it for import. Keep each PR independently reviewable.</li>
       <li><strong>Wave 3 — durability and visible correctness:</strong> F and G.</li>
       <li><strong>Wave 4 — verification closure:</strong> complete H against the implemented failure scenarios, including package installation/smoke evidence.</li>
@@ -246,7 +247,7 @@
 
     <h2>6. Definition of external-alpha ready</h2>
     <ul>
-      <li>A–D and H complete; no open P0/P1 data-integrity or security issue.</li>
+      <li><span class="badge ready">A complete / verified</span> B–D and H remain; no open P0/P1 data-integrity or security issue at release.</li>
       <li>G1–G4 are recorded and their required outcomes are implemented in SPEC, README, settings, packaging, migrations, and executable tickets.</li>
       <li>H’s versioned verification-matrix record is complete and green: commands, supported Linux/Windows platforms, fixtures, manual protocols, expected outcomes, evidence links, performance thresholds, and residual gaps are explicit.</li>
       <li><code>pnpm verify</code> is green at documented Node/pnpm/Rust versions on Linux and Windows.</li>
@@ -257,7 +258,8 @@
     </ul>
 
     <div class="callout good">
-      <strong>Current verification baseline:</strong> the reviewed commit passes <code>pnpm verify</code> in the provisioned WebKitGTK environment at Node 22.23.2, pnpm 10.28.1, and Rust 1.88.0: Svelte 0/0 diagnostics, JavaScript 44/44, Rust 484 passed/0 failed/6 ignored, formatting and Clippy clean, and production build successful. Unsigned deb/rpm builds and both desktop-entry package checks also pass. Hosted GitHub Actions Verify run <a href="https://github.com/zulucode-design/second-brain/actions/runs/34729884375">34729884375</a> independently passed the exact audited HEAD. This baseline is the minimum every remediation wave must preserve.
+      <p><strong>Original verification baseline:</strong> the reviewed audit commit passes <code>pnpm verify</code> in the provisioned WebKitGTK environment at Node 22.23.2, pnpm 10.28.1, and Rust 1.88.0: Svelte 0/0 diagnostics, JavaScript 44/44, Rust 484 passed/0 failed/6 ignored, formatting and Clippy clean, and production build successful. Unsigned deb/rpm builds and both desktop-entry package checks also pass. Hosted GitHub Actions Verify run <a href="https://github.com/zulucode-design/second-brain/actions/runs/34729884375">34729884375</a> independently passed the exact audited HEAD. This remains the historical minimum every remediation wave must preserve.</p>
+      <p><strong>Work package A / PR #90 evidence:</strong> at implementation commit <code>0e558cb</code>, full OCI <code>pnpm verify</code> passed with Svelte 0 errors/0 warnings, 64 frontend tests passed/0 failed, and 500 Rust tests discovered—494 passed, 6 ignored, 0 failed—plus clean rustfmt, Clippy with warnings denied, and production build. Final semantic review: <strong>APPROVED — no remaining blocking findings</strong>. A fresh hosted Verify on the report-refresh head remains the pre-merge gate.</p>
     </div>
   </body>
 </html>
