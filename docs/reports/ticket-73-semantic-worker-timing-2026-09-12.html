@@ -16,7 +16,7 @@
     </style>
   </head>
   <body>
-    <p><span class="status pass">Implementation verified</span></p>
+    <p><span class="status pass">Review passed</span></p>
     <h1>Ticket #73 — semantic worker timing test</h1>
     <p>Diagnosed and remediated on 2026-09-12 from <code>main</code> at
       <code>1c6f838</code>, using the dedicated Windows checkout
@@ -46,6 +46,7 @@
         <tr><td>Minimized Windows stress</td><td><span class="status pass">Passed</span></td><td>5 batches × 2 concurrent processes: 10/10 process runs.</td></tr>
         <tr><td>Complete Windows Rust suite</td><td><span class="status pass">Passed</span></td><td>20/20 consecutive runs with no test exclusions.</td></tr>
         <tr><td>Repository verification</td><td><span class="status pass">Passed</span></td><td><code>pnpm verify</code>: Svelte 0 errors and warnings; JavaScript 44/44; Rust 484 passed with 6 expected ignores; formatting, Clippy with warnings denied, and production build passed.</td></tr>
+        <tr><td>Two-axis review</td><td><span class="status pass">Passed</span></td><td>Standards: 0 findings. Spec: 0 findings after adversarial review hardened the test against early wake exits and already-expired deadlines.</td></tr>
       </tbody>
     </table>
   </body>
