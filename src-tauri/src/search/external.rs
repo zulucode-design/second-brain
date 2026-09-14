@@ -172,7 +172,14 @@ fn apply(search: &SearchIndex, settled: Vec<PathBuf>) -> Result<AppliedChanges, 
     for path in settled {
         let text = path.to_string_lossy().to_string();
         if path.is_file() {
-            upserts.push(text);
+            if is_ignored_at_flush(&path) {
+                // A path can change identity between the notify event and this settled
+                // read (Syncthing publishes conflict copies through renames). Treat an
+                // ignored file as absent here so a stale document is also retired.
+                gone.push(text);
+            } else {
+                upserts.push(text);
+            }
         } else if path.is_dir() {
             folder_arrived = true;
             // A folder that still exists means it arrived — renamed or moved into place.
@@ -241,6 +248,7 @@ fn apply(search: &SearchIndex, settled: Vec<PathBuf>) -> Result<AppliedChanges, 
 fn notes_within(directory: &Path) -> Vec<String> {
     WalkDir::new(directory)
         .into_iter()
+        .filter_entry(|entry| !is_ignored_at_flush(entry.path()))
         .filter_map(|entry| entry.ok())
         .filter(|entry| {
             entry.file_type().is_file()
@@ -248,6 +256,14 @@ fn notes_within(directory: &Path) -> Vec<String> {
         })
         .map(|entry| entry.path().to_string_lossy().to_string())
         .collect()
+}
+
+/// Recheck the complete path at flush time rather than trusting its earlier event name.
+fn is_ignored_at_flush(path: &Path) -> bool {
+    path.components().any(|component| {
+        matches!(component, std::path::Component::Normal(name)
+            if crate::vault::operations::is_hidden(Path::new(name)))
+    })
 }
 
 /// A failed batch, carrying the paths involved so a repair issue can name them.
@@ -381,6 +397,21 @@ mod tests {
         apply(&index, vec![path.clone()]).unwrap();
 
         assert_eq!(hits(&index, "zylophonic"), vec![path.to_string_lossy()]);
+        std::fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn a_conflict_copy_queued_by_the_watcher_never_becomes_findable() {
+        let (vault, index) = indexed_vault("conflict-copy");
+        let conflict = note(
+            &vault.join("Projects"),
+            "Plan.sync-conflict-20260914-153417-PEER.md",
+            "conflict-only-zylophonic",
+        );
+
+        apply(&index, vec![conflict]).unwrap();
+
+        assert!(hits(&index, "conflict-only-zylophonic").is_empty());
         std::fs::remove_dir_all(vault).unwrap();
     }
 

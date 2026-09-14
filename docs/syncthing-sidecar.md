@@ -87,7 +87,9 @@ Syncthing conflict copies use
 their original in Settings. Until resolved they are excluded from note enumeration, PARA
 and notebook counts, keyword and semantic search, graph data, and Notion publication.
 Choosing either version archives the other under `.helixnotes/trash/`; no version is silently
-discarded.
+discarded. Keyword and semantic watcher batching re-checks exclusions when a path settles,
+not only when its filesystem event first arrives; Syncthing can rename a queued path into a
+conflict copy before that later read.
 
 ## Real-machine verification protocol
 
