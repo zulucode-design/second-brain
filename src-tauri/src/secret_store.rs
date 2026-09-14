@@ -152,16 +152,8 @@ pub(crate) fn copy_plaintext_recovery(from: &AppConfig, to: &mut AppConfig) {
     to.ollama_api_key.clone_from(&from.ollama_api_key);
     to.openai_compatible_api_key
         .clone_from(&from.openai_compatible_api_key);
-    to.legacy_sync
-        .credentials
-        .webdav
-        .password
-        .clone_from(&from.legacy_sync.credentials.webdav.password);
-
     for source in &from.vaults {
-        let has_webdav = source.sync.credentials.webdav.password.is_some();
-        let has_notion = source.notion.token.is_some();
-        if !has_webdav && !has_notion {
+        if source.notion.token.is_none() {
             continue;
         }
         if let Some(target) = to.vaults.iter_mut().find(|target| {
@@ -179,12 +171,6 @@ pub(crate) fn copy_plaintext_recovery(from: &AppConfig, to: &mut AppConfig) {
                     && target.bookmark_id.is_none()
                     && source.path == target.path)
         }) {
-            target
-                .sync
-                .credentials
-                .webdav
-                .password
-                .clone_from(&source.sync.credentials.webdav.password);
             target.notion.token.clone_from(&source.notion.token);
         }
     }
@@ -192,22 +178,6 @@ pub(crate) fn copy_plaintext_recovery(from: &AppConfig, to: &mut AppConfig) {
 
 pub(crate) fn has_plaintext_credentials(config: &AppConfig) -> bool {
     !credential_values(config).is_empty()
-        || config.vaults.iter().any(|vault| {
-            vault
-                .sync
-                .credentials
-                .webdav
-                .password
-                .as_deref()
-                .is_some_and(|password| !password.is_empty())
-        })
-        || config
-            .legacy_sync
-            .credentials
-            .webdav
-            .password
-            .as_deref()
-            .is_some_and(|password| !password.is_empty())
 }
 
 #[derive(Debug)]
@@ -316,10 +286,6 @@ fn credential_bindings(config: &AppConfig) -> Vec<(SecretId, Option<String>)> {
     for vault in &config.vaults {
         if let Some(identity) = vault_identity(vault) {
             bindings.push((
-                SecretId::WebdavPassword(identity.to_string()),
-                vault.sync.credentials.webdav.password.clone(),
-            ));
-            bindings.push((
                 SecretId::NotionToken(identity.to_string()),
                 vault.notion.token.clone(),
             ));
@@ -333,13 +299,11 @@ fn clear_credentials(config: &mut AppConfig) {
     for id in ids {
         assign(config, &id, None);
     }
-    // A missing vault identity must not make an unaddressable password survive in
-    // runtime memory or in the redacted disk projection.
+    // A missing vault identity must not make an unaddressable token survive in runtime
+    // memory or in the redacted disk projection.
     for vault in &mut config.vaults {
-        vault.sync.credentials.webdav.password = None;
         vault.notion.token = None;
     }
-    config.legacy_sync.credentials.webdav.password = None;
 }
 
 fn assign(config: &mut AppConfig, id: &SecretId, value: Option<String>) {
@@ -348,15 +312,9 @@ fn assign(config: &mut AppConfig, id: &SecretId, value: Option<String>) {
         SecretId::OpenAiApiKey => config.openai_api_key = value,
         SecretId::OllamaApiKey => config.ollama_api_key = value,
         SecretId::OpenAiCompatibleApiKey => config.openai_compatible_api_key = value,
-        SecretId::WebdavPassword(identity) => {
-            if let Some(vault) = config
-                .vaults
-                .iter_mut()
-                .find(|vault| vault_identity(vault) == Some(identity.as_str()))
-            {
-                vault.sync.credentials.webdav.password = value;
-            }
-        }
+        // WebDAV exists only as a migration-time keyring address. It is never hydrated
+        // into current configuration or exposed to the webview.
+        SecretId::WebdavPassword(_) => {}
         SecretId::NotionToken(identity) => {
             if let Some(vault) = config
                 .vaults
@@ -380,40 +338,6 @@ fn unaddressable_plaintext(config: &AppConfig) -> Option<String> {
     }) {
         return Some(
             "A Notion token cannot migrate until its vault identity is available".to_string(),
-        );
-    }
-
-    if config.vaults.iter().any(|vault| {
-        vault
-            .sync
-            .credentials
-            .webdav
-            .password
-            .as_deref()
-            .is_some_and(|password| !password.is_empty())
-            && vault_identity(vault).is_none()
-    }) {
-        return Some(
-            "A WebDAV password cannot migrate until its vault identity is available".to_string(),
-        );
-    }
-
-    let legacy = config
-        .legacy_sync
-        .credentials
-        .webdav
-        .password
-        .as_deref()
-        .filter(|password| !password.is_empty());
-    if legacy.is_some_and(|legacy| {
-        !config.vaults.iter().any(|vault| {
-            vault.sync.credentials.webdav.password.as_deref() == Some(legacy)
-                && vault_identity(vault).is_some()
-        })
-    }) {
-        return Some(
-            "The legacy WebDAV password cannot migrate until it is associated with an identifiable vault"
-                .to_string(),
         );
     }
     None
@@ -462,7 +386,6 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::MemoryStore;
     use super::*;
-    use crate::sync_config::{ProviderCredentials, SyncSettings, WebdavCredentials};
     use crate::types::VaultConfig;
 
     #[test]
@@ -480,15 +403,6 @@ mod tests {
                     token: Some("notion-secret".to_string()),
                     ..Default::default()
                 },
-                sync: SyncSettings {
-                    credentials: ProviderCredentials {
-                        webdav: WebdavCredentials {
-                            password: Some("webdav-secret".to_string()),
-                            ..Default::default()
-                        },
-                    },
-                    ..Default::default()
-                },
                 ..Default::default()
             }],
             ..Default::default()
@@ -504,10 +418,6 @@ mod tests {
         assert_eq!(
             config.openai_compatible_api_key.as_deref(),
             Some("compatible-secret")
-        );
-        assert_eq!(
-            config.vaults[0].sync.credentials.webdav.password.as_deref(),
-            Some("webdav-secret")
         );
         assert_eq!(
             config.vaults[0].notion.token.as_deref(),
@@ -540,8 +450,8 @@ mod tests {
         );
         assert_eq!(
             stored.len(),
-            6,
-            "the per-vault provider credentials must migrate too"
+            5,
+            "AI and per-vault Notion credentials must migrate"
         );
     }
 
@@ -560,30 +470,12 @@ mod tests {
                         token: Some("notion-secret".to_string()),
                         ..Default::default()
                     },
-                    sync: SyncSettings {
-                        credentials: ProviderCredentials {
-                            webdav: WebdavCredentials {
-                                password: Some("webdav-secret".to_string()),
-                                ..Default::default()
-                            },
-                        },
-                        ..Default::default()
-                    },
                     ..Default::default()
                 },
                 VaultConfig {
                     path: "/vaults/unidentified".to_string(),
                     notion: crate::notion::config::NotionSettings {
                         token: Some("unaddressable-notion-secret".to_string()),
-                        ..Default::default()
-                    },
-                    sync: SyncSettings {
-                        credentials: ProviderCredentials {
-                            webdav: WebdavCredentials {
-                                password: Some("unaddressable-webdav-secret".to_string()),
-                                ..Default::default()
-                            },
-                        },
                         ..Default::default()
                     },
                     ..Default::default()
@@ -599,8 +491,6 @@ mod tests {
             "openai-secret",
             "ollama-secret",
             "compatible-secret",
-            "webdav-secret",
-            "unaddressable-webdav-secret",
             "notion-secret",
             "unaddressable-notion-secret",
         ] {
@@ -656,49 +546,6 @@ mod tests {
         assert_eq!(
             store.0.get(&SecretId::OpenAiApiKey).unwrap().as_deref(),
             Some("old-openai")
-        );
-    }
-
-    #[test]
-    fn webdav_password_follows_the_vault_id_when_the_folder_moves() {
-        let store = MemoryStore::default();
-        let mut before_move = AppConfig {
-            vaults: vec![VaultConfig {
-                path: "/old/location".to_string(),
-                vault_id: Some("stable-vault-id".to_string()),
-                sync: SyncSettings {
-                    credentials: ProviderCredentials {
-                        webdav: WebdavCredentials {
-                            password: Some("follow-the-vault".to_string()),
-                            ..Default::default()
-                        },
-                    },
-                    ..Default::default()
-                },
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        hydrate_config(&mut before_move, &store).unwrap();
-        let mut after_move = AppConfig {
-            vaults: vec![VaultConfig {
-                path: "/new/location".to_string(),
-                vault_id: Some("stable-vault-id".to_string()),
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-
-        hydrate_config(&mut after_move, &store).unwrap();
-
-        assert_eq!(
-            after_move.vaults[0]
-                .sync
-                .credentials
-                .webdav
-                .password
-                .as_deref(),
-            Some("follow-the-vault")
         );
     }
 

@@ -115,13 +115,13 @@ pub fn create_backup(
         let relative = path.strip_prefix(vault).map_err(|e| e.to_string())?;
 
         if path.is_dir() {
-            let dir_name = format!("{}/", relative.to_string_lossy());
+            let dir_name = format!("{}/", crate::vault::path::to_portable_string(relative));
             if dir_name != "/" {
                 zip.add_directory(&dir_name, options)
                     .map_err(|e| e.to_string())?;
             }
         } else {
-            let name = relative.to_string_lossy().to_string();
+            let name = crate::vault::path::to_portable_string(relative);
             zip.start_file(&name, options).map_err(|e| e.to_string())?;
             let mut f = fs::File::open(path).map_err(|e| e.to_string())?;
             let mut buffer = Vec::new();

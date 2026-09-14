@@ -748,10 +748,15 @@ pub async fn remove_vault(
             config.active_bookmark_id.is_none()
                 && config.active_vault.as_deref() == Some(vault.path.as_str())
         };
-        (vault.path.clone(), vault.bookmark_id.clone(), is_active)
+        (
+            vault.path.clone(),
+            vault.bookmark_id.clone(),
+            vault.vault_id.clone(),
+            is_active,
+        )
     });
 
-    let Some((target_path, target_bookmark, is_active)) = target else {
+    let Some((target_path, target_bookmark, target_vault_id, is_active)) = target else {
         return Ok(());
     };
 
@@ -767,6 +772,10 @@ pub async fn remove_vault(
     if is_active {
         next.active_vault = None;
         next.active_bookmark_id = None;
+    }
+    if let Some(vault_id) = target_vault_id.as_deref() {
+        let config_path = app_config_path()?;
+        crate::sync_config::reserve_webdav_retirement(&config_path, vault_id)?;
     }
     save_app_config(&next)?;
 
@@ -3504,247 +3513,6 @@ pub fn test_ai_connection(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-// ── Sync (WebDAV) ──
-
-fn vault_matches_identity(vault: &VaultConfig, path: &str, bookmark_id: Option<&str>) -> bool {
-    if let Some(bookmark_id) = bookmark_id {
-        vault.bookmark_id.as_deref() == Some(bookmark_id)
-    } else {
-        vault.bookmark_id.is_none() && vault.path == path
-    }
-}
-
-fn active_vault_index(config: &AppConfig) -> Result<usize, String> {
-    let active = config.active_vault.as_deref().ok_or("No active vault")?;
-    config
-        .vaults
-        .iter()
-        .position(|vault| {
-            vault_matches_identity(vault, active, config.active_bookmark_id.as_deref())
-        })
-        .ok_or_else(|| "Active vault not found in config".to_string())
-}
-
-fn active_vault_config(config: &AppConfig) -> Result<&VaultConfig, String> {
-    Ok(&config.vaults[active_vault_index(config)?])
-}
-
-#[cfg(test)]
-mod vault_identity_tests {
-    use super::*;
-    use crate::sync_config::{ProviderCredentials, SyncSettings, WebdavCredentials};
-
-    #[test]
-    fn bookmark_identity_disambiguates_vaults_with_the_same_path() {
-        let mut config = AppConfig {
-            active_vault: Some("/same/path".to_string()),
-            vaults: vec![
-                VaultConfig {
-                    path: "/same/path".to_string(),
-                    name: "Local".to_string(),
-                    ..Default::default()
-                },
-                VaultConfig {
-                    path: "/same/path".to_string(),
-                    name: "Files".to_string(),
-                    bookmark_id: Some("bookmark".to_string()),
-                    ..Default::default()
-                },
-            ],
-            active_bookmark_id: Some("bookmark".to_string()),
-            ..Default::default()
-        };
-        assert_eq!(active_vault_config(&config).unwrap().name, "Files");
-
-        config.active_bookmark_id = None;
-        assert_eq!(active_vault_config(&config).unwrap().name, "Local");
-    }
-
-    #[test]
-    fn sync_is_unconfigured_when_the_secret_store_cannot_supply_its_password() {
-        let config = AppConfig {
-            active_vault: Some("/vault".to_string()),
-            secret_store_error: Some("The OS secret store is unavailable or locked".to_string()),
-            vaults: vec![VaultConfig {
-                path: "/vault".to_string(),
-                sync: SyncSettings {
-                    provider: Some("webdav".to_string()),
-                    credentials: ProviderCredentials {
-                        webdav: WebdavCredentials {
-                            url: Some("https://example.com/dav".to_string()),
-                            ..Default::default()
-                        },
-                    },
-                    ..Default::default()
-                },
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-
-        let error = match sync_config_from(&config) {
-            Ok(_) => panic!("sync must remain unconfigured without its stored password"),
-            Err(error) => error,
-        };
-
-        assert!(error.starts_with("Sync is not configured because "));
-        assert!(error.contains("OS secret store"));
-    }
-}
-
-fn sync_config_from(config: &AppConfig) -> Result<crate::sync::WebdavConfig, String> {
-    let v = active_vault_config(config)?;
-    if !v.sync.uses("webdav") {
-        return Err("Sync is not configured".to_string());
-    }
-    let webdav = &v.sync.credentials.webdav;
-    let url = webdav
-        .url
-        .clone()
-        .filter(|u| !u.trim().is_empty())
-        .ok_or("WebDAV URL is not set")?;
-    let password = webdav.password.clone().ok_or_else(|| {
-        config
-            .secret_store_error
-            .clone()
-            .map(|error| format!("Sync is not configured because {error}"))
-            .unwrap_or_else(|| "WebDAV password is not set; sync is not configured".to_string())
-    })?;
-    Ok(crate::sync::WebdavConfig {
-        url,
-        username: webdav.username.clone().unwrap_or_default(),
-        password,
-    })
-}
-
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-pub fn set_sync_settings(
-    state: State<'_, AppState>,
-    provider: Option<String>,
-    url: Option<String>,
-    username: Option<String>,
-    password: Option<String>,
-    sync_on_open: bool,
-    sync_on_change: bool,
-    sync_interval_minutes: u32,
-) -> Result<(), String> {
-    let mut config = state.config.lock().map_err(|e| e.to_string())?;
-    let mut candidate = config.clone();
-    let active_index = active_vault_index(&candidate)?;
-    let v = &mut candidate.vaults[active_index];
-    v.sync.provider = provider.filter(|p| !p.is_empty());
-    v.sync.credentials.webdav.url = url.filter(|u| !u.trim().is_empty());
-    v.sync.credentials.webdav.username = username.filter(|u| !u.is_empty());
-    v.sync.credentials.webdav.password = password.filter(|p| !p.is_empty());
-    v.sync.schedule.on_open = sync_on_open;
-    v.sync.schedule.on_change = sync_on_change;
-    v.sync.schedule.interval_minutes = sync_interval_minutes;
-    commit_secret_config(&mut config, candidate)
-}
-
-#[tauri::command]
-pub fn test_sync_connection(app: AppHandle) -> Result<(), String> {
-    let cfg = {
-        let state = app.state::<AppState>();
-        let config = state.config.lock().map_err(|e| e.to_string())?;
-        sync_config_from(&config)?
-    };
-    std::thread::spawn(move || {
-        use tauri::Emitter;
-        match crate::sync::test_connection(cfg) {
-            Ok(msg) => {
-                let _ = app.emit(
-                    "sync-test-result",
-                    serde_json::json!({ "success": true, "message": msg }),
-                );
-            }
-            Err(e) => {
-                let _ = app.emit(
-                    "sync-test-result",
-                    serde_json::json!({ "success": false, "error": e }),
-                );
-            }
-        }
-    });
-    Ok(())
-}
-
-#[tauri::command]
-pub fn sync_now(app: AppHandle) -> Result<(), String> {
-    use std::sync::atomic::Ordering;
-    let state = app.state::<AppState>();
-    if state.vault_activity.swap(true, Ordering::SeqCst) {
-        return Ok(());
-    }
-    // Guard against overlapping syncs (manual button + interval + on-change can collide).
-    if state.syncing.swap(true, Ordering::SeqCst) {
-        state.vault_activity.store(false, Ordering::SeqCst);
-        return Ok(()); // a sync is already running
-    }
-    let (vault, bookmark_id, cfg) = {
-        let state = app.state::<AppState>();
-        let config = match state.config.lock() {
-            Ok(c) => c,
-            Err(e) => {
-                state.syncing.store(false, Ordering::SeqCst);
-                state.vault_activity.store(false, Ordering::SeqCst);
-                return Err(e.to_string());
-            }
-        };
-        let gathered = config
-            .active_vault
-            .clone()
-            .ok_or_else(|| "No active vault".to_string())
-            .and_then(|vault| {
-                sync_config_from(&config).map(|cfg| (vault, config.active_bookmark_id.clone(), cfg))
-            });
-        match gathered {
-            Ok(vault_config) => vault_config,
-            Err(e) => {
-                drop(config);
-                state.syncing.store(false, Ordering::SeqCst);
-                state.vault_activity.store(false, Ordering::SeqCst);
-                return Err(e);
-            }
-        }
-    };
-    std::thread::spawn(move || {
-        use tauri::Emitter;
-        let result = crate::sync::run_sync(app.clone(), vault.clone(), cfg);
-        app.state::<AppState>()
-            .syncing
-            .store(false, Ordering::SeqCst);
-        app.state::<AppState>()
-            .vault_activity
-            .store(false, Ordering::SeqCst);
-        match result {
-            Ok(summary) => {
-                let ts = chrono::Utc::now().to_rfc3339();
-                if let Ok(mut config) = app.state::<AppState>().config.lock() {
-                    if let Some(vault_config) = config.vaults.iter_mut().find(|candidate| {
-                        vault_matches_identity(candidate, &vault, bookmark_id.as_deref())
-                    }) {
-                        vault_config.sync.schedule.last_sync_time = Some(ts.clone());
-                    }
-                    let _ = save_app_config(&config);
-                }
-                let _ = app.emit(
-                    "sync-done",
-                    serde_json::json!({ "success": true, "summary": summary, "last_sync_time": ts }),
-                );
-            }
-            Err(e) => {
-                let _ = app.emit(
-                    "sync-error",
-                    serde_json::json!({ "success": false, "error": e }),
-                );
-            }
-        }
-    });
-    Ok(())
-}
-
 #[tauri::command]
 pub fn ai_ask(
     app: AppHandle,
@@ -3866,25 +3634,27 @@ fn load_app_config_from(
     path: &std::path::Path,
     store: &dyn crate::secret_store::SecretStore,
 ) -> AppConfig {
-    let mut config: AppConfig = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|contents| serde_json::from_str(&contents).ok())
-        .unwrap_or_default();
-    let structural_migration = migrate_global_sync_to_vault(&mut config);
-    let identity_migration = match populate_vault_ids(&mut config) {
-        Ok(changed) => changed,
-        Err(error) => {
-            config = crate::secret_store::redacted_config(&config);
-            config.secret_store_error = Some(error);
-            return config;
+    let contents = std::fs::read_to_string(path).ok().map(|contents| {
+        match crate::sync_config::retire_webdav(path, &contents, store) {
+            Ok(cleaned) => cleaned,
+            Err(error) => {
+                log::warn!("WebDAV retirement is incomplete and will retry at startup: {error}");
+                // Current AppConfig has no WebDAV fields, so even the historical JSON
+                // cannot restore a production execution path while cleanup waits to retry.
+                contents
+            }
         }
-    };
-    let had_plaintext = crate::secret_store::has_plaintext_credentials(&config);
+    });
+    let mut config: AppConfig = contents
+        .as_deref()
+        .and_then(|contents| serde_json::from_str(contents).ok())
+        .unwrap_or_default();
+    let identity_migration = populate_vault_ids(&mut config);
 
     match crate::secret_store::hydrate_config(&mut config, store) {
         Ok(outcome) => {
             config.secret_store_error = None;
-            if structural_migration || identity_migration || outcome.migrated_plaintext {
+            if identity_migration || outcome.migrated_plaintext {
                 if let Err(save_error) = save_app_config_to(path, &config) {
                     if outcome.migrated_plaintext {
                         let rollback_error =
@@ -3907,61 +3677,23 @@ fn load_app_config_from(
             // unavailable/locked keyring can never turn the plaintext file into a runtime
             // fallback. Keep an existing plaintext file intact for a later migration retry.
             config.secret_store_error = Some(error);
-            if structural_migration && !had_plaintext {
-                let _ = save_app_config_to(path, &config);
-            }
         }
     }
     config
 }
 
-fn populate_vault_ids(config: &mut AppConfig) -> Result<bool, String> {
+fn populate_vault_ids(config: &mut AppConfig) -> bool {
     let mut changed = false;
     for vault in &mut config.vaults {
         if vault.vault_id.is_some() {
             continue;
         }
-        match crate::machine_local::vault_id(std::path::Path::new(&vault.path)) {
-            Ok(identity) => {
-                vault.vault_id = Some(identity);
-                changed = true;
-            }
-            Err(error)
-                if vault
-                    .sync
-                    .credentials
-                    .webdav
-                    .password
-                    .as_deref()
-                    .is_some_and(|password| !password.is_empty()) =>
-            {
-                return Err(format!(
-                    "The WebDAV password for '{}' cannot migrate until its vault identity is available: {error}",
-                    vault.name
-                ));
-            }
-            Err(_) => {}
+        if let Ok(identity) = crate::machine_local::vault_id(std::path::Path::new(&vault.path)) {
+            vault.vault_id = Some(identity);
+            changed = true;
         }
     }
-    Ok(changed)
-}
-
-// One-time migration: WebDAV sync moved from global AppConfig to per-vault VaultConfig.
-// Copy the old global settings into the active vault's config if it has none yet. Idempotent.
-fn migrate_global_sync_to_vault(config: &mut AppConfig) -> bool {
-    if !config.legacy_sync.is_configured() {
-        return false;
-    }
-    let Ok(active_index) = active_vault_index(config) else {
-        return false;
-    };
-    let legacy = config.legacy_sync.clone();
-    let v = &mut config.vaults[active_index];
-    if v.sync.is_configured() {
-        return false; // already migrated, or the vault has its own settings
-    }
-    v.sync = legacy;
-    true
+    changed
 }
 
 fn write_private_file(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
@@ -4087,6 +3819,40 @@ mod secret_config_tests {
     }
 
     #[test]
+    fn an_invalid_retirement_marker_does_not_block_other_secret_hydration_or_updates() {
+        let dir = std::env::temp_dir().join(format!(
+            "helixnotes-invalid-webdav-retirement-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(&path, serde_json::to_string(&AppConfig::default()).unwrap()).unwrap();
+        std::fs::write(dir.join("webdav-retirement-v1.json"), "not valid json").unwrap();
+        let store = MemoryStore::default();
+        store
+            .set(&SecretId::AnthropicApiKey, "existing-anthropic-key")
+            .unwrap();
+
+        let loaded = load_app_config_from(&path, &store);
+
+        assert_eq!(loaded.ai_api_key.as_deref(), Some("existing-anthropic-key"));
+        assert!(loaded.secret_store_error.is_none());
+
+        let mut updated = loaded.clone();
+        updated.ai_api_key = Some("rotated-anthropic-key".to_string());
+        crate::secret_store::apply_config_changes(&loaded, &updated, &store).unwrap();
+        assert_eq!(
+            store
+                .0
+                .borrow()
+                .get(&SecretId::AnthropicApiKey)
+                .map(String::as_str),
+            Some("rotated-anthropic-key")
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn unavailable_store_still_allows_non_secret_settings_to_persist() {
         let path = std::env::temp_dir().join(format!(
             "helixnotes-headless-settings-{}.json",
@@ -4114,78 +3880,6 @@ mod secret_config_tests {
             "the recovery copy must not become a runtime fallback"
         );
         std::fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn legacy_webdav_password_without_a_vault_is_preserved_for_a_later_retry() {
-        let path = std::env::temp_dir().join(format!(
-            "helixnotes-legacy-webdav-{}.json",
-            uuid::Uuid::new_v4()
-        ));
-        let mut original = AppConfig::default();
-        original.legacy_sync.credentials.webdav.password = Some("legacy-recovery-copy".to_string());
-        let original_json = serde_json::to_string(&original).unwrap();
-        std::fs::write(&path, &original_json).unwrap();
-
-        let loaded = load_app_config_from(&path, &MemoryStore::default());
-
-        assert!(loaded.legacy_sync.credentials.webdav.password.is_none());
-        assert!(loaded
-            .secret_store_error
-            .as_deref()
-            .is_some_and(|error| error.contains("legacy WebDAV password")));
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), original_json);
-        std::fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn moved_vault_before_upgrade_does_not_migrate_under_a_fabricated_identity() {
-        let config_path = std::env::temp_dir().join(format!(
-            "helixnotes-moved-vault-config-{}.json",
-            uuid::Uuid::new_v4()
-        ));
-        let stale_vault_path = std::env::temp_dir().join(format!(
-            "helixnotes-moved-vault-stale-{}",
-            uuid::Uuid::new_v4()
-        ));
-        let original = AppConfig {
-            vaults: vec![VaultConfig {
-                path: stale_vault_path.to_string_lossy().into_owned(),
-                name: "Moved vault".to_string(),
-                sync: crate::sync_config::SyncSettings {
-                    credentials: crate::sync_config::ProviderCredentials {
-                        webdav: crate::sync_config::WebdavCredentials {
-                            password: Some("must-remain-recoverable".to_string()),
-                            ..Default::default()
-                        },
-                    },
-                    ..Default::default()
-                },
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        let original_json = serde_json::to_string(&original).unwrap();
-        std::fs::write(&config_path, &original_json).unwrap();
-        let store = MemoryStore::default();
-
-        let loaded = load_app_config_from(&config_path, &store);
-
-        assert!(loaded.vaults[0].sync.credentials.webdav.password.is_none());
-        assert!(loaded
-            .secret_store_error
-            .as_deref()
-            .is_some_and(|error| error.contains("vault identity is available")));
-        assert_eq!(
-            std::fs::read_to_string(&config_path).unwrap(),
-            original_json
-        );
-        assert!(store.0.borrow().is_empty());
-        assert!(
-            !stale_vault_path.exists(),
-            "identity discovery must never recreate an obsolete vault path"
-        );
-        std::fs::remove_file(config_path).unwrap();
     }
 }
 
