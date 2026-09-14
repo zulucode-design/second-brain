@@ -262,7 +262,7 @@
         <tr><td><span class="badge legacy">Legacy/superseded</span></td><td>Daily-note values</td><td>Only safe deserialization/startup fallback remains; active daily-note functionality is removed as intended.</td></tr>
         <tr><td><span class="badge legacy">Legacy/unused</span></td><td>Multi-vault and mobile breadth</td><td>Inherited implementation remains despite one-vault/desktop scope. It expands maintenance and test matrices without a settled product promise.</td></tr>
         <tr><td><span class="badge p3">Stale marker</span></td><td><code>SecretId::NotionToken</code> dead-code comment</td><td><code>secret_store.rs:11–12</code> says it belongs to an in-flight issue branch, but the variant is actively used in migration and tests.</td></tr>
-        <tr><td><span class="badge p3">Repository hygiene</span></td><td><code>/tests/</code> ignored by default</td><td>There are now 13 tracked test files. PR #90 adds explicit exceptions for its two lifecycle suites, but <code>/tests/*</code> remains ignored by default, so unrelated new tests can still be silently omitted.</td></tr>
+        <tr><td><span class="badge implemented">Fixed / verified</span></td><td><code>/tests/</code> ignored by default</td><td>Historical finding: there were 13 tracked test files; PR #90 added explicit exceptions for its two lifecycle suites, but <code>/tests/*</code> remained ignored by default, so unrelated new tests could still be silently omitted. <a href="https://github.com/zulucode-design/second-brain/pull/95">PR #95</a> removes the rule and its two allowlist exceptions. The risk was not theoretical: package G's own new suite was silently ignored and needed <code>git add -f</code>, which would have left it passing locally and absent from CI. All 14 suites in <code>tests/</code> are now tracked with nothing ignored.</td></tr>
         <tr><td><span class="badge p3">No stub markers</span></td><td>Maintained-source TODO/FIXME/HACK inventory</td><td>No substantive <code>TODO</code>, <code>FIXME</code>, <code>HACK</code>, <code>todo!</code>, or <code>unimplemented!</code> was found. “todo” grep hits are callout/task terminology; test doubles are scoped to tests.</td></tr>
       </tbody>
     </table>
@@ -329,7 +329,7 @@
     <ul>
       <li><code>package.json</code> has no <code>packageManager</code> or <code>engines</code>; <code>.npmrc</code> <code>engine-strict=true</code> therefore provides limited enforcement.</li>
       <li><code>prepare</code> suppresses <code>svelte-kit sync</code> failure with <code>|| echo ''</code>, allowing install to appear healthy when generated types fail.</li>
-      <li><code>.gitignore</code> still ignores <code>/tests/*</code> by default, making unrelated new test discovery/staging error-prone. PR #90 explicitly unignores its two lifecycle regression suites, so those tests are tracked; the default-ignore hygiene risk remains.</li>
+      <li><span class="badge implemented">Resolved</span> <code>.gitignore</code> ignored <code>/tests/*</code> by default, making new test discovery and staging error-prone. <a href="https://github.com/zulucode-design/second-brain/pull/95">PR #95</a> removed the rule and both allowlist exceptions after package G's new suite was silently ignored; every suite in <code>tests/</code> is tracked and none is ignored.</li>
       <li>The Nix flake provides a package build but no development shell for reproducing CI’s native dependencies.</li>
     </ul>
 
