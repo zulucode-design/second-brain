@@ -1716,17 +1716,21 @@ mod tests {
         reopened.reconcile_from_notes(&root).unwrap();
         reopened.retry_pending().unwrap();
 
-        let connection = {
-            drop(reopened);
-            rusqlite::Connection::open(&database).unwrap()
+        drop(reopened);
+        // Scoped: Windows refuses to delete a database file while any handle is still open,
+        // so the connection has to be gone before `cleanup` removes the directory.
+        let profiles: Vec<String> = {
+            let connection = rusqlite::Connection::open(&database).unwrap();
+            let mut statement = connection
+                .prepare("SELECT DISTINCT profile FROM notes")
+                .unwrap();
+            let profiles = statement
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            profiles
         };
-        let profiles: Vec<String> = connection
-            .prepare("SELECT DISTINCT profile FROM notes")
-            .unwrap()
-            .query_map([], |row| row.get(0))
-            .unwrap()
-            .map(Result::unwrap)
-            .collect();
         assert_eq!(profiles, vec![super::EMBEDDING_PROFILE.to_string()]);
         cleanup(root);
     }
