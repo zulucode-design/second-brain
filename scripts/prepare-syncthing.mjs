@@ -51,9 +51,21 @@ try {
 
   const unpacked = join(scratch, 'unpacked');
   await mkdir(unpacked);
-  const extraction = process.platform === 'win32'
-    ? spawnSync('powershell.exe', ['-NoProfile', '-Command', 'Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1]', archivePath, unpacked], { stdio: 'inherit' })
-    : spawnSync('tar', ['-xzf', archivePath, '-C', unpacked], { stdio: 'inherit' });
+  let extraction;
+  if (process.platform === 'win32') {
+    const extractor = join(scratch, 'extract.ps1');
+    await writeFile(
+      extractor,
+      'param([string]$Archive, [string]$Destination)\nExpand-Archive -LiteralPath $Archive -DestinationPath $Destination\n',
+    );
+    extraction = spawnSync(
+      'powershell.exe',
+      ['-NoProfile', '-File', extractor, archivePath, unpacked],
+      { stdio: 'inherit' },
+    );
+  } else {
+    extraction = spawnSync('tar', ['-xzf', archivePath, '-C', unpacked], { stdio: 'inherit' });
+  }
   if (extraction.status !== 0) throw new Error(`could not extract ${target.archive}`);
 
   const root = join(unpacked, `syncthing-${process.platform === 'win32' ? 'windows' : 'linux'}-amd64-v${VERSION}`);

@@ -95,4 +95,4 @@ jobs:
         shell: pwsh
         run: |
           pnpm sidecar:prepare
-          & src-tauri/binaries/syncthing-x86_64-pc-windows-msvc.exe --version
+          & ./src-tauri/binaries/syncthing-x86_64-pc-windows-msvc.exe --version

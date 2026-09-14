@@ -70,7 +70,7 @@ test('the selected sidecar is bundled and every app launch path prepares it', as
   const workflow = await source('.github/workflows/verify.yml');
   assert.match(workflow, /pnpm sidecar:prepare/);
   assert.match(workflow, /externalBin/);
-  assert.match(workflow, /syncthing-x86_64-pc-windows-msvc\.exe --version/);
+  assert.match(workflow, /\.\/src-tauri\/binaries\/syncthing-x86_64-pc-windows-msvc\.exe --version/);
 });
 
 test('sync remains an explicit guarded batch rather than ambient Tailnet access', async () => {
