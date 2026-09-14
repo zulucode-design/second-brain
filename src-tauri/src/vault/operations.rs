@@ -139,13 +139,6 @@ pub fn ensure_vault_structure(vault_path: &str) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
 
-    let state_path = hn_dir.join("state.json");
-    if !state_path.exists() {
-        let state = VaultState::default();
-        fs::write(&state_path, serde_json::to_string_pretty(&state).unwrap())
-            .map_err(|e| e.to_string())?;
-    }
-
     let gitignore_path = hn_dir.join(".gitignore");
     if !gitignore_path.exists() {
         fs::write(&gitignore_path, "trash/\nindex.json\nstate.json\n")
@@ -2618,7 +2611,7 @@ pub fn empty_trash(vault_path: &str) -> Result<(), String> {
 }
 
 pub fn load_vault_state(vault_path: &str) -> Result<VaultState, String> {
-    let state_path = helixnotes_dir(vault_path).join("state.json");
+    let state_path = crate::machine_local::vault_state_path(Path::new(vault_path))?;
     if state_path.exists() {
         let data = fs::read_to_string(&state_path).map_err(|e| e.to_string())?;
         serde_json::from_str(&data).map_err(|e| e.to_string())
@@ -2628,7 +2621,7 @@ pub fn load_vault_state(vault_path: &str) -> Result<VaultState, String> {
 }
 
 pub fn save_vault_state(vault_path: &str, state: &VaultState) -> Result<(), String> {
-    let state_path = helixnotes_dir(vault_path).join("state.json");
+    let state_path = crate::machine_local::vault_state_path(Path::new(vault_path))?;
     let data = serde_json::to_string_pretty(state).map_err(|e| e.to_string())?;
     fs::write(&state_path, data).map_err(|e| e.to_string())?;
     Ok(())
@@ -2922,11 +2915,12 @@ mod tests {
     use super::{
         compare_natural_names, create_note, create_notebook, create_web_clipping, duplicate_note,
         ensure_vault_structure, get_note_switcher_titles, helixnotes_dir, load_notebook_icons,
-        load_quick_access, move_note, move_note_with_outcome, permanent_delete, read_note,
-        restore_notebook, save_note, save_note_if_revision, save_quick_access, scan_notebooks,
-        set_notebook_icon, ParaCategory,
+        load_quick_access, load_vault_state, move_note, move_note_with_outcome, permanent_delete,
+        read_note, restore_notebook, save_note, save_note_if_revision, save_quick_access,
+        save_vault_state, scan_notebooks, set_notebook_icon, ParaCategory,
     };
     use crate::search::SearchIndex;
+    use crate::types::VaultState;
     use crate::vault::frontmatter;
     use std::fs;
     use uuid::Uuid;
@@ -2952,6 +2946,28 @@ mod tests {
         for category in ParaCategory::ALL {
             assert!(vault.join(category.folder_name()).is_dir());
         }
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn vault_ui_state_is_machine_local_from_its_first_write() {
+        let vault = scaffolded_vault("machine-local-state");
+        let vault_str = vault.to_string_lossy().to_string();
+        let state = VaultState {
+            last_view_mode: "tasks".to_string(),
+            ..VaultState::default()
+        };
+
+        save_vault_state(&vault_str, &state).unwrap();
+
+        assert_eq!(
+            load_vault_state(&vault_str).unwrap().last_view_mode,
+            "tasks"
+        );
+        assert!(!vault.join(".helixnotes/state.json").exists());
+        assert!(crate::machine_local::vault_state_path(&vault)
+            .unwrap()
+            .is_file());
         fs::remove_dir_all(vault).unwrap();
     }
 

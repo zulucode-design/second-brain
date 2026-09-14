@@ -28,6 +28,9 @@ startup rather than falling back to a Syncthing default. It then starts the proc
 The key is supplied through the process environment rather than the command line.
 Syncthing logs, certificates, its database, API key, pairing state, and process control state
 are machine-local. They never enter the synced vault.
+Per-vault navigation, window, and list state is also machine-local. Older
+`.helixnotes/state.json` files are migrated out on open, and legacy conflict copies
+of that device-only file are removed so absolute paths from one OS cannot reach the other.
 
 Enable restores the sidecar for the active vault. Disable and vault switching request an
 authenticated shutdown and kill a process that does not exit promptly. Unexpected exits are
