@@ -109,6 +109,7 @@ struct Runtime {
 
 pub struct SyncSidecar {
     runtime: Mutex<Runtime>,
+    lifecycle: tokio::sync::Mutex<()>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -138,6 +139,7 @@ impl SyncSidecar {
                 restart_count: 0,
                 scheduler_generation: 0,
             }),
+            lifecycle: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -517,6 +519,22 @@ fn start(
     restart_count: u8,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>> {
     Box::pin(async move {
+        let lifecycle_state = app.state::<AppState>();
+        let _lifecycle = lifecycle_state.sync_sidecar.lifecycle.lock().await;
+        {
+            let runtime = lifecycle_state
+                .sync_sidecar
+                .runtime
+                .lock()
+                .map_err(|error| error.to_string())?;
+            if runtime.child.is_some() {
+                return if runtime.vault_path.as_ref() == Some(&vault) {
+                    Ok(())
+                } else {
+                    Err("Syncthing is still attached to another vault".to_string())
+                };
+            }
+        }
         let control = read_control(&vault)?;
         let home = generate_if_needed(&app, &vault).await?;
         let args = vec![
@@ -674,6 +692,8 @@ fn start(
 }
 
 async fn stop(app: &AppHandle, vault: &Path) -> Result<(), String> {
+    let lifecycle_state = app.state::<AppState>();
+    let _lifecycle = lifecycle_state.sync_sidecar.lifecycle.lock().await;
     let control = read_control(vault)?;
     {
         let state = app.state::<AppState>();
