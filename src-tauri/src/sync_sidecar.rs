@@ -21,7 +21,10 @@ const STARTUP_WAIT: Duration = Duration::from_millis(100);
 const MAX_RESTARTS: u8 = 3;
 const STABLE_RUN: Duration = Duration::from_secs(30);
 const SYNC_INTERVAL: Duration = Duration::from_secs(5 * 60);
-const SYNC_COMPLETION_HANDOFF_GRACE: Duration = Duration::from_secs(3);
+// A peer can report the previously known index as complete while a fresh scan is still in
+// progress. Keep observing a clean cluster long enough for that scan to publish; any late index
+// update makes the observation incomplete and resets the latch.
+const SYNC_COMPLETION_STABLE_OBSERVATIONS: u8 = 30;
 const WATCHDOG_FLAG: &str = "--helix-sync-watchdog";
 const WATCHDOG_API_KEY: &str = "HELIX_SYNC_WATCHDOG_API_KEY";
 
@@ -1315,7 +1318,7 @@ impl CompletionLatch {
         } else {
             0
         };
-        self.confirmed = self.consecutive_complete >= 2;
+        self.confirmed = self.consecutive_complete >= SYNC_COMPLETION_STABLE_OBSERVATIONS;
         self.confirmed
     }
 }
@@ -1385,10 +1388,6 @@ fn wait_for_sync(
             remote_completion.as_ref(),
             peer_id,
         )) {
-            // Both apps can observe the same completed cluster state a fraction of a second
-            // apart. Keep this side resumed long enough for the peer to latch that state too;
-            // otherwise the first app to return would pause the connection under the second.
-            std::thread::sleep(SYNC_COMPLETION_HANDOFF_GRACE);
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(500));
@@ -1532,7 +1531,7 @@ mod tests {
     use super::{
         convergence_observation_is_complete, harden_generated_config_xml, read_control,
         tailscale_ipv4, until_next_sync_window, valid_device_id, write_control, CompletionLatch,
-        ControlState, SYNC_INTERVAL,
+        ControlState, SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL,
     };
 
     fn vault() -> std::path::PathBuf {
@@ -1698,8 +1697,23 @@ mod tests {
     #[test]
     fn bilateral_completion_is_latched_for_the_peer_handoff() {
         let mut completion = CompletionLatch::default();
-        assert!(!completion.observe(true));
+        for _ in 0..SYNC_COMPLETION_STABLE_OBSERVATIONS - 1 {
+            assert!(!completion.observe(true));
+        }
         assert!(completion.observe(true));
         assert!(completion.observe(false));
+    }
+
+    #[test]
+    fn late_peer_index_activity_resets_completion_stability() {
+        let mut completion = CompletionLatch::default();
+        for _ in 0..SYNC_COMPLETION_STABLE_OBSERVATIONS - 1 {
+            assert!(!completion.observe(true));
+        }
+        assert!(!completion.observe(false));
+        for _ in 0..SYNC_COMPLETION_STABLE_OBSERVATIONS - 1 {
+            assert!(!completion.observe(true));
+        }
+        assert!(completion.observe(true));
     }
 }

@@ -79,6 +79,10 @@ is fixed:
 
 The app owns the guard, backup, terminal event, projections, and conflict UI. Syncthing owns
 file reconciliation, delete/move propagation, delayed arrival, and conflict-copy creation.
+Completion requires fifteen seconds of continuously clean local and peer observations. A peer can
+briefly report its previously published index as complete while a fresh scan is still running; any
+late index activity resets the stability latch so the first device cannot pause the connection
+before that scan and its resulting transfer finish.
 
 ## Conflicts
 
