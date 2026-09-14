@@ -5,6 +5,7 @@
 	import { debounce } from '$lib/utils/debounce';
 	import { tasksLayout, tasksHideCompleted, tasksOnlyFlagged, tasksSort, appConfig } from '$lib/stores/app';
 	import { isAndroid } from '$lib/platform';
+	import { asyncViewState, type LoadStatus } from '$lib/utils/async-view-state';
 	import type { TaskItem, FileEvent } from '$lib/types';
 
 	let { onOpenTask = (_t: TaskItem) => {}, onToggleTask = async (_t: TaskItem) => {}, onSetTaskPriority = async (_t: TaskItem, _p: string | null) => {}, onSetTaskDue = async (_t: TaskItem, _d: string | null) => {} }: {
@@ -15,19 +16,29 @@
 	} = $props();
 
 	let tasks = $state<TaskItem[]>([]);
-	let loading = $state(true);
+	let status = $state<LoadStatus>('loading');
+	let loadError = $state<unknown>(null);
 	let taskQuery = $state('');
 	let unlisten: (() => void) | null = null;
 
 	async function load() {
+		status = 'loading';
 		try {
 			tasks = await getTasks();
+			loadError = null;
+			status = 'loaded';
 		} catch (e) {
+			// Keep whatever rows are already on screen: the failure is reported separately, and
+			// discarding them here is what made a broken backend look like an empty vault.
 			console.error('Failed to load tasks:', e);
-			tasks = [];
+			loadError = e;
+			status = 'failed';
 		}
-		loading = false;
 	}
+
+	// Derived from tasks.length, not the filtered list: "no tasks at all" and "nothing matches
+	// this filter" are different answers, and neither means the backend failed.
+	const viewState = $derived(asyncViewState({ status, itemCount: tasks.length, error: loadError }));
 
 	const debouncedLoad = debounce(load, 400);
 
@@ -271,8 +282,14 @@
 		</div>
 	{/snippet}
 
-	{#if loading}
+	{#if viewState.kind === 'loading'}
 		<div class="tasks-empty">Loading...</div>
+	{:else if viewState.kind === 'failed'}
+		<div class="tasks-failed" role="alert">
+			<div class="tasks-failed-head">Tasks could not be loaded</div>
+			<div class="tasks-failed-detail">{viewState.message}</div>
+			<button class="tasks-ctl" onclick={() => load()}>Retry</button>
+		</div>
 	{:else if viewLayout === 'calendar'}
 		<div class="tasks-cal-pane">
 			<div class="cal">
@@ -327,8 +344,10 @@
 				{/if}
 			</div>
 		</div>
+	{:else if viewState.kind === 'empty'}
+		<div class="tasks-empty">No tasks. Add <code>- [ ] something</code> to any note.</div>
 	{:else if filtered.length === 0}
-		<div class="tasks-empty">No tasks. Add <code>- [ ] something</code> to any note.{#if openCount === 0 && tasks.length}{' '}All done!{/if}</div>
+		<div class="tasks-empty">{#if openCount === 0}All done!{:else}No tasks match the current filter.{/if}</div>
 	{:else}
 		<div class="tasks-list">
 			{#each filtered as t (rowKey(t))}{@render taskRow(t, false)}{/each}
@@ -396,6 +415,25 @@
 		color: var(--text-tertiary);
 		font-size: 13px;
 		text-align: center;
+	}
+	.tasks-failed {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 8px;
+		padding: 24px 16px;
+		text-align: center;
+	}
+	.tasks-failed-head {
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+	.tasks-failed-detail {
+		font-size: 12px;
+		color: var(--text-secondary);
+		max-width: 46ch;
+		word-break: break-word;
 	}
 	.task-row {
 		display: flex;

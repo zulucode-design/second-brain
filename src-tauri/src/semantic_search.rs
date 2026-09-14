@@ -13,6 +13,16 @@ use std::time::Duration;
 use walkdir::WalkDir;
 
 const EMBEDDING_PROFILE: &str = "ollama:embeddinggemma:chunks-v1";
+/// The layout of this machine-local projection, recorded in the file's `user_version`.
+///
+/// Bump this whenever the tables, columns, or constraints below change. `CREATE TABLE IF NOT
+/// EXISTS` alone silently adopts whatever tables it finds, so an older file would keep its
+/// old columns and only fail later, at a query, as if the data were wrong. The version makes
+/// that mismatch explicit at open. It is a separate contract from `EMBEDDING_PROFILE`: this
+/// one describes the shape of the store, that one describes what the vectors in it mean.
+const SEMANTIC_SCHEMA_VERSION: i64 = 1;
+/// `notes`, `chunks`, and `pending_notes` — a file carrying only some of them is unusable.
+const SEMANTIC_TABLES: [&str; 3] = ["notes", "chunks", "pending_notes"];
 const CHUNK_CHARACTERS: usize = 1_500;
 const CHUNK_OVERLAP: usize = 200;
 // Do not present a note merely because it is the least unrelated result in a small vault.
@@ -154,14 +164,7 @@ impl SemanticIndex {
         if let Some(parent) = database.parent() {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
-        let connection = match initialize_database(database) {
-            Ok(connection) => connection,
-            Err(error) if is_corrupt_database(&error) => {
-                remove_derived_database(database)?;
-                initialize_database(database).map_err(|error| error.to_string())?
-            }
-            Err(error) => return Err(error.to_string()),
-        };
+        let connection = open_derived_database(database)?;
         Ok(Self {
             database: Mutex::new(connection),
             backend,
@@ -172,11 +175,90 @@ impl SemanticIndex {
     }
 }
 
-fn initialize_database(database: &Path) -> rusqlite::Result<Connection> {
+/// What opening the derived database found.
+enum Prepared {
+    /// Usable as-is: the schema version and tables are the ones this build wrote.
+    Ready(Connection),
+    /// Present but not interpretable by this build, with the reason to log.
+    Incompatible(String),
+}
+
+/// Open the semantic projection, replacing it whenever its contents cannot be trusted.
+///
+/// Every branch here is safe because this database holds no source of truth. The Markdown
+/// vault does, and `reconcile_from_notes` — which every caller runs after opening — requeues
+/// whatever the replacement is missing. Reusing a file this build cannot interpret is the
+/// only unsafe option, because the damage would surface later as wrong answers.
+fn open_derived_database(database: &Path) -> Result<Connection, String> {
+    let reason = match prepare_database(database) {
+        Ok(Prepared::Ready(connection)) => return Ok(connection),
+        Ok(Prepared::Incompatible(reason)) => reason,
+        Err(error) if is_corrupt_database(&error) => {
+            "the file is not a readable SQLite database".to_string()
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+
+    log::info!("Recreating the semantic index from Markdown because {reason}.");
+    remove_derived_database(database)?;
+    match prepare_database(database).map_err(|error| error.to_string())? {
+        Prepared::Ready(connection) => Ok(connection),
+        // The replacement is a file this build just created, so this cannot normally happen.
+        Prepared::Incompatible(reason) => Err(format!(
+            "The semantic index could not be recreated: {reason}"
+        )),
+    }
+}
+
+fn prepare_database(database: &Path) -> rusqlite::Result<Prepared> {
     let connection = Connection::open(database)?;
+    connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+    // Reads the file header, so a file that is not a database is rejected here.
+    let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    let tables = derived_table_count(&connection)?;
+
+    if tables == 0 {
+        // A new file, or one just replaced: stamp the version together with the tables so the
+        // two can never disagree.
+        create_schema(&connection)?;
+        return Ok(Prepared::Ready(connection));
+    }
+    if tables != SEMANTIC_TABLES.len() {
+        return Ok(Prepared::Incompatible(format!(
+            "it has {tables} of the {} expected tables",
+            SEMANTIC_TABLES.len()
+        )));
+    }
+    if version != SEMANTIC_SCHEMA_VERSION {
+        return Ok(Prepared::Incompatible(if version == 0 {
+            "it predates semantic schema versioning".to_string()
+        } else {
+            format!(
+                "it declares semantic schema version {version} and this build writes \
+                 {SEMANTIC_SCHEMA_VERSION}"
+            )
+        }));
+    }
+    Ok(Prepared::Ready(connection))
+}
+
+/// How many of the expected tables this file actually has.
+///
+/// Driven by `SEMANTIC_TABLES` rather than a literal name list, so adding a table to the
+/// schema cannot leave the completeness check silently looking for the old set.
+fn derived_table_count(connection: &Connection) -> rusqlite::Result<usize> {
+    let mut statement = connection
+        .prepare("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1")?;
+    let mut present = 0;
+    for table in SEMANTIC_TABLES {
+        present += statement.query_row([table], |row| row.get::<_, usize>(0))?;
+    }
+    Ok(present)
+}
+
+fn create_schema(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(
-        "PRAGMA foreign_keys = ON;
-                 CREATE TABLE IF NOT EXISTS notes (
+        "CREATE TABLE IF NOT EXISTS notes (
                     note_key TEXT PRIMARY KEY,
                     path TEXT NOT NULL UNIQUE,
                     title TEXT NOT NULL,
@@ -198,7 +280,8 @@ fn initialize_database(database: &Path) -> rusqlite::Result<Connection> {
                     profile TEXT NOT NULL
                  );",
     )?;
-    Ok(connection)
+    connection.pragma_update(None, "user_version", SEMANTIC_SCHEMA_VERSION)?;
+    Ok(())
 }
 
 fn is_corrupt_database(error: &rusqlite::Error) -> bool {
@@ -1473,6 +1556,182 @@ mod tests {
             "Routine"
         );
         drop(index);
+        cleanup(root);
+    }
+
+    fn recorded_schema_version(database: &Path) -> i64 {
+        let connection = rusqlite::Connection::open(database).unwrap();
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    fn stamp_schema_version(database: &Path, version: i64) {
+        let connection = rusqlite::Connection::open(database).unwrap();
+        connection
+            .pragma_update(None, "user_version", version)
+            .unwrap();
+    }
+
+    /// Index one note and return the vault root and database path it used.
+    fn indexed_vault(label: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let root = scratch(label);
+        let areas = root.join("Areas");
+        std::fs::create_dir_all(&areas).unwrap();
+        let note = areas.join("Routine.md");
+        let database = root.join("semantic.sqlite3");
+        write_note(&note, "schema-id", "Routine", "Areas", "coffee before work");
+        let index = SemanticIndex::open_at(&database, Arc::new(MeaningBackend)).unwrap();
+        index.note_changed(&note).unwrap();
+        index.retry_pending().unwrap();
+        assert_eq!(index.status().unwrap().indexed_notes, 1);
+        drop(index);
+        (root, database)
+    }
+
+    #[test]
+    fn a_fresh_database_records_the_schema_version_it_was_created_with() {
+        let root = scratch("schema-stamp");
+        let database = root.join("semantic.sqlite3");
+        let index = SemanticIndex::open_at(&database, Arc::new(MeaningBackend)).unwrap();
+        drop(index);
+
+        assert_eq!(
+            recorded_schema_version(&database),
+            super::SEMANTIC_SCHEMA_VERSION,
+            "a database created by this build must declare its own schema version"
+        );
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_database_at_the_current_schema_version_is_reopened_with_its_work_intact() {
+        let (root, database) = indexed_vault("schema-compatible");
+
+        let reopened = SemanticIndex::open_at(&database, Arc::new(MeaningBackend)).unwrap();
+
+        // Nothing was discarded: reopening a compatible index must not cost the user a rebuild.
+        assert_eq!(reopened.status().unwrap().indexed_notes, 1);
+        assert_eq!(reopened.status().unwrap().queued_notes, 0);
+        assert_eq!(
+            reopened
+                .search("how I structure my mornings", None, 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        drop(reopened);
+        cleanup(root);
+    }
+
+    #[test]
+    fn an_unrecognized_schema_version_is_rebuilt_rather_than_reused() {
+        let (root, database) = indexed_vault("schema-newer");
+        // A newer build wrote this file; its tables may mean something else entirely.
+        stamp_schema_version(&database, super::SEMANTIC_SCHEMA_VERSION + 7);
+
+        let reopened = SemanticIndex::open_at(&database, Arc::new(MeaningBackend)).unwrap();
+
+        assert_eq!(
+            reopened.status().unwrap().indexed_notes,
+            0,
+            "derived rows from an unknown schema must not be reused"
+        );
+        assert_eq!(
+            recorded_schema_version(&database),
+            super::SEMANTIC_SCHEMA_VERSION,
+            "the replacement must declare the version this build actually created"
+        );
+
+        // Rebuild recovery: the Markdown is the source of truth, so the index comes back.
+        reopened.reconcile_from_notes(&root).unwrap();
+        reopened.retry_pending().unwrap();
+        assert_eq!(reopened.status().unwrap().indexed_notes, 1);
+        assert_eq!(
+            reopened
+                .search("how I structure my mornings", None, 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        drop(reopened);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_database_predating_schema_versioning_is_rebuilt() {
+        let (root, database) = indexed_vault("schema-unversioned");
+        // Version 0 is what every database written before this contract existed reports.
+        stamp_schema_version(&database, 0);
+
+        let reopened = SemanticIndex::open_at(&database, Arc::new(MeaningBackend)).unwrap();
+
+        assert_eq!(reopened.status().unwrap().indexed_notes, 0);
+        assert_eq!(
+            recorded_schema_version(&database),
+            super::SEMANTIC_SCHEMA_VERSION
+        );
+        reopened.reconcile_from_notes(&root).unwrap();
+        reopened.retry_pending().unwrap();
+        assert_eq!(reopened.status().unwrap().indexed_notes, 1);
+        drop(reopened);
+        cleanup(root);
+    }
+
+    #[test]
+    fn an_incomplete_set_of_derived_tables_is_replaced_not_patched() {
+        let (root, database) = indexed_vault("schema-partial");
+        {
+            // A half-written or half-migrated file: the version says current, the tables do not.
+            let connection = rusqlite::Connection::open(&database).unwrap();
+            connection.execute_batch("DROP TABLE chunks;").unwrap();
+        }
+
+        let reopened = SemanticIndex::open_at(&database, Arc::new(MeaningBackend)).unwrap();
+
+        assert_eq!(reopened.status().unwrap().indexed_notes, 0);
+        reopened.reconcile_from_notes(&root).unwrap();
+        reopened.retry_pending().unwrap();
+        assert_eq!(reopened.status().unwrap().indexed_notes, 1);
+        assert_eq!(
+            reopened
+                .search("how I structure my mornings", None, 10)
+                .unwrap()
+                .len(),
+            1,
+            "a replaced database must be able to serve searches again"
+        );
+        drop(reopened);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_rebuilt_database_keeps_the_embedding_profile_contract() {
+        // Schema version and embedding profile are separate contracts: replacing the file for
+        // a schema reason must still record vectors under the profile this build compares.
+        let (root, database) = indexed_vault("schema-profile");
+        stamp_schema_version(&database, super::SEMANTIC_SCHEMA_VERSION + 1);
+
+        let reopened = SemanticIndex::open_at(&database, Arc::new(MeaningBackend)).unwrap();
+        reopened.reconcile_from_notes(&root).unwrap();
+        reopened.retry_pending().unwrap();
+
+        drop(reopened);
+        // Scoped: Windows refuses to delete a database file while any handle is still open,
+        // so the connection has to be gone before `cleanup` removes the directory.
+        let profiles: Vec<String> = {
+            let connection = rusqlite::Connection::open(&database).unwrap();
+            let mut statement = connection
+                .prepare("SELECT DISTINCT profile FROM notes")
+                .unwrap();
+            let profiles = statement
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            profiles
+        };
+        assert_eq!(profiles, vec![super::EMBEDDING_PROFILE.to_string()]);
         cleanup(root);
     }
 

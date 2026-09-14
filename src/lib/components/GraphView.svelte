@@ -3,6 +3,7 @@
 	import { getGraphData } from '$lib/api';
 	import { activeNotePath, appConfig } from '$lib/stores/app';
 	import { isMobile } from '$lib/platform';
+	import { asyncViewState, type LoadStatus } from '$lib/utils/async-view-state';
 
 	let { onclose, onnavigate }: {
 		onclose: () => void;
@@ -10,11 +11,13 @@
 	} = $props();
 
 	let canvas = $state<HTMLCanvasElement>(null!);
-	let loading = $state(true);
+	let status = $state<LoadStatus>('loading');
+	let loadError = $state<unknown>(null);
 	let searchQuery = $state('');
 	let localMode = $state(true); // default: show only active note's neighborhood
 
-	const dataPromise = getGraphData();
+	// Requested before mount so the graph is ready sooner; reassigned to re-request on retry.
+	let dataPromise = getGraphData();
 
 	interface GraphNode { id: string; title: string; path: string; x: number; y: number; vx: number; vy: number; }
 	interface GraphEdge { sourceIdx: number; targetIdx: number; bidirectional: boolean; }
@@ -153,7 +156,7 @@
 	}
 
 	async function buildGraph() {
-		loading = true;
+		status = 'loading';
 		try {
 			const data = await dataPromise;
 			const w = canvasW || 800;
@@ -185,11 +188,24 @@
 			buildFolderColors();
 			updateSearchMatch();
 			activeNodeIdx = nodes.findIndex(n => n.path === ($activeNotePath || ''));
+			loadError = null;
+			status = 'loaded';
 		} catch (e) {
+			// A graph that cannot be read is not a vault without links: say so and offer a retry
+			// rather than presenting an empty canvas as the truth.
 			console.error('Failed to build graph:', e);
+			loadError = e;
+			status = 'failed';
+			return;
 		}
-		loading = false;
 		startSimulation();
+	}
+
+	const viewState = $derived(asyncViewState({ status, itemCount: nodes.length, error: loadError }));
+
+	function retry() {
+		dataPromise = getGraphData();
+		buildGraph();
 	}
 
 	function centerOnActiveNote() {
@@ -796,7 +812,7 @@
 				{/if}
 			</div>
 			<div class="graph-stats">
-				{#if !loading}
+				{#if viewState.kind === 'content' || viewState.kind === 'empty'}
 					{#if localMode && activeNodeIdx >= 0}
 						{computeLocalSets().nodeSet.size} notes · {computeLocalSets().edgeSet.size} links
 					{:else}
@@ -835,7 +851,7 @@
 			</button>
 		</div>
 		<div class="graph-body">
-			{#if loading}
+			{#if viewState.kind === 'loading'}
 				<div class="graph-loading">
 					<svg class="spinner" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 						<circle cx="12" cy="12" r="10" opacity="0.25"/>
@@ -843,6 +859,14 @@
 					</svg>
 					Building graph...
 				</div>
+			{:else if viewState.kind === 'failed'}
+				<div class="graph-failed" role="alert">
+					<div class="graph-failed-head">The graph could not be built</div>
+					<div class="graph-failed-detail">{viewState.message}</div>
+					<button class="graph-retry" onclick={retry}>Retry</button>
+				</div>
+			{:else if viewState.kind === 'empty'}
+				<div class="graph-loading">No notes to graph yet.</div>
 			{/if}
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<canvas
@@ -1038,6 +1062,47 @@
 		font-size: 13px;
 		color: var(--text-tertiary);
 		z-index: 1;
+	}
+
+	.graph-failed {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		padding: 0 16px;
+		text-align: center;
+		z-index: 1;
+	}
+
+	.graph-failed-head {
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.graph-failed-detail {
+		font-size: 12px;
+		color: var(--text-secondary);
+		max-width: 46ch;
+		word-break: break-word;
+	}
+
+	.graph-retry {
+		padding: 4px 12px;
+		border: 1px solid var(--border-color);
+		border-radius: 5px;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		font-size: 12px;
+		font-family: inherit;
+		cursor: pointer;
+	}
+
+	.graph-retry:hover {
+		background: var(--bg-hover);
 	}
 
 	.spinner {

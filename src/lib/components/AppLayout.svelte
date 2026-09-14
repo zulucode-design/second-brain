@@ -83,6 +83,8 @@
 	import { relocateDocument, runSaveGatedAction } from '$lib/utils/document-lifecycle';
 	import { GenerationGate } from '$lib/utils/generation-gate';
 	import { runActiveDocumentMutation } from '$lib/utils/document-mutation';
+	import { describeLoadFailure } from '$lib/utils/async-view-state';
+	import { showToast } from '$lib/utils/toast';
 	import { get } from 'svelte/store';
 	import type { VaultState, FileEvent, NotebookEntry, TaskItem, AiStatus, HotkeyStatus, RepairStatus, ParaCategory, NoteContent } from '$lib/types';
 	import type { StartupTarget } from '$lib/utils/startup-view';
@@ -723,7 +725,11 @@
 					},
 				});
 			} catch (error) {
+				// A rejected task edit — an impossible due date, a note that moved — left the
+				// Markdown unchanged. Saying so is the only way the user learns the click did
+				// nothing; a packaged build has no console to read.
 				console.error(errorMessage, error);
+				showToast(describeLoadFailure(error));
 			}
 		});
 		navigationQueue = run.then(() => {}, () => {});
