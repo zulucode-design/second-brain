@@ -84,7 +84,7 @@
 	import { GenerationGate } from '$lib/utils/generation-gate';
 	import { runActiveDocumentMutation } from '$lib/utils/document-mutation';
 	import { get } from 'svelte/store';
-	import type { VaultState, FileEvent, NotebookEntry, TaskItem, AiStatus, HotkeyStatus, RepairStatus, ParaCategory, NoteContent } from '$lib/types';
+	import type { VaultState, FileEvent, NotebookEntry, TaskItem, AiStatus, HotkeyStatus, RepairStatus, ParaCategory, NoteContent, BulkMutationTerminal } from '$lib/types';
 	import type { StartupTarget } from '$lib/utils/startup-view';
 
 	function findNotebookByPath(list: NotebookEntry[], relPath: string): NotebookEntry | null {
@@ -100,6 +100,7 @@
 	let noteList = $state<NoteList>();
 	let editor = $state<Editor>();
 	let unlistenFileChange: (() => void) | null = null;
+	let unlistenSyncDone: (() => void) | null = null;
 	let unlistenAiStatus: (() => void) | null = null;
 	let unlistenHotkeyStatus: (() => void) | null = null;
 	let unlistenRepairStatus: (() => void) | null = null;
@@ -605,6 +606,10 @@
 		await Promise.all([sidebar?.refresh(), noteList?.refresh(true)]);
 	}
 
+	async function refreshAfterSync(): Promise<void> {
+		await Promise.all([sidebar?.refresh(), noteList?.refresh(true), refreshUnfiled()]);
+	}
+
 	function requestNoteCreation() {
 		if ($shutdownPending || $viewMode === 'quickaccess' || $viewMode === 'trash' || $viewMode === 'unfiled') return;
 		if (!isMobile && $notelistCollapsed) $notelistCollapsed = false;
@@ -1023,6 +1028,11 @@
 		window.addEventListener(NAVIGATE_NOTE_EVENT, handleNavigationRequest);
 		removeNavigationRequest = () => window.removeEventListener(NAVIGATE_NOTE_EVENT, handleNavigationRequest);
 
+		unlistenSyncDone = await listen<BulkMutationTerminal>('sync-done', async (event) => {
+			if (alive() && event.payload.outcome !== 'failure') await refreshAfterSync();
+		});
+		if (!alive()) { unlistenSyncDone(); unlistenSyncDone = null; return; }
+
 		let lastNotePath: string | null = null;
 		let lastViewMode = '';
 		let lastNotebook: string | null = null;
@@ -1256,6 +1266,7 @@
 		startupGate.cancel();
 		void releaseOwnedVaultSwitchGate();
 		unlistenFileChange?.();
+		unlistenSyncDone?.();
 		unlistenAiStatus?.();
 		unlistenHotkeyStatus?.();
 		unlistenRepairStatus?.();
