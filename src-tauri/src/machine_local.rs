@@ -366,6 +366,11 @@ pub fn sync_state_path(vault_path: &Path) -> Result<PathBuf, String> {
     vault_dir(vault_path).map(|dir| dir.join("sync_state.json"))
 }
 
+/// App-owned Syncthing config, certificates, database, and logs for this vault.
+pub fn syncthing_dir(vault_path: &Path) -> Result<PathBuf, String> {
+    machine_local_dir(vault_path, "syncthing")
+}
+
 /// File recording repairs this machine's vault needs.
 pub fn repair_ledger_path(vault_path: &Path) -> Result<PathBuf, String> {
     vault_dir(vault_path).map(|dir| dir.join("repair_issues.json"))

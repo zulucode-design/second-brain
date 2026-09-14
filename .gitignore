@@ -1,4 +1,5 @@
 node_modules
+src-tauri/binaries/syncthing-*
 
 # Foreign lockfiles - this project uses pnpm (pnpm-lock.yaml is the only lockfile)
 package-lock.json

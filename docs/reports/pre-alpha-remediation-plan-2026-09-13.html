@@ -53,7 +53,7 @@
     <table>
       <thead><tr><th>Gate</th><th>Decision required</th><th>Why it blocks work</th><th>Output</th></tr></thead>
       <tbody>
-        <tr><td><span class="badge decision">G1 Sync architecture — decided; removal complete</span></td><td>ADR-0009 reaffirms ADR-0002: bundle an app-managed Syncthing sidecar over user-installed Tailscale with explicit device pairing; remove WebDAV from production.</td><td>Package B has completed WebDAV removal and durable config/credential retirement. Package D still owns sidecar lifecycle, pairing, conflict handling, and its verification.</td><td>ADR-0009, SPEC §8, #82, #84, and #28.</td></tr>
+        <tr><td><span class="badge decision">G1 Sync architecture — implemented locally; machine gate pending</span></td><td>ADR-0009 reaffirms ADR-0002: bundle an app-managed Syncthing sidecar over user-installed Tailscale with explicit device pairing; remove WebDAV from production.</td><td>Package B completed WebDAV removal. Issue #84 implements package D's lifecycle, pairing, guarded batches, shared retention setting, and conflict workflow; real packaged Windows/Fedora verification remains.</td><td>ADR-0009, SPEC §8, <code>docs/syncthing-sidecar.md</code>, #82, #84, and #28.</td></tr>
         <tr><td><span class="badge decision">G2 Alpha scope — decided</span></td><td>ADR-0010 makes semantic search part of the external-alpha retrieval contract and moves #8–#11 to the v1 feature-complete beta.</td><td>The absent interaction surfaces remain v1 commitments without blocking safety-focused external testing.</td><td>ADR-0010, SPEC delivery milestones, README, and #8–#11.</td></tr>
         <tr><td><span class="badge decision">G3 Product identity — decided</span></td><td>ADR-0011 makes Second Brain the sole user-facing identity, keeps the existing Second Brain application identifier, starts at <code>0.1.0-alpha.1</code>, treats HelixNotes as separate, and disables the inherited updater.</td><td>Package I still owns the rename and narrow mixed-build migration; H/#49 own package and future signed-update evidence.</td><td>ADR-0011, SPEC §9, #89, and #49.</td></tr>
         <tr><td><span class="badge decision">G4 Platform/vault contract — decided</span></td><td>ADR-0012 supports Windows 11 x86-64 and Fedora 44 Workstation x86-64 with one logical vault replicated between the two machines.</td><td>Package I removes inherited unsupported-platform and multi-vault paths; H verifies only the supported matrix and the 10,000-note baseline.</td><td>ADR-0012, SPEC §2/§12, #89, and #88.</td></tr>
@@ -111,7 +111,7 @@
           <td>Complete. C owns the merged shared coordinator primitive and contract tests; D must consume it for the sidecar, while E retains import result-accuracy work.</td>
         </tr>
         <tr>
-          <td><strong>D</strong><br><span class="badge p1">P1 sync integrity</span></td>
+          <td><strong>D</strong><br><span class="badge p1">Implemented locally; real-machine gate pending</span></td>
           <td>Implement the selected sidecar architecture and make its incoming/bulk changes interruption-safe and projection-complete.</td>
           <td>
             <ul>
@@ -124,8 +124,8 @@
               <li>Two-machine interruption, delete, move, delayed-arrival, pairing/authentication, and conflict fixtures pass for the selected sidecar.</li>
             </ul>
           </td>
-          <td>Future-sidecar obligations derived from historical D-04/D-06; blockers 4–5; existing #28 and #14.</td>
-          <td>G1; C’s coordinator/backup primitives; B’s completed WebDAV removal boundary.</td>
+          <td>Implementation and local regressions cover historical D-04/D-06 and blockers 4–5. The Windows/Fedora protocol in <code>docs/syncthing-sidecar.md</code> remains pending for #28.</td>
+          <td>G1; C’s coordinator/backup primitives; B’s completed WebDAV removal boundary. No implementation dependency remains.</td>
         </tr>
         <tr>
           <td><strong>E</strong><br><span class="badge p2">P2 import/external files</span></td>
@@ -186,7 +186,7 @@
             </ul>
           </td>
           <td>Test assessment gaps; existing #24 and #49.</td>
-          <td>A and C now provide focused save/navigation/shutdown, restore rollback, and bulk-coordination regressions; B provides WebDAV-unreachability policy checks. D must still provide the sidecar scenarios; E–G are non-gating matrix rows unless separately promoted. CI scaffolding can continue immediately.</td>
+          <td>A and C provide focused save/navigation/shutdown, restore rollback, and bulk-coordination regressions; B provides WebDAV-unreachability policy checks. D provides local sidecar regressions and still requires its packaged two-machine scenarios; E–G are non-gating matrix rows unless separately promoted.</td>
         </tr>
         <tr>
           <td><strong>I</strong><br><span class="badge p3">P3 product/cleanup</span></td>

@@ -18,8 +18,11 @@ mod semantic_search;
 mod shutdown;
 mod state;
 mod sync_config;
+mod sync_conflicts;
+mod sync_sidecar;
 mod types;
 mod vault;
+mod vault_settings;
 mod web_clipping;
 
 use state::AppState;
@@ -298,6 +301,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_shell::init())
         .on_webview_event(|webview, event| {
             if let tauri::WebviewEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
                 let scope = webview.fs_scope();
@@ -397,6 +401,7 @@ pub fn run() {
                 {
                     log::warn!("Failed to restore the vault asset scope: {error}");
                 }
+                sync_sidecar::restore_enabled(app.handle().clone());
             }
 
             #[cfg(desktop)]
@@ -549,6 +554,12 @@ pub fn run() {
             commands::get_install_type,
             commands::is_mobile_platform,
             commands::get_pending_open_file,
+            sync_sidecar::sync_status,
+            sync_sidecar::sync_set_enabled,
+            sync_sidecar::sync_pair,
+            sync_sidecar::sync_now,
+            sync_conflicts::list_sync_conflicts,
+            sync_conflicts::resolve_sync_conflict,
         ])
         .register_asynchronous_uri_scheme_protocol("imgproxy", |_ctx, request, responder| {
             let path = request.uri().path().to_string();

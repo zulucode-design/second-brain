@@ -26,6 +26,8 @@ import type {
   SemanticStatus,
   SaveCommitOutcome,
   RelocationOutcome,
+  SyncStatus,
+  SyncConflict,
 } from "./types";
 
 export async function openVault(path: string): Promise<void> {
@@ -660,6 +662,31 @@ export async function getPendingOpenFile(): Promise<string | null> {
 
 export async function getRepairStatus(): Promise<RepairStatus> {
   return invoke("get_repair_status");
+}
+
+export async function getSyncStatus(): Promise<SyncStatus> {
+  return invoke("sync_status");
+}
+
+export async function setSyncEnabled(enabled: boolean): Promise<SyncStatus> {
+  return invoke("sync_set_enabled", { enabled });
+}
+
+export async function pairSyncDevice(deviceId: string, name: string, tailscaleIp: string, vaultId: string): Promise<SyncStatus> {
+  return invoke("sync_pair", { deviceId, name, tailscaleIp, vaultId });
+}
+
+/** Starts a guarded background run; completion arrives through `sync-done`. */
+export async function syncNow(): Promise<void> {
+  return invoke("sync_now");
+}
+
+export async function listSyncConflicts(): Promise<SyncConflict[]> {
+  return invoke("list_sync_conflicts");
+}
+
+export async function resolveSyncConflict(conflictPath: string, choice: "original" | "conflict"): Promise<void> {
+  return invoke("resolve_sync_conflict", { conflictPath, choice });
 }
 
 export async function retryRepairs(): Promise<RepairStatus> {

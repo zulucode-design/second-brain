@@ -344,6 +344,13 @@ Sync is provided by **Syncthing bundled as an app-managed sidecar** (Tauri `exte
 The app owns its lifecycle, configuration, and folder scoping. To the user, sync is a toggle
 in Settings: nothing to install, no second application.
 
+The sidecar remains paused between app-scheduled or user-requested batches. Before a batch
+can receive files, the app acquires its bulk-mutation lease and creates a full-vault safety
+backup outside the vault. It then resumes the paired folder, waits for convergence, pauses it
+again on every terminal path, and rebuilds machine-local projections. Operational lifecycle,
+pinning, pairing, and verification details are recorded in
+[syncthing-sidecar.md](syncthing-sidecar.md).
+
 Tailscale is a separate, user-installed prerequisite. The app explains how to verify that
 the paired machines can reach each other, but does not install, configure, or supervise
 Tailscale. The Syncthing sidecar uses app-owned configuration and does not adopt or modify a
@@ -359,9 +366,12 @@ produces a conflict copy on disk. See Conflicts below.
 
 ### Pairing
 
-Two devices exchange identities **once, explicitly** — one machine shows an identifier, the
-other accepts it. Auto-pairing every device on the Tailnet is rejected: it would make network
-membership the only protection on the vault.
+Two devices exchange identities **once, explicitly and in both directions** — each machine
+shows its Syncthing identifier and shared vault identifier, and each accepts the other's
+device identifier and Tailscale address. Both machines must begin with a copy of the same
+vault; a mismatched vault identity is rejected rather than merging unrelated data.
+Auto-pairing every device on the Tailnet is rejected: it would make network membership the
+only protection on the vault.
 
 ### What syncs, and what must not
 
@@ -424,7 +434,7 @@ When a note is edited on both machines before either observed the other's change
 **surfaces both versions and lets the user choose**. No silent last-write-wins overwrite.
 
 Concretely, the bundled engine writes a conflict copy beside the original
-(`note.sync-conflict-<timestamp>-<device>.md`). The app **detects that pattern and pairs the
+(`note.sync-conflict-YYYYMMDD-HHMMSS-<device>.md`). The app **detects that pattern and pairs the
 copy with its original**, presenting the choice above. A conflict copy is never surfaced as
 an ordinary note — left alone it would be indexed under a machine-generated title and pollute
 search, the graph, and PARA counts.

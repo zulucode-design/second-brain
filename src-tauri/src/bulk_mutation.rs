@@ -24,7 +24,7 @@ pub enum BulkMutationOutcome {
     Failure,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct BulkMutationTerminal {
     pub success: bool,
     pub outcome: BulkMutationOutcome,

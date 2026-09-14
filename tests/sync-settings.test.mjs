@@ -27,14 +27,8 @@ const forbiddenProductionContracts = [
   /mod sync;/,
   /set_sync_settings/,
   /test_sync_connection/,
-  /sync_now/,
   /setSyncSettings/,
   /testSyncConnection/,
-  /syncNow/,
-  /sync-progress/,
-  /sync-done/,
-  /sync-error/,
-  /sync-test-result/,
   /sync_provider/,
   /webdav_url/,
   /WebdavCredentials/,
@@ -47,7 +41,7 @@ test('the WebDAV client module is absent from the production crate', async () =>
   );
 });
 
-test('production command, config, API, scheduler, and UI paths cannot invoke WebDAV', async () => {
+test('production command, config, API, scheduler, and UI paths retain no WebDAV contracts', async () => {
   for (const path of productionFiles) {
     const contents = await source(path);
     for (const forbidden of forbiddenProductionContracts) {
@@ -61,4 +55,41 @@ test('the removed frontend configuration helper cannot be imported', async () =>
     access(new URL('src/lib/utils/sync-settings.ts', root)),
     /ENOENT/,
   );
+});
+
+test('the selected sidecar is bundled and every app launch path prepares it', async () => {
+  const overlay = JSON.parse(await source('src-tauri/tauri.sidecar.conf.json'));
+  assert.deepEqual(overlay.bundle.externalBin, ['binaries/syncthing']);
+
+  const packageJson = JSON.parse(await source('package.json'));
+  assert.match(packageJson.scripts['tauri:dev'], /sidecar:prepare/);
+  assert.match(packageJson.scripts['tauri:dev'], /tauri\.sidecar\.conf\.json/);
+  assert.match(packageJson.scripts['tauri:build'], /sidecar:prepare/);
+  assert.match(packageJson.scripts['tauri:build'], /tauri\.sidecar\.conf\.json/);
+
+  const workflow = await source('.github/workflows/verify.yml');
+  assert.match(workflow, /pnpm sidecar:prepare/);
+  assert.match(workflow, /externalBin/);
+  assert.match(workflow, /syncthing-x86_64-pc-windows-msvc\.exe --version/);
+});
+
+test('sync remains an explicit guarded batch rather than ambient Tailnet access', async () => {
+  const backend = await source('src-tauri/src/sync_sidecar.rs');
+  assert.match(backend, /autoAcceptFolders"\s*:\s*false/);
+  assert.match(backend, /globalAnnounceEnabled/);
+  assert.match(backend, /create_pre_sync_backup/);
+  assert.match(backend, /bulk_mutation/);
+  assert.match(backend, /FolderPauseGuard/);
+  assert.match(backend, /reconcile_bulk_projections/);
+
+  const settings = await source('src/lib/components/SettingsPanel.svelte');
+  assert.match(settings, /Pair explicitly/);
+  assert.match(settings, /Vault ID from the other machine/);
+  assert.match(settings, /Conflict copies stay out of notes/);
+});
+
+test('a delayed local attachment is presented as not synced yet', async () => {
+  const editor = await source('src/lib/components/Editor.svelte');
+  assert.match(editor, /Attachment not synced yet/);
+  assert.match(editor, /listen\('sync-done', retryDelayedAttachments\)/);
 });

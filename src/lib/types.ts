@@ -261,6 +261,32 @@ export interface RepairStatus {
   issues: RepairIssue[];
 }
 
+export interface SyncStatus {
+  enabled: boolean;
+  running: boolean;
+  version: string;
+  deviceId: string | null;
+  error: string | null;
+  paired: boolean;
+  peerName: string | null;
+  peerConnected: boolean;
+  vaultId: string | null;
+}
+
+export interface SyncConflict {
+  conflictPath: string;
+  originalPath: string;
+  relativePath: string;
+  conflictContent: string;
+  originalContent: string | null;
+}
+
+export interface BulkMutationTerminal {
+  success: boolean;
+  outcome: "success" | "changed-incomplete" | "failure";
+  error?: string;
+}
+
 export interface ImportResult {
   files_converted: number;
   links_converted: number;

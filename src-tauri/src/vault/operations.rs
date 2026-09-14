@@ -281,7 +281,10 @@ fn scan_dir_with_count(dir: &Path, vault_root: &str) -> (Vec<NotebookEntry>, usi
         };
         if ft.is_dir() && !is_hidden(&entry.path()) {
             subdirs.push(entry);
-        } else if ft.is_file() && entry.path().extension().and_then(|x| x.to_str()) == Some("md") {
+        } else if ft.is_file()
+            && !is_hidden(&entry.path())
+            && entry.path().extension().and_then(|x| x.to_str()) == Some("md")
+        {
             note_count += 1;
         }
     }
@@ -327,6 +330,7 @@ pub(crate) fn is_hidden(path: &Path) -> bool {
         .and_then(|n| n.to_str())
         .map(|n| {
             n.starts_with('.')
+                || n.contains(".sync-conflict-")
                 || matches!(
                     n,
                     "_res" | "_resources" | "_attachments" | "_assets" | "assets" | "node_modules"
@@ -345,6 +349,7 @@ pub fn count_root_notes(vault_path: &str) -> Result<usize, String> {
         .filter_map(|e| e.ok())
         .filter(|e| {
             e.file_type().map(|ft| ft.is_file()).unwrap_or(false)
+                && !is_hidden(&e.path())
                 && e.path().extension().and_then(|x| x.to_str()) == Some("md")
         })
         .count();
@@ -396,7 +401,11 @@ pub fn scan_notes(vault_path: &str, notebook_path: Option<&str>) -> Result<Vec<N
                 Ok(rd) => rd
                     .filter_map(|e| e.ok())
                     .map(|e| e.path())
-                    .filter(|p| p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md"))
+                    .filter(|p| {
+                        p.is_file()
+                            && !is_hidden(p)
+                            && p.extension().and_then(|x| x.to_str()) == Some("md")
+                    })
                     .collect(),
                 Err(_) => Vec::new(),
             }
@@ -408,7 +417,11 @@ pub fn scan_notes(vault_path: &str, notebook_path: Option<&str>) -> Result<Vec<N
                 .filter_entry(|e| !is_hidden(e.path()) && !e.path().starts_with(&hn_dir))
                 .filter_map(|e| e.ok())
                 .map(|e| e.path().to_path_buf())
-                .filter(|p| p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md"))
+                .filter(|p| {
+                    p.is_file()
+                        && !is_hidden(p)
+                        && p.extension().and_then(|x| x.to_str()) == Some("md")
+                })
                 .collect()
         };
 
@@ -433,7 +446,11 @@ pub fn scan_notes(vault_path: &str, notebook_path: Option<&str>) -> Result<Vec<N
                 .map_err(|e| e.to_string())?
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
-                .filter(|p| p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md"))
+                .filter(|p| {
+                    p.is_file()
+                        && !is_hidden(p)
+                        && p.extension().and_then(|x| x.to_str()) == Some("md")
+                })
                 .collect()
         } else {
             WalkDir::new(root)
@@ -443,7 +460,11 @@ pub fn scan_notes(vault_path: &str, notebook_path: Option<&str>) -> Result<Vec<N
                 })
                 .filter_map(|e| e.ok())
                 .map(|e| e.path().to_path_buf())
-                .filter(|p| p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md"))
+                .filter(|p| {
+                    p.is_file()
+                        && !is_hidden(p)
+                        && p.extension().and_then(|x| x.to_str()) == Some("md")
+                })
                 .collect()
         };
 
@@ -3231,6 +3252,34 @@ mod tests {
         assert!(projects
             .iter()
             .all(|note| note.path != mismatched_path.to_string_lossy()));
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn conflict_copies_are_not_notes_or_para_counts() {
+        let vault = scaffolded_vault("conflict-copy-isolation");
+        let vault_str = vault.to_string_lossy().to_string();
+        create_note(&vault_str, Some("Projects"), "Plan").unwrap();
+        fs::write(
+            vault.join("Projects/Plan.sync-conflict-20260913-142233-ABCDEF.md"),
+            "conflict",
+        )
+        .unwrap();
+        let notes = super::scan_notes(
+            &vault_str,
+            Some(vault.join("Projects").to_string_lossy().as_ref()),
+        )
+        .unwrap();
+        assert_eq!(notes.len(), 1);
+        let notebooks = super::scan_notebooks(&vault_str).unwrap();
+        assert_eq!(
+            notebooks
+                .iter()
+                .find(|entry| entry.name == "Projects")
+                .unwrap()
+                .note_count,
+            1
+        );
         fs::remove_dir_all(vault).unwrap();
     }
 
