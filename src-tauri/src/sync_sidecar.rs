@@ -21,6 +21,7 @@ const STARTUP_WAIT: Duration = Duration::from_millis(100);
 const MAX_RESTARTS: u8 = 3;
 const STABLE_RUN: Duration = Duration::from_secs(30);
 const SYNC_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const SYNC_COMPLETION_HANDOFF_GRACE: Duration = Duration::from_secs(3);
 const WATCHDOG_FLAG: &str = "--helix-sync-watchdog";
 const WATCHDOG_API_KEY: &str = "HELIX_SYNC_WATCHDOG_API_KEY";
 
@@ -1269,6 +1270,56 @@ fn peer_connected(
         .unwrap_or(false))
 }
 
+fn convergence_observation_is_complete(
+    local_status: &serde_json::Value,
+    remote_completion: Option<&serde_json::Value>,
+    peer_id: &str,
+) -> bool {
+    let idle = local_status.get("state").and_then(|value| value.as_str()) == Some("idle");
+    let needed = local_status
+        .get("needTotalItems")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(1);
+    let received_peer_index = local_status
+        .get("remoteSequence")
+        .and_then(|value| value.as_object())
+        .is_some_and(|sequences| sequences.contains_key(peer_id));
+    let peer_complete = remote_completion.is_some_and(|completion| {
+        completion
+            .get("remoteState")
+            .and_then(|value| value.as_str())
+            == Some("valid")
+            && completion.get("needItems").and_then(|value| value.as_u64()) == Some(0)
+            && completion
+                .get("needDeletes")
+                .and_then(|value| value.as_u64())
+                == Some(0)
+            && completion.get("needBytes").and_then(|value| value.as_u64()) == Some(0)
+    });
+    idle && needed == 0 && received_peer_index && peer_complete
+}
+
+#[derive(Default)]
+struct CompletionLatch {
+    consecutive_complete: u8,
+    confirmed: bool,
+}
+
+impl CompletionLatch {
+    fn observe(&mut self, complete: bool) -> bool {
+        if self.confirmed {
+            return true;
+        }
+        self.consecutive_complete = if complete {
+            self.consecutive_complete.saturating_add(1)
+        } else {
+            0
+        };
+        self.confirmed = self.consecutive_complete >= 2;
+        self.confirmed
+    }
+}
+
 fn wait_for_sync(
     client: &reqwest::blocking::Client,
     control: &ControlState,
@@ -1292,7 +1343,7 @@ fn wait_for_sync(
         .map_err(|error| error.to_string())?
         .error_for_status()
         .map_err(|error| format!("Syncthing could not scan the vault: {error}"))?;
-    let mut stable = 0;
+    let mut completion = CompletionLatch::default();
     for _ in 0..600 {
         let value: serde_json::Value = client
             .get(endpoint(control, "/rest/db/status"))
@@ -1312,13 +1363,32 @@ fn wait_for_sync(
         {
             return Err("Syncthing reported one or more file errors".to_string());
         }
-        let idle = value.get("state").and_then(|value| value.as_str()) == Some("idle");
-        let needed = value
-            .get("needTotalItems")
-            .and_then(|value| value.as_u64())
-            .unwrap_or(1);
-        stable = if idle && needed == 0 { stable + 1 } else { 0 };
-        if stable >= 2 {
+        let completion_response = client
+            .get(endpoint(control, "/rest/db/completion"))
+            .header("X-API-Key", &control.api_key)
+            .query(&[("folder", folder_id), ("device", peer_id)])
+            .send()
+            .map_err(|error| error.to_string())?;
+        let remote_completion = if completion_response.status() == reqwest::StatusCode::NOT_FOUND {
+            None
+        } else {
+            Some(
+                completion_response
+                    .error_for_status()
+                    .map_err(|error| error.to_string())?
+                    .json::<serde_json::Value>()
+                    .map_err(|error| error.to_string())?,
+            )
+        };
+        if completion.observe(convergence_observation_is_complete(
+            &value,
+            remote_completion.as_ref(),
+            peer_id,
+        )) {
+            // Both apps can observe the same completed cluster state a fraction of a second
+            // apart. Keep this side resumed long enough for the peer to latch that state too;
+            // otherwise the first app to return would pause the connection under the second.
+            std::thread::sleep(SYNC_COMPLETION_HANDOFF_GRACE);
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(500));
@@ -1460,8 +1530,9 @@ pub async fn sync_now(app: AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        harden_generated_config_xml, read_control, tailscale_ipv4, until_next_sync_window,
-        valid_device_id, write_control, ControlState, SYNC_INTERVAL,
+        convergence_observation_is_complete, harden_generated_config_xml, read_control,
+        tailscale_ipv4, until_next_sync_window, valid_device_id, write_control, CompletionLatch,
+        ControlState, SYNC_INTERVAL,
     };
 
     fn vault() -> std::path::PathBuf {
@@ -1575,5 +1646,60 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("missing required safety fields"));
+    }
+
+    #[test]
+    fn local_idle_is_not_convergence_before_the_remote_index_arrives() {
+        let local = serde_json::json!({
+            "state": "idle",
+            "needTotalItems": 0,
+            "pullErrors": 0
+        });
+
+        assert!(!convergence_observation_is_complete(&local, None, "PEER"));
+    }
+
+    #[test]
+    fn convergence_requires_both_local_and_remote_completion() {
+        let local = serde_json::json!({
+            "state": "idle",
+            "needTotalItems": 0,
+            "pullErrors": 0,
+            "remoteSequence": { "PEER": 14 }
+        });
+        let remote = serde_json::json!({
+            "remoteState": "valid",
+            "needItems": 0,
+            "needDeletes": 0,
+            "needBytes": 0,
+            "sequence": 14
+        });
+
+        assert!(convergence_observation_is_complete(
+            &local,
+            Some(&remote),
+            "PEER"
+        ));
+
+        let still_receiving = serde_json::json!({
+            "remoteState": "valid",
+            "needItems": 1,
+            "needDeletes": 0,
+            "needBytes": 128,
+            "sequence": 13
+        });
+        assert!(!convergence_observation_is_complete(
+            &local,
+            Some(&still_receiving),
+            "PEER"
+        ));
+    }
+
+    #[test]
+    fn bilateral_completion_is_latched_for_the_peer_handoff() {
+        let mut completion = CompletionLatch::default();
+        assert!(!completion.observe(true));
+        assert!(completion.observe(true));
+        assert!(completion.observe(false));
     }
 }

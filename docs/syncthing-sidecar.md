@@ -63,11 +63,15 @@ is fixed:
 2. create an identifiable full-vault pre-sync backup outside the vault, always including
    attachments; abort without resuming Syncthing if this fails;
 3. resume the configured folder and paired device, require Tailscale reachability, request a
-   scan, and wait for two consecutive idle/up-to-date observations;
-4. re-pause both folder and device on success or error (with a drop guard as a second cleanup
+   scan, and wait for two consecutive bilateral completion observations: the local database
+   must contain the peer's remote sequence and need nothing, while peer completion must report
+   a valid shared folder and need no items, deletions, or bytes;
+4. latch bilateral completion and keep the connection resumed for a short handoff grace so the
+   peer can confirm the same state before either machine pauses;
+5. re-pause both folder and device on success or error (with a drop guard as a second cleanup
    path);
-5. reconcile the shared settings projection, keyword index, and semantic index;
-6. release watcher suppression and emit exactly one `success`, `changed-incomplete`, or
+6. reconcile the shared settings projection, keyword index, and semantic index;
+7. release watcher suppression and emit exactly one `success`, `changed-incomplete`, or
    `failure` terminal outcome.
 
 The app owns the guard, backup, terminal event, projections, and conflict UI. Syncthing owns
