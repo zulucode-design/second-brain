@@ -124,7 +124,7 @@
               <li>Two-machine interruption, delete, move, delayed-arrival, pairing/authentication, and conflict fixtures pass for the selected sidecar.</li>
             </ul>
           </td>
-          <td>Implementation and local regressions cover historical D-04/D-06 and blockers 4–5. The Windows/Fedora protocol in <code>docs/syncthing-sidecar.md</code> remains pending for #28.</td>
+          <td>Implementation and local regressions cover historical D-04/D-06 and blockers 4–5. The first packaged Fedora run caught and corrected a wildcard first listener and a sidecar surviving forced app termination; live WebDriver regressions now prove Tailscale-only binding and parent-death cleanup. The remaining Windows/Fedora data, move/delete, delayed-arrival, and conflict protocol in <code>docs/syncthing-sidecar.md</code> remains pending for #28.</td>
           <td>G1; C’s coordinator/backup primitives; B’s completed WebDAV removal boundary. No implementation dependency remains.</td>
         </tr>
         <tr>

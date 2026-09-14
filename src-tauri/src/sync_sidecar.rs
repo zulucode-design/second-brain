@@ -21,6 +21,8 @@ const STARTUP_WAIT: Duration = Duration::from_millis(100);
 const MAX_RESTARTS: u8 = 3;
 const STABLE_RUN: Duration = Duration::from_secs(30);
 const SYNC_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const WATCHDOG_FLAG: &str = "--helix-sync-watchdog";
+const WATCHDOG_API_KEY: &str = "HELIX_SYNC_WATCHDOG_API_KEY";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -158,6 +160,146 @@ impl SyncSidecar {
         })
     }
 }
+
+/// The packaged app doubles as a tiny parent-death watchdog. The API key stays in this
+/// helper's environment, never its command line, and the helper initializes no Tauri UI.
+pub(crate) fn run_watchdog_if_requested() -> bool {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) != Some(WATCHDOG_FLAG) {
+        return false;
+    }
+    let parsed = args
+        .get(2)
+        .and_then(|value| value.parse::<u32>().ok())
+        .zip(args.get(3).and_then(|value| value.parse::<u32>().ok()))
+        .zip(args.get(4).and_then(|value| value.parse::<u16>().ok()));
+    let api_key = std::env::var(WATCHDOG_API_KEY).ok();
+    let Some(((parent_pid, sidecar_pid), gui_port)) = parsed else {
+        return true;
+    };
+    let Some(api_key) = api_key.filter(|value| !value.is_empty()) else {
+        return true;
+    };
+
+    while process_is_alive(parent_pid) && process_is_alive(sidecar_pid) {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if process_is_alive(parent_pid) {
+        return true;
+    }
+
+    let endpoint = format!("http://127.0.0.1:{gui_port}/rest/system/shutdown");
+    if let Ok(client) = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_millis(250))
+        .build()
+    {
+        for _ in 0..40 {
+            if client
+                .post(&endpoint)
+                .header("X-API-Key", &api_key)
+                .send()
+                .map(|response| response.status().is_success())
+                .unwrap_or(false)
+            {
+                return true;
+            }
+            if !process_is_alive(sidecar_pid) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    terminate_process(sidecar_pid);
+    true
+}
+
+fn spawn_parent_watchdog(sidecar_pid: u32, control: &ControlState) -> Result<(), String> {
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("Could not locate the sidecar watchdog: {error}"))?;
+    std::process::Command::new(executable)
+        .args([
+            WATCHDOG_FLAG,
+            &std::process::id().to_string(),
+            &sidecar_pid.to_string(),
+            &control.gui_port.to_string(),
+        ])
+        .env(WATCHDOG_API_KEY, &control.api_key)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Could not start the sidecar watchdog: {error}"))
+}
+
+#[cfg(unix)]
+fn process_is_alive(pid: u32) -> bool {
+    unsafe extern "C" {
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+    // SAFETY: signal zero performs existence/permission checking and changes no process.
+    unsafe { kill(pid as i32, 0) == 0 }
+}
+
+#[cfg(unix)]
+fn terminate_process(pid: u32) {
+    unsafe extern "C" {
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+    // SAFETY: the PID came directly from the child handle owned by this app instance.
+    let _ = unsafe { kill(pid as i32, 15) };
+}
+
+#[cfg(windows)]
+fn process_is_alive(pid: u32) -> bool {
+    type Handle = *mut std::ffi::c_void;
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    const WAIT_TIMEOUT: u32 = 0x0000_0102;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn OpenProcess(access: u32, inherit_handle: i32, process_id: u32) -> Handle;
+        fn WaitForSingleObject(handle: Handle, milliseconds: u32) -> u32;
+        fn CloseHandle(handle: Handle) -> i32;
+    }
+    // SAFETY: the handle is checked for null, used only for a zero-time wait, then closed.
+    unsafe {
+        let handle = OpenProcess(SYNCHRONIZE, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let alive = WaitForSingleObject(handle, 0) == WAIT_TIMEOUT;
+        let _ = CloseHandle(handle);
+        alive
+    }
+}
+
+#[cfg(windows)]
+fn terminate_process(pid: u32) {
+    type Handle = *mut std::ffi::c_void;
+    const PROCESS_TERMINATE: u32 = 0x0001;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn OpenProcess(access: u32, inherit_handle: i32, process_id: u32) -> Handle;
+        fn TerminateProcess(process: Handle, exit_code: u32) -> i32;
+        fn CloseHandle(handle: Handle) -> i32;
+    }
+    // SAFETY: the handle is checked for null, targets the recorded child PID, then is closed.
+    unsafe {
+        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+        if !handle.is_null() {
+            let _ = TerminateProcess(handle, 1);
+            let _ = CloseHandle(handle);
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn process_is_alive(_pid: u32) -> bool {
+    false
+}
+
+#[cfg(not(any(unix, windows)))]
+fn terminate_process(_pid: u32) {}
 
 /// Restore only the app-owned process for an explicitly enabled active vault.
 pub fn restore_enabled(app: AppHandle) {
@@ -513,6 +655,187 @@ async fn generate_if_needed(app: &AppHandle, vault: &Path) -> Result<PathBuf, St
     Ok(home)
 }
 
+fn harden_generated_config_xml(
+    contents: &str,
+    control: &ControlState,
+    local_address: std::net::Ipv4Addr,
+) -> Result<Vec<u8>, String> {
+    use quick_xml::events::{BytesText, Event};
+
+    fn replacement(
+        path: &[Vec<u8>],
+        control: &ControlState,
+        local_address: std::net::Ipv4Addr,
+    ) -> Option<(&'static str, String)> {
+        if path.len() != 3 || path[0] != b"configuration" {
+            return None;
+        }
+        match (path[1].as_slice(), path[2].as_slice()) {
+            (b"gui", b"address") => {
+                Some(("gui/address", format!("127.0.0.1:{}", control.gui_port)))
+            }
+            (b"gui", b"apikey") => Some(("gui/apikey", control.api_key.clone())),
+            (b"options", b"listenAddress") => Some((
+                "options/listenAddress",
+                format!("tcp://{local_address}:22000"),
+            )),
+            (b"options", b"globalAnnounceEnabled") => {
+                Some(("options/globalAnnounceEnabled", "false".into()))
+            }
+            (b"options", b"localAnnounceEnabled") => {
+                Some(("options/localAnnounceEnabled", "false".into()))
+            }
+            (b"options", b"relaysEnabled") => Some(("options/relaysEnabled", "false".into())),
+            (b"options", b"startBrowser") => Some(("options/startBrowser", "false".into())),
+            (b"options", b"natEnabled") => Some(("options/natEnabled", "false".into())),
+            (b"options", b"urAccepted") => Some(("options/urAccepted", "-1".into())),
+            (b"options", b"autoUpgradeIntervalH") => {
+                Some(("options/autoUpgradeIntervalH", "0".into()))
+            }
+            (b"options", b"crashReportingEnabled") => {
+                Some(("options/crashReportingEnabled", "false".into()))
+            }
+            (b"options", b"announceLANAddresses") => {
+                Some(("options/announceLANAddresses", "false".into()))
+            }
+            _ => None,
+        }
+    }
+
+    let mut reader = quick_xml::Reader::from_str(contents);
+    reader.config_mut().trim_text(false);
+    let mut writer = quick_xml::Writer::new(Vec::with_capacity(contents.len()));
+    let mut path = Vec::<Vec<u8>>::new();
+    let mut replaced = std::collections::BTreeSet::new();
+    loop {
+        let event = reader
+            .read_event()
+            .map_err(|error| format!("Generated Syncthing configuration is invalid: {error}"))?;
+        match event {
+            Event::Start(start) => {
+                path.push(start.name().as_ref().to_vec());
+                writer
+                    .write_event(Event::Start(start))
+                    .map_err(|error| error.to_string())?;
+            }
+            Event::Text(text) => {
+                if let Some((field, value)) = replacement(&path, control, local_address) {
+                    replaced.insert(field);
+                    writer
+                        .write_event(Event::Text(BytesText::new(&value)))
+                        .map_err(|error| error.to_string())?;
+                } else {
+                    writer
+                        .write_event(Event::Text(text))
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+            Event::End(end) => {
+                writer
+                    .write_event(Event::End(end))
+                    .map_err(|error| error.to_string())?;
+                path.pop();
+            }
+            Event::Eof => break,
+            other => writer
+                .write_event(other)
+                .map_err(|error| error.to_string())?,
+        }
+    }
+    const REQUIRED_FIELDS: usize = 12;
+    if replaced.len() != REQUIRED_FIELDS {
+        return Err(format!(
+            "Generated Syncthing configuration is missing required safety fields (found {} of {REQUIRED_FIELDS})",
+            replaced.len()
+        ));
+    }
+    Ok(writer.into_inner())
+}
+
+fn harden_generated_config(
+    home: &Path,
+    control: &ControlState,
+    local_address: std::net::Ipv4Addr,
+) -> Result<(), String> {
+    use std::io::Write;
+
+    let path = home.join("config.xml");
+    let contents = std::fs::read_to_string(&path)
+        .map_err(|error| format!("Could not read generated Syncthing configuration: {error}"))?;
+    let hardened = harden_generated_config_xml(&contents, control, local_address)?;
+    let temporary = home.join(format!(".config-{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| {
+        let mut options = std::fs::OpenOptions::new();
+        options.create_new(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&temporary)
+            .map_err(|error| error.to_string())?;
+        file.write_all(&hardened)
+            .and_then(|_| file.sync_all())
+            .map_err(|error| error.to_string())?;
+        drop(file);
+        replace_generated_config(&temporary, &path)?;
+        #[cfg(unix)]
+        std::fs::File::open(home)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(temporary);
+    }
+    result.map_err(|error: String| format!("Could not harden Syncthing configuration: {error}"))
+}
+
+#[cfg(unix)]
+fn replace_generated_config(source: &Path, destination: &Path) -> Result<(), String> {
+    std::fs::rename(source, destination).map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn replace_generated_config(source: &Path, destination: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn MoveFileExW(existing_filename: *const u16, new_filename: *const u16, flags: u32) -> i32;
+    }
+
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    // SAFETY: both buffers are NUL-terminated, remain alive for the call, and the flags
+    // request an atomic replacement with write-through durability.
+    let replaced = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if replaced == 0 {
+        Err(std::io::Error::last_os_error().to_string())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn replace_generated_config(source: &Path, destination: &Path) -> Result<(), String> {
+    std::fs::rename(source, destination).map_err(|error| error.to_string())
+}
+
 fn start(
     app: AppHandle,
     vault: PathBuf,
@@ -537,6 +860,8 @@ fn start(
         }
         let control = read_control(&vault)?;
         let home = generate_if_needed(&app, &vault).await?;
+        let local_address = local_tailscale_ipv4()?;
+        harden_generated_config(&home, &control, local_address)?;
         let args = vec![
             "serve".to_string(),
             format!("--home={}", home.to_string_lossy()),
@@ -562,6 +887,10 @@ fn start(
             .env("STVERSIONEXTRA", "Second Brain managed sidecar")
             .spawn()
             .map_err(|error| format!("Could not start bundled Syncthing: {error}"))?;
+        if let Err(error) = spawn_parent_watchdog(child.pid(), &control) {
+            let _ = child.kill();
+            return Err(error);
+        }
 
         let generation = {
             let state = app.state::<AppState>();
@@ -1131,8 +1460,8 @@ pub async fn sync_now(app: AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        read_control, tailscale_ipv4, until_next_sync_window, valid_device_id, write_control,
-        SYNC_INTERVAL,
+        harden_generated_config_xml, read_control, tailscale_ipv4, until_next_sync_window,
+        valid_device_id, write_control, ControlState, SYNC_INTERVAL,
     };
 
     fn vault() -> std::path::PathBuf {
@@ -1177,5 +1506,74 @@ mod tests {
     #[test]
     fn scheduled_windows_are_aligned_and_never_more_than_one_interval_away() {
         assert!(until_next_sync_window() <= SYNC_INTERVAL);
+    }
+
+    #[test]
+    fn generated_config_is_hardened_before_the_first_serve() {
+        let generated = r#"<configuration version="52">
+    <device id="LOCAL"><address>dynamic</address><paused>false</paused></device>
+    <gui enabled="true"><address>127.0.0.1:8384</address><apikey>generated-key</apikey></gui>
+    <options>
+        <listenAddress>default</listenAddress>
+        <globalAnnounceEnabled>true</globalAnnounceEnabled>
+        <localAnnounceEnabled>true</localAnnounceEnabled>
+        <relaysEnabled>true</relaysEnabled>
+        <startBrowser>true</startBrowser>
+        <natEnabled>true</natEnabled>
+        <urAccepted>0</urAccepted>
+        <autoUpgradeIntervalH>12</autoUpgradeIntervalH>
+        <crashReportingEnabled>true</crashReportingEnabled>
+        <announceLANAddresses>true</announceLANAddresses>
+    </options>
+</configuration>"#;
+        let control = ControlState {
+            version: 1,
+            enabled: true,
+            api_key: "app-owned-key".into(),
+            gui_port: 22046,
+            peer: None,
+        };
+
+        let hardened = String::from_utf8(
+            harden_generated_config_xml(generated, &control, "100.124.210.13".parse().unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+
+        assert!(hardened.contains("<address>127.0.0.1:22046</address>"));
+        assert!(hardened.contains("<apikey>app-owned-key</apikey>"));
+        assert!(hardened.contains("<listenAddress>tcp://100.124.210.13:22000</listenAddress>"));
+        for element in [
+            "globalAnnounceEnabled",
+            "localAnnounceEnabled",
+            "relaysEnabled",
+            "startBrowser",
+            "natEnabled",
+            "crashReportingEnabled",
+            "announceLANAddresses",
+        ] {
+            assert!(hardened.contains(&format!("<{element}>false</{element}>")));
+        }
+        assert!(hardened.contains("<urAccepted>-1</urAccepted>"));
+        assert!(hardened.contains("<autoUpgradeIntervalH>0</autoUpgradeIntervalH>"));
+        assert!(hardened.contains("<device id=\"LOCAL\"><address>dynamic</address>"));
+    }
+
+    #[test]
+    fn generated_config_with_missing_safety_fields_fails_closed() {
+        let control = ControlState {
+            version: 1,
+            enabled: true,
+            api_key: "app-owned-key".into(),
+            gui_port: 22046,
+            peer: None,
+        };
+        let error = harden_generated_config_xml(
+            "<configuration><gui><address>127.0.0.1:8384</address></gui></configuration>",
+            &control,
+            "100.124.210.13".parse().unwrap(),
+        )
+        .unwrap_err();
+        assert!(error.contains("missing required safety fields"));
     }
 }

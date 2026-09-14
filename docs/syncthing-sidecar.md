@@ -21,16 +21,20 @@ exercise this protocol, then ship a new app. Syncthing self-upgrade is disabled.
 
 ## Ownership and lifecycle
 
-The app creates a private Syncthing home outside the vault, generates configuration once,
-starts the process paused, and controls its loopback REST API with a random machine-local
-API key. The key is supplied through the process environment rather than the command line.
+The app creates a private Syncthing home outside the vault and controls its loopback REST API
+with a random machine-local API key. After generation and before every first `serve`, it
+durably rewrites and validates the pinned configuration schema; a missing safety field stops
+startup rather than falling back to a Syncthing default. It then starts the process paused.
+The key is supplied through the process environment rather than the command line.
 Syncthing logs, certificates, its database, API key, pairing state, and process control state
 are machine-local. They never enter the synced vault.
 
 Enable restores the sidecar for the active vault. Disable and vault switching request an
 authenticated shutdown and kill a process that does not exit promptly. Unexpected exits are
-restarted at most three times. The Tauri shell plugin also owns child cleanup when the app
-process exits. A five-minute scheduler requests guarded sync runs on shared UTC boundaries
+restarted at most three times. A minimal watchdog process receives the API key through its
+environment and requests authenticated sidecar shutdown if the app process disappears; this
+also bounds cleanup after a forced app termination that cannot run normal Tauri teardown. A
+five-minute scheduler requests guarded sync runs on shared UTC boundaries
 so independently launched machines overlap; it does not leave the folder or paired device
 continuously resumed. An immediate manual transfer requires pressing Sync now on both
 machines within the 30-second reachability window.

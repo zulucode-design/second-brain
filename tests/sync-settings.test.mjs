@@ -77,6 +77,8 @@ test('sync remains an explicit guarded batch rather than ambient Tailnet access'
   const backend = await source('src-tauri/src/sync_sidecar.rs');
   assert.match(backend, /autoAcceptFolders"\s*:\s*false/);
   assert.match(backend, /globalAnnounceEnabled/);
+  assert.match(backend, /harden_generated_config\(&home, &control, local_address\)/);
+  assert.match(backend, /spawn_parent_watchdog\(child\.pid\(\), &control\)/);
   assert.match(backend, /create_pre_sync_backup/);
   assert.match(backend, /bulk_mutation/);
   assert.match(backend, /FolderPauseGuard/);

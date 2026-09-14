@@ -30,6 +30,14 @@ use state::AppState;
 use tauri::{Emitter, Manager};
 use tauri_plugin_fs::FsExt;
 
+/// Run the hidden sidecar watchdog mode before initializing Tauri.
+///
+/// The packaged application reuses its own executable for this narrow helper so a forced
+/// parent-process termination cannot strand an unpaused Syncthing process.
+pub fn run_sync_watchdog_if_requested() -> bool {
+    sync_sidecar::run_watchdog_if_requested()
+}
+
 fn release_shutdown(app: &tauri::AppHandle, request_id: &str) {
     let _ = app.emit(
         "save-close-released",
