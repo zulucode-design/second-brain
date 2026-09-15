@@ -109,8 +109,12 @@
     <tr><td>Update and package signing</td><td>signing path verified, or the updater stays disabled per ADR-0011</td><td>not verified</td><td>#88, #24</td><td><span class="s red">missing</span></td></tr>
     <tr><td>Performance</td><td>cold start, editor interaction, graph render, and semantic retrieval measured on both machines with thresholds</td><td>not measured. A 2026-09-14 attempt timed five launches of the D: build from SSH until the process had a main window;
       all five runs recorded no window because a process in the SSH session cannot see window handles in the console session.
-      The launches and stops themselves worked. Startup timing needs a probe running inside the desktop session, such as
-      a scheduled task that writes its own timings.</td><td>#88</td><td><span class="s red">missing</span></td></tr>
+      The launches and stops themselves worked. A second attempt ran the probe as a scheduled task inside the console
+      session (<code>D:\SecondBrainTest\perf\startup.jsonl</code>): native window handle after 133, 39, 56, 42, and 41 ms
+      (first run 133 ms, then a median of 42 ms), with no config and therefore the vault picker. That measures when Windows
+      creates the window, before the web view has drawn anything, so it is not a user-visible startup time. Still missing:
+      time until the UI is interactive with a representative vault, editor interaction, graph render, semantic retrieval,
+      and all Fedora measurements.</td><td>#88</td><td><span class="s red">missing</span></td></tr>
     <tr><td>Log privacy and diagnostic export</td><td>written redaction policy; user-started export excludes note contents and secrets by default</td><td>policy written in <code>docs/log-privacy.md</code> with an audit of current log calls (no secrets logged; paths, note ids,
       Notion messages, and Syncthing output are logged locally as note metadata). Export not implemented; deferred until #86
       merges because it touches the same startup and command modules.</td><td>#88</td><td><span class="s amber">policy done, export missing</span></td></tr>
