@@ -6,7 +6,10 @@
 //! - Unix: `rename(2)` is atomic within one filesystem (hence the same-directory temporary),
 //!   and the parent directory is `fsync`ed afterwards so the rename itself survives power loss.
 //! - Windows: `MoveFileExW(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)`, which does
-//!   not return until the move is flushed. NTFS has no directory `fsync` to add.
+//!   not return until the move is flushed. NTFS has no directory `fsync` to add. Any other
+//!   open handle on the destination (Defender, the search indexer, Syncthing hashing, an
+//!   external editor) makes the move fail with access denied or a sharing violation, even
+//!   with `FILE_SHARE_DELETE`, so it is retried for a short bounded budget first.
 //!
 //! A reader therefore sees either the complete previous file or the complete new one, never a
 //! truncated mix. On any failure the temporary is removed and the destination is untouched.
@@ -107,21 +110,41 @@ fn atomic_replace(source: &Path, destination: &Path) -> Result<(), String> {
         .encode_wide()
         .chain(Some(0))
         .collect();
-    // SAFETY: both buffers are NUL-terminated, remain alive for the call, and the flags
-    // request an atomic replacement with write-through durability.
-    let replaced = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if replaced == 0 {
-        Err(std::io::Error::last_os_error().to_string())
-    } else {
-        Ok(())
+    const ERROR_ACCESS_DENIED: i32 = 5;
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+
+    for attempt in 1..=REPLACE_ATTEMPTS {
+        // SAFETY: both buffers are NUL-terminated, remain alive for the call, and the flags
+        // request an atomic replacement with write-through durability.
+        let replaced = unsafe {
+            MoveFileExW(
+                source.as_ptr(),
+                destination.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if replaced != 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        let transient = matches!(
+            error.raw_os_error(),
+            Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION)
+        );
+        if !transient || attempt == REPLACE_ATTEMPTS {
+            return Err(error.to_string());
+        }
+        std::thread::sleep(REPLACE_RETRY_WAIT);
     }
+    unreachable!("the final replace attempt always returns")
 }
+
+/// Same shape as the search index's commit retry (PR #74), with a longer budget (~250 ms):
+/// a scanner holding a note open is the common case, not an edge case.
+#[cfg(windows)]
+const REPLACE_ATTEMPTS: usize = 11;
+#[cfg(windows)]
+const REPLACE_RETRY_WAIT: std::time::Duration = std::time::Duration::from_millis(25);
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -180,6 +203,38 @@ pub(crate) mod tests {
         let path = dir.join("missing-parent").join("file.json");
         assert!(replace(&path, b"data", Mode::Shared).is_err());
         assert!(!path.exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_briefly_held_destination_is_replaced_after_it_is_released() {
+        let dir = scratch();
+        let path = dir.join("note.md");
+        std::fs::write(&path, "old").unwrap();
+        let holder = std::fs::File::open(&path).unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            drop(holder);
+        });
+        replace(&path, b"new", Mode::Shared).unwrap();
+        release.join().unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+        assert_eq!(entries(&dir), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_destination_held_past_the_retry_budget_fails_with_old_content_intact() {
+        let dir = scratch();
+        let path = dir.join("note.md");
+        std::fs::write(&path, "old").unwrap();
+        let holder = std::fs::File::open(&path).unwrap();
+        assert!(replace(&path, b"new", Mode::Shared).is_err());
+        drop(holder);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
+        assert_eq!(entries(&dir), 1, "the temporary is cleaned up");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
