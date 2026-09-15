@@ -1199,7 +1199,7 @@ fn wait_for_sync(
         if peer_connected(client, control, peer_id)? {
             break;
         }
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(SYNC_POLL_INTERVAL);
     }
     if !peer_connected(client, control, peer_id)? {
         return Err("The paired device is not reachable over Tailscale".to_string());
@@ -1242,11 +1242,37 @@ fn wait_for_sync(
             )
         };
         if progress.observe(&value, remote_completion.as_ref(), peer_id) {
+            hold_for_peer_handoff(PEER_HANDOFF_GRACE, SYNC_POLL_INTERVAL, || {
+                peer_connected(client, control, peer_id)
+            });
             return Ok(());
         }
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(SYNC_POLL_INTERVAL);
     }
     Err(progress.failure().to_string())
+}
+
+const SYNC_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+// Each peer's latch starts when its own run starts, so the first to confirm must stay connected
+// long enough for the other to confirm too (#103). ponytail: 60 s is a manual-testing value; a
+// peer confirming later than this still reports failure. Tune it from real runs.
+const PEER_HANDOFF_GRACE: Duration = Duration::from_secs(60);
+
+/// Keep the connection open after local confirmation until the peer reports it disconnected or the
+/// grace ends. A failed status call is not a disconnect: ending early there would reopen #103.
+fn hold_for_peer_handoff(
+    grace: Duration,
+    poll: Duration,
+    mut peer_connected: impl FnMut() -> Result<bool, String>,
+) {
+    let deadline = std::time::Instant::now() + grace;
+    while std::time::Instant::now() < deadline {
+        if peer_connected() == Ok(false) {
+            return;
+        }
+        std::thread::sleep(poll);
+    }
 }
 
 fn run_sync(app: AppHandle, vault: PathBuf, control: ControlState, peer: Peer) {
@@ -1386,11 +1412,66 @@ pub async fn sync_now(app: AppHandle) -> Result<(), String> {
 mod tests {
     use super::{
         append_durable_temp_ignore_if_missing, convergence_observation_is_complete,
-        harden_generated_config_xml, read_control, tailscale_ipv4, until_next_sync_window,
-        valid_device_id, write_control, CompletionLatch, ControlState, SyncProgress,
-        DURABLE_TEMP_IGNORE, PULL_ERROR_EXPLAINS_FAILURE, SYNC_COMPLETION_STABLE_OBSERVATIONS,
-        SYNC_INTERVAL,
+        harden_generated_config_xml, hold_for_peer_handoff, read_control, tailscale_ipv4,
+        until_next_sync_window, valid_device_id, write_control, CompletionLatch, ControlState,
+        SyncProgress, DURABLE_TEMP_IGNORE, PEER_HANDOFF_GRACE, PULL_ERROR_EXPLAINS_FAILURE,
+        SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL, SYNC_POLL_INTERVAL,
     };
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn handoff_hold_ends_only_when_the_peer_reports_a_disconnect() {
+        let grace = Duration::from_millis(200);
+
+        let mut calls = 0;
+        let started = Instant::now();
+        hold_for_peer_handoff(grace, Duration::ZERO, || {
+            calls += 1;
+            Ok(calls < 3)
+        });
+        assert_eq!(calls, 3, "a reported disconnect ends the hold at once");
+        assert!(started.elapsed() < grace);
+
+        let started = Instant::now();
+        hold_for_peer_handoff(grace, Duration::from_millis(5), || {
+            Err("status call failed".to_string())
+        });
+        assert!(
+            started.elapsed() >= grace,
+            "a failed status call must not end the hold"
+        );
+
+        let started = Instant::now();
+        hold_for_peer_handoff(grace, Duration::from_millis(5), || Ok(true));
+        assert!(
+            started.elapsed() >= grace,
+            "a connected peer is held for the grace"
+        );
+    }
+
+    #[test]
+    fn a_later_started_peer_confirms_inside_the_first_peers_handoff_grace() {
+        // Manual Sync now allows both presses up to 30 s apart.
+        let observations =
+            |span: Duration| (span.as_millis() / SYNC_POLL_INTERVAL.as_millis()) as usize;
+        let start_gap = observations(Duration::from_secs(30));
+        let grace = observations(PEER_HANDOFF_GRACE);
+        let (mut first, mut second) = (CompletionLatch::default(), CompletionLatch::default());
+        let mut first_released_at = None;
+        for tick in 0..start_gap + 2 * grace {
+            if first_released_at.is_none() && first.observe(true) {
+                first_released_at = Some(tick + grace);
+            }
+            if tick >= start_gap && second.observe(true) {
+                assert!(
+                    tick <= first_released_at.unwrap(),
+                    "first peer paused too early"
+                );
+                return;
+            }
+        }
+        panic!("second peer never confirmed");
+    }
 
     #[test]
     fn durable_temp_ignore_is_appended_once_and_keeps_user_patterns() {
