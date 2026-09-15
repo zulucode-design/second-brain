@@ -202,6 +202,8 @@ export interface AppConfig {
   openai_compatible_api_key: string | null;
   /** Actionable startup failure from the OS credential store, never persisted to disk. */
   secret_store_error?: string | null;
+  /** Why config.json could not be used at startup; the damaged file is kept beside it. */
+  config_error?: string | null;
   ai_model: string;
   ai_writing_style: string | null;
   default_view_mode: boolean;

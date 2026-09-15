@@ -139,7 +139,7 @@ pub fn save(vault_path: &Path, note_id: &str, entry: &MapEntry) -> Result<(), St
     let dir = notion_dir(vault_path);
     std::fs::create_dir_all(&dir).map_err(|error| format!("Cannot create {dir:?}: {error}"))?;
     let encoded = serde_json::to_string_pretty(entry).map_err(|error| error.to_string())?;
-    std::fs::write(&path, encoded)
+    crate::durable::replace(&path, encoded.as_bytes(), crate::durable::Mode::Shared)
         .map_err(|error| format!("Cannot write the Notion map entry for {note_id}: {error}"))
 }
 

@@ -681,7 +681,7 @@ pub fn save_note_if_revision(
     let filename = path.file_name().unwrap_or_default().to_string_lossy();
     let note = note_content_from_raw(&reported_path, raw.clone(), &filename);
 
-    fs::write(path, raw).map_err(|e| e.to_string())?;
+    crate::durable::replace(&path, raw.as_bytes(), crate::durable::Mode::Shared)?;
     Ok(SaveNoteOutcome {
         revision,
         old_raw: existing,
@@ -2623,7 +2623,7 @@ pub fn load_vault_state(vault_path: &str) -> Result<VaultState, String> {
 pub fn save_vault_state(vault_path: &str, state: &VaultState) -> Result<(), String> {
     let state_path = crate::machine_local::vault_state_path(Path::new(vault_path))?;
     let data = serde_json::to_string_pretty(state).map_err(|e| e.to_string())?;
-    fs::write(&state_path, data).map_err(|e| e.to_string())?;
+    crate::durable::replace(&state_path, data.as_bytes(), crate::durable::Mode::Shared)?;
     Ok(())
 }
 

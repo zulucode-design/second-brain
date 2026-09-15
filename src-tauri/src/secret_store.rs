@@ -139,6 +139,7 @@ pub(crate) fn redacted_config(config: &AppConfig) -> AppConfig {
     let mut redacted = config.clone();
     clear_credentials(&mut redacted);
     redacted.secret_store_error = None;
+    redacted.config_error = None;
     redacted
 }
 

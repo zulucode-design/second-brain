@@ -3742,21 +3742,41 @@ fn load_app_config_from(
     path: &std::path::Path,
     store: &dyn crate::secret_store::SecretStore,
 ) -> AppConfig {
-    let contents = std::fs::read_to_string(path).ok().map(|contents| {
-        match crate::sync_config::retire_webdav(path, &contents, store) {
-            Ok(cleaned) => cleaned,
-            Err(error) => {
-                log::warn!("WebDAV retirement is incomplete and will retry at startup: {error}");
-                // Current AppConfig has no WebDAV fields, so even the historical JSON
-                // cannot restore a production execution path while cleanup waits to retry.
-                contents
+    let mut config = match read_app_config(path) {
+        ConfigRead::Loaded(contents) => {
+            let contents = match crate::sync_config::retire_webdav(path, &contents, store) {
+                Ok(cleaned) => cleaned,
+                Err(error) => {
+                    log::warn!(
+                        "WebDAV retirement is incomplete and will retry at startup: {error}"
+                    );
+                    // Current AppConfig has no WebDAV fields, so even the historical JSON
+                    // cannot restore a production execution path while cleanup waits to retry.
+                    contents
+                }
+            };
+            match parse_app_config(&contents) {
+                Ok(config) => config,
+                Err(damage) => damaged_config(path, damage),
             }
         }
-    });
-    let mut config: AppConfig = contents
-        .as_deref()
-        .and_then(|contents| serde_json::from_str(contents).ok())
-        .unwrap_or_default();
+        ConfigRead::Absent => AppConfig::default(),
+        ConfigRead::Unreadable(error) => damaged_config(
+            path,
+            ConfigDamage {
+                reason: format!("config.json could not be read: {error}"),
+                recovered_vaults: Vec::new(),
+            },
+        ),
+    };
+    if config.config_error.is_some() {
+        // Leave the damaged file alone until it is preserved (done in `damaged_config`), and
+        // skip migrations that would rewrite it.
+        if let Err(error) = crate::secret_store::hydrate_config(&mut config, store) {
+            config.secret_store_error = Some(error);
+        }
+        return config;
+    }
     let identity_migration = populate_vault_ids(&mut config);
 
     match crate::secret_store::hydrate_config(&mut config, store) {
@@ -3790,6 +3810,90 @@ fn load_app_config_from(
     config
 }
 
+enum ConfigRead {
+    Absent,
+    Unreadable(std::io::Error),
+    Loaded(String),
+}
+
+fn read_app_config(path: &std::path::Path) -> ConfigRead {
+    match std::fs::read_to_string(path) {
+        Ok(contents) => ConfigRead::Loaded(contents),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => ConfigRead::Absent,
+        Err(error) => ConfigRead::Unreadable(error),
+    }
+}
+
+struct ConfigDamage {
+    reason: String,
+    recovered_vaults: Vec<VaultConfig>,
+}
+
+/// Malformed (not JSON) and incompatible (JSON, but not an `AppConfig`) are reported
+/// differently. Either way, every vault entry that still parses is returned for recovery.
+fn parse_app_config(contents: &str) -> Result<AppConfig, ConfigDamage> {
+    let document: serde_json::Value =
+        serde_json::from_str(contents).map_err(|error| ConfigDamage {
+            reason: format!("config.json is malformed: {error}"),
+            recovered_vaults: Vec::new(),
+        })?;
+    serde_json::from_value(document.clone()).map_err(|error| ConfigDamage {
+        reason: format!("config.json is incompatible with this version: {error}"),
+        recovered_vaults: document
+            .get("vaults")
+            .and_then(serde_json::Value::as_array)
+            .map(|vaults| {
+                vaults
+                    .iter()
+                    .filter_map(|vault| serde_json::from_value(vault.clone()).ok())
+                    .collect()
+            })
+            .unwrap_or_default(),
+    })
+}
+
+/// Startup config for a damaged `config.json`: defaults plus the recovered vault list, no
+/// active vault, and an error the vault picker shows. The damaged file is copied aside
+/// (owner-only, since it may hold credentials) first; if that fails, saving stays blocked.
+fn damaged_config(path: &std::path::Path, damage: ConfigDamage) -> AppConfig {
+    let preserved = path.with_extension(format!(
+        "json.damaged-{}",
+        chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+    ));
+    let copied = std::fs::copy(path, &preserved).and_then(|_| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&preserved, std::fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
+    });
+    let reason = damage.reason;
+    let (message, config_save_blocked) = match copied {
+        Ok(()) => (
+            format!(
+                "{reason}. Settings were reset; the damaged file was kept at {}.",
+                preserved.display()
+            ),
+            false,
+        ),
+        Err(error) => (
+            format!(
+                "{reason}. The file could not be preserved ({error}), so settings will not be saved until it is fixed or removed: {}",
+                path.display()
+            ),
+            true,
+        ),
+    };
+    log::error!("{message}");
+    AppConfig {
+        vaults: damage.recovered_vaults,
+        config_error: Some(message),
+        config_save_blocked,
+        ..AppConfig::default()
+    }
+}
+
 fn populate_vault_ids(config: &mut AppConfig) -> bool {
     let mut changed = false;
     for vault in &mut config.vaults {
@@ -3805,24 +3909,152 @@ fn populate_vault_ids(config: &mut AppConfig) -> bool {
 }
 
 fn write_private_file(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
-    use std::io::Write;
+    crate::durable::replace(path, data, crate::durable::Mode::Private)
+}
 
-    let mut options = std::fs::OpenOptions::new();
-    options.create(true).truncate(true).write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+#[cfg(test)]
+mod config_startup_tests {
+    use super::*;
+
+    struct EmptyStore;
+    impl crate::secret_store::SecretStore for EmptyStore {
+        fn get(&self, _id: &crate::secret_store::SecretId) -> Result<Option<String>, String> {
+            Ok(None)
+        }
+        fn set(&self, _id: &crate::secret_store::SecretId, _value: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn delete(&self, _id: &crate::secret_store::SecretId) -> Result<(), String> {
+            Ok(())
+        }
     }
 
-    let mut file = options.open(path).map_err(|error| error.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))
-            .map_err(|error| error.to_string())?;
+    fn scratch() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("sb-config-startup-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
-    file.write_all(data).map_err(|error| error.to_string())
+
+    fn preserved_copies(dir: &std::path::Path) -> Vec<String> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+            .filter(|name| name.starts_with("config.json.damaged-"))
+            .collect()
+    }
+
+    #[test]
+    fn absent_config_is_a_clean_first_launch() {
+        let dir = scratch();
+        let loaded = load_app_config_from(&dir.join("config.json"), &EmptyStore);
+        assert!(loaded.config_error.is_none());
+        assert!(loaded.vaults.is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn malformed_config_is_reported_and_preserved_not_treated_as_first_launch() {
+        let dir = scratch();
+        let path = dir.join("config.json");
+        std::fs::write(&path, "{\"vaults\": [ truncated").unwrap();
+
+        let loaded = load_app_config_from(&path, &EmptyStore);
+
+        let error = loaded.config_error.as_deref().unwrap();
+        assert!(error.contains("malformed"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{\"vaults\": [ truncated"
+        );
+        let copies = preserved_copies(&dir);
+        assert_eq!(copies.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(dir.join(&copies[0])).unwrap(),
+            "{\"vaults\": [ truncated"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn incompatible_config_keeps_its_discoverable_vaults_without_opening_one() {
+        let dir = scratch();
+        let path = dir.join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"vaults":[{"path":"/vaults/work","name":"Work"},{"bogus":true}],"active_vault":"/vaults/work","theme":42}"#,
+        )
+        .unwrap();
+
+        let loaded = load_app_config_from(&path, &EmptyStore);
+
+        assert!(loaded
+            .config_error
+            .as_deref()
+            .unwrap()
+            .contains("incompatible"));
+        assert_eq!(loaded.vaults.len(), 1);
+        assert_eq!(loaded.vaults[0].path, "/vaults/work");
+        assert!(
+            loaded.active_vault.is_none(),
+            "a damaged config must not auto-open a vault"
+        );
+        assert_eq!(preserved_copies(&dir).len(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn unreadable_config_is_its_own_outcome() {
+        let dir = scratch();
+        // A directory where the file should be reads as an I/O error, not NotFound, on
+        // every platform and regardless of privileges.
+        let path = dir.join("config.json");
+        std::fs::create_dir(&path).unwrap();
+
+        let loaded = load_app_config_from(&path, &EmptyStore);
+
+        let error = loaded.config_error.as_deref().unwrap();
+        assert!(error.contains("could not be read"), "{error}");
+        assert!(
+            ensure_config_writable(&loaded).is_err(),
+            "unpreserved config must not be overwritten"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_interrupted_config_save_keeps_the_previous_config() {
+        let dir = scratch();
+        let path = dir.join("config.json");
+        let previous = AppConfig {
+            theme: "dark".to_string(),
+            ..Default::default()
+        };
+        save_app_config_to(&path, &previous).unwrap();
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        let next = AppConfig {
+            theme: "light".to_string(),
+            ..Default::default()
+        };
+        crate::durable::tests::with_interrupted_replace(|| {
+            assert!(save_app_config_to(&path, &next).is_err());
+        });
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+        assert_eq!(load_app_config_from(&path, &EmptyStore).theme, "dark");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_runtime_config_error_is_never_persisted() {
+        let config = AppConfig {
+            config_error: Some("damaged".to_string()),
+            ..Default::default()
+        };
+        let persisted =
+            serde_json::to_string(&crate::secret_store::redacted_config(&config)).unwrap();
+        assert!(!persisted.contains("config_error"));
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -3991,8 +4223,17 @@ mod secret_config_tests {
     }
 }
 
+/// A damaged config.json that could not be copied aside must not be replaced by a save.
+fn ensure_config_writable(config: &AppConfig) -> Result<(), String> {
+    match (&config.config_error, config.config_save_blocked) {
+        (Some(error), true) => Err(error.clone()),
+        _ => Ok(()),
+    }
+}
+
 fn save_app_config(config: &AppConfig) -> Result<(), String> {
     let path = app_config_path()?;
+    ensure_config_writable(config)?;
     if config.secret_store_error.is_some() {
         let recovery: Option<AppConfig> = std::fs::read_to_string(&path)
             .ok()

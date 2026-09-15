@@ -210,6 +210,8 @@
 			const config = await getAppConfig();
 			if (!alive()) return;
 			$appConfig = config;
+			// A damaged config.json is not a first launch: say so in the vault picker.
+			if (config.config_error) startupVaultError = config.config_error;
 			const fontSizeUnlisten = await listen<number>('editor-font-size-changed', (event) => {
 				if (alive() && $appConfig?.font_size !== event.payload) applyEditorFontSize(event.payload);
 			});
@@ -337,11 +339,15 @@
 							active_vault: null,
 							active_bookmark_id: null
 						};
+					} else {
+						// $vaultReady stays false, so the picker shows this instead of an empty app.
+						startupVaultError = `Could not open ${config.active_vault}: ${e}`;
 					}
 				}
 			}
-		} catch {
-			// First launch or no config
+		} catch (e) {
+			// Absent config is not an error (the backend returns defaults); this is a real failure.
+			startupVaultError = `Could not load settings: ${e}`;
 		} finally {
 			if (!alive()) return;
 			loading = false;
