@@ -75,7 +75,7 @@
     <tr><td><code>pnpm verify</code></td><td>Ubuntu 22.04 (CI)</td><td>check, JS tests, Rust tests, fmt/clippy, build all pass</td><td><code>verify</code> job, <code>.github/workflows/verify.yml</code></td><td><span class="s green">green</span></td></tr>
     <tr><td><code>pnpm test:rust</code></td><td>Windows Server 2022 (CI)</td><td>library tests pass through the Windows manifest path</td><td><code>windows-rust</code> job, PR #92</td><td><span class="s green">green</span></td></tr>
     <tr><td><code>pnpm verify</code></td><td>Windows 11 desktop</td><td>same as Linux</td><td>none recorded at <code>8155213</code></td><td><span class="s amber">not run</span></td></tr>
-    <tr><td>Unsigned deb/rpm build and desktop-entry check</td><td>Ubuntu 22.04 (CI)</td><td>both packages contain the portal desktop entry</td><td><code>scripts/verify-linux-package.sh</code> on <code>main</code>; not yet run under the pinned pnpm</td><td><span class="s amber">green on main, pin pending CI</span></td></tr>
+    <tr><td>Unsigned deb/rpm build and desktop-entry check</td><td>Ubuntu 22.04 (CI)</td><td>both packages contain the portal desktop entry</td><td><code>scripts/verify-linux-package.sh</code>; green under the pinned pnpm 11 in PR #98's run 34927910056 (verify 18m10s, windows-rust 5m25s)</td><td><span class="s green">green</span></td></tr>
     <tr><td><code>pnpm install</code> fails when <code>svelte-kit sync</code> fails</td><td>all</td><td>install no longer reports success over a failed type sync</td><td>suppression removed from <code>prepare</code> on this branch; a failing sync has not been demonstrated</td><td><span class="s amber">changed, unproven</span></td></tr>
   </table>
 </section>
