@@ -92,7 +92,8 @@
       at 61 of 5,000 notes; the receiver settled at 431 with no conflicts or duplicates; nothing was left running; the Fedora run
       failed ("not reachable over Tailscale") rather than claiming success. Recovery <strong>failed</strong>: every later run on
       Windows ended within about a second with "Syncthing reported one or more file errors", in either press order.
-      Defect #101 (pull errors treated as terminal); fix in progress. Run 2 (sidecar stop) not attempted.</td><td><span class="s red">blocking (#101)</span></td></tr>
+      Defect #101 (pull errors treated as terminal) is fixed on <code>fix/101-transient-pull-errors</code>, pending merge; the
+      two-machine run must be repeated from a fresh vault on rebuilt packages. Run 2 (sidecar stop) not attempted.</td><td><span class="s red">blocking (#101)</span></td></tr>
     <tr><td>E: import and external viewer</td><td>#85</td><td>overlapping imports refused; failures counted; external file opens read-only</td><td>not started</td><td><span class="s grey">deferred, non-gating</span></td></tr>
     <tr><td>F: durable writes and startup failures</td><td>#86</td><td>interrupted writes keep the previous file; config failures are distinct and visible</td><td>in progress on <code>fix/86-durable-writes</code>; Windows replace behavior to be checked on the desktop</td><td><span class="s grey">in progress, non-gating</span></td></tr>
     <tr><td>G: due-date, empty-state, semantic schema</td><td>#87</td><td>implemented outcomes</td><td>PR #95 regressions</td><td><span class="s green">green</span></td></tr>
@@ -115,7 +116,8 @@
       <code>/S /D=D:\SecondBrainTest\app</code> in 3.3 s, and the uninstall registry entry now points at D:. Launched in the console
       session: one packaged <code>App</code> process, 5 new log lines with no warnings or errors. Force-stopped with
       <code>sync-interrupt.ps1 -Target App</code>; nothing left running 15 s later. Not covered: sidecar and watchdog (sync was not
-      enabled on the test vault), the in-window UI, uninstall, and the MSI. 2026-09-15: rebuilt from <code>4d2ae7f</code> (rustls and Tiptap upgrades) and
+      enabled on the test vault), the in-window UI, uninstall, and the MSI. The old per-user files in
+      <code>%LOCALAPPDATA%\HelixNotes</code> were left in place. 2026-09-15: rebuilt from <code>4d2ae7f</code> (rustls and Tiptap upgrades) and
       reinstalled over the D: install; launched with no configuration (vault picker), 1 new log line with no warnings or errors,
       stopped with <code>-Target App</code>, nothing left running. The old per-user C: install and its app data were deleted the same day.</td><td>#88, #49</td><td><span class="s amber">install and launch done, partial</span></td></tr>
     <tr><td>Update and package signing</td><td>signing path verified, or the updater stays disabled per ADR-0011</td><td>not verified</td><td>#88, #24</td><td><span class="s red">missing</span></td></tr>

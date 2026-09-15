@@ -1167,24 +1167,45 @@ fn pull_errors(local_status: &serde_json::Value) -> u64 {
         .unwrap_or(0)
 }
 
-/// Why a run that never converged failed. Syncthing reports pull errors while a peer reconnects
-/// or re-sends its index after an interruption and retries them itself (#101), so errors only
-/// explain the failure if they were still present at the last observation before the deadline.
+// Syncthing retries failed pulls about once a minute and can briefly report none between
+// attempts, so errors seen within this many observations (60 s at 500 ms) still explain a failure.
+const PULL_ERROR_EXPLAINS_FAILURE: usize = 120;
+
+/// One guarded run's view of convergence. Pull errors are not terminal (#101): after an
+/// interruption Syncthing reports them while the peer reconnects and re-sends its index, then
+/// retries them itself. They block completion and only name the failure if the deadline arrives
+/// while they are still recent.
 #[derive(Default)]
-struct SyncWait {
-    pull_errors: bool,
+struct SyncProgress {
+    completion: CompletionLatch,
+    observations: usize,
+    last_pull_error: Option<usize>,
 }
 
-impl SyncWait {
-    fn observe(&mut self, local_status: &serde_json::Value) {
-        self.pull_errors = pull_errors(local_status) > 0;
+impl SyncProgress {
+    fn observe(
+        &mut self,
+        local_status: &serde_json::Value,
+        remote_completion: Option<&serde_json::Value>,
+        peer_id: &str,
+    ) -> bool {
+        self.observations += 1;
+        if pull_errors(local_status) > 0 {
+            self.last_pull_error = Some(self.observations);
+        }
+        self.completion.observe(convergence_observation_is_complete(
+            local_status,
+            remote_completion,
+            peer_id,
+        ))
     }
 
-    fn deadline_error(&self) -> &'static str {
-        if self.pull_errors {
-            "Syncthing reported one or more file errors"
-        } else {
-            "Sync did not converge within five minutes"
+    fn failure(&self) -> &'static str {
+        match self.last_pull_error {
+            Some(at) if self.observations - at < PULL_ERROR_EXPLAINS_FAILURE => {
+                "Syncthing reported one or more file errors"
+            }
+            _ => "Sync did not converge within five minutes",
         }
     }
 }
@@ -1233,8 +1254,7 @@ fn wait_for_sync(
         .map_err(|error| error.to_string())?
         .error_for_status()
         .map_err(|error| format!("Syncthing could not scan the vault: {error}"))?;
-    let mut completion = CompletionLatch::default();
-    let mut outcome = SyncWait::default();
+    let mut progress = SyncProgress::default();
     for _ in 0..600 {
         let value: serde_json::Value = client
             .get(endpoint(control, "/rest/db/status"))
@@ -1246,7 +1266,6 @@ fn wait_for_sync(
             .map_err(|error| error.to_string())?
             .json()
             .map_err(|error| error.to_string())?;
-        outcome.observe(&value);
         let completion_response = client
             .get(endpoint(control, "/rest/db/completion"))
             .header("X-API-Key", &control.api_key)
@@ -1264,16 +1283,12 @@ fn wait_for_sync(
                     .map_err(|error| error.to_string())?,
             )
         };
-        if completion.observe(convergence_observation_is_complete(
-            &value,
-            remote_completion.as_ref(),
-            peer_id,
-        )) {
+        if progress.observe(&value, remote_completion.as_ref(), peer_id) {
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(500));
     }
-    Err(outcome.deadline_error().to_string())
+    Err(progress.failure().to_string())
 }
 
 fn run_sync(app: AppHandle, vault: PathBuf, control: ControlState, peer: Peer) {
@@ -1412,7 +1427,8 @@ mod tests {
     use super::{
         convergence_observation_is_complete, harden_generated_config_xml, read_control,
         tailscale_ipv4, until_next_sync_window, valid_device_id, write_control, CompletionLatch,
-        ControlState, SyncWait, SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL,
+        ControlState, SyncProgress, PULL_ERROR_EXPLAINS_FAILURE,
+        SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL,
     };
 
     fn vault() -> std::path::PathBuf {
@@ -1600,50 +1616,79 @@ mod tests {
 
     // Issue #101: after an interrupted transfer, Syncthing reports pull errors while the peer
     // reconnects and re-sends its index. Ending the run on the first one made recovery impossible.
-    #[test]
-    fn transient_pull_errors_block_completion_but_the_run_can_still_converge() {
-        let remote = serde_json::json!({
+    fn peer_complete() -> serde_json::Value {
+        serde_json::json!({
             "remoteState": "valid",
             "needItems": 0,
             "needDeletes": 0,
             "needBytes": 0
-        });
-        let erroring = serde_json::json!({
+        })
+    }
+
+    fn local_with_pull_errors(pull_errors: u64) -> serde_json::Value {
+        serde_json::json!({
             "state": "idle",
             "needTotalItems": 0,
-            "pullErrors": 4569,
+            "pullErrors": pull_errors,
             "remoteSequence": { "PEER": 14 }
-        });
-        let clean = serde_json::json!({
-            "state": "idle",
-            "needTotalItems": 0,
-            "pullErrors": 0,
-            "remoteSequence": { "PEER": 14 }
-        });
-
-        assert!(!convergence_observation_is_complete(&erroring, Some(&remote), "PEER"));
-
-        let mut completion = CompletionLatch::default();
-        let mut outcome = SyncWait::default();
-        outcome.observe(&erroring);
-        assert!(!completion.observe(convergence_observation_is_complete(&erroring, Some(&remote), "PEER")));
-        for _ in 0..SYNC_COMPLETION_STABLE_OBSERVATIONS - 1 {
-            outcome.observe(&clean);
-            assert!(!completion.observe(convergence_observation_is_complete(&clean, Some(&remote), "PEER")));
-        }
-        outcome.observe(&clean);
-        assert!(completion.observe(convergence_observation_is_complete(&clean, Some(&remote), "PEER")));
-        assert_eq!(outcome.deadline_error(), "Sync did not converge within five minutes");
+        })
     }
 
     #[test]
-    fn pull_errors_still_present_at_the_deadline_fail_as_file_errors() {
-        let mut outcome = SyncWait::default();
-        assert_eq!(outcome.deadline_error(), "Sync did not converge within five minutes");
-        outcome.observe(&serde_json::json!({ "pullErrors": 2 }));
-        assert_eq!(outcome.deadline_error(), "Syncthing reported one or more file errors");
-        // Errors that cleared before the deadline are not the reason the run failed.
-        outcome.observe(&serde_json::json!({ "pullErrors": 0 }));
-        assert_eq!(outcome.deadline_error(), "Sync did not converge within five minutes");
+    fn transient_pull_errors_do_not_end_a_run_that_later_converges() {
+        let remote = peer_complete();
+        let mut progress = SyncProgress::default();
+
+        assert!(!progress.observe(&local_with_pull_errors(4569), Some(&remote), "PEER"));
+        for _ in 0..SYNC_COMPLETION_STABLE_OBSERVATIONS - 1 {
+            assert!(!progress.observe(&local_with_pull_errors(0), Some(&remote), "PEER"));
+        }
+        assert!(progress.observe(&local_with_pull_errors(0), Some(&remote), "PEER"));
+    }
+
+    #[test]
+    fn a_pull_error_inside_a_clean_streak_restarts_the_stability_window() {
+        let remote = peer_complete();
+        let mut progress = SyncProgress::default();
+
+        for _ in 0..SYNC_COMPLETION_STABLE_OBSERVATIONS - 1 {
+            assert!(!progress.observe(&local_with_pull_errors(0), Some(&remote), "PEER"));
+        }
+        assert!(!progress.observe(&local_with_pull_errors(1), Some(&remote), "PEER"));
+        for _ in 0..SYNC_COMPLETION_STABLE_OBSERVATIONS - 1 {
+            assert!(!progress.observe(&local_with_pull_errors(0), Some(&remote), "PEER"));
+        }
+        assert!(progress.observe(&local_with_pull_errors(0), Some(&remote), "PEER"));
+    }
+
+    #[test]
+    fn recent_pull_errors_name_the_deadline_failure() {
+        let still_scanning = serde_json::json!({ "state": "scanning" });
+        let mut progress = SyncProgress::default();
+        assert_eq!(
+            progress.failure(),
+            "Sync did not converge within five minutes"
+        );
+
+        progress.observe(&local_with_pull_errors(2), None, "PEER");
+        assert_eq!(
+            progress.failure(),
+            "Syncthing reported one or more file errors"
+        );
+
+        // Syncthing can report zero errors between its once-a-minute retries.
+        for _ in 0..PULL_ERROR_EXPLAINS_FAILURE - 1 {
+            progress.observe(&still_scanning, None, "PEER");
+        }
+        assert_eq!(
+            progress.failure(),
+            "Syncthing reported one or more file errors"
+        );
+
+        progress.observe(&still_scanning, None, "PEER");
+        assert_eq!(
+            progress.failure(),
+            "Sync did not converge within five minutes"
+        );
     }
 }
