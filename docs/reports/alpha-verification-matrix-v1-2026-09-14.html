@@ -50,8 +50,8 @@
   <p>Version 1, recorded 2026-09-14 against <code>main</code> at <code>8155213</code>. This record is versioned:
   when a row's status changes, update this file in the same pull request, or add a new version file when the
   supported platforms, fixtures, or gate definition change.</p>
-  <div class="gate"><strong>Gate status: not green.</strong> Package D still needs its two-machine interruption run (#97),
-  F is in progress (#86), no Linux or Windows package has been installed and launched, and performance,
+  <div class="gate"><strong>Gate status: not green.</strong> Package D passed its two-machine interruption runs (#97) on 2026-09-15,
+  and F is merged (#86), but no Linux or Windows package has been installed and launched, and performance,
   diagnostics privacy, dependency audit, and signing evidence do not exist yet.</div>
 </header>
 
@@ -98,8 +98,13 @@
       and on Windows stopping the monitor orphaned the worker, which kept syncing, held the lock, and escaped the watchdog. The fix
       on <code>fix/104-sidecar-single-process</code> spawns with <code>STMONITORED=yes</code>. Installed <code>syncthing.exe</code>
       on the desktop then ran as one process and left nothing after a forced stop, and <code>pnpm test:rust</code> passed there
-      (510 passed). Run 2 must be repeated on rebuilt packages. #103 (the first peer to confirm pauses before the other can) is
-      fixed separately.</td><td><span class="s red">blocking (#104 rerun)</span></td></tr>
+      (510 passed). #103 (the first peer to confirm pauses before the other can) is fixed separately.
+      Update 2026-09-15: #104 merged in PR #106 and #103 in PR #107 (<code>8ffe097</code>). Both runs were repeated from fresh vaults on
+      packages built from that tree, and both passed: 5,000/5,000 notes with correct content on both machines, no conflicts or strays,
+      nothing left running. Run 2 (sidecar stopped at 74 notes): the app restarted a single Syncthing. Run 1 (app stopped at 166 notes):
+      the watchdog stopped the orphaned sidecar within 5 s, and the reopened app converged. Evidence: #97 comments 5685043384 and 5688674503.
+      Non-blocking follow-ups: #110 (a run stalls the full five minutes after a sidecar restart), #111 (no sync-run logging),
+      #112 (joining a vault creates a <code>config.json</code> conflict copy).</td><td><span class="s green">green</span></td></tr>
     <tr><td>E: import and external viewer</td><td>#85</td><td>overlapping imports refused; failures counted; external file opens read-only</td><td>not started</td><td><span class="s grey">deferred, non-gating</span></td></tr>
     <tr><td>F: durable writes and startup failures</td><td>#86</td><td>interrupted writes keep the previous file; config failures are distinct and visible</td><td>merged in PR #100 (<code>c8017b1</code>). Windows: the replace retries <code>MoveFileExW</code> 11 times, 25 ms apart, on
       errors 5 and 32; <code>pnpm test:rust</code> passed on the desktop at <code>4a22c6a</code> (506 passed), including the held-then-released
