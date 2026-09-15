@@ -3757,16 +3757,16 @@ fn load_app_config_from(
             };
             match parse_app_config(&contents) {
                 Ok(config) => config,
-                Err(failure) => damaged_config(path, failure),
+                Err(damage) => damaged_config(path, damage),
             }
         }
         ConfigRead::Absent => AppConfig::default(),
         ConfigRead::Unreadable(error) => damaged_config(
             path,
-            (
-                format!("config.json could not be read: {error}"),
-                Vec::new(),
-            ),
+            ConfigDamage {
+                reason: format!("config.json could not be read: {error}"),
+                recovered_vaults: Vec::new(),
+            },
         ),
     };
     if config.config_error.is_some() {
@@ -3824,13 +3824,22 @@ fn read_app_config(path: &std::path::Path) -> ConfigRead {
     }
 }
 
+struct ConfigDamage {
+    reason: String,
+    recovered_vaults: Vec<VaultConfig>,
+}
+
 /// Malformed (not JSON) and incompatible (JSON, but not an `AppConfig`) are reported
 /// differently. Either way, every vault entry that still parses is returned for recovery.
-fn parse_app_config(contents: &str) -> Result<AppConfig, (String, Vec<VaultConfig>)> {
-    let document: serde_json::Value = serde_json::from_str(contents)
-        .map_err(|error| (format!("config.json is malformed: {error}"), Vec::new()))?;
-    serde_json::from_value(document.clone()).map_err(|error| {
-        let vaults = document
+fn parse_app_config(contents: &str) -> Result<AppConfig, ConfigDamage> {
+    let document: serde_json::Value =
+        serde_json::from_str(contents).map_err(|error| ConfigDamage {
+            reason: format!("config.json is malformed: {error}"),
+            recovered_vaults: Vec::new(),
+        })?;
+    serde_json::from_value(document.clone()).map_err(|error| ConfigDamage {
+        reason: format!("config.json is incompatible with this version: {error}"),
+        recovered_vaults: document
             .get("vaults")
             .and_then(serde_json::Value::as_array)
             .map(|vaults| {
@@ -3839,39 +3848,48 @@ fn parse_app_config(contents: &str) -> Result<AppConfig, (String, Vec<VaultConfi
                     .filter_map(|vault| serde_json::from_value(vault.clone()).ok())
                     .collect()
             })
-            .unwrap_or_default();
-        (
-            format!("config.json is incompatible with this version: {error}"),
-            vaults,
-        )
+            .unwrap_or_default(),
     })
 }
 
 /// Startup config for a damaged `config.json`: defaults plus the recovered vault list, no
 /// active vault, and an error the vault picker shows. The damaged file is copied aside
-/// first; if that fails the error says so and saving stays blocked (see `save_app_config`).
-fn damaged_config(
-    path: &std::path::Path,
-    (reason, vaults): (String, Vec<VaultConfig>),
-) -> AppConfig {
+/// (owner-only, since it may hold credentials) first; if that fails, saving stays blocked.
+fn damaged_config(path: &std::path::Path, damage: ConfigDamage) -> AppConfig {
     let preserved = path.with_extension(format!(
         "json.damaged-{}",
         chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
     ));
-    let message = match std::fs::copy(path, &preserved) {
-        Ok(_) => format!(
-            "{reason}. Settings were reset; the damaged file was kept at {}.",
-            preserved.display()
+    let copied = std::fs::copy(path, &preserved).and_then(|_| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&preserved, std::fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
+    });
+    let reason = damage.reason;
+    let (message, config_save_blocked) = match copied {
+        Ok(()) => (
+            format!(
+                "{reason}. Settings were reset; the damaged file was kept at {}.",
+                preserved.display()
+            ),
+            false,
         ),
-        Err(error) => format!(
-            "{reason}. The file could not be preserved ({error}), so settings will not be saved until it is fixed or removed: {}",
-            path.display()
+        Err(error) => (
+            format!(
+                "{reason}. The file could not be preserved ({error}), so settings will not be saved until it is fixed or removed: {}",
+                path.display()
+            ),
+            true,
         ),
     };
     log::error!("{message}");
     AppConfig {
-        vaults,
+        vaults: damage.recovered_vaults,
         config_error: Some(message),
+        config_save_blocked,
         ..AppConfig::default()
     }
 }
@@ -3997,9 +4015,33 @@ mod config_startup_tests {
         let error = loaded.config_error.as_deref().unwrap();
         assert!(error.contains("could not be read"), "{error}");
         assert!(
-            save_app_config_guarded(&loaded).is_err(),
+            ensure_config_writable(&loaded).is_err(),
             "unpreserved config must not be overwritten"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_interrupted_config_save_keeps_the_previous_config() {
+        let dir = scratch();
+        let path = dir.join("config.json");
+        let previous = AppConfig {
+            theme: "dark".to_string(),
+            ..Default::default()
+        };
+        save_app_config_to(&path, &previous).unwrap();
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        let next = AppConfig {
+            theme: "light".to_string(),
+            ..Default::default()
+        };
+        crate::durable::tests::with_interrupted_replace(|| {
+            assert!(save_app_config_to(&path, &next).is_err());
+        });
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+        assert_eq!(load_app_config_from(&path, &EmptyStore).theme, "dark");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -4182,16 +4224,16 @@ mod secret_config_tests {
 }
 
 /// A damaged config.json that could not be copied aside must not be replaced by a save.
-fn save_app_config_guarded(config: &AppConfig) -> Result<(), String> {
-    match config.config_error.as_deref() {
-        Some(error) if error.contains("could not be preserved") => Err(error.to_string()),
+fn ensure_config_writable(config: &AppConfig) -> Result<(), String> {
+    match (&config.config_error, config.config_save_blocked) {
+        (Some(error), true) => Err(error.clone()),
         _ => Ok(()),
     }
 }
 
 fn save_app_config(config: &AppConfig) -> Result<(), String> {
     let path = app_config_path()?;
-    save_app_config_guarded(config)?;
+    ensure_config_writable(config)?;
     if config.secret_store_error.is_some() {
         let recovery: Option<AppConfig> = std::fs::read_to_string(&path)
             .ok()

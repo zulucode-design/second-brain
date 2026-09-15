@@ -204,7 +204,7 @@ pub fn import(vault_path: &str) -> Result<ImportResult, String> {
         }
 
         if changed {
-            let _ = std::fs::write(path, &content);
+            let _ = crate::durable::replace(path, content.as_bytes(), crate::durable::Mode::Shared);
             result.files_converted += 1;
         }
     }
@@ -702,7 +702,8 @@ fn rewrite_attachment_refs(vault: &Path, moved: &HashMap<String, String>) -> Res
             .to_string();
 
         if new_content != content {
-            let _ = std::fs::write(path, new_content);
+            let _ =
+                crate::durable::replace(path, new_content.as_bytes(), crate::durable::Mode::Shared);
         }
     }
     Ok(())
