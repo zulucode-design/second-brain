@@ -647,6 +647,11 @@ fn start(
             .env("STGUIADDRESS", format!("127.0.0.1:{}", control.gui_port))
             .env("STGUIAPIKEY", &control.api_key)
             .env("STVERSIONEXTRA", "Second Brain managed sidecar")
+            // Run as one process. Otherwise Syncthing's monitor spawns a worker that survives
+            // kill() on Windows, keeps the lock and escapes the watchdog (#104). The app
+            // supervises restarts itself. ponytail: hidden switch verified on v2.1.5 only;
+            // recheck with `tasklist`/`ps` when bumping the pinned Syncthing.
+            .env("STMONITORED", "yes")
             .spawn()
             .map_err(|error| format!("Could not start bundled Syncthing: {error}"))?;
         if let Err(error) =
@@ -970,6 +975,54 @@ fn set_device_paused(
     Ok(())
 }
 
+/// Crash-orphaned `durable::replace` temporaries must never replicate (#99).
+const DURABLE_TEMP_IGNORE: &str = "(?d).*.tmp";
+
+/// The `.stignore` lines to write, or `None` if the pattern is already there.
+fn with_durable_temp_ignore(mut lines: Vec<String>) -> Option<Vec<String>> {
+    if lines.iter().any(|line| line.trim() == DURABLE_TEMP_IGNORE) {
+        return None;
+    }
+    lines.push(DURABLE_TEMP_IGNORE.to_string());
+    Some(lines)
+}
+
+fn ensure_durable_temp_ignored(
+    client: &reqwest::blocking::Client,
+    control: &ControlState,
+    folder_id: &str,
+) -> Result<(), String> {
+    let url = endpoint(control, &format!("/rest/db/ignores?folder={folder_id}"));
+    let current: serde_json::Value = client
+        .get(&url)
+        .header("X-API-Key", &control.api_key)
+        .send()
+        .and_then(|response| response.error_for_status())
+        .and_then(|response| response.json())
+        .map_err(|error| format!("Could not read the sync ignore patterns: {error}"))?;
+    let lines = current
+        .get("ignore")
+        .and_then(|value| value.as_array())
+        .map(|lines| {
+            lines
+                .iter()
+                .filter_map(|line| line.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let Some(lines) = with_durable_temp_ignore(lines) else {
+        return Ok(());
+    };
+    client
+        .post(&url)
+        .header("X-API-Key", &control.api_key)
+        .json(&serde_json::json!({ "ignore": lines }))
+        .send()
+        .and_then(|response| response.error_for_status())
+        .map_err(|error| format!("Could not update the sync ignore patterns: {error}"))?;
+    Ok(())
+}
+
 struct FolderPauseGuard<'a> {
     client: &'a reqwest::blocking::Client,
     control: &'a ControlState,
@@ -1252,7 +1305,9 @@ fn run_sync(app: AppHandle, vault: PathBuf, control: ControlState, peer: Peer) {
                             return;
                         }
                     };
-                    match set_folder_paused(&client, &control, &folder_id, false) {
+                    match ensure_durable_temp_ignored(&client, &control, &folder_id)
+                        .and_then(|()| set_folder_paused(&client, &control, &folder_id, false))
+                    {
                         Err(error) => crate::bulk_mutation::BulkMutationTerminal::failure(error),
                         Ok(()) => {
                             if let Err(error) =
@@ -1326,10 +1381,23 @@ pub async fn sync_now(app: AppHandle) -> Result<(), String> {
 mod tests {
     use super::{
         convergence_observation_is_complete, harden_generated_config_xml, read_control,
-        tailscale_ipv4, until_next_sync_window, valid_device_id, write_control, CompletionLatch,
-        ControlState, SyncProgress, PULL_ERROR_EXPLAINS_FAILURE,
-        SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL,
+        tailscale_ipv4, until_next_sync_window, valid_device_id, with_durable_temp_ignore,
+        write_control, CompletionLatch, ControlState, SyncProgress, DURABLE_TEMP_IGNORE,
+        PULL_ERROR_EXPLAINS_FAILURE, SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL,
     };
+
+    #[test]
+    fn durable_temp_ignore_is_appended_once_and_keeps_user_patterns() {
+        let user = vec!["// mine".to_string(), "private/".to_string()];
+        let updated = with_durable_temp_ignore(user.clone()).unwrap();
+        assert_eq!(&updated[..2], &user[..]);
+        assert_eq!(updated[2], DURABLE_TEMP_IGNORE);
+        assert_eq!(with_durable_temp_ignore(updated), None);
+        assert_eq!(
+            with_durable_temp_ignore(Vec::new()),
+            Some(vec![DURABLE_TEMP_IGNORE.to_string()])
+        );
+    }
 
     fn vault() -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!("sync-sidecar-test-{}", uuid::Uuid::new_v4()));
