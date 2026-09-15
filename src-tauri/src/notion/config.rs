@@ -207,8 +207,12 @@ pub fn save_registry(vault_path: &Path, registry: &DatabaseRegistry) -> Result<(
     let dir = notion_dir(vault_path);
     std::fs::create_dir_all(&dir).map_err(|error| format!("Cannot create {dir:?}: {error}"))?;
     let encoded = serde_json::to_string_pretty(registry).map_err(|error| error.to_string())?;
-    std::fs::write(registry_path(vault_path), encoded)
-        .map_err(|error| format!("Cannot write the Notion database registry: {error}"))
+    crate::durable::replace(
+        &registry_path(vault_path),
+        encoded.as_bytes(),
+        crate::durable::Mode::Shared,
+    )
+    .map_err(|error| format!("Cannot write the Notion database registry: {error}"))
 }
 
 #[cfg(test)]
@@ -331,6 +335,22 @@ mod tests {
         registry.set_link(ParaCategory::Resources, link("r"));
 
         save_registry(&vault, &registry).unwrap();
+        assert_eq!(load_registry(&vault), registry);
+    }
+
+    #[test]
+    fn an_interrupted_registry_save_keeps_the_previous_registry() {
+        let vault = tempdir();
+        let mut registry = DatabaseRegistry::default();
+        registry.set_link(ParaCategory::Resources, link("r"));
+        save_registry(&vault, &registry).unwrap();
+
+        let mut replacement = registry.clone();
+        replacement.set_link(ParaCategory::Projects, link("p"));
+        crate::durable::tests::with_interrupted_replace(|| {
+            assert!(save_registry(&vault, &replacement).is_err());
+        });
+
         assert_eq!(load_registry(&vault), registry);
     }
 

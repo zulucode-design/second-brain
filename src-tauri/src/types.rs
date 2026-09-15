@@ -284,6 +284,10 @@ pub struct AppConfig {
     /// Persisted config is always redacted before serialization, including this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret_store_error: Option<String>,
+    /// Runtime-only reason `config.json` could not be used at startup (unreadable, malformed,
+    /// or incompatible). Never persisted; the damaged file is preserved beside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_error: Option<String>,
     #[serde(default = "default_ai_model")]
     pub ai_model: String,
     #[serde(default)]
@@ -397,6 +401,7 @@ impl Default for AppConfig {
             openai_compatible_base_url: None,
             openai_compatible_api_key: None,
             secret_store_error: None,
+            config_error: None,
             ai_model: "claude-sonnet-4-6".to_string(),
             ai_writing_style: None,
             default_view_mode: false,

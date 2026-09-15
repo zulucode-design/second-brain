@@ -278,7 +278,7 @@ fn unlocked_vault_id(path: &Path) -> Result<String, String> {
         return read_claimed_vault_id(path);
     }
     let replacement = uuid::Uuid::new_v4().to_string();
-    std::fs::write(path, &replacement)
+    crate::durable::replace(path, replacement.as_bytes(), crate::durable::Mode::Shared)
         .map_err(|error| format!("Could not repair the vault identity: {error}"))?;
     Ok(replacement)
 }

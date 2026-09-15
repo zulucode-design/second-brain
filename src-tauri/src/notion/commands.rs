@@ -682,7 +682,7 @@ fn write_last_run(vault: &Path, summary: Option<&Summary>, error: Option<&str>) 
         "error": error,
     });
     if let Ok(encoded) = serde_json::to_string_pretty(&payload) {
-        let _ = std::fs::write(path, encoded);
+        let _ = crate::durable::replace(&path, encoded.as_bytes(), crate::durable::Mode::Shared);
     }
 }
 

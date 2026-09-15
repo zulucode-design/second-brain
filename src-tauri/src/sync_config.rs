@@ -12,7 +12,6 @@
 use crate::secret_store::{SecretId, SecretStore};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const RETIREMENT_VERSION: u8 = 1;
@@ -165,95 +164,7 @@ fn write_marker(path: &Path, marker: &RetirementMarker) -> Result<(), String> {
 }
 
 fn write_durable_private_file(path: &Path, data: &[u8]) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| "Private file path has no parent directory".to_string())?;
-    let filename = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| "Private file path has no valid filename".to_string())?;
-    let temporary = parent.join(format!(".{filename}.{}.tmp", uuid::Uuid::new_v4()));
-
-    let mut options = std::fs::OpenOptions::new();
-    options.create_new(true).write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-
-    let result = (|| {
-        let mut file = options
-            .open(&temporary)
-            .map_err(|error| error.to_string())?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            file.set_permissions(std::fs::Permissions::from_mode(0o600))
-                .map_err(|error| error.to_string())?;
-        }
-        file.write_all(data).map_err(|error| error.to_string())?;
-        file.sync_all().map_err(|error| error.to_string())?;
-        drop(file);
-
-        atomic_replace(&temporary, path)?;
-
-        // Unix rename durability also requires the containing directory to be synced.
-        #[cfg(unix)]
-        std::fs::File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    })();
-
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-    }
-    result
-}
-
-#[cfg(unix)]
-fn atomic_replace(source: &Path, destination: &Path) -> Result<(), String> {
-    std::fs::rename(source, destination).map_err(|error| error.to_string())
-}
-
-#[cfg(windows)]
-fn atomic_replace(source: &Path, destination: &Path) -> Result<(), String> {
-    use std::os::windows::ffi::OsStrExt;
-
-    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
-    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
-
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn MoveFileExW(existing_filename: *const u16, new_filename: *const u16, flags: u32) -> i32;
-    }
-
-    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
-    let destination: Vec<u16> = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
-    // SAFETY: both buffers are NUL-terminated, remain alive for the call, and the flags
-    // request an atomic replacement with write-through durability.
-    let replaced = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if replaced == 0 {
-        Err(std::io::Error::last_os_error().to_string())
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-fn atomic_replace(source: &Path, destination: &Path) -> Result<(), String> {
-    std::fs::rename(source, destination).map_err(|error| error.to_string())
+    crate::durable::replace(path, data, crate::durable::Mode::Private)
 }
 
 fn strip_webdav(document: &mut Value) -> Result<(bool, Vec<String>), String> {
