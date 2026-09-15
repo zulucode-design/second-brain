@@ -139,13 +139,6 @@ pub fn ensure_vault_structure(vault_path: &str) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
 
-    let state_path = hn_dir.join("state.json");
-    if !state_path.exists() {
-        let state = VaultState::default();
-        fs::write(&state_path, serde_json::to_string_pretty(&state).unwrap())
-            .map_err(|e| e.to_string())?;
-    }
-
     let gitignore_path = hn_dir.join(".gitignore");
     if !gitignore_path.exists() {
         fs::write(&gitignore_path, "trash/\nindex.json\nstate.json\n")
@@ -281,7 +274,10 @@ fn scan_dir_with_count(dir: &Path, vault_root: &str) -> (Vec<NotebookEntry>, usi
         };
         if ft.is_dir() && !is_hidden(&entry.path()) {
             subdirs.push(entry);
-        } else if ft.is_file() && entry.path().extension().and_then(|x| x.to_str()) == Some("md") {
+        } else if ft.is_file()
+            && !is_hidden(&entry.path())
+            && entry.path().extension().and_then(|x| x.to_str()) == Some("md")
+        {
             note_count += 1;
         }
     }
@@ -327,6 +323,7 @@ pub(crate) fn is_hidden(path: &Path) -> bool {
         .and_then(|n| n.to_str())
         .map(|n| {
             n.starts_with('.')
+                || crate::vault::conflicts::is_conflict_copy(path)
                 || matches!(
                     n,
                     "_res" | "_resources" | "_attachments" | "_assets" | "assets" | "node_modules"
@@ -345,6 +342,7 @@ pub fn count_root_notes(vault_path: &str) -> Result<usize, String> {
         .filter_map(|e| e.ok())
         .filter(|e| {
             e.file_type().map(|ft| ft.is_file()).unwrap_or(false)
+                && !is_hidden(&e.path())
                 && e.path().extension().and_then(|x| x.to_str()) == Some("md")
         })
         .count();
@@ -396,7 +394,11 @@ pub fn scan_notes(vault_path: &str, notebook_path: Option<&str>) -> Result<Vec<N
                 Ok(rd) => rd
                     .filter_map(|e| e.ok())
                     .map(|e| e.path())
-                    .filter(|p| p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md"))
+                    .filter(|p| {
+                        p.is_file()
+                            && !is_hidden(p)
+                            && p.extension().and_then(|x| x.to_str()) == Some("md")
+                    })
                     .collect(),
                 Err(_) => Vec::new(),
             }
@@ -408,7 +410,11 @@ pub fn scan_notes(vault_path: &str, notebook_path: Option<&str>) -> Result<Vec<N
                 .filter_entry(|e| !is_hidden(e.path()) && !e.path().starts_with(&hn_dir))
                 .filter_map(|e| e.ok())
                 .map(|e| e.path().to_path_buf())
-                .filter(|p| p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md"))
+                .filter(|p| {
+                    p.is_file()
+                        && !is_hidden(p)
+                        && p.extension().and_then(|x| x.to_str()) == Some("md")
+                })
                 .collect()
         };
 
@@ -433,7 +439,11 @@ pub fn scan_notes(vault_path: &str, notebook_path: Option<&str>) -> Result<Vec<N
                 .map_err(|e| e.to_string())?
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
-                .filter(|p| p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md"))
+                .filter(|p| {
+                    p.is_file()
+                        && !is_hidden(p)
+                        && p.extension().and_then(|x| x.to_str()) == Some("md")
+                })
                 .collect()
         } else {
             WalkDir::new(root)
@@ -443,7 +453,11 @@ pub fn scan_notes(vault_path: &str, notebook_path: Option<&str>) -> Result<Vec<N
                 })
                 .filter_map(|e| e.ok())
                 .map(|e| e.path().to_path_buf())
-                .filter(|p| p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md"))
+                .filter(|p| {
+                    p.is_file()
+                        && !is_hidden(p)
+                        && p.extension().and_then(|x| x.to_str()) == Some("md")
+                })
                 .collect()
         };
 
@@ -2597,7 +2611,7 @@ pub fn empty_trash(vault_path: &str) -> Result<(), String> {
 }
 
 pub fn load_vault_state(vault_path: &str) -> Result<VaultState, String> {
-    let state_path = helixnotes_dir(vault_path).join("state.json");
+    let state_path = crate::machine_local::vault_state_path(Path::new(vault_path))?;
     if state_path.exists() {
         let data = fs::read_to_string(&state_path).map_err(|e| e.to_string())?;
         serde_json::from_str(&data).map_err(|e| e.to_string())
@@ -2607,7 +2621,7 @@ pub fn load_vault_state(vault_path: &str) -> Result<VaultState, String> {
 }
 
 pub fn save_vault_state(vault_path: &str, state: &VaultState) -> Result<(), String> {
-    let state_path = helixnotes_dir(vault_path).join("state.json");
+    let state_path = crate::machine_local::vault_state_path(Path::new(vault_path))?;
     let data = serde_json::to_string_pretty(state).map_err(|e| e.to_string())?;
     fs::write(&state_path, data).map_err(|e| e.to_string())?;
     Ok(())
@@ -2901,11 +2915,12 @@ mod tests {
     use super::{
         compare_natural_names, create_note, create_notebook, create_web_clipping, duplicate_note,
         ensure_vault_structure, get_note_switcher_titles, helixnotes_dir, load_notebook_icons,
-        load_quick_access, move_note, move_note_with_outcome, permanent_delete, read_note,
-        restore_notebook, save_note, save_note_if_revision, save_quick_access, scan_notebooks,
-        set_notebook_icon, ParaCategory,
+        load_quick_access, load_vault_state, move_note, move_note_with_outcome, permanent_delete,
+        read_note, restore_notebook, save_note, save_note_if_revision, save_quick_access,
+        save_vault_state, scan_notebooks, set_notebook_icon, ParaCategory,
     };
     use crate::search::SearchIndex;
+    use crate::types::VaultState;
     use crate::vault::frontmatter;
     use std::fs;
     use uuid::Uuid;
@@ -2931,6 +2946,28 @@ mod tests {
         for category in ParaCategory::ALL {
             assert!(vault.join(category.folder_name()).is_dir());
         }
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn vault_ui_state_is_machine_local_from_its_first_write() {
+        let vault = scaffolded_vault("machine-local-state");
+        let vault_str = vault.to_string_lossy().to_string();
+        let state = VaultState {
+            last_view_mode: "tasks".to_string(),
+            ..VaultState::default()
+        };
+
+        save_vault_state(&vault_str, &state).unwrap();
+
+        assert_eq!(
+            load_vault_state(&vault_str).unwrap().last_view_mode,
+            "tasks"
+        );
+        assert!(!vault.join(".helixnotes/state.json").exists());
+        assert!(crate::machine_local::vault_state_path(&vault)
+            .unwrap()
+            .is_file());
         fs::remove_dir_all(vault).unwrap();
     }
 
@@ -3231,6 +3268,34 @@ mod tests {
         assert!(projects
             .iter()
             .all(|note| note.path != mismatched_path.to_string_lossy()));
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn conflict_copies_are_not_notes_or_para_counts() {
+        let vault = scaffolded_vault("conflict-copy-isolation");
+        let vault_str = vault.to_string_lossy().to_string();
+        create_note(&vault_str, Some("Projects"), "Plan").unwrap();
+        fs::write(
+            vault.join("Projects/Plan.sync-conflict-20260913-142233-ABCDEF.md"),
+            "conflict",
+        )
+        .unwrap();
+        let notes = super::scan_notes(
+            &vault_str,
+            Some(vault.join("Projects").to_string_lossy().as_ref()),
+        )
+        .unwrap();
+        assert_eq!(notes.len(), 1);
+        let notebooks = super::scan_notebooks(&vault_str).unwrap();
+        assert_eq!(
+            notebooks
+                .iter()
+                .find(|entry| entry.name == "Projects")
+                .unwrap()
+                .note_count,
+            1
+        );
         fs::remove_dir_all(vault).unwrap();
     }
 

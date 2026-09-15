@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
-	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, notionStatus, notionConnect, notionDisconnect, notionSetEnabled, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex } from '$lib/api';
+	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, notionStatus, notionConnect, notionDisconnect, notionSetEnabled, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex, getSyncStatus, setSyncEnabled, pairSyncDevice, syncNow, listSyncConflicts, resolveSyncConflict } from '$lib/api';
 	import type { AiProvider } from '$lib/types';
 	import { AI_PROVIDER_METADATA, AI_PROVIDER_OPTIONS } from '$lib/utils/ai-provider';
 	import { darkThemes, isMobile, isAndroid, isLinux, isWindows } from '$lib/platform';
@@ -12,7 +12,7 @@
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import { openUrl } from '$lib/api';
 	import type { OrphanAttachment } from '$lib/api';
-	import type { ImportResult, BackupEntry, CustomTheme, CustomThemeColors, StartupView, VaultStats, SemanticStatus } from '$lib/types';
+	import type { ImportResult, BackupEntry, CustomTheme, CustomThemeColors, StartupView, VaultStats, SemanticStatus, SyncStatus, BulkMutationTerminal, SyncConflict } from '$lib/types';
 	import { normalizeStartupView } from '$lib/utils/startup-view';
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
@@ -23,7 +23,7 @@
 		onAfterRestore?: () => Promise<void>;
 	} = $props();
 
-	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'maintenance' | 'ai' | 'notion' | 'updates';
+	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'sync' | 'maintenance' | 'ai' | 'notion' | 'updates';
 	let activeTab = $state<Tab>('styling');
 
 	// Updates state
@@ -458,6 +458,55 @@
 		}
 	}
 
+	// ── Device sync ──
+	let sync = $state<SyncStatus | null>(null);
+	let syncBusy = $state(false);
+	let syncDeviceId = $state('');
+	let syncDeviceName = $state('');
+	let syncTailscaleIp = $state('');
+	let syncVaultId = $state('');
+	let syncMessage = $state<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+	let syncConflicts = $state<SyncConflict[]>([]);
+
+	async function refreshSync() {
+		try { sync = await getSyncStatus(); syncConflicts = await listSyncConflicts(); }
+		catch (e) { syncMessage = { type: 'error', text: String(e) }; }
+	}
+
+	async function handleSyncEnabled(enabled: boolean) {
+		syncBusy = true; syncMessage = null;
+		try { sync = await setSyncEnabled(enabled); }
+		catch (e) { syncMessage = { type: 'error', text: String(e) }; }
+		finally { syncBusy = false; }
+	}
+
+	async function handleSyncPair() {
+		syncBusy = true; syncMessage = null;
+		try {
+			sync = await pairSyncDevice(syncDeviceId, syncDeviceName, syncTailscaleIp, syncVaultId);
+			syncMessage = { type: 'success', text: `Paired with ${sync.peerName}.` };
+		} catch (e) { syncMessage = { type: 'error', text: String(e) }; }
+		finally { syncBusy = false; }
+	}
+
+	async function handleSyncNow() {
+		syncBusy = true; syncMessage = { type: 'info', text: 'Creating a safety backup, then syncing…' };
+		try { await syncNow(); }
+		catch (e) { syncBusy = false; syncMessage = { type: 'error', text: String(e) }; }
+	}
+
+	async function handleConflict(conflict: SyncConflict, choice: 'original' | 'conflict') {
+		syncBusy = true; syncMessage = null;
+		try {
+			await resolveSyncConflict(conflict.conflictPath, choice);
+			syncConflicts = await listSyncConflicts();
+			syncMessage = { type: 'success', text: 'Conflict resolved; the discarded version is recoverable from Trash.' };
+		} catch (e) { syncMessage = { type: 'error', text: String(e) }; }
+		finally { syncBusy = false; }
+	}
+
+	$effect(() => { if (activeTab === 'sync') refreshSync(); });
+
 	// ── Notion ──
 	// A read-only published view, not a sync provider (ADR-0002). Its state comes from the
 	// backend rather than the vault config, because the token must never reach the webview
@@ -508,6 +557,13 @@
 			notionProgress = null;
 			notionMessage = { type: 'error', text: event.payload.error, at: 'publish' };
 			await refreshNotion();
+		}).then(registerUnlistener);
+		void listen<BulkMutationTerminal>('sync-done', async (event) => {
+			syncBusy = false;
+			syncMessage = event.payload.success
+				? { type: 'success', text: 'Both devices are up to date.' }
+				: { type: 'error', text: event.payload.error ?? 'Sync did not complete.' };
+			await refreshSync();
 		}).then(registerUnlistener);
 
 		return () => {
@@ -1348,6 +1404,10 @@
 							<path d="M21 12a9 9 0 00-9-9 9.75 9.75 0 00-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 009 9 9.75 9.75 0 006.74-2.74L21 16"/><path d="M16 16h5v5"/>
 						</svg>
 						Backup
+					</button>
+					<button class="tab-btn" class:active={activeTab === 'sync'} onclick={() => activeTab = 'sync'}>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7h-9"/><path d="m16 3 4 4-4 4"/><path d="M4 17h9"/><path d="m8 21-4-4 4-4"/></svg>
+						Sync
 					</button>
 					{/if}
 					<button class="tab-btn" class:active={activeTab === 'maintenance'} onclick={() => activeTab = 'maintenance'}>
@@ -2203,6 +2263,59 @@
 								</div>
 							</div>
 						</div>
+					{:else if activeTab === 'sync'}
+						<div class="tab-content">
+							<div class="settings-section">
+								<h3>Device Sync</h3>
+								<p class="setting-hint">Second Brain runs its own bundled Syncthing process. Tailscale must already connect both machines, but Tailnet membership never pairs a device automatically.</p>
+								<label class="setting-toggle">
+									<span class="setting-label"><span class="setting-name">Enable sync on this machine</span><span class="setting-desc">The sidecar stays paused between guarded sync runs.</span></span>
+									<button class="toggle-switch" class:on={sync?.enabled} role="switch" aria-label="Enable sync on this machine" aria-checked={sync?.enabled ?? false} disabled={syncBusy} onclick={() => handleSyncEnabled(!(sync?.enabled ?? false))}><span class="toggle-knob"></span></button>
+								</label>
+								{#if sync?.deviceId}<p class="setting-hint">This device ID:</p><input class="ai-key-input" readonly value={sync.deviceId} />{/if}
+								{#if sync?.vaultId}<p class="setting-hint">This vault ID:</p><input class="ai-key-input" readonly value={sync.vaultId} />{/if}
+								{#if sync?.error}<div class="import-result error"><span>{sync.error}</span></div>{/if}
+							</div>
+							{#if sync?.enabled && !sync.paired}
+								<div class="settings-section">
+									<h3>Pair Another Device</h3>
+									<p class="setting-hint">On the other machine, enable sync and copy its device ID and Tailscale IPv4 address. Repeat there using this machine's details.</p>
+									<input class="ai-key-input" placeholder="Device name" bind:value={syncDeviceName} />
+									<input class="ai-key-input" placeholder="Syncthing device ID" bind:value={syncDeviceId} />
+									<input class="ai-key-input" placeholder="Tailscale IPv4 (100.x.x.x)" bind:value={syncTailscaleIp} />
+									<input class="ai-key-input" placeholder="Vault ID from the other machine" bind:value={syncVaultId} />
+									<button class="import-btn" disabled={syncBusy || !syncDeviceName.trim() || !syncDeviceId.trim() || !syncTailscaleIp.trim() || !syncVaultId.trim()} onclick={handleSyncPair}>Pair explicitly</button>
+								</div>
+							{/if}
+							{#if sync?.paired}
+								<div class="settings-section">
+									<h3>{sync.peerName}</h3>
+									<p class="setting-hint">{sync.peerConnected ? 'Reachable over Tailscale' : 'Not currently reachable — open Tailscale and Second Brain on the other machine.'}</p>
+									<button class="import-btn" disabled={syncBusy || !sync.enabled} onclick={handleSyncNow}>{syncBusy ? 'Syncing…' : 'Sync now'}</button>
+									<p class="setting-hint">For an immediate transfer, press Sync now on both machines within 30 seconds. Automatic runs align every five minutes.</p>
+									<p class="setting-hint">Every run takes a full recovery backup before allowing incoming changes. Sync remains paused if that backup fails.</p>
+								</div>
+							{/if}
+							{#if syncConflicts.length}
+								<div class="settings-section">
+									<h3>Conflicts ({syncConflicts.length})</h3>
+									<p class="setting-hint">Conflict copies stay out of notes, search, graph counts, and Notion until you choose a version.</p>
+									{#each syncConflicts as conflict (conflict.conflictPath)}
+										<details class="backup-item">
+											<summary>{conflict.relativePath}</summary>
+											<p class="setting-hint">Current version</p><pre class="sync-preview">{conflict.originalContent ?? '(deleted on this device)'}</pre>
+											<p class="setting-hint">Conflict version</p><pre class="sync-preview">{conflict.conflictContent}</pre>
+											<div class="backup-item-actions">
+												<button class="option-btn" disabled={syncBusy || conflict.originalContent === null} onclick={() => handleConflict(conflict, 'original')}>Keep current</button>
+												<button class="option-btn" disabled={syncBusy} onclick={() => handleConflict(conflict, 'conflict')}>Use conflict</button>
+											</div>
+										</details>
+									{/each}
+								</div>
+							{/if}
+							{#if syncMessage}<div class="import-result {syncMessage.type === 'info' ? 'success' : syncMessage.type}"><span>{syncMessage.text}</span></div>{/if}
+						</div>
+
 					{:else if activeTab === 'backup'}
 						<div class="tab-content">
 							<div class="settings-section">
@@ -3611,6 +3724,16 @@
 	.backup-item-actions {
 		display: flex;
 		gap: 4px;
+	}
+
+	.sync-preview {
+		max-height: 12rem;
+		overflow: auto;
+		white-space: pre-wrap;
+		font-size: 0.75rem;
+		background: var(--bg-tertiary);
+		padding: 0.65rem;
+		border-radius: 6px;
 	}
 
 	.backup-action-btn {

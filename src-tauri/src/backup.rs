@@ -64,6 +64,25 @@ pub fn create_backup(
     backup_dir: &Path,
     include_attachments: bool,
 ) -> Result<BackupEntry, String> {
+    create_backup_with_prefix(
+        vault_path,
+        backup_dir,
+        include_attachments,
+        "helixnotes-backup",
+    )
+}
+
+/// Create the identifiable, full-vault recovery point required before incoming sync.
+pub fn create_pre_sync_backup(vault_path: &str, backup_dir: &Path) -> Result<BackupEntry, String> {
+    create_backup_with_prefix(vault_path, backup_dir, true, "helixnotes-pre-sync")
+}
+
+fn create_backup_with_prefix(
+    vault_path: &str,
+    backup_dir: &Path,
+    include_attachments: bool,
+    prefix: &str,
+) -> Result<BackupEntry, String> {
     let vault = Path::new(vault_path);
     if !vault.is_dir() {
         return Err("Vault directory does not exist".to_string());
@@ -75,7 +94,7 @@ pub fn create_backup(
 
     let now = Utc::now();
     let timestamp = now.format("%Y-%m-%dT%H-%M-%S").to_string();
-    let filename = format!("helixnotes-backup-{}.zip", timestamp);
+    let filename = format!("{prefix}-{timestamp}.zip");
     let backup_path = backup_dir.join(&filename);
 
     let file = fs::File::create(&backup_path)
@@ -521,8 +540,8 @@ pub fn cleanup_old_backups(backup_dir: &Path, max_count: u32) -> Result<(), Stri
 #[cfg(test)]
 mod tests {
     use super::{
-        commit_staged_restore_with, create_backup, delete_backup, extract_and_validate_with,
-        restore_backup,
+        commit_staged_restore_with, create_backup, create_pre_sync_backup, delete_backup,
+        extract_and_validate_with, restore_backup,
     };
     use std::fs;
     use std::io::{Seek, SeekFrom, Write};
@@ -652,6 +671,23 @@ mod tests {
         assert!(archive
             .by_name(".helixnotes/attachments/image.png")
             .is_err());
+        drop(archive);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pre_sync_backup_is_identifiable_and_always_contains_attachments() {
+        let root = std::env::temp_dir().join(format!("second-brain-pre-sync-{}", Uuid::new_v4()));
+        let vault = root.join("vault");
+        let backups = root.join("backups");
+        fs::create_dir_all(vault.join(".helixnotes/attachments")).unwrap();
+        fs::write(vault.join("note.md"), "safe point").unwrap();
+        fs::write(vault.join(".helixnotes/attachments/file.bin"), "binary").unwrap();
+        let entry = create_pre_sync_backup(vault.to_str().unwrap(), &backups).unwrap();
+        assert!(entry.filename.starts_with("helixnotes-pre-sync-"));
+        let mut archive = ZipArchive::new(fs::File::open(entry.path).unwrap()).unwrap();
+        assert!(archive.by_name("note.md").is_ok());
+        assert!(archive.by_name(".helixnotes/attachments/file.bin").is_ok());
         drop(archive);
         fs::remove_dir_all(root).unwrap();
     }

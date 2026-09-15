@@ -15,9 +15,10 @@
     "test:rust": "node scripts/test-rust.mjs",
     "lint:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "verify": "pnpm check && pnpm test && pnpm test:rust && pnpm lint:rust && pnpm build",
+    "sidecar:prepare": "node scripts/prepare-syncthing.mjs",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:dev": "pnpm sidecar:prepare && tauri dev --config src-tauri/tauri.sidecar.conf.json",
+    "tauri:build": "pnpm sidecar:prepare && tauri build --config src-tauri/tauri.sidecar.conf.json"
   },
   "devDependencies": {
     "@sveltejs/adapter-auto": "^7.0.0",

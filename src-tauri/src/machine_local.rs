@@ -11,7 +11,8 @@
 //! - `search/` and `semantic.sqlite3` — derived search indexes; each machine builds its own.
 //! - `relocation/` — directory-move manifests. Replaying another machine's in-flight
 //!   manifest is exactly the data loss the manifests exist to prevent.
-//! - `sync_state.json` and `repair_issues.json` — each a record of what *this* machine saw.
+//! - `state.json`, `sync_state.json`, and `repair_issues.json` — UI state and records of
+//!   what *this* machine saw.
 //!
 //! What deliberately does NOT live here: the staging directory used to publish rewritten
 //! notes (`.helixnotes/staging/`). Publishing is an `fs::rename` onto the note's own path,
@@ -361,9 +362,19 @@ pub fn semantic_database_path(vault_path: &Path) -> Result<PathBuf, String> {
     vault_dir(vault_path).map(|dir| dir.join("semantic.sqlite3"))
 }
 
+/// Per-machine window, navigation, and list preferences for this vault.
+pub fn vault_state_path(vault_path: &Path) -> Result<PathBuf, String> {
+    vault_dir(vault_path).map(|dir| dir.join("state.json"))
+}
+
 /// File recording what this machine last saw on the sync remote.
 pub fn sync_state_path(vault_path: &Path) -> Result<PathBuf, String> {
     vault_dir(vault_path).map(|dir| dir.join("sync_state.json"))
+}
+
+/// App-owned Syncthing config, certificates, database, and logs for this vault.
+pub fn syncthing_dir(vault_path: &Path) -> Result<PathBuf, String> {
+    machine_local_dir(vault_path, "syncthing")
 }
 
 /// File recording repairs this machine's vault needs.
@@ -393,6 +404,7 @@ pub fn migrate(vault_path: &Path) -> Result<(), String> {
     // cannot leave a file behind in the vault because one list was updated and one was not.
     let ledger = repair_ledger_path(vault_path)?;
     for target in [
+        vault_state_path(vault_path)?,
         sync_state_path(vault_path)?,
         ledger.clone(),
         ledger.with_extension("json.backup"),
@@ -403,6 +415,22 @@ pub fn migrate(vault_path: &Path) -> Result<(), String> {
         let legacy = metadata_dir.join(name);
         if legacy.is_file() {
             move_path(&legacy, &target)?;
+        }
+    }
+
+    // Older sync builds could create conflict copies of per-machine UI state before this
+    // file moved out of the vault. Neither copy is shared user data: the exact state.json
+    // above preserves this machine's current state, while peer conflict copies can contain
+    // foreign absolute paths and must not remain in the sync boundary.
+    if let Ok(entries) = std::fs::read_dir(&metadata_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with("state.sync-conflict-") && name.ends_with(".json") {
+                std::fs::remove_file(entry.path()).map_err(|error| {
+                    format!("Could not remove legacy machine-state conflict: {error}")
+                })?;
+            }
         }
     }
 
@@ -556,6 +584,16 @@ mod tests {
         .unwrap();
         std::fs::write(metadata.join("sync_state.json"), b"{\"files\":{}}").unwrap();
         std::fs::write(metadata.join("repair_issues.json"), b"{\"issues\":[]}").unwrap();
+        std::fs::write(
+            metadata.join("state.json"),
+            b"{\"last_view_mode\":\"tasks\"}",
+        )
+        .unwrap();
+        std::fs::write(
+            metadata.join("state.sync-conflict-20260914-144012-PEER.json"),
+            b"{\"last_open_note\":\"C:\\\\peer\\\\note.md\"}",
+        )
+        .unwrap();
         std::fs::create_dir_all(metadata.join("search_index")).unwrap();
         root
     }
@@ -707,11 +745,19 @@ mod tests {
         );
         assert!(local.join("sync_state.json").is_file());
         assert!(local.join("repair_issues.json").is_file());
+        assert_eq!(
+            std::fs::read(local.join("state.json")).unwrap(),
+            b"{\"last_view_mode\":\"tasks\"}"
+        );
 
         // Nothing unsafe to sync is left behind.
         assert!(!metadata.join("relocation-recovery").exists());
         assert!(!metadata.join("sync_state.json").exists());
         assert!(!metadata.join("repair_issues.json").exists());
+        assert!(!metadata.join("state.json").exists());
+        assert!(!metadata
+            .join("state.sync-conflict-20260914-144012-PEER.json")
+            .exists());
         assert!(!metadata.join("search_index").exists());
         std::fs::remove_dir_all(vault).unwrap();
     }

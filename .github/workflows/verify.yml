@@ -50,13 +50,16 @@ jobs:
       - name: Run project verification
         run: pnpm verify
 
+      - name: Prepare pinned Syncthing sidecar
+        run: pnpm sidecar:prepare
+
       # Both formats: deb and rpm are configured separately in tauri.conf.json, and rpm is
       # the shipping path for this project's own Linux machine. Checking only one leaves the
       # other free to break into a silent "App info not found" on install.
       - name: Build unsigned Linux packages
         run: >-
           pnpm exec tauri build --bundles deb,rpm --ci --no-sign
-          --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          --config '{"bundle":{"externalBin":["binaries/syncthing"],"createUpdaterArtifacts":false}}'
 
       - name: Verify portal desktop entry in Debian package
         run: scripts/verify-linux-package.sh "$(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -print -quit)"
@@ -87,3 +90,9 @@ jobs:
 
       - name: Run Windows Rust tests
         run: pnpm test:rust
+
+      - name: Verify pinned Windows sidecar preparation
+        shell: pwsh
+        run: |
+          pnpm sidecar:prepare
+          & ./src-tauri/binaries/syncthing-x86_64-pc-windows-msvc.exe --version

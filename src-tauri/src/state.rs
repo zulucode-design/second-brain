@@ -36,6 +36,7 @@ pub struct AppState {
     /// land after a newer move, delete, restore, or save.
     pub note_mutation: Mutex<()>,
     pub bulk_mutation: crate::bulk_mutation::BulkMutationCoordinator,
+    pub sync_sidecar: crate::sync_sidecar::SyncSidecar,
     pub repair_status: Mutex<RepairStatus>,
     pub app_handle: Mutex<Option<tauri::AppHandle>>,
     /// Coordinates awaited save acknowledgements for hide, close, and app-exit requests.
@@ -70,6 +71,7 @@ impl AppState {
             pending_open_file: Mutex::new(None),
             note_mutation: Mutex::new(()),
             bulk_mutation: crate::bulk_mutation::BulkMutationCoordinator::new(),
+            sync_sidecar: crate::sync_sidecar::SyncSidecar::new(),
             repair_status: Mutex::new(RepairStatus::default()),
             app_handle: Mutex::new(None),
             shutdown: Mutex::new(crate::shutdown::ShutdownState::default()),

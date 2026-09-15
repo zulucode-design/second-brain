@@ -34,6 +34,8 @@
     <p class="meta"><strong>Status refresh — merged PR #90:</strong> work package A / D-01 is complete and verified by <a href="https://github.com/zulucode-design/second-brain/pull/90">PR #90</a>; implementation commit before its report refresh: <code>0e558cb4e6c4b84df9e63ae0ccad11b6fa8467ef</code>.</p>
     <p class="meta"><strong>Status refresh — merged PR #93:</strong> work package C / D-03 / D-10 is complete and verified by <a href="https://github.com/zulucode-design/second-brain/pull/93">PR #93</a>; transactional restore, shared restore/import coordination, projection reconciliation, and backup-scope regressions are merged.</p>
     <p class="meta"><strong>Status refresh — PR #94:</strong> work package B / D-02 / D-05 is complete and verified on <a href="https://github.com/zulucode-design/second-brain/pull/94">PR #94</a>; the rebased package A/B/C tree passes local <code>pnpm verify</code> and requires fresh hosted checks before merge.</p>
+    <p class="meta"><strong>Status refresh — issue #84 implementation branch:</strong> live packaged Windows/Fedora testing has verified bilateral transfer, live workspace refresh, offline move/delete behavior, delayed attachment recovery, conflict exclusion, and both recoverable resolution choices. Testing found and fixed inherited per-device <code>.helixnotes/state.json</code> inside the sync boundary and a queued conflict rename entering keyword search after reconciliation. A forced Syncthing termination produced no false clean outcome, created a pre-sync backup, restarted under bounded supervision, and converged all 5,000 incoming files on the next run. The separate forced-app fixture exposed a completion race: one peer could latch its previously known clean index while the other was still scanning a large new batch. Completion now requires fifteen seconds of continuous clean observations, reset by late peer index activity. Rebuilt two-machine verification of that correction and the vault-boundary scenario remain pending.</p>
+    <p class="meta"><strong>Current disposition — 2026-09-14:</strong> the preceding issue #84 paragraph and the work-package D row below are historical gate records, retained intact. Packaged Windows/Fedora verification at <code>a6cf5ef</code> subsequently passed pairing, data and attachment transfer, move/delete, delayed arrival, paired conflict recovery, forced-sidecar and forced-app recovery, watcher refresh, and sync disable plus vault switching.</p>
     <p class="meta"><strong>Status refresh — PR #95:</strong> work package G / D-12 / D-13 / D-14 is complete and verified on <a href="https://github.com/zulucode-design/second-brain/pull/95">PR #95</a>; calendar due-date validation, the shared loading/empty/failed classifier with retry for Graph and Tasks, and the explicit semantic schema version with safe rebuild are implemented with regression tests. G was never a release gate, so this does not change the external-alpha gate below: <strong>D and H remain the outstanding packages.</strong> Package G no longer needs a deferral row in H’s matrix; H should record it as delivered rather than as a gap with an owner and milestone.</p>
 
     <div class="callout danger">
@@ -54,7 +56,7 @@
     <table>
       <thead><tr><th>Gate</th><th>Decision required</th><th>Why it blocks work</th><th>Output</th></tr></thead>
       <tbody>
-        <tr><td><span class="badge decision">G1 Sync architecture — decided; removal complete</span></td><td>ADR-0009 reaffirms ADR-0002: bundle an app-managed Syncthing sidecar over user-installed Tailscale with explicit device pairing; remove WebDAV from production.</td><td>Package B has completed WebDAV removal and durable config/credential retirement. Package D still owns sidecar lifecycle, pairing, conflict handling, and its verification.</td><td>ADR-0009, SPEC §8, #82, #84, and #28.</td></tr>
+        <tr><td><span class="badge decision">G1 Sync architecture — implemented locally; machine gate pending</span></td><td>ADR-0009 reaffirms ADR-0002: bundle an app-managed Syncthing sidecar over user-installed Tailscale with explicit device pairing; remove WebDAV from production.</td><td>Package B completed WebDAV removal. Issue #84 implements package D's lifecycle, pairing, guarded batches, shared retention setting, and conflict workflow; real packaged Windows/Fedora verification remains.</td><td>ADR-0009, SPEC §8, <code>docs/syncthing-sidecar.md</code>, #82, #84, and #28.</td></tr>
         <tr><td><span class="badge decision">G2 Alpha scope — decided</span></td><td>ADR-0010 makes semantic search part of the external-alpha retrieval contract and moves #8–#11 to the v1 feature-complete beta.</td><td>The absent interaction surfaces remain v1 commitments without blocking safety-focused external testing.</td><td>ADR-0010, SPEC delivery milestones, README, and #8–#11.</td></tr>
         <tr><td><span class="badge decision">G3 Product identity — decided</span></td><td>ADR-0011 makes Second Brain the sole user-facing identity, keeps the existing Second Brain application identifier, starts at <code>0.1.0-alpha.1</code>, treats HelixNotes as separate, and disables the inherited updater.</td><td>Package I still owns the rename and narrow mixed-build migration; H/#49 own package and future signed-update evidence.</td><td>ADR-0011, SPEC §9, #89, and #49.</td></tr>
         <tr><td><span class="badge decision">G4 Platform/vault contract — decided</span></td><td>ADR-0012 supports Windows 11 x86-64 and Fedora 44 Workstation x86-64 with one logical vault replicated between the two machines.</td><td>Package I removes inherited unsupported-platform and multi-vault paths; H verifies only the supported matrix and the 10,000-note baseline.</td><td>ADR-0012, SPEC §2/§12, #89, and #88.</td></tr>
@@ -112,7 +114,7 @@
           <td>Complete. C owns the merged shared coordinator primitive and contract tests; D must consume it for the sidecar, while E retains import result-accuracy work.</td>
         </tr>
         <tr>
-          <td><strong>D</strong><br><span class="badge p1">P1 sync integrity</span></td>
+          <td><strong>D</strong><br><span class="badge p1">Implemented locally; real-machine gate pending</span></td>
           <td>Implement the selected sidecar architecture and make its incoming/bulk changes interruption-safe and projection-complete.</td>
           <td>
             <ul>
@@ -125,8 +127,8 @@
               <li>Two-machine interruption, delete, move, delayed-arrival, pairing/authentication, and conflict fixtures pass for the selected sidecar.</li>
             </ul>
           </td>
-          <td>Future-sidecar obligations derived from historical D-04/D-06; blockers 4–5; existing #28 and #14.</td>
-          <td>G1; C’s coordinator/backup primitives; B’s completed WebDAV removal boundary.</td>
+          <td>Implementation and local regressions cover historical D-04/D-06 and blockers 4–5. Packaged testing caught and corrected a wildcard first listener, a sidecar surviving forced app termination, and a one-sided completion check that paused before remote index exchange. Live WebDriver regressions prove Tailscale-only binding and parent-death cleanup; focused tests now require bilateral completion and a peer handoff grace. The corrected Windows/Fedora data, move/delete, delayed-arrival, and conflict protocol in <code>docs/syncthing-sidecar.md</code> remains pending for #28.</td>
+          <td>G1; C’s coordinator/backup primitives; B’s completed WebDAV removal boundary. No implementation dependency remains.</td>
         </tr>
         <tr>
           <td><strong>E</strong><br><span class="badge p2">P2 import/external files</span></td>
@@ -187,7 +189,7 @@
             </ul>
           </td>
           <td>Test assessment gaps; existing #24 and #49.</td>
-          <td>A and C now provide focused save/navigation/shutdown, restore rollback, and bulk-coordination regressions; B provides WebDAV-unreachability policy checks. D must still provide the sidecar scenarios; E–G are non-gating matrix rows unless separately promoted. CI scaffolding can continue immediately.</td>
+          <td>A and C provide focused save/navigation/shutdown, restore rollback, and bulk-coordination regressions; B provides WebDAV-unreachability policy checks. D provides local sidecar regressions and still requires its packaged two-machine scenarios; E–G are non-gating matrix rows unless separately promoted.</td>
         </tr>
         <tr>
           <td><strong>I</strong><br><span class="badge p3">P3 product/cleanup</span></td>

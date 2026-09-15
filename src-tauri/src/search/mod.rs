@@ -261,10 +261,11 @@ pub(crate) fn is_ignored_by_index(path: &Path, vault_path: &Path) -> bool {
         // Outside the vault entirely; nothing in the index can describe it.
         return true;
     };
-    relative.components().any(|component| {
-        matches!(component, std::path::Component::Normal(name)
+    crate::vault::operations::is_hidden(path)
+        || relative.components().any(|component| {
+            matches!(component, std::path::Component::Normal(name)
             if name.to_string_lossy().starts_with('.'))
-    })
+        })
 }
 
 fn build_search_schema() -> SearchSchema {
@@ -1043,6 +1044,21 @@ mod tests {
         index.reconcile(&root.to_string_lossy()).unwrap();
 
         assert_eq!(index.search("zylophonic", 10).unwrap().len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn conflict_copies_never_enter_keyword_search() {
+        let root = reconcile_vault("conflict");
+        write_note(&root, "Plan.md", "canonical words");
+        write_note(
+            &root,
+            "Plan.sync-conflict-20260913-142233-ABCDEF.md",
+            "conflict-only-secret",
+        );
+        let index = SearchIndex::new_in_memory().unwrap();
+        index.reconcile(&root.to_string_lossy()).unwrap();
+        assert!(index.search("conflict-only-secret", 10).unwrap().is_empty());
         fs::remove_dir_all(root).unwrap();
     }
 }

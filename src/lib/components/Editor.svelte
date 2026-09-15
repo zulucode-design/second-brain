@@ -3026,6 +3026,31 @@
 		return src;
 	}
 
+	function isVaultAttachmentSource(src: string): boolean {
+		const local = assetUrlToLocalPath(src);
+		return local?.replace(/\\/g, '/').includes('/.helixnotes/attachments/') ?? false;
+	}
+
+	function markDelayedAttachment(event: Event) {
+		const image = event.target as HTMLImageElement;
+		if (image.tagName !== 'IMG' || !isVaultAttachmentSource(image.src)) return;
+		if (!image.dataset.syncOriginalAlt) image.dataset.syncOriginalAlt = image.alt;
+		image.dataset.syncPending = 'true';
+		image.alt = 'Attachment not synced yet';
+		image.title = 'This attachment has not synced to this device yet.';
+	}
+
+	function retryDelayedAttachments() {
+		for (const image of editorElement?.querySelectorAll<HTMLImageElement>('img[data-sync-pending="true"]') ?? []) {
+			const source = image.src;
+			image.removeAttribute('data-sync-pending');
+			image.alt = image.dataset.syncOriginalAlt ?? '';
+			image.removeAttribute('title');
+			image.src = '';
+			requestAnimationFrame(() => { image.src = source; });
+		}
+	}
+
 	type EditorSaveSnapshot = {
 		path: string;
 		meta: NoteMeta;
@@ -4336,6 +4361,12 @@
 				createEditor('');
 			}
 		}
+	});
+
+	$effect(() => {
+		if (!editorElement) return;
+		editorElement.addEventListener('error', markDelayedAttachment, true);
+		return () => editorElement?.removeEventListener('error', markDelayedAttachment, true);
 	});
 
 	// Close formatting dropdowns when clicking outside the formatting bar
@@ -5945,6 +5976,7 @@
 	// Refresh wiki-link title cache whenever vault files change so that deleted
 	// notes become unresolved and newly created notes become resolvable.
 	let unlistenFileChange: (() => void) | null = null;
+	let unlistenSyncDone: (() => void) | null = null;
 	if ($appConfig?.enable_wiki_links) {
 		listen('file-changed', () => {
 			if (!componentDestroyed && $appConfig?.enable_wiki_links) refreshWikiLinkTitles();
@@ -5953,12 +5985,17 @@
 			else unlistenFileChange = unlisten;
 		});
 	}
+	listen('sync-done', retryDelayedAttachments).then((unlisten) => {
+		if (componentDestroyed) unlisten();
+		else unlistenSyncDone = unlisten;
+	});
 
 	onDestroy(() => {
 		componentDestroyed = true;
 		clearTaskReveal();
 		destroyEditor();
 		unlistenFileChange?.();
+		unlistenSyncDone?.();
 		if (infoPathCopyTimer) clearTimeout(infoPathCopyTimer);
 	});
 </script>
@@ -9987,6 +10024,17 @@
 
 	:global(.tiptap-wrapper .tiptap img[data-size="full"]) {
 		max-width: 100%;
+	}
+
+	:global(.tiptap-wrapper .tiptap img[data-sync-pending="true"]) {
+		min-width: 15rem;
+		min-height: 3rem;
+		padding: 0.75rem;
+		border: 1px dashed var(--border-color);
+		border-radius: 0.5rem;
+		background: var(--bg-secondary);
+		color: var(--text-secondary);
+		object-fit: contain;
 	}
 
 	.img-toolbar-overlay {

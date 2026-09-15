@@ -343,6 +343,13 @@ fn open_vault_path(
     // Before anything reads state: pull machine-local state out of the vault if this is
     // an older vault, and drop staging left behind by an interrupted note rewrite.
     crate::machine_local::migrate(Path::new(&path))?;
+    let legacy_max_versions = state
+        .config
+        .lock()
+        .map_err(|error| error.to_string())?
+        .max_versions_per_note;
+    let shared_settings =
+        crate::vault_settings::load_or_create(Path::new(&path), legacy_max_versions)?;
     let restored = crate::vault::relocation::sweep_staging(Path::new(&path));
     if restored > 0 {
         log::warn!("Restored {restored} note(s) left in staging by an interrupted rewrite");
@@ -568,6 +575,8 @@ fn open_vault_path(
     }
     next.active_vault = Some(path.clone());
     next.active_bookmark_id = active_bookmark_id;
+    // Compatibility projection for existing callers; the in-vault file is authoritative.
+    next.max_versions_per_note = shared_settings.max_versions_per_note;
     save_app_config(&next)?;
     *search_slot = Some(search);
     *semantic_slot = Some(semantic.clone());
@@ -585,6 +594,7 @@ fn open_vault_path(
     });
 
     register_hotkey_now_a_vault_exists(&app);
+    crate::sync_sidecar::activate_vault(app.clone(), PathBuf::from(&path));
 
     Ok(())
 }
@@ -1699,12 +1709,6 @@ pub fn get_graph_data(state: State<'_, AppState>) -> Result<crate::types::GraphD
         let path_str = path.to_string_lossy().to_string();
         if path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
-        }
-        // Skip Syncthing conflict files
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.contains(".sync-conflict-") {
-                continue;
-            }
         }
         // Deduplicate by canonical path (handles symlinks)
         let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
@@ -2909,7 +2913,20 @@ fn do_import_obsidian(app: AppHandle, vault_path: &str) -> Result<ImportResult, 
     Ok(result)
 }
 
-fn reconcile_bulk_projections(state: &AppState, vault_path: &str) -> Result<(), String> {
+pub(crate) fn reconcile_bulk_projections(state: &AppState, vault_path: &str) -> Result<(), String> {
+    let legacy_max_versions = state
+        .config
+        .lock()
+        .map_err(|error| error.to_string())?
+        .max_versions_per_note;
+    let shared = crate::vault_settings::load_or_create(Path::new(vault_path), legacy_max_versions)?;
+    {
+        let mut config = state.config.lock().map_err(|error| error.to_string())?;
+        if config.max_versions_per_note != shared.max_versions_per_note {
+            config.max_versions_per_note = shared.max_versions_per_note;
+            save_app_config(&config)?;
+        }
+    }
     if let Some(search) = state
         .search_index
         .lock()
