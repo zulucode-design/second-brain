@@ -67,9 +67,9 @@ is fixed:
    attachments; abort without resuming Syncthing if this fails;
 3. resume the configured folder and paired device, require Tailscale reachability, request a
    scan, and wait for fifteen seconds of continuously clean bilateral completion observations:
-   the local database must contain the peer's remote sequence and need nothing, while peer
-   completion must report a valid shared folder and need no items, deletions, or bytes; any late
-   index activity resets the observation window;
+   the local database must contain the peer's remote sequence, need nothing, and report no pull
+   errors, while peer completion must report a valid shared folder and need no items, deletions,
+   or bytes; any late index activity or pull error resets the observation window;
 4. re-pause both folder and device on success or error (with a drop guard as a second cleanup
    path);
 5. reconcile the shared settings projection, keyword index, and semantic index;
@@ -81,7 +81,10 @@ file reconciliation, delete/move propagation, delayed arrival, and conflict-copy
 Completion requires fifteen seconds of continuously clean local and peer observations. A peer can
 briefly report its previously published index as complete while a fresh scan is still running; any
 late index activity resets the stability latch so the first device cannot pause the connection
-before that scan and its resulting transfer finish.
+before that scan and its resulting transfer finish. Pull errors are not terminal either: after an
+interrupted transfer, Syncthing reports them while the peer reconnects and re-sends its index, and
+retries them itself. A run fails because of them only if they are still present when the five-minute
+convergence limit ends (#101).
 
 ## Conflicts
 
