@@ -100,7 +100,12 @@
   <table>
     <tr><th>Control</th><th>Expected outcome</th><th>Current state</th><th>Owner</th><th>Status</th></tr>
     <tr><td>Linux package install and launch</td><td>rpm installs and launches on Fedora 44; deb installs and launches on a Debian-family host</td><td>built and inspected only</td><td>#88</td><td><span class="s red">missing</span></td></tr>
-    <tr><td>Windows package install and launch</td><td>installer from a known commit installs, launches, and uninstalls cleanly</td><td>an installed HelixNotes 1.3.4 exists on the desktop, but its build commit is not recorded</td><td>#88, #49</td><td><span class="s red">missing</span></td></tr>
+    <tr><td>Windows package install and launch</td><td>installer from a known commit installs, launches, and uninstalls cleanly</td><td>2026-09-14: NSIS installer built on the desktop from <code>85b6b02</code> (build output on D:), installed silently with
+      <code>/S /D=D:\SecondBrainTest\app</code> in 3.3 s, and the uninstall registry entry now points at D:. Launched in the console
+      session: one packaged <code>App</code> process, 5 new log lines with no warnings or errors. Force-stopped with
+      <code>sync-interrupt.ps1 -Target App</code>; nothing left running 15 s later. Not covered: sidecar and watchdog (sync was not
+      enabled on the test vault), the in-window UI, uninstall, and the MSI. The old per-user files in
+      <code>%LOCALAPPDATA%\HelixNotes</code> were left in place.</td><td>#88, #49</td><td><span class="s amber">install and launch done, partial</span></td></tr>
     <tr><td>Update and package signing</td><td>signing path verified, or the updater stays disabled per ADR-0011</td><td>not verified</td><td>#88, #24</td><td><span class="s red">missing</span></td></tr>
     <tr><td>Performance</td><td>cold start, editor interaction, graph render, and semantic retrieval measured on both machines with thresholds</td><td>not measured</td><td>#88</td><td><span class="s red">missing</span></td></tr>
     <tr><td>Log privacy and diagnostic export</td><td>written redaction policy; user-started export excludes note contents and secrets by default</td><td>policy written in <code>docs/log-privacy.md</code> with an audit of current log calls (no secrets logged; paths, note ids,
