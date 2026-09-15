@@ -93,13 +93,20 @@
       failed ("not reachable over Tailscale") rather than claiming success. Recovery <strong>failed</strong>: every later run on
       Windows ended within about a second with "Syncthing reported one or more file errors", in either press order.
       Defect #101 (pull errors treated as terminal) is fixed on <code>fix/101-transient-pull-errors</code>, pending merge; the
-      two-machine run must be repeated from a fresh vault on rebuilt packages. Run 2 (sidecar stop) not attempted.</td><td><span class="s red">blocking (#101)</span></td></tr>
+      two-machine run must be repeated from a fresh vault on rebuilt packages. Run 2 (sidecar stop) not attempted.
+      Update 2026-09-15: #101 merged; the run 1 rerun passed. Run 2 found #104: Syncthing v2.1.5 runs as a monitor and a worker,
+      and on Windows stopping the monitor orphaned the worker, which kept syncing, held the lock, and escaped the watchdog. The fix
+      on <code>fix/104-sidecar-single-process</code> spawns with <code>STMONITORED=yes</code>. Installed <code>syncthing.exe</code>
+      on the desktop then ran as one process and left nothing after a forced stop, and <code>pnpm test:rust</code> passed there
+      (510 passed). Run 2 must be repeated on rebuilt packages. #103 (the first peer to confirm pauses before the other can) is
+      fixed separately.</td><td><span class="s red">blocking (#104 rerun)</span></td></tr>
     <tr><td>E: import and external viewer</td><td>#85</td><td>overlapping imports refused; failures counted; external file opens read-only</td><td>not started</td><td><span class="s grey">deferred, non-gating</span></td></tr>
     <tr><td>F: durable writes and startup failures</td><td>#86</td><td>interrupted writes keep the previous file; config failures are distinct and visible</td><td>merged in PR #100 (<code>c8017b1</code>). Windows: the replace retries <code>MoveFileExW</code> 11 times, 25 ms apart, on
       errors 5 and 32; <code>pnpm test:rust</code> passed on the desktop at <code>4a22c6a</code> (506 passed), including the held-then-released
       and held-past-budget tests. Accepted Windows limits: no directory fsync on NTFS (<code>MOVEFILE_WRITE_THROUGH</code> covers the
-      move), and no ACL or permission preservation (Unix-only by spec). Open follow-up: #99, orphaned <code>.tmp</code> files replicating
-      through Syncthing. Not verified: the vault picker's config-error message on screen.</td><td><span class="s green">merged</span></td></tr>
+      move), and no ACL or permission preservation (Unix-only by spec). Follow-up #99 (orphaned <code>.tmp</code> files replicating
+      through Syncthing) is fixed on <code>fix/104-sidecar-single-process</code>: each run adds <code>(?d).*.tmp</code> to the vault's
+      <code>.stignore</code>, and an orphan stays hidden on the machine where it was created. Not verified: the vault picker's config-error message on screen.</td><td><span class="s green">merged</span></td></tr>
     <tr><td>G: due-date, empty-state, semantic schema</td><td>#87</td><td>implemented outcomes</td><td>PR #95 regressions</td><td><span class="s green">green</span></td></tr>
   </table>
 </section>

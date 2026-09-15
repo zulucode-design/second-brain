@@ -647,6 +647,11 @@ fn start(
             .env("STGUIADDRESS", format!("127.0.0.1:{}", control.gui_port))
             .env("STGUIAPIKEY", &control.api_key)
             .env("STVERSIONEXTRA", "Second Brain managed sidecar")
+            // Run as one process. Otherwise Syncthing's monitor spawns a worker that survives
+            // kill() on Windows, keeps the lock and escapes the watchdog (#104). The app
+            // supervises restarts itself. ponytail: hidden switch verified on v2.1.5 only;
+            // recheck with `tasklist`/`ps` when bumping the pinned Syncthing.
+            .env("STMONITORED", "yes")
             .spawn()
             .map_err(|error| format!("Could not start bundled Syncthing: {error}"))?;
         if let Err(error) =
@@ -970,6 +975,59 @@ fn set_device_paused(
     Ok(())
 }
 
+/// Crash-orphaned `durable::replace` temporaries must never replicate (#99).
+const DURABLE_TEMP_IGNORE: &str = "(?d).*.tmp";
+
+/// The `.stignore` lines to write, or `None` if the pattern is already there.
+fn append_durable_temp_ignore_if_missing(mut lines: Vec<String>) -> Option<Vec<String>> {
+    if lines.iter().any(|line| line.trim() == DURABLE_TEMP_IGNORE) {
+        return None;
+    }
+    lines.push(DURABLE_TEMP_IGNORE.to_string());
+    Some(lines)
+}
+
+fn ensure_durable_temp_ignored(
+    client: &reqwest::blocking::Client,
+    control: &ControlState,
+    folder_id: &str,
+) -> Result<(), String> {
+    let current: serde_json::Value = client
+        .get(endpoint(control, "/rest/db/ignores"))
+        .header("X-API-Key", &control.api_key)
+        .query(&[("folder", folder_id)])
+        .send()
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| format!("Could not read the sync ignore patterns: {error}"))?
+        .json()
+        .map_err(|error| error.to_string())?;
+    // A `null` list means no .stignore yet. Any other shape fails closed: writing back a guess
+    // would replace the user's patterns.
+    let lines = match current.get("ignore") {
+        Some(serde_json::Value::Null) => Vec::new(),
+        Some(serde_json::Value::Array(lines)) => lines
+            .iter()
+            .map(|line| line.as_str().map(str::to_string))
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| "Syncthing returned invalid ignore patterns".to_string())?,
+        _ => return Err("Syncthing returned invalid ignore patterns".to_string()),
+    };
+    let Some(lines) = append_durable_temp_ignore_if_missing(lines) else {
+        return Ok(());
+    };
+    client
+        .post(endpoint(control, "/rest/db/ignores"))
+        .header("X-API-Key", &control.api_key)
+        .query(&[("folder", folder_id)])
+        .json(&serde_json::json!({ "ignore": lines }))
+        .send()
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| format!("Could not update the sync ignore patterns: {error}"))?;
+    Ok(())
+}
+
 struct FolderPauseGuard<'a> {
     client: &'a reqwest::blocking::Client,
     control: &'a ControlState,
@@ -1278,7 +1336,9 @@ fn run_sync(app: AppHandle, vault: PathBuf, control: ControlState, peer: Peer) {
                             return;
                         }
                     };
-                    match set_folder_paused(&client, &control, &folder_id, false) {
+                    match ensure_durable_temp_ignored(&client, &control, &folder_id)
+                        .and_then(|()| set_folder_paused(&client, &control, &folder_id, false))
+                    {
                         Err(error) => crate::bulk_mutation::BulkMutationTerminal::failure(error),
                         Ok(()) => {
                             if let Err(error) =
@@ -1351,11 +1411,11 @@ pub async fn sync_now(app: AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        convergence_observation_is_complete, harden_generated_config_xml, hold_for_peer_handoff,
-        read_control, tailscale_ipv4, until_next_sync_window, valid_device_id, write_control,
-        CompletionLatch, ControlState, SyncProgress, PEER_HANDOFF_GRACE,
-        PULL_ERROR_EXPLAINS_FAILURE, SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL,
-        SYNC_POLL_INTERVAL,
+        append_durable_temp_ignore_if_missing, convergence_observation_is_complete,
+        harden_generated_config_xml, hold_for_peer_handoff, read_control, tailscale_ipv4,
+        until_next_sync_window, valid_device_id, write_control, CompletionLatch, ControlState,
+        SyncProgress, DURABLE_TEMP_IGNORE, PEER_HANDOFF_GRACE, PULL_ERROR_EXPLAINS_FAILURE,
+        SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL, SYNC_POLL_INTERVAL,
     };
     use std::time::{Duration, Instant};
 
@@ -1411,6 +1471,19 @@ mod tests {
             }
         }
         panic!("second peer never confirmed");
+    }
+
+    #[test]
+    fn durable_temp_ignore_is_appended_once_and_keeps_user_patterns() {
+        let user = vec!["// mine".to_string(), "private/".to_string()];
+        let updated = append_durable_temp_ignore_if_missing(user.clone()).unwrap();
+        assert_eq!(&updated[..2], &user[..]);
+        assert_eq!(updated[2], DURABLE_TEMP_IGNORE);
+        assert_eq!(append_durable_temp_ignore_if_missing(updated), None);
+        assert_eq!(
+            append_durable_temp_ignore_if_missing(Vec::new()),
+            Some(vec![DURABLE_TEMP_IGNORE.to_string()])
+        );
     }
 
     fn vault() -> std::path::PathBuf {
