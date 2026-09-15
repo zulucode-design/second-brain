@@ -38,7 +38,10 @@ home lock and escaping the watchdog (#104). Recheck the process count whenever t
 
 Before each run resumes the folder, the app makes sure the vault's `.stignore` contains
 `(?d).*.tmp`. The line is appended, and existing patterns are kept. This stops durable-write
-temporaries orphaned by a crash from replicating (#99). `.stignore` itself never syncs.
+temporaries orphaned by a crash from replicating (#99). `.stignore` itself never syncs. An orphan
+stays, hidden, on the machine where it was created, and a copy that replicated before this rule
+stays on the peer. If the ignore list can't be read or has an unexpected shape, the run fails and
+the folder stays paused. The app never overwrites patterns it couldn't read.
 
 Enable restores the sidecar for the active vault. Disable and vault switching request an
 authenticated shutdown and kill a process that does not exit promptly. Unexpected exits are

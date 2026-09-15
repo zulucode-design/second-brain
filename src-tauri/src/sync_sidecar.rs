@@ -979,7 +979,7 @@ fn set_device_paused(
 const DURABLE_TEMP_IGNORE: &str = "(?d).*.tmp";
 
 /// The `.stignore` lines to write, or `None` if the pattern is already there.
-fn with_durable_temp_ignore(mut lines: Vec<String>) -> Option<Vec<String>> {
+fn append_durable_temp_ignore_if_missing(mut lines: Vec<String>) -> Option<Vec<String>> {
     if lines.iter().any(|line| line.trim() == DURABLE_TEMP_IGNORE) {
         return None;
     }
@@ -992,33 +992,38 @@ fn ensure_durable_temp_ignored(
     control: &ControlState,
     folder_id: &str,
 ) -> Result<(), String> {
-    let url = endpoint(control, &format!("/rest/db/ignores?folder={folder_id}"));
     let current: serde_json::Value = client
-        .get(&url)
+        .get(endpoint(control, "/rest/db/ignores"))
         .header("X-API-Key", &control.api_key)
+        .query(&[("folder", folder_id)])
         .send()
-        .and_then(|response| response.error_for_status())
-        .and_then(|response| response.json())
-        .map_err(|error| format!("Could not read the sync ignore patterns: {error}"))?;
-    let lines = current
-        .get("ignore")
-        .and_then(|value| value.as_array())
-        .map(|lines| {
-            lines
-                .iter()
-                .filter_map(|line| line.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    let Some(lines) = with_durable_temp_ignore(lines) else {
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| format!("Could not read the sync ignore patterns: {error}"))?
+        .json()
+        .map_err(|error| error.to_string())?;
+    // A `null` list means no .stignore yet. Any other shape fails closed: writing back a guess
+    // would replace the user's patterns.
+    let lines = match current.get("ignore") {
+        Some(serde_json::Value::Null) => Vec::new(),
+        Some(serde_json::Value::Array(lines)) => lines
+            .iter()
+            .map(|line| line.as_str().map(str::to_string))
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| "Syncthing returned invalid ignore patterns".to_string())?,
+        _ => return Err("Syncthing returned invalid ignore patterns".to_string()),
+    };
+    let Some(lines) = append_durable_temp_ignore_if_missing(lines) else {
         return Ok(());
     };
     client
-        .post(&url)
+        .post(endpoint(control, "/rest/db/ignores"))
         .header("X-API-Key", &control.api_key)
+        .query(&[("folder", folder_id)])
         .json(&serde_json::json!({ "ignore": lines }))
         .send()
-        .and_then(|response| response.error_for_status())
+        .map_err(|error| error.to_string())?
+        .error_for_status()
         .map_err(|error| format!("Could not update the sync ignore patterns: {error}"))?;
     Ok(())
 }
@@ -1380,21 +1385,22 @@ pub async fn sync_now(app: AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        convergence_observation_is_complete, harden_generated_config_xml, read_control,
-        tailscale_ipv4, until_next_sync_window, valid_device_id, with_durable_temp_ignore,
-        write_control, CompletionLatch, ControlState, SyncProgress, DURABLE_TEMP_IGNORE,
-        PULL_ERROR_EXPLAINS_FAILURE, SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL,
+        append_durable_temp_ignore_if_missing, convergence_observation_is_complete,
+        harden_generated_config_xml, read_control, tailscale_ipv4, until_next_sync_window,
+        valid_device_id, write_control, CompletionLatch, ControlState, SyncProgress,
+        DURABLE_TEMP_IGNORE, PULL_ERROR_EXPLAINS_FAILURE, SYNC_COMPLETION_STABLE_OBSERVATIONS,
+        SYNC_INTERVAL,
     };
 
     #[test]
     fn durable_temp_ignore_is_appended_once_and_keeps_user_patterns() {
         let user = vec!["// mine".to_string(), "private/".to_string()];
-        let updated = with_durable_temp_ignore(user.clone()).unwrap();
+        let updated = append_durable_temp_ignore_if_missing(user.clone()).unwrap();
         assert_eq!(&updated[..2], &user[..]);
         assert_eq!(updated[2], DURABLE_TEMP_IGNORE);
-        assert_eq!(with_durable_temp_ignore(updated), None);
+        assert_eq!(append_durable_temp_ignore_if_missing(updated), None);
         assert_eq!(
-            with_durable_temp_ignore(Vec::new()),
+            append_durable_temp_ignore_if_missing(Vec::new()),
             Some(vec![DURABLE_TEMP_IGNORE.to_string()])
         );
     }
