@@ -312,38 +312,9 @@ fn read_control(vault: &Path) -> Result<ControlState, String> {
 }
 
 fn write_control(vault: &Path, state: &ControlState) -> Result<(), String> {
-    use std::io::Write;
     let path = control_path(vault)?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| "Sync state has no parent".to_string())?;
-    let temporary = parent.join(format!(".sync-control-{}.tmp", uuid::Uuid::new_v4()));
     let data = serde_json::to_vec_pretty(state).map_err(|error| error.to_string())?;
-    let result = (|| {
-        let mut options = std::fs::OpenOptions::new();
-        options.create_new(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options
-            .open(&temporary)
-            .map_err(|error| error.to_string())?;
-        file.write_all(&data).map_err(|error| error.to_string())?;
-        file.sync_all().map_err(|error| error.to_string())?;
-        drop(file);
-        std::fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
-        #[cfg(unix)]
-        std::fs::File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(temporary);
-    }
-    result
+    crate::durable::replace(&path, &data, crate::durable::Mode::Private)
 }
 
 fn endpoint(control: &ControlState, path: &str) -> String {
@@ -619,83 +590,12 @@ fn harden_generated_config(
     control: &ControlState,
     local_address: std::net::Ipv4Addr,
 ) -> Result<(), String> {
-    use std::io::Write;
-
     let path = home.join("config.xml");
     let contents = std::fs::read_to_string(&path)
         .map_err(|error| format!("Could not read generated Syncthing configuration: {error}"))?;
     let hardened = harden_generated_config_xml(&contents, control, local_address)?;
-    let temporary = home.join(format!(".config-{}.tmp", uuid::Uuid::new_v4()));
-    let result = (|| {
-        let mut options = std::fs::OpenOptions::new();
-        options.create_new(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options
-            .open(&temporary)
-            .map_err(|error| error.to_string())?;
-        file.write_all(&hardened)
-            .and_then(|_| file.sync_all())
-            .map_err(|error| error.to_string())?;
-        drop(file);
-        replace_generated_config(&temporary, &path)?;
-        #[cfg(unix)]
-        std::fs::File::open(home)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(temporary);
-    }
-    result.map_err(|error: String| format!("Could not harden Syncthing configuration: {error}"))
-}
-
-#[cfg(unix)]
-fn replace_generated_config(source: &Path, destination: &Path) -> Result<(), String> {
-    std::fs::rename(source, destination).map_err(|error| error.to_string())
-}
-
-#[cfg(windows)]
-fn replace_generated_config(source: &Path, destination: &Path) -> Result<(), String> {
-    use std::os::windows::ffi::OsStrExt;
-
-    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
-    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
-
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn MoveFileExW(existing_filename: *const u16, new_filename: *const u16, flags: u32) -> i32;
-    }
-
-    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
-    let destination: Vec<u16> = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
-    // SAFETY: both buffers are NUL-terminated, remain alive for the call, and the flags
-    // request an atomic replacement with write-through durability.
-    let replaced = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if replaced == 0 {
-        Err(std::io::Error::last_os_error().to_string())
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-fn replace_generated_config(source: &Path, destination: &Path) -> Result<(), String> {
-    std::fs::rename(source, destination).map_err(|error| error.to_string())
+    crate::durable::replace(&path, &hardened, crate::durable::Mode::Private)
+        .map_err(|error| format!("Could not harden Syncthing configuration: {error}"))
 }
 
 fn start(

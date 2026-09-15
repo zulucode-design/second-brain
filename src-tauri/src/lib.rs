@@ -6,6 +6,7 @@ mod autostart;
 mod backup;
 mod bulk_mutation;
 mod commands;
+mod durable;
 mod history;
 mod hotkey;
 mod image_proxy;

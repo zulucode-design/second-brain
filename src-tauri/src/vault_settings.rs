@@ -5,7 +5,6 @@
 //! one another's snapshots.
 
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const VERSION: u8 = 1;
@@ -50,28 +49,8 @@ fn write(vault: &Path, settings: &VaultSettings) -> Result<(), String> {
         .parent()
         .ok_or_else(|| "Shared vault settings have no parent".to_string())?;
     std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let temporary = parent.join(format!(".settings-{}.tmp", uuid::Uuid::new_v4()));
     let data = serde_json::to_vec_pretty(settings).map_err(|error| error.to_string())?;
-    let result = (|| {
-        let mut file = std::fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)
-            .map_err(|error| error.to_string())?;
-        file.write_all(&data).map_err(|error| error.to_string())?;
-        file.sync_all().map_err(|error| error.to_string())?;
-        drop(file);
-        std::fs::rename(&temporary, &destination).map_err(|error| error.to_string())?;
-        #[cfg(unix)]
-        std::fs::File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(temporary);
-    }
-    result
+    crate::durable::replace(&destination, &data, crate::durable::Mode::Shared)
 }
 
 #[cfg(test)]
