@@ -111,8 +111,9 @@
       <code>/S /D=D:\SecondBrainTest\app</code> in 3.3 s, and the uninstall registry entry now points at D:. Launched in the console
       session: one packaged <code>App</code> process, 5 new log lines with no warnings or errors. Force-stopped with
       <code>sync-interrupt.ps1 -Target App</code>; nothing left running 15 s later. Not covered: sidecar and watchdog (sync was not
-      enabled on the test vault), the in-window UI, uninstall, and the MSI. The old per-user files in
-      <code>%LOCALAPPDATA%\HelixNotes</code> were left in place.</td><td>#88, #49</td><td><span class="s amber">install and launch done, partial</span></td></tr>
+      enabled on the test vault), the in-window UI, uninstall, and the MSI. 2026-09-15: rebuilt from <code>4d2ae7f</code> (rustls and Tiptap upgrades) and
+      reinstalled over the D: install; launched with no configuration (vault picker), 1 new log line with no warnings or errors,
+      stopped with <code>-Target App</code>, nothing left running. The old per-user C: install and its app data were deleted the same day.</td><td>#88, #49</td><td><span class="s amber">install and launch done, partial</span></td></tr>
     <tr><td>Update and package signing</td><td>signing path verified, or the updater stays disabled per ADR-0011</td><td>not verified</td><td>#88, #24</td><td><span class="s red">missing</span></td></tr>
     <tr><td>Performance</td><td>cold start, editor interaction, graph render, and semantic retrieval measured on both machines with thresholds</td><td>not measured. A 2026-09-14 attempt timed five launches of the D: build from SSH until the process had a main window;
       all five runs recorded no window because a process in the SSH session cannot see window handles in the console session.
