@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>External-alpha verification matrix — v1 (2026-09-14)</title>
+  <style>
+    :root {
+      --page: #f3f1eb; --paper: #fffdf8; --ink: #20241f; --muted: #626960; --line: #d7d1c5;
+      --accent: #185f52; --critical: #a42626; --critical-soft: #f8dfdc; --medium: #776000;
+      --medium-soft: #f4ebbd; --good: #276c43; --good-soft: #dcece2; --low: #4f6278; --low-soft: #e3e9f0;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      --serif: Iowan Old Style, Palatino Linotype, Georgia, serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --page: #151815; --paper: #1d211d; --ink: #e8e6df; --muted: #a3a99f; --line: #373d36;
+        --accent: #7cc4b1; --critical: #f0a09a; --critical-soft: #3d2322; --medium: #e3cf73;
+        --medium-soft: #353016; --good: #8fd1a6; --good-soft: #1f3326; --low: #a9bad0; --low-soft: #242b34; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--page); color: var(--ink); font: 16px/1.6 var(--sans); }
+    a { color: var(--accent); }
+    code { font-family: var(--mono); font-size: 0.87em; overflow-wrap: anywhere; }
+    .page { width: min(1180px, calc(100% - 30px)); margin: 26px auto 70px; }
+    header, section { border: 1px solid var(--line); background: var(--paper); border-radius: 20px; padding: clamp(20px, 4vw, 44px); margin-bottom: 18px; }
+    h1 { margin: 0; font: 600 clamp(2rem, 5vw, 3.4rem)/1.05 var(--serif); letter-spacing: -0.03em; }
+    h2 { margin-top: 0; font: 600 1.6rem/1.2 var(--serif); }
+    .kicker { margin: 0 0 10px; color: var(--accent); font-size: 0.75rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
+    .gate { margin-top: 20px; padding: 14px 18px; border-radius: 12px; background: var(--critical-soft); }
+    .gate strong { color: var(--critical); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+    th, td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 700; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; }
+    .s { display: inline-block; padding: 1px 9px; border-radius: 99px; font-size: 0.78rem; font-weight: 750; white-space: nowrap; }
+    .green { color: var(--good); background: var(--good-soft); }
+    .red { color: var(--critical); background: var(--critical-soft); }
+    .amber { color: var(--medium); background: var(--medium-soft); }
+    .grey { color: var(--low); background: var(--low-soft); }
+    ol li { margin-bottom: 6px; }
+  </style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <p class="kicker">Package H · issue #88 · program #76</p>
+  <h1>External-alpha verification matrix</h1>
+  <p>Version 1, recorded 2026-09-14 against <code>main</code> at <code>8155213</code>. This record is versioned:
+  when a row's status changes, update this file in the same pull request, or add a new version file when the
+  supported platforms, fixtures, or gate definition change.</p>
+  <div class="gate"><strong>Gate status: not green.</strong> Package D still needs its two-machine interruption run (#97),
+  F is in progress (#86), no Linux or Windows package has been installed and launched, and performance,
+  diagnostics privacy, dependency audit, and signing evidence do not exist yet.</div>
+</header>
+
+<section>
+  <h2>Supported platforms and toolchain</h2>
+  <p>From ADR-0012: Windows 11 x86-64 (primary desktop, runs local models) and Fedora 44 Workstation x86-64
+  (laptop), one replicated logical vault. macOS, mobile, and additional vaults are outside the alpha contract.</p>
+  <table>
+    <tr><th>Component</th><th>Pinned or required</th><th>Where enforced</th></tr>
+    <tr><td>Node.js</td><td><code>&gt;=22</code> (CI runs 22; both machines run 24)</td><td><code>package.json</code> <code>engines</code> with <code>.npmrc</code> <code>engine-strict=true</code></td></tr>
+    <tr><td>pnpm</td><td><code>pnpm@11.22.0</code></td><td><code>packageManager</code>; CI's <code>pnpm/action-setup</code> reads it instead of a separate version</td></tr>
+    <tr><td>Rust</td><td>1.88 minimum</td><td><code>rust-version</code> in <code>src-tauri/Cargo.toml</code>; CI toolchain 1.88.0</td></tr>
+    <tr><td>Syncthing sidecar</td><td>v2.1.5, SHA-256 pinned per target</td><td><code>scripts/prepare-syncthing.mjs</code>; <code>docs/syncthing-sidecar.md</code></td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>Automated commands</h2>
+  <table>
+    <tr><th>Command</th><th>Platform</th><th>Expected outcome</th><th>Evidence</th><th>Status</th></tr>
+    <tr><td><code>pnpm verify</code></td><td>Ubuntu 22.04 (CI)</td><td>check, JS tests, Rust tests, fmt/clippy, build all pass</td><td><code>verify</code> job, <code>.github/workflows/verify.yml</code></td><td><span class="s green">green</span></td></tr>
+    <tr><td><code>pnpm test:rust</code></td><td>Windows Server 2022 (CI)</td><td>library tests pass through the Windows manifest path</td><td><code>windows-rust</code> job, PR #92</td><td><span class="s green">green</span></td></tr>
+    <tr><td><code>pnpm verify</code></td><td>Windows 11 desktop</td><td>same as Linux</td><td>none recorded at <code>8155213</code></td><td><span class="s amber">not run</span></td></tr>
+    <tr><td>Unsigned deb/rpm build and desktop-entry check</td><td>Ubuntu 22.04 (CI)</td><td>both packages contain the portal desktop entry</td><td><code>scripts/verify-linux-package.sh</code></td><td><span class="s green">green</span></td></tr>
+    <tr><td><code>pnpm install</code> fails when <code>svelte-kit sync</code> fails</td><td>all</td><td>install no longer reports success over a failed type sync</td><td><code>prepare</code> script, this PR</td><td><span class="s green">fixed</span></td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>Work-package rows</h2>
+  <table>
+    <tr><th>Row</th><th>Ticket</th><th>Expected outcome</th><th>Evidence</th><th>Status</th></tr>
+    <tr><td>G1–G4 decisions</td><td>#77–#80</td><td>recorded and implemented</td><td>ADR-0009, ADR-0010, ADR-0011, ADR-0012</td><td><span class="s green">recorded</span></td></tr>
+    <tr><td>A: save-safe navigation and shutdown</td><td>#81</td><td>edit→navigate and edit→close never lose a save</td><td>PR #90 lifecycle suites; no end-to-end run in a package</td><td><span class="s amber">code done, E2E gap</span></td></tr>
+    <tr><td>B: WebDAV trust boundary</td><td>#82</td><td>WebDAV unreachable from production</td><td>PR #94</td><td><span class="s green">green</span></td></tr>
+    <tr><td>C: transactional restore</td><td>#83</td><td>failed restore rolls back; bulk mutations exclude each other</td><td>PR #93 regressions</td><td><span class="s green">green</span></td></tr>
+    <tr><td>D: interruption-safe sync</td><td>#84, #97</td><td>5,000-note transfer converges after forced app and sidecar stops</td><td>PR #96 local regressions; two-machine run pending (protocol below)</td><td><span class="s red">blocking</span></td></tr>
+    <tr><td>E: import and external viewer</td><td>#85</td><td>overlapping imports refused; failures counted; external file opens read-only</td><td>not started</td><td><span class="s grey">deferred, non-gating</span></td></tr>
+    <tr><td>F: durable writes and startup failures</td><td>#86</td><td>interrupted writes keep the previous file; config failures are distinct and visible</td><td>in progress on <code>fix/86-durable-writes</code>; Windows replace behavior to be checked on the desktop</td><td><span class="s grey">in progress, non-gating</span></td></tr>
+    <tr><td>G: due-date, empty-state, semantic schema</td><td>#87</td><td>implemented outcomes</td><td>PR #95 regressions</td><td><span class="s green">green</span></td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>Release controls</h2>
+  <table>
+    <tr><th>Control</th><th>Expected outcome</th><th>Current state</th><th>Owner</th><th>Status</th></tr>
+    <tr><td>Linux package install and launch</td><td>rpm installs and launches on Fedora 44; deb installs and launches on a Debian-family host</td><td>built and inspected only</td><td>#88</td><td><span class="s red">missing</span></td></tr>
+    <tr><td>Windows package install and launch</td><td>installer from a known commit installs, launches, and uninstalls cleanly</td><td>an installed HelixNotes 1.3.4 exists on the desktop, but its build commit is not recorded</td><td>#88, #49</td><td><span class="s red">missing</span></td></tr>
+    <tr><td>Update and package signing</td><td>signing path verified, or the updater stays disabled per ADR-0011</td><td>not verified</td><td>#88, #24</td><td><span class="s red">missing</span></td></tr>
+    <tr><td>Performance</td><td>cold start, editor interaction, graph render, and semantic retrieval measured on both machines with thresholds</td><td>not measured</td><td>#88</td><td><span class="s red">missing</span></td></tr>
+    <tr><td>Log privacy and diagnostic export</td><td>written redaction policy; user-started export excludes note contents and secrets by default</td><td>no policy, no export</td><td>#88</td><td><span class="s red">missing</span></td></tr>
+    <tr><td>Dependency vulnerability and license audit</td><td>npm and Cargo audits run, with findings triaged</td><td>not run</td><td>#88</td><td><span class="s red">missing</span></td></tr>
+    <tr><td>Toolchain pinning</td><td><code>packageManager</code> and <code>engines</code> declared</td><td>added in this PR</td><td>#88</td><td><span class="s green">fixed</span></td></tr>
+    <tr><td>Test ignore rule</td><td>no suite silently untracked</td><td>removed in PR #95</td><td>#88</td><td><span class="s green">fixed</span></td></tr>
+  </table>
+</section>
+
+<section id="protocol-97">
+  <h2>Manual protocol: interrupted 5,000-note transfer (#97)</h2>
+  <p>Run on packaged builds of the same recorded commit on both machines, over Tailscale, using disposable copies
+  of one vault that both machines have already paired. Stopping processes uses exact installed executable paths,
+  never name patterns.</p>
+  <ol>
+    <li>Record the build commit, app version, Syncthing version and device IDs, OS versions, and start time.</li>
+    <li>On the sending machine, with the app closed: <code>node scripts/sync-fixture.mjs generate &lt;vault&gt;</code>.
+      Its output records the sentinel hash.</li>
+    <li>On the receiving machine, before syncing: <code>node scripts/sync-fixture.mjs check &lt;vault&gt;</code> must report
+      <code>matching: 0</code>.</li>
+    <li>Open both apps and press Sync now on both within 30 seconds. Repeat <code>check</code> on the receiver until
+      <code>matching</code> is above 0 and below 5,000. That proves the transfer began but did not finish.</li>
+    <li>Run 1: on Windows, <code>scripts\windows\sync-interrupt.ps1 -Action Stop -Target App</code>.
+      Run 2 (fresh vault copies): <code>-Target Sidecar</code>. Keep each JSON line it prints.</li>
+    <li>Within a minute, <code>-Action Report</code> must show no orphan Syncthing process after an app stop (the watchdog
+      cleans it up). After a sidecar stop, the app's bounded restart may bring it back.</li>
+    <li>Record what the UI shows. It must not report a clean or up-to-date outcome while <code>check</code> is incomplete.</li>
+    <li>Restart the app normally, run Sync now on both machines, and repeat until the terminal outcome arrives.</li>
+    <li><code>check</code> on both machines must exit 0: 5,000 matching notes, sentinel present, no conflict copies,
+      duplicate IDs, or strays. No manual file repair is allowed at any point.</li>
+    <li>Confirm a <code>helixnotes-pre-sync-*.zip</code> exists for each interrupted run in the backup folder, close the app,
+      and confirm <code>-Action Report</code> lists no processes.</li>
+    <li>Attach the JSON lines, screenshots, and timestamps to #97 and update the D row above.</li>
+  </ol>
+  <p>If a run fails, record the last <code>check</code> line, the terminal status, and the <code>Report</code> output, then
+  open an implementation ticket. Do not change sync behavior inside this protocol.</p>
+</section>
+
+</div>
+</body>
+</html>
