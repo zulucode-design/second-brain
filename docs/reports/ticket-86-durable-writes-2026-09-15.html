@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ticket #86 — durable critical writes and explicit startup failures</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+      body { max-width: 900px; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.55; }
+      h1, h2 { color: #f9fafb; }
+      code { background: #1f2937; padding: .12rem .3rem; border-radius: .25rem; }
+      .status { display: inline-block; border-radius: 999px; padding: .2rem .65rem; font-weight: 700; }
+      .pass { background: #064e3b; color: #a7f3d0; }
+      .open { background: #78350f; color: #fde68a; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { text-align: left; border-bottom: 1px solid #374151; padding: .65rem; vertical-align: top; }
+    </style>
+  </head>
+  <body>
+    <p><span class="status pass">Verified, one item unverified</span></p>
+    <h1>Ticket #86 — durable critical writes and explicit startup failures</h1>
+    <p>Package F of #76, covering audit D-09 and D-11. Implemented on 2026-09-15 on
+      <code>fix/86-durable-writes</code> from <code>main</code> at <code>8155213</code>. An earlier
+      attempt by another agent left no usable commits; this work started fresh.</p>
+
+    <h2>What changed</h2>
+    <p><code>durable::replace</code> is the one crash-safe write: a same-directory temporary,
+      <code>sync_all</code>, then atomic replacement (rename plus a directory fsync on Unix,
+      <code>MoveFileExW</code> with write-through on Windows, retried for about 250 ms while another
+      handle holds the destination). It serves note saves, import link rewrites, app config, vault UI
+      state, shared vault settings, sync control state, the Syncthing config, vault identity repair,
+      and the Notion registry, map, and last-run records. Three private copies of the helper were
+      removed.</p>
+    <p>An absent <code>config.json</code> is a first launch. Unreadable, malformed, and incompatible
+      files are distinct outcomes: the file is copied aside owner-only, vault entries that still
+      parse are kept, no vault opens automatically, and the reason is shown in the vault picker. If
+      the copy fails, settings saves are refused. A non-iOS active-vault open failure is shown in the
+      picker and the app does not become ready.</p>
+
+    <h2>Verification</h2>
+    <table>
+      <thead><tr><th>Check</th><th>Status</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Repository verification (Fedora)</td><td><span class="status pass">Passed</span></td><td><code>pnpm verify</code> and <code>pnpm lint:rust</code>; Rust 539 passed, 6 expected ignores.</td></tr>
+        <tr><td>Windows Rust suite</td><td><span class="status pass">Passed</span></td><td><code>pnpm test:rust</code> at <code>4a22c6a</code> on the Windows desktop (<code>D:\SecondBrainTest\src86</code>): 506 passed, 5 ignored, run by the #88 session.</td></tr>
+        <tr><td>Failure injection</td><td><span class="status pass">Passed</span></td><td>A failure after the temporary is fully written keeps the previous content and leaves no temporary, in <code>durable.rs</code>, through the Notion registry, and through the app-config writer.</td></tr>
+        <tr><td>Windows held-open destination</td><td><span class="status pass">Passed</span></td><td>Probe on D:: without a retry, <code>MoveFileExW</code> fails with error 5 while any other handle is open (even with delete sharing), and the old content survives. With the retry, a handle released after 50 ms succeeds, and one held throughout fails with the old content intact and no temporary.</td></tr>
+        <tr><td>Startup outcomes</td><td><span class="status pass">Passed</span></td><td><code>config_startup_tests</code>: absent, malformed, incompatible (vaults recovered, no auto-open), unreadable (save blocked), and the runtime error never persisted.</td></tr>
+        <tr><td>Manual run, Fedora debug build</td><td><span class="status pass">Passed</span></td><td>Launched with isolated <code>XDG_CONFIG_HOME</code>/<code>XDG_DATA_HOME</code> and a truncated, then a wrongly typed, <code>config.json</code>. Both times the app stayed up, the original file hash was unchanged, and <code>config.json.damaged-*</code> appeared with mode <code>0600</code> while the original was <code>0644</code>.</td></tr>
+        <tr><td>Vault picker message on screen</td><td><span class="status open">Unverified</span></td><td>No screenshot tool on the Wayland session; the Svelte path is covered by <code>svelte-check</code> only.</td></tr>
+        <tr><td>Two-axis review</td><td><span class="status pass">Findings addressed</span></td><td>Standards: the save block matched message text (now a typed flag), plus a tuple that is now a named struct and a rename. Spec: import rewrites were not durable, the preserved copy kept loose permissions, and app config had no interruption test; all fixed.</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Known limits</h2>
+    <p>The damaged-config log line is dropped because config loads before the log plugin is
+      registered; the picker message is the user-facing record. A crash between creating the
+      temporary and replacing can leave a hidden <code>.*.tmp</code> that Syncthing may replicate —
+      tracked in #99. No directory fsync on NTFS and no Windows ACL preservation, by design. The
+      Syncthing sidecar restore still runs for the configured vault before the frontend's open, and
+      its outcome is independent of vault readiness.</p>
+  </body>
+</html>
