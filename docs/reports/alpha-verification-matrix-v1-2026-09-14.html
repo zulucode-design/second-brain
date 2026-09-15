@@ -107,7 +107,10 @@
       enabled on the test vault), the in-window UI, uninstall, and the MSI. The old per-user files in
       <code>%LOCALAPPDATA%\HelixNotes</code> were left in place.</td><td>#88, #49</td><td><span class="s amber">install and launch done, partial</span></td></tr>
     <tr><td>Update and package signing</td><td>signing path verified, or the updater stays disabled per ADR-0011</td><td>not verified</td><td>#88, #24</td><td><span class="s red">missing</span></td></tr>
-    <tr><td>Performance</td><td>cold start, editor interaction, graph render, and semantic retrieval measured on both machines with thresholds</td><td>not measured</td><td>#88</td><td><span class="s red">missing</span></td></tr>
+    <tr><td>Performance</td><td>cold start, editor interaction, graph render, and semantic retrieval measured on both machines with thresholds</td><td>not measured. A 2026-09-14 attempt timed five launches of the D: build from SSH until the process had a main window;
+      all five runs recorded no window because a process in the SSH session cannot see window handles in the console session.
+      The launches and stops themselves worked. Startup timing needs a probe running inside the desktop session, such as
+      a scheduled task that writes its own timings.</td><td>#88</td><td><span class="s red">missing</span></td></tr>
     <tr><td>Log privacy and diagnostic export</td><td>written redaction policy; user-started export excludes note contents and secrets by default</td><td>policy written in <code>docs/log-privacy.md</code> with an audit of current log calls (no secrets logged; paths, note ids,
       Notion messages, and Syncthing output are logged locally as note metadata). Export not implemented; deferred until #86
       merges because it touches the same startup and command modules.</td><td>#88</td><td><span class="s amber">policy done, export missing</span></td></tr>
