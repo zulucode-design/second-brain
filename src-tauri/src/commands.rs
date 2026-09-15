@@ -2079,6 +2079,103 @@ fn set_due_on_line(line: &str, due: Option<&str>) -> String {
     }
 }
 
+/// Interpret the due date a task edit requests: `None` or empty clears it.
+///
+/// A task due date is written into the Markdown line, so it has to be a date a calendar
+/// can actually produce. Shape alone is not enough: `2026-02-31` and `2026-13-01` match
+/// `YYYY-MM-DD` but name no day, and once stored they sort and compare as ordinary dates
+/// that no calendar view can ever land on.
+fn parse_task_due_date(due: Option<&str>) -> Result<Option<&str>, String> {
+    let value = match due {
+        None | Some("") => return Ok(None),
+        Some(value) => value,
+    };
+    // Shape first, so the stored text is always exactly `YYYY-MM-DD`: chrono itself accepts
+    // unpadded input like `2026-9-4`, which would then sort as a string against padded dates.
+    let date_re = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap();
+    if !date_re.is_match(value) {
+        return Err(format!("“{value}” is not a date. Use YYYY-MM-DD."));
+    }
+    // Then the calendar, which is what rejects a well-shaped day that does not exist.
+    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|_| format!("“{value}” is not a real calendar date."))?;
+    Ok(Some(value))
+}
+
+#[cfg(test)]
+mod task_due_date_tests {
+    use super::parse_task_due_date;
+
+    #[test]
+    fn a_real_calendar_date_is_accepted() {
+        assert_eq!(
+            parse_task_due_date(Some("2026-09-14")),
+            Ok(Some("2026-09-14"))
+        );
+        assert_eq!(
+            parse_task_due_date(Some("2026-12-31")),
+            Ok(Some("2026-12-31"))
+        );
+        assert_eq!(
+            parse_task_due_date(Some("2026-01-01")),
+            Ok(Some("2026-01-01"))
+        );
+    }
+
+    #[test]
+    fn a_leap_day_is_accepted_only_in_a_leap_year() {
+        assert_eq!(
+            parse_task_due_date(Some("2028-02-29")),
+            Ok(Some("2028-02-29"))
+        );
+        assert!(parse_task_due_date(Some("2026-02-29")).is_err());
+        // 1900 is divisible by 4 but is not a leap year: only real calendar rules reject it.
+        assert!(parse_task_due_date(Some("1900-02-29")).is_err());
+    }
+
+    #[test]
+    fn an_impossible_date_is_rejected_with_a_message_naming_the_value() {
+        for impossible in [
+            "2026-02-31", // February never has 31 days
+            "2026-13-01", // there is no thirteenth month
+            "2026-00-10", // there is no zeroth month
+            "2026-04-31", // April has 30 days
+            "2026-06-00", // there is no zeroth day
+            "2026-12-32",
+        ] {
+            let error = parse_task_due_date(Some(impossible))
+                .expect_err(&format!("{impossible} is not a real calendar date"));
+            assert!(
+                error.contains(impossible),
+                "the message must name the rejected value so the user can see what was wrong, got: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_malformed_value_is_rejected_and_never_reaches_the_markdown() {
+        for malformed in [
+            "2026-9-14",
+            "14-09-2026",
+            "tomorrow",
+            "2026-09",
+            "2026-09-14T00:00",
+            " ",
+        ] {
+            assert!(
+                parse_task_due_date(Some(malformed)).is_err(),
+                "{malformed} must not be written into a task line"
+            );
+        }
+    }
+
+    #[test]
+    fn an_absent_or_empty_value_clears_the_due_date() {
+        assert_eq!(parse_task_due_date(None), Ok(None));
+        assert_eq!(parse_task_due_date(Some("")), Ok(None));
+    }
+}
+
 #[tauri::command]
 pub fn set_task_due(
     state: State<'_, AppState>,
@@ -2091,13 +2188,7 @@ pub fn set_task_due(
         .note_mutation
         .lock()
         .map_err(|error| error.to_string())?;
-    // Validate format (YYYY-MM-DD); None/empty clears the due date.
-    let date_re = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap();
-    let due_val: Option<&str> = match due.as_deref() {
-        None | Some("") => None,
-        Some(d) if date_re.is_match(d) => Some(d),
-        Some(_) => return Err("Invalid due date".to_string()),
-    };
+    let due_val: Option<&str> = parse_task_due_date(due.as_deref())?;
 
     let (vault_path, meta, body) = read_task_note(&state, &note_path)?;
     let mut lines: Vec<String> = body.lines().map(|l| l.to_string()).collect();
