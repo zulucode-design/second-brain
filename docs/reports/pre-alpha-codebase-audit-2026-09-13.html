@@ -329,8 +329,8 @@
 
     <h3>Setup/reproducibility concerns</h3>
     <ul>
-      <li><code>package.json</code> has no <code>packageManager</code> or <code>engines</code>; <code>.npmrc</code> <code>engine-strict=true</code> therefore provides limited enforcement.</li>
-      <li><code>prepare</code> suppresses <code>svelte-kit sync</code> failure with <code>|| echo ''</code>, allowing install to appear healthy when generated types fail.</li>
+      <li><code>package.json</code> has no <code>packageManager</code> or <code>engines</code>; <code>.npmrc</code> <code>engine-strict=true</code> therefore provides limited enforcement. <em>Current status: fixed on <code>chore/88-verification-matrix</code>, pending merge — pins <code>pnpm@11.22.0</code> and Node <code>&gt;=22.13</code>; CI reads the pnpm version from <code>packageManager</code>.</em></li>
+      <li><code>prepare</code> suppresses <code>svelte-kit sync</code> failure with <code>|| echo ''</code>, allowing install to appear healthy when generated types fail. <em>Current status: fixed on the same branch, pending merge — the suppression is removed.</em></li>
       <li><span class="badge implemented">Resolved</span> <code>.gitignore</code> ignored <code>/tests/*</code> by default, making new test discovery and staging error-prone. <a href="https://github.com/zulucode-design/second-brain/pull/95">PR #95</a> removed the rule and both allowlist exceptions after package G's new suite was silently ignored; every suite in <code>tests/</code> is tracked and none is ignored.</li>
       <li>The Nix flake provides a package build but no development shell for reproducing CI’s native dependencies.</li>
     </ul>

@@ -185,7 +185,7 @@
               <li>Define log privacy/redaction rules and provide a user-controlled diagnostic export that excludes note contents and secrets by default.</li>
               <li>Measure cold startup, editor interaction, graph rendering, and semantic retrieval on the primary Windows desktop and target Linux laptop; record thresholds and regressions in the matrix.</li>
               <li>Dependency vulnerability/license audit and updater signing checks exist.</li>
-              <li><code>packageManager</code>/engines are pinned; prepare no longer swallows failure; <s>test ignore rule removed</s> — <strong>done</strong> in <a href="https://github.com/zulucode-design/second-brain/pull/95">PR #95</a>, which deleted <code>/tests/*</code> and its allowlist exceptions so no suite can be silently untracked. The pinning and <code>prepare</code> items remain open.</li>
+              <li><code>packageManager</code>/engines are pinned; prepare no longer swallows failure — <strong>fixed on <code>chore/88-verification-matrix</code>, pending merge</strong> (<code>pnpm@11.22.0</code>, Node <code>&gt;=22.13</code>, CI reads the pinned pnpm, <code>prepare</code> runs <code>svelte-kit sync</code> without suppression); <s>test ignore rule removed</s> — <strong>done</strong> in <a href="https://github.com/zulucode-design/second-brain/pull/95">PR #95</a>, which deleted <code>/tests/*</code> and its allowlist exceptions so no suite can be silently untracked. The versioned matrix now lives at <code>docs/reports/alpha-verification-matrix-v1-2026-09-14.html</code>.</li>
             </ul>
           </td>
           <td>Test assessment gaps; existing #24 and #49.</td>
