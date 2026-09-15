@@ -86,6 +86,12 @@ interrupted transfer, Syncthing reports them while the peer reconnects and re-se
 retries them itself. A run fails because of them only if they are still present when the five-minute
 convergence limit ends (#101).
 
+Each device's latch starts when its own run starts, so they confirm at different moments. After
+confirming, a device keeps the connection open for up to 60 seconds before it pauses. It stops
+waiting early once the peer disconnects. Without that grace the first device paused and the second
+could never confirm, so a complete vault could still report failure (#103). The 60 seconds is a
+manual-testing value, to be tuned from real runs.
+
 ## Conflicts
 
 Syncthing conflict copies use

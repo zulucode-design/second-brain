@@ -1184,11 +1184,31 @@ fn wait_for_sync(
             )
         };
         if progress.observe(&value, remote_completion.as_ref(), peer_id) {
+            hold_for_peer_handoff(client, control, peer_id);
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(500));
     }
     Err(progress.failure().to_string())
+}
+
+// Each peer's latch starts when its own run starts, so the first to confirm must stay connected
+// long enough for the other to confirm too (#103). ponytail: 60 s (at 500 ms) is a manual-testing
+// value; tune it from real runs.
+const PEER_HANDOFF_GRACE_OBSERVATIONS: usize = 120;
+
+/// Keep the connection open after local confirmation until the peer pauses or the grace ends.
+fn hold_for_peer_handoff(
+    client: &reqwest::blocking::Client,
+    control: &ControlState,
+    peer_id: &str,
+) {
+    for _ in 0..PEER_HANDOFF_GRACE_OBSERVATIONS {
+        if !peer_connected(client, control, peer_id).unwrap_or(false) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
 }
 
 fn run_sync(app: AppHandle, vault: PathBuf, control: ControlState, peer: Peer) {
@@ -1327,9 +1347,30 @@ mod tests {
     use super::{
         convergence_observation_is_complete, harden_generated_config_xml, read_control,
         tailscale_ipv4, until_next_sync_window, valid_device_id, write_control, CompletionLatch,
-        ControlState, SyncProgress, PULL_ERROR_EXPLAINS_FAILURE,
+        ControlState, SyncProgress, PEER_HANDOFF_GRACE_OBSERVATIONS, PULL_ERROR_EXPLAINS_FAILURE,
         SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL,
     };
+
+    #[test]
+    fn a_later_started_peer_confirms_inside_the_first_peers_handoff_grace() {
+        // Manual Sync now allows both presses up to 30 s (60 observations) apart.
+        let start_gap = 60;
+        let (mut first, mut second) = (CompletionLatch::default(), CompletionLatch::default());
+        let mut first_released_at = None;
+        for tick in 0..start_gap + 2 * PEER_HANDOFF_GRACE_OBSERVATIONS {
+            if first_released_at.is_none() && first.observe(true) {
+                first_released_at = Some(tick + PEER_HANDOFF_GRACE_OBSERVATIONS);
+            }
+            if tick >= start_gap && second.observe(true) {
+                assert!(
+                    tick <= first_released_at.unwrap(),
+                    "first peer paused too early"
+                );
+                return;
+            }
+        }
+        panic!("second peer never confirmed");
+    }
 
     fn vault() -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!("sync-sidecar-test-{}", uuid::Uuid::new_v4()));
