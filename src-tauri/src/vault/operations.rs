@@ -323,7 +323,7 @@ pub(crate) fn is_hidden(path: &Path) -> bool {
         .and_then(|n| n.to_str())
         .map(|n| {
             n.starts_with('.')
-                || n.contains(".sync-conflict-")
+                || crate::vault::conflicts::is_conflict_copy(path)
                 || matches!(
                     n,
                     "_res" | "_resources" | "_attachments" | "_assets" | "assets" | "node_modules"

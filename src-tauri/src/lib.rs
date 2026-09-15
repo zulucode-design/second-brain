@@ -20,6 +20,7 @@ mod state;
 mod sync_config;
 mod sync_conflicts;
 mod sync_sidecar;
+mod sync_watchdog;
 mod types;
 mod vault;
 mod vault_settings;
@@ -35,7 +36,7 @@ use tauri_plugin_fs::FsExt;
 /// The packaged application reuses its own executable for this narrow helper so a forced
 /// parent-process termination cannot strand an unpaused Syncthing process.
 pub fn run_sync_watchdog_if_requested() -> bool {
-    sync_sidecar::run_watchdog_if_requested()
+    sync_watchdog::run_if_requested()
 }
 
 fn release_shutdown(app: &tauri::AppHandle, request_id: &str) {

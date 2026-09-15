@@ -1,4 +1,5 @@
 use crate::state::AppState;
+use crate::vault::conflicts::original_for_conflict;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use tauri::State;
@@ -13,21 +14,22 @@ pub struct SyncConflict {
     original_content: Option<String>,
 }
 
-fn original_for_conflict(path: &Path) -> Option<PathBuf> {
-    let name = path.file_name()?.to_str()?;
-    let marker = name.find(".sync-conflict-")?;
-    let suffix = &name[marker + ".sync-conflict-".len()..];
-    let (date, rest) = suffix.split_once('-')?;
-    let (time, device_ext) = rest.split_once('-')?;
-    if date.len() != 8
-        || time.len() != 6
-        || !date.bytes().all(|b| b.is_ascii_digit())
-        || !time.bytes().all(|b| b.is_ascii_digit())
-        || !device_ext.ends_with(".md")
-    {
-        return None;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConflictChoice {
+    Original,
+    Conflict,
+}
+
+impl TryFrom<&str> for ConflictChoice {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "original" => Ok(Self::Original),
+            "conflict" => Ok(Self::Conflict),
+            _ => Err("Choice must be original or conflict".to_string()),
+        }
     }
-    Some(path.with_file_name(format!("{}.md", &name[..marker])))
 }
 
 fn scan(vault: &Path) -> Result<Vec<SyncConflict>, String> {
@@ -87,11 +89,11 @@ fn trash_path(vault: &Path, source: &Path) -> Result<PathBuf, String> {
     )))
 }
 
-fn resolve_files(vault: &Path, conflict: &Path, choice: &str) -> Result<(), String> {
+fn resolve_files(vault: &Path, conflict: &Path, choice: ConflictChoice) -> Result<(), String> {
     let original = original_for_conflict(conflict)
         .ok_or_else(|| "Not a Syncthing conflict copy".to_string())?;
     match choice {
-        "original" => {
+        ConflictChoice::Original => {
             if !original.exists() {
                 return Err(
                     "The current version no longer exists; choose the conflict version".to_string(),
@@ -100,7 +102,7 @@ fn resolve_files(vault: &Path, conflict: &Path, choice: &str) -> Result<(), Stri
             std::fs::rename(conflict, trash_path(vault, conflict)?)
                 .map_err(|error| format!("Could not archive conflict copy: {error}"))?
         }
-        "conflict" => {
+        ConflictChoice::Conflict => {
             let archived = original
                 .exists()
                 .then(|| trash_path(vault, &original))
@@ -116,7 +118,6 @@ fn resolve_files(vault: &Path, conflict: &Path, choice: &str) -> Result<(), Stri
                 return Err(format!("Could not choose conflict version: {error}"));
             }
         }
-        _ => return Err("Choice must be original or conflict".to_string()),
     }
     Ok(())
 }
@@ -143,13 +144,18 @@ pub fn resolve_sync_conflict(
         .note_mutation
         .lock()
         .map_err(|error| error.to_string())?;
-    resolve_files(&vault, &conflict, &choice)?;
+    resolve_files(
+        &vault,
+        &conflict,
+        ConflictChoice::try_from(choice.as_str())?,
+    )?;
     crate::commands::reconcile_bulk_projections(&state, &vault_string)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{original_for_conflict, resolve_files, scan};
+    use super::{resolve_files, scan, ConflictChoice};
+    use crate::vault::conflicts::original_for_conflict;
 
     fn conflict_fixture() -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
         let vault = std::env::temp_dir().join(format!("conflict-choice-{}", uuid::Uuid::new_v4()));
@@ -198,7 +204,7 @@ mod tests {
     #[test]
     fn keeping_current_archives_the_conflict_copy() {
         let (vault, original, conflict) = conflict_fixture();
-        resolve_files(&vault, &conflict, "original").unwrap();
+        resolve_files(&vault, &conflict, ConflictChoice::Original).unwrap();
         assert_eq!(std::fs::read_to_string(original).unwrap(), "current");
         assert!(!conflict.exists());
         assert_eq!(
@@ -213,7 +219,7 @@ mod tests {
     #[test]
     fn choosing_conflict_preserves_current_and_promotes_conflict() {
         let (vault, original, conflict) = conflict_fixture();
-        resolve_files(&vault, &conflict, "conflict").unwrap();
+        resolve_files(&vault, &conflict, ConflictChoice::Conflict).unwrap();
         assert_eq!(std::fs::read_to_string(&original).unwrap(), "conflict");
         assert!(!conflict.exists());
         let archived = std::fs::read_dir(vault.join(".helixnotes/trash"))

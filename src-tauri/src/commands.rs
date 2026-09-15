@@ -1710,12 +1710,6 @@ pub fn get_graph_data(state: State<'_, AppState>) -> Result<crate::types::GraphD
         if path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
         }
-        // Skip Syncthing conflict files
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.contains(".sync-conflict-") {
-                continue;
-            }
-        }
         // Deduplicate by canonical path (handles symlinks)
         let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let canonical_str = canonical.to_string_lossy().to_string();

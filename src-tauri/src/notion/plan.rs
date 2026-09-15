@@ -17,6 +17,7 @@
 //! mtime and identical bytes, and republishing it would be a wasted call on every sync.
 
 use serde::Serialize;
+use std::path::Path;
 
 use super::config::DatabaseRegistry;
 use super::map::{EntryState, MapEntry};
@@ -175,7 +176,7 @@ impl Action {
 /// It ends in `.md` and sits in the notes tree, so nothing but this check keeps it out of
 /// the published view.
 pub fn is_conflict_copy(relative_path: &str) -> bool {
-    relative_path.contains(".sync-conflict-")
+    crate::vault::conflicts::is_conflict_copy(Path::new(relative_path))
 }
 
 /// Whether a note is worth reading, judged on its modification time alone.

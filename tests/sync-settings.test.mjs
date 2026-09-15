@@ -78,11 +78,15 @@ test('sync remains an explicit guarded batch rather than ambient Tailnet access'
   assert.match(backend, /autoAcceptFolders"\s*:\s*false/);
   assert.match(backend, /globalAnnounceEnabled/);
   assert.match(backend, /harden_generated_config\(&home, &control, local_address\)/);
-  assert.match(backend, /spawn_parent_watchdog\(child\.pid\(\), &control\)/);
+  assert.match(backend, /sync_watchdog::spawn\(child\.pid\(\), control\.gui_port, &control\.api_key\)/);
   assert.match(backend, /create_pre_sync_backup/);
   assert.match(backend, /bulk_mutation/);
   assert.match(backend, /FolderPauseGuard/);
   assert.match(backend, /reconcile_bulk_projections/);
+
+  const watchdog = await source('src-tauri/src/sync_watchdog.rs');
+  assert.match(watchdog, /--helix-sync-watchdog/);
+  assert.match(watchdog, /rest\/system\/shutdown/);
 
   const settings = await source('src/lib/components/SettingsPanel.svelte');
   assert.match(settings, /Pair explicitly/);

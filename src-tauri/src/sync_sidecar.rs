@@ -25,8 +25,6 @@ const SYNC_INTERVAL: Duration = Duration::from_secs(5 * 60);
 // progress. Keep observing a clean cluster long enough for that scan to publish; any late index
 // update makes the observation incomplete and resets the latch.
 const SYNC_COMPLETION_STABLE_OBSERVATIONS: u8 = 30;
-const WATCHDOG_FLAG: &str = "--helix-sync-watchdog";
-const WATCHDOG_API_KEY: &str = "HELIX_SYNC_WATCHDOG_API_KEY";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -164,146 +162,6 @@ impl SyncSidecar {
         })
     }
 }
-
-/// The packaged app doubles as a tiny parent-death watchdog. The API key stays in this
-/// helper's environment, never its command line, and the helper initializes no Tauri UI.
-pub(crate) fn run_watchdog_if_requested() -> bool {
-    let args: Vec<String> = std::env::args().collect();
-    if args.get(1).map(String::as_str) != Some(WATCHDOG_FLAG) {
-        return false;
-    }
-    let parsed = args
-        .get(2)
-        .and_then(|value| value.parse::<u32>().ok())
-        .zip(args.get(3).and_then(|value| value.parse::<u32>().ok()))
-        .zip(args.get(4).and_then(|value| value.parse::<u16>().ok()));
-    let api_key = std::env::var(WATCHDOG_API_KEY).ok();
-    let Some(((parent_pid, sidecar_pid), gui_port)) = parsed else {
-        return true;
-    };
-    let Some(api_key) = api_key.filter(|value| !value.is_empty()) else {
-        return true;
-    };
-
-    while process_is_alive(parent_pid) && process_is_alive(sidecar_pid) {
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    if process_is_alive(parent_pid) {
-        return true;
-    }
-
-    let endpoint = format!("http://127.0.0.1:{gui_port}/rest/system/shutdown");
-    if let Ok(client) = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_millis(250))
-        .build()
-    {
-        for _ in 0..40 {
-            if client
-                .post(&endpoint)
-                .header("X-API-Key", &api_key)
-                .send()
-                .map(|response| response.status().is_success())
-                .unwrap_or(false)
-            {
-                return true;
-            }
-            if !process_is_alive(sidecar_pid) {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-    }
-    terminate_process(sidecar_pid);
-    true
-}
-
-fn spawn_parent_watchdog(sidecar_pid: u32, control: &ControlState) -> Result<(), String> {
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("Could not locate the sidecar watchdog: {error}"))?;
-    std::process::Command::new(executable)
-        .args([
-            WATCHDOG_FLAG,
-            &std::process::id().to_string(),
-            &sidecar_pid.to_string(),
-            &control.gui_port.to_string(),
-        ])
-        .env(WATCHDOG_API_KEY, &control.api_key)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("Could not start the sidecar watchdog: {error}"))
-}
-
-#[cfg(unix)]
-fn process_is_alive(pid: u32) -> bool {
-    unsafe extern "C" {
-        fn kill(pid: i32, signal: i32) -> i32;
-    }
-    // SAFETY: signal zero performs existence/permission checking and changes no process.
-    unsafe { kill(pid as i32, 0) == 0 }
-}
-
-#[cfg(unix)]
-fn terminate_process(pid: u32) {
-    unsafe extern "C" {
-        fn kill(pid: i32, signal: i32) -> i32;
-    }
-    // SAFETY: the PID came directly from the child handle owned by this app instance.
-    let _ = unsafe { kill(pid as i32, 15) };
-}
-
-#[cfg(windows)]
-fn process_is_alive(pid: u32) -> bool {
-    type Handle = *mut std::ffi::c_void;
-    const SYNCHRONIZE: u32 = 0x0010_0000;
-    const WAIT_TIMEOUT: u32 = 0x0000_0102;
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn OpenProcess(access: u32, inherit_handle: i32, process_id: u32) -> Handle;
-        fn WaitForSingleObject(handle: Handle, milliseconds: u32) -> u32;
-        fn CloseHandle(handle: Handle) -> i32;
-    }
-    // SAFETY: the handle is checked for null, used only for a zero-time wait, then closed.
-    unsafe {
-        let handle = OpenProcess(SYNCHRONIZE, 0, pid);
-        if handle.is_null() {
-            return false;
-        }
-        let alive = WaitForSingleObject(handle, 0) == WAIT_TIMEOUT;
-        let _ = CloseHandle(handle);
-        alive
-    }
-}
-
-#[cfg(windows)]
-fn terminate_process(pid: u32) {
-    type Handle = *mut std::ffi::c_void;
-    const PROCESS_TERMINATE: u32 = 0x0001;
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn OpenProcess(access: u32, inherit_handle: i32, process_id: u32) -> Handle;
-        fn TerminateProcess(process: Handle, exit_code: u32) -> i32;
-        fn CloseHandle(handle: Handle) -> i32;
-    }
-    // SAFETY: the handle is checked for null, targets the recorded child PID, then is closed.
-    unsafe {
-        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
-        if !handle.is_null() {
-            let _ = TerminateProcess(handle, 1);
-            let _ = CloseHandle(handle);
-        }
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-fn process_is_alive(_pid: u32) -> bool {
-    false
-}
-
-#[cfg(not(any(unix, windows)))]
-fn terminate_process(_pid: u32) {}
 
 /// Restore only the app-owned process for an explicitly enabled active vault.
 pub fn restore_enabled(app: AppHandle) {
@@ -891,7 +749,9 @@ fn start(
             .env("STVERSIONEXTRA", "Second Brain managed sidecar")
             .spawn()
             .map_err(|error| format!("Could not start bundled Syncthing: {error}"))?;
-        if let Err(error) = spawn_parent_watchdog(child.pid(), &control) {
+        if let Err(error) =
+            crate::sync_watchdog::spawn(child.pid(), control.gui_port, &control.api_key)
+        {
             let _ = child.kill();
             return Err(error);
         }
@@ -1059,23 +919,30 @@ async fn stop(app: &AppHandle, vault: &Path) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-pub async fn sync_status(app: AppHandle) -> Result<SyncStatus, String> {
-    let vault = active_vault(&app)?;
-    let control = read_control(&vault)?;
-    let mut status = app
-        .state::<AppState>()
-        .sync_sidecar
-        .snapshot(control.enabled)?;
-    status.vault_id = Some(machine_local::vault_id(&vault)?);
+/// Build the status payload at the command boundary, where machine-local and peer state belong.
+async fn enriched_status(
+    app: &AppHandle,
+    vault: &Path,
+    control: &ControlState,
+    enabled: bool,
+) -> Result<SyncStatus, String> {
+    let mut status = app.state::<AppState>().sync_sidecar.snapshot(enabled)?;
+    status.vault_id = Some(machine_local::vault_id(vault)?);
     status.paired = control.peer.is_some();
     status.peer_name = control.peer.as_ref().map(|peer| peer.name.clone());
     if status.running {
         if let Some(peer) = &control.peer {
-            status.peer_connected = peer_is_connected(&control, &peer.device_id).await;
+            status.peer_connected = peer_is_connected(control, &peer.device_id).await;
         }
     }
     Ok(status)
+}
+
+#[tauri::command]
+pub async fn sync_status(app: AppHandle) -> Result<SyncStatus, String> {
+    let vault = active_vault(&app)?;
+    let control = read_control(&vault)?;
+    enriched_status(&app, &vault, &control, control.enabled).await
 }
 
 #[tauri::command]
@@ -1100,16 +967,7 @@ pub async fn sync_set_enabled(app: AppHandle, enabled: bool) -> Result<SyncStatu
     }
     control.enabled = enabled;
     write_control(&vault, &control)?;
-    let mut status = app.state::<AppState>().sync_sidecar.snapshot(enabled)?;
-    status.vault_id = Some(machine_local::vault_id(&vault)?);
-    status.paired = control.peer.is_some();
-    status.peer_name = control.peer.as_ref().map(|peer| peer.name.clone());
-    if status.running {
-        if let Some(peer) = &control.peer {
-            status.peer_connected = peer_is_connected(&control, &peer.device_id).await;
-        }
-    }
-    Ok(status)
+    enriched_status(&app, &vault, &control, enabled).await
 }
 
 #[tauri::command]
