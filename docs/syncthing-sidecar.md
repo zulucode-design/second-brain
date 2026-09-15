@@ -89,7 +89,10 @@ convergence limit ends (#101).
 Each device's latch starts when its own run starts, so they confirm at different moments. After
 confirming, a device keeps the connection open for up to 60 seconds before it pauses. It stops
 waiting early once the peer disconnects. Without that grace the first device paused and the second
-could never confirm, so a complete vault could still report failure (#103). The 60 seconds is a
+could never confirm, so a complete vault could still report failure (#103). A failed status call
+does not end the grace. When both devices confirm close together, each waits for the other, so the
+first to confirm holds for the full 60 seconds and keeps note edits blocked that long. A device that
+confirms more than 60 seconds after its peer still reports failure. The 60 seconds is a
 manual-testing value, to be tuned from real runs.
 
 ## Conflicts
