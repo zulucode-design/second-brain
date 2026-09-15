@@ -23,6 +23,26 @@ binary gets one only from `scripts/test-rust.mjs`, which sets
 `HELIX_WINDOWS_TEST_MANIFEST=1`. That gate cannot be removed: applied unscoped it
 also hits the app binary, where a second manifest is a hard linker error (`CVT1100`).
 
+## PowerShell on the Windows machine
+
+`ssh sb-windows` is Nicolas's real desktop, not a sandbox. Every PowerShell script run there
+follows three rules:
+
+1. **Name your own variables** (`$tempDir`, `$stHome`, `$launchedPid`). PowerShell's automatic
+   variables — `$HOME`, `$PID`, `$HOST`, `$INPUT`, `$ARGS`, `$PROFILE`, `$PWD`, `$ERROR`,
+   `$MATCHES`, `$_` and the rest — are read-only or reserved: assigning one, looping over it, or
+   declaring it as a parameter fails silently and the old value stays.
+2. **Guard every recursive delete.** Before any `Remove-Item -Recurse`, call a guard that resolves
+   the path and throws unless it is under `$env:TEMP`:
+   `function Assert-UnderTemp($p) { $full = [IO.Path]::GetFullPath($p); if (-not $full.StartsWith([IO.Path]::GetFullPath($env:TEMP) + '\')) { throw "refusing to delete $full" } }`
+3. **Stop processes by the exact PID you launched**, never by name or command-line match.
+
+Why: on 2026-09-15 a script stored a temp path in `$home`; the assignment was ignored, so it
+started Syncthing in `C:\Users\Nicolas`, killed a process matched by that path, and ran
+`Remove-Item -Recurse -Force` on the user profile. It deleted nothing only because files were
+locked. Claude sessions on this machine also run a blocking hook
+(`~/.claude/hooks/powershell-guard.py`), but these rules bind every agent, hook or not.
+
 ## Agent skills
 
 ### Issue tracker
