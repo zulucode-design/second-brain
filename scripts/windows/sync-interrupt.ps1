@@ -39,11 +39,17 @@ if (-not $Action -or ($Action -eq 'Stop' -and -not $Target)) {
 $appExes = @($InstallDir | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $_ 'helixnotes.exe')) })
 $sidecarExes = @($InstallDir | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $_ 'syncthing.exe')) })
 
+# Syncthing runs as a monitor process (started by the app, and the one it supervises) plus a
+# worker it spawns itself. Only the monitor is the Sidecar target; the worker is reported as
+# SidecarWorker so Report shows whether it outlives a stop.
 function Get-PackagedProcesses {
-  Get-CimInstance Win32_Process -Filter "Name = 'helixnotes.exe' OR Name = 'syncthing.exe'" |
+  $all = @(Get-CimInstance Win32_Process -Filter "Name = 'helixnotes.exe' OR Name = 'syncthing.exe'")
+  $syncthingIds = @($all | Where-Object Name -eq 'syncthing.exe' | ForEach-Object ProcessId)
+  $all |
     ForEach-Object {
       $path = $_.ExecutablePath
       $role = if (-not $path) { 'Unverified' }
+              elseif ($sidecarExes -contains $path -and $syncthingIds -contains $_.ParentProcessId) { 'SidecarWorker' }
               elseif ($sidecarExes -contains $path) { 'Sidecar' }
               elseif ($appExes -notcontains $path) { $null }
               elseif ($_.CommandLine -like '*--helix-sync-watchdog*') { 'Watchdog' }
