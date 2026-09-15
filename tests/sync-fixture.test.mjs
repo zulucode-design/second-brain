@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -29,6 +29,18 @@ test('generation refuses a non-vault and a vault that already has the fixture', 
   assert.throws(() => generate(join(root, 'missing')), /not a vault/);
   generate(root);
   assert.throws(() => generate(root), /already present/);
+});
+
+test('a generation that fails partway leaves no half-written fixture behind', (t) => {
+  const root = vault(t);
+  // A file where the second category folder should be makes that write fail after the
+  // first category already received notes.
+  writeFileSync(join(root, 'Areas'), 'not a folder');
+  assert.throws(() => generate(root));
+  assert.equal(existsSync(join(root, 'Projects', 'Sync Fixture 97')), false);
+  unlinkSync(join(root, 'Areas'));
+  generate(root);
+  assert.equal(check(root).complete, true);
 });
 
 test('a missing sentinel is incomplete even though other notes arrived', (t) => {

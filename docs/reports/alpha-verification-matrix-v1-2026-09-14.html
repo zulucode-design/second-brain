@@ -61,7 +61,7 @@
   (laptop), one replicated logical vault. macOS, mobile, and additional vaults are outside the alpha contract.</p>
   <table>
     <tr><th>Component</th><th>Pinned or required</th><th>Where enforced</th></tr>
-    <tr><td>Node.js</td><td><code>&gt;=22</code> (CI runs 22; both machines run 24)</td><td><code>package.json</code> <code>engines</code> with <code>.npmrc</code> <code>engine-strict=true</code></td></tr>
+    <tr><td>Node.js</td><td><code>&gt;=22.13</code>, the floor <code>pnpm@11.22.0</code> itself requires (CI runs the latest 22.x; both machines run 24)</td><td><code>package.json</code> <code>engines</code> with <code>.npmrc</code> <code>engine-strict=true</code></td></tr>
     <tr><td>pnpm</td><td><code>pnpm@11.22.0</code></td><td><code>packageManager</code>; CI's <code>pnpm/action-setup</code> reads it instead of a separate version</td></tr>
     <tr><td>Rust</td><td>1.88 minimum</td><td><code>rust-version</code> in <code>src-tauri/Cargo.toml</code>; CI toolchain 1.88.0</td></tr>
     <tr><td>Syncthing sidecar</td><td>v2.1.5, SHA-256 pinned per target</td><td><code>scripts/prepare-syncthing.mjs</code>; <code>docs/syncthing-sidecar.md</code></td></tr>
@@ -75,8 +75,8 @@
     <tr><td><code>pnpm verify</code></td><td>Ubuntu 22.04 (CI)</td><td>check, JS tests, Rust tests, fmt/clippy, build all pass</td><td><code>verify</code> job, <code>.github/workflows/verify.yml</code></td><td><span class="s green">green</span></td></tr>
     <tr><td><code>pnpm test:rust</code></td><td>Windows Server 2022 (CI)</td><td>library tests pass through the Windows manifest path</td><td><code>windows-rust</code> job, PR #92</td><td><span class="s green">green</span></td></tr>
     <tr><td><code>pnpm verify</code></td><td>Windows 11 desktop</td><td>same as Linux</td><td>none recorded at <code>8155213</code></td><td><span class="s amber">not run</span></td></tr>
-    <tr><td>Unsigned deb/rpm build and desktop-entry check</td><td>Ubuntu 22.04 (CI)</td><td>both packages contain the portal desktop entry</td><td><code>scripts/verify-linux-package.sh</code></td><td><span class="s green">green</span></td></tr>
-    <tr><td><code>pnpm install</code> fails when <code>svelte-kit sync</code> fails</td><td>all</td><td>install no longer reports success over a failed type sync</td><td><code>prepare</code> script, this PR</td><td><span class="s green">fixed</span></td></tr>
+    <tr><td>Unsigned deb/rpm build and desktop-entry check</td><td>Ubuntu 22.04 (CI)</td><td>both packages contain the portal desktop entry</td><td><code>scripts/verify-linux-package.sh</code> on <code>main</code>; not yet run under the pinned pnpm</td><td><span class="s amber">green on main, pin pending CI</span></td></tr>
+    <tr><td><code>pnpm install</code> fails when <code>svelte-kit sync</code> fails</td><td>all</td><td>install no longer reports success over a failed type sync</td><td>suppression removed from <code>prepare</code> on this branch; a failing sync has not been demonstrated</td><td><span class="s amber">changed, unproven</span></td></tr>
   </table>
 </section>
 
@@ -105,7 +105,7 @@
     <tr><td>Performance</td><td>cold start, editor interaction, graph render, and semantic retrieval measured on both machines with thresholds</td><td>not measured</td><td>#88</td><td><span class="s red">missing</span></td></tr>
     <tr><td>Log privacy and diagnostic export</td><td>written redaction policy; user-started export excludes note contents and secrets by default</td><td>no policy, no export</td><td>#88</td><td><span class="s red">missing</span></td></tr>
     <tr><td>Dependency vulnerability and license audit</td><td>npm and Cargo audits run, with findings triaged</td><td>not run</td><td>#88</td><td><span class="s red">missing</span></td></tr>
-    <tr><td>Toolchain pinning</td><td><code>packageManager</code> and <code>engines</code> declared</td><td>added in this PR</td><td>#88</td><td><span class="s green">fixed</span></td></tr>
+    <tr><td>Toolchain pinning</td><td><code>packageManager</code> and <code>engines</code> declared</td><td>added on <code>chore/88-verification-matrix</code>, pending merge</td><td>#88</td><td><span class="s amber">pending merge</span></td></tr>
     <tr><td>Test ignore rule</td><td>no suite silently untracked</td><td>removed in PR #95</td><td>#88</td><td><span class="s green">fixed</span></td></tr>
   </table>
 </section>
@@ -116,22 +116,27 @@
   of one vault that both machines have already paired. Stopping processes uses exact installed executable paths,
   never name patterns.</p>
   <ol>
-    <li>Record the build commit, app version, Syncthing version and device IDs, OS versions, and start time.</li>
+    <li>Record the build commit, installer type (NSIS or MSI), app version, Syncthing version and device IDs, OS
+      versions, and start time.</li>
     <li>On the sending machine, with the app closed: <code>node scripts/sync-fixture.mjs generate &lt;vault&gt;</code>.
       Its output records the sentinel hash.</li>
     <li>On the receiving machine, before syncing: <code>node scripts/sync-fixture.mjs check &lt;vault&gt;</code> must report
-      <code>matching: 0</code>.</li>
+      <code>matching: 0</code> and <code>missing: 5000</code>.</li>
     <li>Open both apps and press Sync now on both within 30 seconds. Repeat <code>check</code> on the receiver until
-      <code>matching</code> is above 0 and below 5,000. That proves the transfer began but did not finish.</li>
+      <code>matching</code> is above 0 and <code>missing</code> is above 0. That proves the transfer began but did not finish.</li>
     <li>Run 1: on Windows, <code>scripts\windows\sync-interrupt.ps1 -Action Stop -Target App</code>.
-      Run 2 (fresh vault copies): <code>-Target Sidecar</code>. Keep each JSON line it prints.</li>
+      Run 2 (fresh vault copies): <code>-Target Sidecar</code>. Keep each JSON line it prints. The script searches both the
+      NSIS and MSI install folders; pass <code>-InstallDir</code> for any other location. If it refuses because a process is
+      unverified, rerun it from an elevated PowerShell.</li>
     <li>Within a minute, <code>-Action Report</code> must show no orphan Syncthing process after an app stop (the watchdog
       cleans it up). After a sidecar stop, the app's bounded restart may bring it back.</li>
     <li>Record what the UI shows. It must not report a clean or up-to-date outcome while <code>check</code> is incomplete.</li>
     <li>Restart the app normally, run Sync now on both machines, and repeat until the terminal outcome arrives.</li>
     <li><code>check</code> on both machines must exit 0: 5,000 matching notes, sentinel present, no conflict copies,
       duplicate IDs, or strays. No manual file repair is allowed at any point.</li>
-    <li>Confirm a <code>helixnotes-pre-sync-*.zip</code> exists for each interrupted run in the backup folder, close the app,
+    <li>Confirm a <code>helixnotes-pre-sync-*.zip</code> exists for each interrupted run in the backup folder: the custom
+      location if Settings sets one, otherwise <code>%APPDATA%\helixnotes\backups</code> on Windows and
+      <code>~/.config/helixnotes/backups</code> on Fedora. Then close the app
       and confirm <code>-Action Report</code> lists no processes.</li>
     <li>Attach the JSON lines, screenshots, and timestamps to #97 and update the D row above.</li>
   </ol>

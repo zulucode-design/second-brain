@@ -10,7 +10,7 @@
 // 1 while it is incomplete or wrong, and 2 on usage errors.
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -52,10 +52,18 @@ export function generate(vault) {
       throw new Error(`fixture already present in ${category}; use a fresh disposable vault copy`);
     }
   }
-  for (let index = 0; index < NOTE_COUNT; index += 1) {
-    const note = fixtureNote(index);
-    mkdirSync(join(vault, note.path, '..'), { recursive: true });
-    writeFileSync(join(vault, note.path), note.content, { flag: 'wx' });
+  try {
+    for (let index = 0; index < NOTE_COUNT; index += 1) {
+      const note = fixtureNote(index);
+      mkdirSync(join(vault, note.path, '..'), { recursive: true });
+      writeFileSync(join(vault, note.path), note.content, { flag: 'wx' });
+    }
+  } catch (error) {
+    // A half-written fixture would make every retry fail as "already present".
+    for (const category of CATEGORIES) {
+      rmSync(join(vault, category, FIXTURE_FOLDER), { recursive: true, force: true });
+    }
+    throw error;
   }
   return { notes: NOTE_COUNT, sentinelSha256: sha256(fixtureNote(SENTINEL_INDEX).content) };
 }
@@ -69,11 +77,13 @@ function walk(root, visit) {
 }
 
 export function check(vault) {
+  const portable = (path) => path.split(sep).join('/');
   const expected = new Map();
   for (let index = 0; index < NOTE_COUNT; index += 1) {
     const note = fixtureNote(index);
-    expected.set(note.path.split(sep).join('/'), note.content);
+    expected.set(portable(note.path), note.content);
   }
+  const sentinelPath = portable(fixtureNote(SENTINEL_INDEX).path);
 
   let matching = 0;
   let wrongContent = 0;
@@ -85,7 +95,7 @@ export function check(vault) {
   // The whole vault, including .helixnotes/: a fixture id surfacing in trash, the holding
   // area, or a second folder is a duplicate or resurrection, not a harmless extra file.
   walk(vault, (path) => {
-    const rel = relative(vault, path).split(sep).join('/');
+    const rel = portable(relative(vault, path));
     if (rel.startsWith('.stfolder') || rel.startsWith('.stversions')) return;
     if (!rel.endsWith('.md')) return;
     const content = readFileSync(path, 'utf8');
@@ -95,17 +105,18 @@ export function check(vault) {
     // unrelated conflict copies archived in trash, and those say nothing about this run. A
     // conflict copy is recognised by its id or, if truncated, by the note it was copied from.
     const conflictOf = rel.replace(/\.sync-conflict-[^.]*(?=\.md$)/, '');
-    if (conflictOf !== rel && (id?.startsWith(ID_PREFIX) || expected.has(conflictOf))) {
+    const isConflict = conflictOf !== rel;
+    if (isConflict && (id?.startsWith(ID_PREFIX) || expected.has(conflictOf))) {
       conflictCopies.push(rel);
     }
     // Judge fixture paths by content before identity: a truncated transfer can cut off the
     // id line itself, and that is wrong content, not a missing note.
     const want = expected.get(rel);
     if (want === undefined) {
-      if (id?.startsWith(ID_PREFIX) && !rel.includes('.sync-conflict-')) strays.push(rel);
+      if (id?.startsWith(ID_PREFIX) && !isConflict) strays.push(rel);
     } else if (content === want) {
       matching += 1;
-      if (rel.endsWith('Fixture sentinel.md')) sentinelPresent = true;
+      if (rel === sentinelPath) sentinelPresent = true;
     } else {
       wrongContent += 1;
     }
