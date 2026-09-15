@@ -88,9 +88,18 @@
     <tr><td>A: save-safe navigation and shutdown</td><td>#81</td><td>edit→navigate and edit→close never lose a save</td><td>PR #90 lifecycle suites; no end-to-end run in a package</td><td><span class="s amber">code done, E2E gap</span></td></tr>
     <tr><td>B: WebDAV trust boundary</td><td>#82</td><td>WebDAV unreachable from production</td><td>PR #94</td><td><span class="s green">green</span></td></tr>
     <tr><td>C: transactional restore</td><td>#83</td><td>failed restore rolls back; bulk mutations exclude each other</td><td>PR #93 regressions</td><td><span class="s green">green</span></td></tr>
-    <tr><td>D: interruption-safe sync</td><td>#84, #97</td><td>5,000-note transfer converges after forced app and sidecar stops</td><td>PR #96 local regressions; two-machine run pending (protocol below)</td><td><span class="s red">blocking</span></td></tr>
+    <tr><td>D: interruption-safe sync</td><td>#84, #97</td><td>5,000-note transfer converges after forced app and sidecar stops</td><td>PR #96 local regressions. Two-machine run 1 on 2026-09-15 (Fedora sender, Windows receiver): the app force-stopped
+      at 61 of 5,000 notes; the receiver settled at 431 with no conflicts or duplicates; nothing was left running; the Fedora run
+      failed ("not reachable over Tailscale") rather than claiming success. Recovery <strong>failed</strong>: every later run on
+      Windows ended within about a second with "Syncthing reported one or more file errors", in either press order.
+      Defect #101 (pull errors treated as terminal) is fixed on <code>fix/101-transient-pull-errors</code>, pending merge; the
+      two-machine run must be repeated from a fresh vault on rebuilt packages. Run 2 (sidecar stop) not attempted.</td><td><span class="s red">blocking (#101)</span></td></tr>
     <tr><td>E: import and external viewer</td><td>#85</td><td>overlapping imports refused; failures counted; external file opens read-only</td><td>not started</td><td><span class="s grey">deferred, non-gating</span></td></tr>
-    <tr><td>F: durable writes and startup failures</td><td>#86</td><td>interrupted writes keep the previous file; config failures are distinct and visible</td><td>in progress on <code>fix/86-durable-writes</code>; Windows replace behavior to be checked on the desktop</td><td><span class="s grey">in progress, non-gating</span></td></tr>
+    <tr><td>F: durable writes and startup failures</td><td>#86</td><td>interrupted writes keep the previous file; config failures are distinct and visible</td><td>merged in PR #100 (<code>c8017b1</code>). Windows: the replace retries <code>MoveFileExW</code> 11 times, 25 ms apart, on
+      errors 5 and 32; <code>pnpm test:rust</code> passed on the desktop at <code>4a22c6a</code> (506 passed), including the held-then-released
+      and held-past-budget tests. Accepted Windows limits: no directory fsync on NTFS (<code>MOVEFILE_WRITE_THROUGH</code> covers the
+      move), and no ACL or permission preservation (Unix-only by spec). Open follow-up: #99, orphaned <code>.tmp</code> files replicating
+      through Syncthing. Not verified: the vault picker's config-error message on screen.</td><td><span class="s green">merged</span></td></tr>
     <tr><td>G: due-date, empty-state, semantic schema</td><td>#87</td><td>implemented outcomes</td><td>PR #95 regressions</td><td><span class="s green">green</span></td></tr>
   </table>
 </section>
@@ -112,7 +121,9 @@
       session: one packaged <code>App</code> process, 5 new log lines with no warnings or errors. Force-stopped with
       <code>sync-interrupt.ps1 -Target App</code>; nothing left running 15 s later. Not covered: sidecar and watchdog (sync was not
       enabled on the test vault), the in-window UI, uninstall, and the MSI. The old per-user files in
-      <code>%LOCALAPPDATA%\HelixNotes</code> were left in place.</td><td>#88, #49</td><td><span class="s amber">install and launch done, partial</span></td></tr>
+      <code>%LOCALAPPDATA%\HelixNotes</code> were left in place. 2026-09-15: rebuilt from <code>4d2ae7f</code> (rustls and Tiptap upgrades) and
+      reinstalled over the D: install; launched with no configuration (vault picker), 1 new log line with no warnings or errors,
+      stopped with <code>-Target App</code>, nothing left running. The old per-user C: install and its app data were deleted the same day.</td><td>#88, #49</td><td><span class="s amber">install and launch done, partial</span></td></tr>
     <tr><td>Update and package signing</td><td>signing path verified, or the updater stays disabled per ADR-0011</td><td>not verified</td><td>#88, #24</td><td><span class="s red">missing</span></td></tr>
     <tr><td>Performance</td><td>cold start, editor interaction, graph render, and semantic retrieval measured on both machines with thresholds</td><td>not measured. A 2026-09-14 attempt timed five launches of the D: build from SSH until the process had a main window;
       all five runs recorded no window because a process in the SSH session cannot see window handles in the console session.

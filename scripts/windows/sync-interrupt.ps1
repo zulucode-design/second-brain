@@ -39,12 +39,21 @@ if (-not $Action -or ($Action -eq 'Stop' -and -not $Target)) {
 $appExes = @($InstallDir | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $_ 'helixnotes.exe')) })
 $sidecarExes = @($InstallDir | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $_ 'syncthing.exe')) })
 
+# Syncthing runs as a monitor process (started by the app, and the one it supervises) plus a
+# worker it spawns itself. Only the monitor, whose parent is the packaged app, is the Sidecar
+# target. A packaged Syncthing whose parent is another packaged Syncthing is its SidecarWorker;
+# one whose parent is neither is a SidecarOrphan, which is what outliving a stop looks like.
 function Get-PackagedProcesses {
-  Get-CimInstance Win32_Process -Filter "Name = 'helixnotes.exe' OR Name = 'syncthing.exe'" |
+  $all = @(Get-CimInstance Win32_Process -Filter "Name = 'helixnotes.exe' OR Name = 'syncthing.exe'")
+  $sidecarIds = @($all | Where-Object { $sidecarExes -contains $_.ExecutablePath } | ForEach-Object ProcessId)
+  $appIds = @($all | Where-Object { $appExes -contains $_.ExecutablePath } | ForEach-Object ProcessId)
+  $all |
     ForEach-Object {
       $path = $_.ExecutablePath
       $role = if (-not $path) { 'Unverified' }
-              elseif ($sidecarExes -contains $path) { 'Sidecar' }
+              elseif ($sidecarExes -contains $path -and $sidecarIds -contains $_.ParentProcessId) { 'SidecarWorker' }
+              elseif ($sidecarExes -contains $path -and $appIds -contains $_.ParentProcessId) { 'Sidecar' }
+              elseif ($sidecarExes -contains $path) { 'SidecarOrphan' }
               elseif ($appExes -notcontains $path) { $null }
               elseif ($_.CommandLine -like '*--helix-sync-watchdog*') { 'Watchdog' }
               else { 'App' }
