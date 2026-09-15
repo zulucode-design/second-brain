@@ -103,7 +103,9 @@
     <tr><td>Windows package install and launch</td><td>installer from a known commit installs, launches, and uninstalls cleanly</td><td>an installed HelixNotes 1.3.4 exists on the desktop, but its build commit is not recorded</td><td>#88, #49</td><td><span class="s red">missing</span></td></tr>
     <tr><td>Update and package signing</td><td>signing path verified, or the updater stays disabled per ADR-0011</td><td>not verified</td><td>#88, #24</td><td><span class="s red">missing</span></td></tr>
     <tr><td>Performance</td><td>cold start, editor interaction, graph render, and semantic retrieval measured on both machines with thresholds</td><td>not measured</td><td>#88</td><td><span class="s red">missing</span></td></tr>
-    <tr><td>Log privacy and diagnostic export</td><td>written redaction policy; user-started export excludes note contents and secrets by default</td><td>no policy, no export</td><td>#88</td><td><span class="s red">missing</span></td></tr>
+    <tr><td>Log privacy and diagnostic export</td><td>written redaction policy; user-started export excludes note contents and secrets by default</td><td>policy written in <code>docs/log-privacy.md</code> with an audit of current log calls (no secrets logged; paths, note ids,
+      Notion messages, and Syncthing output are logged locally as note metadata). Export not implemented; deferred until #86
+      merges because it touches the same startup and command modules.</td><td>#88</td><td><span class="s amber">policy done, export missing</span></td></tr>
     <tr><td>Dependency vulnerability and license audit</td><td>npm and Cargo audits run, with findings triaged</td><td>npm run 2026-09-14: 1 high and 1 moderate advisory, both <code>@tiptap/core</code> 3.19.0 (fixed in 3.30.5). The high one is a
       quadratic regex in Tiptap's own Markdown attribute parsing; the app parses Markdown with <code>markdown-it</code> and never
       calls those helpers, so it looks unreachable but still needs the upgrade. The moderate one needs an own <code>__proto__</code>
