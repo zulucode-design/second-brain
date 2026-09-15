@@ -17,7 +17,7 @@
     </style>
   </head>
   <body>
-    <p><span class="status pass">Verified, one item unverified</span></p>
+    <p><span class="status pass">Verified</span></p>
     <h1>Ticket #86 — durable critical writes and explicit startup failures</h1>
     <p>Package F of #76, covering audit D-09 and D-11. Implemented on 2026-09-15 on
       <code>fix/86-durable-writes</code> from <code>main</code> at <code>8155213</code>. An earlier
@@ -47,7 +47,7 @@
         <tr><td>Windows held-open destination</td><td><span class="status pass">Passed</span></td><td>Probe on D:: without a retry, <code>MoveFileExW</code> fails with error 5 while any other handle is open (even with delete sharing), and the old content survives. With the retry, a handle released after 50 ms succeeds, and one held throughout fails with the old content intact and no temporary.</td></tr>
         <tr><td>Startup outcomes</td><td><span class="status pass">Passed</span></td><td><code>config_startup_tests</code>: absent, malformed, incompatible (vaults recovered, no auto-open), unreadable (save blocked), and the runtime error never persisted.</td></tr>
         <tr><td>Manual run, Fedora debug build</td><td><span class="status pass">Passed</span></td><td>Launched with isolated <code>XDG_CONFIG_HOME</code>/<code>XDG_DATA_HOME</code> and a truncated, then a wrongly typed, <code>config.json</code>. Both times the app stayed up, the original file hash was unchanged, and <code>config.json.damaged-*</code> appeared with mode <code>0600</code> while the original was <code>0644</code>.</td></tr>
-        <tr><td>Vault picker message on screen</td><td><span class="status open">Unverified</span></td><td>No screenshot tool on the Wayland session; the Svelte path is covered by <code>svelte-check</code> only.</td></tr>
+        <tr><td>Vault picker on screen (Nicolas, Fedora)</td><td><span class="status pass">Passed</span></td><td>Truncated config: picker shows <code>config.json is malformed: EOF while parsing a value at line 1 column 137</code> with the preserved-copy path, not a first launch. Incompatible config: picker shows <code>invalid type: integer `42`, expected a string</code>, lists the recovered vault under Recent, and did not auto-open it. Clicking it opened the vault; only then was <code>config.json</code> rewritten (0600), with both damaged copies still present.</td></tr>
         <tr><td>Two-axis review</td><td><span class="status pass">Findings addressed</span></td><td>Standards: the save block matched message text (now a typed flag), plus a tuple that is now a named struct and a rename. Spec: import rewrites were not durable, the preserved copy kept loose permissions, and app config had no interruption test; all fixed.</td></tr>
       </tbody>
     </table>
