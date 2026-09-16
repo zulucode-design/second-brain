@@ -99,7 +99,17 @@
     <tr><td>Performance</td><td>All budgets below pass on both real target machines against the same 10,000-note fixture and candidate commit.</td><td>No user-visible timings recorded.</td><td>#88</td><td><span class="s red">missing</span></td></tr>
     <tr><td>Fedora package</td><td>RPM from the candidate commit installs, completes the walkthrough below, exits cleanly, and uninstalls without deleting the disposable vault.</td><td>A prior RPM was reinstalled and process-smoked. In-window walkthrough and uninstall are missing.</td><td>#88</td><td><span class="s amber">partial</span></td></tr>
     <tr><td>Windows package</td><td>NSIS package from the candidate commit installs, completes the walkthrough below including #49's notification, exits with no sidecar/watchdog left, and uninstalls without deleting the disposable vault.</td><td>Prior NSIS packages installed and launched. In-window walkthrough, #49 notification, and uninstall are missing.</td><td>#88, #49</td><td><span class="s amber">partial</span></td></tr>
-    <tr><td>Residual defects</td><td>Every open defect found by remediation has an explicit severity, alpha disposition, owner, and milestone; no P0/P1 remains.</td><td>#110, #111, and #112 were non-blocking follow-ups from #97, but lack recorded severity and milestone.</td><td>#76</td><td><span class="s amber">classification missing</span></td></tr>
+    <tr><td>Residual defects</td><td>Every open defect found by remediation has an explicit severity, alpha disposition, owner, and milestone; no P0/P1 remains.</td><td>#110 is P2; #111 and #112 are P3. All are deferred, non-blocking, assigned to zulucode-design, and scheduled for the v1 feature-complete beta milestone. No P0/P1 remains.</td><td>#76</td><td><span class="s green">verified</span></td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>Residual-defect classifications</h2>
+  <table>
+    <tr><th>Issue</th><th>Severity and alpha disposition</th><th>Owner and milestone</th></tr>
+    <tr><td><a href="https://github.com/zulucode-design/second-brain/issues/110">#110</a> sidecar-restart run stall</td><td>P2; deferred, non-blocking. One run can wait for its deadline after a sidecar restart, but no data is lost and later scheduled work completes.</td><td>zulucode-design; v1 feature-complete beta</td></tr>
+    <tr><td><a href="https://github.com/zulucode-design/second-brain/issues/111">#111</a> missing sync-run logging</td><td>P3; deferred, non-blocking. Observability gap only; sync data safety and terminal behavior are unchanged.</td><td>zulucode-design; v1 feature-complete beta</td></tr>
+    <tr><td><a href="https://github.com/zulucode-design/second-brain/issues/112">#112</a> joining-vault config conflict</td><td>P3; deferred, non-blocking. Conflict file differs only in <code>created</code>; no note data is affected.</td><td>zulucode-design; v1 feature-complete beta</td></tr>
   </table>
 </section>
 
@@ -167,7 +177,7 @@
     <li><s>Prove install-failure propagation.</s> Completed with a deterministic temporary fixture. <s>Close dependency-audit evidence.</s></li>
     <li>Choose one candidate commit and run hosted plus real-machine verification.</li>
     <li>Run performance protocol and final installed-package walkthroughs without changing the candidate.</li>
-    <li>Classify residual defects, update the audit and remediation plan, then close #49, #88, and the H row in #76 only when every blocking row is green.</li>
+    <li><s>Classify residual defects.</s> #110–#112 now name severity, alpha disposition, owner, and milestone. Close #49, #88, and the H row in #76 only when every blocking row is green.</li>
   </ol>
 </section>
 
