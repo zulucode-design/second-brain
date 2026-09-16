@@ -96,7 +96,7 @@
     <tr><td>Diagnostic export</td><td>User starts the export. Default output contains no note body, planted secret, note path/title, provider response body, or credential field. Tests inspect the produced archive.</td><td>Settings → Maintenance creates a ZIP with build/OS/package metadata, redacted configuration, sync status and last terminal outcome, and redacted rotated logs. The archive test proves planted vault content, secret, note path/title/id, device id, Tailscale address, and credential field are absent. Final installed-package walkthrough must exercise the button once.</td><td>#88</td><td><span class="s green">implemented</span></td></tr>
     <tr><td>Install failure propagation</td><td>A deterministic fixture makes <code>svelte-kit sync</code> fail and proves <code>pnpm install</code> returns nonzero.</td><td><code>tests/install-failure.test.mjs</code> runs <code>pnpm install --offline</code> against a temporary package using the repository's exact <code>prepare</code> command and an intentionally failing Svelte config; the test requires the install to fail with the fixture marker.</td><td>#88</td><td><span class="s green">verified</span></td></tr>
     <tr><td>Dependency audit</td><td><code>pnpm audit --prod</code> and <code>cargo audit --file src-tauri/Cargo.lock</code> report no known vulnerability, production licenses are recorded, and every Cargo warning has a reachability and disposition entry.</td><td>Five compatible Cargo updates remove every patched advisory. Remaining twelve warnings have reviewed accept/defer dispositions below; no package vulnerability remains. Production JavaScript and Rust license metadata is compatible with AGPL-3.0-or-later; <code>khroma</code>'s metadata omission was checked against its bundled MIT license.</td><td>#88</td><td><span class="s green">verified</span></td></tr>
-    <tr><td>Performance</td><td>All budgets below pass on both real target machines against the same 10,000-note fixture and candidate commit.</td><td>No user-visible timings recorded.</td><td>#88</td><td><span class="s red">missing</span></td></tr>
+    <tr><td>Performance</td><td>All budgets below pass on both real target machines against the same 10,000-note fixture and candidate commit.</td><td>Opt-in probe, fixture, cold-start harness, and budget summariser are implemented (see protocol below). The earlier Windows startup probe timed native window creation only and is not evidence. No user-visible timings recorded yet.</td><td>#88</td><td><span class="s red">missing</span></td></tr>
     <tr><td>Fedora package</td><td>RPM from the candidate commit installs, completes the walkthrough below, exits cleanly, and uninstalls without deleting the disposable vault.</td><td>A prior RPM was reinstalled and process-smoked. In-window walkthrough and uninstall are missing.</td><td>#88</td><td><span class="s amber">partial</span></td></tr>
     <tr><td>Windows package</td><td>NSIS package from the candidate commit installs, completes the walkthrough below including #49's notification, exits with no sidecar/watchdog left, and uninstalls without deleting the disposable vault.</td><td>Prior NSIS packages installed and launched. In-window walkthrough, #49 notification, and uninstall are missing.</td><td>#88, #49</td><td><span class="s amber">partial</span></td></tr>
     <tr><td>Residual defects</td><td>Every open defect found by remediation has an explicit severity, alpha disposition, owner, and milestone; no P0/P1 remains.</td><td>#110 is P2; #111 and #112 are P3. All are deferred, non-blocking, assigned to zulucode-design, and scheduled for the v1 feature-complete beta milestone. No P0/P1 remains.</td><td>#76</td><td><span class="s green">verified</span></td></tr>
@@ -147,6 +147,29 @@
     <tr><td>Graph render</td><td>10,000-note vault with recorded explicit-link count; graph command until first complete visible frame.</td><td>Median ≤ 2 s; every run ≤ 4 s.</td></tr>
     <tr><td>Semantic retrieval</td><td>10,000 indexed notes; warm configured embedding backend; query submission until ranked results display.</td><td>p95 ≤ 2 s. Also record local exact-scan time separately; p95 ≤ 250 ms.</td></tr>
   </table>
+  <h3>Instrumentation</h3>
+  <p>Timings come from an opt-in probe that is inert unless <code>SECOND_BRAIN_PERF_LOG</code> names a file. The app then
+  appends one JSON line per measurement with a wall-clock <code>epochMs</code>. Samples hold timings and counts only:
+  no note content, title, path, or query. Every interval ends at the next painted frame (animation frame followed
+  by a message-channel task), not at the native window or the data reply.</p>
+  <ul>
+    <li><strong>Fixture:</strong> <code>node scripts/perf-fixture.mjs generate &lt;vault&gt;</code> writes 9,999 notes across the
+    four PARA roots with 19,998 explicit title links, plus one 5,000-word note (10,000 notes total).</li>
+    <li><strong>Cold startup:</strong> <code>node scripts/perf-startup.mjs &lt;installed executable&gt; &lt;log&gt;</code> records
+    a launch time, starts the app with <code>SECOND_BRAIN_PERF_EXIT_AFTER_STARTUP=1</code>, and waits for it to exit.
+    The app writes <code>startup-ready</code> once session restoration has loaded the sidebar, note list, and last note and
+    that frame is painted, then exits through its normal save-aware shutdown. The configuration must restore the
+    5,000-word note. A mark without the sidebar, note list, or an editable editor counts as a failed run.</li>
+    <li><strong>Editor:</strong> each single-character key press without a modifier in the rich editor records
+    <code>editor-key</code> from the input event timestamp to the next paint.</li>
+    <li><strong>Graph:</strong> <code>graph-render</code> runs from graph view creation, which happens when the graph command
+    opens it, until the frame after the first full-layout draw. It records node and edge counts.</li>
+    <li><strong>Search:</strong> <code>semantic-search</code> runs from query submission after the input debounce until the
+    ranked results are painted. The backend records <code>semantic-backend</code> with the embedding time and the local
+    exact-scan time (database read, decode, cosine ranking) separately.</li>
+    <li><strong>Summary:</strong> <code>node scripts/perf-summary.mjs &lt;log&gt;</code> prints every sample, median,
+    nearest-rank p95, maximum, and verdict per budget. Raw logs are preserved with the evidence.</li>
+  </ul>
   <p>If a budget fails, preserve raw measurements and open a focused defect. Do not weaken a budget in the same
   change that fixes its failure.</p>
 </section>

@@ -2,6 +2,7 @@
 	import { showSearch, appConfig, mobileView, notebooks, activeNotebook, activeTag, viewMode } from '$lib/stores/app';
 	import { searchNotes, semanticSearch } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
+	import { startTimer } from '$lib/perf-probe';
 	import { PARA_CATEGORIES, type SearchResult, type NotebookEntry, type ParaCategory } from '$lib/types';
 	import { isMobile } from '$lib/platform';
 
@@ -27,6 +28,7 @@
 		generation: number,
 	) => {
 		if (generation !== requestGeneration) return;
+		const finishSearchTimer = startTimer(`${searchMode}-search`);
 		try {
 			const found = searchMode === 'semantic'
 				? await semanticSearch(q, searchCategory || undefined, 20)
@@ -34,6 +36,7 @@
 			if (generation !== requestGeneration) return;
 			results = found;
 			selectedIndex = 0;
+			finishSearchTimer({ results: found.length });
 		} catch (e) {
 			if (generation !== requestGeneration) return;
 			console.error('Search failed:', e);

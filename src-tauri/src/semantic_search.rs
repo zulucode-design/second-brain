@@ -479,7 +479,10 @@ impl SemanticIndex {
         category: Option<ParaCategory>,
         limit: usize,
     ) -> Result<Vec<SearchResult>, String> {
+        let embed_started = std::time::Instant::now();
         let mut query_embeddings = self.backend.embed(&[query.to_string()])?;
+        let embed_ms = embed_started.elapsed().as_secs_f64() * 1000.0;
+        let scan_started = std::time::Instant::now();
         let query_embedding = query_embeddings
             .pop()
             .filter(|embedding| !embedding.is_empty())
@@ -537,6 +540,12 @@ impl SemanticIndex {
                 .then_with(|| left.title.cmp(&right.title))
         });
         results.truncate(limit);
+        crate::perf_probe::record(serde_json::json!({
+            "kind": "semantic-backend",
+            "embedMs": embed_ms,
+            "exactScanMs": scan_started.elapsed().as_secs_f64() * 1000.0,
+            "results": results.len(),
+        }));
         Ok(results)
     }
 
