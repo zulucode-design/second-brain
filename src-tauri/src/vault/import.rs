@@ -531,13 +531,17 @@ fn fix_md_image_refs(
         }
         if !decoded.contains('/') {
             if let Some(rel) = file_index.get(&decoded) {
-                *links_converted += 1;
                 let abs_target = vault.join(rel);
                 let note_rel = pathdiff(
                     abs_target.to_str().unwrap_or(""),
                     note_dir.to_str().unwrap_or(""),
                 )
                 .unwrap_or(rel.clone());
+                // A reference the wiki pass already rewrote resolves to the string it
+                // produced; counting it again would report one conversion as two.
+                if note_rel != decoded {
+                    *links_converted += 1;
+                }
                 return format!("![{}]({})", alt, note_rel.replace(' ', "%20"));
             }
         }
@@ -581,13 +585,17 @@ fn fix_md_link_refs(
         }
         if !decoded.contains('/') {
             if let Some(rel) = file_index.get(&decoded) {
-                *links_converted += 1;
                 let abs_target = vault.join(rel);
                 let note_rel = pathdiff(
                     abs_target.to_str().unwrap_or(""),
                     note_dir.to_str().unwrap_or(""),
                 )
                 .unwrap_or(rel.clone());
+                // Same as the image pass: only a reference this pass actually changed is a
+                // conversion. A link the wiki pass produced resolves to itself.
+                if note_rel != decoded {
+                    *links_converted += 1;
+                }
                 return format!("[{}]({})", display, note_rel.replace(' ', "%20"));
             }
         }
@@ -1133,6 +1141,38 @@ mod tests {
             result.failed
         );
         assert!(result.failed[0].contains("note.md"));
+    }
+
+    /// Wiki links are rewritten by the wiki pass and then re-resolved by the Markdown-link
+    /// pass. Only a pass that actually changes the target has converted anything: counting
+    /// the second resolution too reported three converted links as five.
+    #[test]
+    fn a_link_is_counted_once_however_many_passes_resolve_it() {
+        let vault = std::env::temp_dir().join(format!("import-link-count-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(vault.join("Projects")).unwrap();
+        std::fs::write(
+            vault.join("Projects").join("launch-plan.md"),
+            "---\ncategory: Projects\n---\n\nSee [[Projects/spec]] and [[launch-plan#Risks]].\n",
+        )
+        .unwrap();
+        std::fs::write(
+            vault.join("Projects").join("spec.md"),
+            "---\ncategory: Projects\n---\n\nBack to [[launch-plan]].\n",
+        )
+        .unwrap();
+
+        let result = import(&vault.to_string_lossy()).unwrap();
+        let converted =
+            std::fs::read_to_string(vault.join("Projects").join("launch-plan.md")).unwrap();
+        std::fs::remove_dir_all(&vault).unwrap();
+
+        assert_eq!(result.files_converted, 2);
+        assert_eq!(
+            result.links_converted, 3,
+            "three wiki links exist, however many passes touch them"
+        );
+        assert!(converted.contains("[Projects/spec](spec.md)"));
+        assert!(converted.contains("[launch-plan#Risks](launch-plan.md#Risks)"));
     }
 
     #[test]
