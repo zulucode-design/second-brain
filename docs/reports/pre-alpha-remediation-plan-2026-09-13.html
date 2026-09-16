@@ -58,7 +58,7 @@
       <tbody>
         <tr><td><span class="badge decision">G1 Sync architecture — implemented locally; machine gate pending</span></td><td>ADR-0009 reaffirms ADR-0002: bundle an app-managed Syncthing sidecar over user-installed Tailscale with explicit device pairing; remove WebDAV from production.</td><td>Package B completed WebDAV removal. Issue #84 implements package D's lifecycle, pairing, guarded batches, shared retention setting, and conflict workflow; real packaged Windows/Fedora verification remains.</td><td>ADR-0009, SPEC §8, <code>docs/syncthing-sidecar.md</code>, #82, #84, and #28.</td></tr>
         <tr><td><span class="badge decision">G2 Alpha scope — decided</span></td><td>ADR-0010 makes semantic search part of the external-alpha retrieval contract and moves #8–#11 to the v1 feature-complete beta.</td><td>The absent interaction surfaces remain v1 commitments without blocking safety-focused external testing.</td><td>ADR-0010, SPEC delivery milestones, README, and #8–#11.</td></tr>
-        <tr><td><span class="badge decision">G3 Product identity — decided</span></td><td>ADR-0011 makes Second Brain the sole user-facing identity, keeps the existing Second Brain application identifier, starts at <code>0.1.0-alpha.1</code>, treats HelixNotes as separate, and disables the inherited updater.</td><td>Package I still owns the rename and narrow mixed-build migration; H/#49 own package and future signed-update evidence.</td><td>ADR-0011, SPEC §9, #89, and #49.</td></tr>
+        <tr><td><span class="badge decision">G3 Product identity — implemented</span></td><td>ADR-0011 makes Second Brain the sole user-facing identity, keeps the existing Second Brain application identifier, starts at <code>0.1.0-alpha.1</code>, treats HelixNotes as separate, and disables the inherited updater.</td><td>The narrow package rename, updater removal, and mixed-name launch-reference migration are implemented with regression coverage. H/#49 still own installed-package and future signed-update evidence.</td><td>ADR-0011, SPEC §9, #89, and #49.</td></tr>
         <tr><td><span class="badge decision">G4 Platform/vault contract — decided</span></td><td>ADR-0012 supports Windows 11 x86-64 and Fedora 44 Workstation x86-64 with one logical vault replicated between the two machines.</td><td>Package I removes inherited unsupported-platform and multi-vault paths; H verifies only the supported matrix and the 10,000-note baseline.</td><td>ADR-0012, SPEC §2/§12, #89, and #88.</td></tr>
       </tbody>
     </table>
@@ -189,7 +189,7 @@
             </ul>
           </td>
           <td>Test assessment gaps; existing #24 and #49.</td>
-          <td>A–G are implemented, and D's packaged two-machine scenarios passed. The narrow G3 identity/migration/updater slice from I must land before H records final package and performance evidence; unrelated I cleanup stays in wave 5.</td>
+          <td>A–G and the narrow G3 identity/migration/updater prerequisite are implemented, and D's packaged two-machine scenarios passed. H can now establish its candidate before final package and performance evidence; unrelated I cleanup stays in wave 5.</td>
         </tr>
         <tr>
           <td><strong>I</strong><br><span class="badge p3">P3 product/cleanup</span></td>
