@@ -477,7 +477,8 @@
 	}
 
 	async function handleOpenFile(filePath: string) {
-		if (!filePath || !filePath.endsWith('.md')) return;
+		// Case-insensitive: a Windows or macOS file association can hand back `NOTE.MD`.
+		if (!filePath || !filePath.toLowerCase().endsWith('.md')) return;
 		const config = get(appConfig);
 		const vaultRoot = config?.active_vault;
 		const isExternal = isExternalNotePath(vaultRoot, filePath);
