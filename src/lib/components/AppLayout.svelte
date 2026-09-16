@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { installEditorKeyProbe, markStartupReady } from '$lib/perf-probe';
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { listen } from '@tauri-apps/api/event';
 	import Sidebar from './Sidebar.svelte';
@@ -1154,6 +1155,8 @@
 			await restoreRun;
 		}
 		if (!alive()) return;
+		void markStartupReady();
+		void installEditorKeyProbe();
 
 		// On mobile, derive tags from the scanned notes (avoids a separate full-scan Rust call)
 		if (isMobile) {

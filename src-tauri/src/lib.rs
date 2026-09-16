@@ -13,6 +13,7 @@ mod hotkey;
 mod image_proxy;
 mod machine_local;
 mod notion;
+mod perf_probe;
 mod safe_fetch;
 mod search;
 mod secret_store;
@@ -195,6 +196,20 @@ fn cancel_note_window_reservation(app: tauri::AppHandle, label: String, token: S
         .unwrap_or(shutdown::AcknowledgeOutcome::Ignored);
     if let shutdown::AcknowledgeOutcome::Complete(intent) = outcome {
         perform_shutdown(&app, intent);
+    }
+}
+
+#[tauri::command]
+fn perf_probe_enabled() -> bool {
+    perf_probe::log_path().is_some()
+}
+
+#[tauri::command]
+fn record_perf_sample(app: tauri::AppHandle, sample: serde_json::Value) {
+    let startup_ready = sample["kind"] == "startup-ready";
+    perf_probe::record(sample);
+    if startup_ready && perf_probe::exit_after_startup() {
+        begin_shutdown(&app, shutdown::ShutdownIntent::ExitApp);
     }
 }
 
@@ -460,6 +475,8 @@ pub fn run() {
             cancel_note_window_reservation,
             begin_vault_switch,
             end_vault_switch,
+            perf_probe_enabled,
+            record_perf_sample,
             commands::open_vault,
             commands::choose_external_vault,
             commands::restore_external_vault,

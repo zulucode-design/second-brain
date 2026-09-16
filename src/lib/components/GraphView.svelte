@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { startTimer } from '$lib/perf-probe';
 	import { onDestroy } from 'svelte';
 	import { getGraphData } from '$lib/api';
 	import { activeNotePath, appConfig } from '$lib/stores/app';
@@ -17,6 +18,7 @@
 	let localMode = $state(true); // default: show only active note's neighborhood
 
 	// Requested before mount so the graph is ready sooner; reassigned to re-request on retry.
+	const finishGraphTimer = startTimer('graph-render');
 	let dataPromise = getGraphData();
 
 	interface GraphNode { id: string; title: string; path: string; x: number; y: number; vx: number; vy: number; }
@@ -254,6 +256,7 @@
 		// Show the full graph while physics finishes settling
 		fitToView();
 		draw();
+		finishGraphTimer({ nodes: nodes.length, edges: edges.length, localMode });
 
 		// Queue remaining physics - camera will snap to active note when done
 		physicsRemaining = Math.min(400, Math.max(150, nodes.length * 3));
