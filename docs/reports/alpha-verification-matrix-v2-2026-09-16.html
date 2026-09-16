@@ -181,13 +181,15 @@
     <tr><th>Measure</th><th>Fedora 44</th><th>Windows 11</th><th>Status</th></tr>
     <tr><td>Cold startup (semantic index built)</td><td>2094, 2057, 2031, 2058, 1972 ms; median 2057, max 2094</td><td>6406, 6427, 6111, 6615, 6186 ms; median 6406, max 6615</td><td><span class="s red">fail</span> Windows (#128)</td></tr>
     <tr><td>Cold startup (earlier run)</td><td>AI unconfigured: 2373, 2218, 2138, 2233, 2230 ms; median 2230</td><td>Index still building: 6942, 6809, 6700, 6744, 6838 ms; median 6809</td><td><span class="s grey">context</span></td></tr>
-    <tr><td>Editor, first 200 keys</td><td>median 21.5 ms, p95 11,641 ms, max 12,167 ms; 98 keys over 100 ms, all in the first 98. The 744 keys after them: p95 25 ms, max 50 ms.</td><td>median 4.1 ms, p95 62 ms, max 78.6 ms</td><td><span class="s red">fail</span> both (#127)</td></tr>
+    <tr><td>Editor, first 200 keys</td><td>Run 1: median 21.5 ms, p95 11,641 ms, max 12,167 ms; 98 keys over 100 ms, all in the first 98. Rerun: froze, 120 keys, maximum 91,084 ms.</td><td>median 4.1 ms, p95 62 ms, max 78.6 ms</td><td><span class="s red">fail</span> both (#127)</td></tr>
     <tr><td>Graph render (10,000 nodes, 19,998 edges)</td><td>116,973 ms; 1 of 5 runs. The app was unusable, so the rest were not taken.</td><td>44,780, 37,163, 39,107 ms; 3 of 5 runs. The first ran while the semantic index was still building.</td><td><span class="s red">fail</span> both (#126)</td></tr>
     <tr><td>Semantic retrieval, submit to painted</td><td>187, 190, 201, 125, 150 ms; p95 201</td><td>158, 98, 145, 132, 112 ms; p95 158</td><td><span class="s green">pass</span></td></tr>
     <tr><td>Local exact scan</td><td>76, 92, 77, 72, 83 ms; p95 92</td><td>65, 64, 63, 65, 65 ms; p95 65</td><td><span class="s green">pass</span></td></tr>
   </table>
-  <p>Caveats: on Fedora, GNOME <code>localsearch-3</code> was at about 138% CPU during the editor run, with 5.8 GB of swap in use. #127 asks for a
-  quiet-machine rerun before attributing the whole freeze to the app. Fedora semantic searches ran without first confirming the
+  <p>Fedora editor rerun: the rerun started with the file indexer idle and the note restored. It was worse. The app accepted 120 keys, with key-to-paint latency rising to 91 s,
+  and GNOME offered to force-quit it. It was then stopped by its exact PID. Once the app started writing, GNOME <code>localsearch-3</code>, which indexes
+  <code>$HOME</code> recursively, rose to about 180% CPU, but the key events arrived one every 1–4 s, so each key press was blocked for seconds in the webview. The
+  development app has never frozen like this on normal-size vaults. #127 records both runs. Fedora semantic searches ran without first confirming the
   index had finished; the status read 10,000 indexed right afterwards. Two queries returned no results on both machines
   (#130), and the Fedora queue count stayed high after indexing finished (#129). Neither affects the latency budgets. Screenshots
   from these runs show unrelated personal windows, so they are kept off the public repository.</p>
