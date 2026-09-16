@@ -1177,6 +1177,16 @@ pub fn read_note(state: State<'_, AppState>, path: String) -> Result<NoteContent
     operations::read_note(vault_path, &path)
 }
 
+/// Read-only view of a Markdown file the user opened from outside the vault (file association,
+/// CLI argument, or open dialog). `ensure_readable_path` is the authorization: the OS-open paths
+/// in `lib.rs` grant the fs scope before the frontend ever learns the path, so an unscoped IPC
+/// caller cannot use this to read arbitrary files.
+#[tauri::command]
+pub fn read_external_note(app: AppHandle, path: String) -> Result<NoteContent, String> {
+    ensure_readable_path(&app, Path::new(&path))?;
+    operations::read_external_note(&path)
+}
+
 /// Read-only preview for a regular Markdown note directly inside the Holding Area.
 #[tauri::command]
 pub fn read_unfiled_note(state: State<'_, AppState>, path: String) -> Result<NoteContent, String> {
@@ -3252,6 +3262,67 @@ mod external_access_tests {
         app.fs_scope().allow_file(&outside_destination).unwrap();
         assert!(ensure_readable_path(app.handle(), &outside_file).is_ok());
         assert!(ensure_writable_path(app.handle(), &outside_destination).is_ok());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The external viewer must read an OS-authorized file from outside the vault without
+    /// becoming a way to read (or write) anything else. `read_external_note` is deliberately
+    /// paired with `ensure_readable_path` here exactly as the command pairs them.
+    #[test]
+    fn the_external_viewer_reads_only_authorized_markdown_and_never_relaxes_mutation() {
+        let root = std::env::temp_dir().join(format!(
+            "helixnotes-external-viewer-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let vault = root.join("vault");
+        let vault_note = vault.join("note.md");
+        let outside_note = root.join("outside.md");
+        let outside_text = root.join("outside.txt");
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(&vault_note, b"inside").unwrap();
+        fs::write(&outside_note, b"outside").unwrap();
+        fs::write(&outside_text, b"not markdown").unwrap();
+
+        let vault_path = vault.to_string_lossy().into_owned();
+        let config = AppConfig {
+            active_vault: Some(vault_path.clone()),
+            ..Default::default()
+        };
+        let app = tauri::test::mock_builder()
+            .plugin(tauri_plugin_fs::init())
+            .manage(AppState::new(config))
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+
+        // Unauthorized: the path is outside the vault and the user never selected it.
+        assert!(ensure_readable_path(app.handle(), &outside_note).is_err());
+
+        app.fs_scope().allow_file(&outside_note).unwrap();
+        app.fs_scope().allow_file(&outside_text).unwrap();
+
+        // Authorized outside the vault: readable, and reported under the path asked for.
+        assert!(ensure_readable_path(app.handle(), &outside_note).is_ok());
+        let viewed = crate::vault::operations::read_external_note(outside_note.to_str().unwrap())
+            .expect("an authorized external Markdown file is readable");
+        assert_eq!(viewed.path, outside_note.to_str().unwrap());
+        assert!(viewed.raw.contains("outside"));
+
+        // Inside the vault: the same command still works, so the viewer has one path.
+        assert!(ensure_readable_path(app.handle(), &vault_note).is_ok());
+        assert!(crate::vault::operations::read_external_note(vault_note.to_str().unwrap()).is_ok());
+
+        // Scoped but not Markdown: refused, because the viewer cannot render it.
+        assert!(
+            crate::vault::operations::read_external_note(outside_text.to_str().unwrap()).is_err()
+        );
+
+        // The mutation guards are untouched: an authorized external file is still not a note
+        // this vault will read through the vault validator, save, or delete.
+        let outside_arg = outside_note.to_str().unwrap();
+        assert!(crate::vault::operations::read_note(&vault_path, outside_arg).is_err());
+        assert!(crate::vault::operations::delete_note(&vault_path, outside_arg).is_err());
+        assert_eq!(fs::read_to_string(&outside_note).unwrap(), "outside");
 
         fs::remove_dir_all(root).unwrap();
     }

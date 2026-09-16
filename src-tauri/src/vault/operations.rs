@@ -584,6 +584,21 @@ pub fn read_vault_note(vault_path: &str, path: &str) -> Result<NoteContent, Stri
     read_note_content(&validated, path)
 }
 
+/// Read a Markdown file the user opened from outside the vault. Callers must have already
+/// checked the filesystem scope; this only refuses paths the viewer cannot render, and never
+/// widens the vault/trash validators used by every mutation command.
+pub fn read_external_note(path: &str) -> Result<NoteContent, String> {
+    let requested = Path::new(path);
+    if requested
+        .extension()
+        .and_then(|extension| extension.to_str())
+        != Some("md")
+    {
+        return Err("Note path must point to a Markdown file".to_string());
+    }
+    read_note_content(requested, path)
+}
+
 /// Read a note waiting for category assignment without opening access to the rest of
 /// `.helixnotes`. The same validator used by filing keeps preview and mutation aligned.
 pub fn read_unfiled_note(vault_path: &str, path: &str) -> Result<NoteContent, String> {

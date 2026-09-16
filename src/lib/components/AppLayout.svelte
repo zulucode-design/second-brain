@@ -74,7 +74,7 @@
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
 	const isMobile = $derived($platformIsMobile);
-	import { loadVaultState, saveVaultState, readNote, readUnfiledNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, notionStatus, notionPublishNow, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus, getHotkeyStatus, getRepairStatus, retryRepairs, clipWebPage, beginVaultSwitch, endVaultSwitch } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote, readExternalNote, readUnfiledNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, notionStatus, notionPublishNow, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus, getHotkeyStatus, getRepairStatus, retryRepairs, clipWebPage, beginVaultSwitch, endVaultSwitch } from '$lib/api';
 	import { darkThemes, isAndroid } from '$lib/platform';
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow, closeSecondaryWindowsForVaultSwitch } from '$lib/utils/window';
@@ -84,6 +84,7 @@
 	import { GenerationGate } from '$lib/utils/generation-gate';
 	import { runActiveDocumentMutation } from '$lib/utils/document-mutation';
 	import { describeLoadFailure } from '$lib/utils/async-view-state';
+	import { isExternalNotePath } from '$lib/utils/paths';
 	import { showToast } from '$lib/utils/toast';
 	import { get } from 'svelte/store';
 	import type { VaultState, FileEvent, NotebookEntry, TaskItem, AiStatus, HotkeyStatus, RepairStatus, ParaCategory, NoteContent, BulkMutationTerminal } from '$lib/types';
@@ -479,13 +480,13 @@
 		if (!filePath || !filePath.endsWith('.md')) return;
 		const config = get(appConfig);
 		const vaultRoot = config?.active_vault;
-		const isExternal = !vaultRoot || !filePath.startsWith(vaultRoot + '/');
+		const isExternal = isExternalNotePath(vaultRoot, filePath);
 
 		if (isExternal) {
 			if (isAndroid) return;
 			await afterCurrentNoteSaved('Opening the file', async () => {
 				try {
-					const content = await readNote(filePath);
+					const content = await readExternalNote(filePath);
 					if ($shutdownPending || !(await ensureCurrentNoteSaved('Opening the file')) || $shutdownPending) return false;
 					$viewerNote = { path: filePath, content: content.content };
 					$activeNote = content;
@@ -496,6 +497,7 @@
 					return true;
 				} catch (error) {
 					console.error('Failed to open external file:', error);
+					showToast(`Could not open this file: ${describeLoadFailure(error)}`);
 					return false;
 				}
 			});
