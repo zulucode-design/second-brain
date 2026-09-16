@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>External-alpha verification matrix — v2 (2026-09-16)</title>
+  <style>
+    :root {
+      --page: #f3f1eb; --paper: #fffdf8; --ink: #20241f; --muted: #626960; --line: #d7d1c5;
+      --accent: #185f52; --bad: #a42626; --bad-soft: #f8dfdc; --warn: #776000;
+      --warn-soft: #f4ebbd; --good: #276c43; --good-soft: #dcece2; --info: #4f6278; --info-soft: #e3e9f0;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      --serif: Iowan Old Style, Palatino Linotype, Georgia, serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #151815; --paper: #1d211d; --ink: #e8e6df; --muted: #a3a99f; --line: #373d36;
+        --accent: #7cc4b1; --bad: #f0a09a; --bad-soft: #3d2322; --warn: #e3cf73;
+        --warn-soft: #353016; --good: #8fd1a6; --good-soft: #1f3326; --info: #a9bad0; --info-soft: #242b34;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--page); color: var(--ink); font: 16px/1.6 var(--sans); }
+    a { color: var(--accent); }
+    code { font-family: var(--mono); font-size: 0.87em; overflow-wrap: anywhere; }
+    .page { width: min(1180px, calc(100% - 30px)); margin: 26px auto 70px; }
+    header, section { border: 1px solid var(--line); background: var(--paper); border-radius: 20px; padding: clamp(20px, 4vw, 44px); margin-bottom: 18px; }
+    h1 { margin: 0; font: 600 clamp(2rem, 5vw, 3.4rem)/1.05 var(--serif); letter-spacing: -0.03em; }
+    h2 { margin-top: 0; font: 600 1.6rem/1.2 var(--serif); }
+    .kicker { margin: 0 0 10px; color: var(--accent); font-size: 0.75rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
+    .gate { margin-top: 20px; padding: 14px 18px; border-radius: 12px; background: var(--bad-soft); }
+    .gate strong { color: var(--bad); }
+    .note { padding: 12px 16px; border-left: 4px solid var(--accent); background: var(--info-soft); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+    th, td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 700; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; }
+    .s { display: inline-block; padding: 1px 9px; border-radius: 99px; font-size: 0.78rem; font-weight: 750; white-space: nowrap; }
+    .green { color: var(--good); background: var(--good-soft); }
+    .red { color: var(--bad); background: var(--bad-soft); }
+    .amber { color: var(--warn); background: var(--warn-soft); }
+    .grey { color: var(--info); background: var(--info-soft); }
+    ol li, ul li { margin-bottom: 6px; }
+  </style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <p class="kicker">Package H · issue #88 · program #76</p>
+  <h1>External-alpha verification matrix</h1>
+  <p>Version 2, recorded 2026-09-16 against <code>main</code> at <code>857ae01</code>. This version supersedes
+  <a href="alpha-verification-matrix-v1-2026-09-14.html">version 1</a> as the active gate. Version 1 remains the
+  historical record of package H's first measurements and the completed package D protocol.</p>
+  <div class="gate"><strong>Gate status: not green.</strong> Packages A–G are implemented and D passed the real
+  two-machine interruption protocol. Remaining blockers are the G3 product-identity/updater outcome, diagnostic
+  export, dependency-license and warning triage, performance evidence, and final installed-package walkthroughs
+  from one release-candidate commit.</div>
+</header>
+
+<section>
+  <h2>Gate boundary</h2>
+  <p>External-alpha product support is exactly Windows 11 x86-64 and Fedora 44 Workstation x86-64, as settled by
+  ADR-0012 and issue #88. The Windows package for this gate is NSIS; the Fedora package is RPM. Existing Ubuntu,
+  deb, and Windows Server jobs remain useful build infrastructure, but they do not establish product support.
+  MSI, AppImage, macOS, Android, iOS, Ubuntu, and newer Fedora releases are outside this gate.</p>
+  <p>The tested capacity baseline is 10,000 notes in one logical vault. It is not an enforced maximum. All manual
+  tests use disposable vaults. No verification step may mutate the production vault.</p>
+  <div class="note"><strong>Candidate invalidation rule:</strong> final performance and package evidence names one
+  commit. A later change to runtime code, dependencies, packaging, capabilities, or configuration invalidates the
+  affected evidence and requires that row to be rerun.</div>
+</section>
+
+<section>
+  <h2>Current evidence</h2>
+  <table>
+    <tr><th>Area</th><th>Evidence at 857ae01</th><th>Status</th></tr>
+    <tr><td>Hosted verification</td><td>GitHub Actions run <a href="https://github.com/zulucode-design/second-brain/actions/runs/35114045441">35114045441</a> passed on 2026-09-16. It includes Ubuntu <code>pnpm verify</code>, Linux package assertions, and Windows <code>pnpm test:rust</code>.</td><td><span class="s green">green</span></td></tr>
+    <tr><td>A: save lifecycle</td><td>PR #90 regression suites cover edit→navigate and edit→close. Final installed-package walkthrough remains.</td><td><span class="s amber">package check open</span></td></tr>
+    <tr><td>B: WebDAV removal</td><td>PR #94 removed the production path.</td><td><span class="s green">green</span></td></tr>
+    <tr><td>C: restore and coordination</td><td>PR #93 proves rollback and bulk-mutation exclusion.</td><td><span class="s green">green</span></td></tr>
+    <tr><td>D: interruption-safe sync</td><td>Issue #97 passed both 5,000-note interruption runs on real Fedora and Windows packages. PRs #102, #106, and #107 fixed defects exposed by the protocol.</td><td><span class="s green">green</span></td></tr>
+    <tr><td>E: import and external viewer</td><td>PRs #114 and #115 completed the viewer and import-accuracy work.</td><td><span class="s green">green</span></td></tr>
+    <tr><td>F: durable writes and startup failures</td><td>PR #100 passed Windows held-file regressions. Final package walkthrough must display the startup-error path.</td><td><span class="s amber">package check open</span></td></tr>
+    <tr><td>G: visible correctness</td><td>PR #95 covers due dates, failed-versus-empty state, and semantic schema versioning.</td><td><span class="s green">green</span></td></tr>
+    <tr><td>Toolchain</td><td><code>pnpm@11.22.0</code>, Node <code>&gt;=22.13</code>, Rust 1.88, and Syncthing 2.1.5 are pinned. The test ignore rule is removed.</td><td><span class="s green">green</span></td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>Remaining controls</h2>
+  <table>
+    <tr><th>Control</th><th>Pass condition</th><th>Current state</th><th>Owner</th><th>Status</th></tr>
+    <tr><td>G3 implementation</td><td>Packages identify only as Second Brain <code>0.1.0-alpha.1</code>; executable/package names are <code>second-brain</code>; mixed-name development state migrates without deleting a vault; inherited updater endpoint, key, startup check, and update UI are absent.</td><td><code>tauri.conf.json</code> still names HelixNotes 1.3.4 and carries the inherited endpoint/key. Startup still calls the updater. Final package evidence would be invalidated by fixing this afterward.</td><td>#89, prerequisite for #88</td><td><span class="s red">blocking</span></td></tr>
+    <tr><td>Diagnostic export</td><td>User starts the export. Default output contains no note body, planted secret, note path/title, provider response body, or credential field. Tests inspect the produced archive.</td><td>Policy exists in <code>docs/log-privacy.md</code>; export is not implemented.</td><td>#88</td><td><span class="s red">missing</span></td></tr>
+    <tr><td>Install failure propagation</td><td>A deterministic fixture makes <code>svelte-kit sync</code> fail and proves <code>pnpm install</code> returns nonzero.</td><td><code>prepare</code> no longer suppresses failure; failure propagation has not been demonstrated.</td><td>#88</td><td><span class="s amber">proof missing</span></td></tr>
+    <tr><td>Dependency audit</td><td><code>pnpm audit</code> and <code>cargo audit</code> report no known vulnerability, production licenses are recorded, and every Cargo warning has a reachability and disposition entry.</td><td>Tiptap and rustls vulnerabilities are fixed. Cargo licenses and transitive warnings remain open.</td><td>#88</td><td><span class="s amber">partial</span></td></tr>
+    <tr><td>Performance</td><td>All budgets below pass on both real target machines against the same 10,000-note fixture and candidate commit.</td><td>No user-visible timings recorded.</td><td>#88</td><td><span class="s red">missing</span></td></tr>
+    <tr><td>Fedora package</td><td>RPM from the candidate commit installs, completes the walkthrough below, exits cleanly, and uninstalls without deleting the disposable vault.</td><td>A prior RPM was reinstalled and process-smoked. In-window walkthrough and uninstall are missing.</td><td>#88</td><td><span class="s amber">partial</span></td></tr>
+    <tr><td>Windows package</td><td>NSIS package from the candidate commit installs, completes the walkthrough below including #49's notification, exits with no sidecar/watchdog left, and uninstalls without deleting the disposable vault.</td><td>Prior NSIS packages installed and launched. In-window walkthrough, #49 notification, and uninstall are missing.</td><td>#88, #49</td><td><span class="s amber">partial</span></td></tr>
+    <tr><td>Residual defects</td><td>Every open defect found by remediation has an explicit severity, alpha disposition, owner, and milestone; no P0/P1 remains.</td><td>#110, #111, and #112 were non-blocking follow-ups from #97, but lack recorded severity and milestone.</td><td>#76</td><td><span class="s amber">classification missing</span></td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>Performance protocol and budgets</h2>
+  <p>Use five runs per machine and report every sample, median, and maximum. Start from a stopped app with a valid,
+  already-built local index unless the row explicitly measures rebuild. Measure user-visible completion, not native
+  window creation. Background semantic indexing may continue after the core interface becomes interactive.</p>
+  <table>
+    <tr><th>Measure</th><th>Fixture and interval</th><th>Budget</th></tr>
+    <tr><td>Cold startup</td><td>10,000-note vault; process launch until sidebar, note list, and editor accept input.</td><td>Median ≤ 3 s; every run ≤ 5 s.</td></tr>
+    <tr><td>Editor interaction</td><td>5,000-word Markdown note; 200 ordinary key presses; key event until editor paint.</td><td>p95 ≤ 50 ms; maximum ≤ 100 ms.</td></tr>
+    <tr><td>Graph render</td><td>10,000-note vault with recorded explicit-link count; graph command until first complete visible frame.</td><td>Median ≤ 2 s; every run ≤ 4 s.</td></tr>
+    <tr><td>Semantic retrieval</td><td>10,000 indexed notes; warm configured embedding backend; query submission until ranked results display.</td><td>p95 ≤ 2 s. Also record local exact-scan time separately; p95 ≤ 250 ms.</td></tr>
+  </table>
+  <p>If a budget fails, preserve raw measurements and open a focused defect. Do not weaken a budget in the same
+  change that fixes its failure.</p>
+</section>
+
+<section>
+  <h2>Final package walkthrough</h2>
+  <p>Run once on each supported machine against packages built from the same candidate commit. Record OS version,
+  package filename and SHA-256, commit, start/end time, screenshots, and relevant diagnostic export.</p>
+  <ol>
+    <li>Install the package and launch it from the installed desktop/start-menu entry.</li>
+    <li>Open a clean disposable vault; confirm all four PARA roots and no repair issues.</li>
+    <li>Capture a note, edit it, navigate away immediately, reopen it, edit it again, and close the app immediately. Confirm both saves survived.</li>
+    <li>Exercise keyword search, semantic search, graph, tasks, trash restore, note history, backup, and transactional restore.</li>
+    <li>Clip a reachable web page and attach a local file. Confirm AI-offline mode leaves capture, editing, organization, and keyword search usable.</li>
+    <li>Publish one disposable note to Notion when credentials are available; otherwise record the external-service block without using a production note.</li>
+    <li>Display the malformed-config startup error from package F, then restore the disposable configuration.</li>
+    <li>On Windows, perform #49's renamed-vault hotkey check and confirm the installed notification appears.</li>
+    <li>Export diagnostics and run the planted secret/body/path assertions against the produced archive.</li>
+    <li>Exit normally; confirm no app, sidecar, or watchdog process remains. Uninstall; confirm the disposable vault remains.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>Closure order</h2>
+  <ol>
+    <li>Land the narrow G3 identity, migration, and updater-disable slice from #89.</li>
+    <li>Implement and test diagnostic export.</li>
+    <li>Close install-failure and dependency-audit evidence.</li>
+    <li>Choose one candidate commit and run hosted plus real-machine verification.</li>
+    <li>Run performance protocol and final installed-package walkthroughs without changing the candidate.</li>
+    <li>Classify residual defects, update the audit and remediation plan, then close #49, #88, and the H row in #76 only when every blocking row is green.</li>
+  </ol>
+</section>
+
+</div>
+</body>
+</html>

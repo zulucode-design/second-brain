@@ -181,15 +181,15 @@
               <li>Windows CI uses <code>pnpm test:rust</code>; hosted Ubuntu verification/package jobs remain green.</li>
               <li>Gating component/IPC/E2E coverage retains package B’s WebDAV-unreachability policy checks and separately covers future sidecar interruption plus edit→immediate navigate, edit→close, and restore rollback.</li>
               <li>The matrix carries failed-import, startup/config, due-date/error-state, and semantic-schema rows owned by E–G; they may be explicitly deferred with target milestones and expected current outcomes without blocking H. The due-date/error-state and semantic-schema rows are no longer deferrals: PR #95 delivered them, so H records their implemented expected outcomes and cites the package G regressions as evidence. The failed-import and startup/config rows remain owned by E and F.</li>
-              <li>Deb/rpm and the supported Windows package are installed and smoke-launched, not only built or inspected.</li>
+              <li>Fedora 44 RPM and Windows 11 NSIS packages are installed, walked through, and uninstalled, not only built or inspected. Ubuntu/deb and Windows Server remain build infrastructure, not supported-product evidence.</li>
               <li>Define log privacy/redaction rules and provide a user-controlled diagnostic export that excludes note contents and secrets by default.</li>
               <li>Measure cold startup, editor interaction, graph rendering, and semantic retrieval on the primary Windows desktop and target Linux laptop; record thresholds and regressions in the matrix.</li>
               <li>Dependency vulnerability/license audit and updater signing checks exist.</li>
-              <li><code>packageManager</code>/engines are pinned; prepare no longer swallows failure — <strong>fixed on <code>chore/88-verification-matrix</code>, pending merge</strong> (<code>pnpm@11.22.0</code>, Node <code>&gt;=22.13</code>, CI reads the pinned pnpm, <code>prepare</code> runs <code>svelte-kit sync</code> without suppression); <s>test ignore rule removed</s> — <strong>done</strong> in <a href="https://github.com/zulucode-design/second-brain/pull/95">PR #95</a>, which deleted <code>/tests/*</code> and its allowlist exceptions so no suite can be silently untracked. The versioned matrix now lives at <code>docs/reports/alpha-verification-matrix-v1-2026-09-14.html</code>.</li>
+              <li><code>packageManager</code>/engines are pinned and <code>prepare</code> no longer swallows failure — <strong>merged in <a href="https://github.com/zulucode-design/second-brain/pull/98">PR #98</a></strong> (<code>pnpm@11.22.0</code>, Node <code>&gt;=22.13</code>, CI reads the pinned pnpm, <code>prepare</code> runs <code>svelte-kit sync</code> without suppression); <s>test ignore rule removed</s> — <strong>done</strong> in <a href="https://github.com/zulucode-design/second-brain/pull/95">PR #95</a>. The active record is <code>docs/reports/alpha-verification-matrix-v2-2026-09-16.html</code>.</li>
             </ul>
           </td>
           <td>Test assessment gaps; existing #24 and #49.</td>
-          <td>A and C provide focused save/navigation/shutdown, restore rollback, and bulk-coordination regressions; B provides WebDAV-unreachability policy checks. D provides local sidecar regressions and still requires its packaged two-machine scenarios; E–G are non-gating matrix rows unless separately promoted.</td>
+          <td>A–G are implemented, and D's packaged two-machine scenarios passed. The narrow G3 identity/migration/updater slice from I must land before H records final package and performance evidence; unrelated I cleanup stays in wave 5.</td>
         </tr>
         <tr>
           <td><strong>I</strong><br><span class="badge p3">P3 product/cleanup</span></td>
@@ -230,7 +230,7 @@
       <li><strong>Wave 1 — independent P1s complete:</strong> <span class="badge ready">A/B/C complete / verified</span> PR #90 fixed save lifecycle, PR #93 delivered transactional restore and the shared coordinator, and PR #94 removes WebDAV.</li>
       <li><strong>Wave 2 — coordinated mutation adoption:</strong> D adopts C’s coordinator for the selected sync architecture, then E adopts it for import. Keep each PR independently reviewable.</li>
       <li><strong>Wave 3 — durability and visible correctness:</strong> <span class="badge ready">G complete / verified</span> PR #95 delivered calendar due-date validation, the loading/empty/failed classifier with retry, and the semantic schema version contract. F remains open: it was taken out of wave order because G depends on nothing and touches no mutation, sync, or coordinator code.</li>
-      <li><strong>Wave 4 — verification closure:</strong> complete H against the implemented failure scenarios, including package installation/smoke evidence.</li>
+      <li><strong>Wave 4 — verification closure:</strong> complete H against the implemented failure scenarios. Pull forward only I's G3 identity/migration/updater slice before final package and performance evidence, because that slice changes the package under test.</li>
       <li><strong>Wave 5 — product alignment:</strong> I and G3/G4 migrations.</li>
       <li><strong>Wave 6 — scoped feature completion:</strong> J according to G2, followed by a fresh audit delta and alpha sign-off.</li>
     </ol>
