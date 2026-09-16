@@ -50,12 +50,12 @@
 <header>
   <p class="kicker">Package H · issue #88 · program #76</p>
   <h1>External-alpha verification matrix</h1>
-  <p>Version 2, recorded 2026-09-16 against <code>main</code> at <code>857ae01</code>. This version supersedes
+  <p>Version 2, recorded 2026-09-16 against <code>main</code> at <code>2a7d0c9</code>. This version supersedes
   <a href="alpha-verification-matrix-v1-2026-09-14.html">version 1</a> as the active gate. Version 1 remains the
   historical record of package H's first measurements and the completed package D protocol.</p>
   <div class="gate"><strong>Gate status: not green.</strong> Packages A–G are implemented and D passed the real
   two-machine interruption protocol. The G3 product-identity/updater implementation is complete in the identity
-  prerequisite change, and the diagnostic export is implemented with archive-content regression coverage. Remaining blockers are dependency-license and warning triage, performance evidence, and final installed-package walkthroughs
+  prerequisite change, and the diagnostic export is implemented with archive-content regression coverage. Remaining blockers are performance evidence and final installed-package walkthroughs
   from one release-candidate commit.</div>
 </header>
 
@@ -95,11 +95,33 @@
     <tr><td>G3 implementation</td><td>Packages identify only as Second Brain <code>0.1.0-alpha.1</code>; executable/package names are <code>second-brain</code>; mixed-name development state migrates without deleting a vault; inherited updater endpoint, key, startup check, and update UI are absent.</td><td>The identity prerequisite change applies the package/window/binary identity, preserves the stable application id, keyring service, and legacy config location, rewrites stale autostart/desktop launch references idempotently, and removes the inherited updater dependency, capability, configuration, startup check, and UI. Source-contract and Rust migration tests pass. Installed-package evidence remains part of the final walkthrough.</td><td>#89, prerequisite for #88</td><td><span class="s green">implemented</span></td></tr>
     <tr><td>Diagnostic export</td><td>User starts the export. Default output contains no note body, planted secret, note path/title, provider response body, or credential field. Tests inspect the produced archive.</td><td>Settings → Maintenance creates a ZIP with build/OS/package metadata, redacted configuration, sync status and last terminal outcome, and redacted rotated logs. The archive test proves planted vault content, secret, note path/title/id, device id, Tailscale address, and credential field are absent. Final installed-package walkthrough must exercise the button once.</td><td>#88</td><td><span class="s green">implemented</span></td></tr>
     <tr><td>Install failure propagation</td><td>A deterministic fixture makes <code>svelte-kit sync</code> fail and proves <code>pnpm install</code> returns nonzero.</td><td><code>tests/install-failure.test.mjs</code> runs <code>pnpm install --offline</code> against a temporary package using the repository's exact <code>prepare</code> command and an intentionally failing Svelte config; the test requires the install to fail with the fixture marker.</td><td>#88</td><td><span class="s green">verified</span></td></tr>
-    <tr><td>Dependency audit</td><td><code>pnpm audit</code> and <code>cargo audit</code> report no known vulnerability, production licenses are recorded, and every Cargo warning has a reachability and disposition entry.</td><td>Tiptap and rustls vulnerabilities are fixed. Cargo licenses and transitive warnings remain open.</td><td>#88</td><td><span class="s amber">partial</span></td></tr>
+    <tr><td>Dependency audit</td><td><code>pnpm audit --prod</code> and <code>cargo audit --file src-tauri/Cargo.lock</code> report no known vulnerability, production licenses are recorded, and every Cargo warning has a reachability and disposition entry.</td><td>Five compatible Cargo updates remove every patched advisory. Remaining twelve warnings have reviewed accept/defer dispositions below; no package vulnerability remains. Production JavaScript and Rust license metadata is compatible with AGPL-3.0-or-later; <code>khroma</code>'s metadata omission was checked against its bundled MIT license.</td><td>#88</td><td><span class="s green">verified</span></td></tr>
     <tr><td>Performance</td><td>All budgets below pass on both real target machines against the same 10,000-note fixture and candidate commit.</td><td>No user-visible timings recorded.</td><td>#88</td><td><span class="s red">missing</span></td></tr>
     <tr><td>Fedora package</td><td>RPM from the candidate commit installs, completes the walkthrough below, exits cleanly, and uninstalls without deleting the disposable vault.</td><td>A prior RPM was reinstalled and process-smoked. In-window walkthrough and uninstall are missing.</td><td>#88</td><td><span class="s amber">partial</span></td></tr>
     <tr><td>Windows package</td><td>NSIS package from the candidate commit installs, completes the walkthrough below including #49's notification, exits with no sidecar/watchdog left, and uninstalls without deleting the disposable vault.</td><td>Prior NSIS packages installed and launched. In-window walkthrough, #49 notification, and uninstall are missing.</td><td>#88, #49</td><td><span class="s amber">partial</span></td></tr>
     <tr><td>Residual defects</td><td>Every open defect found by remediation has an explicit severity, alpha disposition, owner, and milestone; no P0/P1 remains.</td><td>#110, #111, and #112 were non-blocking follow-ups from #97, but lack recorded severity and milestone.</td><td>#76</td><td><span class="s amber">classification missing</span></td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>Dependency-audit evidence</h2>
+  <p>Recorded against this branch's lockfile. <code>pnpm audit --prod</code> reports no known vulnerabilities.
+  <code>cargo audit --file src-tauri/Cargo.lock</code> reports zero vulnerabilities. Cargo metadata has no missing
+  license field; its expressions are permissive or offer a permissive option. <code>pnpm licenses list --prod</code>
+  reports the same compatible JavaScript set plus <code>khroma</code> as <q>Unknown</q>; its bundled <code>license</code> file is MIT.</p>
+  <p>Compatible lockfile updates move <code>anyhow</code> 1.0.102→1.0.104, <code>event-listener</code> 5.4.1→5.4.2,
+  <code>memmap2</code> 0.9.10→0.9.11, <code>rand</code> 0.8.5→0.8.6, and yanked <code>chacha20</code> 0.10.1→0.10.2.
+  These remove RUSTSEC-2026-0190, -0221, -0186, -0097 for rand 0.8, and the yanked-package warning without changing
+  declared dependencies.</p>
+  <table>
+    <tr><th>Warning</th><th>Parent and package reachability</th><th>Disposition</th></tr>
+    <tr><td><code>fxhash</code> 0.2.1<br>RUSTSEC-2025-0057</td><td><code>selectors → kuchikiki → tauri-utils</code>, enabled only by Tauri build/code-generation HTML manipulation. It does not ship in Windows or Fedora packages.</td><td>Accept: unmaintained informational warning, no patched version. Remove when Tauri removes this build dependency.</td></tr>
+    <tr><td><code>instant</code> 0.1.13<br>RUSTSEC-2024-0384</td><td><code>measure_time → tantivy → second-brain</code>; ships in both target packages.</td><td>Accept: unmaintained informational warning, no known vulnerability or compatible update. Reassess with next Tantivy update.</td></tr>
+    <tr><td><code>proc-macro-error</code> 1.0.4<br>RUSTSEC-2024-0370</td><td><code>glib-macros → glib</code>; compiler proc-macro only. It does not ship.</td><td>Accept: unmaintained informational warning. Remove only with upstream GTK/Tauri macro migration.</td></tr>
+    <tr><td><code>unic-char-property</code>, <code>unic-char-range</code>, <code>unic-common</code>, <code>unic-ucd-ident</code>, <code>unic-ucd-version</code> 0.9.0<br>RUSTSEC-2025-0081, -0075, -0080, -0100, -0098</td><td><code>urlpattern → tauri-utils → tauri</code>; ships in both target packages.</td><td>Accept: unmaintained informational warnings, no compatible patch. Tauri owns replacement; reassess on its next update.</td></tr>
+    <tr><td><code>glib</code> 0.18.5<br>RUSTSEC-2024-0429</td><td>GTK/WebKit stack below Tauri; Fedora package only. Application code and immediate GTK/Tauri callers contain no <code>Variant::array_iter_str</code> use, advisory's affected API.</td><td>Defer: no compatible update; fixed <code>glib</code> requires GTK/Tauri stack migration. Track on framework update; Windows unaffected.</td></tr>
+    <tr><td><code>lru</code> 0.12.5<br>RUSTSEC-2026-0002, -0253</td><td><code>tantivy → second-brain</code>; ships in both target packages. Tantivy's block cache uses only <code>get</code>, <code>put</code>, and <code>len</code>, not affected <code>iter_mut</code> or <code>pop</code> APIs.</td><td>Defer: no compatible update; fixed versions require Tantivy upgrade. Advisory-specific APIs are not reached by current Tantivy code.</td></tr>
+    <tr><td><code>rand</code> 0.7.3<br>RUSTSEC-2026-0097</td><td><code>phf_generator → phf_codegen → selectors → kuchikiki → tauri-utils</code>; build/code-generation only. It does not ship in either package.</td><td>Accept: advisory requires no-argument <code>rand::rng()</code>; rand 0.7 exposes only <code>rng(seed)</code> and its build-only parent cannot call affected API.</td></tr>
   </table>
 </section>
 
@@ -142,7 +164,7 @@
   <ol>
     <li><s>Land the narrow G3 identity, migration, and updater-disable slice from #89.</s> Implemented and covered by source-contract plus Linux/Windows migration tests.</li>
     <li><s>Implement and test diagnostic export.</s> Completed with archive-content regression coverage; exercise it during the final package walkthrough.</li>
-    <li><s>Prove install-failure propagation.</s> Completed with a deterministic temporary fixture. Close dependency-audit evidence.</li>
+    <li><s>Prove install-failure propagation.</s> Completed with a deterministic temporary fixture. <s>Close dependency-audit evidence.</s></li>
     <li>Choose one candidate commit and run hosted plus real-machine verification.</li>
     <li>Run performance protocol and final installed-package walkthroughs without changing the candidate.</li>
     <li>Classify residual defects, update the audit and remediation plan, then close #49, #88, and the H row in #76 only when every blocking row is green.</li>
