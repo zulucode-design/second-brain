@@ -102,6 +102,8 @@ export interface NotebookEntry {
 export interface SaveCommitOutcome {
   revision: string;
   warnings: string[];
+  /** The saved note's list row; the watcher does not announce the app's own saves. */
+  entry?: NoteEntry | null;
 }
 
 export interface RelocationOutcome {

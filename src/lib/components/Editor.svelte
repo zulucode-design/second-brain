@@ -3101,6 +3101,8 @@
 		persist: async ({ path, meta, body, expectedRevision }) => {
 			const outcome = await saveNote(path, meta, body, expectedRevision);
 			loadedRevision = outcome.revision;
+			const entry = outcome.entry;
+			if (entry) notes.update((list) => list.map((n) => (n.path === entry.path ? entry : n)));
 			if (outcome.warnings.length > 0) console.warn('Note saved with repairable projection warnings:', outcome.warnings);
 		},
 		onDirtyChange: (dirty) => { $editorDirty = dirty; },

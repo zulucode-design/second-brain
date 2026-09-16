@@ -673,6 +673,7 @@ pub fn save_note_if_revision(
     meta: &NoteMeta,
     body: &str,
     expected_revision: &str,
+    before_replace: impl FnOnce(&Path, &str),
 ) -> Result<SaveNoteOutcome, String> {
     let reported_path = path.to_string();
     let path = ensure_note_path(vault_path, Path::new(path))?;
@@ -698,12 +699,29 @@ pub fn save_note_if_revision(
     let filename = path.file_name().unwrap_or_default().to_string_lossy();
     let note = note_content_from_raw(&reported_path, raw.clone(), &filename);
 
+    // Before the write, not after: the watcher can observe the replacement before this
+    // function returns.
+    before_replace(&path, &revision);
     crate::durable::replace(&path, raw.as_bytes(), crate::durable::Mode::Shared)?;
     Ok(SaveNoteOutcome {
         revision,
         old_raw: existing,
         note,
     })
+}
+
+/// The note-list row for a note this process just saved, so the list can be updated without
+/// rescanning the vault.
+pub fn saved_note_entry(vault_path: &str, note: &NoteContent) -> NoteEntry {
+    let path = Path::new(&note.path);
+    NoteEntry {
+        path: note.path.clone(),
+        relative_path: crate::vault::path::to_portable_string(
+            path.strip_prefix(vault_path).unwrap_or(path),
+        ),
+        meta: note.meta.clone(),
+        preview: frontmatter::extract_preview(&note.content, 120),
+    }
 }
 
 pub fn save_note(
@@ -713,7 +731,7 @@ pub fn save_note(
     body: &str,
 ) -> Result<SaveNoteOutcome, String> {
     let current = read_vault_note(vault_path, path)?;
-    save_note_if_revision(vault_path, path, meta, body, &current.revision)
+    save_note_if_revision(vault_path, path, meta, body, &current.revision, |_, _| {})
 }
 
 pub fn create_note(
@@ -952,7 +970,7 @@ fn trashed_note_manifest_path(trash_note: &Path) -> PathBuf {
     trash_note.with_file_name(format!("{filename}.restore.json"))
 }
 
-fn content_sha256(content: &[u8]) -> String {
+pub(crate) fn content_sha256(content: &[u8]) -> String {
     format!("{:x}", Sha256::digest(content))
 }
 
@@ -3098,6 +3116,7 @@ mod tests {
                 &first_read.meta,
                 first_body,
                 &first_read.revision,
+                |_, _| {},
             )
             .unwrap();
             assert_ne!(saved.revision, first_read.revision);
@@ -3108,6 +3127,7 @@ mod tests {
                 &stale_read.meta,
                 stale_body,
                 &stale_read.revision,
+                |_, _| {},
             )
             .unwrap_err();
             assert!(conflict.contains("Save conflict"));
