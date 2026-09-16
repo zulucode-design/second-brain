@@ -109,6 +109,7 @@ struct Runtime {
     last_error: Option<String>,
     restart_count: u8,
     scheduler_generation: u64,
+    last_terminal: Option<crate::bulk_mutation::BulkMutationTerminal>,
 }
 
 pub struct SyncSidecar {
@@ -128,6 +129,7 @@ pub struct SyncStatus {
     peer_name: Option<String>,
     peer_connected: bool,
     vault_id: Option<String>,
+    last_terminal: Option<crate::bulk_mutation::BulkMutationTerminal>,
 }
 
 impl SyncSidecar {
@@ -142,6 +144,7 @@ impl SyncSidecar {
                 last_error: None,
                 restart_count: 0,
                 scheduler_generation: 0,
+                last_terminal: None,
             }),
             lifecycle: tokio::sync::Mutex::new(()),
         }
@@ -159,6 +162,7 @@ impl SyncSidecar {
             peer_name: None,
             peer_connected: false,
             vault_id: None,
+            last_terminal: runtime.last_terminal.clone(),
         })
     }
 }
@@ -1275,8 +1279,15 @@ fn hold_for_peer_handoff(
     }
 }
 
-fn run_sync(app: AppHandle, vault: PathBuf, control: ControlState, peer: Peer) {
+fn publish_sync_terminal(app: &AppHandle, terminal: crate::bulk_mutation::BulkMutationTerminal) {
     use tauri::Emitter;
+    if let Ok(mut runtime) = app.state::<AppState>().sync_sidecar.runtime.lock() {
+        runtime.last_terminal = Some(terminal.clone());
+    }
+    let _ = app.emit("sync-done", terminal);
+}
+
+fn run_sync(app: AppHandle, vault: PathBuf, control: ControlState, peer: Peer) {
     let state = app.state::<AppState>();
     let terminal = match state
         .bulk_mutation
@@ -1288,16 +1299,16 @@ fn run_sync(app: AppHandle, vault: PathBuf, control: ControlState, peer: Peer) {
                 Ok(config) => match crate::backup::get_backup_dir(&config.backup_location) {
                     Ok(dir) => (dir, config.backup_max_count),
                     Err(error) => {
-                        let _ = app.emit(
-                            "sync-done",
+                        publish_sync_terminal(
+                            &app,
                             crate::bulk_mutation::BulkMutationTerminal::failure(error),
                         );
                         return;
                     }
                 },
                 Err(error) => {
-                    let _ = app.emit(
-                        "sync-done",
+                    publish_sync_terminal(
+                        &app,
                         crate::bulk_mutation::BulkMutationTerminal::failure(error.to_string()),
                     );
                     return;
@@ -1308,8 +1319,8 @@ fn run_sync(app: AppHandle, vault: PathBuf, control: ControlState, peer: Peer) {
                 .zip(std::fs::canonicalize(&vault).ok())
                 .is_some_and(|(backup, vault)| backup.starts_with(vault));
             if backup_inside_vault {
-                let _ = app.emit(
-                    "sync-done",
+                publish_sync_terminal(
+                    &app,
                     crate::bulk_mutation::BulkMutationTerminal::failure(
                         "Sync aborted: choose a backup folder outside the vault",
                     ),
@@ -1329,8 +1340,8 @@ fn run_sync(app: AppHandle, vault: PathBuf, control: ControlState, peer: Peer) {
                     let folder_id = match machine_local::vault_id(&vault) {
                         Ok(id) => id,
                         Err(error) => {
-                            let _ = app.emit(
-                                "sync-done",
+                            publish_sync_terminal(
+                                &app,
                                 crate::bulk_mutation::BulkMutationTerminal::failure(error),
                             );
                             return;
@@ -1345,8 +1356,8 @@ fn run_sync(app: AppHandle, vault: PathBuf, control: ControlState, peer: Peer) {
                                 set_device_paused(&client, &control, &peer.device_id, false)
                             {
                                 let _ = set_folder_paused(&client, &control, &folder_id, true);
-                                let _ = app.emit(
-                                    "sync-done",
+                                publish_sync_terminal(
+                                    &app,
                                     crate::bulk_mutation::BulkMutationTerminal::failure(error),
                                 );
                                 return;
@@ -1385,7 +1396,7 @@ fn run_sync(app: AppHandle, vault: PathBuf, control: ControlState, peer: Peer) {
             }
         }
     };
-    let _ = app.emit("sync-done", terminal);
+    publish_sync_terminal(&app, terminal);
 }
 
 #[tauri::command]

@@ -1,8 +1,8 @@
 # Log privacy and diagnostics
 
 Package H (#88) requires a written redaction policy and a user-controlled diagnostic export
-that excludes note contents and secrets by default. This document is the policy. The export
-is not implemented yet; see "Diagnostic export" below.
+that excludes note contents and secrets by default. This document is the policy and describes
+the implemented export.
 
 ## Where logs go
 
@@ -47,7 +47,7 @@ forwarded to the log file.
 - Development-only `println!` and `eprintln!` calls exist in tests and in the portal probe.
   They do not reach the log file.
 
-## Diagnostic export (not yet implemented)
+## Diagnostic export
 
 The export must be started by the user, never automatic or uploaded by the app. By default
 it contains:
@@ -59,9 +59,10 @@ it contains:
 - configuration with every secret field removed, not masked.
 
 It never contains note files, attachments, history, trash, backups, the search or semantic
-indexes, or the keyring. Including unredacted paths is a separate, explicit choice that the
-export screen explains.
+indexes, or the keyring. There is no unredacted mode. Add one only with a separate, explicit
+consent flow and tests.
 
-Implementation is deferred until #86 merges, because it touches the same startup and command
-modules. Tests must prove that a planted secret, a planted note body, and a planted note path
-never appear in a default export.
+The export is available under Settings → Maintenance. It writes one ZIP archive containing
+`manifest.json`, redacted `config.json`, redacted `sync.json`, and redacted rotated logs. Its
+regression test opens the produced archive and proves that a planted secret, note body, note
+path/title, note id, Syncthing device id, Tailscale address, and credential field do not appear.

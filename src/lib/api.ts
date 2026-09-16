@@ -50,6 +50,10 @@ export async function getAppConfig(): Promise<AppConfig> {
   return invoke("get_app_config");
 }
 
+export async function exportDiagnostics(path: string): Promise<void> {
+  return invoke("export_diagnostics", { path });
+}
+
 export async function setTheme(theme: string): Promise<void> {
   return invoke("set_theme", { theme });
 }

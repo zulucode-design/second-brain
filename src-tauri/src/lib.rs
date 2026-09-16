@@ -6,6 +6,7 @@ mod autostart;
 mod backup;
 mod bulk_mutation;
 mod commands;
+mod diagnostic_export;
 mod durable;
 mod history;
 mod hotkey;
@@ -464,6 +465,7 @@ pub fn run() {
             commands::restore_external_vault,
             commands::remove_vault,
             commands::get_app_config,
+            diagnostic_export::export_diagnostics,
             commands::set_theme,
             commands::set_system_themes,
             commands::set_accent_color,
