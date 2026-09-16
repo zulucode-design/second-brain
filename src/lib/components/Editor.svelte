@@ -48,7 +48,7 @@
 	import { debounce } from '$lib/utils/debounce';
 	import { SaveCoordinator, type SaveResult } from '$lib/utils/save-coordinator';
 	import { EditorMutationBarrier, type EditorDocumentIdentity } from '$lib/utils/editor-mutation-barrier';
-	import type { NoteNavigationResult } from '$lib/utils/navigation';
+	import { NOTE_SAVED_EVENT, type NoteNavigationResult } from '$lib/utils/navigation';
 	import { encryptSecretText, decryptSecretText, readSecretTitle } from '$lib/utils/secrets';
 	import { WrapSelectedText } from '$lib/editor/extensions/wrapSelectedText';
 	import { CodeBlockInputScroll } from '$lib/editor/extensions/codeBlockInputScroll';
@@ -3103,6 +3103,7 @@
 			loadedRevision = outcome.revision;
 			const entry = outcome.entry;
 			if (entry) notes.update((list) => list.map((n) => (n.path === entry.path ? entry : n)));
+			window.dispatchEvent(new CustomEvent(NOTE_SAVED_EVENT, { detail: { path, hasTasks: /^\s*[-*] \[[ xX]\]/m.test(body) } }));
 			if (outcome.warnings.length > 0) console.warn('Note saved with repairable projection warnings:', outcome.warnings);
 		},
 		onDirtyChange: (dirty) => { $editorDirty = dirty; },

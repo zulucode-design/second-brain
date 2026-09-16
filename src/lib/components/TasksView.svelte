@@ -3,6 +3,7 @@
 	import { listen } from '@tauri-apps/api/event';
 	import { getTasks } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
+	import { NOTE_SAVED_EVENT } from '$lib/utils/navigation';
 	import { tasksLayout, tasksHideCompleted, tasksOnlyFlagged, tasksSort, appConfig } from '$lib/stores/app';
 	import { isAndroid } from '$lib/platform';
 	import { asyncViewState, type LoadStatus } from '$lib/utils/async-view-state';
@@ -45,7 +46,12 @@
 	onMount(() => {
 		load();
 		listen<FileEvent>('file-changed', () => debouncedLoad()).then((u) => (unlisten = u));
-		return () => { unlisten?.(); };
+		const onNoteSaved = (event: Event) => {
+			const { path, hasTasks } = (event as CustomEvent<{ path: string; hasTasks: boolean }>).detail;
+			if (hasTasks || tasks.some((task) => task.note_path === path)) debouncedLoad();
+		};
+		window.addEventListener(NOTE_SAVED_EVENT, onNoteSaved);
+		return () => { unlisten?.(); window.removeEventListener(NOTE_SAVED_EVENT, onNoteSaved); };
 	});
 
 	// Local YYYY-MM-DD (en-CA gives ISO-style date)
