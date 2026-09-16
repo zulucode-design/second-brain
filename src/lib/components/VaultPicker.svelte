@@ -15,7 +15,7 @@
 	let recentVaults: VaultConfig[] = $derived($appConfig?.vaults ?? []);
 	let loading = $state(false);
 	let error = $state('');
-	let vaultName = $state('HelixNotes');
+	let vaultName = $state('Second Brain');
 	let hasPermission = $state(!isAndroid);
 	let selectedLocation = $state('Documents');
 	let switchReleaseStarted = false;
@@ -75,7 +75,7 @@
 			const bridge = (window as any).Android;
 			bridge?.requestStoragePermission?.();
 		} catch {
-			error = 'Go to Settings > Apps > HelixNotes > Permissions and enable "All files access".';
+			error = 'Go to Settings > Apps > Second Brain > Permissions and enable "All files access".';
 		}
 	}
 
@@ -87,15 +87,15 @@
 	}
 
 	let fullPath = $derived(
-		isIOS ? `${iosBasePath}/${vaultName.trim() || 'HelixNotes'}`
-		: isAndroid ? `${getMobileBasePath()}/${vaultName.trim() || 'HelixNotes'}`
+		isIOS ? `${iosBasePath}/${vaultName.trim() || 'Second Brain'}`
+		: isAndroid ? `${getMobileBasePath()}/${vaultName.trim() || 'Second Brain'}`
 		: ''
 	);
 
 	async function pickFolder() {
 		if (isIOS) {
 			const base = iosBasePath || (await documentDir()).replace(/\/+$/, '');
-			await openSelectedVault(`${base}/${vaultName.trim() || 'HelixNotes'}`);
+			await openSelectedVault(`${base}/${vaultName.trim() || 'Second Brain'}`);
 		} else if (isAndroid) {
 			await openSelectedVault(fullPath);
 		} else {
@@ -123,7 +123,7 @@
 		} catch (e) {
 			const msg = String(e);
 			if (isAndroid && /os error 13|permission denied/i.test(msg)) {
-				error = 'Storage permission is required. Enable file access for HelixNotes in your system settings, then try again.';
+				error = 'Storage permission is required. Enable file access for Second Brain in your system settings, then try again.';
 			} else {
 				error = msg;
 			}
@@ -222,11 +222,11 @@
 				<line x1="29" y1="18" x2="19" y2="30" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.7" />
 			</svg>
 		</div>
-		<h1>HelixNotes</h1>
+		<h1>Second Brain</h1>
 		<p class="subtitle">Local markdown notes</p>
 		{#if isMobile}
 			{#if isIOS}
-				<p class="description">Keep notes in HelixNotes, or use an existing folder from iCloud Drive or Files.</p>
+				<p class="description">Keep notes in Second Brain, or use an existing folder from iCloud Drive or Files.</p>
 			{:else}
 				<p class="description">Choose where to store your notes. Sync with Syncthing, Nextcloud, or any file sync app.</p>
 			{/if}
@@ -265,7 +265,7 @@
 
 			<div class="vault-name-input">
 				<label for="vault-name">Vault name</label>
-				<div class="vault-name-preview"><input id="vault-name" type="text" bind:value={vaultName} placeholder="HelixNotes" /></div>
+				<div class="vault-name-preview"><input id="vault-name" type="text" bind:value={vaultName} placeholder="Second Brain" /></div>
 				<span class="vault-path-hint">{fullPath}</span>
 			</div>
 		{:else}

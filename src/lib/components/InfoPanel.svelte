@@ -136,7 +136,7 @@
 							<line x1="29" y1="18" x2="19" y2="30" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.7" />
 						</svg>
 					</div>
-					<h3 class="app-name">HelixNotes</h3>
+					<h3 class="app-name">Second Brain</h3>
 					<p class="app-version">v{appVersion}</p>
 					<p class="app-description">A local markdown note-taking app.</p>
 
@@ -144,13 +144,13 @@
 
 					<div class="info-credits">
 						<p>Created by <strong>Yuri Karamian</strong></p>
-						<button class="info-link" onclick={() => openLink('https://helixnotes.com')}>
+						<button class="info-link" onclick={() => openLink('https://github.com/zulucode-design/second-brain')}>
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 								<circle cx="12" cy="12" r="10" />
 								<line x1="2" y1="12" x2="22" y2="12" />
 								<path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" />
 							</svg>
-							helixnotes.com
+							GitHub repository
 						</button>
 					</div>
 				{:else}

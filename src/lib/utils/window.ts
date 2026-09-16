@@ -31,7 +31,7 @@ export async function openNoteWindow(notePath: string, noteTitle: string) {
 	try {
 		const noteWindow = new WebviewWindow(reservation.label, {
 			url,
-			title: `${noteTitle} - HelixNotes`,
+			title: `${noteTitle} - Second Brain`,
 			width: 900,
 			height: 700,
 			minWidth: 500,

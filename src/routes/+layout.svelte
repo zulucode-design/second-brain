@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import '../app.css';
-	import { resolvedTheme, appConfig, activeNotePath, installType, platformIsMobile, checkForUpdate, checkForUpdateMobile, isManagedInstall, customThemes } from '$lib/stores/app';
-	import { openFile, openUrl, getInstallType, isMobilePlatform } from '$lib/api';
+	import { resolvedTheme, appConfig, activeNotePath, platformIsMobile, customThemes } from '$lib/stores/app';
+	import { openFile, openUrl, isMobilePlatform } from '$lib/api';
 	import { get } from 'svelte/store';
 	import { darkThemes, isMobile, isAndroid } from '$lib/platform';
 	import type { CustomTheme } from '$lib/types';
@@ -13,8 +13,7 @@
 	let { children } = $props();
 
 	// The quick-capture overlay is its own window on the same bundle. It gets the theme, but
-	// none of the main window's furniture: it is not resizable, and running the update check
-	// again from a second window would double every launch's network call.
+	// none of the main window's furniture because it is not resizable.
 	const isCaptureWindow =
 		typeof window !== 'undefined' && window.location.pathname.startsWith('/capture');
 
@@ -111,20 +110,10 @@
 		}
 	}
 
-	// Detect install type and check for updates on startup
+	// Replace the user-agent guess with the backend's compile-time platform.
 	onMount(() => {
 		if (isCaptureWindow) return;
-		// Authoritative platform from the backend (compile-time), overriding the UA guess. (#63)
 		isMobilePlatform().then((m) => platformIsMobile.set(m)).catch(() => {});
-		if (isMobile) {
-			installType.set('android');
-			// Android updates come from the F-droid repo / Obtainium, so no in-app update check.
-		} else {
-			getInstallType().then(t => {
-				installType.set(t);
-				if (!isManagedInstall(t)) checkForUpdate();
-			}).catch(() => {});
-		}
 	});
 
 	// Intercept all link clicks in capture phase to prevent webview navigation
@@ -221,7 +210,7 @@
 <svelte:document oncontextmenu={(e) => { if (!isMobile) e.preventDefault(); }} />
 
 <svelte:head>
-	<title>HelixNotes</title>
+	<title>Second Brain</title>
 </svelte:head>
 
 {@render children()}
