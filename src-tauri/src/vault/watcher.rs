@@ -141,6 +141,12 @@ pub fn start_watcher(
         while let Ok(result) = rx.recv() {
             match result {
                 Ok(event) => {
+                    // notify reports every open on Linux. Reading a note is not a change,
+                    // and forwarding it made each index flush and vault scan re-queue the
+                    // notes it had just read, a loop that never settled (#127).
+                    if matches!(event.kind, EventKind::Access(_)) {
+                        continue;
+                    }
                     let state = app.state::<AppState>();
                     // A bulk consumer owns reconciliation. Dropping all watcher work here
                     // prevents stale incremental index writes as well as UI event storms.
