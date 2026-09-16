@@ -105,7 +105,7 @@
       the watchdog stopped the orphaned sidecar within 5 s, and the reopened app converged. Evidence: #97 comments 5685043384 and 5688674503.
       Non-blocking follow-ups: #110 (a run stalls the full five minutes after a sidecar restart), #111 (no sync-run logging),
       #112 (joining a vault creates a <code>config.json</code> conflict copy).</td><td><span class="s green">green</span></td></tr>
-    <tr><td>E: import and external viewer</td><td>#85</td><td>overlapping imports refused; failures counted; external file opens read-only</td><td>not started</td><td><span class="s grey">deferred, non-gating</span></td></tr>
+    <tr><td>E: import and external viewer</td><td>#85</td><td>overlapping imports refused; failures counted; external file opens read-only</td><td>external viewer fixed (read_external_note, scope-checked, tested); import accuracy in progress</td><td><span class="s grey">deferred, non-gating</span></td></tr>
     <tr><td>F: durable writes and startup failures</td><td>#86</td><td>interrupted writes keep the previous file; config failures are distinct and visible</td><td>merged in PR #100 (<code>c8017b1</code>). Windows: the replace retries <code>MoveFileExW</code> 11 times, 25 ms apart, on
       errors 5 and 32; <code>pnpm test:rust</code> passed on the desktop at <code>4a22c6a</code> (506 passed), including the held-then-released
       and held-past-budget tests. Accepted Windows limits: no directory fsync on NTFS (<code>MOVEFILE_WRITE_THROUGH</code> covers the
