@@ -2,6 +2,7 @@
 	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
 	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, notionStatus, notionConnect, notionDisconnect, notionSetEnabled, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex, getSyncStatus, setSyncEnabled, pairSyncDevice, syncNow, listSyncConflicts, resolveSyncConflict, copyTextToClipboard } from '$lib/api';
 	import type { AiProvider } from '$lib/types';
+	import { importOutcomeView, type ImportDonePayload } from '$lib/utils/import-outcome';
 	import { AI_PROVIDER_METADATA, AI_PROVIDER_OPTIONS } from '$lib/utils/ai-provider';
 	import { darkThemes, isMobile, isAndroid, isLinux, isWindows } from '$lib/platform';
 	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
@@ -1070,19 +1071,11 @@
 		importResult = null;
 		importError = null;
 
-		const unlistenDone = await listen<{ success: boolean; files_converted?: number; links_converted?: number; frontmatter_normalized?: number; syntax_converted?: number; attachments_moved?: number; error?: string }>('import-done', (event) => {
-			const data = event.payload;
-			if (data.success) {
-				importResult = {
-					files_converted: data.files_converted ?? 0,
-					links_converted: data.links_converted ?? 0,
-					frontmatter_normalized: data.frontmatter_normalized ?? 0,
-					syntax_converted: data.syntax_converted ?? 0,
-					attachments_moved: data.attachments_moved ?? 0,
-				};
-			} else {
-				importError = data.error ?? 'Import failed';
-			}
+		const unlistenDone = await listen<ImportDonePayload>('import-done', async (event) => {
+			const view = importOutcomeView(event.payload);
+			importResult = view.result;
+			importError = view.error;
+			if (view.refresh) await onAfterRestore?.();
 			importLoading = false;
 			unlistenDone();
 		});
@@ -2497,7 +2490,7 @@
 								<div class="import-result success">
 									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
 									<div class="import-stats">
-										<span>Import complete</span>
+										<span>{importError ? 'Import incomplete — what did convert:' : 'Import complete'}</span>
 										<ul>
 											{#if importResult.frontmatter_normalized}<li>Normalized frontmatter in {importResult.frontmatter_normalized} notes</li>{/if}
 											{#if importResult.links_converted}<li>Converted {importResult.links_converted} wiki-links to markdown</li>{/if}

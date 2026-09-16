@@ -54,40 +54,44 @@ pub fn import(vault_path: &str) -> Result<ImportResult, String> {
         frontmatter_normalized: 0,
         syntax_converted: 0,
         attachments_moved: 0,
+        failed: Vec::new(),
     };
 
     for path in &md_files {
+        // This note's conversions are counted locally and added to the totals only once its
+        // single write succeeds, so the reported totals describe what reached the disk and
+        // there is no rollback to get wrong.
+        let mut note_links = 0u64;
+        let mut note_frontmatter = 0u64;
+        let mut note_syntax = 0u64;
         let raw = match std::fs::read_to_string(path) {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(error) => {
+                result.failed.push(format!("{}: {error}", path.display()));
+                continue;
+            }
         };
         let note_dir = path.parent().unwrap_or(Path::new(""));
 
         let mut content = raw.clone();
-        let mut changed = false;
 
         let renamed = rename_deprecated_properties(&content);
         if renamed != content {
             content = renamed;
-            changed = true;
         }
 
         let (meta, body) = normalize_frontmatter(&content, path);
         let normalized = frontmatter::merge_frontmatter(&content, &meta, &body);
         if normalized != content {
             content = normalized;
-            changed = true;
-            result.frontmatter_normalized += 1;
+            note_frontmatter += 1;
         }
 
         let after_syntax = convert_syntax(&content, &highlight_re, &comment_re);
         if after_syntax != content {
             content = after_syntax;
-            changed = true;
-            result.syntax_converted += 1;
+            note_syntax += 1;
         }
-
-        let links_before = result.links_converted;
 
         let after_embeds = wiki_embed_re
             .replace_all(&content, |caps: &regex::Captures| {
@@ -97,7 +101,7 @@ pub fn import(vault_path: &str) -> Result<ImportResult, String> {
                 if file_part.is_empty() {
                     if let Some(a) = anchor {
                         let display = if alt_param.is_empty() { a } else { alt_param };
-                        result.links_converted += 1;
+                        note_links += 1;
                         return format!("[{}](#{})", display, a);
                     }
                 }
@@ -128,7 +132,7 @@ pub fn import(vault_path: &str) -> Result<ImportResult, String> {
                     } else {
                         alt_param
                     };
-                    result.links_converted += 1;
+                    note_links += 1;
                     format!("![{}]({})", alt, link_target)
                 } else {
                     let display = if alt_param.is_empty() || is_dimension_spec(alt_param) {
@@ -136,7 +140,7 @@ pub fn import(vault_path: &str) -> Result<ImportResult, String> {
                     } else {
                         alt_param
                     };
-                    result.links_converted += 1;
+                    note_links += 1;
                     format!("[{}]({})", display, link_target)
                 }
             })
@@ -155,7 +159,7 @@ pub fn import(vault_path: &str) -> Result<ImportResult, String> {
                         } else {
                             display_param
                         };
-                        result.links_converted += 1;
+                        note_links += 1;
                         return format!("[{}](#{})", display, a);
                     }
                 }
@@ -176,7 +180,7 @@ pub fn import(vault_path: &str) -> Result<ImportResult, String> {
                 } else {
                     display_param
                 };
-                result.links_converted += 1;
+                note_links += 1;
                 format!("[{}]({})", display, link_target)
             })
             .to_string();
@@ -188,7 +192,7 @@ pub fn import(vault_path: &str) -> Result<ImportResult, String> {
             vault,
             note_dir,
             &file_index,
-            &mut result.links_converted,
+            &mut note_links,
         );
         content = fix_md_link_refs(
             &content,
@@ -196,24 +200,32 @@ pub fn import(vault_path: &str) -> Result<ImportResult, String> {
             vault,
             note_dir,
             &file_index,
-            &mut result.links_converted,
+            &mut note_links,
         );
 
-        if result.links_converted > links_before {
-            changed = true;
-        }
-
-        if changed {
-            let _ = crate::durable::replace(path, content.as_bytes(), crate::durable::Mode::Shared);
-            result.files_converted += 1;
+        // Whether to write is decided by the content, not by the counters: a pass can make a
+        // real change it does not count (encoding a space in an href), and a counter that
+        // stood in for "changed" would drop that rewrite.
+        if content != raw {
+            match crate::durable::replace(path, content.as_bytes(), crate::durable::Mode::Shared) {
+                Ok(()) => {
+                    result.files_converted += 1;
+                    result.links_converted += note_links;
+                    result.frontmatter_normalized += note_frontmatter;
+                    result.syntax_converted += note_syntax;
+                }
+                Err(error) => result.failed.push(format!("{}: {error}", path.display())),
+            }
         }
     }
 
-    let moved = move_attachments(vault)?;
+    // Attachment relocation runs after every note has already been rewritten, so a failure
+    // here leaves the vault changed but incomplete. Both steps record what they could not do
+    // and carry on: returning early would discard the record of what did change.
+    let moved = move_attachments(vault, &mut result.failed);
     result.attachments_moved = moved.len() as u64;
-
     if !moved.is_empty() {
-        rewrite_attachment_refs(vault, &moved)?;
+        rewrite_attachment_refs(vault, &moved, &mut result.failed);
     }
 
     cleanup_empty_dirs(vault);
@@ -507,14 +519,20 @@ fn fix_md_image_refs(
         }
         if !decoded.contains('/') {
             if let Some(rel) = file_index.get(&decoded) {
-                *links_converted += 1;
                 let abs_target = vault.join(rel);
                 let note_rel = pathdiff(
                     abs_target.to_str().unwrap_or(""),
                     note_dir.to_str().unwrap_or(""),
                 )
                 .unwrap_or(rel.clone());
-                return format!("![{}]({})", alt, note_rel.replace(' ', "%20"));
+                // Count what this pass actually emits, not what it resolved: a reference the
+                // wiki pass already rewrote emits the string already on the page, while one
+                // whose spaces need encoding is a real rewrite even though the target matches.
+                let emitted = note_rel.replace(' ', "%20");
+                if emitted != *src {
+                    *links_converted += 1;
+                }
+                return format!("![{}]({})", alt, emitted);
             }
         }
         if decoded.contains('/') {
@@ -557,14 +575,19 @@ fn fix_md_link_refs(
         }
         if !decoded.contains('/') {
             if let Some(rel) = file_index.get(&decoded) {
-                *links_converted += 1;
                 let abs_target = vault.join(rel);
                 let note_rel = pathdiff(
                     abs_target.to_str().unwrap_or(""),
                     note_dir.to_str().unwrap_or(""),
                 )
                 .unwrap_or(rel.clone());
-                return format!("[{}]({})", display, note_rel.replace(' ', "%20"));
+                // Same as the image pass: the emitted href decides, so an already-rewritten
+                // link is not counted twice and an encoding-only rewrite is not missed.
+                let emitted = note_rel.replace(' ', "%20");
+                if emitted != href {
+                    *links_converted += 1;
+                }
+                return format!("[{}]({})", display, emitted);
             }
         }
         if decoded.contains('/') {
@@ -586,9 +609,18 @@ fn fix_md_link_refs(
     .to_string()
 }
 
-fn move_attachments(vault: &Path) -> Result<HashMap<String, String>, String> {
+/// Move every non-Markdown file into the vault's attachments directory, reporting what it
+/// could not move through `failed` — the same channel the note rewrites use, so the caller
+/// has one place to look rather than a `Result` it has to funnel back into the list.
+fn move_attachments(vault: &Path, failed: &mut Vec<String>) -> HashMap<String, String> {
+    let mut moved: HashMap<String, String> = HashMap::new();
     let attachments_dir = vault.join(".helixnotes").join("attachments");
-    let _ = std::fs::create_dir_all(&attachments_dir);
+    if let Err(error) = std::fs::create_dir_all(&attachments_dir) {
+        failed.push(format!(
+            "Failed to create the attachments directory: {error}"
+        ));
+        return moved;
+    }
 
     let attachment_files: Vec<_> = walkdir::WalkDir::new(vault)
         .into_iter()
@@ -610,33 +642,60 @@ fn move_attachments(vault: &Path) -> Result<HashMap<String, String>, String> {
         .map(|e| e.path().to_path_buf())
         .collect();
 
-    let mut moved: HashMap<String, String> = HashMap::new();
-
     for src_path in &attachment_files {
         let old_rel = match src_path.strip_prefix(vault) {
             Ok(r) => r.to_string_lossy().to_string(),
-            Err(_) => continue,
+            Err(error) => {
+                failed.push(format!("{}: {error}", src_path.display()));
+                continue;
+            }
         };
         let new_rel = format!(".helixnotes/attachments/{}", old_rel);
         let dest_path = vault.join(&new_rel);
 
         if let Some(parent) = dest_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                failed.push(format!("{}: {error}", src_path.display()));
+                continue;
+            }
         }
 
-        if std::fs::rename(src_path, &dest_path).is_ok()
-            || std::fs::copy(src_path, &dest_path)
+        // A rename across filesystems fails, so fall back to copy-then-remove; only report
+        // the failure when neither route moved the file.
+        match std::fs::rename(src_path, &dest_path) {
+            Ok(()) => {
+                moved.insert(old_rel, new_rel);
+            }
+            Err(rename_error) => match std::fs::copy(src_path, &dest_path)
                 .and_then(|_| std::fs::remove_file(src_path))
-                .is_ok()
-        {
-            moved.insert(old_rel, new_rel);
+            {
+                Ok(()) => {
+                    moved.insert(old_rel, new_rel);
+                }
+                Err(copy_error) => failed.push(format!(
+                    "{}: {rename_error}; {copy_error}",
+                    src_path.display()
+                )),
+            },
         }
     }
-    Ok(moved)
+    moved
 }
 
-fn rewrite_attachment_refs(vault: &Path, moved: &HashMap<String, String>) -> Result<(), String> {
-    let md_ref = Regex::new(r"(!?\[[^\]]*\])\(([^)]+)\)").map_err(|e| e.to_string())?;
+/// Point every reference at its attachment's new home, reporting through `failed` for the
+/// same reason `move_attachments` does.
+fn rewrite_attachment_refs(
+    vault: &Path,
+    moved: &HashMap<String, String>,
+    failed: &mut Vec<String>,
+) {
+    let md_ref = match Regex::new(r"(!?\[[^\]]*\])\(([^)]+)\)") {
+        Ok(regex) => regex,
+        Err(error) => {
+            failed.push(error.to_string());
+            return;
+        }
+    };
 
     let md_files: Vec<_> = walkdir::WalkDir::new(vault)
         .into_iter()
@@ -653,7 +712,10 @@ fn rewrite_attachment_refs(vault: &Path, moved: &HashMap<String, String>) -> Res
     for path in &md_files {
         let content = match std::fs::read_to_string(path) {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(error) => {
+                failed.push(format!("{}: {error}", path.display()));
+                continue;
+            }
         };
         let note_dir = path.parent().unwrap_or(Path::new(""));
 
@@ -702,11 +764,15 @@ fn rewrite_attachment_refs(vault: &Path, moved: &HashMap<String, String>) -> Res
             .to_string();
 
         if new_content != content {
-            let _ =
-                crate::durable::replace(path, new_content.as_bytes(), crate::durable::Mode::Shared);
+            // A note whose attachment links were not rewritten now points at a file that has
+            // moved, so this failure has to reach the user rather than the log.
+            if let Err(error) =
+                crate::durable::replace(path, new_content.as_bytes(), crate::durable::Mode::Shared)
+            {
+                failed.push(format!("{}: {error}", path.display()));
+            }
         }
     }
-    Ok(())
 }
 
 fn cleanup_empty_dirs(root: &Path) {
@@ -1036,6 +1102,114 @@ mod tests {
         assert!(report.unfiled.is_empty());
     }
 
+    /// A write that fails must not be counted as a conversion. Every per-note counter is
+    /// checked, not just `files_converted`: the link, frontmatter, and syntax counters are
+    /// incremented while the note is being rewritten in memory, before the single write.
+    #[test]
+    fn a_failed_write_is_reported_as_a_failure_rather_than_a_conversion() {
+        let vault = std::env::temp_dir().join(format!("import-write-failure-{}", Uuid::new_v4()));
+        let note_path = vault.join("note.md");
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::write(
+            &note_path,
+            "---\nalias: old\n---\n\n==highlight== and a [[wiki link]]\n",
+        )
+        .unwrap();
+        let before = std::fs::read_to_string(&note_path).unwrap();
+
+        let result = crate::durable::tests::with_interrupted_replace(|| {
+            import(&vault.to_string_lossy()).unwrap()
+        });
+        let after = std::fs::read_to_string(&note_path).unwrap();
+        std::fs::remove_dir_all(&vault).unwrap();
+
+        assert_eq!(
+            after, before,
+            "an interrupted write leaves the note as it was"
+        );
+        assert_eq!(
+            result.files_converted, 0,
+            "a failed write is not a conversion"
+        );
+        assert_eq!(result.links_converted, 0);
+        assert_eq!(result.frontmatter_normalized, 0);
+        assert_eq!(result.syntax_converted, 0);
+        assert!(!result.mutated(), "nothing reached the disk");
+        assert_eq!(
+            result.failed.len(),
+            1,
+            "the failure is reported: {:?}",
+            result.failed
+        );
+        assert!(result.failed[0].contains("note.md"));
+    }
+
+    /// Wiki links are rewritten by the wiki pass and then re-resolved by the Markdown-link
+    /// pass. Only a pass that actually changes the target has converted anything: counting
+    /// the second resolution too reported three converted links as five.
+    /// A link whose only defect is an unencoded space is rewritten by the Markdown-link pass
+    /// and must be both counted and written, even though its resolved target is unchanged.
+    /// Deriving "changed" from the counters, or counting the resolved target instead of the
+    /// emitted href, loses this rewrite.
+    #[test]
+    fn encoding_a_space_in_a_link_counts_and_is_written() {
+        let vault = std::env::temp_dir().join(format!("import-space-href-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::write(
+            vault.join("my file.md"),
+            "---\ncategory: Projects\n---\n\nbody\n",
+        )
+        .unwrap();
+        std::fs::write(
+            vault.join("index.md"),
+            "---\ncategory: Projects\n---\n\nSee [a](my file.md).\n",
+        )
+        .unwrap();
+
+        let result = import(&vault.to_string_lossy()).unwrap();
+        let after = std::fs::read_to_string(vault.join("index.md")).unwrap();
+        std::fs::remove_dir_all(&vault).unwrap();
+
+        assert!(
+            after.contains("[a](my%20file.md)"),
+            "the rewrite reached the disk"
+        );
+        assert_eq!(
+            result.links_converted, 1,
+            "an encoding-only rewrite is a conversion"
+        );
+        assert!(result.failed.is_empty());
+    }
+
+    #[test]
+    fn a_link_is_counted_once_however_many_passes_resolve_it() {
+        let vault = std::env::temp_dir().join(format!("import-link-count-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(vault.join("Projects")).unwrap();
+        std::fs::write(
+            vault.join("Projects").join("launch-plan.md"),
+            "---\ncategory: Projects\n---\n\nSee [[Projects/spec]] and [[launch-plan#Risks]].\n",
+        )
+        .unwrap();
+        std::fs::write(
+            vault.join("Projects").join("spec.md"),
+            "---\ncategory: Projects\n---\n\nBack to [[launch-plan]].\n",
+        )
+        .unwrap();
+
+        let result = import(&vault.to_string_lossy()).unwrap();
+        let converted =
+            std::fs::read_to_string(vault.join("Projects").join("launch-plan.md")).unwrap();
+        std::fs::remove_dir_all(&vault).unwrap();
+
+        assert_eq!(result.files_converted, 2);
+        assert_eq!(
+            result.links_converted, 3,
+            "three wiki links exist, however many passes touch them"
+        );
+        assert!(converted.contains("[Projects/spec](spec.md)"));
+        assert!(converted.contains("[launch-plan#Risks](launch-plan.md#Risks)"));
+    }
+
     #[test]
     fn attachment_import_never_moves_internal_or_tool_state() {
         let vault = std::env::temp_dir().join(format!("attachment-scope-{}", Uuid::new_v4()));
@@ -1049,7 +1223,9 @@ mod tests {
         std::fs::write(&tool_state, "tool").unwrap();
         std::fs::write(&attachment, "image").unwrap();
 
-        let moved = move_attachments(&vault).unwrap();
+        let mut failed = Vec::new();
+        let moved = move_attachments(&vault, &mut failed);
+        assert!(failed.is_empty(), "nothing should fail to move: {failed:?}");
         let moved_attachment = vault
             .join(".helixnotes")
             .join("attachments")

@@ -295,6 +295,11 @@ export interface ImportResult {
   frontmatter_normalized: number;
   syntax_converted: number;
   attachments_moved: number;
+  /**
+   * Files the import could not read, write, or move. Present only when non-empty; the panel
+   * shows the terminal `error`, which summarizes these.
+   */
+  failed?: string[];
 }
 
 export interface VaultStats {
