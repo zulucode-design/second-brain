@@ -1,4 +1,5 @@
 use crate::asset_scope;
+use crate::bulk_mutation::BulkMutationTerminal;
 use crate::hotkey;
 use crate::search::SearchIndex;
 use crate::state::AppState;
@@ -2875,42 +2876,183 @@ pub fn import_obsidian(app: AppHandle) -> Result<(), String> {
     // Fire-and-forget: return immediately, do work in background thread
     std::thread::spawn(move || {
         use tauri::Emitter;
-        match do_import_obsidian(app.clone(), &vault_path) {
-            Ok(result) => {
-                let _ = app.emit(
-                    "import-done",
-                    serde_json::json!({
-                        "success": true,
-                        "files_converted": result.files_converted,
-                        "links_converted": result.links_converted,
-                        "frontmatter_normalized": result.frontmatter_normalized,
-                        "syntax_converted": result.syntax_converted,
-                        "attachments_moved": result.attachments_moved,
-                    }),
-                );
-            }
-            Err(e) => {
-                let _ = app.emit(
-                    "import-done",
-                    serde_json::json!({
-                        "success": false,
-                        "error": e,
-                    }),
-                );
-            }
-        }
+        let (result, terminal) = do_import_obsidian(&app, &vault_path);
+        let _ = app.emit(
+            "import-done",
+            import_done_payload(result.as_ref(), &terminal),
+        );
     });
     Ok(())
 }
 
-fn do_import_obsidian(app: AppHandle, vault_path: &str) -> Result<ImportResult, String> {
+/// Run the import and classify how it ended.
+///
+/// Reconciliation runs even when the conversion reported failures, because by then the vault on
+/// disk has already changed and the projections would otherwise describe the vault as it was.
+fn do_import_obsidian(
+    app: &AppHandle,
+    vault_path: &str,
+) -> (Option<ImportResult>, BulkMutationTerminal) {
     let state = app.state::<AppState>();
-    let _lease = state
+    let _lease = match state
         .bulk_mutation
-        .acquire(&state.note_mutation, &state.vault_activity)?;
-    let result = crate::vault::import::import(vault_path)?;
-    reconcile_bulk_projections(&state, vault_path)?;
-    Ok(result)
+        .acquire(&state.note_mutation, &state.vault_activity)
+    {
+        Ok(lease) => lease,
+        // Refused before the vault was touched: nothing changed.
+        Err(error) => return (None, BulkMutationTerminal::failure(error)),
+    };
+    let result = match crate::vault::import::import(vault_path) {
+        Ok(result) => result,
+        // `import` only fails outright before it writes anything; everything that can fail
+        // after the first write is recorded in `failed` instead.
+        Err(error) => return (None, BulkMutationTerminal::failure(error)),
+    };
+
+    let reconciled = reconcile_bulk_projections(&state, vault_path);
+    let terminal = classify_import(&result, reconciled);
+    (Some(result), terminal)
+}
+
+/// How an import that got as far as running ended:
+///
+/// | conversion | reconciliation | vault changed | outcome            |
+/// |------------|----------------|---------------|--------------------|
+/// | clean      | ok             | either        | success            |
+/// | failures   | ok             | no            | failure            |
+/// | failures   | ok             | yes           | changed-incomplete |
+/// | either     | failed         | no            | failure            |
+/// | either     | failed         | yes           | changed-incomplete |
+///
+/// A reconciliation failure after the vault changed is changed-incomplete rather than a
+/// failure: the notes were converted, but the views of them no longer match.
+fn classify_import(result: &ImportResult, reconciled: Result<(), String>) -> BulkMutationTerminal {
+    match reconciled {
+        Err(error) if result.mutated() => BulkMutationTerminal::changed_incomplete(error),
+        Err(error) => BulkMutationTerminal::failure(error),
+        Ok(()) if result.failed.is_empty() => BulkMutationTerminal::success(),
+        Ok(()) if result.mutated() => {
+            BulkMutationTerminal::changed_incomplete(describe_import_failures(&result.failed))
+        }
+        Ok(()) => BulkMutationTerminal::failure(describe_import_failures(&result.failed)),
+    }
+}
+
+/// Name what failed without pasting an unbounded list of paths into a notification.
+fn describe_import_failures(failed: &[String]) -> String {
+    let shown = failed
+        .iter()
+        .take(3)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("; ");
+    match failed.len().saturating_sub(3) {
+        0 => format!("{} file(s) could not be converted: {shown}", failed.len()),
+        remaining => format!(
+            "{} file(s) could not be converted: {shown}; and {remaining} more",
+            failed.len()
+        ),
+    }
+}
+
+/// Carry the shared terminal contract (`success`, `outcome`, `error`) and the counts the
+/// settings panel shows in one payload, so a partial import still reports what it converted.
+fn import_done_payload(
+    result: Option<&ImportResult>,
+    terminal: &BulkMutationTerminal,
+) -> serde_json::Value {
+    let mut payload = serde_json::json!(terminal);
+    if let (Some(object), Some(result)) = (payload.as_object_mut(), result) {
+        object.insert("files_converted".into(), result.files_converted.into());
+        object.insert("links_converted".into(), result.links_converted.into());
+        object.insert(
+            "frontmatter_normalized".into(),
+            result.frontmatter_normalized.into(),
+        );
+        object.insert("syntax_converted".into(), result.syntax_converted.into());
+        object.insert("attachments_moved".into(), result.attachments_moved.into());
+    }
+    payload
+}
+
+#[cfg(test)]
+mod import_outcome_tests {
+    use super::{classify_import, import_done_payload};
+    use crate::bulk_mutation::BulkMutationTerminal;
+    use crate::types::ImportResult;
+
+    fn result(files_converted: u64, failed: &[&str]) -> ImportResult {
+        ImportResult {
+            files_converted,
+            links_converted: 2,
+            frontmatter_normalized: 1,
+            syntax_converted: 0,
+            attachments_moved: 0,
+            failed: failed.iter().map(|entry| entry.to_string()).collect(),
+        }
+    }
+
+    fn outcome(result: &ImportResult, reconciled: Result<(), String>) -> String {
+        serde_json::to_value(classify_import(result, reconciled)).unwrap()["outcome"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    #[test]
+    fn an_import_that_changed_nothing_and_failed_is_a_failure_not_a_partial_change() {
+        assert_eq!(outcome(&result(0, &["a.md: denied"]), Ok(())), "failure");
+        assert_eq!(outcome(&result(0, &[]), Err("index".into())), "failure");
+    }
+
+    #[test]
+    fn an_import_that_changed_the_vault_and_then_failed_is_changed_incomplete() {
+        assert_eq!(
+            outcome(&result(3, &["a.md: denied"]), Ok(())),
+            "changed-incomplete"
+        );
+        // Converted cleanly, but the projections could not be rebuilt over the new notes.
+        assert_eq!(
+            outcome(&result(3, &[]), Err("index rebuild failed".into())),
+            "changed-incomplete"
+        );
+    }
+
+    #[test]
+    fn a_clean_import_is_a_success() {
+        assert_eq!(outcome(&result(3, &[]), Ok(())), "success");
+        assert_eq!(outcome(&result(0, &[]), Ok(())), "success");
+    }
+
+    /// The panel needs the terminal contract and the counts in one payload: a partial import
+    /// must still be able to report what it converted.
+    #[test]
+    fn a_partial_import_reports_its_counts_alongside_the_reason_it_stopped() {
+        let result = result(3, &["a.md: denied"]);
+        let payload = import_done_payload(
+            Some(&result),
+            &BulkMutationTerminal::changed_incomplete("a.md: denied"),
+        );
+
+        assert_eq!(payload["success"], false);
+        assert_eq!(payload["outcome"], "changed-incomplete");
+        assert_eq!(payload["error"], "a.md: denied");
+        assert_eq!(payload["files_converted"], 3);
+        assert_eq!(payload["links_converted"], 2);
+        assert_eq!(payload["frontmatter_normalized"], 1);
+    }
+
+    /// A refusal or a pre-write failure has no result to report; the payload must still be a
+    /// well-formed terminal rather than a payload with missing counters.
+    #[test]
+    fn a_refused_import_still_emits_a_well_formed_terminal() {
+        let payload = import_done_payload(None, &BulkMutationTerminal::failure("already running"));
+
+        assert_eq!(payload["success"], false);
+        assert_eq!(payload["outcome"], "failure");
+        assert_eq!(payload["error"], "already running");
+        assert!(payload.get("files_converted").is_none());
+    }
 }
 
 pub(crate) fn reconcile_bulk_projections(state: &AppState, vault_path: &str) -> Result<(), String> {
@@ -3366,16 +3508,14 @@ pub fn restore_backup(app: AppHandle, backup_path: String) -> Result<(), String>
             .bulk_mutation
             .acquire(&state.note_mutation, &state.vault_activity)
         {
-            Err(error) => crate::bulk_mutation::BulkMutationTerminal::failure(error),
+            Err(error) => BulkMutationTerminal::failure(error),
             Ok(_lease) => {
                 match crate::backup::restore_backup(&vault_path, &backup_dir, &backup_path) {
                     Ok(()) => match reconcile_bulk_projections(&state, &vault_path) {
-                        Ok(()) => crate::bulk_mutation::BulkMutationTerminal::success(),
-                        Err(error) => {
-                            crate::bulk_mutation::BulkMutationTerminal::changed_incomplete(format!(
+                        Ok(()) => BulkMutationTerminal::success(),
+                        Err(error) => BulkMutationTerminal::changed_incomplete(format!(
                             "Vault restored, but derived views could not be reconciled: {error}"
-                        ))
-                        }
+                        )),
                     },
                     Err(error) if error.changed => {
                         let reconciliation = reconcile_bulk_projections(&state, &vault_path).err();
@@ -3385,11 +3525,9 @@ pub fn restore_backup(app: AppHandle, backup_path: String) -> Result<(), String>
                                 error.message
                             )
                         });
-                        crate::bulk_mutation::BulkMutationTerminal::changed_incomplete(message)
+                        BulkMutationTerminal::changed_incomplete(message)
                     }
-                    Err(error) => {
-                        crate::bulk_mutation::BulkMutationTerminal::failure(error.message)
-                    }
+                    Err(error) => BulkMutationTerminal::failure(error.message),
                 }
             }
         };

@@ -1056,9 +1056,11 @@
 		importResult = null;
 		importError = null;
 
-		const unlistenDone = await listen<{ success: boolean; files_converted?: number; links_converted?: number; frontmatter_normalized?: number; syntax_converted?: number; attachments_moved?: number; error?: string }>('import-done', (event) => {
+		const unlistenDone = await listen<BulkMutationTerminal & Partial<ImportResult>>('import-done', async (event) => {
 			const data = event.payload;
-			if (data.success) {
+			// A changed-incomplete import converted some notes and failed on others. Showing only
+			// the error would hide what did change, so both halves are reported.
+			if (data.outcome !== 'failure') {
 				importResult = {
 					files_converted: data.files_converted ?? 0,
 					links_converted: data.links_converted ?? 0,
@@ -1066,9 +1068,11 @@
 					syntax_converted: data.syntax_converted ?? 0,
 					attachments_moved: data.attachments_moved ?? 0,
 				};
-			} else {
-				importError = data.error ?? 'Import failed';
+				// The watcher is suppressed for the duration of a bulk mutation, so the
+				// workspace only shows the converted notes once it is refreshed here.
+				await onAfterRestore?.();
 			}
+			if (!data.success) importError = data.error ?? 'Import failed';
 			importLoading = false;
 			unlistenDone();
 		});
@@ -2477,7 +2481,7 @@
 								<div class="import-result success">
 									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
 									<div class="import-stats">
-										<span>Import complete</span>
+										<span>{importError ? 'Import incomplete — what did convert:' : 'Import complete'}</span>
 										<ul>
 											{#if importResult.frontmatter_normalized}<li>Normalized frontmatter in {importResult.frontmatter_normalized} notes</li>{/if}
 											{#if importResult.links_converted}<li>Converted {importResult.links_converted} wiki-links to markdown</li>{/if}

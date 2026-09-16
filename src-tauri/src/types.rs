@@ -503,6 +503,18 @@ pub struct ImportResult {
     pub frontmatter_normalized: u64,
     pub syntax_converted: u64,
     pub attachments_moved: u64,
+    /// Files the import could not read, write, or move. Every counter above reflects a
+    /// completed change on disk, so a non-empty list means the vault changed incompletely.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failed: Vec<String>,
+}
+
+impl ImportResult {
+    /// Whether anything at all reached the disk. Distinguishes a run that failed before it
+    /// changed the vault from one that stopped partway through changing it.
+    pub fn mutated(&self) -> bool {
+        self.files_converted > 0 || self.attachments_moved > 0
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
