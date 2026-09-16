@@ -27,6 +27,25 @@ export function relativePath(fromDirectory: string, targetPath: string): string 
 	return result.join('/') || '.';
 }
 
+/**
+ * True when a file the OS asked us to open lies outside the active vault, and so must be
+ * shown read-only through the external viewer rather than navigated to as a vault note.
+ *
+ * Separators are normalized because Windows hands us `C:\vault\note.md` while the stored
+ * vault root may use either separator: comparing them raw makes every in-vault Windows file
+ * look external.
+ */
+export function isExternalNotePath(vaultRoot: string | null | undefined, filePath: string): boolean {
+	if (!vaultRoot) return true;
+	const root = vaultRoot.replace(/\\/g, '/').replace(/\/+$/, '');
+	const file = filePath.replace(/\\/g, '/');
+	const windowsPath = /^[A-Za-z]:\//.test(root) || /^[A-Za-z]:\//.test(file);
+	const prefix = `${root}/`;
+	return windowsPath
+		? !file.toLowerCase().startsWith(prefix.toLowerCase())
+		: !file.startsWith(prefix);
+}
+
 export function normalizeLocalAssetPath(path: string): string {
 	return path
 		.replace(/\\/g, '/')
