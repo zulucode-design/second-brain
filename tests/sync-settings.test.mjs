@@ -94,6 +94,13 @@ test('sync remains an explicit guarded batch rather than ambient Tailnet access'
   assert.match(settings, /Conflict copies stay out of notes/);
 });
 
+test('the Syncthing device ID uses native clipboard copy with confirmation', async () => {
+  const settings = await source('src/lib/components/SettingsPanel.svelte');
+  assert.match(settings, /copyTextToClipboard\(sync\.deviceId\)/);
+  assert.match(settings, /aria-label="This device ID"/);
+  assert.match(settings, /syncDeviceCopied \? 'Copied' : 'Copy'/);
+});
+
 test('a delayed local attachment is presented as not synced yet', async () => {
   const editor = await source('src/lib/components/Editor.svelte');
   assert.match(editor, /Attachment not synced yet/);

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
-	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, notionStatus, notionConnect, notionDisconnect, notionSetEnabled, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex, getSyncStatus, setSyncEnabled, pairSyncDevice, syncNow, listSyncConflicts, resolveSyncConflict } from '$lib/api';
+	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, notionStatus, notionConnect, notionDisconnect, notionSetEnabled, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex, getSyncStatus, setSyncEnabled, pairSyncDevice, syncNow, listSyncConflicts, resolveSyncConflict, copyTextToClipboard } from '$lib/api';
 	import type { AiProvider } from '$lib/types';
 	import { AI_PROVIDER_METADATA, AI_PROVIDER_OPTIONS } from '$lib/utils/ai-provider';
 	import { darkThemes, isMobile, isAndroid, isLinux, isWindows } from '$lib/platform';
@@ -465,6 +465,8 @@
 	let syncDeviceName = $state('');
 	let syncTailscaleIp = $state('');
 	let syncVaultId = $state('');
+	let syncDeviceCopied = $state(false);
+	let syncDeviceCopyTimeout: ReturnType<typeof setTimeout> | undefined;
 	let syncMessage = $state<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 	let syncConflicts = $state<SyncConflict[]>([]);
 
@@ -478,6 +480,18 @@
 		try { sync = await setSyncEnabled(enabled); }
 		catch (e) { syncMessage = { type: 'error', text: String(e) }; }
 		finally { syncBusy = false; }
+	}
+
+	async function copySyncDeviceId() {
+		if (!sync?.deviceId) return;
+		try {
+			await copyTextToClipboard(sync.deviceId);
+			syncDeviceCopied = true;
+			if (syncDeviceCopyTimeout) clearTimeout(syncDeviceCopyTimeout);
+			syncDeviceCopyTimeout = setTimeout(() => { syncDeviceCopied = false; }, 1500);
+		} catch (e) {
+			syncMessage = { type: 'error', text: `Failed to copy device ID: ${e}` };
+		}
 	}
 
 	async function handleSyncPair() {
@@ -2272,7 +2286,13 @@
 									<span class="setting-label"><span class="setting-name">Enable sync on this machine</span><span class="setting-desc">The sidecar stays paused between guarded sync runs.</span></span>
 									<button class="toggle-switch" class:on={sync?.enabled} role="switch" aria-label="Enable sync on this machine" aria-checked={sync?.enabled ?? false} disabled={syncBusy} onclick={() => handleSyncEnabled(!(sync?.enabled ?? false))}><span class="toggle-knob"></span></button>
 								</label>
-								{#if sync?.deviceId}<p class="setting-hint">This device ID:</p><input class="ai-key-input" readonly value={sync.deviceId} />{/if}
+								{#if sync?.deviceId}
+									<p class="setting-hint">This device ID:</p>
+									<div class="ai-key-row">
+										<input class="ai-key-input" readonly value={sync.deviceId} aria-label="This device ID" />
+										<button type="button" class="import-btn" onclick={copySyncDeviceId} aria-live="polite">{syncDeviceCopied ? 'Copied' : 'Copy'}</button>
+									</div>
+								{/if}
 								{#if sync?.vaultId}<p class="setting-hint">This vault ID:</p><input class="ai-key-input" readonly value={sync.vaultId} />{/if}
 								{#if sync?.error}<div class="import-result error"><span>{sync.error}</span></div>{/if}
 							</div>
