@@ -55,8 +55,7 @@
   historical record of package H's first measurements and the completed package D protocol.</p>
   <div class="gate"><strong>Gate status: not green.</strong> Packages A–G are implemented and D passed the real
   two-machine interruption protocol. The G3 product-identity/updater implementation is complete in the identity
-  prerequisite change, and the diagnostic export is implemented with archive-content regression coverage. Remaining blockers are performance evidence and final installed-package walkthroughs
-  from one release-candidate commit.</div>
+  prerequisite change, and the diagnostic export is implemented with archive-content regression coverage. Candidate commit is <code>8021755</code> (PR #125 added the performance probe). Performance was measured on both machines and fails three budgets: graph render (#126), editor latency (#127), and Windows cold start (#128). Final installed-package walkthroughs remain.</div>
 </header>
 
 <section>
@@ -96,7 +95,7 @@
     <tr><td>Diagnostic export</td><td>User starts the export. Default output contains no note body, planted secret, note path/title, provider response body, or credential field. Tests inspect the produced archive.</td><td>Settings → Maintenance creates a ZIP with build/OS/package metadata, redacted configuration, sync status and last terminal outcome, and redacted rotated logs. The archive test proves planted vault content, secret, note path/title/id, device id, Tailscale address, and credential field are absent. Final installed-package walkthrough must exercise the button once.</td><td>#88</td><td><span class="s green">implemented</span></td></tr>
     <tr><td>Install failure propagation</td><td>A deterministic fixture makes <code>svelte-kit sync</code> fail and proves <code>pnpm install</code> returns nonzero.</td><td><code>tests/install-failure.test.mjs</code> runs <code>pnpm install --offline</code> against a temporary package using the repository's exact <code>prepare</code> command and an intentionally failing Svelte config; the test requires the install to fail with the fixture marker.</td><td>#88</td><td><span class="s green">verified</span></td></tr>
     <tr><td>Dependency audit</td><td><code>pnpm audit --prod</code> and <code>cargo audit --file src-tauri/Cargo.lock</code> report no known vulnerability, production licenses are recorded, and every Cargo warning has a reachability and disposition entry.</td><td>Five compatible Cargo updates remove every patched advisory. Remaining twelve warnings have reviewed accept/defer dispositions below; no package vulnerability remains. Production JavaScript and Rust license metadata is compatible with AGPL-3.0-or-later; <code>khroma</code>'s metadata omission was checked against its bundled MIT license.</td><td>#88</td><td><span class="s green">verified</span></td></tr>
-    <tr><td>Performance</td><td>All budgets below pass on both real target machines against the same 10,000-note fixture and candidate commit.</td><td>Opt-in probe, fixture, cold-start harness, and budget summariser are implemented (see protocol below). The earlier Windows startup probe timed native window creation only and is not evidence. No user-visible timings recorded yet.</td><td>#88</td><td><span class="s red">missing</span></td></tr>
+    <tr><td>Performance</td><td>All budgets below pass on both real target machines against the same 10,000-note fixture and candidate commit.</td><td>Measured on installed packages from <code>8021755</code>; results below. Semantic retrieval and exact scan pass on both machines, and Fedora cold start passes. Graph render fails on both machines (#126), editor latency fails on both (#127), and Windows cold start fails (#128). The earlier Windows startup probe timed native window creation only and is not evidence.</td><td>#88, #126, #127, #128</td><td><span class="s red">failing</span></td></tr>
     <tr><td>Fedora package</td><td>RPM from the candidate commit installs, completes the walkthrough below, exits cleanly, and uninstalls without deleting the disposable vault.</td><td>A prior RPM was reinstalled and process-smoked. In-window walkthrough and uninstall are missing.</td><td>#88</td><td><span class="s amber">partial</span></td></tr>
     <tr><td>Windows package</td><td>NSIS package from the candidate commit installs, completes the walkthrough below including #49's notification, exits with no sidecar/watchdog left, and uninstalls without deleting the disposable vault.</td><td>Prior NSIS packages installed and launched. In-window walkthrough, #49 notification, and uninstall are missing.</td><td>#88, #49</td><td><span class="s amber">partial</span></td></tr>
     <tr><td>Residual defects</td><td>Every open defect found by remediation has an explicit severity, alpha disposition, owner, and milestone; no P0/P1 remains.</td><td>#110 is P2; #111 and #112 are P3. All are deferred, non-blocking, assigned to zulucode-design, and scheduled for the v1 feature-complete beta milestone. No P0/P1 remains.</td><td>#76</td><td><span class="s green">verified</span></td></tr>
@@ -170,6 +169,30 @@
     <li><strong>Summary:</strong> <code>node scripts/perf-summary.mjs &lt;log&gt;</code> prints every sample, median,
     nearest-rank p95, maximum, and verdict per budget. Raw logs are preserved with the evidence.</li>
   </ul>
+  <h3>Results at 8021755 (2026-09-16)</h3>
+  <p>Fedora 44 Workstation x86-64 with <code>second-brain-0.1.0-alpha.1-1.x86_64.rpm</code> (SHA-256
+  <code>2645d38150fa6e48a97286ea6c0b99d33ca4f73d355c2516245fe5294c3be5cd</code>), and Windows 11 Pro 10.0.26200 x64 with
+  <code>Second Brain_0.1.0-alpha.1_x64-setup.exe</code> (SHA-256
+  <code>48F577C5661739417B1377F6D83DE848049DE4B4503DAA22973E3E6D105055A4</code>). Both used a disposable vault generated
+  by <code>scripts/perf-fixture.mjs</code> with the 5,000-word note restored at startup. Embeddings came from
+  <code>embeddinggemma</code> on the Windows desktop's Ollama. Fedora reached it through an SSH tunnel over Tailscale.
+  Raw JSONL for every run is in <code>docs/reports/evidence/88-perf-2026-09-16/</code>.</p>
+  <table>
+    <tr><th>Measure</th><th>Fedora 44</th><th>Windows 11</th><th>Status</th></tr>
+    <tr><td>Cold startup (semantic index built)</td><td>2094, 2057, 2031, 2058, 1972 ms; median 2057, max 2094</td><td>6406, 6427, 6111, 6615, 6186 ms; median 6406, max 6615</td><td><span class="s red">fail</span> Windows (#128)</td></tr>
+    <tr><td>Cold startup (earlier run)</td><td>AI unconfigured: 2373, 2218, 2138, 2233, 2230 ms; median 2230</td><td>Index still building: 6942, 6809, 6700, 6744, 6838 ms; median 6809</td><td><span class="s grey">context</span></td></tr>
+    <tr><td>Editor, first 200 keys</td><td>Run 1: median 21.5 ms, p95 11,641 ms, max 12,167 ms; 98 keys over 100 ms, all in the first 98. Rerun: froze, 120 keys, maximum 91,084 ms.</td><td>median 4.1 ms, p95 62 ms, max 78.6 ms</td><td><span class="s red">fail</span> both (#127)</td></tr>
+    <tr><td>Graph render (10,000 nodes, 19,998 edges)</td><td>116,973 ms; 1 of 5 runs. The app was unusable, so the rest were not taken.</td><td>44,780, 37,163, 39,107 ms; 3 of 5 runs. The first ran while the semantic index was still building.</td><td><span class="s red">fail</span> both (#126)</td></tr>
+    <tr><td>Semantic retrieval, submit to painted</td><td>187, 190, 201, 125, 150 ms; p95 201</td><td>158, 98, 145, 132, 112 ms; p95 158</td><td><span class="s green">pass</span></td></tr>
+    <tr><td>Local exact scan</td><td>76, 92, 77, 72, 83 ms; p95 92</td><td>65, 64, 63, 65, 65 ms; p95 65</td><td><span class="s green">pass</span></td></tr>
+  </table>
+  <p>Fedora editor rerun: the rerun started with the file indexer idle and the note restored. It was worse. The app accepted 120 keys, with key-to-paint latency rising to 91 s,
+  and GNOME offered to force-quit it. It was then stopped by its exact PID. Once the app started writing, GNOME <code>localsearch-3</code>, which indexes
+  <code>$HOME</code> recursively, rose to about 180% CPU, but the key events arrived one every 1–4 s, so each key press was blocked for seconds in the webview. The
+  development app has never frozen like this on normal-size vaults. #127 records both runs. Fedora semantic searches ran without first confirming the
+  index had finished; the status read 10,000 indexed right afterwards. Two queries returned no results on both machines
+  (#130), and the Fedora queue count stayed high after indexing finished (#129). Neither affects the latency budgets. Screenshots
+  from these runs show unrelated personal windows, so they are kept off the public repository.</p>
   <p>If a budget fails, preserve raw measurements and open a focused defect. Do not weaken a budget in the same
   change that fixes its failure.</p>
 </section>
@@ -198,7 +221,7 @@
     <li><s>Land the narrow G3 identity, migration, and updater-disable slice from #89.</s> Implemented and covered by source-contract plus Linux/Windows migration tests.</li>
     <li><s>Implement and test diagnostic export.</s> Completed with archive-content regression coverage; exercise it during the final package walkthrough.</li>
     <li><s>Prove install-failure propagation.</s> Completed with a deterministic temporary fixture. <s>Close dependency-audit evidence.</s></li>
-    <li>Choose one candidate commit and run hosted plus real-machine verification.</li>
+    <li>Choose one candidate commit and run hosted plus real-machine verification. Candidate <code>8021755</code>; hosted checks passed on PR #125.</li>
     <li>Run performance protocol and final installed-package walkthroughs without changing the candidate.</li>
     <li><s>Classify residual defects.</s> #110–#112 now name severity, alpha disposition, owner, and milestone. Close #49, #88, and the H row in #76 only when every blocking row is green.</li>
   </ol>
