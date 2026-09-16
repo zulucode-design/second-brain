@@ -2940,13 +2940,14 @@ fn classify_import(result: &ImportResult, reconciled: Result<(), String>) -> Bul
 
 /// Name what failed without pasting an unbounded list of paths into a notification.
 fn describe_import_failures(failed: &[String]) -> String {
+    const SHOWN: usize = 3;
     let shown = failed
         .iter()
-        .take(3)
+        .take(SHOWN)
         .map(String::as_str)
         .collect::<Vec<_>>()
         .join("; ");
-    match failed.len().saturating_sub(3) {
+    match failed.len().saturating_sub(SHOWN) {
         0 => format!("{} file(s) could not be converted: {shown}", failed.len()),
         remaining => format!(
             "{} file(s) could not be converted: {shown}; and {remaining} more",
@@ -3512,7 +3513,7 @@ pub fn restore_backup(app: AppHandle, backup_path: String) -> Result<(), String>
             Ok(_lease) => {
                 match crate::backup::restore_backup(&vault_path, &backup_dir, &backup_path) {
                     Ok(()) => match reconcile_bulk_projections(&state, &vault_path) {
-                        Ok(()) => BulkMutationTerminal::success(),
+                        Ok(()) => crate::bulk_mutation::BulkMutationTerminal::success(),
                         Err(error) => BulkMutationTerminal::changed_incomplete(format!(
                             "Vault restored, but derived views could not be reconciled: {error}"
                         )),
@@ -3525,7 +3526,7 @@ pub fn restore_backup(app: AppHandle, backup_path: String) -> Result<(), String>
                                 error.message
                             )
                         });
-                        BulkMutationTerminal::changed_incomplete(message)
+                        crate::bulk_mutation::BulkMutationTerminal::changed_incomplete(message)
                     }
                     Err(error) => BulkMutationTerminal::failure(error.message),
                 }
