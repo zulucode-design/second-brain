@@ -54,12 +54,23 @@ pub fn import(vault_path: &str) -> Result<ImportResult, String> {
         frontmatter_normalized: 0,
         syntax_converted: 0,
         attachments_moved: 0,
+        failed: Vec::new(),
     };
 
     for path in &md_files {
+        // Every counter this note touches is rolled back if its single write fails, so the
+        // reported totals only ever describe conversions that actually reached the disk.
+        let counters_before = (
+            result.links_converted,
+            result.frontmatter_normalized,
+            result.syntax_converted,
+        );
         let raw = match std::fs::read_to_string(path) {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(error) => {
+                result.failed.push(format!("{}: {error}", path.display()));
+                continue;
+            }
         };
         let note_dir = path.parent().unwrap_or(Path::new(""));
 
@@ -86,8 +97,6 @@ pub fn import(vault_path: &str) -> Result<ImportResult, String> {
             changed = true;
             result.syntax_converted += 1;
         }
-
-        let links_before = result.links_converted;
 
         let after_embeds = wiki_embed_re
             .replace_all(&content, |caps: &regex::Captures| {
@@ -199,21 +208,36 @@ pub fn import(vault_path: &str) -> Result<ImportResult, String> {
             &mut result.links_converted,
         );
 
-        if result.links_converted > links_before {
+        if result.links_converted > counters_before.0 {
             changed = true;
         }
 
         if changed {
-            let _ = crate::durable::replace(path, content.as_bytes(), crate::durable::Mode::Shared);
-            result.files_converted += 1;
+            match crate::durable::replace(path, content.as_bytes(), crate::durable::Mode::Shared) {
+                Ok(()) => result.files_converted += 1,
+                Err(error) => {
+                    result.links_converted = counters_before.0;
+                    result.frontmatter_normalized = counters_before.1;
+                    result.syntax_converted = counters_before.2;
+                    result.failed.push(format!("{}: {error}", path.display()));
+                }
+            }
         }
     }
 
-    let moved = move_attachments(vault)?;
-    result.attachments_moved = moved.len() as u64;
-
-    if !moved.is_empty() {
-        rewrite_attachment_refs(vault, &moved)?;
+    // Attachment relocation runs after every note has already been rewritten, so a failure
+    // here leaves the vault changed but incomplete. It is recorded rather than propagated:
+    // returning early would discard the record of what did change.
+    match move_attachments(vault, &mut result.failed) {
+        Ok(moved) => {
+            result.attachments_moved = moved.len() as u64;
+            if !moved.is_empty() {
+                if let Err(error) = rewrite_attachment_refs(vault, &moved, &mut result.failed) {
+                    result.failed.push(error);
+                }
+            }
+        }
+        Err(error) => result.failed.push(error),
     }
 
     cleanup_empty_dirs(vault);
@@ -586,9 +610,13 @@ fn fix_md_link_refs(
     .to_string()
 }
 
-fn move_attachments(vault: &Path) -> Result<HashMap<String, String>, String> {
+fn move_attachments(
+    vault: &Path,
+    failed: &mut Vec<String>,
+) -> Result<HashMap<String, String>, String> {
     let attachments_dir = vault.join(".helixnotes").join("attachments");
-    let _ = std::fs::create_dir_all(&attachments_dir);
+    std::fs::create_dir_all(&attachments_dir)
+        .map_err(|error| format!("Failed to create the attachments directory: {error}"))?;
 
     let attachment_files: Vec<_> = walkdir::WalkDir::new(vault)
         .into_iter()
@@ -615,27 +643,48 @@ fn move_attachments(vault: &Path) -> Result<HashMap<String, String>, String> {
     for src_path in &attachment_files {
         let old_rel = match src_path.strip_prefix(vault) {
             Ok(r) => r.to_string_lossy().to_string(),
-            Err(_) => continue,
+            Err(error) => {
+                failed.push(format!("{}: {error}", src_path.display()));
+                continue;
+            }
         };
         let new_rel = format!(".helixnotes/attachments/{}", old_rel);
         let dest_path = vault.join(&new_rel);
 
         if let Some(parent) = dest_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                failed.push(format!("{}: {error}", src_path.display()));
+                continue;
+            }
         }
 
-        if std::fs::rename(src_path, &dest_path).is_ok()
-            || std::fs::copy(src_path, &dest_path)
+        // A rename across filesystems fails, so fall back to copy-then-remove; only report
+        // the failure when neither route moved the file.
+        match std::fs::rename(src_path, &dest_path) {
+            Ok(()) => {
+                moved.insert(old_rel, new_rel);
+            }
+            Err(rename_error) => match std::fs::copy(src_path, &dest_path)
                 .and_then(|_| std::fs::remove_file(src_path))
-                .is_ok()
-        {
-            moved.insert(old_rel, new_rel);
+            {
+                Ok(()) => {
+                    moved.insert(old_rel, new_rel);
+                }
+                Err(copy_error) => failed.push(format!(
+                    "{}: {rename_error}; {copy_error}",
+                    src_path.display()
+                )),
+            },
         }
     }
     Ok(moved)
 }
 
-fn rewrite_attachment_refs(vault: &Path, moved: &HashMap<String, String>) -> Result<(), String> {
+fn rewrite_attachment_refs(
+    vault: &Path,
+    moved: &HashMap<String, String>,
+    failed: &mut Vec<String>,
+) -> Result<(), String> {
     let md_ref = Regex::new(r"(!?\[[^\]]*\])\(([^)]+)\)").map_err(|e| e.to_string())?;
 
     let md_files: Vec<_> = walkdir::WalkDir::new(vault)
@@ -653,7 +702,10 @@ fn rewrite_attachment_refs(vault: &Path, moved: &HashMap<String, String>) -> Res
     for path in &md_files {
         let content = match std::fs::read_to_string(path) {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(error) => {
+                failed.push(format!("{}: {error}", path.display()));
+                continue;
+            }
         };
         let note_dir = path.parent().unwrap_or(Path::new(""));
 
@@ -702,8 +754,13 @@ fn rewrite_attachment_refs(vault: &Path, moved: &HashMap<String, String>) -> Res
             .to_string();
 
         if new_content != content {
-            let _ =
-                crate::durable::replace(path, new_content.as_bytes(), crate::durable::Mode::Shared);
+            // A note whose attachment links were not rewritten now points at a file that has
+            // moved, so this failure has to reach the user rather than the log.
+            if let Err(error) =
+                crate::durable::replace(path, new_content.as_bytes(), crate::durable::Mode::Shared)
+            {
+                failed.push(format!("{}: {error}", path.display()));
+            }
         }
     }
     Ok(())
@@ -1036,6 +1093,48 @@ mod tests {
         assert!(report.unfiled.is_empty());
     }
 
+    /// A write that fails must not be counted as a conversion. Every per-note counter is
+    /// checked, not just `files_converted`: the link, frontmatter, and syntax counters are
+    /// incremented while the note is being rewritten in memory, before the single write.
+    #[test]
+    fn a_failed_write_is_reported_as_a_failure_rather_than_a_conversion() {
+        let vault = std::env::temp_dir().join(format!("import-write-failure-{}", Uuid::new_v4()));
+        let note_path = vault.join("note.md");
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::write(
+            &note_path,
+            "---\nalias: old\n---\n\n==highlight== and a [[wiki link]]\n",
+        )
+        .unwrap();
+        let before = std::fs::read_to_string(&note_path).unwrap();
+
+        let result = crate::durable::tests::with_interrupted_replace(|| {
+            import(&vault.to_string_lossy()).unwrap()
+        });
+        let after = std::fs::read_to_string(&note_path).unwrap();
+        std::fs::remove_dir_all(&vault).unwrap();
+
+        assert_eq!(
+            after, before,
+            "an interrupted write leaves the note as it was"
+        );
+        assert_eq!(
+            result.files_converted, 0,
+            "a failed write is not a conversion"
+        );
+        assert_eq!(result.links_converted, 0);
+        assert_eq!(result.frontmatter_normalized, 0);
+        assert_eq!(result.syntax_converted, 0);
+        assert!(!result.mutated(), "nothing reached the disk");
+        assert_eq!(
+            result.failed.len(),
+            1,
+            "the failure is reported: {:?}",
+            result.failed
+        );
+        assert!(result.failed[0].contains("note.md"));
+    }
+
     #[test]
     fn attachment_import_never_moves_internal_or_tool_state() {
         let vault = std::env::temp_dir().join(format!("attachment-scope-{}", Uuid::new_v4()));
@@ -1049,7 +1148,9 @@ mod tests {
         std::fs::write(&tool_state, "tool").unwrap();
         std::fs::write(&attachment, "image").unwrap();
 
-        let moved = move_attachments(&vault).unwrap();
+        let mut failed = Vec::new();
+        let moved = move_attachments(&vault, &mut failed).unwrap();
+        assert!(failed.is_empty(), "nothing should fail to move: {failed:?}");
         let moved_attachment = vault
             .join(".helixnotes")
             .join("attachments")
