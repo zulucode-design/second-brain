@@ -2962,18 +2962,15 @@ fn import_done_payload(
     result: Option<&ImportResult>,
     terminal: &BulkMutationTerminal,
 ) -> serde_json::Value {
-    let mut payload = serde_json::json!(terminal);
-    if let (Some(object), Some(result)) = (payload.as_object_mut(), result) {
-        object.insert("files_converted".into(), result.files_converted.into());
-        object.insert("links_converted".into(), result.links_converted.into());
-        object.insert(
-            "frontmatter_normalized".into(),
-            result.frontmatter_normalized.into(),
-        );
-        object.insert("syntax_converted".into(), result.syntax_converted.into());
-        object.insert("attachments_moved".into(), result.attachments_moved.into());
+    /// Flattened so every `ImportResult` field reaches the panel without being listed by hand.
+    #[derive(serde::Serialize)]
+    struct Payload<'a> {
+        #[serde(flatten)]
+        terminal: &'a BulkMutationTerminal,
+        #[serde(flatten)]
+        result: Option<&'a ImportResult>,
     }
-    payload
+    serde_json::json!(Payload { terminal, result })
 }
 
 #[cfg(test)]
@@ -3041,6 +3038,7 @@ mod import_outcome_tests {
         assert_eq!(payload["files_converted"], 3);
         assert_eq!(payload["links_converted"], 2);
         assert_eq!(payload["frontmatter_normalized"], 1);
+        assert_eq!(payload["failed"][0], "a.md: denied");
     }
 
     /// A refusal or a pre-write failure has no result to report; the payload must still be a
