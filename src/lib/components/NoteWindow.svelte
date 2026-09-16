@@ -83,7 +83,7 @@
 			$activeNotePath = path;
 			$editorDirty = false;
 			editor?.loadNote(path, content.content, undefined, false, content.revision);
-			void appWindow.setTitle(`${content.meta.title} - HelixNotes`);
+			void appWindow.setTitle(`${content.meta.title} - Second Brain`);
 			return true;
 		},
 		onSaveFailure: (error) => {
@@ -189,7 +189,7 @@
 			await tick();
 			if (!initialIsCurrent() || currentPath !== notePath) return;
 			editor?.loadNote(notePath, content.content, undefined, false, content.revision);
-			void appWindow.setTitle(`${content.meta.title} - HelixNotes`);
+			void appWindow.setTitle(`${content.meta.title} - Second Brain`);
 		} catch (e) {
 			if (initialIsCurrent()) loadError = String(e);
 		}

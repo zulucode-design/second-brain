@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, updateAvailable as globalUpdateAvailable, updateObj as globalUpdateObj, installType, settingsTab, androidApkUrl, checkForUpdateMobile, notebookSortMode, isManagedInstall, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
+	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, notebookSortMode, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
 	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, notionStatus, notionConnect, notionDisconnect, notionSetEnabled, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex, getSyncStatus, setSyncEnabled, pairSyncDevice, syncNow, listSyncConflicts, resolveSyncConflict, copyTextToClipboard } from '$lib/api';
 	import type { AiProvider } from '$lib/types';
 	import { importOutcomeView, type ImportDonePayload } from '$lib/utils/import-outcome';
@@ -9,9 +9,7 @@
 	import { listen } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
 	import { describeSummary, describeSkipped, nextStep, type NotionStatus, type NotionSummary, type VisiblePage } from '$lib/utils/notion-settings';
-	import { getVersion } from '@tauri-apps/api/app';
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
-	import { openUrl } from '$lib/api';
 	import type { OrphanAttachment } from '$lib/api';
 	import type { ImportResult, BackupEntry, CustomTheme, CustomThemeColors, StartupView, VaultStats, SemanticStatus, SyncStatus, BulkMutationTerminal, SyncConflict } from '$lib/types';
 	import { normalizeStartupView } from '$lib/utils/startup-view';
@@ -24,109 +22,9 @@
 		onAfterRestore?: () => Promise<void>;
 	} = $props();
 
-	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'sync' | 'maintenance' | 'ai' | 'notion' | 'updates';
+	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'sync' | 'maintenance' | 'ai' | 'notion';
 	let activeTab = $state<Tab>('styling');
 
-	// Updates state
-	let updateChecking = $state(false);
-	let updateAvailable = $state<{ version: string; body?: string; date?: string } | null>(null);
-	let updateDownloading = $state(false);
-	let updateProgress = $state(0);
-	let updateMessage = $state<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
-	let updateObj = $state<any>(null);
-	let appVersion = $state('...');
-
-	async function loadAppVersion() {
-		try { appVersion = await getVersion(); } catch { appVersion = '0.0.0'; }
-	}
-	loadAppVersion();
-
-	// Switch to requested tab if set externally (e.g. from update badge)
-	$effect(() => {
-		const tab = $settingsTab;
-		if (tab) {
-			activeTab = tab as Tab;
-			$settingsTab = null;
-		}
-	});
-
-	// Pre-populate from global store if update was already detected at startup
-	$effect(() => {
-		const global = $globalUpdateAvailable;
-		if (global && !updateAvailable) {
-			updateAvailable = { version: global.version, body: global.body };
-		}
-	});
-
-	// Pre-populate updater object from global store so Download & Install works without manual check
-	$effect(() => {
-		const obj = $globalUpdateObj;
-		if (obj && !updateObj) {
-			updateObj = obj;
-		}
-	});
-
-	async function handleCheckUpdate() {
-		updateChecking = true;
-		updateMessage = null;
-		updateAvailable = null;
-		try {
-			if (isMobile) {
-				await checkForUpdateMobile();
-				const global = $globalUpdateAvailable;
-				if (global) {
-					updateAvailable = { version: global.version, body: global.body };
-					updateMessage = { type: 'info', text: `Version ${global.version} is available!` };
-				} else {
-					updateMessage = { type: 'success', text: 'You are on the latest version.' };
-				}
-			} else {
-				const { check: checkUpdate } = await import('@tauri-apps/plugin-updater');
-				const update = await checkUpdate();
-				if (update) {
-					updateObj = update;
-					$globalUpdateObj = update;
-					updateAvailable = { version: update.version, body: update.body, date: update.date };
-					globalUpdateAvailable.set({ version: update.version, body: update.body });
-					updateMessage = { type: 'info', text: `Version ${update.version} is available!` };
-				} else {
-					updateMessage = { type: 'success', text: 'You are on the latest version.' };
-				}
-			}
-		} catch (e) {
-			updateMessage = { type: 'error', text: `Failed to check: ${e}` };
-		} finally {
-			updateChecking = false;
-		}
-	}
-
-	async function handleDownloadAndInstall() {
-		if (!updateObj) return;
-		updateDownloading = true;
-		updateProgress = 0;
-		updateMessage = { type: 'info', text: 'Downloading update...' };
-		try {
-			let totalBytes = 0;
-			let downloadedBytes = 0;
-			await updateObj.downloadAndInstall((event: any) => {
-				if (event.event === 'Started' && event.data.contentLength) {
-					totalBytes = event.data.contentLength;
-				} else if (event.event === 'Progress') {
-					downloadedBytes += event.data.chunkLength;
-					if (totalBytes > 0) {
-						updateProgress = Math.round((downloadedBytes / totalBytes) * 100);
-					}
-				} else if (event.event === 'Finished') {
-					updateProgress = 100;
-				}
-			});
-			updateMessage = { type: 'success', text: 'Update installed! Restart the app to apply.' };
-		} catch (e) {
-			updateMessage = { type: 'error', text: `Update failed: ${e}` };
-		} finally {
-			updateDownloading = false;
-		}
-	}
 
 	// Vault maintenance state
 	let vaultStats = $state<VaultStats | null>(null);
@@ -1435,14 +1333,6 @@
 						</svg>
 						Notion
 					</button>
-					{#if !isAndroid}
-					<button class="tab-btn" class:active={activeTab === 'updates'} onclick={() => activeTab = 'updates'}>
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<path d="M21 12a9 9 0 00-9-9 9.75 9.75 0 00-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 3"/>
-						</svg>
-						Updates
-					</button>
-					{/if}
 				</nav>
 
 				<div class="settings-body">
@@ -1602,7 +1492,7 @@
 								<label class="setting-toggle">
 									<span class="setting-label">
 										<span class="setting-name">Start at system startup</span>
-										<span class="setting-desc">Launch HelixNotes when your computer starts</span>
+										<span class="setting-desc">Launch Second Brain when your computer starts</span>
 									</span>
 									<button class="toggle-switch" class:on={autostart} role="switch" aria-checked={autostart} aria-label="Start at system startup" onclick={() => { autostart = !autostart; saveGeneralSettings(); }}>
 										<span class="toggle-knob"></span>
@@ -2467,7 +2357,7 @@
 						<div class="tab-content">
 							<div class="settings-section">
 								<h3>Import from Obsidian</h3>
-								<p class="import-desc">Converts an Obsidian vault to HelixNotes format, including note details, links, highlights, comments, and attachments. Open the Obsidian vault directory as your HelixNotes vault first. This changes files in place, so make a backup before importing.</p>
+								<p class="import-desc">Converts an Obsidian vault to Second Brain format, including note details, links, highlights, comments, and attachments. Open the Obsidian vault directory as your Second Brain vault first. This changes files in place, so make a backup before importing.</p>
 								<div class="import-warn">
 									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
 									<span>This modifies files in place. Make a backup before running!</span>
@@ -2514,7 +2404,7 @@
 						<div class="tab-content">
 							{#if $appConfig?.secret_store_error}
 								<div class="import-result error">
-									<span>{$appConfig.secret_store_error} Unlock the OS credential store, then restart HelixNotes.</span>
+									<span>{$appConfig.secret_store_error} Unlock the OS credential store, then restart Second Brain.</span>
 								</div>
 							{/if}
 							<div class="settings-section">
@@ -2844,105 +2734,6 @@
 							{/if}
 						</div>
 
-					{:else if activeTab === 'updates'}
-						<div class="tab-content">
-							<div class="settings-section">
-								<h3>Current Version</h3>
-								<p class="update-version">HelixNotes <strong>v{appVersion}</strong></p>
-							</div>
-
-							{#if isManagedInstall($installType)}
-							<div class="settings-section">
-								<h3>Updates</h3>
-								<p class="setting-hint">HelixNotes was installed through your system package manager, which delivers updates. The app does not check for or install updates on its own.</p>
-							</div>
-							{:else}
-							<div class="settings-section">
-								<h3>Check for Updates</h3>
-								<button class="import-btn" onclick={handleCheckUpdate} disabled={updateChecking || updateDownloading}>
-									{#if updateChecking}
-										<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
-										Checking...
-									{:else}
-										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<path d="M21 12a9 9 0 00-9-9 9.75 9.75 0 00-6.74 2.74L3 8"/><path d="M3 3v5h5"/>
-										</svg>
-										Check for Updates
-									{/if}
-								</button>
-							</div>
-							{/if}
-
-							{#if updateAvailable}
-								<div class="settings-section">
-									<h3>Update Available</h3>
-									<div class="update-info">
-										<p class="update-new-version">Version <strong>{updateAvailable.version}</strong></p>
-										{#if updateAvailable.date}
-											<p class="update-date">{new Date(updateAvailable.date).toLocaleDateString()}</p>
-										{/if}
-										{#if updateAvailable.body}
-											<div class="update-notes">{updateAvailable.body}</div>
-										{/if}
-									</div>
-									{#if $installType === 'appimage' || $installType === 'windows' || $installType === 'macos'}
-									<button class="update-install-btn" onclick={handleDownloadAndInstall} disabled={updateDownloading}>
-										{#if updateDownloading}
-											<svg class="spinner-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
-											{updateProgress > 0 ? `Downloading ${updateProgress}%` : 'Downloading...'}
-										{:else}
-											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-												<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-											</svg>
-											Download & Install
-										{/if}
-									</button>
-									{#if updateDownloading && updateProgress > 0}
-										<div class="update-progress-bar">
-											<div class="update-progress-fill" style="width: {updateProgress}%"></div>
-										</div>
-									{/if}
-								{:else if $installType === 'deb'}
-									<div class="update-apt-info">
-										<p>Update via your package manager:</p>
-										<code>sudo apt update && sudo apt upgrade helix-notes</code>
-									</div>
-								{:else if $installType === 'aur'}
-									<div class="update-apt-info">
-										<p>Update via your AUR helper:</p>
-										<code>yay -Syu helixnotes</code>
-									</div>
-								{:else if $installType === 'android'}
-									<button class="update-install-btn" onclick={() => { openUrl('https://helixnotes.com/#download').catch(() => {}); }}>
-										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-										</svg>
-										Download from Website
-									</button>
-								{:else}
-									<a class="update-install-btn" href="https://gitlab.com/ArkHost/HelixNotes/-/releases" target="_blank" rel="noopener">
-										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-										</svg>
-										Download from Codeberg
-									</a>
-								{/if}
-								</div>
-							{/if}
-
-							{#if updateMessage}
-								<div class="import-result {updateMessage.type}">
-									{#if updateMessage.type === 'success'}
-										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
-									{:else if updateMessage.type === 'error'}
-										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg>
-									{:else}
-										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
-									{/if}
-									<span>{updateMessage.text}</span>
-								</div>
-							{/if}
-						</div>
 					{/if}
 				</div>
 			</div>
@@ -3954,96 +3745,6 @@
 		color: var(--text-tertiary);
 	}
 
-	/* Updates tab */
-	.update-version {
-		font-size: 14px;
-		color: var(--text-primary);
-	}
-
-	.update-info {
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-color);
-		border-radius: 8px;
-		padding: 12px 14px;
-		margin-bottom: 12px;
-	}
-
-	.update-new-version {
-		font-size: 14px;
-		color: var(--text-primary);
-		margin-bottom: 4px;
-	}
-
-	.update-date {
-		font-size: 12px;
-		color: var(--text-tertiary);
-		margin-bottom: 8px;
-	}
-
-	.update-notes {
-		font-size: 13px;
-		color: var(--text-secondary);
-		line-height: 1.5;
-		white-space: pre-wrap;
-		max-height: 150px;
-		overflow-y: auto;
-	}
-
-	.update-install-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 8px;
-		padding: 10px 18px;
-		border: none;
-		border-radius: 10px;
-		background: var(--accent);
-		color: white;
-		font-size: 13px;
-		font-weight: 500;
-		cursor: pointer;
-		transition: all 0.15s;
-	}
-
-	.update-install-btn:hover:not(:disabled) {
-		background: var(--accent-hover);
-	}
-
-	.update-install-btn:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-
-	.update-apt-info {
-		margin-top: 8px;
-	}
-	.update-apt-info p {
-		margin: 0 0 6px 0;
-		font-size: 13px;
-		color: var(--text-secondary);
-	}
-	.update-apt-info code {
-		display: block;
-		padding: 8px 12px;
-		background: var(--bg-secondary);
-		border-radius: 6px;
-		font-size: 12px;
-		user-select: all;
-	}
-
-	.update-progress-bar {
-		margin-top: 10px;
-		height: 6px;
-		border-radius: 3px;
-		background: var(--bg-secondary);
-		overflow: hidden;
-	}
-
-	.update-progress-fill {
-		height: 100%;
-		border-radius: 3px;
-		background: var(--accent);
-		transition: width 0.3s ease;
-	}
 
 	.import-result.info {
 		background: color-mix(in srgb, var(--accent) 10%, transparent);

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { focusMode, readOnly, shutdownPending, holdingPreview, updateAvailable, showSettings, settingsTab, appConfig } from '$lib/stores/app';
+	import { focusMode, readOnly, shutdownPending, holdingPreview, appConfig } from '$lib/stores/app';
 	import NoteSwitcher from './NoteSwitcher.svelte';
 
 	let {
@@ -82,13 +82,7 @@
 			<line x1="19" y1="18" x2="29" y2="30" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.7" />
 			<line x1="29" y1="18" x2="19" y2="30" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.7" />
 		</svg>
-		<span class="titlebar-title">HelixNotes</span>
-		{#if $updateAvailable}
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<button class="update-badge" onmousedown={(e) => e.stopPropagation()} onclick={() => { $settingsTab = 'updates'; $showSettings = true; }}>
-				v{$updateAvailable.version} available
-			</button>
-		{/if}
+		<span class="titlebar-title">Second Brain</span>
 	</div>
 	{#if $appConfig?.show_note_switcher}
 		<div class="titlebar-note-switcher">
@@ -191,25 +185,6 @@
 		font-size: 12px;
 		font-weight: 500;
 		color: var(--text-tertiary);
-	}
-
-	.update-badge {
-		font-size: 10px;
-		font-weight: 600;
-		color: var(--accent);
-		background: color-mix(in srgb, var(--accent) 12%, transparent);
-		border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
-		border-radius: 10px;
-		padding: 1px 8px;
-		cursor: pointer;
-		pointer-events: auto;
-		-webkit-app-region: no-drag;
-		transition: background 0.15s, border-color 0.15s;
-	}
-
-	.update-badge:hover {
-		background: color-mix(in srgb, var(--accent) 20%, transparent);
-		border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 	}
 
 	.titlebar-actions {

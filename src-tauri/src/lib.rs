@@ -562,7 +562,6 @@ pub fn run() {
             notion::commands::notion_visible_pages,
             notion::commands::notion_setup,
             notion::commands::notion_publish_now,
-            commands::get_install_type,
             commands::is_mobile_platform,
             commands::get_pending_open_file,
             sync_sidecar::sync_status,
@@ -627,8 +626,6 @@ pub fn run() {
                 }
             }
         }));
-
-        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
         // The app owns the key on Windows (ADR-0001), so registration goes through this
         // plugin directly rather than the Linux portal's compositor handshake. Both are
@@ -803,7 +800,7 @@ fn show_main_window(app: &tauri::AppHandle) {
 }
 
 fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let show = MenuItemBuilder::with_id("show", "Show HelixNotes").build(app)?;
+    let show = MenuItemBuilder::with_id("show", "Show Second Brain").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
     let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
 
@@ -817,7 +814,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         // plugin's default (`true`) puts the menu on *both* buttons, and the click handler
         // below then raced it to show the window as well.
         .show_menu_on_left_click(false)
-        .tooltip("HelixNotes")
+        .tooltip("Second Brain")
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => show_main_window(app),
             "quit" => begin_shutdown(app, shutdown::ShutdownIntent::ExitApp),

@@ -1,8 +1,10 @@
 {
-  "name": "helixnotes",
+  "name": "second-brain",
   "private": true,
   "license": "AGPL-3.0-or-later",
-  "version": "1.3.4",
+  "version": "0.1.0-alpha.1",
+  "homepage": "https://github.com/zulucode-design/second-brain",
+  "repository": "https://github.com/zulucode-design/second-brain.git",
   "type": "module",
   "packageManager": "pnpm@11.22.0",
   "engines": {
@@ -44,7 +46,6 @@
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-fs": "^2.4.5",
-    "@tauri-apps/plugin-updater": "^2.10.0",
     "@tiptap/core": "^3.31.3",
     "@tiptap/extension-code-block-lowlight": "^3.31.3",
     "@tiptap/extension-color": "^3.31.3",

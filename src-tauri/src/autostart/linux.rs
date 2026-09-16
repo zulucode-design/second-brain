@@ -116,13 +116,13 @@ mod tests {
     #[test]
     fn enabling_writes_an_entry_that_was_not_there() {
         let config_home = temp_config_home();
-        let exec = Path::new("/opt/second-brain/helixnotes");
+        let exec = Path::new("/opt/second-brain/second-brain");
 
         sync(true, &config_home, &app_id(), exec).expect("sync writes the entry");
 
         let written =
             fs::read_to_string(entry_path(&config_home, &app_id())).expect("the entry now exists");
-        assert!(written.contains("Exec=\"/opt/second-brain/helixnotes\""));
+        assert!(written.contains("Exec=\"/opt/second-brain/second-brain\""));
 
         fs::remove_dir_all(&config_home).ok();
     }
@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn enabling_again_with_the_same_exec_does_not_rewrite_the_file() {
         let config_home = temp_config_home();
-        let exec = Path::new("/opt/second-brain/helixnotes");
+        let exec = Path::new("/opt/second-brain/second-brain");
         sync(true, &config_home, &app_id(), exec).expect("first sync writes");
         let path = entry_path(&config_home, &app_id());
         let written_at = fs::metadata(&path).expect("entry exists").modified().ok();
@@ -151,18 +151,18 @@ mod tests {
     }
 
     #[test]
-    fn a_moved_binary_refreshes_the_entry_rather_than_leaving_it_stale() {
+    fn a_mixed_name_binary_refreshes_the_entry_without_losing_the_preference() {
         let config_home = temp_config_home();
-        let old_exec = Path::new("/opt/second-brain-old/helixnotes");
-        let new_exec = Path::new("/opt/second-brain/helixnotes");
+        let old_exec = Path::new("/opt/second-brain/helixnotes");
+        let new_exec = Path::new("/opt/second-brain/second-brain");
         sync(true, &config_home, &app_id(), old_exec).expect("first sync writes");
 
         sync(true, &config_home, &app_id(), new_exec).expect("second sync refreshes");
 
         let written = fs::read_to_string(entry_path(&config_home, &app_id()))
             .expect("the entry still exists");
-        assert!(written.contains("Exec=\"/opt/second-brain/helixnotes\""));
-        assert!(!written.contains("second-brain-old"));
+        assert!(written.contains("Exec=\"/opt/second-brain/second-brain\""));
+        assert!(!written.contains("helixnotes"));
 
         fs::remove_dir_all(&config_home).ok();
     }
@@ -170,7 +170,7 @@ mod tests {
     #[test]
     fn disabling_removes_an_existing_entry() {
         let config_home = temp_config_home();
-        let exec = Path::new("/opt/second-brain/helixnotes");
+        let exec = Path::new("/opt/second-brain/second-brain");
         sync(true, &config_home, &app_id(), exec).expect("first sync writes");
 
         sync(false, &config_home, &app_id(), exec).expect("disabling removes it");
@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn disabling_when_nothing_was_ever_written_is_not_an_error() {
         let config_home = temp_config_home();
-        let exec = Path::new("/opt/second-brain/helixnotes");
+        let exec = Path::new("/opt/second-brain/second-brain");
         sync(false, &config_home, &app_id(), exec).expect("disabling with nothing there is fine");
         fs::remove_dir_all(&config_home).ok();
     }

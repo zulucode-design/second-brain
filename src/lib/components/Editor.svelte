@@ -1446,7 +1446,7 @@
 	const MermaidRenderer = Extension.create({
 		name: 'mermaidRendererOptIn',
 		addProseMirrorPlugins() {
-			console.info('[HelixNotes] Mermaid renderer (opt-in) initialised');
+			console.info('[Second Brain] Mermaid renderer (opt-in) initialised');
 
 			let mermaidPromise: Promise<any> | null = null;
 			const svgCache = new Map<string, string>();

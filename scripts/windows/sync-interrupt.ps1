@@ -11,7 +11,7 @@
 # %LOCALAPPDATA%, MSI per machine under Program Files. Pass -InstallDir for anything else.
 #
 # Stop refuses unless exactly one process matches. The sync watchdog runs from the same
-# helixnotes.exe with --helix-sync-watchdog, so App excludes it; stopping the app is supposed to
+# second-brain.exe with --helix-sync-watchdog, so App excludes it; stopping the app is supposed to
 # leave the watchdog to shut the sidecar down, which Report then shows.
 #
 # A process whose executable path Windows will not reveal to this session (typically an
@@ -24,8 +24,8 @@ param(
   [ValidateSet('Stop', 'Report')][string]$Action,
   [ValidateSet('App', 'Sidecar')][string]$Target,
   [string[]]$InstallDir = @(
-    (Join-Path $env:LOCALAPPDATA 'HelixNotes'),
-    (Join-Path $env:ProgramFiles 'HelixNotes')
+    (Join-Path $env:LOCALAPPDATA 'Second Brain'),
+    (Join-Path $env:ProgramFiles 'Second Brain')
   )
 )
 
@@ -36,14 +36,14 @@ if (-not $Action -or ($Action -eq 'Stop' -and -not $Target)) {
   exit 2
 }
 
-$appExes = @($InstallDir | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $_ 'helixnotes.exe')) })
+$appExes = @($InstallDir | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $_ 'second-brain.exe')) })
 $sidecarExes = @($InstallDir | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $_ 'syncthing.exe')) })
 
 # The app runs Syncthing as a single process (STMONITORED=yes, #104). A packaged Syncthing whose
 # parent is the packaged app is the Sidecar target; any other is a SidecarOrphan, which is what
 # outliving a stop looks like.
 function Get-PackagedProcesses {
-  $all = @(Get-CimInstance Win32_Process -Filter "Name = 'helixnotes.exe' OR Name = 'syncthing.exe'")
+  $all = @(Get-CimInstance Win32_Process -Filter "Name = 'second-brain.exe' OR Name = 'syncthing.exe'")
   $appIds = @($all | Where-Object { $appExes -contains $_.ExecutablePath } | ForEach-Object ProcessId)
   $all |
     ForEach-Object {

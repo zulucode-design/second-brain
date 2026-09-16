@@ -3879,7 +3879,7 @@ pub fn ai_ask(
         return Err(reason);
     }
 
-    let mut system_prompt = "You are a helpful writing assistant inside a note-taking app called HelixNotes. \
+    let mut system_prompt = "You are a helpful writing assistant inside a note-taking app called Second Brain. \
         You help users improve, rewrite, summarize, and transform their text. \
         Return ONLY the resulting text - no explanations, no markdown code fences, no preamble. \
         Preserve the original language of the text unless specifically asked to translate. \
@@ -4519,48 +4519,6 @@ pub fn is_mobile_platform() -> bool {
     // Compile-time platform: true only for the Android/iOS builds. Authoritative, unlike the
     // webview user-agent, which some desktop WebKitGTK builds report mobile-looking (issue #63).
     cfg!(mobile)
-}
-
-#[tauri::command]
-pub fn get_install_type() -> String {
-    // Build-time override for distro packagers (e.g. Solus): build with
-    // HELIXNOTES_INSTALL_TYPE=solus to report that type and suppress the in-app updater.
-    if let Some(forced) = option_env!("HELIXNOTES_INSTALL_TYPE") {
-        if !forced.is_empty() {
-            return forced.to_string();
-        }
-    }
-
-    // On mobile (iOS/Android) the concept of install type is irrelevant and the
-    // Linux detection below would attempt std::process::Command which is forbidden
-    // in the iOS sandbox. Return early.
-    if cfg!(mobile) {
-        return "mobile".to_string();
-    }
-
-    if cfg!(target_os = "macos") {
-        "macos".to_string()
-    } else if cfg!(target_os = "windows") {
-        "windows".to_string()
-    } else if std::path::Path::new("/var/lib/dpkg/info/helix-notes.list").exists() {
-        "deb".to_string()
-    } else if std::path::Path::new("/var/lib/pacman/local").exists()
-        && ["helixnotes", "helixnotes-bin", "helixnotes-appimage-bin"]
-            .iter()
-            .any(|pkg| {
-                std::process::Command::new("pacman")
-                    .args(["-Q", pkg])
-                    .output()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false)
-            })
-    {
-        "aur".to_string()
-    } else if std::env::var("APPIMAGE").is_ok() {
-        "appimage".to_string()
-    } else {
-        "native".to_string()
-    }
 }
 
 #[cfg(test)]

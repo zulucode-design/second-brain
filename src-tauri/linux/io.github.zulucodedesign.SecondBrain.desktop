@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=HelixNotes
-Comment=Local markdown note-taking app
-Exec=helixnotes
-Icon=helixnotes
+Name=Second Brain
+Comment=Local-first personal knowledge app
+Exec=second-brain
+Icon=second-brain
 Terminal=false
 Categories=Office;
-StartupWMClass=helixnotes
+StartupWMClass=second-brain

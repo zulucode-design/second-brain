@@ -103,7 +103,7 @@ mod tests {
     fn enabling_writes_a_value_that_was_not_there() {
         let app_id = scoped_app_id("Enable");
         cleanup(&app_id);
-        let exec = Path::new(r"C:\Program Files\Second Brain\helixnotes.exe");
+        let exec = Path::new(r"C:\Program Files\Second Brain\second-brain.exe");
 
         sync(true, &app_id, exec).expect("sync writes the value");
 
@@ -118,11 +118,11 @@ mod tests {
     }
 
     #[test]
-    fn a_moved_binary_refreshes_the_value_rather_than_leaving_it_stale() {
+    fn a_mixed_name_binary_refreshes_the_value_without_losing_the_preference() {
         let app_id = scoped_app_id("Moved");
         cleanup(&app_id);
-        let old_exec = Path::new(r"C:\Program Files\Second Brain Old\helixnotes.exe");
-        let new_exec = Path::new(r"C:\Program Files\Second Brain\helixnotes.exe");
+        let old_exec = Path::new(r"C:\Program Files\Second Brain\helixnotes.exe");
+        let new_exec = Path::new(r"C:\Program Files\Second Brain\second-brain.exe");
         sync(true, &app_id, old_exec).expect("first sync writes");
 
         sync(true, &app_id, new_exec).expect("second sync refreshes");
@@ -141,7 +141,7 @@ mod tests {
     fn disabling_removes_an_existing_value() {
         let app_id = scoped_app_id("Disable");
         cleanup(&app_id);
-        let exec = Path::new(r"C:\Program Files\Second Brain\helixnotes.exe");
+        let exec = Path::new(r"C:\Program Files\Second Brain\second-brain.exe");
         sync(true, &app_id, exec).expect("first sync writes");
 
         sync(false, &app_id, exec).expect("disabling removes it");
@@ -157,7 +157,7 @@ mod tests {
     fn disabling_when_nothing_was_ever_written_is_not_an_error() {
         let app_id = scoped_app_id("NeverWritten");
         cleanup(&app_id);
-        let exec = Path::new(r"C:\Program Files\Second Brain\helixnotes.exe");
+        let exec = Path::new(r"C:\Program Files\Second Brain\second-brain.exe");
         sync(false, &app_id, exec).expect("disabling with nothing there is fine");
     }
 }

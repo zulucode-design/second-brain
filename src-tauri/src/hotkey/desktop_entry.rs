@@ -146,7 +146,9 @@ pub fn ensure_appimage_entry(
             .create_new(true)
             .write(true)
             .open(&temporary)?;
-        file.write_all(entry_contents("HelixNotes", appimage, env!("CARGO_PKG_NAME")).as_bytes())?;
+        file.write_all(
+            entry_contents("Second Brain", appimage, env!("CARGO_PKG_NAME")).as_bytes(),
+        )?;
         file.sync_all()?;
         fs::rename(&temporary, &path)?;
         Ok(Integration::Written { path })
@@ -196,7 +198,7 @@ mod tests {
 
         let packaged_entry =
             include_str!("../../linux/io.github.zulucodedesign.SecondBrain.desktop");
-        let generated = entry_contents("HelixNotes", Path::new("helixnotes"), "helixnotes");
+        let generated = entry_contents("Second Brain", Path::new("second-brain"), "second-brain");
         for field in ["Exec", "Icon", "Categories", "StartupWMClass"] {
             assert_eq!(
                 desktop_field(packaged_entry, field),
@@ -248,7 +250,7 @@ mod tests {
         let contents = entry_contents(
             "Second Brain",
             Path::new("/home/u/My Apps/SecondBrain.AppImage"),
-            "helixnotes",
+            "second-brain",
         );
         assert!(contents.contains("Exec=\"/home/u/My Apps/SecondBrain.AppImage\""));
     }
@@ -260,7 +262,7 @@ mod tests {
         let contents = entry_contents(
             "Second Brain",
             Path::new("/home/u/Apps/SecondBrain.AppImage"),
-            "helixnotes",
+            "second-brain",
         );
         assert!(contents.contains("NoDisplay=true"));
     }
@@ -268,22 +270,20 @@ mod tests {
     #[test]
     fn an_entry_pointing_at_this_appimage_is_left_alone() {
         let exec = Path::new("/home/u/Apps/SecondBrain.AppImage");
-        let existing = entry_contents("Second Brain", exec, "helixnotes");
+        let existing = entry_contents("Second Brain", exec, "second-brain");
         assert!(is_current(Some(&existing), exec));
     }
 
     #[test]
-    fn an_entry_pointing_somewhere_else_is_rewritten() {
-        // The AppImage was moved or replaced by a new download. The old entry now names a
-        // path that does not exist, GLib drops it, and the hotkey dies silently.
+    fn a_mixed_name_entry_is_rewritten_for_the_new_executable() {
         let existing = entry_contents(
-            "Second Brain",
-            Path::new("/home/u/Downloads/SecondBrain.AppImage"),
+            "HelixNotes",
+            Path::new("/opt/Second Brain/helixnotes"),
             "helixnotes",
         );
         assert!(!is_current(
             Some(&existing),
-            Path::new("/home/u/Apps/SecondBrain.AppImage")
+            Path::new("/opt/Second Brain/second-brain")
         ));
     }
 
