@@ -15,6 +15,7 @@ const { code } = await transformWithEsbuild(source, 'paths.ts', {
 const {
   assetSourceToMarkdown,
   assetUrlToLocalPath,
+  isExternalNotePath,
   normalizeLocalAssetPath,
   resolvePathFromFile,
   resolveVaultFilePath
@@ -114,4 +115,21 @@ test('resolves vault files consistently across platforms', () => {
     resolveVaultFilePath('../assets/image.png', '\\\\server\\share\\Vault\\notes\\Note.md', '\\\\server\\share\\Vault'),
     '//server/share/Vault/assets/image.png'
   );
+});
+
+test('a file inside the vault is not treated as external, on either separator', () => {
+  assert.equal(isExternalNotePath('/home/u/vault', '/home/u/vault/note.md'), false);
+  assert.equal(isExternalNotePath('C:\\vault', 'C:\\vault\\note.md'), false);
+  // The stored root and the OS-supplied path need not agree on separator or drive case.
+  assert.equal(isExternalNotePath('C:/vault', 'C:\\vault\\sub\\note.md'), false);
+  assert.equal(isExternalNotePath('c:\\vault', 'C:\\vault\\note.md'), false);
+});
+
+test('a file outside the vault is external, and a sibling prefix is not inside', () => {
+  assert.equal(isExternalNotePath('/home/u/vault', '/home/u/elsewhere/note.md'), true);
+  assert.equal(isExternalNotePath('C:\\vault', 'D:\\notes\\note.md'), true);
+  // `/home/u/vault-archive` starts with the root string but is a different directory.
+  assert.equal(isExternalNotePath('/home/u/vault', '/home/u/vault-archive/note.md'), true);
+  // No vault open: everything is external.
+  assert.equal(isExternalNotePath(null, '/home/u/vault/note.md'), true);
 });

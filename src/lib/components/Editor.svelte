@@ -59,6 +59,7 @@
 	import { serializeInlineMarkdown } from '$lib/editor/markdown';
 	import { replaceWithWikiLink } from '$lib/editor/wikiLinks';
 	import { assetSourceToMarkdown, assetUrlToLocalPath, normalizeLocalAssetPath, resolveVaultFilePath } from '$lib/utils/paths';
+	import { clampMenuPosition, placeSubmenu } from '$lib/utils/menu-position';
 	import GraphView from './GraphView.svelte';
 	import TagSuggestInput from './TagSuggestInput.svelte';
 	import ImageViewer from './ImageViewer.svelte';
@@ -503,11 +504,17 @@
 		if (!q || q.startsWith('http://') || q.startsWith('https://') || q.startsWith('mailto:')) return [];
 		return linkSuggestTitles.filter(e => e.title.toLowerCase().includes(q)).slice(0, 8);
 	});
-	let textContextMenu = $state<{ x: number; y: number; submenuLeft: boolean } | null>(null);
+	let textContextMenu = $state<{ x: number; y: number } | null>(null);
+	let textContextMenuElement = $state<HTMLElement>(null!);
 	let tableContextMenu = $state<{ x: number; y: number; hasStyling: boolean } | null>(null);
 	let imageToolbar = $state<{ pos: number; x: number; y: number; size: string; src: string; alt: string } | null>(null);
 	let imageViewer = $state<{ src: string; alt: string } | null>(null);
 	let copyToast = $state<'copying' | 'done' | null>(null);
+	let ctxHeadingTrigger = $state<HTMLElement>(null!);
+	let ctxHeadingSubmenuElement = $state<HTMLElement>(null!);
+	let ctxHeadingSubmenu = $state(false);
+	let ctxHeadingSubmenuPosition = $state<{ x: number; y: number } | null>(null);
+	let ctxHeadingCloseTimer: ReturnType<typeof setTimeout> | null = null;
 
 	$effect(() => {
 		const open = headingDropdown || colorDropdown || highlightDropdown || alignDropdown || insertDropdown || tablePickerOpen;
@@ -4962,13 +4969,7 @@
 			if (href) {
 				event.preventDefault();
 				event.stopPropagation();
-				let lx = event.clientX;
-				let ly = event.clientY;
-				const lw = 200, lh = 200;
-				if (lx + lw > window.innerWidth) lx = window.innerWidth - lw - 8;
-				if (ly + lh > window.innerHeight) ly = window.innerHeight - lh - 8;
-				if (lx < 4) lx = 4;
-				if (ly < 4) ly = 4;
+				const { x: lx, y: ly } = clampMenuPosition(event.clientX, event.clientY, 200, 200, { width: window.innerWidth, height: window.innerHeight });
 				linkContextMenu = { x: lx, y: ly, href, anchor };
 				return;
 			}
@@ -4978,14 +4979,7 @@
 		if (cell) {
 			event.preventDefault();
 			event.stopPropagation();
-			let x = event.clientX;
-			let y = event.clientY;
-			const menuWidth = 220;
-			const menuHeight = 600;
-			if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 8;
-			if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 8;
-			if (x < 4) x = 4;
-			if (y < 4) y = 4;
+			const { x, y } = clampMenuPosition(event.clientX, event.clientY, 220, 600, { width: window.innerWidth, height: window.innerHeight });
 			let hasStyling = false;
 			if (editor) {
 				const pos = editor.view.posAtDOM(event.target as Node, 0);
@@ -5009,22 +5003,50 @@
 		event.preventDefault();
 		event.stopPropagation();
 		// Position menu, adjusting if it would overflow the viewport
-		let x = event.clientX;
-		let y = event.clientY;
-		const menuWidth = 220;
-		const menuHeight = 740;
-		if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 8;
-		if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 8;
-		if (x < 4) x = 4;
-		if (y < 4) y = 4;
-		const submenuWidth = 150;
-		const submenuLeft = x + menuWidth + submenuWidth > window.innerWidth;
-		textContextMenu = { x, y, submenuLeft };
+		const { x, y } = clampMenuPosition(event.clientX, event.clientY, 220, 740, { width: window.innerWidth, height: window.innerHeight });
+		textContextMenu = { x, y };
+		ctxHeadingSubmenu = false;
+		ctxHeadingSubmenuPosition = null;
+		void tick().then(() => {
+			if (!textContextMenu || !textContextMenuElement) return;
+			const rect = textContextMenuElement.getBoundingClientRect();
+			const position = clampMenuPosition(textContextMenu.x, textContextMenu.y, rect.width, rect.height, { width: window.innerWidth, height: window.innerHeight });
+			if (position.x !== textContextMenu.x || position.y !== textContextMenu.y) textContextMenu = position;
+		});
 	}
 
 	function closeTextContextMenu() {
 		textContextMenu = null;
+		cancelHeadingSubmenuClose();
 		ctxHeadingSubmenu = false;
+		ctxHeadingSubmenuPosition = null;
+	}
+
+	function cancelHeadingSubmenuClose() {
+		if (ctxHeadingCloseTimer) clearTimeout(ctxHeadingCloseTimer);
+		ctxHeadingCloseTimer = null;
+	}
+
+	function scheduleHeadingSubmenuClose() {
+		cancelHeadingSubmenuClose();
+		ctxHeadingCloseTimer = setTimeout(() => {
+			ctxHeadingSubmenu = false;
+			ctxHeadingSubmenuPosition = null;
+		}, 100);
+	}
+
+	async function openHeadingSubmenu() {
+		cancelHeadingSubmenuClose();
+		ctxHeadingSubmenu = true;
+		await tick();
+		if (!ctxHeadingTrigger || !ctxHeadingSubmenuElement) return;
+		const rect = ctxHeadingSubmenuElement.getBoundingClientRect();
+		ctxHeadingSubmenuPosition = placeSubmenu(
+			ctxHeadingTrigger.getBoundingClientRect(),
+			rect.width,
+			rect.height,
+			{ width: window.innerWidth, height: window.innerHeight },
+		);
 	}
 
 	function closeTableContextMenu() {
@@ -5100,8 +5122,6 @@
 		editor.chain().focus().selectAll().run();
 		closeTextContextMenu();
 	}
-
-	let ctxHeadingSubmenu = $state(false);
 
 	function ctxSetHeading(level: number) {
 		editor?.chain().focus().toggleHeading({ level: level as 1 | 2 | 3 | 4 }).run();
@@ -5997,6 +6017,7 @@
 		unlistenFileChange?.();
 		unlistenSyncDone?.();
 		if (infoPathCopyTimer) clearTimeout(infoPathCopyTimer);
+		cancelHeadingSubmenuClose();
 	});
 </script>
 
@@ -7210,7 +7231,7 @@
 {#if textContextMenu}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="text-ctx-overlay" onclick={(e) => closeFromOverlay(e, closeTextContextMenu)} onkeydown={(e) => closeOnEscape(e, closeTextContextMenu)}>
-		<div class="text-ctx-menu" style="left: {textContextMenu.x}px; top: {textContextMenu.y}px">
+		<div class="text-ctx-menu" bind:this={textContextMenuElement} style="left: {textContextMenu.x}px; top: {textContextMenu.y}px">
 			<button onclick={ctxCut}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
 				Cut
@@ -7234,22 +7255,12 @@
 			</button>
 			<div class="text-ctx-sep"></div>
 			<!-- Heading submenu -->
-			<div class="text-ctx-submenu-wrap" onmouseenter={() => ctxHeadingSubmenu = true} onmouseleave={() => ctxHeadingSubmenu = false}>
-				<button class="has-submenu">
+			<div class="text-ctx-submenu-wrap" bind:this={ctxHeadingTrigger} onmouseenter={openHeadingSubmenu} onmouseleave={scheduleHeadingSubmenuClose}>
+				<button class="has-submenu" aria-haspopup="menu" aria-expanded={ctxHeadingSubmenu} onclick={openHeadingSubmenu} onfocus={openHeadingSubmenu}>
 					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16M4 6v12M20 6v12"/></svg>
 					Heading
 					<svg class="submenu-arrow" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 6 15 12 9 18"/></svg>
 				</button>
-				{#if ctxHeadingSubmenu}
-					<div class="text-ctx-submenu" class:flip-left={textContextMenu?.submenuLeft}>
-						<button class:active={isEditorActive('heading', { level: 1 })} onclick={() => ctxSetHeading(1)}>Heading 1</button>
-						<button class:active={isEditorActive('heading', { level: 2 })} onclick={() => ctxSetHeading(2)}>Heading 2</button>
-						<button class:active={isEditorActive('heading', { level: 3 })} onclick={() => ctxSetHeading(3)}>Heading 3</button>
-						<button class:active={isEditorActive('heading', { level: 4 })} onclick={() => ctxSetHeading(4)}>Heading 4</button>
-						<div class="text-ctx-sep"></div>
-						<button class:active={isEditorActive('paragraph')} onclick={ctxSetParagraph}>Paragraph</button>
-					</div>
-				{/if}
 			</div>
 			<div class="text-ctx-sep"></div>
 			<button onclick={ctxBold}>
@@ -7333,6 +7344,22 @@
 				</button>
 			{/if}
 		</div>
+		{#if ctxHeadingSubmenu}
+			<div
+				class="text-ctx-submenu"
+				bind:this={ctxHeadingSubmenuElement}
+				style="left: {ctxHeadingSubmenuPosition?.x ?? 0}px; top: {ctxHeadingSubmenuPosition?.y ?? 0}px; visibility: {ctxHeadingSubmenuPosition ? 'visible' : 'hidden'}"
+				onmouseenter={cancelHeadingSubmenuClose}
+				onmouseleave={scheduleHeadingSubmenuClose}
+			>
+				<button class:active={isEditorActive('heading', { level: 1 })} onclick={() => ctxSetHeading(1)}>Heading 1</button>
+				<button class:active={isEditorActive('heading', { level: 2 })} onclick={() => ctxSetHeading(2)}>Heading 2</button>
+				<button class:active={isEditorActive('heading', { level: 3 })} onclick={() => ctxSetHeading(3)}>Heading 3</button>
+				<button class:active={isEditorActive('heading', { level: 4 })} onclick={() => ctxSetHeading(4)}>Heading 4</button>
+				<div class="text-ctx-sep"></div>
+				<button class:active={isEditorActive('paragraph')} onclick={ctxSetParagraph}>Paragraph</button>
+			</div>
+		{/if}
 	</div>
 {/if}
 
@@ -10442,7 +10469,11 @@
 		border-radius: 10px;
 		box-shadow: var(--shadow-lg);
 		padding: 4px;
-		min-width: 200px;
+		width: min(220px, calc(100vw - 16px));
+		max-height: calc(100vh - 16px);
+		min-width: 0;
+		box-sizing: border-box;
+		overflow-y: auto;
 		z-index: 1501;
 	}
 
@@ -10507,24 +10538,17 @@
 	}
 
 	.text-ctx-submenu {
-		position: absolute;
-		left: 100%;
-		top: -4px;
-		margin-left: 2px;
+		position: fixed;
 		background: var(--bg-primary);
 		border: 1px solid var(--border-color);
 		border-radius: 10px;
 		box-shadow: var(--shadow-lg);
 		padding: 4px;
-		min-width: 140px;
+		width: min(140px, calc(100vw - 16px));
+		max-height: calc(100vh - 16px);
+		box-sizing: border-box;
+		overflow-y: auto;
 		z-index: 1502;
-	}
-
-	.text-ctx-submenu.flip-left {
-		left: auto;
-		right: 100%;
-		margin-left: 0;
-		margin-right: 2px;
 	}
 
 	.text-ctx-submenu button {

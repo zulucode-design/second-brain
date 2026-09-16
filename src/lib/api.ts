@@ -143,6 +143,11 @@ export async function readNote(path: string): Promise<NoteContent> {
   return invoke("read_note", { path });
 }
 
+/** Read-only view of a Markdown file the user opened from outside the vault. */
+export async function readExternalNote(path: string): Promise<NoteContent> {
+  return invoke("read_external_note", { path });
+}
+
 /** Read-only preview of a validated note directly inside the Holding Area. */
 export async function readUnfiledNote(path: string): Promise<NoteContent> {
   return invoke("read_unfiled_note", { path });
