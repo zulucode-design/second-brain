@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, notebookSortMode, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
-	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, notionStatus, notionConnect, notionDisconnect, notionSetEnabled, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex, getSyncStatus, setSyncEnabled, pairSyncDevice, syncNow, listSyncConflicts, resolveSyncConflict, copyTextToClipboard } from '$lib/api';
+	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, notionStatus, notionConnect, notionDisconnect, notionSetEnabled, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex, getSyncStatus, setSyncEnabled, pairSyncDevice, syncNow, listSyncConflicts, resolveSyncConflict, copyTextToClipboard, exportDiagnostics } from '$lib/api';
 	import type { AiProvider } from '$lib/types';
 	import { importOutcomeView, type ImportDonePayload } from '$lib/utils/import-outcome';
 	import { AI_PROVIDER_METADATA, AI_PROVIDER_OPTIONS } from '$lib/utils/ai-provider';
@@ -36,6 +36,8 @@
 	let semanticStatusError = $state(false);
 	let rebuildingSemantic = $state(false);
 	let semanticMessage = $state('');
+	let exportingDiagnostics = $state(false);
+	let diagnosticMessage = $state('');
 	const orphanedAttachmentTotal = $derived((orphanedAttachments ?? []).reduce((total, attachment) => total + attachment.size, 0));
 
 	$effect(() => {
@@ -89,6 +91,24 @@
 			semanticMessage = `Could not rebuild semantic search: ${String(error)}`;
 		} finally {
 			rebuildingSemantic = false;
+		}
+	}
+
+	async function handleExportDiagnostics() {
+		const path = await saveDialog({
+			filters: [{ name: 'ZIP archive', extensions: ['zip'] }],
+			defaultPath: 'second-brain-diagnostics.zip',
+		});
+		if (!path) return;
+		exportingDiagnostics = true;
+		diagnosticMessage = '';
+		try {
+			await exportDiagnostics(path);
+			diagnosticMessage = 'Diagnostic archive exported.';
+		} catch (error) {
+			diagnosticMessage = `Could not export diagnostics: ${String(error)}`;
+		} finally {
+			exportingDiagnostics = false;
 		}
 	}
 
@@ -1669,6 +1689,15 @@
 										<p class="cleanup-hint">Moved to the vault's trash folder (recoverable), not permanently deleted.</p>
 									{/if}
 								</div>
+							</div>
+
+							<div class="settings-section">
+								<h3>Diagnostics</h3>
+								<p class="setting-desc">Export app details, redacted configuration, sync status, and redacted logs. Notes, attachments, indexes, backups, and credentials are never included.</p>
+								<button class="import-btn cleanup-action" onclick={handleExportDiagnostics} disabled={exportingDiagnostics}>
+									{exportingDiagnostics ? 'Exporting…' : 'Export diagnostics'}
+								</button>
+								{#if diagnosticMessage}<p class="cleanup-message">{diagnosticMessage}</p>{/if}
 							</div>
 						</div>
 					{:else if activeTab === 'editor'}

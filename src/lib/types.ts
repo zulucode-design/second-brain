@@ -273,6 +273,7 @@ export interface SyncStatus {
   peerName: string | null;
   peerConnected: boolean;
   vaultId: string | null;
+  lastTerminal: BulkMutationTerminal | null;
 }
 
 export interface SyncConflict {

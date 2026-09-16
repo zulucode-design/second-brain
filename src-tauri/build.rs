@@ -29,6 +29,16 @@ fn link_windows_common_controls() {
 }
 
 fn main() {
+    let commit = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|commit| !commit.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo::rustc-env=SECOND_BRAIN_BUILD_COMMIT={commit}");
+
     tauri_build::build();
 
     println!("cargo::rerun-if-env-changed=HELIX_WINDOWS_TEST_MANIFEST");
