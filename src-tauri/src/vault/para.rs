@@ -145,43 +145,60 @@ pub fn reconcile_vault(vault_path: &str) -> Result<ReconcileReport, String> {
     let unfiled_dir = ensure_holding_area(root)?;
     let mut report = ReconcileReport::default();
 
+    // Walk first, then read every note in parallel: opening 10,000 files one at a time took
+    // 1.7 s of Windows startup (#128). Relocation stays sequential and in walk order, and
+    // no note is moved while the walk is still running.
+    let mut walked = Vec::new();
     for entry in walkdir::WalkDir::new(root)
         .into_iter()
         .filter_entry(|entry| entry.depth() == 0 || !is_app_metadata(entry.path()))
     {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(error) => {
-                report.failures.push(ReconcileFailure {
-                    path: error
-                        .path()
-                        .map(|path| relative_to(root, path))
-                        .unwrap_or_else(|| "<vault>".to_string()),
-                    message: error.to_string(),
-                });
-                continue;
+        match entry {
+            Ok(entry) => {
+                let path = entry.into_path();
+                if path.is_file() && path.extension().and_then(|x| x.to_str()) == Some("md") {
+                    walked.push(Ok(path));
+                }
             }
-        };
-        let path = entry.path();
-        if !path.is_file() || path.extension().and_then(|x| x.to_str()) != Some("md") {
-            continue;
+            Err(error) => walked.push(Err(ReconcileFailure {
+                path: error
+                    .path()
+                    .map(|path| relative_to(root, path))
+                    .unwrap_or_else(|| "<vault>".to_string()),
+                message: error.to_string(),
+            })),
         }
+    }
 
-        let raw = match std::fs::read_to_string(path) {
-            Ok(raw) => raw,
-            Err(error) => {
-                report.failures.push(ReconcileFailure {
-                    path: relative_to(root, path),
+    use rayon::prelude::*;
+    let read: Vec<_> = walked
+        .into_par_iter()
+        .map(|walked| {
+            let path = walked?;
+            match std::fs::read_to_string(&path) {
+                Ok(raw) => {
+                    let filename = path.file_name().unwrap_or_default().to_string_lossy();
+                    let category = crate::vault::frontmatter::parse_note(&raw, &filename)
+                        .0
+                        .category;
+                    Ok((path, category))
+                }
+                Err(error) => Err(ReconcileFailure {
+                    path: relative_to(root, &path),
                     message: error.to_string(),
-                });
+                }),
+            }
+        })
+        .collect();
+
+    for note in read {
+        let (path, category) = match note {
+            Ok(note) => note,
+            Err(failure) => {
+                report.failures.push(failure);
                 continue;
             }
         };
-        let filename = path.file_name().unwrap_or_default().to_string_lossy();
-        let category = crate::vault::frontmatter::parse_note(&raw, &filename)
-            .0
-            .category;
-
         let destination_dir = match category {
             Some(category) => root.join(category.folder_name()),
             None => unfiled_dir.clone(),
@@ -193,11 +210,11 @@ pub fn reconcile_vault(vault_path: &str) -> Result<ReconcileReport, String> {
             continue;
         }
 
-        match relocate_note(root, path, &destination_dir) {
+        match relocate_note(root, &path, &destination_dir) {
             Ok(_) if category.is_some() => report.relocated += 1,
             Ok(_) => report.moved_to_holding += 1,
             Err(error) => report.failures.push(ReconcileFailure {
-                path: relative_to(root, path),
+                path: relative_to(root, &path),
                 message: error,
             }),
         }
