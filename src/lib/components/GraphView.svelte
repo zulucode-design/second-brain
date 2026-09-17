@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { startTimer } from '$lib/perf-probe';
+	import { applyRepulsion } from '$lib/utils/graph-repulsion';
 	import { onDestroy } from 'svelte';
 	import { getGraphData } from '$lib/api';
 	import { activeNotePath, appConfig } from '$lib/stores/app';
@@ -249,9 +250,13 @@
 		draw();
 	}
 
+	const PHYSICS_FRAME_BUDGET_MS = 12;
+
 	function startSimulation() {
-		// Initial settle - enough for a rough layout, camera set after full physics
-		for (let i = 0; i < 80; i++) simulate();
+		// Initial settle - enough for a rough layout, camera set after full physics. Bounded in
+		// time so a large graph still draws its first frame promptly; the loop finishes it.
+		const settleUntil = performance.now() + PHYSICS_FRAME_BUDGET_MS * 20;
+		for (let i = 0; i < 80 && performance.now() < settleUntil; i++) simulate();
 
 		// Show the full graph while physics finishes settling
 		fitToView();
@@ -263,6 +268,13 @@
 		startAnimLoop();
 	}
 
+	// Only the simulated part of the graph has a layout, so switching mode or active note
+	// must settle what is newly visible.
+	function resumePhysics() {
+		physicsRemaining = Math.max(physicsRemaining, 150);
+		if (canvas && nodes.length > 0) startAnimLoop();
+	}
+
 	function startAnimLoop() {
 		if (animFrameId) cancelAnimationFrame(animFrameId);
 		lastGlowTs = 0;
@@ -272,9 +284,13 @@
 
 			// Physics batch
 			if (physicsRemaining > 0) {
-				const batch = Math.min(20, physicsRemaining);
-				for (let i = 0; i < batch; i++) simulate();
-				physicsRemaining -= batch;
+				// Up to 20 passes per frame, but never more than a frame's worth of work.
+				const frameUntil = performance.now() + PHYSICS_FRAME_BUDGET_MS;
+				for (let i = 0; i < 20 && physicsRemaining > 0; i++) {
+					simulate();
+					physicsRemaining--;
+					if (performance.now() >= frameUntil) break;
+				}
 				// When physics is fully settled, snap camera to active note
 				if (physicsRemaining === 0) {
 					if (activeNodeIdx >= 0) centerOnActiveNote(); else fitToView();
@@ -304,29 +320,28 @@
 	}
 
 	function simulate() {
-		const nodeCount = nodes.length;
-		if (nodeCount === 0) return;
+		if (nodes.length === 0) return;
 		const w = canvasW || 800, h = canvasH || 600;
 		const centerX = w / 2, centerY = h / 2;
 
-		// Repulsion
-		for (let i = 0; i < nodeCount; i++) {
-			const a = nodes[i];
-			for (let j = i + 1; j < nodeCount; j++) {
-				const b = nodes[j];
-				const dx = b.x - a.x, dy = b.y - a.y;
-				const distSq = dx * dx + dy * dy;
-				if (distSq > 360000) continue;
-				const d = distSq || 1;
-				const force = 1500 / d;
-				const dist = Math.sqrt(d);
-				const fx = (dx / dist) * force, fy = (dy / dist) * force;
-				a.vx -= fx; a.vy -= fy; b.vx += fx; b.vy += fy;
-			}
+		// Local mode shows only the active note's neighbourhood, so only it needs a layout.
+		let simulated: number[];
+		let simulatedEdges: GraphEdge[];
+		if (localMode) {
+			const { nodeSet, edgeSet } = computeLocalSets();
+			simulated = [...nodeSet];
+			simulatedEdges = [...edgeSet].map((i) => edges[i]);
+		} else {
+			simulated = nodes.map((_, i) => i);
+			simulatedEdges = edges;
 		}
+		const count = simulated.length;
+		if (count === 0) return;
+
+		applyRepulsion(simulated.map((i) => nodes[i]));
 
 		// Spring attraction along edges
-		for (const edge of edges) {
+		for (const edge of simulatedEdges) {
 			const a = nodes[edge.sourceIdx], b = nodes[edge.targetIdx];
 			const dx = b.x - a.x, dy = b.y - a.y;
 			const dist = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -336,7 +351,7 @@
 		}
 
 		// Center gravity - weaker for isolated nodes so they spread instead of clustering
-		for (let i = 0; i < nodeCount; i++) {
+		for (const i of simulated) {
 			const node = nodes[i];
 			const gravity = (nodeDegree[i] || 0) === 0 ? 0.0002 : 0.0008;
 			node.vx += (centerX - node.x) * gravity;
@@ -344,7 +359,8 @@
 		}
 
 		// Damping + integration
-		for (const node of nodes) {
+		for (const i of simulated) {
+			const node = nodes[i];
 			if (node === dragging) continue;
 			node.vx *= 0.85; node.vy *= 0.85;
 			node.x += node.vx; node.y += node.vy;
@@ -371,6 +387,17 @@
 		// Local mode: restrict which nodes/edges are visible
 		const { nodeSet: localNodeSet, edgeSet: localEdgeSet } = localMode ? computeLocalSets() : { nodeSet: null as Set<number> | null, edgeSet: null as Set<number> | null };
 
+		// Skip what is off screen: zoomed into a 10,000-note graph, painting and labelling every
+		// node made each frame take about a second (#126). The margin keeps edge labels and glows.
+		const margin = 40 / zoom;
+		const viewX0 = -pan.x / zoom - margin, viewY0 = -pan.y / zoom - margin;
+		const viewX1 = (canvasW - pan.x) / zoom + margin, viewY1 = (canvasH - pan.y) / zoom + margin;
+		const nodeOffscreen = (n: GraphNode) => n.x < viewX0 || n.x > viewX1 || n.y < viewY0 || n.y > viewY1;
+		const edgeOffscreen = (e: GraphEdge) => {
+			const a = nodes[e.sourceIdx], b = nodes[e.targetIdx];
+			return Math.max(a.x, b.x) < viewX0 || Math.min(a.x, b.x) > viewX1 || Math.max(a.y, b.y) < viewY0 || Math.min(a.y, b.y) > viewY1;
+		};
+
 		// ── Edges ──────────────────────────────────────────────────────────────
 		if (isHovering) {
 			// Dimmed non-connected edges
@@ -381,6 +408,7 @@
 			for (let i = 0; i < edges.length; i++) {
 				if (hoveredEdgeSet.has(i)) continue;
 				if (localEdgeSet && !localEdgeSet.has(i)) continue;
+				if (edgeOffscreen(edges[i])) continue;
 				ctx.moveTo(nodes[edges[i].sourceIdx].x, nodes[edges[i].sourceIdx].y);
 				ctx.lineTo(nodes[edges[i].targetIdx].x, nodes[edges[i].targetIdx].y);
 			}
@@ -434,6 +462,7 @@
 			ctx.beginPath();
 			for (let i = 0; i < edges.length; i++) {
 				if (localEdgeSet && !localEdgeSet.has(i)) continue;
+				if (edgeOffscreen(edges[i])) continue;
 				ctx.moveTo(nodes[edges[i].sourceIdx].x, nodes[edges[i].sourceIdx].y);
 				ctx.lineTo(nodes[edges[i].targetIdx].x, nodes[edges[i].targetIdx].y);
 			}
@@ -442,6 +471,7 @@
 			ctx.beginPath();
 			for (let i = 0; i < edges.length; i++) {
 				if (localEdgeSet && !localEdgeSet.has(i)) continue;
+				if (edgeOffscreen(edges[i])) continue;
 				const e = edges[i];
 				if (searchMatchSet!.has(e.sourceIdx) || searchMatchSet!.has(e.targetIdx)) {
 					ctx.moveTo(nodes[e.sourceIdx].x, nodes[e.sourceIdx].y);
@@ -456,6 +486,7 @@
 			ctx.beginPath();
 			for (let i = 0; i < edges.length; i++) {
 				if (localEdgeSet && !localEdgeSet.has(i)) continue;
+				if (edgeOffscreen(edges[i])) continue;
 				ctx.moveTo(nodes[edges[i].sourceIdx].x, nodes[edges[i].sourceIdx].y);
 				ctx.lineTo(nodes[edges[i].targetIdx].x, nodes[edges[i].targetIdx].y);
 			}
@@ -478,6 +509,7 @@
 				};
 				for (let i = 0; i < edges.length; i++) {
 					if (localEdgeSet && !localEdgeSet.has(i)) continue;
+				if (edgeOffscreen(edges[i])) continue;
 					const e = edges[i];
 					const src = nodes[e.sourceIdx], tgt = nodes[e.targetIdx];
 					const dx = tgt.x - src.x, dy = tgt.y - src.y;
@@ -499,11 +531,40 @@
 		type LabelSpec = { x: number; y: number; text: string; fontSize: number; weight: string; color: string; alpha: number; priority: number; };
 		const labelQueue: LabelSpec[] = [];
 
+		// Ordinary nodes are filled as one path per colour; one fill call per node made a
+		// zoomed 10,000-node frame take about a second (#126). Special nodes keep their own
+		// paint below, on top of these.
+		const isPlainNode = (i: number, node: GraphNode) =>
+			!isHovering && node.path !== activePath && (!isSearching || searchMatchSet!.has(i));
+		const plainByColor = new Map<string, number[]>();
+		for (let i = 0; i < nodes.length; i++) {
+			if (localNodeSet && !localNodeSet.has(i)) continue;
+			const node = nodes[i];
+			if (nodeOffscreen(node) || !isPlainNode(i, node)) continue;
+			const color = getNodeBaseColor(i);
+			let group = plainByColor.get(color);
+			if (!group) plainByColor.set(color, (group = []));
+			group.push(i);
+		}
+		ctx.globalAlpha = 1;
+		for (const [color, group] of plainByColor) {
+			ctx.beginPath();
+			for (const i of group) {
+				const node = nodes[i];
+				const radius = getNodeRadius(i, false);
+				ctx.moveTo(node.x + radius, node.y);
+				ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
+			}
+			ctx.fillStyle = color;
+			ctx.fill();
+		}
+
 		for (let i = 0; i < nodes.length; i++) {
 			// Skip nodes outside local view
 			if (localNodeSet && !localNodeSet.has(i)) continue;
 
 			const node = nodes[i];
+			if (nodeOffscreen(node)) continue;
 			const isActive = node.path === activePath;
 			const isHovered = node === hoveredNode;
 			const isNeighbor = hoveredNeighborSet.has(i);
@@ -531,17 +592,19 @@
 			}
 
 			// Node fill
-			ctx.globalAlpha = dimmed ? (dimBySearch ? 0.07 : 0.12) : 1;
-			ctx.beginPath();
-			ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
-			if (isActive || isHovered) {
-				ctx.fillStyle = accent;
-			} else if (isHovering && isNeighbor) {
-				ctx.fillStyle = accent + 'bb';
-			} else {
-				ctx.fillStyle = getNodeBaseColor(i);
+			if (!isPlainNode(i, node)) {
+				ctx.globalAlpha = dimmed ? (dimBySearch ? 0.07 : 0.12) : 1;
+				ctx.beginPath();
+				ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
+				if (isActive || isHovered) {
+					ctx.fillStyle = accent;
+				} else if (isHovering && isNeighbor) {
+					ctx.fillStyle = accent + 'bb';
+				} else {
+					ctx.fillStyle = getNodeBaseColor(i);
+				}
+				ctx.fill();
 			}
-			ctx.fill();
 
 			// Active outer ring - static, alpha pulse only
 			if (isActive) {
@@ -579,7 +642,11 @@
 		ctx.textAlign = 'center';
 		ctx.textBaseline = 'bottom';
 
+		// ponytail: capped label placement instead of a spatial index; raise the caps or index
+		// the rects if dense zoomed views drop labels users need. Priority labels come first.
+		let labelAttempts = 0;
 		for (const lab of labelQueue) {
+			if (drawnRects.length >= 300 || labelAttempts++ >= 1500) break;
 			if (lab.alpha === 0) continue;
 			ctx.font = `${lab.weight} ${lab.fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
 			const tw = ctx.measureText(lab.text).width;
@@ -773,6 +840,7 @@
 			navigatedFromGraph = false;
 			centerOnActiveNote();
 		}
+		if (localMode && newIdx >= 0 && canvas && status === 'loaded') resumePhysics();
 		if (newIdx >= 0 && !animFrameId && canvas) startAnimLoop();
 		else if (newIdx < 0 && !animFrameId && canvas) draw(); // remove stale glow immediately
 	});
@@ -830,7 +898,7 @@
 				class="graph-btn"
 				class:active={localMode}
 				title={localMode ? 'Show all notes' : 'Show local graph'}
-				onclick={() => { localMode = !localMode; focusActive(); }}
+				onclick={() => { localMode = !localMode; focusActive(); resumePhysics(); }}
 			>
 				<!-- network/local icon -->
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
