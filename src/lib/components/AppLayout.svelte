@@ -507,7 +507,13 @@
 		await navigateToPath(filePath);
 	}
 
+	// Startup restoration reads the saved state and then reopens the last note. Persisting
+	// before it finishes wrote `last_open_note: null` whenever the note took longer than the
+	// debounce to load, so the next launch had nothing to restore (#128).
+	let restorationSettled = false;
+
 	const persistState = debounce(async () => {
+		if (!restorationSettled) return;
 		const state: VaultState = {
 			last_open_note: $activeNotePath,
 			sidebar_width: $sidebarWidth,
@@ -1097,7 +1103,7 @@
 		}
 
 		// Run sidebar and note list refresh in parallel
-		await Promise.all([sidebar?.refresh(), noteList?.refresh()]);
+		await Promise.all([sidebar?.refresh({ deferTags: true }), noteList?.refresh()]);
 		if (!alive()) return;
 
 		// Full-vault attachment scans cause navigation stalls on mobile storage.
@@ -1155,7 +1161,10 @@
 			await restoreRun;
 		}
 		if (!alive()) return;
+		restorationSettled = true;
+		persistState();
 		void markStartupReady();
+		void sidebar?.refreshTags();
 		void installEditorKeyProbe();
 
 		// On mobile, derive tags from the scanned notes (avoids a separate full-scan Rust call)
