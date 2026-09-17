@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use walkdir::WalkDir;
 
-const EMBEDDING_PROFILE: &str = "ollama:embeddinggemma:chunks-v1";
+const EMBEDDING_PROFILE: &str = "ollama:embeddinggemma:chunks-v2";
 /// The layout of this machine-local projection, recorded in the file's `user_version`.
 ///
 /// Bump this whenever the tables, columns, or constraints below change. `CREATE TABLE IF NOT
@@ -26,7 +26,23 @@ const SEMANTIC_TABLES: [&str; 3] = ["notes", "chunks", "pending_notes"];
 const CHUNK_CHARACTERS: usize = 1_500;
 const CHUNK_OVERLAP: usize = 200;
 // Do not present a note merely because it is the least unrelated result in a small vault.
-const MIN_SEMANTIC_SCORE: f32 = 0.45;
+// Calibrated for the chunks-v2 prompts against live embeddinggemma (#130): 24 paraphrased
+// queries over 24 notes scored their right note at 0.258 or above, and 8 queries with no
+// matching note topped out at 0.192.
+const MIN_SEMANTIC_SCORE: f32 = 0.22;
+/// EmbeddingGemma's retrieval prompts. Without them a paraphrase and an unrelated note
+/// scored within 0.02 of each other, so no cutoff could keep one and hide the other (#130).
+/// Changing either prompt changes what stored vectors mean, so it requires a new profile.
+const QUERY_PROMPT: &str = "task: search result | query: ";
+
+fn document_input(title: &str, text: &str) -> String {
+    let title = if title.trim().is_empty() {
+        "none"
+    } else {
+        title
+    };
+    format!("title: {title} | text: {text}")
+}
 
 /// The external inference boundary. Production talks to Ollama; tests substitute a
 /// deterministic implementation while retaining the real SQLite store.
@@ -496,7 +512,7 @@ impl SemanticIndex {
         limit: usize,
     ) -> Result<Vec<SearchResult>, String> {
         let embed_started = std::time::Instant::now();
-        let mut query_embeddings = self.backend.embed(&[query.to_string()])?;
+        let mut query_embeddings = self.backend.embed(&[format!("{QUERY_PROMPT}{query}")])?;
         let embed_ms = embed_started.elapsed().as_secs_f64() * 1000.0;
         let scan_started = std::time::Instant::now();
         let query_embedding = query_embeddings
@@ -759,7 +775,7 @@ fn chunks_for(title: &str, body: &str) -> Vec<NoteChunk> {
     let characters: Vec<char> = body.chars().collect();
     if characters.is_empty() {
         return vec![NoteChunk {
-            input: title.to_string(),
+            input: document_input(title, ""),
             snippet: String::new(),
         }];
     }
@@ -769,7 +785,7 @@ fn chunks_for(title: &str, body: &str) -> Vec<NoteChunk> {
         let end = (start + CHUNK_CHARACTERS).min(characters.len());
         let snippet: String = characters[start..end].iter().collect();
         chunks.push(NoteChunk {
-            input: format!("{title}\n\n{snippet}"),
+            input: document_input(title, &snippet),
             snippet,
         });
         if end == characters.len() {
@@ -962,9 +978,11 @@ mod tests {
                     if input.contains("target") {
                         vec![1.0, 0.0]
                     } else if input.contains("moderate") {
-                        vec![0.5, 0.8660254]
+                        // cosine 0.30 with the query: a weak but real chunks-v2 match
+                        vec![0.3, 0.9539392]
                     } else if input.contains("weak") {
-                        vec![0.4, 0.9165151]
+                        // cosine 0.19: the best score a query with no matching note reached
+                        vec![0.19, 0.9817841]
                     } else {
                         vec![0.0, 1.0]
                     }
@@ -1094,6 +1112,49 @@ mod tests {
         let results = index.search("target", None, 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Moderate");
+        drop(index);
+        cleanup(root);
+    }
+
+    struct RecordingBackend(Mutex<Vec<String>>);
+
+    impl EmbeddingBackend for RecordingBackend {
+        fn embed(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>, String> {
+            self.0.lock().unwrap().extend(inputs.iter().cloned());
+            Ok(inputs.iter().map(|_| vec![1.0, 0.0]).collect())
+        }
+    }
+
+    #[test]
+    fn queries_and_notes_use_embeddinggemmas_retrieval_prompts() {
+        let root = scratch("retrieval-prompts");
+        let note = root.join("Bread.md");
+        write_note(
+            &note,
+            "bread-id",
+            "Sourdough",
+            "Resources",
+            "A long cold proof.",
+        );
+        let untitled = root.join("Untitled.md");
+        write_note(&untitled, "untitled-id", "", "Resources", "");
+        let backend = Arc::new(RecordingBackend(Mutex::new(Vec::new())));
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), backend.clone()).unwrap();
+        index.note_changed(&note).unwrap();
+        index.note_changed(&untitled).unwrap();
+        index.retry_pending().unwrap();
+        index.search("how to bake bread", None, 10).unwrap();
+
+        let inputs = backend.0.lock().unwrap().clone();
+        assert!(inputs.contains(&"title: Sourdough | text: A long cold proof.".to_string()));
+        assert!(inputs
+            .iter()
+            .any(|input| input.starts_with("title: ") && input.ends_with("| text: ")));
+        assert_eq!(
+            inputs.last().unwrap(),
+            "task: search result | query: how to bake bread"
+        );
         drop(index);
         cleanup(root);
     }

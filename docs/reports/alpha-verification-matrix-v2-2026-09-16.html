@@ -191,7 +191,7 @@
   <code>$HOME</code> recursively, rose to about 180% CPU, but the key events arrived one every 1–4 s, so each key press was blocked for seconds in the webview. The
   development app has never frozen like this on normal-size vaults. #127 records both runs. Fedora semantic searches ran without first confirming the
   index had finished; the status read 10,000 indexed right afterwards. Two queries returned no results on both machines
-  (#130), and the Fedora queue count stayed high after indexing finished (#129). The #129 fix stops re-queueing notes whose embedding is already current. The inflated count came from the watcher loop fixed in #127 re-reporting every note. Neither affects the latency budgets. Screenshots
+  (#130), which the #130 fix addresses with EmbeddingGemma retrieval prompts and a recalibrated 0.22 cutoff, and the Fedora queue count stayed high after indexing finished (#129). The #129 fix stops re-queueing notes whose embedding is already current. The inflated count came from the watcher loop fixed in #127 re-reporting every note. Neither affects the latency budgets. Screenshots
   from these runs show unrelated personal windows, so they are kept off the public repository.</p>
   <p>If a budget fails, preserve raw measurements and open a focused defect. Do not weaken a budget in the same
   change that fixes its failure.</p>
