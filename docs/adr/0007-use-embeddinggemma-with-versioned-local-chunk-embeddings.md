@@ -27,12 +27,19 @@ context window, and requires Ollama 0.11.10 or later. See the
 Semantic retrieval has a fixed v1 profile:
 
 ```text
-ollama:embeddinggemma:chunks-v1
+ollama:embeddinggemma:chunks-v2
 ```
 
 The profile covers all compatibility-sensitive inputs, not only the displayed model name.
 Each note is split into overlapping chunks of at most 1,500 Unicode characters with a
-200-character overlap. Its title prefixes every embedding input. `truncate` is disabled in
+200-character overlap. Every embedding input uses EmbeddingGemma's retrieval prompts: a chunk
+is embedded as `title: <title or none> | text: <chunk>`, and a query as
+`task: search result | query: <query>`.
+
+*Amended 2026-09-16 (#130):* `chunks-v1` embedded the bare title and chunk text. On live
+results, a paraphrased query scored its right note within 0.02 of an unrelated note, so the
+0.45 cutoff hid valid matches. The prompts widened that gap, and the cutoff was recalibrated to
+0.22. Moving to `chunks-v2` re-embeds every note once in the background. `truncate` is disabled in
 the Ollama request so the backend cannot silently embed less text than the stored result
 snippet claims. Each note contributes only its best-scoring chunk to the final result list.
 
