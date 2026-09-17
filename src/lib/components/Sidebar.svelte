@@ -138,7 +138,9 @@
 	}
 
 
-	export async function refresh() {
+	/** `deferTags` leaves tags for `refreshTags()`: reading every note's tags competes with the
+	 * note list for the same files, and startup should not wait for it (#128). */
+	export async function refresh({ deferTags = false }: { deferTags?: boolean } = {}) {
 		try {
 			if (isMobile) {
 				// On mobile, parallelize and skip getAllTags (derive from $notes instead)
@@ -156,13 +158,22 @@
 				const [nbs, rootCount] = await Promise.all([getNotebooks(), countRootNotes()]);
 				$notebooks = nbs;
 				$rootNoteCount = rootCount;
-				$tags = await getAllTags();
+				if (!deferTags) $tags = await getAllTags();
 				$notebookIcons = await getNotebookIcons();
 				const qaNotes = await getQuickAccess();
 				$quickAccessPaths = qaNotes.map(n => n.relative_path);
 			}
 		} catch (e) {
 			console.error('Failed to refresh sidebar:', e);
+		}
+	}
+
+	export async function refreshTags() {
+		if (isMobile) return;
+		try {
+			$tags = await getAllTags();
+		} catch (e) {
+			console.error('Failed to refresh tags:', e);
 		}
 	}
 

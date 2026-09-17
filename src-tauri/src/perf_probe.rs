@@ -40,7 +40,9 @@ fn append(path: &std::path::Path, sample: &mut serde_json::Value) {
         .create(true)
         .append(true)
         .open(path)
-        .and_then(|mut file| writeln!(file, "{sample}"));
+        // One write per line: concurrent samples from Rust threads interleaved mid-line
+        // when `writeln!` issued several writes.
+        .and_then(|mut file| file.write_all(format!("{sample}\n").as_bytes()));
     if let Err(error) = written {
         log::warn!("Could not write a performance sample: {error}");
     }

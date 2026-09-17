@@ -334,6 +334,8 @@ impl From<FolderSelection> for ExternalVaultResult {
     }
 }
 
+const SEMANTIC_RECONCILE_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
+
 fn open_vault_path(
     app: AppHandle,
     state: &State<'_, AppState>,
@@ -593,6 +595,10 @@ fn open_vault_path(
 
     let semantic_vault = path.clone();
     std::thread::spawn(move || {
+        // ponytail: a fixed head start for startup, not a signal. It rereads every note, and
+        // run alongside the note list's first scan it cost Windows startup about 0.4 s
+        // (#128). Replace with a frontend-ready trigger if the delay proves wrong.
+        std::thread::sleep(SEMANTIC_RECONCILE_DELAY);
         if let Err(error) = semantic.reconcile_from_notes(Path::new(&semantic_vault)) {
             log::error!("Could not reconcile the semantic index: {error}");
         }
@@ -1008,17 +1014,28 @@ pub fn set_content_width(state: State<'_, AppState>, width: Option<u32>) -> Resu
 
 // ── Notebooks ──
 
-#[tauri::command]
+/// The active vault path, copied so the config lock is not held while a command reads
+/// the vault. These reads run off the main thread (#128), and holding the lock through a
+/// 10,000-note scan would make them queue behind one another again.
+fn active_vault(state: &State<'_, AppState>) -> Result<String, String> {
+    state
+        .config
+        .lock()
+        .map_err(|error| error.to_string())?
+        .active_vault
+        .clone()
+        .ok_or_else(|| "No active vault".to_string())
+}
+
+#[tauri::command(async)]
 pub fn get_notebooks(state: State<'_, AppState>) -> Result<Vec<NotebookEntry>, String> {
-    let config = state.config.lock().map_err(|e| e.to_string())?;
-    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let vault_path = &active_vault(&state)?;
     operations::scan_notebooks(vault_path)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn count_root_notes(state: State<'_, AppState>) -> Result<usize, String> {
-    let config = state.config.lock().map_err(|e| e.to_string())?;
-    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let vault_path = &active_vault(&state)?;
     operations::count_root_notes(vault_path)
 }
 
@@ -1165,20 +1182,18 @@ pub fn delete_notebook(state: State<'_, AppState>, path: String) -> Result<(), S
 
 // ── Notes ──
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_notes(
     state: State<'_, AppState>,
     notebook_path: Option<String>,
 ) -> Result<Vec<NoteEntry>, String> {
-    let config = state.config.lock().map_err(|e| e.to_string())?;
-    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let vault_path = &active_vault(&state)?;
     operations::scan_notes(vault_path, notebook_path.as_deref())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_note(state: State<'_, AppState>, path: String) -> Result<NoteContent, String> {
-    let config = state.config.lock().map_err(|error| error.to_string())?;
-    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let vault_path = &active_vault(&state)?;
     operations::read_note(vault_path, &path)
 }
 
@@ -1469,10 +1484,9 @@ pub async fn open_hotkey_settings() -> Result<(), String> {
 ///
 /// Non-empty means the user has something to resolve: until each one is given a
 /// category, the app cannot say where it belongs.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_unfiled_notes(state: State<'_, AppState>) -> Result<Vec<NoteEntry>, String> {
-    let config = state.config.lock().map_err(|e| e.to_string())?;
-    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let vault_path = &active_vault(&state)?;
     operations::list_unfiled_notes(vault_path)
 }
 
@@ -1624,19 +1638,17 @@ pub fn move_note(
 
 // ── Tags ──
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_all_tags(state: State<'_, AppState>) -> Result<Vec<(String, usize)>, String> {
-    let config = state.config.lock().map_err(|e| e.to_string())?;
-    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let vault_path = &active_vault(&state)?;
     operations::get_all_tags(vault_path)
 }
 
 // ── Wiki-links ──
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_all_note_titles(state: State<'_, AppState>) -> Result<Vec<NoteTitleEntry>, String> {
-    let config = state.config.lock().map_err(|e| e.to_string())?;
-    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let vault_path = &active_vault(&state)?;
     let vault = std::path::Path::new(vault_path);
     let hn_dir = operations::helixnotes_dir(vault_path);
     let mut entries = Vec::new();
@@ -1705,12 +1717,11 @@ pub async fn get_note_switcher_titles(
 
 // ── Graph ──
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_graph_data(state: State<'_, AppState>) -> Result<crate::types::GraphData, String> {
     use std::collections::{HashMap, HashSet};
 
-    let config = state.config.lock().map_err(|e| e.to_string())?;
-    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let vault_path = &active_vault(&state)?;
     let vault = std::path::Path::new(vault_path);
 
     // Pass 1: collect ALL notes as nodes (no title deduplication - every note must appear)
@@ -1891,11 +1902,10 @@ fn extract_title_fast(raw: &str) -> Option<String> {
 
 // ── Tasks ──
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_tasks(state: State<'_, AppState>) -> Result<Vec<crate::types::TaskItem>, String> {
     use rayon::prelude::*;
-    let config = state.config.lock().map_err(|e| e.to_string())?;
-    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let vault_path = &active_vault(&state)?;
     let vault = std::path::Path::new(vault_path);
     let hn_dir = operations::helixnotes_dir(vault_path);
 
@@ -2511,10 +2521,9 @@ pub fn empty_trash(state: State<'_, AppState>) -> Result<(), String> {
 
 // ── Vault State ──
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn load_vault_state(state: State<'_, AppState>) -> Result<VaultState, String> {
-    let config = state.config.lock().map_err(|e| e.to_string())?;
-    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let vault_path = &active_vault(&state)?;
     operations::load_vault_state(vault_path)
 }
 
@@ -2662,12 +2671,11 @@ pub fn save_attachment(
 
 // ── Notebook Icons ──
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_notebook_icons(
     state: State<'_, AppState>,
 ) -> Result<std::collections::HashMap<String, String>, String> {
-    let config = state.config.lock().map_err(|e| e.to_string())?;
-    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let vault_path = &active_vault(&state)?;
     operations::load_notebook_icons(vault_path)
 }
 
@@ -2852,11 +2860,10 @@ mod vault_stats_path_tests {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_vault_stats(state: State<'_, AppState>) -> Result<VaultStats, String> {
     use rayon::prelude::*;
-    let config = state.config.lock().map_err(|e| e.to_string())?;
-    let vault_path = config.active_vault.as_ref().ok_or("No active vault")?;
+    let vault_path = &active_vault(&state)?;
 
     let paths: Vec<std::path::PathBuf> = walkdir::WalkDir::new(vault_path)
         .into_iter()
