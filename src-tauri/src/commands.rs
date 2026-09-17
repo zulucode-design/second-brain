@@ -139,7 +139,11 @@ fn committed_save_outcome(
     for (name, result) in projections {
         record_projection_warning(&mut warnings, name, result);
     }
-    SaveCommitOutcome { revision, warnings }
+    SaveCommitOutcome {
+        revision,
+        warnings,
+        entry: None,
+    }
 }
 
 fn index_note_now(state: &State<'_, AppState>, vault_path: &str, path: &str) -> Result<(), String> {
@@ -1225,8 +1229,15 @@ pub fn save_note(
     let max_versions = config.max_versions_per_note;
     drop(config);
 
-    let outcome =
-        operations::save_note_if_revision(&vault_path, &path, &meta, &body, &expected_revision)?;
+    let outcome = operations::save_note_if_revision(
+        &vault_path,
+        &path,
+        &meta,
+        &body,
+        &expected_revision,
+        |written, revision| state.own_writes.record(written, revision),
+    )?;
+    let entry = operations::saved_note_entry(&vault_path, &outcome.note);
     let note_id = meta.id.clone();
     let snapshot_vault = vault_path.clone();
     let old_raw = outcome.old_raw;
@@ -1237,10 +1248,10 @@ pub fn save_note(
     let index_result = index_note_now(&state, &vault_path, &path);
     queue_semantic_note_now(&state, &path);
 
-    Ok(committed_save_outcome(
-        outcome.revision,
-        [("Search projection", index_result)],
-    ))
+    Ok(SaveCommitOutcome {
+        entry: Some(entry),
+        ..committed_save_outcome(outcome.revision, [("Search projection", index_result)])
+    })
 }
 
 #[tauri::command]

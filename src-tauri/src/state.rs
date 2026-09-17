@@ -35,6 +35,8 @@ pub struct AppState {
     /// Serializes note lifecycle mutations so an older search/index side effect cannot
     /// land after a newer move, delete, restore, or save.
     pub note_mutation: Mutex<()>,
+    /// Saves this process made, so the vault watcher can drop their echoes.
+    pub own_writes: crate::vault::watcher::OwnWrites,
     pub bulk_mutation: crate::bulk_mutation::BulkMutationCoordinator,
     pub sync_sidecar: crate::sync_sidecar::SyncSidecar,
     pub repair_status: Mutex<RepairStatus>,
@@ -62,6 +64,7 @@ impl AppState {
             search_index: Mutex::new(None),
             semantic_index: Mutex::new(None),
             watcher: Mutex::new(None),
+            own_writes: Default::default(),
             vault_transition: tokio::sync::Mutex::new(()),
             importing: AtomicBool::new(false),
             vault_activity: AtomicBool::new(false),

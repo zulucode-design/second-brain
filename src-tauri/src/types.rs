@@ -70,6 +70,9 @@ pub struct SaveCommitOutcome {
     pub revision: String,
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// The saved note's list row, present when the watcher will not announce the save.
+    #[serde(default)]
+    pub entry: Option<NoteEntry>,
 }
 
 /// Authoritative result of a path mutation. `note` is present whenever the operation

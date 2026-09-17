@@ -10,6 +10,45 @@ use crate::types::FileEvent;
 use crate::vault::operations::helixnotes_dir;
 use std::sync::Arc;
 
+/// Revisions this process has written to notes, keyed by canonical path.
+///
+/// The watcher reports the app's own saves like any other change, and every listener then
+/// rescans the vault. On a large vault that rescan, repeated after each autosave, stalls the
+/// editor (#127). A change is an echo only while the bytes on disk still hash to the revision
+/// written, so an external edit to the same note is never hidden.
+#[derive(Default)]
+pub struct OwnWrites(std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, String>>);
+
+impl OwnWrites {
+    pub fn record(&self, path: &Path, revision: &str) {
+        let Ok(canonical) = std::fs::canonicalize(path) else {
+            return;
+        };
+        if let Ok(mut writes) = self.0.lock() {
+            writes.insert(canonical, revision.to_string());
+        }
+    }
+
+    fn is_echo(&self, path: &Path) -> bool {
+        let Ok(canonical) = std::fs::canonicalize(path) else {
+            return false;
+        };
+        let Ok(mut writes) = self.0.lock() else {
+            return false;
+        };
+        let Some(revision) = writes.get(&canonical) else {
+            return false;
+        };
+        let matches = std::fs::read(&canonical)
+            .map(|bytes| crate::vault::operations::content_sha256(&bytes) == *revision)
+            .unwrap_or(false);
+        if !matches {
+            writes.remove(&canonical);
+        }
+        matches
+    }
+}
+
 const IOS_POLL_INTERVAL: Duration = Duration::from_secs(10);
 const NATIVE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -102,6 +141,12 @@ pub fn start_watcher(
         while let Ok(result) = rx.recv() {
             match result {
                 Ok(event) => {
+                    // notify reports every open on Linux. Reading a note is not a change,
+                    // and forwarding it made each index flush and vault scan re-queue the
+                    // notes it had just read, a loop that never settled (#127).
+                    if matches!(event.kind, EventKind::Access(_)) {
+                        continue;
+                    }
                     let state = app.state::<AppState>();
                     // A bulk consumer owns reconciliation. Dropping all watcher work here
                     // prevents stale incremental index writes as well as UI event storms.
@@ -112,6 +157,18 @@ pub fn start_watcher(
                     let dominated_by_hn = event.paths.iter().all(|p| p.starts_with(&hn_dir));
                     if dominated_by_hn {
                         continue;
+                    }
+                    // A save replaces the note through a hidden temporary, so its echo can
+                    // carry that temporary alongside the note. Drop both.
+                    let mut event = event;
+                    if event.paths.iter().any(|p| state.own_writes.is_echo(p)) {
+                        event.paths.retain(|p| {
+                            !crate::search::is_ignored_by_index(p, &vault_root)
+                                && !state.own_writes.is_echo(p)
+                        });
+                        if event.paths.is_empty() {
+                            continue;
+                        }
                     }
 
                     // The indexer needs a laxer rule than the UI, and needs it before the
@@ -177,6 +234,38 @@ pub fn start_watcher(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_bytes_this_process_wrote_count_as_an_echo() {
+        let dir = scratch("own-writes");
+        let note = dir.join("note.md");
+        let written = "---\ntitle: \"a\"\n---\nsaved body\n";
+        std::fs::write(&note, written).unwrap();
+        let own = OwnWrites::default();
+        assert!(!own.is_echo(&note), "an unrecorded note is never an echo");
+
+        own.record(
+            &note,
+            &crate::vault::operations::content_sha256(written.as_bytes()),
+        );
+        assert!(own.is_echo(&note));
+        assert!(
+            own.is_echo(&note),
+            "repeated events for the same save stay echoes"
+        );
+
+        std::fs::write(&note, "edited elsewhere\n").unwrap();
+        assert!(
+            !own.is_echo(&note),
+            "an external edit to a saved note must be announced"
+        );
+        std::fs::write(&note, written).unwrap();
+        assert!(
+            !own.is_echo(&note),
+            "a mismatch forgets the save instead of matching it later"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     fn scratch(label: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("watcher-{label}-{}", uuid::Uuid::new_v4()));
