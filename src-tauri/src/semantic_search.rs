@@ -348,6 +348,22 @@ impl SemanticIndex {
                 params![note_key, path_text],
             )
             .map_err(|error| error.to_string())?;
+        // A change event does not mean the content changed: reindexing and file watchers
+        // report notes whose embedding is already current. Queueing those re-embedded the
+        // vault and left "waiting" counts above the note count (#129).
+        let already_indexed = database
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM notes
+                    WHERE note_key = ?1 AND path = ?2 AND content_hash = ?3 AND profile = ?4
+                 )",
+                params![note_key, path_text, raw_hash, self.profile.as_str()],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|error| error.to_string())?;
+        if already_indexed {
+            return Ok(());
+        }
         database
             .execute(
                 "INSERT INTO pending_notes (note_key, path, content_hash, profile)
@@ -1099,6 +1115,41 @@ mod tests {
         assert_eq!(results[0].title, "moderate");
         assert!(results[0].snippet.is_empty());
         drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn an_unchanged_indexed_note_is_not_queued_again() {
+        let root = scratch("unchanged-requeue");
+        let note = root.join("Settled.md");
+        write_note(
+            &note,
+            "settled-id",
+            "Settled",
+            "Areas",
+            "Already embedded text.",
+        );
+        let database = root.join("semantic.sqlite3");
+        let index = SemanticIndex::open_at(&database, Arc::new(ThresholdBackend)).unwrap();
+        index.note_changed(&note).unwrap();
+        index.retry_pending().unwrap();
+        assert_eq!(index.status().unwrap().queued_notes, 0);
+        drop(index);
+
+        // Offline now, so anything queued would stay queued and show as waiting.
+        let offline = SemanticIndex::open_at(&database, Arc::new(UnavailableBackend)).unwrap();
+        offline.note_changed(&note).unwrap();
+        let status = offline.status().unwrap();
+        assert_eq!((status.indexed_notes, status.queued_notes), (1, 0));
+
+        write_note(&note, "settled-id", "Settled", "Areas", "Edited text.");
+        offline.note_changed(&note).unwrap();
+        assert_eq!(
+            offline.status().unwrap().queued_notes,
+            1,
+            "a real edit is still queued"
+        );
+        drop(offline);
         cleanup(root);
     }
 
