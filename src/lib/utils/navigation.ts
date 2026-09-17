@@ -12,3 +12,6 @@ export function requestNoteNavigation(path: string): void {
 
 
 export type NoteNavigationResult = 'navigated' | 'save-failed' | 'not-found' | 'blocked';
+/** The app's own saves are not echoed by the vault watcher, so views that list note content
+ * listen for this instead. `detail` is `{ path, hasTasks }`. */
+export const NOTE_SAVED_EVENT = 'helix:note-saved';
