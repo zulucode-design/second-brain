@@ -11,11 +11,14 @@ export interface RepairBanner {
 }
 
 /**
- * What the vault banner shows. Real repairs outrank restore notices (#142). Among notices,
- * unowned restore folders come first: they may hold the only copy of a vault's notes, so
- * they must be seen, with every path, before anything else is dismissed.
+ * What the vault banner shows (#142). Unowned restore folders come first, even before a
+ * repair: they may hold the only copy of a vault's notes, so they must be seen, with every
+ * path. Then repairs, then the notice that an interrupted restore was recovered.
  */
 export function repairBanner(status: RepairStatus, repairError: string): RepairBanner | null {
+	const notices = status.issues.filter((issue) => issue.stage === 'restore');
+	const unowned = notices.find((issue) => issue.key === 'restore:unowned');
+	if (unowned) return notice(unowned);
 	const repairs = status.issues.filter((issue) => issue.stage !== 'restore');
 	if (repairs.length > 0 || repairError) {
 		return {
@@ -29,14 +32,15 @@ export function repairBanner(status: RepairStatus, repairError: string): RepairB
 			paths: repairs[0]?.paths.slice(0, 1) ?? []
 		};
 	}
-	const notices = status.issues.filter((issue) => issue.stage === 'restore');
-	const notice = notices.find((issue) => issue.key === 'restore:unowned') ?? notices[0];
-	if (!notice) return null;
+	return notices[0] ? notice(notices[0]) : null;
+}
+
+function notice(issue: RepairStatus['issues'][number]): RepairBanner {
 	return {
 		kind: 'notice',
-		key: notice.key,
-		title: notice.key === 'restore:unowned' ? 'Restore folders found' : 'Restore interrupted',
-		message: notice.message,
-		paths: notice.paths
+		key: issue.key,
+		title: issue.key === 'restore:unowned' ? 'Restore folders found' : 'Restore interrupted',
+		message: issue.message,
+		paths: issue.paths
 	};
 }

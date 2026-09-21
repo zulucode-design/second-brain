@@ -73,3 +73,7 @@ test('a failed repair attempt keeps the repair banner with its error', () => {
     paths: []
   });
 });
+
+test('unowned restore folders outrank a repair: they may be the only copy of some notes', () => {
+  assert.equal(repairBanner({ issues: [searchFailure, unowned] }, '').key, 'restore:unowned');
+});

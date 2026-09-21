@@ -267,13 +267,18 @@ enum RestorePhase {
     Unpacking,
     Committing,
     Published,
+    /// The vault is whole again (pre-restore, or kept as restored) and only cleanup remains.
+    /// Recorded before cleanup, so a later open never re-runs undo or publish on a vault the
+    /// user may have edited since it opened.
+    Undone,
+    Kept,
 }
 
 /// The durable record of one restore, written next to the vault before anything is staged,
 /// so a restore interrupted at any point can be finished or undone on the next open (#142).
 /// The name lists let recovery tell a published backup entry from a live one without
 /// guessing from directory contents alone.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RestoreJournal {
     vault: PathBuf,
@@ -339,13 +344,24 @@ fn restore_backup_with(
     let parent = vault.parent().ok_or("Vault must have a parent directory")?;
     // Two journals for one vault could undo each other's work, so an unfinished restore is
     // always recovered, by reopening the vault, before another starts.
-    let pending = restore_entries(parent)
+    for path in restore_entries(parent)
         .into_iter()
         .filter(|path| is_journal(path))
-        .any(|path| read_journal(&path).map_or(true, |journal| journal.vault == vault));
-    if pending {
-        return Err("An unfinished restore of this vault must be recovered first. Reopen the vault, then restore again."
-            .into());
+    {
+        match read_journal(&path) {
+            Ok(journal) if journal.vault == vault => {
+                return Err("An unfinished restore of this vault must be recovered first. Reopen the vault, then restore again."
+                    .into());
+            }
+            Ok(_) => {}
+            Err(_) => {
+                return Err(format!(
+                    "The restore record {} cannot be read, so it is unclear whether another restore is unfinished. Move that file out of the folder, then restore again.",
+                    path.display()
+                )
+                .into());
+            }
+        }
     }
     let nonce = uuid::Uuid::new_v4();
     let journal_path = parent.join(format!("{RESTORE_PREFIX}journal-{nonce}.json"));
@@ -548,25 +564,33 @@ fn recover_with(
                 parent.display()
             ));
         }
-        let recovered = match journal.phase {
-            RestorePhase::Published => {
-                complete_publish(&journal).map(|()| RecoveredRestore::KeptRestored)
-            }
-            RestorePhase::Unpacking | RestorePhase::Committing => {
-                undo_with(&journal, step).map(|()| RecoveredRestore::Undone)
-            }
+        let (recovered, interrupted) = match journal.phase {
+            RestorePhase::Published => (
+                complete_publish(&journal).map(|()| RecoveredRestore::KeptRestored),
+                true,
+            ),
+            RestorePhase::Unpacking | RestorePhase::Committing => (
+                undo_with(&journal, step).map(|()| RecoveredRestore::Undone),
+                true,
+            ),
+            // Settled by an earlier open; only its cleanup was left.
+            RestorePhase::Kept => (Ok(RecoveredRestore::KeptRestored), false),
+            RestorePhase::Undone => (Ok(RecoveredRestore::Undone), false),
         };
         let outcome = recovered.map_err(|error| {
             format!(
-                "{error}. Nothing was deleted: until this is resolved, the vault's original entries are in {} and the restored copies are in {}. Move or rename anything in the way, then reopen the vault.",
+                "{error}. Nothing was deleted: until this is resolved, some or all of the vault's original entries may be in {} and the restored copies in {}. Move or rename anything in the way, then reopen the vault.",
                 journal.rollback.display(),
                 journal.stage.display()
             )
         })?;
         // The vault is whole now. A cleanup failure (a scanner holding a handle) only delays
-        // tidying up: the journal stays and the next open finishes it.
-        if let Err(error) = clean_up(path, &journal, outcome) {
+        // tidying up: the journal stays, settled, and the next open finishes it.
+        if let Err(error) = settle_and_clean_up(path, &journal, outcome) {
             log::warn!("Recovered restore left files behind until the next open: {error}");
+        }
+        if !interrupted {
+            continue;
         }
         log::warn!(
             "Recovered an interrupted restore of {}: {outcome:?}",
@@ -588,7 +612,7 @@ fn recover_with(
 /// copies alone: published entries are moved back into it first.
 fn undo(journal_path: &Path, journal: &RestoreJournal) -> Result<(), String> {
     undo_with(journal, &mut || Ok(()))?;
-    clean_up(journal_path, journal, RecoveredRestore::Undone)
+    settle_and_clean_up(journal_path, journal, RecoveredRestore::Undone)
 }
 
 fn undo_with(
@@ -705,7 +729,25 @@ fn clean_up(
 /// through `complete_publish` and `clean_up`, like a recovered one.
 fn finish(journal_path: &Path, journal: &RestoreJournal) -> Result<(), String> {
     complete_publish(journal)?;
-    clean_up(journal_path, journal, RecoveredRestore::KeptRestored)
+    settle_and_clean_up(journal_path, journal, RecoveredRestore::KeptRestored)
+}
+
+/// Record that the vault is whole, then clean up. From here on a failed cleanup is retried on
+/// the next open as cleanup alone.
+fn settle_and_clean_up(
+    journal_path: &Path,
+    journal: &RestoreJournal,
+    outcome: RecoveredRestore,
+) -> Result<(), String> {
+    let mut settled = journal.clone();
+    settled.phase = match outcome {
+        RecoveredRestore::Undone => RestorePhase::Undone,
+        RecoveredRestore::KeptRestored => RestorePhase::Kept,
+    };
+    if settled.phase != journal.phase {
+        write_journal(journal_path, &settled)?;
+    }
+    clean_up(journal_path, journal, outcome)
 }
 
 /// Clean up a restore that never reached the commit; the vault was not touched.
@@ -1631,7 +1673,7 @@ mod tests {
         let victim = elsewhere.join(".second-brain-restore-stage-victim");
         fs::create_dir_all(&victim).unwrap();
         fs::write(victim.join("keep.md"), "not ours").unwrap();
-        let vault_path = fs::canonicalize(&vault).unwrap();
+        let vault_path = dunce::canonicalize(&vault).unwrap();
         let journal = serde_json::json!({
             "vault": vault_path,
             "stage": victim,
@@ -1692,9 +1734,12 @@ mod tests {
             "cleanup retries on the next open"
         );
         fs::set_permissions(&stage, fs::Permissions::from_mode(0o700)).unwrap();
-        assert_eq!(
-            recover_interrupted_restore(&vault).unwrap().outcomes.len(),
-            1
+        assert!(
+            recover_interrupted_restore(&vault)
+                .unwrap()
+                .outcomes
+                .is_empty(),
+            "the later open only finishes cleanup; the recovery was reported once"
         );
         assert_eq!(restore_leftovers(&root), Vec::<String>::new());
         fs::remove_dir_all(root).unwrap();
@@ -1723,6 +1768,97 @@ mod tests {
         assert!(error.contains(&rollback.display().to_string()), "{error}");
         drop(lock);
         recover_interrupted_restore(&vault).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Recover once with the stage undeletable, so cleanup has to wait for a later open.
+    #[cfg(unix)]
+    fn recover_with_cleanup_blocked(root: &Path, vault: &Path) -> Vec<RecoveredRestore> {
+        use std::os::unix::fs::PermissionsExt;
+        let stage = leftover(root, "stage-");
+        fs::create_dir_all(stage.join("pin")).unwrap();
+        fs::write(stage.join("pin/pin.md"), "pin").unwrap();
+        fs::set_permissions(stage.join("pin"), fs::Permissions::from_mode(0o500)).unwrap();
+        let outcomes = recover_interrupted_restore(vault).unwrap().outcomes;
+        assert!(
+            leftover(root, "journal-").exists(),
+            "cleanup must still be pending"
+        );
+        fs::set_permissions(stage.join("pin"), fs::Permissions::from_mode(0o700)).unwrap();
+        outcomes
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn edits_made_after_a_kept_restore_survive_the_delayed_cleanup() {
+        let (root, vault, backups, backup) = restore_fixture("late-cleanup-kept");
+        kill_restore_at(&vault, &backups, &backup, RestoreStep::Journal, 3);
+        assert_eq!(
+            recover_with_cleanup_blocked(&root, &vault),
+            vec![RecoveredRestore::KeptRestored]
+        );
+        // The vault opened; the user deletes a restored folder before the next open.
+        fs::remove_dir_all(vault.join("Resources")).unwrap();
+        let edited = tree(&vault);
+
+        let later = recover_interrupted_restore(&vault).unwrap();
+
+        assert!(
+            later.outcomes.is_empty(),
+            "nothing was interrupted this time"
+        );
+        assert_eq!(
+            tree(&vault),
+            edited,
+            "the deleted folder must not come back"
+        );
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn edits_made_after_an_undone_restore_survive_the_delayed_cleanup() {
+        let (root, vault, backups, backup) = restore_fixture("late-cleanup-undone");
+        kill_restore_at(&vault, &backups, &backup, RestoreStep::Publish, 2);
+        assert_eq!(
+            recover_with_cleanup_blocked(&root, &vault),
+            vec![RecoveredRestore::Undone]
+        );
+        // The user creates a folder with the name of an entry the restore would have added.
+        fs::create_dir_all(vault.join("Resources")).unwrap();
+        fs::write(vault.join("Resources/mine.md"), "written after the restore").unwrap();
+        let edited = tree(&vault);
+
+        let later = recover_interrupted_restore(&vault).unwrap();
+
+        assert!(
+            later.outcomes.is_empty(),
+            "nothing was interrupted this time"
+        );
+        assert_eq!(
+            tree(&vault),
+            edited,
+            "the user's new folder must not be taken"
+        );
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_journal_blocks_restore_and_says_which_file_to_move() {
+        let (root, vault, backups, backup) = restore_fixture("unreadable-journal");
+        let damaged = root.join(".second-brain-restore-journal-damaged.json");
+        fs::write(&damaged, "not a journal").unwrap();
+
+        let error = restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap())
+            .unwrap_err();
+
+        assert!(
+            error.message.contains(&damaged.display().to_string()),
+            "{}",
+            error.message
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

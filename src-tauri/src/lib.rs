@@ -432,10 +432,20 @@ pub fn run() {
                 match backup::recover_interrupted_restore(std::path::Path::new(&vault_path)) {
                     Ok(recovery) => {
                         if !recovery.outcomes.is_empty() {
-                            let mut status = vault::repair::load(&vault_path).unwrap_or_default();
-                            vault::repair::apply_restore_recovery(&mut status, &recovery);
-                            if let Err(error) = vault::repair::save(&vault_path, &status) {
-                                log::warn!("Could not record the restore recovery notice: {error}");
+                            // An unreadable ledger is left for open_vault_path to report and
+                            // replace; overwriting it here would hide that.
+                            match vault::repair::load(&vault_path) {
+                                Ok(mut status) => {
+                                    vault::repair::apply_restore_recovery(&mut status, &recovery);
+                                    if let Err(error) = vault::repair::save(&vault_path, &status) {
+                                        log::warn!(
+                                            "Could not record the restore recovery notice: {error}"
+                                        );
+                                    }
+                                }
+                                Err(error) => log::warn!(
+                                    "Restore recovery notice not recorded; the repair ledger is unreadable: {error}"
+                                ),
                             }
                         }
                         sync_sidecar::restore_enabled(app.handle().clone());
