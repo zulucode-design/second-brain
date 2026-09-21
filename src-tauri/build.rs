@@ -47,21 +47,26 @@ fn main() {
     // Cargo reruns a build script only for the inputs it declares, so without these an
     // incremental build keeps whichever commit the script last saw (#138). HEAD changes on
     // checkout; its reflog changes on every commit, reset, and checkout made in this checkout or
-    // worktree. `--git-path` resolves both for linked worktrees, and before the first commit.
+    // worktree. `--git-path` resolves both for linked worktrees and before the first commit
+    // (until then `logs/HEAD` is missing, so cargo reruns the script on every build).
     let mut unresolved = false;
     for git_path in ["HEAD", "logs/HEAD"] {
-        match git(&[
+        // Git before 2.31 does not know --path-format and echoes it back as a path, so only a
+        // single absolute path counts as resolved.
+        let resolved = git(&[
             "rev-parse",
             "--path-format=absolute",
             "--git-path",
             git_path,
-        ]) {
+        ])
+        .filter(|path| !path.contains('\n') && std::path::Path::new(path).is_absolute());
+        match resolved {
             Some(path) => println!("cargo::rerun-if-changed={path}"),
             None => unresolved = true,
         }
     }
     // Outside a git checkout both lookups fail and there is no commit to go stale.
-    if unresolved && commit.is_some() {
+    if unresolved && git(&["rev-parse", "--git-dir"]).is_some() {
         println!(concat!(
             "cargo::warning=could not resolve git HEAD paths; SECOND_BRAIN_BUILD_COMMIT ",
             "may go stale on incremental builds (needs git 2.31+)"
