@@ -38,6 +38,15 @@ pub struct RepairStatus {
 const RESTORE_RECOVERED: &str = "restore:recovered";
 const RESTORE_UNOWNED: &str = "restore:unowned";
 
+pub fn unreadable_ledger_issue(vault_path: &str, error: &str) -> RepairIssue {
+    RepairIssue {
+        key: "reconciliation:ledger".to_string(),
+        stage: RepairStage::Reconciliation,
+        message: format!("The repair ledger was unreadable and has been replaced: {error}"),
+        paths: vec![ledger_location(vault_path)],
+    }
+}
+
 /// Record what an interrupted-restore recovery has to tell the user (#142). Restore folders
 /// no journal accounts for are raised until dismissed, and again whenever the set changes,
 /// since one may hold the only copy of a vault's notes.
@@ -167,7 +176,7 @@ pub fn load(vault_path: &str) -> Result<RepairStatus, String> {
 
 pub fn save(vault_path: &str, status: &RepairStatus) -> Result<(), String> {
     let path = ledger_path(vault_path)?;
-    if status.issues.is_empty() {
+    if status.issues.is_empty() && status.dismissed_restore_folders.is_empty() {
         match fs::remove_file(path) {
             Ok(()) => return Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -296,6 +305,26 @@ mod tests {
             .map(|issue| issue.key.as_str())
             .collect();
         assert_eq!(keys, vec!["restore:unowned"]);
+    }
+
+    #[test]
+    fn dismissed_restore_folders_persist_when_no_issue_remains() {
+        let vault =
+            std::env::temp_dir().join(format!("repair-dismissed-restore-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(vault.join(".helixnotes")).unwrap();
+        let vault = vault.to_string_lossy().to_string();
+        let stray = "/v/.second-brain-restore-rollback-a";
+        let mut status = RepairStatus::default();
+        apply_restore_recovery(&mut status, &strays(&[stray]));
+        dismiss_restore_notice(&mut status, RESTORE_UNOWNED);
+
+        save(&vault, &status).unwrap();
+        let mut loaded = load(&vault).unwrap();
+        apply_restore_recovery(&mut loaded, &strays(&[stray]));
+
+        assert_eq!(unowned(&loaded), None);
+        assert_eq!(loaded.dismissed_restore_folders, [stray]);
+        fs::remove_dir_all(vault).unwrap();
     }
 
     #[test]

@@ -537,14 +537,12 @@ fn recover_with(
         if !is_journal(path) {
             continue;
         }
-        let journal = match read_journal(path) {
-            Ok(journal) => journal,
-            Err(error) => {
-                log::warn!("Unreadable restore journal {}: {error}", path.display());
-                recovery.strays.push(path.clone());
-                continue;
-            }
-        };
+        let journal = read_journal(path).map_err(|error| {
+            format!(
+                "The restore record {} cannot be read, so the vault cannot be recovered safely: {error}. Nothing was changed; move that file out of the folder only after the vault looks right.",
+                path.display()
+            )
+        })?;
         accounted.insert(journal.stage.clone());
         accounted.insert(journal.rollback.clone());
         if journal.vault != vault {
@@ -745,6 +743,9 @@ fn settle_and_clean_up(
         RecoveredRestore::KeptRestored => RestorePhase::Kept,
     };
     if settled.phase != journal.phase {
+        // The settled record must never reach disk before the renames that made the vault
+        // whole. Otherwise a power loss could leave recovery data to be cleaned up as stale.
+        persist_renames(journal)?;
         write_journal(journal_path, &settled)?;
     }
     clean_up(journal_path, journal, outcome)
@@ -1473,9 +1474,6 @@ mod tests {
         let stray = root.join(".second-brain-restore-rollback-left-by-an-old-build");
         fs::create_dir_all(&stray).unwrap();
         fs::write(stray.join("only-copy.md"), "precious").unwrap();
-        let unreadable = root.join(".second-brain-restore-journal-damaged.json");
-        fs::write(&unreadable, "not a journal").unwrap();
-
         let recovery = recover_interrupted_restore(&vault).unwrap();
 
         assert!(recovery.outcomes.is_empty());
@@ -1485,18 +1483,29 @@ mod tests {
             torn_other,
             "another vault's restore is not ours to touch"
         );
-        let mut strays = recovery.strays.clone();
-        strays.sort();
-        assert_eq!(strays, vec![unreadable.clone(), stray.clone()]);
+        assert_eq!(recovery.strays, vec![stray.clone()]);
         assert_eq!(
             fs::read_to_string(stray.join("only-copy.md")).unwrap(),
             "precious"
         );
-        assert!(unreadable.exists());
-
         let other_recovery = recover_interrupted_restore(&other).unwrap();
         assert_eq!(other_recovery.outcomes, vec![RecoveredRestore::Undone]);
         assert_eq!(tree(&other), other_before);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_journal_blocks_recovery_without_touching_the_vault() {
+        let (root, vault, _, _) = restore_fixture("unreadable-recovery-journal");
+        let before = tree(&vault);
+        let damaged = root.join(".second-brain-restore-journal-damaged.json");
+        fs::write(&damaged, "not a journal").unwrap();
+
+        let error = recover_interrupted_restore(&vault).unwrap_err();
+
+        assert!(error.contains(&damaged.display().to_string()), "{error}");
+        assert_eq!(tree(&vault), before);
+        assert!(damaged.exists());
         fs::remove_dir_all(root).unwrap();
     }
 

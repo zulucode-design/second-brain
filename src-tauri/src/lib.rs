@@ -432,20 +432,25 @@ pub fn run() {
                 match backup::recover_interrupted_restore(std::path::Path::new(&vault_path)) {
                     Ok(recovery) => {
                         if !recovery.outcomes.is_empty() {
-                            // An unreadable ledger is left for open_vault_path to report and
-                            // replace; overwriting it here would hide that.
-                            match vault::repair::load(&vault_path) {
-                                Ok(mut status) => {
-                                    vault::repair::apply_restore_recovery(&mut status, &recovery);
-                                    if let Err(error) = vault::repair::save(&vault_path, &status) {
-                                        log::warn!(
-                                            "Could not record the restore recovery notice: {error}"
-                                        );
-                                    }
+                            let mut status = match vault::repair::load(&vault_path) {
+                                Ok(status) => status,
+                                Err(error) => {
+                                    let mut status = vault::repair::RepairStatus::default();
+                                    status.record(vault::repair::unreadable_ledger_issue(
+                                        &vault_path,
+                                        &error,
+                                    ));
+                                    status
                                 }
-                                Err(error) => log::warn!(
-                                    "Restore recovery notice not recorded; the repair ledger is unreadable: {error}"
-                                ),
+                            };
+                            vault::repair::apply_restore_recovery(&mut status, &recovery);
+                            if let Err(error) = vault::repair::save(&vault_path, &status) {
+                                log::warn!("Could not record the restore recovery notice: {error}");
+                            }
+                            // Keep the notice visible for this launch even if its durable write
+                            // failed. `open_vault_path` merges it before publishing fresh status.
+                            if let Ok(mut current) = app.state::<AppState>().repair_status.lock() {
+                                *current = status;
                             }
                         }
                         sync_sidecar::restore_enabled(app.handle().clone());
