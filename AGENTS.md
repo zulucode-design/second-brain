@@ -31,8 +31,9 @@ against what it was asked to do: the issue, or Nicolas's request when there is n
 **Standards** checks it against this repo's rules. Claude runs this as the `code-review` skill; any
 agent without that skill runs both axes by hand.
 
-Fix every finding. A finding left unfixed is named in the PR body with its reason, for Nicolas to
-accept. The PR body carries a `Final review: <sha>` line naming the commit the review covered.
+Fix every finding. A finding may stay unfixed only when a follow-up issue is open to fix it and the
+PR body names the finding, the reason it stays, and that issue's number. The PR body carries a
+`Final review: <sha>` line naming the commit the review covered.
 
 Any new head commit (a fix, a review fix, or a merge from main) needs a fresh final review of the
 whole branch, and the `Final review:` line moves to it.
