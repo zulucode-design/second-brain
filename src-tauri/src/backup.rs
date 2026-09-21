@@ -586,7 +586,10 @@ fn recover_with(
         // alone may wait when a scanner holds a handle; the settled journal makes that safe.
         settle(path, &journal, outcome).map_err(|error| {
             format!(
-                "The recovered vault could not be recorded durably: {error}. Nothing was deleted; reopen the vault to retry."
+                "The recovered vault could not be recorded durably: {error}. Nothing was deleted; the vault is at {}, restored copies may be in {}, and displaced originals may be in {}. Reopen the vault to retry.",
+                journal.vault.display(),
+                journal.stage.display(),
+                journal.rollback.display()
             )
         })?;
         if let Err(error) = clean_up(path, &journal, outcome) {
@@ -1757,6 +1760,15 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("could not be recorded durably"), "{error}");
+        assert!(error.contains(&vault.display().to_string()), "{error}");
+        assert!(
+            error.contains(&leftover(&root, "stage-").display().to_string()),
+            "{error}"
+        );
+        assert!(
+            error.contains(&leftover(&root, "rollback-").display().to_string()),
+            "{error}"
+        );
         assert!(leftover(&root, "stage-").exists());
         assert!(leftover(&root, "rollback-").exists());
         assert!(journal.is_dir());

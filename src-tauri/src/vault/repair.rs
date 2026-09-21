@@ -63,7 +63,7 @@ pub fn apply_restore_recovery(
             }
             RecoveredRestore::KeptRestored => {
                 "A restore was interrupted after it had finished copying. Your vault was kept as \
-                 restored, and the files the restore left behind were cleaned up."
+                 restored. Any leftover restore files will be removed the next time the vault opens."
             }
         };
         status.record(RepairIssue {
