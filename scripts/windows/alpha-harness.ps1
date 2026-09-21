@@ -1,7 +1,8 @@
 param(
-  [ValidateSet('Metadata', 'EnsureTask', 'RunTask', 'RemoveTask', 'StopPid')][string]$Action,
+  [ValidateSet('Metadata', 'EnsureTask', 'RunTask', 'RemoveTask', 'StopPid', 'FindProcess')][string]$Action,
   [string]$TaskName,
   [string]$ExecutablePath,
+  [string]$TaskArguments,
   [int]$PidToStop
 )
 
@@ -41,7 +42,9 @@ if ($Action -eq 'EnsureTask') {
   if (-not $TaskName) { throw 'TaskName is required' }
   $interactiveUser = (Get-CimInstance Win32_ComputerSystem).UserName
   if (-not $interactiveUser) { throw 'no interactive Windows user is logged in' }
-  $taskAction = New-ScheduledTaskAction -Execute $resolvedExecutable -WorkingDirectory ([IO.Path]::GetDirectoryName($resolvedExecutable))
+  $taskActionOptions = @{ Execute = $resolvedExecutable; WorkingDirectory = [IO.Path]::GetDirectoryName($resolvedExecutable) }
+  if ($TaskArguments) { $taskActionOptions.Argument = $TaskArguments }
+  $taskAction = New-ScheduledTaskAction @taskActionOptions
   $taskPrincipal = New-ScheduledTaskPrincipal -UserId $interactiveUser -LogonType Interactive -RunLevel Limited
   $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 1)
   Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Principal $taskPrincipal -Settings $taskSettings -Force | Out-Null
@@ -75,6 +78,23 @@ if ($Action -eq 'RemoveTask') {
   }
   [pscustomobject]@{ at = Get-NowUtc; action = 'remove-task'; task = $TaskName; removed = [bool]$scheduledTask } |
     ConvertTo-Json -Compress
+  exit 0
+}
+
+if ($Action -eq 'FindProcess') {
+  $escapedName = [IO.Path]::GetFileName($resolvedExecutable).Replace("'", "''")
+  $matchingRecords = @(Get-CimInstance Win32_Process -Filter "Name = '$escapedName'" |
+    Where-Object { $_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath).Equals($resolvedExecutable, [StringComparison]::OrdinalIgnoreCase) } |
+    ForEach-Object {
+      [pscustomobject]@{
+        Id = $_.ProcessId
+        ParentId = $_.ParentProcessId
+        SessionId = $_.SessionId
+        Started = $_.CreationDate.ToUniversalTime().ToString('o')
+      }
+    })
+  [pscustomobject]@{ at = Get-NowUtc; action = 'find-process'; executable = $resolvedExecutable; processes = $matchingRecords } |
+    ConvertTo-Json -Depth 3 -Compress
   exit 0
 }
 
