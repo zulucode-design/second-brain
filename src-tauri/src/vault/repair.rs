@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 pub enum RepairStage {
     Search,
     Reconciliation,
+    /// Notices, not failures: an interrupted restore was recovered, or restore folders no
+    /// record accounts for were found. Retrying leaves them; only dismissing clears them.
+    Restore,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -27,6 +30,46 @@ pub struct RepairIssue {
 pub struct RepairStatus {
     #[serde(default)]
     pub issues: Vec<RepairIssue>,
+}
+
+/// What an interrupted-restore recovery has to tell the user (#142).
+pub fn restore_notices(recovery: &crate::backup::RestoreRecovery) -> Vec<RepairIssue> {
+    use crate::backup::RecoveredRestore;
+    let mut notices = Vec::new();
+    if let Some(outcome) = recovery.outcomes.last() {
+        let message = match outcome {
+            RecoveredRestore::Undone => {
+                "A restore was interrupted before it finished. Your vault is back exactly as it \
+                 was before the restore; run the restore again if you still want it."
+            }
+            RecoveredRestore::KeptRestored => {
+                "A restore was interrupted after it had finished copying. Your vault was kept as \
+                 restored, and the files the restore left behind were cleaned up."
+            }
+        };
+        notices.push(RepairIssue {
+            key: "restore:recovered".to_string(),
+            stage: RepairStage::Restore,
+            message: message.to_string(),
+            paths: Vec::new(),
+        });
+    }
+    if !recovery.strays.is_empty() {
+        notices.push(RepairIssue {
+            key: "restore:unowned".to_string(),
+            stage: RepairStage::Restore,
+            message: "Restore folders were found next to your vault that no restore record \
+                      accounts for. They may hold an earlier copy of your notes, so they were \
+                      left untouched."
+                .to_string(),
+            paths: recovery
+                .strays
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect(),
+        });
+    }
+    notices
 }
 
 impl RepairStatus {

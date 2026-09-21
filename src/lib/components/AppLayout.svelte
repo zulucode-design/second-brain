@@ -73,7 +73,7 @@
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
 	const isMobile = $derived($platformIsMobile);
-	import { loadVaultState, saveVaultState, readNote, readExternalNote, readUnfiledNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, notionStatus, notionPublishNow, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus, getHotkeyStatus, getRepairStatus, retryRepairs, clipWebPage, beginVaultSwitch, endVaultSwitch } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote, readExternalNote, readUnfiledNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, notionStatus, notionPublishNow, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus, getHotkeyStatus, getRepairStatus, retryRepairs, dismissRestoreNotices, clipWebPage, beginVaultSwitch, endVaultSwitch } from '$lib/api';
 	import { darkThemes, isAndroid } from '$lib/platform';
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow, closeSecondaryWindowsForVaultSwitch } from '$lib/utils/window';
@@ -86,6 +86,7 @@
 	import { isExternalNotePath } from '$lib/utils/paths';
 	import { showToast } from '$lib/utils/toast';
 	import { get } from 'svelte/store';
+	import { repairBanner } from '$lib/utils/repair-banner';
 	import type { VaultState, FileEvent, NotebookEntry, TaskItem, AiStatus, HotkeyStatus, RepairStatus, ParaCategory, NoteContent, BulkMutationTerminal } from '$lib/types';
 	import type { StartupTarget } from '$lib/utils/startup-view';
 
@@ -109,6 +110,7 @@
 	let repairStatus = $state<RepairStatus>({ issues: [] });
 	let repairBusy = $state(false);
 	let repairError = $state('');
+	const banner = $derived(repairBanner(repairStatus, repairError));
 	let noteCreationOpen = $state(false);
 	let noteCreationBusy = $state(false);
 	let suggestedCreationNotebook = $state<string | null>(null);
@@ -123,6 +125,18 @@
 	let suggestedWebClipNotebook = $state<string | null>(null);
 	let webClipDialog = $state<HTMLDivElement>();
 	let webClipUrlInput = $state<HTMLInputElement>();
+
+	async function dismissNotice() {
+		repairBusy = true;
+		repairError = '';
+		try {
+			repairStatus = await dismissRestoreNotices();
+		} catch (error) {
+			repairError = String(error);
+		} finally {
+			repairBusy = false;
+		}
+	}
 
 	async function repairNow() {
 		repairBusy = true;
@@ -1370,22 +1384,22 @@
 	</div>
 {/if}
 
-{#if repairStatus.issues.length > 0 || repairError}
-	<div class="repair-banner" role="alert">
+{#if banner}
+	<div class="repair-banner" role={banner.kind === 'repair' ? 'alert' : 'status'}>
 		<div>
-			<strong>Vault repair needed</strong>
-			<span>
-				{repairStatus.issues.length > 0
-					? `${repairStatus.issues.length} issue${repairStatus.issues.length === 1 ? '' : 's'} may leave filing or search results incomplete.`
-					: repairError}
-			</span>
-			{#if repairStatus.issues[0]?.paths[0]}
-				<code>{repairStatus.issues[0].paths[0]}</code>
+			<strong>{banner.title}</strong>
+			<span>{banner.message}</span>
+			{#if banner.path}
+				<code>{banner.path}</code>
 			{/if}
 		</div>
-		<button type="button" onclick={repairNow} disabled={repairBusy}>
-			{repairBusy ? 'Repairing…' : 'Repair now'}
-		</button>
+		{#if banner.kind === 'repair'}
+			<button type="button" onclick={repairNow} disabled={repairBusy}>
+				{repairBusy ? 'Repairing…' : 'Repair now'}
+			</button>
+		{:else}
+			<button type="button" onclick={dismissNotice} disabled={repairBusy}>Dismiss</button>
+		{/if}
 	</div>
 {/if}
 

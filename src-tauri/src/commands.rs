@@ -346,6 +346,12 @@ fn open_vault_path(
         .note_mutation
         .lock()
         .map_err(|error| error.to_string())?;
+    // First, before `ensure_vault_structure` recreates folders a torn restore moved aside and
+    // before the watcher, indexes, or sync see the vault (#142).
+    let restore_recovery = crate::backup::recover_interrupted_restore(Path::new(&path))
+        .map_err(|error| {
+            format!("An interrupted restore could not be recovered, so the vault was not opened: {error}")
+        })?;
     operations::ensure_vault_structure(&path)?;
     // Before anything reads state: pull machine-local state out of the vault if this is
     // an older vault, and drop staging left behind by an interrupted note rewrite.
@@ -366,6 +372,9 @@ fn open_vault_path(
         Err(error) => (repair::RepairStatus::default(), Some(error)),
     };
     repair_status.clear_stage(repair::RepairStage::Reconciliation);
+    for notice in repair::restore_notices(&restore_recovery) {
+        repair_status.record(notice);
+    }
     if let Some(error) = ledger_error {
         repair_status.record(repair::RepairIssue {
             key: "reconciliation:ledger".to_string(),
@@ -2349,6 +2358,22 @@ pub fn get_repair_status(state: State<'_, AppState>) -> Result<repair::RepairSta
         .lock()
         .map(|status| status.clone())
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn dismiss_restore_notices(state: State<'_, AppState>) -> Result<repair::RepairStatus, String> {
+    let vault_path = state
+        .config
+        .lock()
+        .map_err(|error| error.to_string())?
+        .active_vault
+        .clone()
+        .ok_or("No active vault")?;
+    let mut status = repair::load(&vault_path)?;
+    status.clear_stage(repair::RepairStage::Restore);
+    repair::save(&vault_path, &status)?;
+    publish_repair_status(&state, status.clone())?;
+    Ok(status)
 }
 
 #[tauri::command]

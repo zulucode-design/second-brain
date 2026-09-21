@@ -252,7 +252,7 @@ export interface FileEvent {
   path: string;
 }
 
-export type RepairStage = "search" | "reconciliation";
+export type RepairStage = "search" | "reconciliation" | "restore";
 
 export interface RepairIssue {
   key: string;

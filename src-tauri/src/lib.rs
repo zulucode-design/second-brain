@@ -427,7 +427,26 @@ pub fn run() {
                 {
                     log::warn!("Failed to restore the vault asset scope: {error}");
                 }
-                sync_sidecar::restore_enabled(app.handle().clone());
+                // Sync must never see a vault torn by an interrupted restore (#142). If
+                // recovery fails here the vault will also refuse to open, with the reason.
+                match backup::recover_interrupted_restore(std::path::Path::new(&vault_path)) {
+                    Ok(recovery) => {
+                        let notices = vault::repair::restore_notices(&recovery);
+                        if !notices.is_empty() {
+                            let mut status = vault::repair::load(&vault_path).unwrap_or_default();
+                            for notice in notices {
+                                status.record(notice);
+                            }
+                            if let Err(error) = vault::repair::save(&vault_path, &status) {
+                                log::warn!("Could not record the restore recovery notice: {error}");
+                            }
+                        }
+                        sync_sidecar::restore_enabled(app.handle().clone());
+                    }
+                    Err(error) => log::error!(
+                        "Sync not started: an interrupted restore could not be recovered: {error}"
+                    ),
+                }
             }
 
             #[cfg(desktop)]
@@ -534,6 +553,7 @@ pub fn run() {
             commands::reindex,
             commands::get_repair_status,
             commands::retry_repairs,
+            commands::dismiss_restore_notices,
             commands::get_trash,
             commands::restore_note,
             commands::restore_notebook,
