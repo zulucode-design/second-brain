@@ -43,15 +43,21 @@ fn main() {
     println!("cargo::rustc-env=SECOND_BRAIN_BUILD_COMMIT={commit}");
     // Cargo reruns a build script only for the inputs it declares, so without these an
     // incremental build keeps whichever commit the script last saw (#138). HEAD changes on
-    // checkout; its reflog changes on every commit, reset, and checkout, including in worktrees.
-    for git_path in ["HEAD", "logs/HEAD"] {
-        if let Some(path) = git(&[
-            "rev-parse",
-            "--path-format=absolute",
-            "--git-path",
-            git_path,
-        ]) {
-            println!("cargo::rerun-if-changed={path}");
+    // checkout; its reflog changes on every commit, reset, and checkout made in this checkout or
+    // worktree. `--git-path` resolves both for linked worktrees.
+    if commit != "unknown" {
+        for git_path in ["HEAD", "logs/HEAD"] {
+            match git(&[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                git_path,
+            ]) {
+                Some(path) => println!("cargo::rerun-if-changed={path}"),
+                None => println!(
+                    "cargo::warning=could not resolve git {git_path}; SECOND_BRAIN_BUILD_COMMIT may go stale on incremental builds (needs git 2.31+)"
+                ),
+            }
         }
     }
 
