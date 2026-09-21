@@ -711,7 +711,8 @@ impl SemanticIndex {
             // failing a later read (#144).
             let raw = match std::fs::read_to_string(&path) {
                 Ok(raw) => raw,
-                // Gone, or no longer a file: dropped from the queue and the index.
+                // Gone, or no longer a file: dropped from the queue and the index. If it comes
+                // back (a restore that rolled back), the next reconcile queues it again.
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound || !path.is_file() => {
                     self.note_removed(&path)?;
                     continue;
