@@ -651,8 +651,8 @@ impl SemanticIndex {
                 Ok(raw) => raw,
                 // Gone since the walk (a restore or move); left unseen, so it is removed below.
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                // Unreadable for now (a Windows move in progress, a lock): keep what the index
-                // has, and let the rest of the pass run rather than stopping at this note.
+                // Unreadable (a Windows move in progress, a lock, text that is not UTF-8): keep
+                // what the index has, and let the rest of the pass run rather than stop here.
                 Err(_) => {
                     unreadable += 1;
                     seen.insert(path_text);
@@ -671,7 +671,7 @@ impl SemanticIndex {
             self.note_removed(Path::new(path))?;
         }
         if unreadable > 0 {
-            log::warn!("Semantic reconcile left {unreadable} unreadable notes as they were");
+            log::warn!("Semantic reconcile skipped unreadable notes: {unreadable}");
         }
         Ok(())
     }
@@ -707,6 +707,7 @@ impl SemanticIndex {
             rows.collect::<Result<Vec<_>, _>>()
                 .map_err(|error| error.to_string())?
         };
+        let mut unreadable = 0;
         for path in paths {
             let path = std::path::PathBuf::from(path);
             // One read serves both steps, so a note removed mid-retry is caught here instead of
@@ -718,12 +719,20 @@ impl SemanticIndex {
                     self.note_removed(&path)?;
                     continue;
                 }
-                Err(error) => return Err(error.to_string()),
+                // Still a file but unreadable: it stays queued for the next retry instead of
+                // holding up every note queued behind it.
+                Err(_) => {
+                    unreadable += 1;
+                    continue;
+                }
             };
             self.refresh_pending_text(&path, &raw)?;
             if !self.embed_pending_text(&path, &raw)? {
                 return Ok(RetryOutcome::BackendUnavailable);
             }
+        }
+        if unreadable > 0 {
+            log::warn!("Semantic retry left unreadable notes queued: {unreadable}");
         }
         Ok(RetryOutcome::QueueProcessed)
     }
@@ -1668,6 +1677,70 @@ mod tests {
 
         assert_eq!(index.status().unwrap().indexed_notes, 1);
         assert_eq!(index.status().unwrap().queued_notes, 0);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn an_unreadable_note_neither_stops_reconciliation_nor_leaves_the_index() {
+        let root = scratch("reconcile-unreadable");
+        let areas = root.join("Areas");
+        std::fs::create_dir_all(&areas).unwrap();
+        let broken = areas.join("Broken.md");
+        let later = areas.join("Later.md");
+        write_note(&broken, "broken-id", "Broken", "Areas", "taxes");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let index = SemanticIndex::open_at(
+            &root.join("semantic.sqlite3"),
+            Arc::new(CountingBackend {
+                calls: calls.clone(),
+            }),
+        )
+        .unwrap();
+        index.note_changed(&broken).unwrap();
+        index.retry_pending().unwrap();
+
+        std::fs::write(&broken, [0xff, 0xfe, 0xfd]).unwrap();
+        write_note(&later, "later-id", "Later", "Areas", "coffee");
+        index.reconcile_from_notes(&root).unwrap();
+
+        // The unreadable note keeps its entry, and the note after it is still queued.
+        assert_eq!(index.status().unwrap().indexed_notes, 1);
+        assert_eq!(index.status().unwrap().queued_notes, 1);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn an_unreadable_queued_note_does_not_hold_up_the_rest_of_the_queue() {
+        let root = scratch("retry-unreadable");
+        let areas = root.join("Areas");
+        std::fs::create_dir_all(&areas).unwrap();
+        let broken = areas.join("Broken.md");
+        let behind = areas.join("Behind.md");
+        write_note(&broken, "broken-id", "Broken", "Areas", "taxes");
+        write_note(&behind, "behind-id", "Behind", "Areas", "coffee");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let index = SemanticIndex::open_at(
+            &root.join("semantic.sqlite3"),
+            Arc::new(CountingBackend {
+                calls: calls.clone(),
+            }),
+        )
+        .unwrap();
+        index.note_changed(&broken).unwrap();
+        index.note_changed(&behind).unwrap();
+        std::fs::write(&broken, [0xff, 0xfe, 0xfd]).unwrap();
+
+        index.retry_pending().unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(index.status().unwrap().indexed_notes, 1);
+        assert_eq!(
+            index.status().unwrap().queued_notes,
+            1,
+            "the unreadable note stays queued"
+        );
         drop(index);
         cleanup(root);
     }
