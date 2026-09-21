@@ -399,22 +399,22 @@ impl SemanticIndex {
         Ok(())
     }
 
-    /// Embed one queued path. `Ok(false)` means inference is unavailable and the item was
-    /// deliberately left in the durable queue; local storage failures remain real errors.
-    fn embed_pending_path(&self, path: &Path) -> Result<bool, String> {
-        let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    /// Embed one queued note from its text. `Ok(false)` means inference is unavailable and
+    /// the item was deliberately left in the durable queue; local storage failures remain real
+    /// errors.
+    fn embed_pending_text(&self, path: &Path, raw: &str) -> Result<bool, String> {
         let filename = path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("");
-        let (meta, body) = crate::vault::frontmatter::parse_note(&raw, filename);
+        let (meta, body) = crate::vault::frontmatter::parse_note(raw, filename);
         let path_text = path.to_string_lossy().to_string();
         let note_key = if meta.id.trim().is_empty() {
             format!("path:{path_text}")
         } else {
             format!("id:{}", meta.id)
         };
-        let raw_hash = content_hash(&raw);
+        let raw_hash = content_hash(raw);
         let chunks = chunks_for(&meta.title, &body);
         let inputs: Vec<String> = chunks.iter().map(|chunk| chunk.input.clone()).collect();
         let embeddings = match self.backend.embed(&inputs) {
@@ -709,13 +709,20 @@ impl SemanticIndex {
         };
         for path in paths {
             let path = std::path::PathBuf::from(path);
-            if path.is_file() {
-                self.refresh_pending_note(&path)?;
-                if !self.embed_pending_path(&path)? {
-                    return Ok(RetryOutcome::BackendUnavailable);
+            // One read serves both steps, so a note removed mid-retry is caught here instead of
+            // failing a later read (#144).
+            let raw = match std::fs::read_to_string(&path) {
+                Ok(raw) => raw,
+                // Gone, or no longer a file: dropped, as before.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound || !path.is_file() => {
+                    self.note_removed(&path)?;
+                    continue;
                 }
-            } else {
-                self.note_removed(&path)?;
+                Err(error) => return Err(error.to_string()),
+            };
+            self.refresh_pending_text(&path, &raw)?;
+            if !self.embed_pending_text(&path, &raw)? {
+                return Ok(RetryOutcome::BackendUnavailable);
             }
         }
         Ok(RetryOutcome::QueueProcessed)
