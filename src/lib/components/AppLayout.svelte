@@ -73,7 +73,7 @@
 	const appWindow = getCurrentWindow();
 	const isMac = navigator.platform.startsWith('Mac');
 	const isMobile = $derived($platformIsMobile);
-	import { loadVaultState, saveVaultState, readNote, readExternalNote, readUnfiledNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, notionStatus, notionPublishNow, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus, getHotkeyStatus, getRepairStatus, retryRepairs, dismissRestoreNotices, clipWebPage, beginVaultSwitch, endVaultSwitch } from '$lib/api';
+	import { loadVaultState, saveVaultState, readNote, readExternalNote, readUnfiledNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, notionStatus, notionPublishNow, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus, getHotkeyStatus, getRepairStatus, retryRepairs, dismissRestoreNotice, clipWebPage, beginVaultSwitch, endVaultSwitch } from '$lib/api';
 	import { darkThemes, isAndroid } from '$lib/platform';
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow, closeSecondaryWindowsForVaultSwitch } from '$lib/utils/window';
@@ -126,13 +126,12 @@
 	let webClipDialog = $state<HTMLDivElement>();
 	let webClipUrlInput = $state<HTMLInputElement>();
 
-	async function dismissNotice() {
+	async function dismissNotice(key: string) {
 		repairBusy = true;
-		repairError = '';
 		try {
-			repairStatus = await dismissRestoreNotices();
+			repairStatus = await dismissRestoreNotice(key);
 		} catch (error) {
-			repairError = String(error);
+			showToast(`Could not dismiss the notice: ${error}`);
 		} finally {
 			repairBusy = false;
 		}
@@ -1389,16 +1388,16 @@
 		<div>
 			<strong>{banner.title}</strong>
 			<span>{banner.message}</span>
-			{#if banner.path}
-				<code>{banner.path}</code>
-			{/if}
+			{#each banner.paths as path (path)}
+				<code>{path}</code>
+			{/each}
 		</div>
 		{#if banner.kind === 'repair'}
 			<button type="button" onclick={repairNow} disabled={repairBusy}>
 				{repairBusy ? 'Repairing…' : 'Repair now'}
 			</button>
 		{:else}
-			<button type="button" onclick={dismissNotice} disabled={repairBusy}>Dismiss</button>
+			<button type="button" onclick={() => banner.key && dismissNotice(banner.key)} disabled={repairBusy}>Dismiss</button>
 		{/if}
 	</div>
 {/if}

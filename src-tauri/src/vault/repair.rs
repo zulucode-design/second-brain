@@ -30,12 +30,22 @@ pub struct RepairIssue {
 pub struct RepairStatus {
     #[serde(default)]
     pub issues: Vec<RepairIssue>,
+    /// Unowned restore folders the user has already been told about and dismissed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dismissed_restore_folders: Vec<String>,
 }
 
-/// What an interrupted-restore recovery has to tell the user (#142).
-pub fn restore_notices(recovery: &crate::backup::RestoreRecovery) -> Vec<RepairIssue> {
+const RESTORE_RECOVERED: &str = "restore:recovered";
+const RESTORE_UNOWNED: &str = "restore:unowned";
+
+/// Record what an interrupted-restore recovery has to tell the user (#142). Restore folders
+/// no journal accounts for are raised until dismissed, and again whenever the set changes,
+/// since one may hold the only copy of a vault's notes.
+pub fn apply_restore_recovery(
+    status: &mut RepairStatus,
+    recovery: &crate::backup::RestoreRecovery,
+) {
     use crate::backup::RecoveredRestore;
-    let mut notices = Vec::new();
     if let Some(outcome) = recovery.outcomes.last() {
         let message = match outcome {
             RecoveredRestore::Undone => {
@@ -47,29 +57,55 @@ pub fn restore_notices(recovery: &crate::backup::RestoreRecovery) -> Vec<RepairI
                  restored, and the files the restore left behind were cleaned up."
             }
         };
-        notices.push(RepairIssue {
-            key: "restore:recovered".to_string(),
+        status.record(RepairIssue {
+            key: RESTORE_RECOVERED.to_string(),
             stage: RepairStage::Restore,
             message: message.to_string(),
             paths: Vec::new(),
         });
     }
-    if !recovery.strays.is_empty() {
-        notices.push(RepairIssue {
-            key: "restore:unowned".to_string(),
+    let strays: Vec<String> = recovery
+        .strays
+        .iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
+    status
+        .dismissed_restore_folders
+        .retain(|path| strays.contains(path));
+    status.issues.retain(|issue| issue.key != RESTORE_UNOWNED);
+    if strays
+        .iter()
+        .any(|path| !status.dismissed_restore_folders.contains(path))
+    {
+        status.issues.push(RepairIssue {
+            key: RESTORE_UNOWNED.to_string(),
             stage: RepairStage::Restore,
             message: "Restore folders were found next to your vault that no restore record \
                       accounts for. They may hold an earlier copy of your notes, so they were \
-                      left untouched."
+                      left untouched; move them somewhere safe or delete them once you have \
+                      checked them."
                 .to_string(),
-            paths: recovery
-                .strays
-                .iter()
-                .map(|path| path.to_string_lossy().into_owned())
-                .collect(),
+            paths: strays,
         });
     }
-    notices
+}
+
+/// Clear one restore notice. Dismissed folders are remembered so they are not raised again.
+pub fn dismiss_restore_notice(status: &mut RepairStatus, key: &str) {
+    if let Some(issue) = status
+        .issues
+        .iter()
+        .find(|issue| issue.key == key && issue.stage == RepairStage::Restore)
+    {
+        if key == RESTORE_UNOWNED {
+            status
+                .dismissed_restore_folders
+                .extend(issue.paths.iter().cloned());
+        }
+    }
+    status
+        .issues
+        .retain(|issue| !(issue.key == key && issue.stage == RepairStage::Restore));
 }
 
 impl RepairStatus {
@@ -180,6 +216,88 @@ fn sync_parent(_path: &Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    fn strays(paths: &[&str]) -> crate::backup::RestoreRecovery {
+        crate::backup::RestoreRecovery {
+            outcomes: Vec::new(),
+            strays: paths.iter().map(std::path::PathBuf::from).collect(),
+        }
+    }
+
+    fn unowned(status: &RepairStatus) -> Option<Vec<String>> {
+        status
+            .issues
+            .iter()
+            .find(|issue| issue.key == "restore:unowned")
+            .map(|issue| issue.paths.clone())
+    }
+
+    #[test]
+    fn dismissed_restore_folders_stay_quiet_until_the_set_changes() {
+        let mut status = RepairStatus::default();
+        apply_restore_recovery(
+            &mut status,
+            &strays(&["/v/.second-brain-restore-rollback-a"]),
+        );
+        assert_eq!(
+            unowned(&status),
+            Some(vec!["/v/.second-brain-restore-rollback-a".to_string()])
+        );
+
+        dismiss_restore_notice(&mut status, "restore:unowned");
+        apply_restore_recovery(
+            &mut status,
+            &strays(&["/v/.second-brain-restore-rollback-a"]),
+        );
+        assert_eq!(
+            unowned(&status),
+            None,
+            "a dismissed folder is not raised again"
+        );
+
+        apply_restore_recovery(
+            &mut status,
+            &strays(&[
+                "/v/.second-brain-restore-rollback-a",
+                "/v/.second-brain-restore-stage-b",
+            ]),
+        );
+        assert_eq!(
+            unowned(&status),
+            Some(vec![
+                "/v/.second-brain-restore-rollback-a".to_string(),
+                "/v/.second-brain-restore-stage-b".to_string()
+            ]),
+            "a new folder raises the notice again, listing every folder"
+        );
+
+        apply_restore_recovery(&mut status, &strays(&[]));
+        assert_eq!(
+            unowned(&status),
+            None,
+            "folders that are gone clear the notice"
+        );
+        assert!(status.dismissed_restore_folders.is_empty());
+    }
+
+    #[test]
+    fn dismissing_one_restore_notice_keeps_the_other() {
+        let mut status = RepairStatus::default();
+        apply_restore_recovery(
+            &mut status,
+            &crate::backup::RestoreRecovery {
+                outcomes: vec![crate::backup::RecoveredRestore::Undone],
+                strays: vec!["/v/.second-brain-restore-rollback-a".into()],
+            },
+        );
+        dismiss_restore_notice(&mut status, "restore:recovered");
+        let keys: Vec<&str> = status
+            .issues
+            .iter()
+            .map(|issue| issue.key.as_str())
+            .collect();
+        assert_eq!(keys, vec!["restore:unowned"]);
+    }
+
     #[test]
     fn issues_are_deduplicated_and_persist_across_reload() {
         let vault = std::env::temp_dir().join(format!("repair-ledger-{}", uuid::Uuid::new_v4()));
@@ -225,6 +343,7 @@ mod tests {
                     paths: vec!["Projects/Plan.md".to_string()],
                 },
             ],
+            ..Default::default()
         };
 
         status.clear_stage(RepairStage::Search);
@@ -245,6 +364,7 @@ mod tests {
                 message: "recover me".to_string(),
                 paths: Vec::new(),
             }],
+            ..Default::default()
         };
         fs::write(
             backup_path(&vault).unwrap(),

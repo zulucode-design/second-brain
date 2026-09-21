@@ -263,6 +263,8 @@ export interface RepairIssue {
 
 export interface RepairStatus {
   issues: RepairIssue[];
+  /** Unowned restore folders already dismissed; kept by the backend, not shown. */
+  dismissedRestoreFolders?: string[];
 }
 
 export interface SyncStatus {

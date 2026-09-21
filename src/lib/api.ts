@@ -698,6 +698,6 @@ export async function retryRepairs(): Promise<RepairStatus> {
   return invoke("retry_repairs");
 }
 
-export async function dismissRestoreNotices(): Promise<RepairStatus> {
-  return invoke("dismiss_restore_notices");
+export async function dismissRestoreNotice(key: string): Promise<RepairStatus> {
+  return invoke("dismiss_restore_notice", { key });
 }

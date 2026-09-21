@@ -372,9 +372,7 @@ fn open_vault_path(
         Err(error) => (repair::RepairStatus::default(), Some(error)),
     };
     repair_status.clear_stage(repair::RepairStage::Reconciliation);
-    for notice in repair::restore_notices(&restore_recovery) {
-        repair_status.record(notice);
-    }
+    repair::apply_restore_recovery(&mut repair_status, &restore_recovery);
     if let Some(error) = ledger_error {
         repair_status.record(repair::RepairIssue {
             key: "reconciliation:ledger".to_string(),
@@ -2361,7 +2359,14 @@ pub fn get_repair_status(state: State<'_, AppState>) -> Result<repair::RepairSta
 }
 
 #[tauri::command]
-pub fn dismiss_restore_notices(state: State<'_, AppState>) -> Result<repair::RepairStatus, String> {
+pub fn dismiss_restore_notice(
+    state: State<'_, AppState>,
+    key: String,
+) -> Result<repair::RepairStatus, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let vault_path = state
         .config
         .lock()
@@ -2370,7 +2375,7 @@ pub fn dismiss_restore_notices(state: State<'_, AppState>) -> Result<repair::Rep
         .clone()
         .ok_or("No active vault")?;
     let mut status = repair::load(&vault_path)?;
-    status.clear_stage(repair::RepairStage::Restore);
+    repair::dismiss_restore_notice(&mut status, &key);
     repair::save(&vault_path, &status)?;
     publish_repair_status(&state, status.clone())?;
     Ok(status)

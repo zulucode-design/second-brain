@@ -431,12 +431,9 @@ pub fn run() {
                 // recovery fails here the vault will also refuse to open, with the reason.
                 match backup::recover_interrupted_restore(std::path::Path::new(&vault_path)) {
                     Ok(recovery) => {
-                        let notices = vault::repair::restore_notices(&recovery);
-                        if !notices.is_empty() {
+                        if !recovery.outcomes.is_empty() {
                             let mut status = vault::repair::load(&vault_path).unwrap_or_default();
-                            for notice in notices {
-                                status.record(notice);
-                            }
+                            vault::repair::apply_restore_recovery(&mut status, &recovery);
                             if let Err(error) = vault::repair::save(&vault_path, &status) {
                                 log::warn!("Could not record the restore recovery notice: {error}");
                             }
@@ -553,7 +550,7 @@ pub fn run() {
             commands::reindex,
             commands::get_repair_status,
             commands::retry_repairs,
-            commands::dismiss_restore_notices,
+            commands::dismiss_restore_notice,
             commands::get_trash,
             commands::restore_note,
             commands::restore_notebook,

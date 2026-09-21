@@ -335,8 +335,18 @@ fn restore_backup_with(
     mut step: impl FnMut(RestoreStep) -> Result<(), Interrupt>,
 ) -> Result<(), RestoreError> {
     let backup = validated_backup_file(backup_dir, &backup_path.to_string_lossy())?;
-    let vault = fs::canonicalize(vault).map_err(|e| format!("Cannot resolve the vault: {e}"))?;
+    let vault = dunce::canonicalize(vault).map_err(|e| format!("Cannot resolve the vault: {e}"))?;
     let parent = vault.parent().ok_or("Vault must have a parent directory")?;
+    // Two journals for one vault could undo each other's work, so an unfinished restore is
+    // always recovered, by reopening the vault, before another starts.
+    let pending = restore_entries(parent)
+        .into_iter()
+        .filter(|path| is_journal(path))
+        .any(|path| read_journal(&path).map_or(true, |journal| journal.vault == vault));
+    if pending {
+        return Err("An unfinished restore of this vault must be recovered first. Reopen the vault, then restore again."
+            .into());
+    }
     let nonce = uuid::Uuid::new_v4();
     let journal_path = parent.join(format!("{RESTORE_PREFIX}journal-{nonce}.json"));
     let mut journal = RestoreJournal {
@@ -385,6 +395,9 @@ fn restore_backup_with(
         journal.phase = RestorePhase::Committing;
         write_journal(&journal_path, &journal).map_err(Interrupt::Failed)?;
         commit(&journal, &mut step)?;
+        // Some filesystems (Btrfs, XFS) can persist the published record before the renames
+        // it describes; flush the renames first. `finish` also repairs a lost publish.
+        persist_renames(&journal).map_err(Interrupt::Failed)?;
         step(RestoreStep::Journal)?;
         journal.phase = RestorePhase::Published;
         write_journal(&journal_path, &journal).map_err(Interrupt::Failed)?;
@@ -497,39 +510,15 @@ fn recover_with(
     vault: &Path,
     step: &mut impl FnMut() -> Result<(), Interrupt>,
 ) -> Result<RestoreRecovery, String> {
-    let vault = fs::canonicalize(vault).map_err(|e| format!("Cannot resolve the vault: {e}"))?;
+    let vault = dunce::canonicalize(vault).map_err(|e| format!("Cannot resolve the vault: {e}"))?;
     let Some(parent) = vault.parent() else {
         return Ok(RestoreRecovery::default());
     };
     let mut recovery = RestoreRecovery::default();
     let mut accounted = HashSet::new();
-    // A restore writes its journal into this same directory, so if it cannot be listed no
-    // restore can have run here, and refusing to open the vault would help nobody.
-    let listing = match fs::read_dir(parent) {
-        Ok(listing) => listing,
-        Err(error) => {
-            log::warn!(
-                "Cannot scan {} for interrupted restores: {error}",
-                parent.display()
-            );
-            return Ok(recovery);
-        }
-    };
-    let mut entries: Vec<PathBuf> = listing
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with(RESTORE_PREFIX))
-        })
-        .collect();
-    entries.sort();
+    let entries = restore_entries(parent);
     for path in &entries {
-        let is_journal = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with(&format!("{RESTORE_PREFIX}journal-")));
-        if !is_journal {
+        if !is_journal(path) {
             continue;
         }
         let journal = match read_journal(path) {
@@ -545,16 +534,40 @@ fn recover_with(
         if journal.vault != vault {
             continue;
         }
-        let outcome = match journal.phase {
+        let owned = |dir: &Path| {
+            dir.parent() == Some(parent)
+                && dir
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(RESTORE_PREFIX))
+        };
+        if !owned(&journal.stage) || !owned(&journal.rollback) {
+            return Err(format!(
+                "The restore record {} names folders outside {}, so it cannot be trusted. Nothing was changed; remove the record once the vault looks right.",
+                path.display(),
+                parent.display()
+            ));
+        }
+        let recovered = match journal.phase {
             RestorePhase::Published => {
-                finish(path, &journal)?;
-                RecoveredRestore::KeptRestored
+                complete_publish(&journal).map(|()| RecoveredRestore::KeptRestored)
             }
             RestorePhase::Unpacking | RestorePhase::Committing => {
-                undo_with(path, &journal, step)?;
-                RecoveredRestore::Undone
+                undo_with(&journal, step).map(|()| RecoveredRestore::Undone)
             }
         };
+        let outcome = recovered.map_err(|error| {
+            format!(
+                "{error}. Nothing was deleted: until this is resolved, the vault's original entries are in {} and the restored copies are in {}. Move or rename anything in the way, then reopen the vault.",
+                journal.rollback.display(),
+                journal.stage.display()
+            )
+        })?;
+        // The vault is whole now. A cleanup failure (a scanner holding a handle) only delays
+        // tidying up: the journal stays and the next open finishes it.
+        if let Err(error) = clean_up(path, &journal, outcome) {
+            log::warn!("Recovered restore left files behind until the next open: {error}");
+        }
         log::warn!(
             "Recovered an interrupted restore of {}: {outcome:?}",
             vault.display()
@@ -562,11 +575,7 @@ fn recover_with(
         recovery.outcomes.push(outcome);
     }
     for path in entries {
-        let is_journal = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with(&format!("{RESTORE_PREFIX}journal-")));
-        if !is_journal && !accounted.contains(&path) && exists(&path) {
+        if !is_journal(&path) && !accounted.contains(&path) && exists(&path) {
             recovery.strays.push(path);
         }
     }
@@ -578,11 +587,11 @@ fn recover_with(
 /// running it again. The only recursive delete is the journal-named stage, which holds backup
 /// copies alone: published entries are moved back into it first.
 fn undo(journal_path: &Path, journal: &RestoreJournal) -> Result<(), String> {
-    undo_with(journal_path, journal, &mut || Ok(()))
+    undo_with(journal, &mut || Ok(()))?;
+    clean_up(journal_path, journal, RecoveredRestore::Undone)
 }
 
 fn undo_with(
-    journal_path: &Path,
     journal: &RestoreJournal,
     step: &mut impl FnMut() -> Result<(), Interrupt>,
 ) -> Result<(), String> {
@@ -635,22 +644,68 @@ fn undo_with(
         )
         .collect();
     if !missing.is_empty() {
+        let names: Vec<&str> = missing.iter().map(|name| name.as_str()).collect();
         return Err(format!(
-            "Vault entries {missing:?} are in neither the vault nor {}",
-            journal.rollback.display()
+            "{} could not be found in the vault or the rollback folder",
+            names.join(", ")
         ));
     }
-    remove_restore_dir(&journal.stage)?;
-    remove_empty_dir(&rollback_metadata)?;
-    remove_empty_dir(&journal.rollback)?;
+    Ok(())
+}
+
+/// Make sure every entry of a restore recorded as published is in the vault. A publish rename
+/// a filesystem did not persist is finished from the stage rather than lost with it.
+fn complete_publish(journal: &RestoreJournal) -> Result<(), String> {
+    let vault_metadata = journal.vault.join(METADATA_DIR);
+    let stage_metadata = journal.stage.join(METADATA_DIR);
+    let pairs = journal
+        .staged
+        .iter()
+        .map(|name| (journal.stage.join(name), journal.vault.join(name)))
+        .chain(
+            journal
+                .staged_metadata
+                .iter()
+                .map(|name| (stage_metadata.join(name), vault_metadata.join(name))),
+        );
+    for (staged, live) in pairs {
+        if !exists(&live) {
+            if !exists(&staged) {
+                return Err(format!("{} is missing from the restore", live.display()));
+            }
+            if let Some(parent) = live.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            move_entry(&staged, &live)?;
+        }
+    }
+    Ok(())
+}
+
+/// Drop the stage, the rollback, and then the journal, once the vault is whole. For a kept
+/// restore the rollback holds the replaced originals; for an undone one it is empty.
+fn clean_up(
+    journal_path: &Path,
+    journal: &RestoreJournal,
+    outcome: RecoveredRestore,
+) -> Result<(), String> {
+    let parent = journal.vault.parent();
+    remove_restore_dir(&journal.stage, parent)?;
+    match outcome {
+        RecoveredRestore::KeptRestored => remove_restore_dir(&journal.rollback, parent)?,
+        RecoveredRestore::Undone => {
+            remove_empty_dir(&journal.rollback.join(METADATA_DIR))?;
+            remove_empty_dir(&journal.rollback)?;
+        }
+    }
     remove_journal(journal_path)
 }
 
-/// Drop what a finished restore no longer needs: the displaced originals and the stage.
+/// After a successful commit, before the published record: the vault reaches that state only
+/// through `complete_publish` and `clean_up`, like a recovered one.
 fn finish(journal_path: &Path, journal: &RestoreJournal) -> Result<(), String> {
-    remove_restore_dir(&journal.rollback)?;
-    remove_restore_dir(&journal.stage)?;
-    remove_journal(journal_path)
+    complete_publish(journal)?;
+    clean_up(journal_path, journal, RecoveredRestore::KeptRestored)
 }
 
 /// Clean up a restore that never reached the commit; the vault was not touched.
@@ -679,12 +734,14 @@ fn remove_journal(path: &Path) -> Result<(), String> {
     }
 }
 
-/// Recursively delete a journal-named stage or rollback directory, and nothing else.
-fn remove_restore_dir(path: &Path) -> Result<(), String> {
-    let named = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.starts_with(RESTORE_PREFIX));
+/// Recursively delete a journal-named stage or rollback directory next to its vault, and
+/// nothing else.
+fn remove_restore_dir(path: &Path, vault_parent: Option<&Path>) -> Result<(), String> {
+    let named = path.parent() == vault_parent
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(RESTORE_PREFIX));
     if !named {
         return Err(format!("Refusing to delete {}", path.display()));
     }
@@ -701,6 +758,53 @@ fn remove_empty_dir(path: &Path) -> Result<(), String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!("Cannot remove {}: {error}", path.display())),
     }
+}
+
+/// Restore artifacts next to a vault, sorted. An unreadable directory yields none: a restore
+/// writes into this same directory, so none can have run there.
+fn restore_entries(parent: &Path) -> Vec<PathBuf> {
+    let mut entries: Vec<PathBuf> = fs::read_dir(parent)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(RESTORE_PREFIX))
+        })
+        .collect();
+    entries.sort();
+    entries
+}
+
+fn is_journal(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            name.starts_with(&format!("{RESTORE_PREFIX}journal-")) && name.ends_with(".json")
+        })
+}
+
+/// Flush the directory entries the commit renamed. Windows has no directory fsync; NTFS
+/// orders these metadata writes ahead of the write-through journal replace.
+fn persist_renames(journal: &RestoreJournal) -> Result<(), String> {
+    #[cfg(unix)]
+    for dir in [
+        &journal.vault,
+        &journal.vault.join(METADATA_DIR),
+        &journal.rollback,
+        &journal.rollback.join(METADATA_DIR),
+        &journal.stage,
+    ] {
+        if dir.is_dir() {
+            fs::File::open(dir)
+                .and_then(|handle| handle.sync_all())
+                .map_err(|e| format!("Cannot flush {}: {e}", dir.display()))?;
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = journal;
+    Ok(())
 }
 
 fn entry_names(dir: &Path) -> Result<Vec<String>, String> {
@@ -1438,5 +1542,187 @@ mod tests {
             }
         }
         assert!(recovery_kills > 0, "no kill point landed inside a recovery");
+    }
+
+    /// Stop a restore at the `nth` step of `kind`, as if the process died there.
+    fn kill_restore_at(vault: &Path, backups: &Path, backup: &Path, kind: RestoreStep, nth: usize) {
+        let mut seen = 0;
+        let result = restore_backup_with(vault, backups, backup, |step| {
+            if step == kind {
+                seen += 1;
+                if seen == nth {
+                    return Err(Interrupt::Died);
+                }
+            }
+            Ok(())
+        });
+        assert!(result.is_err(), "the {kind:?} #{nth} kill point must exist");
+    }
+
+    fn leftover(root: &Path, kind: &str) -> PathBuf {
+        root.join(
+            restore_leftovers(root)
+                .into_iter()
+                .find(|name| name.contains(kind))
+                .unwrap_or_else(|| panic!("no {kind} left next to the vault")),
+        )
+    }
+
+    #[test]
+    fn a_second_restore_waits_until_the_first_is_recovered() {
+        let (root, vault, backups, backup) = restore_fixture("second-restore");
+        kill_restore_at(&vault, &backups, &backup, RestoreStep::Displace, 2);
+        let torn = tree(&vault);
+
+        let error = restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap())
+            .unwrap_err();
+
+        assert!(!error.changed);
+        assert!(
+            error.message.contains("unfinished restore"),
+            "{}",
+            error.message
+        );
+        assert_eq!(
+            tree(&vault),
+            torn,
+            "the refused restore must not touch the vault"
+        );
+        assert_eq!(
+            restore_leftovers(&root)
+                .iter()
+                .filter(|name| name.contains("journal-"))
+                .count(),
+            1
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_publish_lost_to_power_failure_is_completed_not_deleted() {
+        let (root, vault, backups, backup) = restore_fixture("lost-publish");
+        let reference = restore_fixture("lost-publish-reference");
+        restore_backup(
+            reference.1.to_str().unwrap(),
+            &reference.2,
+            reference.3.to_str().unwrap(),
+        )
+        .unwrap();
+        let restored = tree(&reference.1);
+        fs::remove_dir_all(&reference.0).unwrap();
+        // Die after the published record is durable, then undo one publish rename the way a
+        // filesystem that did not persist it would.
+        kill_restore_at(&vault, &backups, &backup, RestoreStep::Journal, 3);
+        let stage = leftover(&root, "stage-");
+        fs::rename(vault.join("Resources"), stage.join("Resources")).unwrap();
+
+        let recovery = recover_interrupted_restore(&vault).unwrap();
+
+        assert_eq!(recovery.outcomes, vec![RecoveredRestore::KeptRestored]);
+        assert_eq!(tree(&vault), restored);
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_corrupt_journal_cannot_delete_outside_the_vaults_directory() {
+        let (root, vault, _, _) = restore_fixture("corrupt-journal");
+        let elsewhere = root.join("elsewhere");
+        let victim = elsewhere.join(".second-brain-restore-stage-victim");
+        fs::create_dir_all(&victim).unwrap();
+        fs::write(victim.join("keep.md"), "not ours").unwrap();
+        let vault_path = fs::canonicalize(&vault).unwrap();
+        let journal = serde_json::json!({
+            "vault": vault_path,
+            "stage": victim,
+            "rollback": elsewhere.join(".second-brain-restore-rollback-victim"),
+            "phase": "unpacking",
+        });
+        fs::write(
+            root.join(".second-brain-restore-journal-corrupt.json"),
+            serde_json::to_vec(&journal).unwrap(),
+        )
+        .unwrap();
+
+        assert!(recover_interrupted_restore(&vault).is_err());
+        assert_eq!(
+            fs::read_to_string(victim.join("keep.md")).unwrap(),
+            "not ours"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_blocked_recovery_refuses_and_says_where_the_notes_are() {
+        let (root, vault, backups, backup) = restore_fixture("blocked-recovery");
+        kill_restore_at(&vault, &backups, &backup, RestoreStep::Displace, 2);
+        let rollback = leftover(&root, "rollback-");
+        // The user recreated a folder while the app was down, so the original cannot return.
+        fs::create_dir_all(vault.join("Areas")).unwrap();
+        fs::write(vault.join("Areas/new.md"), "made while the app was down").unwrap();
+
+        let error = recover_interrupted_restore(&vault).unwrap_err();
+
+        assert!(error.contains(&rollback.display().to_string()), "{error}");
+        assert!(error.contains("Nothing was deleted"), "{error}");
+        assert_eq!(
+            fs::read_to_string(rollback.join("Areas/b.md")).unwrap(),
+            "live b"
+        );
+        assert!(leftover(&root, "journal-").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_whole_vault_opens_even_when_cleanup_cannot_finish() {
+        use std::os::unix::fs::PermissionsExt;
+        let (root, vault, backups, backup) = restore_fixture("cleanup-blocked");
+        let before = tree(&vault);
+        kill_restore_at(&vault, &backups, &backup, RestoreStep::Stage, 2);
+        let stage = leftover(&root, "stage-");
+        fs::set_permissions(&stage, fs::Permissions::from_mode(0o500)).unwrap();
+
+        let recovery = recover_interrupted_restore(&vault).unwrap();
+
+        assert_eq!(recovery.outcomes, vec![RecoveredRestore::Undone]);
+        assert_eq!(tree(&vault), before);
+        assert!(
+            leftover(&root, "journal-").exists(),
+            "cleanup retries on the next open"
+        );
+        fs::set_permissions(&stage, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            recover_interrupted_restore(&vault).unwrap().outcomes.len(),
+            1
+        );
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_locked_entry_exhausts_the_retries_and_refuses_to_open() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let (root, vault, backups, backup) = restore_fixture("locked-entry");
+        kill_restore_at(&vault, &backups, &backup, RestoreStep::Displace, 2);
+        let rollback = leftover(&root, "rollback-");
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(rollback.join("Areas/b.md"))
+            .unwrap();
+        let started = std::time::Instant::now();
+
+        let error = recover_interrupted_restore(&vault).unwrap_err();
+
+        assert!(
+            started.elapsed() >= std::time::Duration::from_millis(1500),
+            "{error}"
+        );
+        assert!(error.contains(&rollback.display().to_string()), "{error}");
+        drop(lock);
+        recover_interrupted_restore(&vault).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 }
