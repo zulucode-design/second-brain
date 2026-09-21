@@ -139,7 +139,7 @@ pub struct SemanticIndex {
     backend: Arc<dyn EmbeddingBackend>,
     wake_worker: OnceLock<Sender<()>>,
     embedding_outage_reported: AtomicBool,
-    unreadable_reported: AtomicUsize,
+    last_reported_unreadable: AtomicUsize,
     profile: String,
 }
 
@@ -187,7 +187,7 @@ impl SemanticIndex {
             backend,
             wake_worker: OnceLock::new(),
             embedding_outage_reported: AtomicBool::new(false),
-            unreadable_reported: AtomicUsize::new(0),
+            last_reported_unreadable: AtomicUsize::new(0),
             profile: profile.to_string(),
         })
     }
@@ -649,7 +649,8 @@ impl SemanticIndex {
                 Ok(raw) => raw,
                 // Moved away since the walk (a restore in progress), locked, or not UTF-8: keep
                 // what the index has for it, since a restore that rolls back puts it back, and
-                // let the rest of the pass run. The next reconcile settles it.
+                // let the rest of the pass run. A later reconcile drops a note that is really
+                // gone; one that stays unreadable keeps its old entry until it can be read.
                 Err(_) => {
                     unreadable += 1;
                     seen.insert(path_text);
@@ -727,9 +728,12 @@ impl SemanticIndex {
                 return Ok(RetryOutcome::BackendUnavailable);
             }
         }
-        // The worker retries every 20 s; a note that stays unreadable is reported once, not
-        // on every tick.
-        if self.unreadable_reported.swap(unreadable, Ordering::SeqCst) != unreadable
+        // The worker retries every 20 s; the count is reported when it changes, not on every
+        // tick.
+        if self
+            .last_reported_unreadable
+            .swap(unreadable, Ordering::SeqCst)
+            != unreadable
             && unreadable > 0
         {
             log::warn!("Semantic retry left unreadable notes queued: {unreadable}");
