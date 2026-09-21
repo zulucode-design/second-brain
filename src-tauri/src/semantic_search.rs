@@ -582,16 +582,7 @@ impl SemanticIndex {
     }
 
     pub fn rebuild_from_notes(&self, vault: &Path) -> Result<(), String> {
-        let paths: Vec<std::path::PathBuf> = WalkDir::new(vault)
-            .into_iter()
-            .filter_entry(|entry| !crate::search::is_ignored_by_index(entry.path(), vault))
-            .filter_map(Result::ok)
-            .filter(|entry| {
-                entry.file_type().is_file()
-                    && entry.path().extension().and_then(|value| value.to_str()) == Some("md")
-            })
-            .map(|entry| entry.into_path())
-            .collect();
+        let paths = note_paths(vault);
         {
             let mut database = self.database.lock().map_err(|error| error.to_string())?;
             let transaction = database.transaction().map_err(|error| error.to_string())?;
@@ -637,18 +628,18 @@ impl SemanticIndex {
         };
 
         let mut seen = std::collections::HashSet::new();
-        for entry in WalkDir::new(vault)
-            .into_iter()
-            .filter_entry(|entry| !crate::search::is_ignored_by_index(entry.path(), vault))
-            .filter_map(Result::ok)
-            .filter(|entry| {
-                entry.file_type().is_file()
-                    && entry.path().extension().and_then(|value| value.to_str()) == Some("md")
-            })
-        {
-            let path = entry.path();
+        // Collected before any per-note work: a lazy walk keeps its directory handles open
+        // for the whole pass, and on Windows an open handle under a folder stops a restore
+        // from moving that folder (#144).
+        for path in note_paths(vault) {
+            let path = path.as_path();
             let path_text = path.to_string_lossy().to_string();
-            let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+            let raw = match std::fs::read_to_string(path) {
+                Ok(raw) => raw,
+                // Gone since the walk (a restore or move); left unseen, so it is removed below.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error.to_string()),
+            };
             let current = content_hash(&raw);
             seen.insert(path_text.clone());
             if recorded.get(&path_text) != Some(&(current, self.profile.clone())) {
@@ -794,6 +785,21 @@ fn chunks_for(title: &str, body: &str) -> Vec<NoteChunk> {
         start = end - CHUNK_OVERLAP;
     }
     chunks
+}
+
+/// Every note the semantic index covers, returned whole so no directory handle outlives the
+/// walk.
+fn note_paths(vault: &Path) -> Vec<std::path::PathBuf> {
+    WalkDir::new(vault)
+        .into_iter()
+        .filter_entry(|entry| !crate::search::is_ignored_by_index(entry.path(), vault))
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry.file_type().is_file()
+                && entry.path().extension().and_then(|value| value.to_str()) == Some("md")
+        })
+        .map(|entry| entry.into_path())
+        .collect()
 }
 
 fn content_hash(raw: &str) -> String {
