@@ -1077,7 +1077,13 @@ mod tests {
             writer.write_all(body.as_bytes()).unwrap();
         }
         writer.finish().unwrap();
-        (root, vault, backups, backup)
+        let root = dunce::canonicalize(root).unwrap();
+        (
+            root.clone(),
+            root.join("vault"),
+            root.join("backups"),
+            root.join("backups/snapshot.zip"),
+        )
     }
 
     #[test]
