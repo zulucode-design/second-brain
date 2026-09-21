@@ -23,6 +23,27 @@ binary gets one only from `scripts/test-rust.mjs`, which sets
 `HELIX_WINDOWS_TEST_MANIFEST=1`. That gate cannot be removed: applied unscoped it
 also hits the app binary, where a second manifest is a hard linker error (`CVT1100`).
 
+## Pull requests
+
+An issue is complete only once its branch has passed a **final review** of its exact head commit:
+review `git diff origin/main...HEAD`, after `git fetch`, on two separate axes. **Spec** checks it
+against what it was asked to do: the issue, or Nicolas's request when there is no issue.
+**Standards** checks it against this repo's rules. Claude runs this as the `code-review` skill; any
+agent without that skill runs both axes by hand.
+
+Fix every finding. A finding may stay unfixed only when a follow-up issue is open to fix it and the
+PR body names the finding, the reason it stays, and that issue's number. The PR body carries a
+`Final review: <sha>` line naming the commit the review covered.
+
+Any new head commit (a fix, a review fix, or a merge from main) needs a fresh final review of the
+whole branch, and the `Final review:` line moves to it.
+
+Hard rule, no exceptions: no pull request is opened, by any means and including drafts, and nothing
+is pushed to a pull request branch or to main, until the final review of that exact commit is done.
+
+Why: PR #140 was opened on 2026-09-21 without one; the review that followed found a
+silent-failure path and an unverified Windows build.
+
 ## PowerShell on the Windows machine
 
 `ssh sb-windows` is Nicolas's real desktop, not a sandbox. Every PowerShell script run there
