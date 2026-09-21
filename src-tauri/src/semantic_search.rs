@@ -6,7 +6,7 @@ use rusqlite::{params, Connection, ErrorCode};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -139,6 +139,7 @@ pub struct SemanticIndex {
     backend: Arc<dyn EmbeddingBackend>,
     wake_worker: OnceLock<Sender<()>>,
     embedding_outage_reported: AtomicBool,
+    unreadable_reported: AtomicUsize,
     profile: String,
 }
 
@@ -186,6 +187,7 @@ impl SemanticIndex {
             backend,
             wake_worker: OnceLock::new(),
             embedding_outage_reported: AtomicBool::new(false),
+            unreadable_reported: AtomicUsize::new(0),
             profile: profile.to_string(),
         })
     }
@@ -335,24 +337,20 @@ fn path_with_suffix(path: &Path, suffix: &str) -> std::path::PathBuf {
 
 impl SemanticIndex {
     pub fn note_changed(&self, path: &Path) -> Result<(), String> {
-        self.refresh_pending_note(path)?;
-        self.wake();
-        Ok(())
+        let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+        self.queue_text(path, &raw)
     }
 
-    fn wake(&self) {
+    /// Queue a note from text already read, and wake the worker to embed it.
+    fn queue_text(&self, path: &Path, raw: &str) -> Result<(), String> {
+        self.refresh_pending_text(path, raw)?;
         if let Some(wake) = self.wake_worker.get() {
             let _ = wake.send(());
         }
+        Ok(())
     }
 
-    /// Refresh one durable pending row without waking the background worker.
-    fn refresh_pending_note(&self, path: &Path) -> Result<(), String> {
-        let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
-        self.refresh_pending_text(path, &raw)
-    }
-
-    /// `refresh_pending_note` for text the caller has already read.
+    /// Refresh one durable pending row, without waking the background worker.
     fn refresh_pending_text(&self, path: &Path, raw: &str) -> Result<(), String> {
         let filename = path
             .file_name()
@@ -649,10 +647,9 @@ impl SemanticIndex {
             let path_text = path.to_string_lossy().to_string();
             let raw = match std::fs::read_to_string(path) {
                 Ok(raw) => raw,
-                // Gone since the walk (a restore or move); left unseen, so it is removed below.
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                // Unreadable (a Windows move in progress, a lock, text that is not UTF-8): keep
-                // what the index has, and let the rest of the pass run rather than stop here.
+                // Moved away since the walk (a restore in progress), locked, or not UTF-8: keep
+                // what the index has for it, since a restore that rolls back puts it back, and
+                // let the rest of the pass run. The next reconcile settles it.
                 Err(_) => {
                     unreadable += 1;
                     seen.insert(path_text);
@@ -663,8 +660,7 @@ impl SemanticIndex {
             seen.insert(path_text.clone());
             if recorded.get(&path_text) != Some(&(current, self.profile.clone())) {
                 // Reuse the text read above; a second read fails if the note vanished between.
-                self.refresh_pending_text(path, &raw)?;
-                self.wake();
+                self.queue_text(path, &raw)?;
             }
         }
         for path in recorded.keys().filter(|path| !seen.contains(*path)) {
@@ -714,7 +710,7 @@ impl SemanticIndex {
             // failing a later read (#144).
             let raw = match std::fs::read_to_string(&path) {
                 Ok(raw) => raw,
-                // Gone, or no longer a file: dropped, as before.
+                // Gone, or no longer a file: dropped from the queue and the index.
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound || !path.is_file() => {
                     self.note_removed(&path)?;
                     continue;
@@ -731,7 +727,11 @@ impl SemanticIndex {
                 return Ok(RetryOutcome::BackendUnavailable);
             }
         }
-        if unreadable > 0 {
+        // The worker retries every 20 s; a note that stays unreadable is reported once, not
+        // on every tick.
+        if self.unreadable_reported.swap(unreadable, Ordering::SeqCst) != unreadable
+            && unreadable > 0
+        {
             log::warn!("Semantic retry left unreadable notes queued: {unreadable}");
         }
         Ok(RetryOutcome::QueueProcessed)
@@ -1650,7 +1650,7 @@ mod tests {
     }
 
     #[test]
-    fn reconciliation_drops_a_note_that_vanishes_after_the_walk() {
+    fn a_note_that_vanishes_mid_pass_keeps_its_entry_until_the_next_reconcile() {
         let root = scratch("reconcile-vanished");
         let areas = root.join("Areas");
         std::fs::create_dir_all(&areas).unwrap();
@@ -1670,11 +1670,15 @@ mod tests {
         index.note_changed(&moved).unwrap();
         index.retry_pending().unwrap();
 
-        // A restore moves the note away after the walk listed it (#144).
+        // A restore moves the note away after the walk listed it (#144). The restore may
+        // still roll back, so this pass keeps the entry; the next one, which walks again,
+        // drops it.
         let paths = super::note_paths(&root);
         std::fs::remove_file(&moved).unwrap();
         index.reconcile_paths(&paths).unwrap();
+        assert_eq!(index.status().unwrap().indexed_notes, 2);
 
+        index.reconcile_from_notes(&root).unwrap();
         assert_eq!(index.status().unwrap().indexed_notes, 1);
         assert_eq!(index.status().unwrap().queued_notes, 0);
         drop(index);
