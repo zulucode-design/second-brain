@@ -345,18 +345,23 @@ impl SemanticIndex {
     /// Refresh one durable pending row without waking the background worker.
     fn refresh_pending_note(&self, path: &Path) -> Result<(), String> {
         let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+        self.refresh_pending_text(path, &raw)
+    }
+
+    /// `refresh_pending_note` for text the caller has already read.
+    fn refresh_pending_text(&self, path: &Path, raw: &str) -> Result<(), String> {
         let filename = path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("");
-        let (meta, _) = crate::vault::frontmatter::parse_note(&raw, filename);
+        let (meta, _) = crate::vault::frontmatter::parse_note(raw, filename);
         let path_text = path.to_string_lossy().to_string();
         let note_key = if meta.id.trim().is_empty() {
             format!("path:{path_text}")
         } else {
             format!("id:{}", meta.id)
         };
-        let raw_hash = content_hash(&raw);
+        let raw_hash = content_hash(raw);
         let database = self.database.lock().map_err(|error| error.to_string())?;
         database
             .execute(
@@ -601,6 +606,13 @@ impl SemanticIndex {
     }
 
     pub fn reconcile_from_notes(&self, vault: &Path) -> Result<(), String> {
+        // Collected before any per-note work: a lazy walk keeps its directory handles open
+        // for the whole pass, and on Windows an open handle under a folder stops a restore
+        // from moving that folder (#144).
+        self.reconcile_paths(&note_paths(vault))
+    }
+
+    fn reconcile_paths(&self, paths: &[std::path::PathBuf]) -> Result<(), String> {
         let recorded: HashMap<String, (String, String)> = {
             let database = self.database.lock().map_err(|error| error.to_string())?;
             let mut statement = database
@@ -628,11 +640,8 @@ impl SemanticIndex {
         };
 
         let mut seen = std::collections::HashSet::new();
-        // Collected before any per-note work: a lazy walk keeps its directory handles open
-        // for the whole pass, and on Windows an open handle under a folder stops a restore
-        // from moving that folder (#144).
-        for path in note_paths(vault) {
-            let path = path.as_path();
+        let mut queued = false;
+        for path in paths {
             let path_text = path.to_string_lossy().to_string();
             let raw = match std::fs::read_to_string(path) {
                 Ok(raw) => raw,
@@ -643,11 +652,18 @@ impl SemanticIndex {
             let current = content_hash(&raw);
             seen.insert(path_text.clone());
             if recorded.get(&path_text) != Some(&(current, self.profile.clone())) {
-                self.note_changed(path)?;
+                // The text already read, not a second read the note could vanish before.
+                self.refresh_pending_text(path, &raw)?;
+                queued = true;
             }
         }
         for path in recorded.keys().filter(|path| !seen.contains(*path)) {
             self.note_removed(Path::new(path))?;
+        }
+        if queued {
+            if let Some(wake) = self.wake_worker.get() {
+                let _ = wake.send(());
+            }
         }
         Ok(())
     }
@@ -787,8 +803,8 @@ fn chunks_for(title: &str, body: &str) -> Vec<NoteChunk> {
     chunks
 }
 
-/// Every note the semantic index covers, returned whole so no directory handle outlives the
-/// walk.
+/// Every note the semantic index covers, collected eagerly so no directory handle outlives
+/// the walk.
 fn note_paths(vault: &Path) -> Vec<std::path::PathBuf> {
     WalkDir::new(vault)
         .into_iter()
@@ -1605,6 +1621,38 @@ mod tests {
         index.retry_pending().unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 3);
         assert_eq!(index.status().unwrap().indexed_notes, 2);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn reconciliation_drops_a_note_that_vanishes_after_the_walk() {
+        let root = scratch("reconcile-vanished");
+        let areas = root.join("Areas");
+        std::fs::create_dir_all(&areas).unwrap();
+        let kept = areas.join("Kept.md");
+        let moved = areas.join("Moved.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "taxes");
+        write_note(&moved, "moved-id", "Moved", "Areas", "taxes");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let index = SemanticIndex::open_at(
+            &root.join("semantic.sqlite3"),
+            Arc::new(CountingBackend {
+                calls: calls.clone(),
+            }),
+        )
+        .unwrap();
+        index.note_changed(&kept).unwrap();
+        index.note_changed(&moved).unwrap();
+        index.retry_pending().unwrap();
+
+        // A restore moves the note away after the walk listed it (#144).
+        let paths = super::note_paths(&root);
+        std::fs::remove_file(&moved).unwrap();
+        index.reconcile_paths(&paths).unwrap();
+
+        assert_eq!(index.status().unwrap().indexed_notes, 1);
+        assert_eq!(index.status().unwrap().queued_notes, 0);
         drop(index);
         cleanup(root);
     }
