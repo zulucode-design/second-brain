@@ -697,3 +697,7 @@ export async function resolveSyncConflict(conflictPath: string, choice: "origina
 export async function retryRepairs(): Promise<RepairStatus> {
   return invoke("retry_repairs");
 }
+
+export async function dismissRestoreNotice(key: string): Promise<RepairStatus> {
+  return invoke("dismiss_restore_notice", { key });
+}

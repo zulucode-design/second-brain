@@ -252,7 +252,7 @@ export interface FileEvent {
   path: string;
 }
 
-export type RepairStage = "search" | "reconciliation";
+export type RepairStage = "search" | "reconciliation" | "restore";
 
 export interface RepairIssue {
   key: string;
@@ -263,6 +263,8 @@ export interface RepairIssue {
 
 export interface RepairStatus {
   issues: RepairIssue[];
+  /** Unowned restore folders already dismissed; kept by the backend, not shown. */
+  dismissedRestoreFolders?: string[];
 }
 
 export interface SyncStatus {

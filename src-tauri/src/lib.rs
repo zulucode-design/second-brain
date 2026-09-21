@@ -427,7 +427,38 @@ pub fn run() {
                 {
                     log::warn!("Failed to restore the vault asset scope: {error}");
                 }
-                sync_sidecar::restore_enabled(app.handle().clone());
+                // Sync must never see a vault torn by an interrupted restore (#142). If
+                // recovery fails here the vault will also refuse to open, with the reason.
+                match backup::recover_interrupted_restore(std::path::Path::new(&vault_path)) {
+                    Ok(recovery) => {
+                        if !recovery.outcomes.is_empty() {
+                            let mut status = match vault::repair::load(&vault_path) {
+                                Ok(status) => status,
+                                Err(error) => {
+                                    let mut status = vault::repair::RepairStatus::default();
+                                    status.record(vault::repair::unreadable_ledger_issue(
+                                        &vault_path,
+                                        &error,
+                                    ));
+                                    status
+                                }
+                            };
+                            vault::repair::apply_restore_recovery(&mut status, &recovery);
+                            if let Err(error) = vault::repair::save(&vault_path, &status) {
+                                log::warn!("Could not record the restore recovery notice: {error}");
+                            }
+                            // Keep the notice visible for this launch even if its durable write
+                            // failed. `open_vault_path` merges it before publishing fresh status.
+                            if let Ok(mut current) = app.state::<AppState>().repair_status.lock() {
+                                *current = status;
+                            }
+                        }
+                        sync_sidecar::restore_enabled(app.handle().clone());
+                    }
+                    Err(error) => log::error!(
+                        "Sync not started: an interrupted restore could not be recovered: {error}"
+                    ),
+                }
             }
 
             #[cfg(desktop)]
@@ -534,6 +565,7 @@ pub fn run() {
             commands::reindex,
             commands::get_repair_status,
             commands::retry_repairs,
+            commands::dismiss_restore_notice,
             commands::get_trash,
             commands::restore_note,
             commands::restore_notebook,

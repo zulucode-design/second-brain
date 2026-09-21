@@ -38,6 +38,7 @@
     <p class="meta"><strong>Current disposition — 2026-09-14:</strong> the preceding issue #84 paragraph and the work-package D row below are historical gate records, retained intact. Packaged Windows/Fedora verification at <code>a6cf5ef</code> subsequently passed pairing, data and attachment transfer, move/delete, delayed arrival, paired conflict recovery, forced-sidecar and forced-app recovery, watcher refresh, and sync disable plus vault switching.</p>
     <p class="meta"><strong>Status refresh — PR #95:</strong> work package G / D-12 / D-13 / D-14 is complete and verified on <a href="https://github.com/zulucode-design/second-brain/pull/95">PR #95</a>; calendar due-date validation, the shared loading/empty/failed classifier with retry for Graph and Tasks, and the explicit semantic schema version with safe rebuild are implemented with regression tests. G was never a release gate, so this does not change the external-alpha gate below: <strong>D and H remain the outstanding packages.</strong> Package G no longer needs a deferral row in H’s matrix; H should record it as delivered rather than as a gap with an owner and milestone.</p>
     <p class="meta"><strong>Status refresh — 2026-09-16:</strong> H classifies #110 as P2 and #111–#112 as P3. All three are deferred, non-blocking, assigned to zulucode-design, and scheduled for the <strong>v1 feature-complete beta</strong> milestone. No P0/P1 residual defect remains; performance and final installed-package evidence still block H.</p>
+    <p class="meta"><strong>Status refresh — issue #142:</strong> later Gate 2 planning found that PR #93's rollback did not survive process death. The #142 branch journals restore phases durably, recovers before sync or vault readers start, refuses unreadable recovery state, persists user notices, and tests every commit interruption. <code>pnpm verify</code> passes. Package C's source work is complete again; issue #137 Gate 2 remains open for installed Windows/Fedora proof.</p>
 
     <div class="callout danger">
       <strong>Release gate:</strong> work packages A, B, and C are complete and verified. No external alpha until work packages D and H are complete, decision gates G1–G4 are recorded and their required outcomes implemented, no P0/P1 remains open, and H’s versioned verification-matrix record is green. That record must name commands, supported platforms, fixtures, manual protocols, expected outcomes, and evidence for packaged install/launch plus data-safety scenarios. Internal testing must use a disposable vault; WebDAV is removed rather than gated, and transactional restore is merged.
@@ -98,14 +99,16 @@
           <td>G1 selected removal. Package D remains independent work for the bundled sidecar.</td>
         </tr>
         <tr>
-          <td><strong>C</strong><br><span class="badge p1">P1 historical severity</span><br><span class="badge ready">Complete / verified — transactional restore</span></td>
-          <td><strong>Completed by PR #93:</strong> transactional restore, accurate backup scope, and the shared bulk-mutation coordinator used by restore and import.</td>
+          <td><strong>C</strong><br><span class="badge p1">P1 historical severity</span><br><span class="badge ready">Source verified; installed interruption proof pending</span></td>
+          <td><strong>PR #93 + issue #142:</strong> transactional restore, durable killed-process recovery, accurate backup scope, and the shared bulk-mutation coordinator used by restore and import.</td>
           <td>
             <ul>
               <li>Preflight all archive entries, containment, size, and extractability.</li>
               <li>Extract to staging; preserve the live vault until success; atomic swap or tested rollback.</li>
               <li>Introduce and own the minimal shared bulk-mutation coordinator: exclusive mutation lease, RAII watcher suppression/cleanup, preflight/commit phases, projection reconciliation hook, and terminal success/changed-incomplete/failure event contract.</li>
               <li>Restore is the first coordinator consumer and cannot bypass the lease.</li>
+              <li>Write a durable restore journal before staging or renaming; recover it before sync, watcher, indexing, or vault structure creation can observe a torn vault.</li>
+              <li>Refuse startup on unreadable recovery state; surface recovered outcome once and retain unowned restore folders until the user dismisses their paths.</li>
               <li>Reconcile Tantivy, semantic index, and UI after commit.</li>
               <li>Backup includes the agreed vault-scoped metadata or the UI/spec explicitly names exclusions.</li>
               <li>Traversal/read errors fail backup rather than silently omit content.</li>

@@ -40,12 +40,7 @@ fn record_repair_issue(
             .lock()
             .map(|value| value.clone())
             .unwrap_or_default();
-        status.record(repair::RepairIssue {
-            key: "reconciliation:ledger".to_string(),
-            stage: repair::RepairStage::Reconciliation,
-            message: format!("The repair ledger was unreadable and has been replaced: {error}"),
-            paths: vec![repair::ledger_location(vault_path)],
-        });
+        status.record(repair::unreadable_ledger_issue(vault_path, &error));
         status
     });
     status.record(issue);
@@ -346,6 +341,12 @@ fn open_vault_path(
         .note_mutation
         .lock()
         .map_err(|error| error.to_string())?;
+    // First, before `ensure_vault_structure` recreates folders a torn restore moved aside and
+    // before the watcher, indexes, or sync see the vault (#142).
+    let restore_recovery = crate::backup::recover_interrupted_restore(Path::new(&path))
+        .map_err(|error| {
+            format!("An interrupted restore could not be recovered, so the vault was not opened: {error}")
+        })?;
     operations::ensure_vault_structure(&path)?;
     // Before anything reads state: pull machine-local state out of the vault if this is
     // an older vault, and drop staging left behind by an interrupted note rewrite.
@@ -366,13 +367,36 @@ fn open_vault_path(
         Err(error) => (repair::RepairStatus::default(), Some(error)),
     };
     repair_status.clear_stage(repair::RepairStage::Reconciliation);
+    repair::apply_restore_recovery(&mut repair_status, &restore_recovery);
+    // Setup may already have consumed a restore journal before sync starts. Preserve its
+    // one-time recovery and ledger-replacement notices in the status published after open.
+    let startup_notices = if state
+        .config
+        .lock()
+        .map_err(|error| error.to_string())?
+        .active_vault
+        .as_deref()
+        == Some(path.as_str())
+    {
+        state
+            .repair_status
+            .lock()
+            .map_err(|error| error.to_string())?
+            .issues
+            .iter()
+            .filter(|issue| {
+                issue.stage == repair::RepairStage::Restore || issue.key == "reconciliation:ledger"
+            })
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
+    for issue in startup_notices {
+        repair_status.record(issue);
+    }
     if let Some(error) = ledger_error {
-        repair_status.record(repair::RepairIssue {
-            key: "reconciliation:ledger".to_string(),
-            stage: repair::RepairStage::Reconciliation,
-            message: format!("The repair ledger was unreadable and has been replaced: {error}"),
-            paths: vec![repair::ledger_location(&path)],
-        });
+        repair_status.record(repair::unreadable_ledger_issue(&path, &error));
     }
 
     let directory_recovery_failures =
@@ -2349,6 +2373,29 @@ pub fn get_repair_status(state: State<'_, AppState>) -> Result<repair::RepairSta
         .lock()
         .map(|status| status.clone())
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn dismiss_restore_notice(
+    state: State<'_, AppState>,
+    key: String,
+) -> Result<repair::RepairStatus, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let vault_path = state
+        .config
+        .lock()
+        .map_err(|error| error.to_string())?
+        .active_vault
+        .clone()
+        .ok_or("No active vault")?;
+    let mut status = repair::load(&vault_path)?;
+    repair::dismiss_restore_notice(&mut status, &key);
+    repair::save(&vault_path, &status)?;
+    publish_repair_status(&state, status.clone())?;
+    Ok(status)
 }
 
 #[tauri::command]

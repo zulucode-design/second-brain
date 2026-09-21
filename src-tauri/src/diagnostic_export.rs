@@ -55,6 +55,15 @@ impl Redactor {
         }
         for vault in &config.vaults {
             redactor.add(&vault.path);
+            // Restore stage, rollback, and journal paths are siblings of the vault (#142).
+            // A filesystem root would redact every path separator, so it is skipped.
+            if let Some(parent) = std::path::Path::new(&vault.path)
+                .parent()
+                .filter(|parent| parent.parent().is_some())
+                .and_then(|parent| parent.to_str())
+            {
+                redactor.add(parent);
+            }
             redactor.add(&vault.name);
             if let Some(value) = vault.vault_id.as_deref() {
                 redactor.add(value);
@@ -283,7 +292,8 @@ mod tests {
     fn default_export_excludes_vault_content_secrets_and_note_identity() {
         let root = std::env::temp_dir().join(format!("sb-diagnostics-{}", uuid::Uuid::new_v4()));
         let logs = root.join("logs");
-        let vault = root.join("Private Vault");
+        // Restore folders sit next to the vault (#142), so its parent reaches the log too.
+        let vault = root.join("Home of Alice").join("Private Vault");
         fs::create_dir_all(&logs).unwrap();
         fs::create_dir_all(vault.join("Projects")).unwrap();
         fs::write(
@@ -296,8 +306,14 @@ mod tests {
         fs::write(
             logs.join("second-brain.log"),
             format!(
-                "opened {}/Projects/Acquisition plan.md note 5f934749-17da-4dd3-a219-88f9b9ef2277 with {secret}",
-                vault.display()
+                "opened {}/Projects/Acquisition plan.md note 5f934749-17da-4dd3-a219-88f9b9ef2277 with {secret}\n\
+                 Cannot remove {}: permission denied",
+                vault.display(),
+                vault
+                    .parent()
+                    .unwrap()
+                    .join(".second-brain-restore-stage-kept")
+                    .display()
             ),
         )
         .unwrap();
@@ -346,6 +362,7 @@ mod tests {
             "PLANTED NOTE BODY MUST NOT LEAVE",
             "Acquisition plan.md",
             "Private Vault",
+            "Home of Alice",
             "5f934749-17da-4dd3-a219-88f9b9ef2277",
             "AAAAAAA-BBBBBBB-CCCCCCC-DDDDDDD-EEEEEEE-FFFFFFF-GGGGGGG-HHHHHHH",
             "100.64.1.2",
