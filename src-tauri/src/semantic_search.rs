@@ -336,10 +336,14 @@ fn path_with_suffix(path: &Path, suffix: &str) -> std::path::PathBuf {
 impl SemanticIndex {
     pub fn note_changed(&self, path: &Path) -> Result<(), String> {
         self.refresh_pending_note(path)?;
+        self.wake();
+        Ok(())
+    }
+
+    fn wake(&self) {
         if let Some(wake) = self.wake_worker.get() {
             let _ = wake.send(());
         }
-        Ok(())
     }
 
     /// Refresh one durable pending row without waking the background worker.
@@ -640,30 +644,34 @@ impl SemanticIndex {
         };
 
         let mut seen = std::collections::HashSet::new();
-        let mut queued = false;
+        let mut unreadable = 0;
         for path in paths {
             let path_text = path.to_string_lossy().to_string();
             let raw = match std::fs::read_to_string(path) {
                 Ok(raw) => raw,
                 // Gone since the walk (a restore or move); left unseen, so it is removed below.
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error.to_string()),
+                // Unreadable for now (a Windows move in progress, a lock): keep what the index
+                // has, and let the rest of the pass run rather than stopping at this note.
+                Err(_) => {
+                    unreadable += 1;
+                    seen.insert(path_text);
+                    continue;
+                }
             };
             let current = content_hash(&raw);
             seen.insert(path_text.clone());
             if recorded.get(&path_text) != Some(&(current, self.profile.clone())) {
-                // The text already read, not a second read the note could vanish before.
+                // Reuse the text read above; a second read fails if the note vanished between.
                 self.refresh_pending_text(path, &raw)?;
-                queued = true;
+                self.wake();
             }
         }
         for path in recorded.keys().filter(|path| !seen.contains(*path)) {
             self.note_removed(Path::new(path))?;
         }
-        if queued {
-            if let Some(wake) = self.wake_worker.get() {
-                let _ = wake.send(());
-            }
+        if unreadable > 0 {
+            log::warn!("Semantic reconcile left {unreadable} unreadable notes as they were");
         }
         Ok(())
     }
