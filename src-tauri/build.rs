@@ -39,26 +39,33 @@ fn git(args: &[&str]) -> Option<String> {
 }
 
 fn main() {
-    let commit = git(&["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".to_string());
-    println!("cargo::rustc-env=SECOND_BRAIN_BUILD_COMMIT={commit}");
+    let commit = git(&["rev-parse", "HEAD"]);
+    println!(
+        "cargo::rustc-env=SECOND_BRAIN_BUILD_COMMIT={}",
+        commit.as_deref().unwrap_or("unknown")
+    );
     // Cargo reruns a build script only for the inputs it declares, so without these an
     // incremental build keeps whichever commit the script last saw (#138). HEAD changes on
     // checkout; its reflog changes on every commit, reset, and checkout made in this checkout or
-    // worktree. `--git-path` resolves both for linked worktrees.
-    if commit != "unknown" {
-        for git_path in ["HEAD", "logs/HEAD"] {
-            match git(&[
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-path",
-                git_path,
-            ]) {
-                Some(path) => println!("cargo::rerun-if-changed={path}"),
-                None => println!(
-                    "cargo::warning=could not resolve git {git_path}; SECOND_BRAIN_BUILD_COMMIT may go stale on incremental builds (needs git 2.31+)"
-                ),
-            }
+    // worktree. `--git-path` resolves both for linked worktrees, and before the first commit.
+    let mut unresolved = false;
+    for git_path in ["HEAD", "logs/HEAD"] {
+        match git(&[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            git_path,
+        ]) {
+            Some(path) => println!("cargo::rerun-if-changed={path}"),
+            None => unresolved = true,
         }
+    }
+    // Outside a git checkout both lookups fail and there is no commit to go stale.
+    if unresolved && commit.is_some() {
+        println!(concat!(
+            "cargo::warning=could not resolve git HEAD paths; SECOND_BRAIN_BUILD_COMMIT ",
+            "may go stale on incremental builds (needs git 2.31+)"
+        ));
     }
 
     tauri_build::build();
