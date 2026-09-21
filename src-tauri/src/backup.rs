@@ -582,9 +582,14 @@ fn recover_with(
                 journal.stage.display()
             )
         })?;
-        // The vault is whole now. A cleanup failure (a scanner holding a handle) only delays
-        // tidying up: the journal stays, settled, and the next open finishes it.
-        if let Err(error) = settle_and_clean_up(path, &journal, outcome) {
+        // Persist the whole state before allowing anything to open or sync the vault. Cleanup
+        // alone may wait when a scanner holds a handle; the settled journal makes that safe.
+        settle(path, &journal, outcome).map_err(|error| {
+            format!(
+                "The recovered vault could not be recorded durably: {error}. Nothing was deleted; reopen the vault to retry."
+            )
+        })?;
+        if let Err(error) = clean_up(path, &journal, outcome) {
             log::warn!("Recovered restore left files behind until the next open: {error}");
         }
         if !interrupted {
@@ -737,6 +742,15 @@ fn settle_and_clean_up(
     journal: &RestoreJournal,
     outcome: RecoveredRestore,
 ) -> Result<(), String> {
+    settle(journal_path, journal, outcome)?;
+    clean_up(journal_path, journal, outcome)
+}
+
+fn settle(
+    journal_path: &Path,
+    journal: &RestoreJournal,
+    outcome: RecoveredRestore,
+) -> Result<(), String> {
     let mut settled = journal.clone();
     settled.phase = match outcome {
         RecoveredRestore::Undone => RestorePhase::Undone,
@@ -748,7 +762,7 @@ fn settle_and_clean_up(
         persist_renames(journal)?;
         write_journal(journal_path, &settled)?;
     }
-    clean_up(journal_path, journal, outcome)
+    Ok(())
 }
 
 /// Clean up a restore that never reached the commit; the vault was not touched.
@@ -838,6 +852,7 @@ fn persist_renames(journal: &RestoreJournal) -> Result<(), String> {
         &journal.rollback,
         &journal.rollback.join(METADATA_DIR),
         &journal.stage,
+        &journal.stage.join(METADATA_DIR),
     ] {
         if dir.is_dir() {
             fs::File::open(dir)
@@ -1721,6 +1736,30 @@ mod tests {
             "live b"
         );
         assert!(leftover(&root, "journal-").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_settlement_failure_refuses_to_open_and_keeps_recovery_data() {
+        let (root, vault, backups, backup) = restore_fixture("settlement-failure");
+        kill_restore_at(&vault, &backups, &backup, RestoreStep::Publish, 2);
+        let journal = leftover(&root, "journal-");
+        let mut damaged = false;
+
+        let error = recover_with(&vault, &mut || {
+            if !damaged {
+                fs::remove_file(&journal).unwrap();
+                fs::create_dir(&journal).unwrap();
+                damaged = true;
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert!(error.contains("could not be recorded durably"), "{error}");
+        assert!(leftover(&root, "stage-").exists());
+        assert!(leftover(&root, "rollback-").exists());
+        assert!(journal.is_dir());
         fs::remove_dir_all(root).unwrap();
     }
 

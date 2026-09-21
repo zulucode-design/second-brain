@@ -369,8 +369,8 @@ fn open_vault_path(
     repair_status.clear_stage(repair::RepairStage::Reconciliation);
     repair::apply_restore_recovery(&mut repair_status, &restore_recovery);
     // Setup may already have consumed a restore journal before sync starts. Preserve its
-    // one-time notice if writing the repair ledger failed there.
-    let startup_restore_issues = if state
+    // one-time recovery and ledger-replacement notices in the status published after open.
+    let startup_notices = if state
         .config
         .lock()
         .map_err(|error| error.to_string())?
@@ -384,13 +384,15 @@ fn open_vault_path(
             .map_err(|error| error.to_string())?
             .issues
             .iter()
-            .filter(|issue| issue.stage == repair::RepairStage::Restore)
+            .filter(|issue| {
+                issue.stage == repair::RepairStage::Restore || issue.key == "reconciliation:ledger"
+            })
             .cloned()
             .collect()
     } else {
         Vec::new()
     };
-    for issue in startup_restore_issues {
+    for issue in startup_notices {
         repair_status.record(issue);
     }
     if let Some(error) = ledger_error {
