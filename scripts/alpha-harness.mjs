@@ -102,7 +102,7 @@ function syncPort(vaultId) {
   return 18_000 + (value % 10_000);
 }
 
-export function harnessConfig(config, vaultPath, vaultId, backupPath, gate = 'sync') {
+export function harnessConfig(config, vaultPath, vaultId, backupPath, { restore = false } = {}) {
   const next = structuredClone(config);
   next.vaults = [{ path: vaultPath, name: 'Alpha Harness', vault_id: vaultId }];
   next.active_vault = vaultPath;
@@ -110,7 +110,7 @@ export function harnessConfig(config, vaultPath, vaultId, backupPath, gate = 'sy
   next.backup_location = backupPath;
   next.backup_max_count = Math.max(10, Number(next.backup_max_count) || 0);
   // The restore gate restores the one backup it made; a scheduled backup would add a second.
-  if (gate === 'restore') next.backup_enabled = false;
+  if (restore) next.backup_enabled = false;
   return next;
 }
 
@@ -177,7 +177,7 @@ function localTemplateConfig() {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
-function prepareLinux(root, runId, vaultId, gate = 'sync') {
+function prepareLinux(root, runId, vaultId, { restore = false } = {}) {
   requireFreeSpace(root);
   const runRoot = join(root, 'runs', runId, 'fedora');
   if (existsSync(runRoot)) fail(`run already exists: ${runRoot}`);
@@ -192,11 +192,11 @@ function prepareLinux(root, runId, vaultId, gate = 'sync') {
   mkdirSync(backupPath, { recursive: true });
   makeVault(vaultPath, vaultId);
   // Without a control file sync stays off, so the restore gate runs with no sidecar.
-  const control = gate === 'sync' ? makeControl(vaultId) : null;
+  const control = restore ? null : makeControl(vaultId);
   if (control) atomicWrite(join(machinePath, 'sync-control.json'), `${JSON.stringify(control, null, 2)}\n`);
   atomicWrite(
     configPath,
-    `${JSON.stringify(harnessConfig(localTemplateConfig(), vaultPath, vaultId, backupPath, gate), null, 2)}\n`,
+    `${JSON.stringify(harnessConfig(localTemplateConfig(), vaultPath, vaultId, backupPath, { restore }), null, 2)}\n`,
   );
   return { runRoot, vaultPath, backupPath, configHome, dataHome, machinePath, control };
 }
@@ -594,6 +594,14 @@ function processAlive(pid) {
   }
 }
 
+function killForCleanup(pid, signal) {
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    if (error.code !== 'ESRCH') throw error;
+  }
+}
+
 // Runs next to the app (locally on Fedora, over SSH on Windows) because a controller round trip
 // per poll is slower than the whole unpack. The caller has proven `pid` is this run's app.
 async function killWatch({ vault, point, expectedFiles, pid, timeoutMs }) {
@@ -605,8 +613,11 @@ async function killWatch({ vault, point, expectedFiles, pid, timeoutMs }) {
     if (progress.phase !== null) journalSeen = true;
     else if (journalSeen) return { point, missed: true, progress };
     if (killDue(point, progress, expectedFiles)) {
-      process.kill(pid, 'SIGKILL');
-      const killedAt = new Date().toISOString();
+      const killedAt = process.platform === 'win32'
+        ? windowsPowerShell(WINDOWS_TOOLS, [
+            '-Action', 'StopPid', '-PidToStop', String(pid), '-ExecutablePath', WINDOWS_APP,
+          ]).at
+        : (process.kill(pid, 'SIGKILL'), new Date().toISOString());
       const exitDeadline = Date.now() + 15_000;
       while (processAlive(pid) && Date.now() < exitDeadline) await sleep(50);
       if (processAlive(pid)) fail(`app ${pid} survived the kill`);
@@ -644,6 +655,11 @@ function resetVault(vault, snapshot, root) {
   }
   rmSync(vault, { recursive: true, force: true });
   cpSync(snapshot, vault, { recursive: true });
+}
+
+export function snapshotVault(vault, snapshot) {
+  if (existsSync(snapshot)) fail(`snapshot already exists: ${snapshot}`);
+  cpSync(vault, snapshot, { recursive: true });
 }
 
 async function waitForDriver(port, timeoutMs = 30_000) {
@@ -722,13 +738,16 @@ async function openRestoreConfirmation(browser) {
 
 // Repair status loads after the note list renders, so the banner can arrive a moment later.
 // Dismissing it afterwards means the next trial's notice cannot be this one still showing.
-async function readAndDismissNotice(browser) {
+async function readAndDismissNotice(browser, screenshotPath) {
   const banner = browser.$('.repair-banner');
+  let displayed = true;
   try {
     await banner.waitForDisplayed({ timeout: 20_000 });
   } catch {
-    return null;
+    displayed = false;
   }
+  await browser.saveScreenshot(screenshotPath);
+  if (!displayed) return null;
   const notice = { title: await banner.$('strong').getText(), message: await banner.$('span').getText() };
   const started = Date.now();
   await press(browser, banner.$('button=Dismiss'));
@@ -753,6 +772,7 @@ function parseOptions(args) {
     else if (name === '--timeout-minutes') options.timeoutMs = Number(value) * 60_000;
     else fail(`unknown option: ${name}`);
   }
+  if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) fail('timeout must be a positive number');
   return options;
 }
 
@@ -829,9 +849,12 @@ function fedoraPackageEvidence(candidateCommit) {
 }
 
 async function runSync(args) {
+  return runOnFedora(args, runSyncLocked);
+}
+
+async function runOnFedora(args, runLocked) {
   const options = parseOptions(args);
-  if (process.platform !== 'linux') fail('sync controller must run on Fedora');
-  if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) fail('timeout must be a positive number');
+  if (process.platform !== 'linux') fail('harness controller must run on Fedora');
   mkdirSync(options.linuxRoot, { recursive: true });
   const lockRoot = join(homedir(), '.cache', 'second-brain');
   mkdirSync(lockRoot, { recursive: true });
@@ -839,7 +862,7 @@ async function runSync(args) {
   let awake;
   try {
     awake = await keepAwake(options.sshHost, options.timeoutMs);
-    const result = await runSyncLocked({ ...options, holdMinutes: awake.holdMinutes });
+    const result = await runLocked({ ...options, holdMinutes: awake.holdMinutes });
     if (awake.lost()) fail(`${awake.lost()}; the result cannot be trusted`);
     return result;
   } finally {
@@ -848,7 +871,7 @@ async function runSync(args) {
   }
 }
 
-async function runSyncLocked(options) {
+function prepareHarnessRun(options) {
   if (!existsSync(LINUX_APP)) fail(`installed app missing: ${LINUX_APP}`);
   assertNoLinuxApp();
   requireFreeSpace(options.linuxRoot);
@@ -862,8 +885,12 @@ async function runSyncLocked(options) {
   const recovered = remoteWorker(options.sshHost, {
     action: 'recover', root: WINDOWS_ROOT, runId: 'recovery', appPath: WINDOWS_APP,
   });
-
   const runId = new Date().toISOString().replaceAll(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  return { candidateCommit, harnessCommit, fedoraPackage, recovered, runId };
+}
+
+async function runSyncLocked(options) {
+  const { candidateCommit, harnessCommit, fedoraPackage, recovered, runId } = prepareHarnessRun(options);
   const vaultId = randomUUID();
   const evidencePath = join(REPO, 'docs', 'reports', 'evidence', `alpha-harness-sync-${runId}.jsonl`);
   mkdirSync(dirname(evidencePath), { recursive: true });
@@ -1031,7 +1058,7 @@ function descendsFrom(rows, pid, ancestor) {
 }
 
 function linuxRestoreMachine(root, runId, vaultId) {
-  const machine = prepareLinux(root, runId, vaultId, 'restore');
+  const machine = prepareLinux(root, runId, vaultId, { restore: true });
   const snapshotPath = join(machine.runRoot, 'vault-pre');
   let driver;
   const apps = () => {
@@ -1048,7 +1075,7 @@ function linuxRestoreMachine(root, runId, vaultId) {
     progress: () => restoreProgress(machine.vaultPath),
     mutate: () => mutateFixture(machine.vaultPath),
     backups: () => readdirSync(machine.backupPath),
-    snapshot: () => cpSync(machine.vaultPath, snapshotPath, { recursive: true, errorOnExist: true }),
+    snapshot: () => snapshotVault(machine.vaultPath, snapshotPath),
     reset: () => resetVault(machine.vaultPath, snapshotPath, machine.runRoot),
     async startDriver() {
       const log = openSync(join(machine.runRoot, 'tauri-driver.log'), 'a');
@@ -1082,9 +1109,9 @@ function linuxRestoreMachine(root, runId, vaultId) {
     async cleanup() {
       if (!driver) return this.appsGone();
       // Exact PIDs only: apps under this run's driver, then the driver's own children.
-      for (const row of apps()) process.kill(row.pid, 'SIGKILL');
+      for (const row of apps()) killForCleanup(row.pid, 'SIGKILL');
       for (const row of processRows().filter((candidate) => candidate.parentPid === driver.pid)) {
-        process.kill(row.pid, 'SIGTERM');
+        killForCleanup(row.pid, 'SIGTERM');
       }
       if (driver.exitCode === null) {
         driver.kill('SIGTERM');
@@ -1097,26 +1124,26 @@ function linuxRestoreMachine(root, runId, vaultId) {
 }
 
 function windowsRestoreMachine(sshHost, runId, vaultId, candidateCommit) {
-  const call = (action, extra = {}, timeout = 45_000) => remoteWorker(
+  const runWindowsAction = (action, extra = {}, timeout = 45_000) => remoteWorker(
     sshHost, { action, root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP, ...extra }, timeout,
   );
-  const slow = 5 * 60_000;
+  const longTimeoutMs = 5 * 60_000;
   let driverPid;
   let tunnel;
   return {
     name: 'windows',
     application: WINDOWS_APP,
     port: WINDOWS_TUNNEL_PORT,
-    prepare: () => call('prepare', { vaultId, candidateCommit, gate: 'restore' }),
-    generate: () => call('generate', {}, slow),
-    hash: () => call('hash', {}, slow),
-    progress: () => call('progress'),
-    mutate: () => call('mutate', {}, slow),
-    backups: () => call('all-backups').backups,
-    snapshot: () => call('snapshot', {}, slow),
-    reset: () => call('reset', {}, slow),
+    prepare: () => runWindowsAction('prepare', { vaultId, candidateCommit, restore: true }),
+    generate: () => runWindowsAction('generate', {}, longTimeoutMs),
+    hash: () => runWindowsAction('hash', {}, longTimeoutMs),
+    progress: () => runWindowsAction('progress'),
+    mutate: () => runWindowsAction('mutate', {}, longTimeoutMs),
+    backups: () => runWindowsAction('all-backups').backups,
+    snapshot: () => runWindowsAction('snapshot', {}, longTimeoutMs),
+    reset: () => runWindowsAction('reset', {}, longTimeoutMs),
     async startDriver() {
-      const started = call('start-driver');
+      const started = runWindowsAction('start-driver');
       driverPid = started.pid;
       tunnel = spawn('ssh', [
         '-N', '-o', 'ExitOnForwardFailure=yes',
@@ -1126,7 +1153,7 @@ function windowsRestoreMachine(sshHost, runId, vaultId, candidateCommit) {
       if (tunnel.exitCode !== null) fail(`WebDriver tunnel exited ${tunnel.exitCode}; is port ${WINDOWS_TUNNEL_PORT} taken?`);
       return started;
     },
-    appPid: () => call('app-pid', { driverPid }).pid,
+    appPid: () => runWindowsAction('app-pid', { driverPid }).pid,
     killWatch(request) {
       return startKillWatch('ssh', [
         sshHost, 'node', win32.join(WINDOWS_TOOLS, 'alpha-harness.mjs'), '__kill-watch',
@@ -1139,7 +1166,7 @@ function windowsRestoreMachine(sshHost, runId, vaultId, candidateCommit) {
       tunnel?.kill();
       if (driverPid) {
         try {
-          observation(evidencePath, 'driver-stopped', 'windows', call('stop-driver', { driverPid }));
+          observation(evidencePath, 'driver-stopped', 'windows', runWindowsAction('stop-driver', { driverPid }));
         } catch (error) {
           observation(evidencePath, 'cleanup-error', 'windows-driver', { error: error.message });
           firstError = error;
@@ -1196,65 +1223,61 @@ const RECOVERY_NOTICE = {
 };
 
 async function restoreGate(machine, evidencePath, screenshotDir) {
-  const note = (event, value) => observation(evidencePath, event, machine.name, value);
-  note('fixture-generated', await machine.generate());
-  note('driver-started', await machine.startDriver());
+  const record = (event, value) => observation(evidencePath, event, machine.name, value);
+  record('fixture-generated', await machine.generate());
+  record('driver-started', await machine.startDriver());
 
   await withApp(machine, backupThroughUi);
   const backups = machine.backups();
   if (backups.length !== 1) fail(`expected one backup, found ${JSON.stringify(backups)}`);
-  const backedUp = machine.hash();
-  note('backup-created', { backups, vault: backedUp });
+  const backedUpState = machine.hash();
+  record('backup-created', { backups, vault: backedUpState });
 
-  note('vault-mutated', machine.mutate());
-  const pre = await settle(machine);
+  record('vault-mutated', machine.mutate());
+  const preRestoreState = await settle(machine);
   machine.snapshot();
-  note('pre-state', pre);
+  record('pre-state', preRestoreState);
 
   await withApp(machine, async (browser) => {
     await press(browser, await openRestoreConfirmation(browser));
     await waitForRestore(browser);
   });
-  const post = await settle(machine);
-  const afterControl = machine.progress();
-  note('post-state', { vault: post, leftovers: afterControl.leftovers });
-  if (post.sha256 === pre.sha256) fail('the restore did not change the vault');
-  if (afterControl.leftovers.length) fail(`completed restore left files behind: ${afterControl.leftovers}`);
+  const restoredState = await settle(machine);
+  const controlProgress = machine.progress();
+  record('post-state', { vault: restoredState, leftovers: controlProgress.leftovers });
+  if (restoredState.sha256 !== backedUpState.sha256) fail('the restore did not reproduce the backed-up vault');
+  if (controlProgress.leftovers.length) fail(`completed restore left files behind: ${controlProgress.leftovers}`);
 
   for (const point of Object.keys(KILL_POINTS)) {
     machine.reset();
-    if (machine.hash().sha256 !== pre.sha256) fail('vault reset did not reproduce the pre-state');
-    const browser = await openApp(machine.port, machine.application);
+    if (machine.hash().sha256 !== preRestoreState.sha256) fail('vault reset did not reproduce the pre-state');
     let killed;
-    try {
+    await withApp(machine, async (browser) => {
       const confirm = await openRestoreConfirmation(browser);
       const pid = machine.appPid();
-      const watch = machine.killWatch({ point, expectedFiles: backedUp.files, pid, timeoutMs: 5 * 60_000 });
+      const watch = machine.killWatch({ point, expectedFiles: backedUpState.files, pid, timeoutMs: 5 * 60_000 });
       await watch.ready;
       await press(browser, confirm);
       killed = await watch.result;
-    } finally {
-      await closeApp(browser);
-      await machine.appsGone();
-    }
-    note('app-killed', killed);
+    });
+    record('app-killed', killed);
     // A journal that outlives the app is the proof the kill landed inside the restore.
     if (killed.missed || killed.afterKill.phase === null) fail(`kill at ${point} landed after the restore finished`);
-    note('interrupted-state', { point, vault: machine.hash(), progress: machine.progress() });
+    record('interrupted-state', { point, vault: machine.hash(), progress: machine.progress() });
 
     const banner = await withApp(machine, async (relaunched) => {
-      await relaunched.$('.repair-banner').waitForDisplayed({ timeout: 20_000 }).catch(() => {});
-      await relaunched.saveScreenshot(join(screenshotDir, `${machine.name}-${point}.png`));
-      return readAndDismissNotice(relaunched);
+      return readAndDismissNotice(relaunched, join(screenshotDir, `${machine.name}-${point}.png`));
     });
-    const after = machine.progress();
+    const recoveryProgress = machine.progress();
     // Recorded before settling, so the evidence shows what recovery alone produced.
-    const immediate = machine.hash();
-    const recovered = await settle(machine, immediate);
-    const outcome = recoveryOutcome(recovered.sha256, pre.sha256, post.sha256);
-    note('recovered', { point, outcome, immediate, vault: recovered, leftovers: after.leftovers, banner });
+    const immediateState = machine.hash();
+    const recoveredState = await settle(machine, immediateState);
+    const outcome = recoveryOutcome(recoveredState.sha256, preRestoreState.sha256, restoredState.sha256);
+    record('recovered', {
+      point, outcome, immediate: immediateState, vault: recoveredState, leftovers: recoveryProgress.leftovers, banner,
+    });
     if (!outcome) fail(`vault after recovery from ${point} is neither the pre-restore nor the restored state`);
-    if (after.leftovers.length) fail(`recovery from ${point} left files behind: ${after.leftovers}`);
+    if (recoveryProgress.leftovers.length) fail(`recovery from ${point} left files behind: ${recoveryProgress.leftovers}`);
     if (banner?.title !== 'Restore interrupted' || !banner.message.includes(RECOVERY_NOTICE[outcome])) {
       fail(`recovery notice after ${point} is missing or wrong: ${JSON.stringify(banner)}`);
     }
@@ -1262,38 +1285,11 @@ async function restoreGate(machine, evidencePath, screenshotDir) {
 }
 
 async function runRestore(args) {
-  const options = parseOptions(args);
-  if (process.platform !== 'linux') fail('restore controller must run on Fedora');
-  mkdirSync(options.linuxRoot, { recursive: true });
-  const lockRoot = join(homedir(), '.cache', 'second-brain');
-  mkdirSync(lockRoot, { recursive: true });
-  const releaseLock = acquireControllerLock(lockRoot);
-  let awake;
-  try {
-    awake = await keepAwake(options.sshHost, options.timeoutMs);
-    await runRestoreLocked({ ...options, holdMinutes: awake.holdMinutes });
-    if (awake.lost()) fail(`${awake.lost()}; the result cannot be trusted`);
-  } finally {
-    awake?.release();
-    releaseLock();
-  }
+  return runOnFedora(args, runRestoreLocked);
 }
 
 async function runRestoreLocked(options) {
-  if (!existsSync(LINUX_APP)) fail(`installed app missing: ${LINUX_APP}`);
-  assertNoLinuxApp();
-  requireFreeSpace(options.linuxRoot);
-  const candidateCommit = runCommandSync('git', ['rev-parse', '--verify', `${options.candidate}^{commit}`], { cwd: REPO }).stdout;
-  const harnessCommit = runCommandSync('git', ['rev-parse', 'HEAD'], { cwd: REPO }).stdout;
-  const drift = runCommandSync('git', ['diff', '--name-only', candidateCommit, harnessCommit, '--', ...APP_SOURCES], { cwd: REPO }).stdout;
-  if (drift) fail(`app sources differ from candidate ${candidateCommit}:\n${drift}`);
-  const fedoraPackage = fedoraPackageEvidence(candidateCommit);
-  deployWindowsTools(options.sshHost);
-  const recovered = remoteWorker(options.sshHost, {
-    action: 'recover', root: WINDOWS_ROOT, runId: 'recovery', appPath: WINDOWS_APP,
-  });
-
-  const runId = new Date().toISOString().replaceAll(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const { candidateCommit, harnessCommit, fedoraPackage, recovered, runId } = prepareHarnessRun(options);
   const evidencePath = join(REPO, 'docs', 'reports', 'evidence', `alpha-harness-restore-${runId}.jsonl`);
   const screenshotDir = join(options.linuxRoot, 'evidence', `restore-${runId}`);
   mkdirSync(dirname(evidencePath), { recursive: true });
@@ -1496,8 +1492,7 @@ async function windowsWorker(request) {
     const junction = runCommandSync('cmd.exe', ['/d', '/s', '/c', 'mklink', '/J', machineLink, paths.machinePath]);
     if (!junction.stdout) fail('could not create machine-state junction');
 
-    const gate = request.gate ?? 'sync';
-    if (gate === 'sync') {
+    if (!request.restore) {
       const control = makeControl(request.vaultId);
       atomicWrite(win32.join(paths.machinePath, 'sync-control.json'), `${JSON.stringify(control, null, 2)}\n`);
     }
@@ -1509,7 +1504,7 @@ async function windowsWorker(request) {
     writeFileSync(lockPath, `${JSON.stringify({ runId: request.runId, manifestPath: paths.manifestPath })}\n`, { flag: 'wx' });
     atomicWrite(
       configPath,
-      `${JSON.stringify(harnessConfig(original, paths.vaultPath, request.vaultId, paths.backupPath, gate), null, 2)}\n`,
+      `${JSON.stringify(harnessConfig(original, paths.vaultPath, request.vaultId, paths.backupPath, { restore: request.restore }), null, 2)}\n`,
     );
     return {
       runRoot: paths.runRoot,
@@ -1610,8 +1605,7 @@ async function windowsWorker(request) {
   if (request.action === 'mutate') return mutateFixture(paths.vaultPath);
   if (request.action === 'all-backups') return { backups: readdirSync(paths.backupPath) };
   if (request.action === 'snapshot') {
-    if (existsSync(paths.snapshotPath)) fail(`snapshot already exists: ${paths.snapshotPath}`);
-    cpSync(paths.vaultPath, paths.snapshotPath, { recursive: true });
+    snapshotVault(paths.vaultPath, paths.snapshotPath);
     return { snapshot: paths.snapshotPath };
   }
   if (request.action === 'reset') {

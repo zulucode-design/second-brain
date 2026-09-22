@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 const {
   acquireControllerLock, harnessConfig, killDue, mutateFixture, pairedSyncthingConfig, recoveryOutcome, redactTrace,
-  restoreProgress, treeHash,
+  restoreProgress, snapshotVault, treeHash,
 } = await import(
   new URL('../scripts/alpha-harness.mjs', import.meta.url)
 );
@@ -113,9 +115,32 @@ test('public traces drop account names, home paths, and host names', () => {
 test('restore gate config turns off scheduled backups and nothing else', () => {
   const original = { backup_enabled: true, theme: 'dark' };
   assert.equal(harnessConfig(original, '/v', 'id', '/b').backup_enabled, true);
-  const next = harnessConfig(original, '/v', 'id', '/b', 'restore');
+  const next = harnessConfig(original, '/v', 'id', '/b', { restore: true });
   assert.equal(next.backup_enabled, false);
   assert.equal(next.theme, 'dark');
+});
+
+test('snapshot refuses to overwrite existing evidence', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'alpha-harness-snapshot-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const vault = join(root, 'vault');
+  const snapshot = join(root, 'snapshot');
+  mkdirSync(vault);
+  mkdirSync(snapshot);
+  writeFileSync(join(vault, 'note.md'), 'new');
+  writeFileSync(join(snapshot, 'note.md'), 'old');
+
+  assert.throws(() => snapshotVault(vault, snapshot), /snapshot already exists/);
+  assert.equal(readFileSync(join(snapshot, 'note.md'), 'utf8'), 'old');
+});
+
+test('restore rejects an invalid timeout before touching either machine', () => {
+  const result = spawnSync(process.execPath, [
+    fileURLToPath(new URL('../scripts/alpha-harness.mjs', import.meta.url)),
+    'restore', '--timeout-minutes', 'not-a-number',
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /timeout must be a positive number/);
 });
 
 test('vault hash covers metadata, empty folders, and names, and nothing else', (t) => {
