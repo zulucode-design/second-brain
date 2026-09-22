@@ -39,7 +39,7 @@ export class SaveCoordinator<T extends SaveSnapshotBase> {
 	private drainPromise: Promise<SaveResult> | null = null;
 	private documentPath: string | null = null;
 	private documentVersion = 0;
-	// Advances when a different document replaces this one, but not when a rebase moves it.
+	// Advances whenever setDocument resets the document, but not when a rebase moves it.
 	private documentLineage = 0;
 	private revision = 0;
 	private persistedRevision = 0;
@@ -171,8 +171,9 @@ export class SaveCoordinator<T extends SaveSnapshotBase> {
 					throw new Error(`Save invariant failed: persisted ${snapshot.path}, coordinator owns ${this.documentPath ?? 'none'}.`);
 				}
 
-				// A deliberate document replacement happened while persistence was in flight.
-				// Its own revisions, if any, are drained next without clearing them here.
+				// The document was replaced or rebased while persistence was in flight. Its
+				// revisions, including one a rebase carried over, are drained next without
+				// clearing them here.
 				if (this.isDirty()) continue;
 				return { ok: true, status: 'saved', revision: snapshot.revision };
 			} catch (error) {

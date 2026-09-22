@@ -348,7 +348,10 @@
 					rebase: (oldPath, newPath, content) => editor!.rebaseDocument(oldPath, newPath, content),
 				});
 			} catch (error) {
+				// A packaged build has no console, and a rename or move that half-happened must
+				// not look like it did nothing.
 				console.error(`${reason} failed:`, error);
+				showToast(`${reason} failed: ${String(error)}`);
 				return null;
 			}
 		});
@@ -1536,7 +1539,7 @@
 				<NoteList bind:this={noteList} onOpenNote={navigateToPath} onBeforeNoteSwitch={() => ensureCurrentNoteSaved('Navigation')} onBeforeNoteDuplicate={() => ensureCurrentNoteSaved('Duplicating the note')} onBeforeOpenWindow={() => ensureCurrentNoteSaved('Opening a secondary window')} onRelocateActiveDocument={relocateActiveDocument} onUpdateActiveMetadata={updateActiveMetadata} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); }} onRequestCreateNote={requestNoteCreation} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
 			</div>
 			<div class="mobile-panel" class:active={$mobileView === 'editor'}>
-				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} onNavigateNote={navigateToPath} onNavigateWikiNote={navigateToPathResult} onNavigateHistory={navigateHistory} />
+				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} onNavigateNote={navigateToPath} onNavigateWikiNote={navigateToPathResult} onNavigateHistory={navigateHistory} onRelocateActiveDocument={relocateActiveDocument} />
 			</div>
 		</div>
 
@@ -1613,7 +1616,7 @@
 			{/if}
 
 			<div class="editor-panel">
-				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} onNavigateNote={navigateToPath} onNavigateWikiNote={navigateToPathResult} onNavigateHistory={navigateHistory} />
+				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} onNavigateNote={navigateToPath} onNavigateWikiNote={navigateToPathResult} onNavigateHistory={navigateHistory} onRelocateActiveDocument={relocateActiveDocument} />
 				{#if $viewMode === 'tasks' && !taskNoteOpened}
 					<div class="tasks-editor-placeholder">
 						<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
