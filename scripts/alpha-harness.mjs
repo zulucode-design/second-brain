@@ -5,6 +5,7 @@ import {
   appendFileSync,
   closeSync,
   copyFileSync,
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -13,6 +14,7 @@ import {
   readlinkSync,
   readdirSync,
   renameSync,
+  rmSync,
   rmdirSync,
   statfsSync,
   unlinkSync,
@@ -20,11 +22,11 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { isIP } from 'node:net';
-import { dirname, join, resolve, win32 } from 'node:path';
+import { dirname, join, resolve, sep, win32 } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { check, generate, NOTE_COUNT } from './sync-fixture.mjs';
+import { check, fixtureNote, generate, NOTE_COUNT } from './sync-fixture.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO = resolve(dirname(SCRIPT_PATH), '..');
@@ -35,6 +37,15 @@ const LINUX_APP = '/usr/bin/second-brain';
 const MIN_FREE_BYTES = 5 * 1024 ** 3;
 const DEFAULT_TIMEOUT_MS = 20 * 60_000;
 const WINDOWS_TASK = 'SecondBrainAlphaHarness';
+// Test-only tools installed under D:\SecondBrainTest; msedgedriver must match the WebView2 version.
+const WINDOWS_DRIVER = 'D:\\SecondBrainTest\\sb88\\driver\\bin\\tauri-driver.exe';
+const WINDOWS_NATIVE_DRIVER = 'D:\\SecondBrainTest\\sb88\\driver\\msedge\\msedgedriver.exe';
+const WINDOWS_DRIVER_TASK = 'SecondBrainAlphaHarnessDriver';
+const WINDOWS_DRIVER_PORT = 4444;
+const WINDOWS_TUNNEL_PORT = 4446;
+const LINUX_DRIVER_PORT = 4444;
+// Explicit, so a stray listener on tauri-driver's default (4445) fails loudly instead of being proxied to.
+const LINUX_NATIVE_PORT = 4447;
 const APP_SOURCES = ['src', 'src-tauri', 'static', 'pnpm-lock.yaml', 'svelte.config.js', 'vite.config.ts'];
 const POLL_MS = 1_000;
 const DEVICE_ID = /^[A-Z2-7]{7}(?:-[A-Z2-7]{7}){7}$/;
@@ -91,13 +102,15 @@ function syncPort(vaultId) {
   return 18_000 + (value % 10_000);
 }
 
-export function harnessConfig(config, vaultPath, vaultId, backupPath) {
+export function harnessConfig(config, vaultPath, vaultId, backupPath, { restore = false } = {}) {
   const next = structuredClone(config);
   next.vaults = [{ path: vaultPath, name: 'Alpha Harness', vault_id: vaultId }];
   next.active_vault = vaultPath;
   next.active_bookmark_id = null;
   next.backup_location = backupPath;
   next.backup_max_count = Math.max(10, Number(next.backup_max_count) || 0);
+  // The restore gate restores the one backup it made; a scheduled backup would add a second.
+  if (restore) next.backup_enabled = false;
   return next;
 }
 
@@ -164,7 +177,7 @@ function localTemplateConfig() {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
-function prepareLinux(root, runId, vaultId) {
+function prepareLinux(root, runId, vaultId, { restore = false } = {}) {
   requireFreeSpace(root);
   const runRoot = join(root, 'runs', runId, 'fedora');
   if (existsSync(runRoot)) fail(`run already exists: ${runRoot}`);
@@ -178,11 +191,12 @@ function prepareLinux(root, runId, vaultId) {
   mkdirSync(machinePath, { recursive: true });
   mkdirSync(backupPath, { recursive: true });
   makeVault(vaultPath, vaultId);
-  const control = makeControl(vaultId);
-  atomicWrite(join(machinePath, 'sync-control.json'), `${JSON.stringify(control, null, 2)}\n`);
+  // Without a control file sync stays off, so the restore gate runs with no sidecar.
+  const control = restore ? null : makeControl(vaultId);
+  if (control) atomicWrite(join(machinePath, 'sync-control.json'), `${JSON.stringify(control, null, 2)}\n`);
   atomicWrite(
     configPath,
-    `${JSON.stringify(harnessConfig(localTemplateConfig(), vaultPath, vaultId, backupPath), null, 2)}\n`,
+    `${JSON.stringify(harnessConfig(localTemplateConfig(), vaultPath, vaultId, backupPath, { restore }), null, 2)}\n`,
   );
   return { runRoot, vaultPath, backupPath, configHome, dataHome, machinePath, control };
 }
@@ -255,7 +269,7 @@ function base64Request(value) {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
 
-function remoteWorker(sshHost, request) {
+function remoteWorker(sshHost, request, timeout = 45_000) {
   const remoteScript = win32.join(WINDOWS_TOOLS, 'alpha-harness.mjs');
   const result = runCommandSync('ssh', [
     sshHost,
@@ -263,7 +277,7 @@ function remoteWorker(sshHost, request) {
     remoteScript,
     '__windows-worker',
     base64Request(request),
-  ], { timeout: 45_000 });
+  ], { timeout });
   return parseLastJson(result.stdout);
 }
 
@@ -466,6 +480,281 @@ async function waitForWindowsProcesses(sshHost, runId, predicate, timeoutMs = 30
   fail(`Windows process state timed out: ${JSON.stringify(report)}`);
 }
 
+// Gate 2: interrupted restore. The restore journal and its stage and rollback directories sit
+// next to the vault (src-tauri/src/backup.rs, #142); their presence after a kill is the proof
+// that the kill landed inside a restore.
+const RESTORE_PREFIX = '.second-brain-restore-';
+export const KILL_POINTS = { journal: 0, 'stage-half': 0.5, 'stage-late': 0.95 };
+
+function byName(left, right) {
+  return left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
+}
+
+// Every directory and file under the vault, `.helixnotes` included: a recovered vault must equal
+// the pre-restore or the restored state byte for byte, metadata and all.
+export function treeHash(root) {
+  const lines = [];
+  let files = 0;
+  let directories = 0;
+  const visit = (directory, prefix) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort(byName)) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        directories += 1;
+        lines.push(`d ${relative}`);
+        visit(path, relative);
+      } else if (entry.isFile()) {
+        files += 1;
+        lines.push(`f ${relative} ${createHash('sha256').update(readFileSync(path)).digest('hex')}`);
+      } else {
+        fail(`unexpected non-file entry in vault: ${relative}`);
+      }
+    }
+  };
+  visit(root, '');
+  return { sha256: createHash('sha256').update(lines.join('\n')).digest('hex'), files, directories };
+}
+
+function countFiles(directory) {
+  return readdirSync(directory, { recursive: true, withFileTypes: true }).filter((entry) => entry.isFile()).length;
+}
+
+export function restoreProgress(vault) {
+  const parent = dirname(vault);
+  const leftovers = readdirSync(parent).filter((name) => name.startsWith(RESTORE_PREFIX)).sort();
+  const journal = leftovers.find((name) => name.startsWith(`${RESTORE_PREFIX}journal-`) && name.endsWith('.json'));
+  const stage = leftovers.find((name) => name.startsWith(`${RESTORE_PREFIX}stage-`));
+  let phase = null;
+  if (journal) {
+    try {
+      phase = JSON.parse(readFileSync(join(parent, journal), 'utf8')).phase;
+    } catch {
+      phase = 'unreadable';
+    }
+  }
+  let stagedFiles = 0;
+  if (stage) {
+    try {
+      stagedFiles = countFiles(join(parent, stage));
+    } catch {
+      // The commit moves staged entries out while this counts them.
+      stagedFiles = -1;
+    }
+  }
+  return {
+    leftovers,
+    phase,
+    stagedFiles,
+    rollback: leftovers.some((name) => name.startsWith(`${RESTORE_PREFIX}rollback-`)),
+  };
+}
+
+export function killDue(point, progress, expectedFiles) {
+  if (!(point in KILL_POINTS)) fail(`unknown kill point: ${point}`);
+  return progress.phase !== null && progress.stagedFiles >= KILL_POINTS[point] * expectedFiles;
+}
+
+// State B, the pre-restore vault: differs from the backup (state A) by edited, deleted, and added
+// notes, so undo and publish are told apart by hash.
+export function mutateFixture(vault) {
+  let edited = 0;
+  let removed = 0;
+  for (let index = 0; index < NOTE_COUNT; index += 1) {
+    const path = join(vault, fixtureNote(index).path);
+    if (index % 10 === 0) {
+      appendFileSync(path, 'Edited after the backup.\n');
+      edited += 1;
+    } else if (index % 10 === 1) {
+      unlinkSync(path);
+      removed += 1;
+    }
+  }
+  const added = 100;
+  for (let index = 0; index < added; index += 1) {
+    writeFileSync(join(vault, 'Projects', `After backup ${index}.md`), `Written after the backup, ${index}.\n`, { flag: 'wx' });
+  }
+  return { edited, removed, added };
+}
+
+function processAlive(pid) {
+  // A killed child stays a zombie until its parent reaps it; it is no longer running.
+  if (process.platform === 'linux') {
+    try {
+      return !/^\d+ \(.*\) Z/s.test(readFileSync(`/proc/${pid}/stat`, 'utf8'));
+    } catch {
+      return false;
+    }
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+}
+
+function killForCleanup(pid, signal) {
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    if (error.code !== 'ESRCH') throw error;
+  }
+}
+
+// Runs next to the app (locally on Fedora, over SSH on Windows) because a controller round trip
+// per poll is slower than the whole unpack. The caller has proven `pid` is this run's app.
+async function killWatch({ vault, point, expectedFiles, pid, timeoutMs }) {
+  console.log(JSON.stringify({ watching: true }));
+  const deadline = Date.now() + timeoutMs;
+  let journalSeen = false;
+  for (;;) {
+    const progress = restoreProgress(vault);
+    if (progress.phase !== null) journalSeen = true;
+    else if (journalSeen) return { point, missed: true, progress };
+    if (killDue(point, progress, expectedFiles)) {
+      const killedAt = process.platform === 'win32'
+        ? windowsPowerShell(WINDOWS_TOOLS, [
+            '-Action', 'StopPid', '-PidToStop', String(pid), '-ExecutablePath', WINDOWS_APP,
+          ]).at
+        : (process.kill(pid, 'SIGKILL'), new Date().toISOString());
+      const exitDeadline = Date.now() + 15_000;
+      while (processAlive(pid) && Date.now() < exitDeadline) await sleep(50);
+      if (processAlive(pid)) fail(`app ${pid} survived the kill`);
+      return { point, pid, killedAt, atKill: progress, afterKill: restoreProgress(vault) };
+    }
+    if (Date.now() > deadline) fail(`restore did not reach kill point ${point}: ${JSON.stringify(progress)}`);
+    await sleep(2);
+  }
+}
+
+function startKillWatch(executable, args) {
+  const child = spawn(executable, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  let errors = '';
+  let markReady;
+  const ready = new Promise((accept) => { markReady = accept; });
+  child.stdout.on('data', (chunk) => {
+    output += chunk;
+    if (output.includes('"watching":true')) markReady();
+  });
+  child.stderr.on('data', (chunk) => { errors += chunk; });
+  const result = new Promise((accept, reject) => {
+    child.on('exit', (code) => {
+      markReady();
+      if (code === 0) accept(parseLastJson(output));
+      else reject(new Error(`kill watch exited ${code}: ${(errors || output).trim().slice(-500)}`));
+    });
+  });
+  return { ready, result };
+}
+
+function resetVault(vault, snapshot, root) {
+  for (const path of [vault, snapshot]) {
+    if (!resolve(path).startsWith(`${resolve(root)}${sep}`)) fail(`path leaves run root: ${path}`);
+  }
+  rmSync(vault, { recursive: true, force: true });
+  cpSync(snapshot, vault, { recursive: true });
+}
+
+export function snapshotVault(vault, snapshot) {
+  if (existsSync(snapshot)) fail(`snapshot already exists: ${snapshot}`);
+  cpSync(vault, snapshot, { recursive: true });
+}
+
+async function waitForDriver(port, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(2_000) });
+      return;
+    } catch (error) {
+      lastError = error;
+      await sleep(500);
+    }
+  }
+  fail(`WebDriver on port ${port} did not answer: ${lastError?.message}`);
+}
+
+async function openApp(port, application) {
+  // Only the controller needs webdriverio; the Windows worker copy runs without node_modules.
+  const { remote } = await import('webdriverio');
+  const browser = await remote({
+    hostname: '127.0.0.1',
+    port,
+    logLevel: 'warn',
+    connectionRetryCount: 0,
+    capabilities: { 'tauri:options': { application } },
+  });
+  await browser.$('button=New Note').waitForDisplayed({ timeout: 60_000 });
+  return browser;
+}
+
+async function closeApp(browser) {
+  try {
+    await browser.deleteSession();
+    return null;
+  } catch (error) {
+    // Expected after a kill: the session's app is already gone.
+    return error.message;
+  }
+}
+
+// WebKitWebDriver answers element-click with "unsupported operation", so every click is a DOM
+// click; the app's handlers are plain onclick, which it triggers the same way.
+async function press(browser, pending) {
+  const element = await pending;
+  await element.waitForDisplayed({ timeout: 30_000 });
+  // A DOM click on a disabled button is silently ignored.
+  await element.waitForEnabled({ timeout: 30_000 });
+  await browser.execute((target) => target.click(), element);
+}
+
+async function openBackupTab(browser) {
+  await press(browser, browser.$('button[title="Settings"]'));
+  await press(browser, browser.$('button.tab-btn=Backup'));
+}
+
+async function backupThroughUi(browser) {
+  await openBackupTab(browser);
+  await press(browser, browser.$('button.backup-link-btn*=Backup now'));
+  const message = browser.$('.import-result');
+  await message.waitForDisplayed({ timeout: 5 * 60_000 });
+  const text = await message.getText();
+  if (!text.includes('Backup created successfully')) fail(`backup failed in the app: ${text}`);
+}
+
+// Leaves the confirmation's Restore button ready so the caller can arm its watcher first.
+async function openRestoreConfirmation(browser) {
+  await openBackupTab(browser);
+  const restoreButtons = await browser.$$('button.backup-action-btn[title="Restore"]');
+  if (restoreButtons.length !== 1) fail(`expected exactly one backup to restore, found ${restoreButtons.length}`);
+  await press(browser, restoreButtons[0]);
+  const confirm = browser.$('button.restore-confirm-btn');
+  await confirm.waitForDisplayed({ timeout: 10_000 });
+  return confirm;
+}
+
+// Repair status loads after the note list renders, so the banner can arrive a moment later.
+// Dismissing it afterwards means the next trial's notice cannot be this one still showing.
+async function readAndDismissNotice(browser, screenshotPath) {
+  const banner = browser.$('.repair-banner');
+  let displayed = true;
+  try {
+    await banner.waitForDisplayed({ timeout: 20_000 });
+  } catch {
+    displayed = false;
+  }
+  await browser.saveScreenshot(screenshotPath);
+  if (!displayed) return null;
+  const notice = { title: await banner.$('strong').getText(), message: await banner.$('span').getText() };
+  const started = Date.now();
+  await press(browser, banner.$('button=Dismiss'));
+  await banner.waitForExist({ reverse: true, timeout: 60_000 });
+  return { ...notice, dismissedMs: Date.now() - started };
+}
+
 function parseOptions(args) {
   const options = {
     sshHost: 'sb-windows',
@@ -483,6 +772,7 @@ function parseOptions(args) {
     else if (name === '--timeout-minutes') options.timeoutMs = Number(value) * 60_000;
     else fail(`unknown option: ${name}`);
   }
+  if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) fail('timeout must be a positive number');
   return options;
 }
 
@@ -559,9 +849,12 @@ function fedoraPackageEvidence(candidateCommit) {
 }
 
 async function runSync(args) {
+  return runOnFedora(args, runSyncLocked);
+}
+
+async function runOnFedora(args, runLocked) {
   const options = parseOptions(args);
-  if (process.platform !== 'linux') fail('sync controller must run on Fedora');
-  if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) fail('timeout must be a positive number');
+  if (process.platform !== 'linux') fail('harness controller must run on Fedora');
   mkdirSync(options.linuxRoot, { recursive: true });
   const lockRoot = join(homedir(), '.cache', 'second-brain');
   mkdirSync(lockRoot, { recursive: true });
@@ -569,7 +862,7 @@ async function runSync(args) {
   let awake;
   try {
     awake = await keepAwake(options.sshHost, options.timeoutMs);
-    const result = await runSyncLocked({ ...options, holdMinutes: awake.holdMinutes });
+    const result = await runLocked({ ...options, holdMinutes: awake.holdMinutes });
     if (awake.lost()) fail(`${awake.lost()}; the result cannot be trusted`);
     return result;
   } finally {
@@ -578,7 +871,7 @@ async function runSync(args) {
   }
 }
 
-async function runSyncLocked(options) {
+function prepareHarnessRun(options) {
   if (!existsSync(LINUX_APP)) fail(`installed app missing: ${LINUX_APP}`);
   assertNoLinuxApp();
   requireFreeSpace(options.linuxRoot);
@@ -592,8 +885,12 @@ async function runSyncLocked(options) {
   const recovered = remoteWorker(options.sshHost, {
     action: 'recover', root: WINDOWS_ROOT, runId: 'recovery', appPath: WINDOWS_APP,
   });
-
   const runId = new Date().toISOString().replaceAll(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  return { candidateCommit, harnessCommit, fedoraPackage, recovered, runId };
+}
+
+async function runSyncLocked(options) {
+  const { candidateCommit, harnessCommit, fedoraPackage, recovered, runId } = prepareHarnessRun(options);
   const vaultId = randomUUID();
   const evidencePath = join(REPO, 'docs', 'reports', 'evidence', `alpha-harness-sync-${runId}.jsonl`);
   mkdirSync(dirname(evidencePath), { recursive: true });
@@ -732,7 +1029,6 @@ async function runSyncLocked(options) {
       cleanupError ??= error;
     }
     if (windowsPrepared) {
-      let processesStopped = false;
       if (windowsPid) {
         try {
           remoteWorker(options.sshHost, { action: 'stop-app', root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP, pid: windowsPid });
@@ -741,31 +1037,8 @@ async function runSyncLocked(options) {
           cleanupError ??= error;
         }
       }
-      try {
-        let finalReport;
-        try {
-          finalReport = await waitForWindowsProcesses(options.sshHost, runId, (processes) => processes.length === 0, 60_000);
-        } catch (error) {
-          const forced = remoteWorker(options.sshHost, { action: 'cleanup-processes', root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP });
-          observation(evidencePath, 'forced-process-cleanup', 'windows', forced);
-          finalReport = await waitForWindowsProcesses(options.sshHost, runId, (processes) => processes.length === 0, 15_000);
-          cleanupError ??= error;
-        }
-        observation(evidencePath, 'process-final', 'windows', finalReport);
-        processesStopped = true;
-      } catch (error) {
-        observation(evidencePath, 'cleanup-error', 'windows-processes', { error: error.message });
-        cleanupError ??= error;
-      }
-      if (processesStopped) {
-        try {
-          const finalized = remoteWorker(options.sshHost, { action: 'finalize', root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP });
-          observation(evidencePath, 'config-restored', 'windows', finalized);
-        } catch (error) {
-          observation(evidencePath, 'cleanup-error', 'windows-config', { error: error.message });
-          cleanupError ??= error;
-        }
-      }
+      const finalizeError = await finalizeWindows(options.sshHost, runId, evidencePath);
+      cleanupError ??= finalizeError;
     }
   }
 
@@ -776,6 +1049,325 @@ async function runSyncLocked(options) {
   console.log(JSON.stringify({ runId, evidencePath }));
 }
 
+function descendsFrom(rows, pid, ancestor) {
+  const parents = new Map(rows.map((row) => [row.pid, row.parentPid]));
+  for (let current = parents.get(pid); current; current = parents.get(current)) {
+    if (current === ancestor) return true;
+  }
+  return false;
+}
+
+function linuxRestoreMachine(root, runId, vaultId) {
+  const machine = prepareLinux(root, runId, vaultId, { restore: true });
+  const snapshotPath = join(machine.runRoot, 'vault-pre');
+  let driver;
+  const apps = () => {
+    const rows = processRows();
+    return rows.filter((row) => row.executable === LINUX_APP && driver && descendsFrom(rows, row.pid, driver.pid));
+  };
+  return {
+    name: 'fedora',
+    application: LINUX_APP,
+    port: LINUX_DRIVER_PORT,
+    prepare: () => ({ runRoot: machine.runRoot, vault: machine.vaultPath }),
+    generate: () => generate(machine.vaultPath),
+    hash: () => treeHash(machine.vaultPath),
+    progress: () => restoreProgress(machine.vaultPath),
+    mutate: () => mutateFixture(machine.vaultPath),
+    backups: () => readdirSync(machine.backupPath),
+    snapshot: () => snapshotVault(machine.vaultPath, snapshotPath),
+    reset: () => resetVault(machine.vaultPath, snapshotPath, machine.runRoot),
+    async startDriver() {
+      const log = openSync(join(machine.runRoot, 'tauri-driver.log'), 'a');
+      driver = spawn('tauri-driver', ['--port', String(LINUX_DRIVER_PORT), '--native-port', String(LINUX_NATIVE_PORT)], {
+        env: { ...process.env, XDG_CONFIG_HOME: machine.configHome, XDG_DATA_HOME: machine.dataHome },
+        stdio: ['ignore', log, log],
+      });
+      closeSync(log);
+      await waitForDriver(LINUX_DRIVER_PORT);
+      // Something else answering on the port would pass the probe; the driver must still be up.
+      if (driver.exitCode !== null) fail(`tauri-driver exited ${driver.exitCode}; is port ${LINUX_DRIVER_PORT} taken?`);
+      return { pid: driver.pid };
+    },
+    appPid() {
+      const found = apps().filter((row) => !row.commandLine.includes('--helix-sync-watchdog'));
+      if (found.length !== 1) fail(`expected one app under tauri-driver ${driver?.pid}: ${JSON.stringify(found)}`);
+      return found[0].pid;
+    },
+    killWatch(request) {
+      return startKillWatch(process.execPath, [
+        SCRIPT_PATH, '__kill-watch', base64Request({ ...request, vault: machine.vaultPath }),
+      ]);
+    },
+    async appsGone() {
+      const deadline = Date.now() + 60_000;
+      while (linuxReport(machine.machinePath).length && Date.now() < deadline) await sleep(500);
+      const survivors = linuxReport(machine.machinePath);
+      if (survivors.length) fail(`Fedora process survived app exit: ${JSON.stringify(survivors)}`);
+      return { processes: survivors };
+    },
+    async cleanup() {
+      if (!driver) return this.appsGone();
+      // Exact PIDs only: apps under this run's driver, then the driver's own children.
+      for (const row of apps()) killForCleanup(row.pid, 'SIGKILL');
+      for (const row of processRows().filter((candidate) => candidate.parentPid === driver.pid)) {
+        killForCleanup(row.pid, 'SIGTERM');
+      }
+      if (driver.exitCode === null) {
+        driver.kill('SIGTERM');
+        const deadline = Date.now() + 15_000;
+        while (driver.exitCode === null && Date.now() < deadline) await sleep(250);
+      }
+      return this.appsGone();
+    },
+  };
+}
+
+function windowsRestoreMachine(sshHost, runId, vaultId, candidateCommit) {
+  const runWindowsAction = (action, extra = {}, timeout = 45_000) => remoteWorker(
+    sshHost, { action, root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP, ...extra }, timeout,
+  );
+  const longTimeoutMs = 5 * 60_000;
+  let driverPid;
+  let tunnel;
+  return {
+    name: 'windows',
+    application: WINDOWS_APP,
+    port: WINDOWS_TUNNEL_PORT,
+    prepare: () => runWindowsAction('prepare', { vaultId, candidateCommit, restore: true }),
+    generate: () => runWindowsAction('generate', {}, longTimeoutMs),
+    hash: () => runWindowsAction('hash', {}, longTimeoutMs),
+    progress: () => runWindowsAction('progress'),
+    mutate: () => runWindowsAction('mutate', {}, longTimeoutMs),
+    backups: () => runWindowsAction('all-backups').backups,
+    snapshot: () => runWindowsAction('snapshot', {}, longTimeoutMs),
+    reset: () => runWindowsAction('reset', {}, longTimeoutMs),
+    async startDriver() {
+      const started = runWindowsAction('start-driver');
+      driverPid = started.pid;
+      tunnel = spawn('ssh', [
+        '-N', '-o', 'ExitOnForwardFailure=yes',
+        '-L', `127.0.0.1:${WINDOWS_TUNNEL_PORT}:127.0.0.1:${WINDOWS_DRIVER_PORT}`, sshHost,
+      ], { stdio: 'ignore' });
+      await waitForDriver(WINDOWS_TUNNEL_PORT);
+      if (tunnel.exitCode !== null) fail(`WebDriver tunnel exited ${tunnel.exitCode}; is port ${WINDOWS_TUNNEL_PORT} taken?`);
+      return started;
+    },
+    appPid: () => runWindowsAction('app-pid', { driverPid }).pid,
+    killWatch(request) {
+      return startKillWatch('ssh', [
+        sshHost, 'node', win32.join(WINDOWS_TOOLS, 'alpha-harness.mjs'), '__kill-watch',
+        base64Request({ ...request, vault: windowsPaths(WINDOWS_ROOT, runId).vaultPath }),
+      ]);
+    },
+    appsGone: () => waitForWindowsProcesses(sshHost, runId, (processes) => processes.length === 0, 60_000),
+    async cleanup(evidencePath) {
+      let firstError;
+      tunnel?.kill();
+      if (driverPid) {
+        try {
+          observation(evidencePath, 'driver-stopped', 'windows', runWindowsAction('stop-driver', { driverPid }));
+        } catch (error) {
+          observation(evidencePath, 'cleanup-error', 'windows-driver', { error: error.message });
+          firstError = error;
+        }
+      }
+      firstError ??= await finalizeWindows(sshHost, runId, evidencePath);
+      if (firstError) throw firstError;
+    },
+  };
+}
+
+async function waitForRestore(browser) {
+  const message = browser.$('.import-result');
+  await message.waitUntil(async () => /restored|failed/i.test(await message.getText().catch(() => '')), {
+    timeout: 5 * 60_000,
+    timeoutMsg: 'restore did not report a result',
+  });
+  const text = await message.getText();
+  if (text !== 'Backup restored.') fail(`restore did not succeed in the app: ${text}`);
+}
+
+async function withApp(machine, action) {
+  const browser = await openApp(machine.port, machine.application);
+  try {
+    return await action(browser);
+  } finally {
+    await closeApp(browser);
+    await machine.appsGone();
+  }
+}
+
+// A launch can still write to the vault: it normalizes notes it has not seen, and the next open
+// sweeps the empty `.helixnotes/staging` that leaves behind. A state is only comparable once a
+// further launch no longer changes it.
+async function settle(machine, hash = machine.hash()) {
+  for (let launch = 0; launch < 4; launch += 1) {
+    await withApp(machine, async () => {});
+    const next = machine.hash();
+    if (next.sha256 === hash.sha256) return next;
+    hash = next;
+  }
+  fail(`vault still changes on every launch: ${JSON.stringify(hash)}`);
+}
+
+export function recoveryOutcome(hash, pre, post) {
+  if (hash === pre) return 'pre-state';
+  if (hash === post) return 'post-state';
+  return null;
+}
+
+const RECOVERY_NOTICE = {
+  'pre-state': 'back exactly as it was before the restore',
+  'post-state': 'kept as restored',
+};
+
+async function restoreGate(machine, evidencePath, screenshotDir) {
+  const record = (event, value) => observation(evidencePath, event, machine.name, value);
+  record('fixture-generated', await machine.generate());
+  record('driver-started', await machine.startDriver());
+
+  await withApp(machine, backupThroughUi);
+  const backups = machine.backups();
+  if (backups.length !== 1) fail(`expected one backup, found ${JSON.stringify(backups)}`);
+  const backedUpState = machine.hash();
+  record('backup-created', { backups, vault: backedUpState });
+
+  record('vault-mutated', machine.mutate());
+  const preRestoreState = await settle(machine);
+  machine.snapshot();
+  record('pre-state', preRestoreState);
+
+  await withApp(machine, async (browser) => {
+    await press(browser, await openRestoreConfirmation(browser));
+    await waitForRestore(browser);
+  });
+  const restoredState = await settle(machine);
+  const controlProgress = machine.progress();
+  record('post-state', { vault: restoredState, leftovers: controlProgress.leftovers });
+  if (restoredState.sha256 !== backedUpState.sha256) fail('the restore did not reproduce the backed-up vault');
+  if (controlProgress.leftovers.length) fail(`completed restore left files behind: ${controlProgress.leftovers}`);
+
+  for (const point of Object.keys(KILL_POINTS)) {
+    machine.reset();
+    if (machine.hash().sha256 !== preRestoreState.sha256) fail('vault reset did not reproduce the pre-state');
+    let killed;
+    await withApp(machine, async (browser) => {
+      const confirm = await openRestoreConfirmation(browser);
+      const pid = machine.appPid();
+      const watch = machine.killWatch({ point, expectedFiles: backedUpState.files, pid, timeoutMs: 5 * 60_000 });
+      await watch.ready;
+      await press(browser, confirm);
+      killed = await watch.result;
+    });
+    record('app-killed', killed);
+    // A journal that outlives the app is the proof the kill landed inside the restore.
+    if (killed.missed || killed.afterKill.phase === null) fail(`kill at ${point} landed after the restore finished`);
+    record('interrupted-state', { point, vault: machine.hash(), progress: machine.progress() });
+
+    const banner = await withApp(machine, async (relaunched) => {
+      return readAndDismissNotice(relaunched, join(screenshotDir, `${machine.name}-${point}.png`));
+    });
+    const recoveryProgress = machine.progress();
+    // Recorded before settling, so the evidence shows what recovery alone produced.
+    const immediateState = machine.hash();
+    const recoveredState = await settle(machine, immediateState);
+    const outcome = recoveryOutcome(recoveredState.sha256, preRestoreState.sha256, restoredState.sha256);
+    record('recovered', {
+      point, outcome, immediate: immediateState, vault: recoveredState, leftovers: recoveryProgress.leftovers, banner,
+    });
+    if (!outcome) fail(`vault after recovery from ${point} is neither the pre-restore nor the restored state`);
+    if (recoveryProgress.leftovers.length) fail(`recovery from ${point} left files behind: ${recoveryProgress.leftovers}`);
+    if (banner?.title !== 'Restore interrupted' || !banner.message.includes(RECOVERY_NOTICE[outcome])) {
+      fail(`recovery notice after ${point} is missing or wrong: ${JSON.stringify(banner)}`);
+    }
+  }
+}
+
+async function runRestore(args) {
+  return runOnFedora(args, runRestoreLocked);
+}
+
+async function runRestoreLocked(options) {
+  const { candidateCommit, harnessCommit, fedoraPackage, recovered, runId } = prepareHarnessRun(options);
+  const evidencePath = join(REPO, 'docs', 'reports', 'evidence', `alpha-harness-restore-${runId}.jsonl`);
+  const screenshotDir = join(options.linuxRoot, 'evidence', `restore-${runId}`);
+  mkdirSync(dirname(evidencePath), { recursive: true });
+  mkdirSync(screenshotDir, { recursive: true });
+  observation(evidencePath, 'run-start', 'controller', { runId, commit: candidateCommit, harnessCommit, killPoints: Object.keys(KILL_POINTS) });
+  observation(evidencePath, 'package-evidence', 'fedora', fedoraPackage);
+  observation(evidencePath, 'keep-awake', 'controller', {
+    fedora: 'systemd-inhibit sleep:idle',
+    windows: `PowerSetRequest SystemRequired, ${options.holdMinutes} min`,
+  });
+  if (recovered.recovered) observation(evidencePath, 'stale-run-recovered', 'windows', recovered);
+
+  let runError;
+  let cleanupError;
+  const machines = [
+    () => linuxRestoreMachine(options.linuxRoot, runId, randomUUID()),
+    // Built before prepare runs, so a prepare that fails halfway is still finalized.
+    () => windowsRestoreMachine(options.sshHost, runId, randomUUID(), candidateCommit),
+  ];
+  for (const makeMachine of machines) {
+    let machine;
+    try {
+      machine = makeMachine();
+      observation(evidencePath, 'prepared', machine.name, machine.prepare());
+      await restoreGate(machine, evidencePath, screenshotDir);
+    } catch (error) {
+      runError = error;
+      observation(evidencePath, 'run-failed', machine?.name ?? 'controller', { error: error.message });
+    }
+    try {
+      const final = await machine?.cleanup(evidencePath);
+      if (final) observation(evidencePath, 'process-final', machine.name, final);
+    } catch (error) {
+      observation(evidencePath, 'cleanup-error', machine?.name ?? 'controller', { error: error.message });
+      cleanupError ??= error;
+    }
+    if (runError || cleanupError) break;
+  }
+
+  if (runError) throw runError;
+  if (cleanupError) throw cleanupError;
+  observation(evidencePath, 'run-complete', 'controller');
+  console.log(JSON.stringify({ runId, evidencePath, screenshotDir }));
+}
+
+// Windows keeps the run's processes, junction, tasks, and swapped config until this succeeds;
+// both gates end every run here, failed or not.
+async function finalizeWindows(sshHost, runId, evidencePath) {
+  let firstError;
+  let processesStopped = false;
+  try {
+    let finalReport;
+    try {
+      finalReport = await waitForWindowsProcesses(sshHost, runId, (processes) => processes.length === 0, 60_000);
+    } catch (error) {
+      const forced = remoteWorker(sshHost, { action: 'cleanup-processes', root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP });
+      observation(evidencePath, 'forced-process-cleanup', 'windows', forced);
+      finalReport = await waitForWindowsProcesses(sshHost, runId, (processes) => processes.length === 0, 15_000);
+      firstError ??= error;
+    }
+    observation(evidencePath, 'process-final', 'windows', finalReport);
+    processesStopped = true;
+  } catch (error) {
+    observation(evidencePath, 'cleanup-error', 'windows-processes', { error: error.message });
+    firstError ??= error;
+  }
+  if (processesStopped) {
+    try {
+      const finalized = remoteWorker(sshHost, { action: 'finalize', root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP });
+      observation(evidencePath, 'config-restored', 'windows', finalized);
+    } catch (error) {
+      observation(evidencePath, 'cleanup-error', 'windows-config', { error: error.message });
+      firstError ??= error;
+    }
+  }
+  return firstError;
+}
+
 function windowsPaths(root, runId) {
   const runRoot = win32.join(root, 'runs', runId, 'windows');
   return {
@@ -784,6 +1376,7 @@ function windowsPaths(root, runId) {
     backupPath: win32.join(runRoot, 'backups'),
     machinePath: win32.join(runRoot, 'machine-state'),
     manifestPath: win32.join(runRoot, 'state.json'),
+    snapshotPath: win32.join(runRoot, 'vault-pre'),
   };
 }
 
@@ -811,6 +1404,10 @@ function windowsInterrupt(tools, appPath, action, target) {
   return parseLastJson(runCommandSync('powershell.exe', args).stdout);
 }
 
+function windowsFindProcess(tools, executable) {
+  return windowsPowerShell(tools, ['-Action', 'FindProcess', '-ExecutablePath', executable]).processes;
+}
+
 function windowsControl(paths) {
   return JSON.parse(readFileSync(win32.join(paths.machinePath, 'sync-control.json'), 'utf8'));
 }
@@ -836,6 +1433,9 @@ function removeRunArtifacts(tools, appPath, manifest, paths) {
     junctionRemoved = true;
   }
   windowsPowerShell(tools, ['-Action', 'RemoveTask', '-TaskName', WINDOWS_TASK, '-ExecutablePath', appPath]);
+  if (existsSync(WINDOWS_DRIVER)) {
+    windowsPowerShell(tools, ['-Action', 'RemoveTask', '-TaskName', WINDOWS_DRIVER_TASK, '-ExecutablePath', WINDOWS_DRIVER]);
+  }
   return { machineState: paths.machinePath, junctionRemoved, taskRemoved: WINDOWS_TASK };
 }
 
@@ -892,8 +1492,10 @@ async function windowsWorker(request) {
     const junction = runCommandSync('cmd.exe', ['/d', '/s', '/c', 'mklink', '/J', machineLink, paths.machinePath]);
     if (!junction.stdout) fail('could not create machine-state junction');
 
-    const control = makeControl(request.vaultId);
-    atomicWrite(win32.join(paths.machinePath, 'sync-control.json'), `${JSON.stringify(control, null, 2)}\n`);
+    if (!request.restore) {
+      const control = makeControl(request.vaultId);
+      atomicWrite(win32.join(paths.machinePath, 'sync-control.json'), `${JSON.stringify(control, null, 2)}\n`);
+    }
     const lockPath = win32.join(dirname(configPath), 'alpha-harness.lock.json');
     const manifest = {
       version: 1, runId: request.runId, startedAt: new Date().toISOString(), configPath, originalPath, machineLink, appPath,
@@ -902,7 +1504,7 @@ async function windowsWorker(request) {
     writeFileSync(lockPath, `${JSON.stringify({ runId: request.runId, manifestPath: paths.manifestPath })}\n`, { flag: 'wx' });
     atomicWrite(
       configPath,
-      `${JSON.stringify(harnessConfig(original, paths.vaultPath, request.vaultId, paths.backupPath), null, 2)}\n`,
+      `${JSON.stringify(harnessConfig(original, paths.vaultPath, request.vaultId, paths.backupPath, { restore: request.restore }), null, 2)}\n`,
     );
     return {
       runRoot: paths.runRoot,
@@ -997,6 +1599,67 @@ async function windowsWorker(request) {
     return { backups: readdirSync(paths.backupPath).filter((name) => name.startsWith('helixnotes-pre-sync-')) };
   }
 
+  if (request.action === 'generate') return generate(paths.vaultPath);
+  if (request.action === 'hash') return treeHash(paths.vaultPath);
+  if (request.action === 'progress') return restoreProgress(paths.vaultPath);
+  if (request.action === 'mutate') return mutateFixture(paths.vaultPath);
+  if (request.action === 'all-backups') return { backups: readdirSync(paths.backupPath) };
+  if (request.action === 'snapshot') {
+    snapshotVault(paths.vaultPath, paths.snapshotPath);
+    return { snapshot: paths.snapshotPath };
+  }
+  if (request.action === 'reset') {
+    resetVault(paths.vaultPath, paths.snapshotPath, paths.runRoot);
+    return { reset: paths.vaultPath };
+  }
+
+  if (request.action === 'start-driver') {
+    const { startedAt } = JSON.parse(readFileSync(paths.manifestPath, 'utf8'));
+    const running = windowsFindProcess(tools, WINDOWS_DRIVER);
+    if (running.length) fail(`tauri-driver is already running: ${JSON.stringify(running)}`);
+    windowsPowerShell(tools, [
+      '-Action', 'EnsureTask', '-TaskName', WINDOWS_DRIVER_TASK, '-ExecutablePath', WINDOWS_DRIVER,
+      '-TaskArguments', `--port ${WINDOWS_DRIVER_PORT} --native-driver "${WINDOWS_NATIVE_DRIVER}"`,
+    ]);
+    windowsPowerShell(tools, ['-Action', 'RunTask', '-TaskName', WINDOWS_DRIVER_TASK, '-ExecutablePath', WINDOWS_DRIVER]);
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const drivers = windowsFindProcess(tools, WINDOWS_DRIVER)
+        .filter((record) => new Date(record.Started) >= new Date(startedAt));
+      if (drivers.length === 1) {
+        // WebView2 and its WebDriver need the interactive desktop; session 0 has none.
+        if (drivers[0].SessionId === 0) fail('tauri-driver started in session 0, not the desktop');
+        return { pid: drivers[0].Id, sessionId: drivers[0].SessionId };
+      }
+      await sleep(500);
+    }
+    fail('scheduled task did not start exactly one tauri-driver');
+  }
+
+  if (request.action === 'app-pid') {
+    const natives = windowsFindProcess(tools, WINDOWS_NATIVE_DRIVER).filter((record) => record.ParentId === request.driverPid);
+    if (natives.length !== 1) fail(`expected one msedgedriver under tauri-driver ${request.driverPid}: ${JSON.stringify(natives)}`);
+    const apps = windowsInterrupt(tools, appPath, 'Report').processes
+      .filter((record) => record.Role === 'App' && record.ParentId === natives[0].Id);
+    if (apps.length !== 1) fail(`expected one app under msedgedriver ${natives[0].Id}: ${JSON.stringify(apps)}`);
+    return { pid: apps[0].Id };
+  }
+
+  if (request.action === 'stop-driver') {
+    // Exact PIDs only: the driver this run started, then the msedgedriver it spawned.
+    const stopped = [];
+    for (const native of windowsFindProcess(tools, WINDOWS_NATIVE_DRIVER).filter((record) => record.ParentId === request.driverPid)) {
+      windowsPowerShell(tools, ['-Action', 'StopPid', '-PidToStop', String(native.Id), '-ExecutablePath', WINDOWS_NATIVE_DRIVER]);
+      stopped.push(native.Id);
+    }
+    if (windowsFindProcess(tools, WINDOWS_DRIVER).some((record) => record.Id === request.driverPid)) {
+      windowsPowerShell(tools, ['-Action', 'StopPid', '-PidToStop', String(request.driverPid), '-ExecutablePath', WINDOWS_DRIVER]);
+      stopped.push(request.driverPid);
+    }
+    windowsPowerShell(tools, ['-Action', 'RemoveTask', '-TaskName', WINDOWS_DRIVER_TASK, '-ExecutablePath', WINDOWS_DRIVER]);
+    return { stopped };
+  }
+
   if (request.action === 'finalize') {
     const report = windowsInterrupt(tools, appPath, 'Report');
     if (report.processes.length) fail('refusing to restore config while installed processes remain');
@@ -1024,13 +1687,18 @@ async function windowsWorker(request) {
 async function main() {
   const [commandName, ...args] = process.argv.slice(2);
   if (commandName === 'sync') return runSync(args);
+  if (commandName === 'restore') return runRestore(args);
+  if (commandName === '__kill-watch') {
+    console.log(JSON.stringify(await killWatch(JSON.parse(Buffer.from(args[0], 'base64url').toString('utf8')))));
+    return;
+  }
   if (commandName === '__windows-worker') {
     const request = JSON.parse(Buffer.from(args[0], 'base64url').toString('utf8'));
     const result = await windowsWorker(request);
     console.log(JSON.stringify(result));
     return;
   }
-  console.error('usage: node scripts/alpha-harness.mjs sync [--candidate <sha>] [--ssh sb-windows] [--linux-root ~/sb88] [--timeout-minutes 20]');
+  console.error('usage: node scripts/alpha-harness.mjs sync|restore [--candidate <sha>] [--ssh sb-windows] [--linux-root ~/sb88] [--timeout-minutes 20]');
   process.exitCode = 2;
 }
 

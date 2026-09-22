@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
-const { acquireControllerLock, harnessConfig, pairedSyncthingConfig, redactTrace } = await import(
+const {
+  acquireControllerLock, harnessConfig, killDue, mutateFixture, pairedSyncthingConfig, recoveryOutcome, redactTrace,
+  restoreProgress, snapshotVault, treeHash,
+} = await import(
   new URL('../scripts/alpha-harness.mjs', import.meta.url)
 );
 
@@ -105,4 +110,98 @@ test('public traces drop account names, home paths, and host names', () => {
     matching: 5000,
   });
   assert.deepEqual(JSON.parse(redactTrace(JSON.stringify({ matching: 1, host: 'last' }))), { matching: 1 });
+});
+
+test('restore gate config turns off scheduled backups and nothing else', () => {
+  const original = { backup_enabled: true, theme: 'dark' };
+  assert.equal(harnessConfig(original, '/v', 'id', '/b').backup_enabled, true);
+  const next = harnessConfig(original, '/v', 'id', '/b', { restore: true });
+  assert.equal(next.backup_enabled, false);
+  assert.equal(next.theme, 'dark');
+});
+
+test('snapshot refuses to overwrite existing evidence', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'alpha-harness-snapshot-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const vault = join(root, 'vault');
+  const snapshot = join(root, 'snapshot');
+  mkdirSync(vault);
+  mkdirSync(snapshot);
+  writeFileSync(join(vault, 'note.md'), 'new');
+  writeFileSync(join(snapshot, 'note.md'), 'old');
+
+  assert.throws(() => snapshotVault(vault, snapshot), /snapshot already exists/);
+  assert.equal(readFileSync(join(snapshot, 'note.md'), 'utf8'), 'old');
+});
+
+test('restore rejects an invalid timeout before touching either machine', () => {
+  const result = spawnSync(process.execPath, [
+    fileURLToPath(new URL('../scripts/alpha-harness.mjs', import.meta.url)),
+    'restore', '--timeout-minutes', 'not-a-number',
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /timeout must be a positive number/);
+});
+
+test('vault hash covers metadata, empty folders, and names, and nothing else', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'alpha-harness-hash-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const vault = join(root, 'vault');
+  mkdirSync(join(vault, '.helixnotes'), { recursive: true });
+  mkdirSync(join(vault, 'Areas'));
+  writeFileSync(join(vault, '.helixnotes', 'vault_id'), 'id');
+  writeFileSync(join(vault, 'note.md'), 'body');
+
+  const base = treeHash(vault);
+  assert.deepEqual({ files: base.files, directories: base.directories }, { files: 2, directories: 2 });
+  assert.equal(treeHash(vault).sha256, base.sha256, 'stable');
+  writeFileSync(join(vault, '.helixnotes', 'vault_id'), 'other');
+  assert.notEqual(treeHash(vault).sha256, base.sha256, 'metadata content counts');
+  writeFileSync(join(vault, '.helixnotes', 'vault_id'), 'id');
+  rmSync(join(vault, 'Areas'), { recursive: true });
+  assert.notEqual(treeHash(vault).sha256, base.sha256, 'an empty folder counts');
+});
+
+test('restore progress reads the journal and stage, and kill points wait for them', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'alpha-harness-restore-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const vault = join(root, 'vault');
+  mkdirSync(vault);
+  assert.deepEqual(restoreProgress(vault), { leftovers: [], phase: null, stagedFiles: 0, rollback: false });
+  assert.equal(killDue('journal', restoreProgress(vault), 10), false, 'no restore, no kill');
+
+  writeFileSync(join(root, '.second-brain-restore-journal-1.json'), JSON.stringify({ phase: 'unpacking' }));
+  mkdirSync(join(root, '.second-brain-restore-stage-1', 'Areas'), { recursive: true });
+  for (let index = 0; index < 5; index += 1) {
+    writeFileSync(join(root, '.second-brain-restore-stage-1', 'Areas', `${index}.md`), '');
+  }
+  const progress = restoreProgress(vault);
+  assert.equal(progress.phase, 'unpacking');
+  assert.equal(progress.stagedFiles, 5);
+  assert.equal(killDue('journal', progress, 10), true);
+  assert.equal(killDue('stage-half', progress, 10), true);
+  assert.equal(killDue('stage-late', progress, 10), false);
+  assert.throws(() => killDue('elsewhere', progress, 10), /unknown kill point/);
+});
+
+test('the pre-restore vault differs from the backed-up fixture', async (t) => {
+  const { generate, NOTE_COUNT } = await import(new URL('../scripts/sync-fixture.mjs', import.meta.url));
+  const root = mkdtempSync(join(tmpdir(), 'alpha-harness-mutate-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, '.helixnotes'));
+  writeFileSync(join(root, '.helixnotes', 'vault_id'), 'id');
+  generate(root);
+  const backedUp = treeHash(root);
+
+  assert.deepEqual(mutateFixture(root), { edited: 500, removed: 500, added: 100 });
+  const pre = treeHash(root);
+  assert.notEqual(pre.sha256, backedUp.sha256);
+  assert.equal(pre.files, backedUp.files - 500 + 100);
+  assert.equal(backedUp.files, NOTE_COUNT + 1);
+});
+
+test('recovery must land on exactly one whole state', () => {
+  assert.equal(recoveryOutcome('a', 'a', 'b'), 'pre-state');
+  assert.equal(recoveryOutcome('b', 'a', 'b'), 'post-state');
+  assert.equal(recoveryOutcome('c', 'a', 'b'), null);
 });

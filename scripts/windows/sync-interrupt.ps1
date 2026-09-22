@@ -55,7 +55,7 @@ function Get-PackagedProcesses {
               elseif ($_.CommandLine -like '*--helix-sync-watchdog*') { 'Watchdog' }
               else { 'App' }
       if ($role) {
-        [pscustomobject]@{ Role = $role; Name = $_.Name; Id = $_.ProcessId; Path = $path; Started = $_.CreationDate.ToUniversalTime().ToString('o') }
+        [pscustomobject]@{ Role = $role; Name = $_.Name; Id = $_.ProcessId; ParentId = $_.ParentProcessId; Path = $path; Started = $_.CreationDate.ToUniversalTime().ToString('o') }
       }
     }
 }
