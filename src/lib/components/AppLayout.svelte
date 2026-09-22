@@ -79,7 +79,7 @@
 	import { openNoteWindow, closeSecondaryWindowsForVaultSwitch } from '$lib/utils/window';
 	import { normalizeStartupView, resolveStartupTarget } from '$lib/utils/startup-view';
 	import { NAVIGATE_NOTE_EVENT, type NavigateNoteRequest, type NoteNavigationResult } from '$lib/utils/navigation';
-	import { relocateReported, reportSaveFailure, runSaveGatedAction } from '$lib/utils/document-lifecycle';
+	import { relocateReported, reportSaveFailure as reportSaveResult, runSaveGatedAction } from '$lib/utils/document-lifecycle';
 	import { GenerationGate } from '$lib/utils/generation-gate';
 	import { runActiveDocumentMutation } from '$lib/utils/document-mutation';
 	import { describeLoadFailure } from '$lib/utils/async-view-state';
@@ -267,10 +267,6 @@
 	});
 
 	let navigationQueue: Promise<void> = Promise.resolve();
-
-	async function reportSaveResult(reason: string, result: Awaited<ReturnType<Editor['flushSave']>> | undefined): Promise<boolean> {
-		return reportSaveFailure(reason, result);
-	}
 
 	async function ensureCurrentNoteSaved(reason: string): Promise<boolean> {
 		let release: (() => void) | null = null;
