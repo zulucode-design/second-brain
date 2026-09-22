@@ -6,9 +6,11 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { deflateRawSync } from 'node:zlib';
+
 const {
-  acquireControllerLock, harnessConfig, killDue, mutateFixture, pairedSyncthingConfig, recoveryOutcome, redactTrace,
-  restoreProgress, snapshotVault, treeHash,
+  acquireControllerLock, diagnosticLeaks, harnessConfig, killDue, mutateFixture, pairedSyncthingConfig, recoveryOutcome, redactTrace,
+  restoreProgress, snapshotVault, treeHash, zipEntries,
 } = await import(
   new URL('../scripts/alpha-harness.mjs', import.meta.url)
 );
@@ -112,12 +114,15 @@ test('public traces drop account names, home paths, and host names', () => {
   assert.deepEqual(JSON.parse(redactTrace(JSON.stringify({ matching: 1, host: 'last' }))), { matching: 1 });
 });
 
-test('restore gate config turns off scheduled backups and nothing else', () => {
-  const original = { backup_enabled: true, theme: 'dark' };
+test('driven gate config turns off scheduled backups and close-to-tray, and nothing else', () => {
+  const original = { backup_enabled: true, close_to_tray: true, theme: 'dark', ollama_base_url: 'http://real:11434' };
   assert.equal(harnessConfig(original, '/v', 'id', '/b').backup_enabled, true);
-  const next = harnessConfig(original, '/v', 'id', '/b', { restore: true });
+  const next = harnessConfig(original, '/v', 'id', '/b', { driven: true });
   assert.equal(next.backup_enabled, false);
+  assert.equal(next.close_to_tray, false);
   assert.equal(next.theme, 'dark');
+  assert.equal(next.ollama_base_url, 'http://real:11434');
+  assert.equal(harnessConfig(original, '/v', 'id', '/b', { ollamaBaseUrl: 'http://127.0.0.1:11435' }).ollama_base_url, 'http://127.0.0.1:11435');
 });
 
 test('snapshot refuses to overwrite existing evidence', (t) => {
@@ -204,4 +209,64 @@ test('recovery must land on exactly one whole state', () => {
   assert.equal(recoveryOutcome('a', 'a', 'b'), 'pre-state');
   assert.equal(recoveryOutcome('b', 'a', 'b'), 'post-state');
   assert.equal(recoveryOutcome('c', 'a', 'b'), null);
+});
+
+// A minimal archive in the layout the app's exporter writes: local headers, then the directory.
+function zipOf(members) {
+  const locals = [];
+  const directory = [];
+  let offset = 0;
+  for (const [name, text, method] of members) {
+    const data = method === 8 ? deflateRawSync(Buffer.from(text)) : Buffer.from(text);
+    const nameBytes = Buffer.from(name);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(method, 8);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt16LE(nameBytes.length, 26);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(method, 10);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt16LE(nameBytes.length, 28);
+    central.writeUInt32LE(offset, 42);
+    locals.push(local, nameBytes, data);
+    directory.push(central, nameBytes);
+    offset += local.length + nameBytes.length + data.length;
+  }
+  const directoryBytes = Buffer.concat(directory);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(members.length, 10);
+  end.writeUInt32LE(directoryBytes.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, directoryBytes, end]);
+}
+
+test('diagnostic archive members are read back whether stored or deflated', () => {
+  const entries = zipEntries(zipOf([['metadata.json', '{"product":"Second Brain"}', 0], ['logs/app.log', 'started\n'.repeat(50), 8]]));
+  assert.deepEqual([...entries.keys()], ['metadata.json', 'logs/app.log']);
+  assert.equal(entries.get('logs/app.log').toString(), 'started\n'.repeat(50));
+  assert.throws(() => zipEntries(Buffer.from('not a zip')), /not a ZIP archive/);
+});
+
+test('diagnostic leak check names each planted value and the member that holds it', () => {
+  const entries = zipEntries(zipOf([
+    ['config.json', '{"openai_api_key":"[redacted]"}', 8],
+    ['logs/app.log', 'saved Projects/Walkthrough capture.md', 8],
+  ]));
+  assert.deepEqual(diagnosticLeaks(entries, { secret: 'sk-planted', path: 'Projects/Walkthrough capture.md' }), [
+    { member: 'logs/app.log', planted: 'path' },
+  ]);
+});
+
+test('walkthrough refuses to start without its installer or Notion workspace', () => {
+  const script = fileURLToPath(new URL('../scripts/alpha-harness.mjs', import.meta.url));
+  const env = { ...process.env, SECOND_BRAIN_NOTION_TOKEN: '', SECOND_BRAIN_NOTION_PAGE: '' };
+  const noInstaller = spawnSync(process.execPath, [script, 'walkthrough'], { encoding: 'utf8', env });
+  assert.equal(noInstaller.status, 1);
+  assert.match(noInstaller.stderr, /--windows-installer/);
+  const noNotion = spawnSync(process.execPath, [script, 'walkthrough', '--windows-installer', 'D:\\setup.exe'], { encoding: 'utf8', env });
+  assert.equal(noNotion.status, 1);
+  assert.match(noNotion.stderr, /SECOND_BRAIN_NOTION_TOKEN/);
 });

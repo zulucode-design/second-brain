@@ -1,7 +1,7 @@
 # Installed-app alpha harness
 
 Issue #137 tracks the unattended installed-package harness required by #88. Gates are built
-and run in matrix order. Gates 1 and 2 are implemented.
+and run in matrix order. Gates 1, 2, and 3 are implemented.
 
 ## Gate 1: interrupted sync recovery
 
@@ -79,6 +79,87 @@ tests in `backup.rs` (#142). Evidence is written to
 Never run two controllers at once. The Windows `recover` step cannot tell a stale lock from a live
 run's, so a second controller would restore the real Windows config under the first.
 
+## Gate 3: installed-package walkthrough
+
+Run from the Fedora 44 desktop session while `sb-windows` is reachable, with Ollama serving
+`embeddinggemma` on the Windows desktop and a disposable Notion page shared with an integration:
+
+```sh
+export SECOND_BRAIN_NOTION_TOKEN=ntn_... SECOND_BRAIN_NOTION_PAGE='<page title>'
+node scripts/alpha-harness.mjs walkthrough --candidate <sha> \
+  --windows-installer 'D:\SecondBrainTest\src\src-tauri\target\release\bundle\nsis\Second Brain_0.1.0-alpha.1_x64-setup.exe' \
+  --fedora-rpm ~/second-brain-candidate/src-tauri/target/release/bundle/rpm/<rpm>
+```
+
+The RPM must already be installed (`sudo rpm -Uvh --replacepkgs <rpm>`). The controller checks it
+with `rpm -V`, `scripts/verify-linux-package.sh`, and the installed desktop entry's `Exec`. It
+installs the NSIS package silently and checks that the Start-menu entry targets the installed
+executable. Each machine then runs the matrix v2 walkthrough through `tauri-driver`, with one
+screenshot per step under `~/sb88/evidence/walkthrough-<run>/`:
+
+1. open a fresh vault showing the four PARA roots and no repair issues;
+2. create a note, edit it, navigate away at once, reopen it, edit it again, and close the window
+   without waiting; both edits must be on disk after the app exits;
+3. keyword search, a semantic search once the index is complete, graph, tasks, trash restore,
+   note history, backup, and restore;
+4. clip `https://en.wikipedia.org/wiki/Zettelkasten` and attach a local file;
+5. publish to the disposable Notion page, then disconnect, which removes the token from the
+   keyring; the controller confirms the page arrived through the Notion API and archives the
+   databases the run created;
+6. export diagnostics and search the archive for a planted credential, a note body marker, a
+   note title and path, and the vault path;
+7. with the embedding backend pointed at a closed port, capture, edit, move, and keyword search;
+8. start with a malformed `config.json`, which must show the startup error, then restore the
+   run's configuration;
+9. on Windows only (#49): with the vault folder renamed, press Ctrl+Alt+N from the desktop
+   session; the app's notification history must gain a new "Quick capture" toast;
+10. exit through the window's close button and check that no app, sidecar, or watchdog is left.
+
+After the last step, the controller uninstalls the Windows package, checks that the executable and
+Start-menu entry are gone while the vault remains, and reinstalls the candidate. The RPM needs root,
+so after the run Nicolas runs `sudo rpm -e second-brain`, then:
+
+```sh
+node scripts/alpha-harness.mjs walkthrough-uninstalled --run <runId>
+```
+
+This appends the Fedora uninstall result to the same trace.
+
+WebDriver cannot answer native dialogs. The diagnostics export calls the button's own
+`export_diagnostics` command with the path the save dialog would return, and the trace says so.
+The file attachment goes to the editor's hidden file input through a `DataTransfer`, as the picker
+would deliver it. WebKitWebDriver rejects key input, so Fedora types through
+`document.execCommand('insertText')`; Windows uses real WebDriver key actions.
+
+Before every step the Windows desktop must be unlocked; LogonUI.exe running in the desktop session
+means it is locked. Fedora's GNOME lock state is recorded, not required, because WebKitGTK keeps
+running under the lock screen. The Windows keep-awake request comes from the SSH session, and
+Windows ignores a display request from there, so the per-step check is what proves the desktop
+stayed unlocked.
+
+The evidence trace is `docs/reports/evidence/alpha-harness-walkthrough-<timestamp>.jsonl`.
+
+## Running a gate from GitHub Actions
+
+`.github/workflows/alpha-harness.yml` runs one gate by `workflow_dispatch` from `main`. Its
+first job refuses a candidate unless the hosted `verify` and `windows-rust` checks passed on that
+commit. The second job runs on a self-hosted runner labelled `second-brain-alpha` and uses the
+`alpha-harness` environment, which holds the Notion secrets `SECOND_BRAIN_NOTION_TOKEN` and
+`SECOND_BRAIN_NOTION_PAGE`.
+
+The repository is public, so no runner stays registered. Before a dispatch, register one from a
+terminal in the Fedora desktop session, with a registration token from the repository's
+Actions > Runners page:
+
+```sh
+./config.sh --url https://github.com/zulucode-design/second-brain --token <token> \
+  --labels second-brain-alpha --ephemeral --unattended
+./run.sh
+```
+
+`--ephemeral` makes it take exactly one job and deregister. Starting it from the desktop terminal
+gives tauri-driver the session's display and D-Bus, which a system service would not have.
+
 ## Keeping both machines awake
 
 Run `20260921T023725Z` failed when Windows slept seven minutes in (Kernel-Power 42 at
@@ -113,9 +194,8 @@ names at the single point where it writes them.
 
 Windows launch uses the harness-owned `SecondBrainAlphaHarness` scheduled task with interactive
 logon and the exact installed executable under `D:\SecondBrainTest`. The task supplies desktop
-session placement only. Gate 3 must additionally keep or transfer an unlocked console session
-before WebDriver is introduced.
+session placement only. Key presses and full-desktop screenshots come from
+`scripts/windows/alpha-desktop.ps1`, which runs in the same session through a short-lived
+`SecondBrainAlphaHarnessDesktop` task.
 
 Gate 1 passed unattended on candidate `4ea6b9e` (run `20260921T114623Z`), so Gate 2 may start.
-`scripts/verify-linux-package.sh` and the unlocked-session check belong to Gate 3, where the
-walkthrough exercises the installed package's desktop entry and window.

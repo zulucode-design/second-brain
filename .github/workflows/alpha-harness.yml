@@ -1,0 +1,95 @@
+name: Alpha harness
+
+# Runs one #137 harness gate against the installed candidate packages on the two target machines.
+#
+# The self-hosted runner is registered with `--ephemeral` and started by hand from the Fedora
+# desktop session just before a dispatch. It takes this one job and deregisters, so no
+# long-lived runner on this public repository can pick up a fork's pull request. Starting it
+# from the desktop also gives tauri-driver the session's display and D-Bus. See
+# docs/alpha-harness.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      gate:
+        description: Harness gate
+        type: choice
+        options: [sync, restore, walkthrough]
+        required: true
+      candidate:
+        description: Commit both installed packages were built from
+        required: true
+      windows_installer:
+        description: Candidate NSIS setup on the Windows machine (walkthrough only)
+        default: D:\SecondBrainTest\src\src-tauri\target\release\bundle\nsis\Second Brain_0.1.0-alpha.1_x64-setup.exe
+      fedora_rpm:
+        description: Installed candidate RPM on the Fedora machine (walkthrough only)
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  # Two controllers at once can restore the real Windows config under a live run.
+  group: alpha-harness
+  cancel-in-progress: false
+
+jobs:
+  candidate-verified:
+    runs-on: ubuntu-22.04
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      # The harness runs only on a candidate whose hosted Verify checks already passed.
+      - name: Require passing Verify checks on the candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ inputs.candidate }}
+        run: |
+          runs="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${CANDIDATE}/check-runs" --paginate \
+            --jq '.check_runs[] | select(.name == "verify" or .name == "windows-rust") | "\(.name)=\(.conclusion)"')"
+          echo "$runs"
+          grep -qx 'verify=success' <<<"$runs"
+          grep -qx 'windows-rust=success' <<<"$runs"
+
+  harness:
+    needs: candidate-verified
+    runs-on: [self-hosted, linux, x64, second-brain-alpha]
+    # The environment holds the disposable Notion credentials and can require approval.
+    environment: alpha-harness
+    timeout-minutes: 240
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          # The drift check compares the candidate commit with the harness commit.
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run harness gate
+        env:
+          GATE: ${{ inputs.gate }}
+          CANDIDATE: ${{ inputs.candidate }}
+          WINDOWS_INSTALLER: ${{ inputs.windows_installer }}
+          FEDORA_RPM: ${{ inputs.fedora_rpm }}
+          SECOND_BRAIN_NOTION_TOKEN: ${{ secrets.SECOND_BRAIN_NOTION_TOKEN }}
+          SECOND_BRAIN_NOTION_PAGE: ${{ secrets.SECOND_BRAIN_NOTION_PAGE }}
+        run: |
+          args=("$GATE" --candidate "$CANDIDATE")
+          if [[ "$GATE" == walkthrough ]]; then
+            args+=(--windows-installer "$WINDOWS_INSTALLER")
+            if [[ -n "$FEDORA_RPM" ]]; then args+=(--fedora-rpm "$FEDORA_RPM"); fi
+          fi
+          node scripts/alpha-harness.mjs "${args[@]}"
+
+      - name: Keep the public evidence trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha-harness-${{ inputs.gate }}-evidence
+          path: docs/reports/evidence/alpha-harness-*.jsonl
+          if-no-files-found: warn
