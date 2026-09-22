@@ -6,7 +6,7 @@ use rusqlite::{params, Connection, ErrorCode};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -139,6 +139,7 @@ pub struct SemanticIndex {
     backend: Arc<dyn EmbeddingBackend>,
     wake_worker: OnceLock<Sender<()>>,
     embedding_outage_reported: AtomicBool,
+    last_reported_unreadable: AtomicUsize,
     profile: String,
 }
 
@@ -186,6 +187,7 @@ impl SemanticIndex {
             backend,
             wake_worker: OnceLock::new(),
             embedding_outage_reported: AtomicBool::new(false),
+            last_reported_unreadable: AtomicUsize::new(0),
             profile: profile.to_string(),
         })
     }
@@ -335,28 +337,33 @@ fn path_with_suffix(path: &Path, suffix: &str) -> std::path::PathBuf {
 
 impl SemanticIndex {
     pub fn note_changed(&self, path: &Path) -> Result<(), String> {
-        self.refresh_pending_note(path)?;
+        let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+        self.queue_text(path, &raw)
+    }
+
+    /// Queue a note from text already read, and wake the worker to embed it.
+    fn queue_text(&self, path: &Path, raw: &str) -> Result<(), String> {
+        self.refresh_pending_text(path, raw)?;
         if let Some(wake) = self.wake_worker.get() {
             let _ = wake.send(());
         }
         Ok(())
     }
 
-    /// Refresh one durable pending row without waking the background worker.
-    fn refresh_pending_note(&self, path: &Path) -> Result<(), String> {
-        let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    /// Refresh one durable pending row, without waking the background worker.
+    fn refresh_pending_text(&self, path: &Path, raw: &str) -> Result<(), String> {
         let filename = path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("");
-        let (meta, _) = crate::vault::frontmatter::parse_note(&raw, filename);
+        let (meta, _) = crate::vault::frontmatter::parse_note(raw, filename);
         let path_text = path.to_string_lossy().to_string();
         let note_key = if meta.id.trim().is_empty() {
             format!("path:{path_text}")
         } else {
             format!("id:{}", meta.id)
         };
-        let raw_hash = content_hash(&raw);
+        let raw_hash = content_hash(raw);
         let database = self.database.lock().map_err(|error| error.to_string())?;
         database
             .execute(
@@ -390,22 +397,22 @@ impl SemanticIndex {
         Ok(())
     }
 
-    /// Embed one queued path. `Ok(false)` means inference is unavailable and the item was
-    /// deliberately left in the durable queue; local storage failures remain real errors.
-    fn embed_pending_path(&self, path: &Path) -> Result<bool, String> {
-        let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    /// Embed one queued note from its text. `Ok(false)` means inference is unavailable and
+    /// the item was deliberately left in the durable queue; local storage failures remain real
+    /// errors.
+    fn embed_pending_text(&self, path: &Path, raw: &str) -> Result<bool, String> {
         let filename = path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("");
-        let (meta, body) = crate::vault::frontmatter::parse_note(&raw, filename);
+        let (meta, body) = crate::vault::frontmatter::parse_note(raw, filename);
         let path_text = path.to_string_lossy().to_string();
         let note_key = if meta.id.trim().is_empty() {
             format!("path:{path_text}")
         } else {
             format!("id:{}", meta.id)
         };
-        let raw_hash = content_hash(&raw);
+        let raw_hash = content_hash(raw);
         let chunks = chunks_for(&meta.title, &body);
         let inputs: Vec<String> = chunks.iter().map(|chunk| chunk.input.clone()).collect();
         let embeddings = match self.backend.embed(&inputs) {
@@ -582,16 +589,7 @@ impl SemanticIndex {
     }
 
     pub fn rebuild_from_notes(&self, vault: &Path) -> Result<(), String> {
-        let paths: Vec<std::path::PathBuf> = WalkDir::new(vault)
-            .into_iter()
-            .filter_entry(|entry| !crate::search::is_ignored_by_index(entry.path(), vault))
-            .filter_map(Result::ok)
-            .filter(|entry| {
-                entry.file_type().is_file()
-                    && entry.path().extension().and_then(|value| value.to_str()) == Some("md")
-            })
-            .map(|entry| entry.into_path())
-            .collect();
+        let paths = note_paths(vault);
         {
             let mut database = self.database.lock().map_err(|error| error.to_string())?;
             let transaction = database.transaction().map_err(|error| error.to_string())?;
@@ -610,6 +608,13 @@ impl SemanticIndex {
     }
 
     pub fn reconcile_from_notes(&self, vault: &Path) -> Result<(), String> {
+        // Collected before any per-note work: a lazy walk keeps its directory handles open
+        // for the whole pass, and on Windows an open handle under a folder stops a restore
+        // from moving that folder (#144).
+        self.reconcile_paths(&note_paths(vault))
+    }
+
+    fn reconcile_paths(&self, paths: &[std::path::PathBuf]) -> Result<(), String> {
         let recorded: HashMap<String, (String, String)> = {
             let database = self.database.lock().map_err(|error| error.to_string())?;
             let mut statement = database
@@ -637,26 +642,33 @@ impl SemanticIndex {
         };
 
         let mut seen = std::collections::HashSet::new();
-        for entry in WalkDir::new(vault)
-            .into_iter()
-            .filter_entry(|entry| !crate::search::is_ignored_by_index(entry.path(), vault))
-            .filter_map(Result::ok)
-            .filter(|entry| {
-                entry.file_type().is_file()
-                    && entry.path().extension().and_then(|value| value.to_str()) == Some("md")
-            })
-        {
-            let path = entry.path();
+        let mut unreadable = 0;
+        for path in paths {
             let path_text = path.to_string_lossy().to_string();
-            let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+            let raw = match std::fs::read_to_string(path) {
+                Ok(raw) => raw,
+                // Moved away since the walk (a restore in progress), locked, or not UTF-8: keep
+                // what the index has for it, since a restore that rolls back puts it back, and
+                // let the rest of the pass run. A later reconcile drops a note that is really
+                // gone; one that stays unreadable keeps its old entry until it can be read.
+                Err(_) => {
+                    unreadable += 1;
+                    seen.insert(path_text);
+                    continue;
+                }
+            };
             let current = content_hash(&raw);
             seen.insert(path_text.clone());
             if recorded.get(&path_text) != Some(&(current, self.profile.clone())) {
-                self.note_changed(path)?;
+                // Reuse the text read above; a second read fails if the note vanished between.
+                self.queue_text(path, &raw)?;
             }
         }
         for path in recorded.keys().filter(|path| !seen.contains(*path)) {
             self.note_removed(Path::new(path))?;
+        }
+        if unreadable > 0 {
+            log::warn!("Semantic reconcile skipped unreadable notes: {unreadable}");
         }
         Ok(())
     }
@@ -692,16 +704,40 @@ impl SemanticIndex {
             rows.collect::<Result<Vec<_>, _>>()
                 .map_err(|error| error.to_string())?
         };
+        let mut unreadable = 0;
         for path in paths {
             let path = std::path::PathBuf::from(path);
-            if path.is_file() {
-                self.refresh_pending_note(&path)?;
-                if !self.embed_pending_path(&path)? {
-                    return Ok(RetryOutcome::BackendUnavailable);
+            // One read serves both steps, so a note removed mid-retry is caught here instead of
+            // failing a later read (#144).
+            let raw = match std::fs::read_to_string(&path) {
+                Ok(raw) => raw,
+                // Gone, or no longer a file: dropped from the queue and the index. If it comes
+                // back (a restore that rolled back), the next reconcile queues it again.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound || !path.is_file() => {
+                    self.note_removed(&path)?;
+                    continue;
                 }
-            } else {
-                self.note_removed(&path)?;
+                // Still a file but unreadable: it stays queued for the next retry instead of
+                // holding up every note queued behind it.
+                Err(_) => {
+                    unreadable += 1;
+                    continue;
+                }
+            };
+            self.refresh_pending_text(&path, &raw)?;
+            if !self.embed_pending_text(&path, &raw)? {
+                return Ok(RetryOutcome::BackendUnavailable);
             }
+        }
+        // The worker retries every 20 s; the count is reported when it changes, not on every
+        // tick.
+        if self
+            .last_reported_unreadable
+            .swap(unreadable, Ordering::SeqCst)
+            != unreadable
+            && unreadable > 0
+        {
+            log::warn!("Semantic retry left unreadable notes queued: {unreadable}");
         }
         Ok(RetryOutcome::QueueProcessed)
     }
@@ -794,6 +830,21 @@ fn chunks_for(title: &str, body: &str) -> Vec<NoteChunk> {
         start = end - CHUNK_OVERLAP;
     }
     chunks
+}
+
+/// Every note the semantic index covers, collected eagerly so no directory handle outlives
+/// the walk.
+fn note_paths(vault: &Path) -> Vec<std::path::PathBuf> {
+    WalkDir::new(vault)
+        .into_iter()
+        .filter_entry(|entry| !crate::search::is_ignored_by_index(entry.path(), vault))
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry.file_type().is_file()
+                && entry.path().extension().and_then(|value| value.to_str()) == Some("md")
+        })
+        .map(|entry| entry.into_path())
+        .collect()
 }
 
 fn content_hash(raw: &str) -> String {
@@ -1599,6 +1650,106 @@ mod tests {
         index.retry_pending().unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 3);
         assert_eq!(index.status().unwrap().indexed_notes, 2);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_note_that_vanishes_mid_pass_keeps_its_entry_until_the_next_reconcile() {
+        let root = scratch("reconcile-vanished");
+        let areas = root.join("Areas");
+        std::fs::create_dir_all(&areas).unwrap();
+        let kept = areas.join("Kept.md");
+        let moved = areas.join("Moved.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "taxes");
+        write_note(&moved, "moved-id", "Moved", "Areas", "taxes");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let index = SemanticIndex::open_at(
+            &root.join("semantic.sqlite3"),
+            Arc::new(CountingBackend {
+                calls: calls.clone(),
+            }),
+        )
+        .unwrap();
+        index.note_changed(&kept).unwrap();
+        index.note_changed(&moved).unwrap();
+        index.retry_pending().unwrap();
+
+        // A restore moves the note away after the walk listed it (#144). The restore may
+        // still roll back, so this pass keeps the entry; the next one, which walks again,
+        // drops it.
+        let paths = super::note_paths(&root);
+        std::fs::remove_file(&moved).unwrap();
+        index.reconcile_paths(&paths).unwrap();
+        assert_eq!(index.status().unwrap().indexed_notes, 2);
+
+        index.reconcile_from_notes(&root).unwrap();
+        assert_eq!(index.status().unwrap().indexed_notes, 1);
+        assert_eq!(index.status().unwrap().queued_notes, 0);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn an_unreadable_note_neither_stops_reconciliation_nor_leaves_the_index() {
+        let root = scratch("reconcile-unreadable");
+        let areas = root.join("Areas");
+        std::fs::create_dir_all(&areas).unwrap();
+        let broken = areas.join("Broken.md");
+        let later = areas.join("Later.md");
+        write_note(&broken, "broken-id", "Broken", "Areas", "taxes");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let index = SemanticIndex::open_at(
+            &root.join("semantic.sqlite3"),
+            Arc::new(CountingBackend {
+                calls: calls.clone(),
+            }),
+        )
+        .unwrap();
+        index.note_changed(&broken).unwrap();
+        index.retry_pending().unwrap();
+
+        std::fs::write(&broken, [0xff, 0xfe, 0xfd]).unwrap();
+        write_note(&later, "later-id", "Later", "Areas", "coffee");
+        index.reconcile_from_notes(&root).unwrap();
+
+        // The unreadable note keeps its entry, and the note after it is still queued.
+        assert_eq!(index.status().unwrap().indexed_notes, 1);
+        assert_eq!(index.status().unwrap().queued_notes, 1);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn an_unreadable_queued_note_does_not_hold_up_the_rest_of_the_queue() {
+        let root = scratch("retry-unreadable");
+        let areas = root.join("Areas");
+        std::fs::create_dir_all(&areas).unwrap();
+        let broken = areas.join("Broken.md");
+        let behind = areas.join("Behind.md");
+        write_note(&broken, "broken-id", "Broken", "Areas", "taxes");
+        write_note(&behind, "behind-id", "Behind", "Areas", "coffee");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let index = SemanticIndex::open_at(
+            &root.join("semantic.sqlite3"),
+            Arc::new(CountingBackend {
+                calls: calls.clone(),
+            }),
+        )
+        .unwrap();
+        index.note_changed(&broken).unwrap();
+        index.note_changed(&behind).unwrap();
+        std::fs::write(&broken, [0xff, 0xfe, 0xfd]).unwrap();
+
+        index.retry_pending().unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(index.status().unwrap().indexed_notes, 1);
+        assert_eq!(
+            index.status().unwrap().queued_notes,
+            1,
+            "the unreadable note stays queued"
+        );
         drop(index);
         cleanup(root);
     }
