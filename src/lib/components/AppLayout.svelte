@@ -79,7 +79,7 @@
 	import { openNoteWindow, closeSecondaryWindowsForVaultSwitch } from '$lib/utils/window';
 	import { normalizeStartupView, resolveStartupTarget } from '$lib/utils/startup-view';
 	import { NAVIGATE_NOTE_EVENT, type NavigateNoteRequest, type NoteNavigationResult } from '$lib/utils/navigation';
-	import { relocateDocument, runSaveGatedAction } from '$lib/utils/document-lifecycle';
+	import { relocateReported, reportSaveFailure, runSaveGatedAction } from '$lib/utils/document-lifecycle';
 	import { GenerationGate } from '$lib/utils/generation-gate';
 	import { runActiveDocumentMutation } from '$lib/utils/document-mutation';
 	import { describeLoadFailure } from '$lib/utils/async-view-state';
@@ -269,10 +269,7 @@
 	let navigationQueue: Promise<void> = Promise.resolve();
 
 	async function reportSaveResult(reason: string, result: Awaited<ReturnType<Editor['flushSave']>> | undefined): Promise<boolean> {
-		if (!result || result.ok) return true;
-		console.error(`Save failed before ${reason}:`, result.error);
-		window.alert(`Could not save the current note. ${reason} was cancelled so your edits remain open.\n\n${String(result.error)}`);
-		return false;
+		return reportSaveFailure(reason, result);
 	}
 
 	async function ensureCurrentNoteSaved(reason: string): Promise<boolean> {
@@ -334,26 +331,20 @@
 		if ($shutdownPending) return null;
 		const run = navigationQueue.then(async (): Promise<string | null> => {
 			if ($shutdownPending || !editor) return null;
-			try {
-				return await relocateDocument({
-					expectedPath,
-					currentPath: () => $activeNotePath,
-					prepare: () => editor!.lockMutations(),
-					flush: async () => {
-						const result = await editor!.flushSave();
-						await reportSaveResult(reason, result);
-						return result;
-					},
-					mutate: mutation,
-					rebase: (oldPath, newPath, content) => editor!.rebaseDocument(oldPath, newPath, content),
-				});
-			} catch (error) {
-				// A packaged build has no console, and a rename or move that half-happened must
-				// not look like it did nothing.
-				console.error(`${reason} failed:`, error);
-				showToast(`${reason} failed: ${String(error)}`);
-				return null;
-			}
+			return relocateReported({
+				expectedPath,
+				reason,
+				report: showToast,
+				currentPath: () => $activeNotePath,
+				prepare: () => editor!.lockMutations(),
+				flush: async () => {
+					const result = await editor!.flushSave();
+					await reportSaveResult(reason, result);
+					return result;
+				},
+				mutate: mutation,
+				rebase: (oldPath, newPath, content) => editor!.rebaseDocument(oldPath, newPath, content),
+			});
 		});
 		navigationQueue = run.then(() => {}, () => {});
 		return run;

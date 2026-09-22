@@ -48,7 +48,7 @@
 	import { debounce } from '$lib/utils/debounce';
 	import { SaveCoordinator, type SaveResult } from '$lib/utils/save-coordinator';
 	import { EditorMutationBarrier, type EditorDocumentIdentity } from '$lib/utils/editor-mutation-barrier';
-	import { relocateDocument } from '$lib/utils/document-lifecycle';
+	import { relocateReported, reportSaveFailure } from '$lib/utils/document-lifecycle';
 	import { showToast } from '$lib/utils/toast';
 	import { NOTE_SAVED_EVENT, type NoteNavigationResult } from '$lib/utils/navigation';
 	import { encryptSecretText, decryptSecretText, readSecretTitle } from '$lib/utils/secrets';
@@ -3134,26 +3134,23 @@
 		return mutationBarrier.lockAndDrain();
 	}
 
-	// Secondary note windows have no navigation queue; the main window passes its queued version.
-	async function relocateHere(path: string, reason: string, mutation: () => Promise<RelocationOutcome>): Promise<string | null> {
-		try {
-			return await relocateDocument({
-				expectedPath: path,
-				currentPath: () => $activeNotePath,
-				prepare: lockMutations,
-				flush: async () => {
-					const result = await flushSave();
-					if (!result.ok) showToast(`${reason} was cancelled: the note could not be saved. ${String(result.error)}`);
-					return result;
-				},
-				mutate: mutation,
-				rebase: rebaseDocument,
-			});
-		} catch (error) {
-			console.error(`${reason} failed:`, error);
-			showToast(`${reason} failed: ${String(error)}`);
-			return null;
-		}
+	// The main window passes its navigation-queued relocation; secondary note windows have no
+	// queue and relocate directly.
+	function relocateUnqueued(path: string, reason: string, mutation: () => Promise<RelocationOutcome>): Promise<string | null> {
+		return relocateReported({
+			expectedPath: path,
+			reason,
+			report: showToast,
+			currentPath: () => $activeNotePath,
+			prepare: lockMutations,
+			flush: async () => {
+				const result = await flushSave();
+				reportSaveFailure(reason, result);
+				return result;
+			},
+			mutate: mutation,
+			rebase: rebaseDocument,
+		});
 	}
 
 	export function rebaseDocument(expectedPath: string, newPath: string, content: NoteContent): void {
@@ -6119,9 +6116,10 @@
 							if (stem !== newTitle) {
 								const oldTitle = $activeNote.meta.title;
 								// The shared relocation path saves the body first (the backend uses the
-								// title on disk to update incoming wiki-links) and runs in the navigation
-								// queue, so opening another note cannot interleave with the rename (#149).
-								const newPath = await (onRelocateActiveDocument ?? relocateHere)(oldPath, 'Renaming the note', () => renameNote(oldPath, newTitle));
+								// title on disk to update incoming wiki-links). In the main window it runs
+								// in the navigation queue, so opening another note cannot interleave with
+								// the rename (#149).
+								const newPath = await (onRelocateActiveDocument ?? relocateUnqueued)(oldPath, 'Renaming the note', () => renameNote(oldPath, newTitle));
 								if (!newPath) {
 									if ($activeNotePath === oldPath) {
 										(e.target as HTMLInputElement).value = oldTitle;
