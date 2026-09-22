@@ -43,11 +43,13 @@
 	import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, readOnly, shutdownPending, holdingPreview, quickAccessPaths, notes, canGoBack, canGoForward, viewerNote, viewMode, notebooks, outlineWidth, aiStatus, aiUsable } from '$lib/stores/app';
 	import { saveNote, saveImage, saveAttachment, readClipboardImage, addQuickAccess, removeQuickAccess, getQuickAccess, getNoteVersions, getNoteVersionContent, createVersion, aiAsk, getAllNoteTitles, readNote, renameNote } from '$lib/api';
-	import type { VersionEntry, AiStreamEvent, NoteTitleEntry, TaskItem as TaskRecord, NoteMeta, NoteContent } from '$lib/types';
+	import type { VersionEntry, AiStreamEvent, NoteTitleEntry, TaskItem as TaskRecord, NoteMeta, NoteContent, RelocationOutcome } from '$lib/types';
 	import { listen } from '@tauri-apps/api/event';
 	import { debounce } from '$lib/utils/debounce';
 	import { SaveCoordinator, type SaveResult } from '$lib/utils/save-coordinator';
 	import { EditorMutationBarrier, type EditorDocumentIdentity } from '$lib/utils/editor-mutation-barrier';
+	import { relocateReported, reportSaveFailure } from '$lib/utils/document-lifecycle';
+	import { showToast } from '$lib/utils/toast';
 	import { NOTE_SAVED_EVENT, type NoteNavigationResult } from '$lib/utils/navigation';
 	import { encryptSecretText, decryptSecretText, readSecretTitle } from '$lib/utils/secrets';
 	import { WrapSelectedText } from '$lib/editor/extensions/wrapSelectedText';
@@ -72,12 +74,14 @@
 		onNavigateNote = async (_path: string) => false,
 		onNavigateWikiNote = async (_path: string): Promise<NoteNavigationResult> => 'blocked',
 		onNavigateHistory = async (_direction: -1 | 1) => false,
+		onRelocateActiveDocument,
 	}: {
 		onMoveToTrash?: (path: string) => Promise<boolean>;
 		onRequestCreateLinkedNote?: (title: string) => void;
 		onNavigateNote?: (path: string) => Promise<boolean>;
 		onNavigateWikiNote?: (path: string) => Promise<NoteNavigationResult>;
 		onNavigateHistory?: (direction: -1 | 1) => Promise<boolean>;
+		onRelocateActiveDocument?: (path: string, reason: string, mutation: () => Promise<RelocationOutcome>) => Promise<string | null>;
 	} = $props();
 
 	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
@@ -3100,7 +3104,9 @@
 		capture: captureSaveSnapshot,
 		persist: async ({ path, meta, body, expectedRevision }) => {
 			const outcome = await saveNote(path, meta, body, expectedRevision);
-			loadedRevision = outcome.revision;
+			// A save addressed to the path a rename just left must not replace the renamed
+			// file's revision.
+			if (path === loadedPath) loadedRevision = outcome.revision;
 			const entry = outcome.entry;
 			if (entry) notes.update((list) => list.map((n) => (n.path === entry.path ? entry : n)));
 			window.dispatchEvent(new CustomEvent(NOTE_SAVED_EVENT, { detail: { path, hasTasks: /^\s*[-*] \[[ xX]\]/m.test(body) } }));
@@ -3126,6 +3132,25 @@
 
 	export async function lockMutations(): Promise<() => void> {
 		return mutationBarrier.lockAndDrain();
+	}
+
+	// The main window passes its navigation-queued relocation; secondary note windows have no
+	// queue and relocate directly.
+	function relocateUnqueued(path: string, reason: string, mutation: () => Promise<RelocationOutcome>): Promise<string | null> {
+		return relocateReported({
+			expectedPath: path,
+			reason,
+			report: showToast,
+			currentPath: () => $activeNotePath,
+			prepare: lockMutations,
+			flush: async () => {
+				const result = await flushSave();
+				reportSaveFailure(reason, result);
+				return result;
+			},
+			mutate: mutation,
+			rebase: rebaseDocument,
+		});
 	}
 
 	export function rebaseDocument(expectedPath: string, newPath: string, content: NoteContent): void {
@@ -6090,35 +6115,26 @@
 							const stem = filename.replace(/\.md$/, '');
 							if (stem !== newTitle) {
 								const oldTitle = $activeNote.meta.title;
-								let releaseMutations: (() => void) | null = null;
-								try {
-									releaseMutations = await lockMutations();
-									// Save the body before changing metadata. The backend uses the
-									// title currently on disk to update incoming wiki-links.
-									if (!(await forceSave())) {
+								// The shared relocation path saves the body first (the backend uses the
+								// title on disk to update incoming wiki-links). In the main window it runs
+								// in the navigation queue, so opening another note cannot interleave with
+								// the rename (#149).
+								const newPath = await (onRelocateActiveDocument ?? relocateUnqueued)(oldPath, 'Renaming the note', () => renameNote(oldPath, newTitle));
+								if (!newPath) {
+									if ($activeNotePath === oldPath) {
 										(e.target as HTMLInputElement).value = oldTitle;
-										return;
+										if (titleWasStripped) strippedTitle = oldTitle;
 									}
-									const outcome = await renameNote(oldPath, newTitle);
-									if (!outcome.note) throw new Error('Rename committed without authoritative note content.');
-									const newPath = outcome.path;
-									rebaseDocument(oldPath, newPath, outcome.note);
-									if (titleWasStripped) strippedTitle = newTitle;
-									notes.update(list => list.map(n =>
-										n.path === oldPath
-											? { ...n, path: newPath, relative_path: n.relative_path.replace(/[^/]+$/, newTitle + '.md'), meta: { ...n.meta, title: newTitle } }
-											: n
-									));
-									// Refresh wiki-link titles cache so links resolve to renamed note
-									refreshWikiLinkTitles();
-								} catch (err) {
-									console.error('Failed to rename note file:', err);
-									if ($activeNotePath === oldPath && $activeNote) $activeNote.meta.title = oldTitle;
-									(e.target as HTMLInputElement).value = oldTitle;
-									if (titleWasStripped) strippedTitle = oldTitle;
-								} finally {
-									releaseMutations?.();
+									return;
 								}
+								if (titleWasStripped) strippedTitle = newTitle;
+								notes.update(list => list.map(n =>
+									n.path === oldPath
+										? { ...n, path: newPath, relative_path: n.relative_path.replace(/[^/]+$/, newTitle + '.md'), meta: { ...n.meta, title: newTitle } }
+										: n
+								));
+								// Refresh wiki-link titles cache so links resolve to renamed note
+								refreshWikiLinkTitles();
 							} else {
 								$activeNote.meta.title = newTitle;
 								if (titleWasStripped) strippedTitle = newTitle;

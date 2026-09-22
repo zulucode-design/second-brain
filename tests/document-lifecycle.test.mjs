@@ -197,3 +197,34 @@ test('active task mutation holds its lock and cannot replace a navigation winner
   assert.equal(commits, 0);
   assert.equal(released, true);
 });
+
+test('a reported relocation tells the user when another note opened first or the mutation failed', async () => {
+  const { relocateReported: relocate } = await importTypeScript('../src/lib/utils/document-lifecycle.ts');
+  const base = {
+    expectedPath: '/vault/one.md',
+    reason: 'Renaming the note',
+    prepare: async () => () => {},
+    flush: async () => clean,
+    rebase: () => {},
+  };
+  const reports = [];
+  const report = (message) => reports.push(message);
+  const errors = console.error;
+  console.error = () => {};
+  try {
+    assert.equal(await relocate({ ...base, report, currentPath: () => '/vault/other.md', mutate: async () => { throw new Error('must not run'); } }), null);
+    assert.equal(await relocate({
+      ...base, report, currentPath: () => '/vault/one.md', mutate: async () => { throw new Error('name taken'); },
+    }), null);
+    const moved = await relocate({
+      ...base, report, currentPath: () => '/vault/one.md', mutate: async () => ({ path: '/vault/two.md', note: { revision: 'r' }, warnings: [] }),
+    });
+    assert.equal(moved, '/vault/two.md');
+  } finally {
+    console.error = errors;
+  }
+  assert.deepEqual(reports, [
+    'Renaming the note was not applied: another note opened first.',
+    'Renaming the note failed: Error: name taken',
+  ]);
+});

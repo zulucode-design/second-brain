@@ -39,6 +39,8 @@ export class SaveCoordinator<T extends SaveSnapshotBase> {
 	private drainPromise: Promise<SaveResult> | null = null;
 	private documentPath: string | null = null;
 	private documentVersion = 0;
+	// Advances whenever setDocument resets the document, but not when a rebase moves it.
+	private documentLineage = 0;
 	private revision = 0;
 	private persistedRevision = 0;
 
@@ -53,6 +55,7 @@ export class SaveCoordinator<T extends SaveSnapshotBase> {
 		this.cancelDebounce();
 		this.documentPath = path;
 		this.documentVersion += 1;
+		this.documentLineage += 1;
 		this.revision = 0;
 		this.persistedRevision = 0;
 		this.options.onDirtyChange(false);
@@ -62,10 +65,13 @@ export class SaveCoordinator<T extends SaveSnapshotBase> {
 		if (this.documentPath !== expectedPath) {
 			throw new Error(`Save invariant failed: expected active document ${expectedPath}, coordinator owns ${this.documentPath ?? 'none'}.`);
 		}
-		if (this.isDirty() || this.drainPromise) {
-			throw new Error('Save invariant failed: cannot rebase a document with pending revisions.');
-		}
-		this.setDocument(newPath, true);
+		// Edits made while the rename or move was in flight belong to the same note, so they
+		// move with it (#149). The version bump keeps an in-flight old-path save from being
+		// credited, and drain() retries its revision at the new path.
+		this.cancelDebounce();
+		this.documentPath = newPath;
+		this.documentVersion += 1;
+		if (this.isDirty()) this.schedule();
 	}
 
 	markDirty(): number {
@@ -116,6 +122,7 @@ export class SaveCoordinator<T extends SaveSnapshotBase> {
 	private async drain(): Promise<SaveResult> {
 		while (this.isDirty()) {
 			const requestedDocumentVersion = this.documentVersion;
+			const requestedLineage = this.documentLineage;
 			const requestedRevision = this.revision;
 			try {
 				await this.options.prepare?.();
@@ -164,11 +171,19 @@ export class SaveCoordinator<T extends SaveSnapshotBase> {
 					throw new Error(`Save invariant failed: persisted ${snapshot.path}, coordinator owns ${this.documentPath ?? 'none'}.`);
 				}
 
-				// A deliberate document replacement happened while persistence was in flight.
-				// Its own revisions, if any, are drained next without clearing them here.
+				// The document was replaced or rebased while persistence was in flight. Its
+				// revisions, including one a rebase carried over, are drained next without
+				// clearing them here.
 				if (this.isDirty()) continue;
 				return { ok: true, status: 'saved', revision: snapshot.revision };
 			} catch (error) {
+				// A save addressed to a document that was since rebased is not this document's
+				// failure; drain the carried revision at the current path instead.
+				if (
+					requestedLineage === this.documentLineage
+					&& requestedDocumentVersion !== this.documentVersion
+					&& this.isDirty()
+				) continue;
 				this.options.onDirtyChange(this.isDirty());
 				return { ok: false, status: 'failed', revision: this.revision, error };
 			}

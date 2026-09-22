@@ -79,7 +79,7 @@
 	import { openNoteWindow, closeSecondaryWindowsForVaultSwitch } from '$lib/utils/window';
 	import { normalizeStartupView, resolveStartupTarget } from '$lib/utils/startup-view';
 	import { NAVIGATE_NOTE_EVENT, type NavigateNoteRequest, type NoteNavigationResult } from '$lib/utils/navigation';
-	import { relocateDocument, runSaveGatedAction } from '$lib/utils/document-lifecycle';
+	import { relocateReported, reportSaveFailure as reportSaveResult, runSaveGatedAction } from '$lib/utils/document-lifecycle';
 	import { GenerationGate } from '$lib/utils/generation-gate';
 	import { runActiveDocumentMutation } from '$lib/utils/document-mutation';
 	import { describeLoadFailure } from '$lib/utils/async-view-state';
@@ -268,13 +268,6 @@
 
 	let navigationQueue: Promise<void> = Promise.resolve();
 
-	async function reportSaveResult(reason: string, result: Awaited<ReturnType<Editor['flushSave']>> | undefined): Promise<boolean> {
-		if (!result || result.ok) return true;
-		console.error(`Save failed before ${reason}:`, result.error);
-		window.alert(`Could not save the current note. ${reason} was cancelled so your edits remain open.\n\n${String(result.error)}`);
-		return false;
-	}
-
 	async function ensureCurrentNoteSaved(reason: string): Promise<boolean> {
 		let release: (() => void) | null = null;
 		try {
@@ -334,23 +327,20 @@
 		if ($shutdownPending) return null;
 		const run = navigationQueue.then(async (): Promise<string | null> => {
 			if ($shutdownPending || !editor) return null;
-			try {
-				return await relocateDocument({
-					expectedPath,
-					currentPath: () => $activeNotePath,
-					prepare: () => editor!.lockMutations(),
-					flush: async () => {
-						const result = await editor!.flushSave();
-						await reportSaveResult(reason, result);
-						return result;
-					},
-					mutate: mutation,
-					rebase: (oldPath, newPath, content) => editor!.rebaseDocument(oldPath, newPath, content),
-				});
-			} catch (error) {
-				console.error(`${reason} failed:`, error);
-				return null;
-			}
+			return relocateReported({
+				expectedPath,
+				reason,
+				report: showToast,
+				currentPath: () => $activeNotePath,
+				prepare: () => editor!.lockMutations(),
+				flush: async () => {
+					const result = await editor!.flushSave();
+					await reportSaveResult(reason, result);
+					return result;
+				},
+				mutate: mutation,
+				rebase: (oldPath, newPath, content) => editor!.rebaseDocument(oldPath, newPath, content),
+			});
 		});
 		navigationQueue = run.then(() => {}, () => {});
 		return run;
@@ -1536,7 +1526,7 @@
 				<NoteList bind:this={noteList} onOpenNote={navigateToPath} onBeforeNoteSwitch={() => ensureCurrentNoteSaved('Navigation')} onBeforeNoteDuplicate={() => ensureCurrentNoteSaved('Duplicating the note')} onBeforeOpenWindow={() => ensureCurrentNoteSaved('Opening a secondary window')} onRelocateActiveDocument={relocateActiveDocument} onUpdateActiveMetadata={updateActiveMetadata} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); }} onRequestCreateNote={requestNoteCreation} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
 			</div>
 			<div class="mobile-panel" class:active={$mobileView === 'editor'}>
-				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} onNavigateNote={navigateToPath} onNavigateWikiNote={navigateToPathResult} onNavigateHistory={navigateHistory} />
+				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} onNavigateNote={navigateToPath} onNavigateWikiNote={navigateToPathResult} onNavigateHistory={navigateHistory} onRelocateActiveDocument={relocateActiveDocument} />
 			</div>
 		</div>
 
@@ -1613,7 +1603,7 @@
 			{/if}
 
 			<div class="editor-panel">
-				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} onNavigateNote={navigateToPath} onNavigateWikiNote={navigateToPathResult} onNavigateHistory={navigateHistory} />
+				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} onNavigateNote={navigateToPath} onNavigateWikiNote={navigateToPathResult} onNavigateHistory={navigateHistory} onRelocateActiveDocument={relocateActiveDocument} />
 				{#if $viewMode === 'tasks' && !taskNoteOpened}
 					<div class="tasks-editor-placeholder">
 						<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">

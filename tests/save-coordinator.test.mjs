@@ -51,6 +51,7 @@ function harness(persist = async () => {}) {
     get timer() { return timer; },
     fireTimer() { const callback = timer; timer = null; callback?.(); },
     edit(nextBody) { body = nextBody; coordinator.markDirty(); },
+    changeDocumentPath(nextPath) { path = nextPath; },
     changeDocument(nextPath, nextBody, forceReset = false) {
       path = nextPath;
       body = nextBody;
@@ -301,4 +302,66 @@ test('a coordinator-owned metadata save adopts the returned revision for the nex
   assert.equal((await coordinator.flush()).ok, true);
 
   assert.deepEqual(seenRevisions, ['read-revision', 'saved-1']);
+});
+
+// #149: a keystroke that lands while a rename is in flight must follow the note to its new
+// path. Throwing here left the file renamed on disk and every later save on the old path.
+test('rebase carries an edit made during the rename to the new path', async () => {
+  const h = harness();
+  h.edit('typed during rename');
+  h.changeDocumentPath('/vault/renamed.md');
+  h.coordinator.rebaseDocument('/vault/one.md', '/vault/renamed.md');
+
+  assert.equal(h.dirty, true);
+  assert.ok(h.timer, 'the carried edit is still scheduled');
+  h.fireTimer();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(h.snapshots.length, 1);
+  assert.equal(h.snapshots[0].path, '/vault/renamed.md');
+  assert.equal(h.snapshots[0].body, 'typed during rename');
+  assert.equal(h.dirty, false);
+});
+
+test('an old-path save failing after the rename retries the edit at the new path', async () => {
+  const oldPathWrite = deferred();
+  const h = harness((snapshot) => (snapshot.path === '/vault/one.md' ? oldPathWrite.promise : undefined));
+  h.edit('typed during rename');
+  const flushing = h.coordinator.flush();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.snapshots.length, 1);
+
+  h.changeDocumentPath('/vault/renamed.md');
+  h.coordinator.rebaseDocument('/vault/one.md', '/vault/renamed.md');
+  oldPathWrite.reject(new Error('Invalid vault item path'));
+  const result = await flushing;
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(h.snapshots.map((snapshot) => snapshot.path), ['/vault/one.md', '/vault/renamed.md']);
+  assert.equal(h.snapshots[1].body, 'typed during rename');
+  assert.equal(h.dirty, false);
+});
+
+test('rebase still refuses a path the coordinator does not own', () => {
+  const h = harness();
+  assert.throws(
+    () => h.coordinator.rebaseDocument('/vault/other.md', '/vault/renamed.md'),
+    /expected active document \/vault\/other\.md/
+  );
+});
+
+test('a failed save of a replaced document is still reported, not retried as the new one', async () => {
+  const oldWrite = deferred();
+  const h = harness((snapshot) => (snapshot.path === '/vault/one.md' ? oldWrite.promise : undefined));
+  h.edit('old note edit');
+  const flushing = h.coordinator.flush();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  h.changeDocument('/vault/two.md', 'two', true);
+  h.edit('new note edit');
+  oldWrite.reject(new Error('disk full'));
+  const result = await flushing;
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(h.snapshots.map((snapshot) => snapshot.path), ['/vault/one.md']);
 });
