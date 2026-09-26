@@ -1153,7 +1153,8 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl, sync = false 
         const [app] = await waitForState(
           () => {
             if (launchError) throw launchError;
-            const rows = processRows().filter((row) => row.executable === LINUX_APP);
+            const rows = processRows().filter((row) => row.executable === LINUX_APP
+              && !row.commandLine.includes('--helix-sync-watchdog'));
             if (!rows.length && launcher.exitCode !== null) fail(`gio launch exited ${launcher.exitCode}: ${readFileSync(logPath, 'utf8')}`);
             return rows;
           },
