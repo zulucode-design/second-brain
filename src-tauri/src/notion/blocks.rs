@@ -33,6 +33,8 @@ use serde_json::{json, Value};
 
 /// Notion's cap on one rich-text run.
 const MAX_TEXT: usize = 2000;
+/// Notion's cap on a link's URL.
+const MAX_URL: usize = 2000;
 /// Notion's cap on runs in one rich-text array.
 const MAX_RUNS: usize = 100;
 /// Notion's cap on blocks in one request.
@@ -84,11 +86,14 @@ fn rich_text(text: &str, style: Style, link: Option<&str>) -> Vec<Value> {
 }
 
 /// The destination as Notion will take it, or `None` for one it would reject. Notion
-/// accepts only absolute URLs, and one relative link (an anchor, an attachment, a link to
-/// another note) fails the whole page create, so those keep their text and lose the link.
+/// accepts only absolute URLs of up to 2,000 characters, and one link it rejects (an anchor,
+/// an attachment, a link to another note) fails the whole page create, so those keep their
+/// text and lose the link.
 fn notion_link(destination: &str) -> Option<String> {
     let url = reqwest::Url::parse(destination).ok()?;
-    matches!(url.scheme(), "http" | "https" | "mailto").then(|| url.into())
+    let accepted =
+        matches!(url.scheme(), "http" | "https" | "mailto") && url.as_str().len() <= MAX_URL;
+    accepted.then(|| url.into())
 }
 
 /// What kind of container the builder is currently inside.
@@ -662,6 +667,15 @@ mod tests {
             );
             assert_eq!(text_of(&blocks[0]), "see the source here");
         }
+    }
+
+    #[test]
+    fn a_url_longer_than_notion_accepts_keeps_its_text_without_the_link() {
+        let long = format!("https://example.com/{}", "a".repeat(MAX_URL));
+        let blocks = to_blocks(&format!("[long]({long})"));
+        let runs = blocks[0]["paragraph"]["rich_text"].as_array().unwrap();
+        assert!(runs[0]["text"]["link"].is_null());
+        assert_eq!(text_of(&blocks[0]), "long");
     }
 
     #[test]
