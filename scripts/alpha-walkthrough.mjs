@@ -39,6 +39,14 @@ async function elements(browser, pending) {
   return Promise.all((await pending).map((reference) => browser.$(reference)));
 }
 
+// Notion's steps each wait on a network round trip before their next button exists.
+export async function pressTextWhenReady(browser, selector, text, timeout = 60_000) {
+  await browser.waitUntil(async () => (await byText(browser, selector, text)).length === 1, {
+    timeout, timeoutMsg: `no ${selector} reading "${text}" appeared`,
+  });
+  await pressText(browser, selector, text);
+}
+
 export async function pressText(browser, selector, text, options) {
   const found = await byText(browser, selector, text, options);
   if (found.length !== 1) fail(`expected one ${selector} reading "${text}", found ${found.length}`);
@@ -47,12 +55,15 @@ export async function pressText(browser, selector, text, options) {
 
 // Windows (msedgedriver) takes real key input. WebKitWebDriver rejects every key action, so
 // Fedora types through the browser's editing path, which ProseMirror observes like typing.
+//
+// Both type at the caret the caller left: a click would collapse a selection the caller made to
+// replace text, and would move the caret set for an append.
 export function typist(realKeys) {
   return async (browser, pending, text) => {
     const element = await pending;
     await element.waitForDisplayed({ timeout: 30_000 });
     if (realKeys) {
-      await element.click();
+      await browser.execute((target) => target.focus(), element);
       await browser.keys(text.split(''));
       return;
     }
@@ -106,7 +117,11 @@ export async function createNote(browser, type, { category, title, body }) {
   const titleInput = await browser.$('.editor-title input');
   await titleInput.waitForDisplayed({ timeout: 15_000 });
   await browser.waitUntil(async () => (await titleInput.getValue()) === 'Untitled', { timeout: 15_000 });
-  await browser.execute((input) => input.select(), titleInput);
+  // Focus first, then select: typing replaces the selection instead of appending to it.
+  await browser.execute((input) => {
+    input.focus();
+    input.setSelectionRange(0, input.value.length);
+  }, titleInput);
   await type(browser, titleInput, title);
   await blurTitle(browser);
   await browser.waitUntil(
@@ -344,24 +359,48 @@ export async function clipPage(browser, type, { url, category, expectedText }) {
   return { url, category, title };
 }
 
-// The file picker is a native dialog WebDriver cannot answer, so the file is handed to the
-// editor's own hidden input the way the picker would.
-export async function attachFile(browser, { name, content }) {
-  const attached = await browser.execute((fileName, text) => {
-    const input = document.querySelector('#insert-file-input');
-    if (!input) return false;
-    const transfer = new DataTransfer();
-    transfer.items.add(new File([text], fileName, { type: 'text/plain' }));
-    input.files = transfer.files;
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-    return true;
-  }, name, content);
-  if (!attached) fail('editor has no file input');
-  await browser.waitUntil(
-    async () => (await browser.execute(() => document.querySelector('.ProseMirror')?.innerText ?? '')).includes(name),
-    { timeout: 30_000, timeoutMsg: `attachment ${name} did not appear in the note` },
-  );
-  return { name };
+// The file picker is a native dialog WebDriver cannot answer, so the file reaches the editor's
+// own hidden input instead. WebView2 ignores a synthetic DataTransfer, so Windows sends the
+// staged file's path the way WebDriver uploads a file; WebKitGTK ignores that and takes the
+// DataTransfer.
+export async function attachFile(browser, { name, content, path }) {
+  const input = await browser.$('#insert-file-input');
+  // The app logs a failed attachment and shows nothing, so its console is the only report.
+  await browser.execute(() => {
+    window.__attachErrors = [];
+    const original = console.error;
+    console.error = (...parts) => {
+      window.__attachErrors.push(parts.map((part) => part?.message ?? String(part)).join(' '));
+      original(...parts);
+    };
+  });
+  let delivered;
+  if (path) {
+    // Element send keys reaches a hidden input, but not a display:none one.
+    await browser.execute((target) => { target.style.display = ''; }, input);
+    await input.addValue(path);
+    await browser.execute((target) => { target.style.display = 'none'; }, input);
+    delivered = 'path';
+  } else {
+    delivered = await browser.execute((target, fileName, text) => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([text], fileName, { type: 'text/plain' }));
+      target.files = transfer.files;
+      target.dispatchEvent(new Event('change', { bubbles: true }));
+      return target.files.length === 1 ? 'data-transfer' : 'refused';
+    }, input, name, content);
+    if (delivered === 'refused') fail('the webview refused the file list');
+  }
+  try {
+    await browser.waitUntil(
+      async () => (await browser.execute(() => document.querySelector('.ProseMirror')?.innerText ?? '')).includes(name),
+      { timeout: 30_000 },
+    );
+  } catch {
+    const logged = await browser.execute(() => window.__attachErrors ?? []);
+    fail(`attachment ${name} did not appear in the note (${delivered}); console: ${JSON.stringify(logged)}`);
+  }
+  return { name, delivered };
 }
 
 // The export button opens a native save dialog, which WebDriver cannot answer. The harness calls
@@ -389,7 +428,7 @@ export async function notionPublish(browser, type, { token, page }) {
   await openSettingsTab(browser, 'Notion');
   await type(browser, browser.$('input[placeholder="ntn_…"]'), token);
   await pressText(browser, 'button.import-btn', 'Connect');
-  await pressText(browser, 'button.import-btn', 'Choose a page');
+  await pressTextWhenReady(browser, 'button.import-btn', 'Choose a page');
   await browser.waitUntil(async () => (await byText(browser, 'button.option-btn', page)).length === 1, {
     timeout: 60_000, timeoutMsg: `Notion page "${page}" is not shared with the integration`,
   });
@@ -397,7 +436,7 @@ export async function notionPublish(browser, type, { token, page }) {
   const toggle = browser.$('button[aria-label="Publish to Notion from this machine"]');
   await toggle.waitForExist({ timeout: 60_000 });
   if ((await toggle.getAttribute('aria-checked')) !== 'true') await press(browser, toggle);
-  await pressText(browser, 'button.import-btn', 'Publish Now');
+  await pressTextWhenReady(browser, 'button.import-btn', 'Publish Now');
   const summary = await waitForText(
     browser, 'body',
     (value) => /Last published:/.test(value) && !/Publishing/.test(value),
@@ -405,7 +444,10 @@ export async function notionPublish(browser, type, { token, page }) {
   );
   const error = await browser.execute(() => document.querySelector('.import-result.error')?.innerText.trim() ?? null);
   if (error) fail(`Notion publish failed: ${error}`);
-  await pressText(browser, 'button.import-btn', 'Disconnect');
+  // A note Notion refuses is counted, not raised, so the summary is where it shows (#152).
+  const failing = /\d+ failed|failing to publish/.exec(summary);
+  if (failing) fail(`Notion publish left notes unpublished: ${/Last published:[^\n]*(\n[^\n]*){0,2}/.exec(summary)?.[0]}`);
+  await pressTextWhenReady(browser, 'button.import-btn', 'Disconnect');
   await browser.waitUntil(async () => (await byText(browser, 'button.import-btn', 'Connect')).length === 1, {
     timeout: 30_000, timeoutMsg: 'Notion did not disconnect',
   });

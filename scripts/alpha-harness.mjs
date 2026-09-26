@@ -794,6 +794,7 @@ function parseOptions(args) {
     else if (name === '--windows-installer') options.windowsInstaller = value;
     else if (name === '--fedora-rpm') options.fedoraRpm = resolve(value);
     else if (name === '--run') options.runId = value;
+    else if (name === '--machine') options.machine = value;
     else fail(`unknown option: ${name}`);
   }
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) fail('timeout must be a positive number');
@@ -1104,6 +1105,8 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl } = {}) {
     reset: () => resetVault(machine.vaultPath, snapshotPath, machine.runRoot),
     readNote: (relativePath) => readFileSync(join(machine.vaultPath, relativePath), 'utf8'),
     session: fedoraSession,
+    // Fedora's webview takes the file object itself, so nothing has to be staged on disk.
+    stageFile: () => null,
     patchConfig(patch) {
       const current = JSON.parse(readFileSync(machine.configPath, 'utf8'));
       atomicWrite(machine.configPath, `${JSON.stringify({ ...current, ...patch }, null, 2)}\n`);
@@ -1192,6 +1195,7 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
     reset: () => runWindowsAction('reset', {}, longTimeoutMs),
     readNote: (relativePath) => runWindowsAction('read-note', { relativePath }).content,
     session: () => runWindowsAction('session'),
+    stageFile: (name, content) => runWindowsAction('stage-file', { name, content }).path,
     // #49: with the vault folder renamed away, the capture hotkey must raise the installed app's
     // "vault unavailable" toast. The key press comes from the desktop session, like a user's.
     async hotkeyCheck(screenshotDir) {
@@ -1512,27 +1516,32 @@ async function notionRequest(token, method, path, body) {
   return response.json();
 }
 
-async function notionSearch(token, query, object) {
-  const found = await notionRequest(token, 'POST', '/search', { query, filter: { property: 'object', value: object } });
-  return found.results;
+function notionTitle(value) {
+  return (value ?? []).map((part) => part.plain_text).join('');
 }
 
-// Proves the publish reached Notion, then archives the databases this machine's setup created
-// under the disposable page, so runs do not pile up there. Only databases created since
-// `since` under that page are touched.
-async function notionVerifyAndClean({ token, page }, since, title) {
-  const pages = (await notionSearch(token, page, 'page'))
-    .filter((result) => result.properties?.title?.title?.map((part) => part.plain_text).join('') === page);
-  if (pages.length !== 1) fail(`expected one Notion page titled "${page}", found ${pages.length}`);
-  const databases = (await notionSearch(token, '', 'database'))
-    .filter((result) => result.parent?.page_id === pages[0].id && new Date(result.created_time) >= since);
-  const published = (await notionSearch(token, title, 'page'))
-    .filter((result) => databases.some((database) => database.id === result.parent?.database_id));
-  for (const database of databases) {
-    await notionRequest(token, 'PATCH', `/databases/${database.id}`, { archived: true });
+/**
+ * Proves the publish reached Notion, then archives the databases it went to. They are the ones
+ * in the vault's own registry, so a row left under the disposable page by an earlier run cannot
+ * count as this run's.
+ */
+async function notionVerifyAndClean({ token }, registry, titles) {
+  const databaseIds = Object.values(registry.databases).map((database) => database.database_id);
+  if (!databaseIds.length) fail('the vault registered no Notion databases');
+  const published = [];
+  for (const id of databaseIds) {
+    const rows = await notionRequest(token, 'POST', `/databases/${id}/query`, { page_size: 100 });
+    for (const row of rows.results) {
+      published.push(...Object.values(row.properties)
+        .filter((property) => property.type === 'title').map((property) => notionTitle(property.title)));
+    }
   }
-  if (!published.length) fail(`"${title}" was not published under "${page}"`);
-  return { databases: databases.length, archived: databases.length, published: published.length };
+  for (const id of databaseIds) {
+    await notionRequest(token, 'PATCH', `/databases/${id}`, { archived: true });
+  }
+  const missing = titles.filter((title) => !published.includes(title));
+  if (missing.length) fail(`not published to Notion: ${missing.join(', ')}`);
+  return { databases: databaseIds.length, archived: databaseIds.length, published };
 }
 
 const WALKTHROUGH_NOTES = {
@@ -1574,6 +1583,13 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
     }
   };
 
+  // Deleting the WebDriver session kills the app, so the window's own close has to finish
+  // first: its save-aware shutdown is what row A of the matrix measures.
+  const closeAndWait = async (browser) => {
+    await walkthrough.closeWindow(browser);
+    return machine.appsGone();
+  };
+
   record('session', sessionState());
   record('driver-started', await machine.startDriver());
   const planted = { secret: `sk-alpha-harness-${randomUUID()}` };
@@ -1583,7 +1599,7 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
   await withApp(machine, async (browser) => {
     await step(browser, 'vault-open', () => walkthrough.vaultOpened(browser));
     capture = await step(browser, 'save-lifecycle', () => walkthrough.saveLifecycle(browser, type));
-    await walkthrough.closeWindow(browser);
+    await closeAndWait(browser);
   });
   const saved = machine.readNote(capture.relativePath);
   const missing = capture.expected.filter((text) => !saved.includes(text));
@@ -1610,10 +1626,15 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
     await step(browser, 'restore', () => walkthrough.restoreLatest(browser));
     await walkthrough.closeSettings(browser);
     await step(browser, 'web-clip', () => walkthrough.clipPage(browser, type, { url: CLIP_URL, category: 'Resources', expectedText: 'Zettelkasten' }));
-    await step(browser, 'attach-file', () => walkthrough.attachFile(browser, { name: 'walkthrough-attachment.txt', content: 'Attached by the alpha walkthrough.' }));
+    // Its own note, not the clip: a reload of the freshly clipped note cancels the insert.
+    await step(browser, 'attach-file', async () => {
+      await walkthrough.createNote(browser, type, { category: 'Resources', title: 'Walkthrough attachment' });
+      const attachment = { name: 'walkthrough-attachment.txt', content: 'Attached by the alpha walkthrough.' };
+      return walkthrough.attachFile(browser, { ...attachment, path: machine.stageFile(attachment.name, attachment.content) });
+    });
     await step(browser, 'notion-publish', () => walkthrough.notionPublish(browser, type, notion));
     await step(browser, 'diagnostics-export', () => walkthrough.exportDiagnostics(browser, machine.diagnosticsPath));
-    await walkthrough.closeWindow(browser);
+    await closeAndWait(browser);
   });
 
   const archive = zipEntries(machine.fetchDiagnostics(join(screenshotDir, `${machine.name}-diagnostics.zip`)));
@@ -1634,7 +1655,7 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
     await step(browser, 'offline-capture', () => walkthrough.createNote(browser, type, offline).then(() => offline));
     await step(browser, 'offline-organize', () => walkthrough.moveNote(browser, { from: offline.category, to: 'Archives', title: offline.title }));
     await step(browser, 'offline-keyword-search', () => walkthrough.keywordSearch(browser, type, { query: 'offline', expected: offline.title }));
-    await walkthrough.closeWindow(browser);
+    await closeAndWait(browser);
   });
 
   record('config-broken', machine.breakConfig() ?? {});
@@ -1687,13 +1708,14 @@ async function runWalkthroughLocked(options) {
       windows: remoteWorker(options.sshHost, { action: 'ollama', root: WINDOWS_ROOT, runId: 'preflight' }),
       fedora: await ollamaEmbeddingModel(`http://127.0.0.1:${FEDORA_OLLAMA_PORT}`),
     });
+    // `--machine` runs one target while the walkthrough is being fixed; a gate run uses both.
     const machines = [
-      () => linuxDriverMachine(options.linuxRoot, runId, randomUUID(), { ollamaBaseUrl: `http://127.0.0.1:${FEDORA_OLLAMA_PORT}` }),
-      () => windowsDriverMachine(options.sshHost, runId, randomUUID(), candidateCommit, { ollamaBaseUrl: WINDOWS_OLLAMA_URL }),
-    ];
+      ['fedora', () => linuxDriverMachine(options.linuxRoot, runId, randomUUID(), { ollamaBaseUrl: `http://127.0.0.1:${FEDORA_OLLAMA_PORT}` })],
+      ['windows', () => windowsDriverMachine(options.sshHost, runId, randomUUID(), candidateCommit, { ollamaBaseUrl: WINDOWS_OLLAMA_URL })],
+    ].filter(([name]) => !options.machine || options.machine === name).map(([, make]) => make);
+    if (!machines.length) fail(`--machine must be fedora or windows: ${options.machine}`);
     for (const makeMachine of machines) {
       let machine;
-      const since = new Date(Math.floor(Date.now() / 60_000) * 60_000);
       try {
         machine = makeMachine();
         if (machine.install) observation(evidencePath, 'installed', machine.name, machine.install(options.windowsInstaller));
@@ -1704,7 +1726,11 @@ async function runWalkthroughLocked(options) {
           // #137: the Windows walkthrough must run on an unlocked interactive desktop.
           requireUnlocked: machine.name === 'windows',
         });
-        observation(evidencePath, 'notion-checked', machine.name, await notionVerifyAndClean(notion, since, 'Walkthrough capture'));
+        // The clip and the attachment note carry anchor and relative links (#152).
+        const registry = JSON.parse(machine.readNote('.helixnotes/notion/databases.json'));
+        observation(evidencePath, 'notion-checked', machine.name, await notionVerifyAndClean(notion, registry, [
+          'Walkthrough capture', 'Zettelkasten', 'Walkthrough attachment',
+        ]));
       } catch (error) {
         runError = error;
         observation(evidencePath, 'run-failed', machine?.name ?? 'controller', { error: error.message });
@@ -2107,10 +2133,14 @@ async function windowsWorker(request) {
       atomicWrite(manifest.configPath, MALFORMED_CONFIG);
       return { broken: manifest.configPath };
     }
-    // The app keeps the damaged file beside the config; move it out of the user's profile.
+    // The app keeps the damaged file beside the config; move it out of the user's profile. The
+    // profile is on C: and the run root on D:, so a rename fails with EXDEV.
     const configDirectory = dirname(manifest.configPath);
     const damaged = readdirSync(configDirectory).filter((name) => name.startsWith('config.json.damaged-'));
-    for (const name of damaged) renameSync(win32.join(configDirectory, name), win32.join(paths.runRoot, name));
+    for (const name of damaged) {
+      copyFileSync(win32.join(configDirectory, name), win32.join(paths.runRoot, name));
+      unlinkSync(win32.join(configDirectory, name));
+    }
     atomicWrite(manifest.configPath, readFileSync(goodConfigPath));
     return { damaged };
   }
@@ -2148,6 +2178,13 @@ async function windowsWorker(request) {
       vaultKept: existsSync(win32.join(paths.vaultPath, '.helixnotes', 'vault_id')),
       notesKept: readdirSync(paths.vaultPath, { recursive: true }).filter((name) => String(name).endsWith('.md')).length,
     };
+  }
+
+  if (request.action === 'stage-file') {
+    const staged = win32.join(paths.runRoot, request.name);
+    assertWindowsRoot(paths.runRoot, staged);
+    writeFileSync(staged, request.content);
+    return { path: staged };
   }
 
   if (request.action === 'rename-vault') {
@@ -2216,7 +2253,7 @@ async function main() {
   }
   console.error([
     'usage: node scripts/alpha-harness.mjs sync|restore [--candidate <sha>] [--ssh sb-windows] [--linux-root ~/sb88] [--timeout-minutes 20]',
-    '       node scripts/alpha-harness.mjs walkthrough --windows-installer <D:\\...setup.exe> [--fedora-rpm <rpm>] [--candidate <sha>]',
+    '       node scripts/alpha-harness.mjs walkthrough --windows-installer <D:\\...setup.exe> [--fedora-rpm <rpm>] [--candidate <sha>] [--machine fedora|windows]',
     '       node scripts/alpha-harness.mjs walkthrough-uninstalled --run <runId>',
   ].join('\n'));
   process.exitCode = 2;

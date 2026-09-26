@@ -91,6 +91,9 @@ node scripts/alpha-harness.mjs walkthrough --candidate <sha> \
   --fedora-rpm ~/second-brain-candidate/src-tauri/target/release/bundle/rpm/<rpm>
 ```
 
+`--machine fedora` or `--machine windows` runs one machine while a step is being fixed. Only a run
+of both machines counts as the gate.
+
 The RPM must already be installed (`sudo rpm -Uvh --replacepkgs <rpm>`). The controller checks it
 with `rpm -V`, `scripts/verify-linux-package.sh`, and the installed desktop entry's `Exec`. It
 installs the NSIS package silently and checks that the Start-menu entry targets the installed
@@ -103,9 +106,11 @@ screenshot per step under `~/sb88/evidence/walkthrough-<run>/`:
 3. keyword search, a semantic search once the index is complete, graph, tasks, trash restore,
    note history, backup, and restore;
 4. clip `https://en.wikipedia.org/wiki/Zettelkasten` and attach a local file;
-5. publish to the disposable Notion page, then disconnect, which removes the token from the
-   keyring; the controller confirms the page arrived through the Notion API and archives the
-   databases the run created;
+5. publish to the disposable Notion page with no note failing, then disconnect, which removes the
+   token from the keyring. The controller reads the databases the run created from the vault's
+   `.helixnotes/notion/databases.json` and archives them after confirming, through the Notion API,
+   that the capture, the clip, and the attachment note arrived. The clip and the attachment note
+   carry anchor and relative links (#152);
 6. export diagnostics and search the archive for a planted credential, a note body marker, a
    note title and path, and the vault path;
 7. with the embedding backend pointed at a closed port, capture, edit, move, and keyword search;
@@ -127,8 +132,9 @@ This appends the Fedora uninstall result to the same trace.
 
 WebDriver cannot answer native dialogs. The diagnostics export calls the button's own
 `export_diagnostics` command with the path the save dialog would return, and the trace says so.
-The file attachment goes to the editor's hidden file input through a `DataTransfer`, as the picker
-would deliver it. WebKitWebDriver rejects key input, so Fedora types through
+The file attachment goes to the editor's hidden file input, as the picker would deliver it: on
+Fedora through a `DataTransfer`, and on Windows, whose WebView2 ignores a synthetic file list, as
+the path of a file staged in the run folder, sent the way WebDriver uploads a file. WebKitWebDriver rejects key input, so Fedora types through
 `document.execCommand('insertText')`; Windows uses real WebDriver key actions.
 
 Before every step the Windows desktop must be unlocked; LogonUI.exe running in the desktop session
