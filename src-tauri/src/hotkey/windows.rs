@@ -265,6 +265,7 @@ fn on_activation(app: &AppHandle) {
 fn notify_vault_unavailable(app: &AppHandle, path: &str) {
     let notice = super::vault_status::vault_unavailable_notice(path);
     match show_vault_unavailable_toast(&app.config().identifier, &notice.title, &notice.body) {
+        // scripts/alpha-harness.mjs counts this exact line to prove each press was handled.
         Ok(()) => log::info!("Showed the vault-unavailable notification"),
         Err(error) => log::warn!("Could not show the vault-unavailable notification: {error}"),
     }
