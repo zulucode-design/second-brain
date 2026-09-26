@@ -132,11 +132,14 @@ export async function createNote(browser, type, { category, title, body }) {
 }
 
 export async function vaultOpened(browser) {
-  const categories = await browser.execute(() => [...document.querySelectorAll('button')]
+  const sidebarRoots = () => browser.execute(() => [...document.querySelectorAll('button')]
     .map((button) => button.innerText.trim())
     .filter((text) => /^(Projects|Areas|Resources|Archives)\s+\d+$/.test(text)));
-  const roots = categories.map((text) => text.split(/\s+/)[0]).sort();
-  if (roots.join() !== 'Archives,Areas,Projects,Resources') fail(`PARA roots missing: ${JSON.stringify(categories)}`);
+  const complete = (categories) => categories.map((text) => text.split(/\s+/)[0]).sort().join() === 'Archives,Areas,Projects,Resources';
+  // The sidebar fills in after the New Note button that marks the app ready, so wait for it.
+  let categories = [];
+  await browser.waitUntil(async () => complete(categories = await sidebarRoots()), { timeout: 15_000 })
+    .catch(() => fail(`PARA roots missing: ${JSON.stringify(categories)}`));
   const repair = await browser.execute(() => document.querySelector('.repair-banner')?.innerText ?? null);
   if (repair) fail(`fresh vault shows repair issues: ${repair}`);
   return { categories, repair };
