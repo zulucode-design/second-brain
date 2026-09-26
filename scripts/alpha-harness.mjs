@@ -347,12 +347,15 @@ while ((Get-Date) -lt $holdDeadline) { Start-Sleep -Seconds 30 }
 const WINDOWS_KEEP_AWAKE_REASON = 'Second Brain alpha harness run';
 
 // Run 20260921T023725Z died when Windows slept (Kernel-Power 42) seven minutes in. Fedora is held
-// by systemd-inhibit for the controller's lifetime; Windows by a power request whose holder the
-// controller stops by its reported PID, and which expires by itself if the controller dies.
+// by systemd-inhibit, with GNOME's idle lock inhibited while screenshots run. Windows uses a power
+// request whose holder the controller stops by its reported PID and which expires if it dies.
 async function keepAwake(sshHost, timeoutMs) {
   const holdMinutes = Math.ceil((3 * timeoutMs) / 60_000) + 15;
   const fedora = spawn('systemd-inhibit', [
     '--what=sleep:idle', '--who=alpha-harness', `--why=${WINDOWS_KEEP_AWAKE_REASON}`, 'sleep', 'infinity',
+  ], { stdio: 'ignore' });
+  const gnome = spawn('gnome-session-inhibit', [
+    '--inhibit=idle', `--reason=${WINDOWS_KEEP_AWAKE_REASON}`, '--inhibit-only',
   ], { stdio: 'ignore' });
   const windows = spawn('ssh', [
     sshHost, 'powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand',
@@ -362,6 +365,7 @@ async function keepAwake(sshHost, timeoutMs) {
   let lost;
   const release = () => {
     fedora.kill();
+    gnome.kill();
     windows.kill();
     if (holderPid) stopWindowsHolder(sshHost, holderPid);
   };
@@ -376,6 +380,7 @@ async function keepAwake(sshHost, timeoutMs) {
       });
       windows.on('exit', () => { clearTimeout(timer); rejectHeld(new Error('Windows keep-awake exited before holding')); });
       fedora.on('exit', () => { clearTimeout(timer); rejectHeld(new Error('systemd-inhibit exited before the run')); });
+      gnome.on('exit', () => { clearTimeout(timer); rejectHeld(new Error('GNOME idle inhibitor exited before the run')); });
     });
   } catch (error) {
     release();
@@ -384,6 +389,7 @@ async function keepAwake(sshHost, timeoutMs) {
   // Losing a hold mid-run means the machine may sleep again; the run reports it instead of
   // passing quietly.
   fedora.on('exit', () => { lost ??= 'systemd-inhibit exited during the run'; });
+  gnome.on('exit', () => { lost ??= 'GNOME idle inhibitor exited during the run'; });
   windows.on('exit', () => { lost ??= 'Windows keep-awake holder exited during the run'; });
   return { holdMinutes, release, lost: () => lost };
 }
@@ -963,7 +969,7 @@ async function runSyncLocked(options) {
   });
   observation(evidencePath, 'package-evidence', 'fedora', fedoraPackage);
   observation(evidencePath, 'keep-awake', 'controller', {
-    fedora: 'systemd-inhibit sleep:idle',
+    fedora: 'systemd-inhibit sleep:idle; gnome-session-inhibit idle',
     windows: `PowerSetRequest SystemRequired, ${options.holdMinutes} min`,
   });
   if (recovered.recovered) observation(evidencePath, 'stale-run-recovered', 'windows', recovered);
@@ -1482,7 +1488,7 @@ function openGateTrace(options, gate, { runStart = {}, packageChecks } = {}) {
   observation(evidencePath, 'run-start', 'controller', { runId: run.runId, commit: run.candidateCommit, harnessCommit: run.harnessCommit, ...runStart });
   observation(evidencePath, 'package-evidence', 'fedora', packageChecks ? { ...run.fedoraPackage, checks: packageChecks() } : run.fedoraPackage);
   observation(evidencePath, 'keep-awake', 'controller', {
-    fedora: 'systemd-inhibit sleep:idle',
+    fedora: 'systemd-inhibit sleep:idle; gnome-session-inhibit idle',
     windows: `PowerSetRequest SystemRequired, ${options.holdMinutes} min`,
   });
   if (run.recovered.recovered) observation(evidencePath, 'stale-run-recovered', 'windows', run.recovered);
@@ -1727,7 +1733,7 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
   let stepNumber = 0;
   const sessionState = () => {
     const state = machine.session();
-    if (requireUnlocked && (state.locked || state.desktopSession == null)) {
+    if (state.locked || (requireUnlocked && state.desktopSession == null)) {
       fail(`${machine.name} desktop is ${state.locked ? 'locked' : 'not signed in'}`);
     }
     return state;

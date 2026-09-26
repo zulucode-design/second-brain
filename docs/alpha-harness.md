@@ -156,8 +156,9 @@ WebKitWebDriver rejects key input, so Fedora types through `document.execCommand
 Windows uses real WebDriver key actions.
 
 Before every step the Windows desktop must be signed in and unlocked: explorer.exe names the desktop
-session, and LogonUI.exe running in it means it is locked. Fedora's GNOME lock state is recorded,
-not required, because WebKitGTK keeps running under the lock screen. The Windows keep-awake request
+session, and LogonUI.exe running in it means it is locked. Fedora must also be unlocked: its
+WebDriver screenshot timed out under the GNOME lock screen in run 20260926T144833Z. A GNOME idle
+inhibitor keeps that screen from locking during the run. The Windows keep-awake request
 comes from the SSH session, and Windows ignores a display request from there, so the per-step check
 is what proves the desktop stayed unlocked.
 
@@ -192,7 +193,7 @@ pass until package removal and vault preservation both pass. The runner needs no
 Run `20260921T023725Z` failed when Windows slept seven minutes in (Kernel-Power 42 at
 02:43:06Z). Every run now holds both machines awake before it touches either one:
 
-- Fedora: `systemd-inhibit --what=sleep:idle` for the controller's lifetime.
+- Fedora: `systemd-inhibit --what=sleep:idle` and `gnome-session-inhibit --inhibit=idle` for the controller's lifetime.
 - Windows: a `PowerSetRequest(PowerRequestSystemRequired)` held by a PowerShell started over
   SSH. It appears in `powercfg /requests` as "Second Brain alpha harness run". The holder
   reports its PID and the controller stops exactly that process when the run ends. Windows
