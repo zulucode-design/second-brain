@@ -392,8 +392,10 @@ export async function attachFile(browser, { name, content, path }) {
       const transfer = new DataTransfer();
       transfer.items.add(new File([text], fileName, { type: 'text/plain' }));
       target.files = transfer.files;
+      // Checked before the change event: the app's handler empties the input once it has the file.
+      if (target.files.length !== 1) return 'refused';
       target.dispatchEvent(new Event('change', { bubbles: true }));
-      return target.files.length === 1 ? 'data-transfer' : 'refused';
+      return 'data-transfer';
     }, input, name, content);
     if (delivered === 'refused') fail('the webview refused the file list');
   }
