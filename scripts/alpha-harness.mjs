@@ -1118,6 +1118,7 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl, sync = false 
   const snapshotPath = join(machine.runRoot, 'vault-pre');
   const notionAttributes = ['service', APP_IDENTIFIER, 'username', `integration:notion:${vaultId}`];
   let driver;
+  let entryPid;
   const apps = () => {
     const rows = processRows();
     return rows.filter((row) => row.executable === LINUX_APP && driver && descendsFrom(rows, row.pid, driver.pid));
@@ -1136,6 +1137,28 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl, sync = false 
     reset: () => resetVault(machine.vaultPath, snapshotPath, machine.runRoot),
     readNote: (relativePath) => readFileSync(join(machine.vaultPath, relativePath), 'utf8'),
     session: fedoraSession,
+    async launchEntry() {
+      assertNoLinuxApp();
+      runCommandSync('gio', ['launch', LINUX_DESKTOP_ENTRY], {
+        env: { ...process.env, XDG_CONFIG_HOME: machine.configHome, XDG_DATA_HOME: machine.dataHome },
+      });
+      const [app] = await waitForState(
+        () => processRows().filter((row) => row.executable === LINUX_APP),
+        (rows) => rows.length === 1, 30_000, 'Fedora desktop entry launch',
+      );
+      entryPid = app.pid;
+      try {
+        await sleep(2_000);
+        if (!processRows().some((row) => row.pid === app.pid && row.executable === LINUX_APP)) {
+          fail('Fedora desktop entry app exited after launch');
+        }
+        return { entry: LINUX_DESKTOP_ENTRY, executable: app.executable, pid: app.pid };
+      } finally {
+        killForCleanup(app.pid, 'SIGTERM');
+        await this.appsGone();
+        entryPid = undefined;
+      }
+    },
     syncRunning: async () => ({
       roles: await waitForState(() => linuxReport(machine.machinePath).map((row) => row.role), syncProcessesUp, 60_000, 'sync processes'),
     }),
@@ -1195,6 +1218,9 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl, sync = false 
       return { processes: survivors };
     },
     async cleanup() {
+      if (entryPid) {
+        for (const row of linuxReport(machine.machinePath)) killForCleanup(row.pid, 'SIGKILL');
+      }
       if (!driver) return this.appsGone();
       // Exact PIDs only: apps under this run's driver, then the driver's own children.
       for (const row of apps()) killForCleanup(row.pid, 'SIGKILL');
@@ -1239,6 +1265,7 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
     reset: () => runWindowsAction('reset', {}, longTimeoutMs),
     readNote: (relativePath) => runWindowsAction('read-note', { relativePath }).content,
     session: () => runWindowsAction('session'),
+    launchEntry: () => runWindowsAction('launch-entry', {}, desktopTimeoutMs),
     syncRunning: async () => {
       const roles = (processes) => processes.map((row) => row.Role);
       const report = await waitForWindowsProcesses(sshHost, runId, (processes) => syncProcessesUp(roles(processes)), 60_000);
@@ -1718,6 +1745,7 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
   };
 
   record('session', sessionState());
+  record('entry-launched', await machine.launchEntry());
   record('driver-started', await machine.startDriver());
   const planted = { secret: `sk-alpha-harness-${randomUUID()}` };
   record('config-patched', { keys: machine.patchConfig({ openai_api_key: planted.secret }) });
@@ -2202,6 +2230,33 @@ async function windowsWorker(request) {
       await sleep(500);
     }
     fail('scheduled task did not launch exactly one app process');
+  }
+
+  if (request.action === 'launch-entry') {
+    if (windowsInterrupt(tools, appPath, 'Report').processes.length) fail('installed app is already running');
+    const resultPath = win32.join(paths.runRoot, 'entry-launch.json');
+    runDesktopScript(tools, `-Mode LaunchShortcut -OutputPath "${resultPath}"`);
+    const { shortcut } = readDesktopJson(resultPath);
+    unlinkSync(resultPath);
+    const report = await waitForState(
+      () => windowsInterrupt(tools, appPath, 'Report'),
+      (state) => state.processes.filter((row) => row.Role === 'App').length === 1,
+      30_000, 'Windows Start-menu entry launch',
+    );
+    const app = report.processes.find((row) => row.Role === 'App');
+    try {
+      await sleep(2_000);
+      if (!windowsInterrupt(tools, appPath, 'Report').processes.some((row) => row.Id === app.Id && row.Role === 'App')) {
+        fail('Windows Start-menu entry app exited after launch');
+      }
+      return { entry: shortcut, executable: app.Path, pid: app.Id };
+    } finally {
+      windowsPowerShell(tools, ['-Action', 'StopPid', '-PidToStop', String(app.Id), '-ExecutablePath', appPath]);
+      await waitForState(
+        () => windowsInterrupt(tools, appPath, 'Report').processes,
+        (processes) => processes.length === 0, 60_000, 'Windows processes after Start-menu entry exit',
+      );
+    }
   }
 
   if (request.action === 'stop-app') {

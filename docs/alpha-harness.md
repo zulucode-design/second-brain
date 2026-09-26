@@ -98,8 +98,9 @@ of both machines counts as the gate; `run-start` and `run-complete` record the m
 The RPM must already be installed (`sudo rpm -Uvh --replacepkgs <rpm>`). The controller checks it
 with `rpm -V`, `scripts/verify-linux-package.sh`, and the installed desktop entry's `Exec`. It
 installs the NSIS package silently and checks that the Start-menu entry targets the installed
-executable. Each machine then runs the matrix v2 walkthrough through `tauri-driver`, which launches
-the installed binary the entry names rather than the entry itself, with one screenshot per step
+executable. Each machine first launches that installed entry and checks the app process, then
+stops it by PID. The matrix v2 walkthrough runs through `tauri-driver`, which launches the same
+installed binary, with one screenshot per step
 under `~/sb88/evidence/walkthrough-<run>/`:
 
 1. open a fresh vault showing the four PARA roots and no repair issues. Sync is on, unpaired, so the
@@ -182,6 +183,9 @@ Actions > Runners page:
 
 `--ephemeral` makes it take exactly one job and deregister. Starting it from the desktop terminal
 gives tauri-driver the session's display and D-Bus, which a system service would not have.
+For a walkthrough dispatch, the job waits up to 30 minutes after both machines finish for Nicolas
+to run `sudo rpm -e second-brain` on Fedora. It then runs `walkthrough-uninstalled`; the job cannot
+pass until package removal and vault preservation both pass. The runner needs no sudo access.
 
 ## Keeping both machines awake
 

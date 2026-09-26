@@ -1,7 +1,7 @@
 # Runs inside the interactive desktop session (started by alpha-harness.ps1 DesktopScript), where
 # injected input reaches the foreground and the screen can be captured, toasts included.
 param(
-  [ValidateSet('Screenshot', 'CaptureHotkey', 'NotionToken')][string]$Mode,
+  [ValidateSet('Screenshot', 'CaptureHotkey', 'NotionToken', 'LaunchShortcut')][string]$Mode,
   # The screenshot to write, or for NotionToken the JSON result.
   [string]$OutputPath,
   [string]$Aumid,
@@ -16,6 +16,15 @@ $ErrorActionPreference = 'Stop'
 $outputFull = [IO.Path]::GetFullPath($OutputPath)
 if (-not $outputFull.StartsWith([IO.Path]::GetFullPath('D:\SecondBrainTest') + '\', [StringComparison]::OrdinalIgnoreCase)) {
   throw "refusing to write outside D:\SecondBrainTest: $outputFull"
+}
+
+if ($Mode -eq 'LaunchShortcut') {
+  $shortcutPath = Join-Path ([Environment]::GetFolderPath('Programs')) 'Second Brain.lnk'
+  if (-not (Test-Path -LiteralPath $shortcutPath -PathType Leaf)) { throw "Start-menu entry missing: $shortcutPath" }
+  Start-Process -FilePath $shortcutPath
+  [pscustomobject]@{ shortcut = $shortcutPath } | ConvertTo-Json -Compress |
+    Set-Content -LiteralPath $outputFull -Encoding UTF8
+  exit 0
 }
 
 # An SSH logon has no Credential Manager (cmdkey there says "A specified logon session does not

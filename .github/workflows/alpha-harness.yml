@@ -84,7 +84,15 @@ jobs:
             args+=(--windows-installer "$WINDOWS_INSTALLER")
             if [[ -n "$FEDORA_RPM" ]]; then args+=(--fedora-rpm "$FEDORA_RPM"); fi
           fi
-          node scripts/alpha-harness.mjs "${args[@]}"
+          node scripts/alpha-harness.mjs "${args[@]}" | tee "$RUNNER_TEMP/alpha-harness-result.json"
+
+      - name: Verify manual Fedora uninstall
+        if: inputs.gate == 'walkthrough'
+        run: |
+          run_id=$(node -p "JSON.parse(require('node:fs').readFileSync(process.env.RUNNER_TEMP + '/alpha-harness-result.json', 'utf8').trim().split('\n').at(-1)).runId")
+          echo 'Remove the candidate RPM now: sudo rpm -e second-brain'
+          timeout 30m bash -c 'while rpm -q second-brain >/dev/null 2>&1; do sleep 5; done'
+          node scripts/alpha-harness.mjs walkthrough-uninstalled --run "$run_id"
 
       - name: Keep the public evidence trace
         if: always()
