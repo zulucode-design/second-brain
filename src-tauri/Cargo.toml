@@ -82,7 +82,8 @@ ashpd = { version = "0.13.13", default-features = false, features = ["tokio", "g
 # The app owns the key on Windows (ADR-0001), so registration is a direct RegisterHotKey
 # call this plugin wraps, not a compositor handshake — see hotkey/windows.rs.
 tauri-plugin-global-shortcut = "2"
-tauri-plugin-notification = "2"
+# Toasts for hotkey/windows.rs, which needs a tag so a new toast replaces the last (#153).
+windows = { version = "0.61", features = ["Data_Xml_Dom", "UI_Notifications"] }
 # HKEY_CURRENT_USER-only registry access for autostart/windows.rs. No admin privilege and
 # no service, matching the same current-user-only contract as the Linux .desktop entry.
 winreg = "0.52"

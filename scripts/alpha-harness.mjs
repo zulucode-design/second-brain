@@ -23,6 +23,7 @@ import {
 import { homedir } from 'node:os';
 import { isIP } from 'node:net';
 import { dirname, join, resolve, sep, win32 } from 'node:path';
+import { inflateRawSync } from 'node:zlib';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -42,10 +43,19 @@ const WINDOWS_DRIVER = 'D:\\SecondBrainTest\\sb88\\driver\\bin\\tauri-driver.exe
 const WINDOWS_NATIVE_DRIVER = 'D:\\SecondBrainTest\\sb88\\driver\\msedge\\msedgedriver.exe';
 const WINDOWS_DRIVER_TASK = 'SecondBrainAlphaHarnessDriver';
 const WINDOWS_DRIVER_PORT = 4444;
+const WINDOWS_DESKTOP_TASK = 'SecondBrainAlphaHarnessDesktop';
+const WINDOWS_OLLAMA_URL = 'http://127.0.0.1:11434';
+// Fedora reaches the desktop's Ollama through the controller's own tunnel on this port.
+const FEDORA_OLLAMA_PORT = 11435;
+// Nothing listens on the discard port, so the app sees its embedding backend as offline.
+const OFFLINE_OLLAMA_URL = 'http://127.0.0.1:9';
 const WINDOWS_TUNNEL_PORT = 4446;
 const LINUX_DRIVER_PORT = 4444;
 // Explicit, so a stray listener on tauri-driver's default (4445) fails loudly instead of being proxied to.
 const LINUX_NATIVE_PORT = 4447;
+// The notification AUMID of an installed package, and the name of its desktop entry.
+const APP_IDENTIFIER = 'io.github.zulucodedesign.SecondBrain';
+const LINUX_DESKTOP_ENTRY = `/usr/share/applications/${APP_IDENTIFIER}.desktop`;
 const APP_SOURCES = ['src', 'src-tauri', 'static', 'pnpm-lock.yaml', 'svelte.config.js', 'vite.config.ts'];
 const POLL_MS = 1_000;
 const DEVICE_ID = /^[A-Z2-7]{7}(?:-[A-Z2-7]{7}){7}$/;
@@ -102,15 +112,21 @@ function syncPort(vaultId) {
   return 18_000 + (value % 10_000);
 }
 
-export function harnessConfig(config, vaultPath, vaultId, backupPath, { restore = false } = {}) {
+// `driven`: a single-machine run under tauri-driver (Gates 2 and 3). It restores only backups it
+// made, so a scheduled backup would add one it did not expect.
+export function harnessConfig(config, vaultPath, vaultId, backupPath, { driven = false, ollamaBaseUrl } = {}) {
   const next = structuredClone(config);
   next.vaults = [{ path: vaultPath, name: 'Alpha Harness', vault_id: vaultId }];
   next.active_vault = vaultPath;
   next.active_bookmark_id = null;
   next.backup_location = backupPath;
   next.backup_max_count = Math.max(10, Number(next.backup_max_count) || 0);
-  // The restore gate restores the one backup it made; a scheduled backup would add a second.
-  if (restore) next.backup_enabled = false;
+  if (driven) {
+    next.backup_enabled = false;
+    // The window's close button must end the app, not hide it in the tray.
+    next.close_to_tray = false;
+  }
+  if (ollamaBaseUrl) next.ollama_base_url = ollamaBaseUrl;
   return next;
 }
 
@@ -177,7 +193,20 @@ function localTemplateConfig() {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
-function prepareLinux(root, runId, vaultId, { restore = false } = {}) {
+// Package F: a config.json that is not JSON must surface as a startup error, not a fresh start.
+const MALFORMED_CONFIG = '{ "vaults": [ not json\n';
+// The run's config, kept while MALFORMED_CONFIG is in its place.
+const GOOD_CONFIG_NAME = 'config-before-break.json';
+
+function patchConfigFile(configPath, patch) {
+  const current = JSON.parse(readFileSync(configPath, 'utf8'));
+  atomicWrite(configPath, `${JSON.stringify({ ...current, ...patch }, null, 2)}\n`);
+  return Object.keys(patch);
+}
+// The app keeps a config it could not parse beside the new one, under this prefix.
+const DAMAGED_CONFIG_PREFIX = 'config.json.damaged-';
+
+function prepareLinux(root, runId, vaultId, { driven = false, sync = !driven, ollamaBaseUrl } = {}) {
   requireFreeSpace(root);
   const runRoot = join(root, 'runs', runId, 'fedora');
   if (existsSync(runRoot)) fail(`run already exists: ${runRoot}`);
@@ -191,14 +220,15 @@ function prepareLinux(root, runId, vaultId, { restore = false } = {}) {
   mkdirSync(machinePath, { recursive: true });
   mkdirSync(backupPath, { recursive: true });
   makeVault(vaultPath, vaultId);
-  // Without a control file sync stays off, so the restore gate runs with no sidecar.
-  const control = restore ? null : makeControl(vaultId);
+  // Without a control file sync stays off. The restore gate runs so, with no sidecar; the
+  // walkthrough turns sync on, unpaired, so the sidecar and watchdog run and must exit.
+  const control = sync ? makeControl(vaultId) : null;
   if (control) atomicWrite(join(machinePath, 'sync-control.json'), `${JSON.stringify(control, null, 2)}\n`);
   atomicWrite(
     configPath,
-    `${JSON.stringify(harnessConfig(localTemplateConfig(), vaultPath, vaultId, backupPath, { restore }), null, 2)}\n`,
+    `${JSON.stringify(harnessConfig(localTemplateConfig(), vaultPath, vaultId, backupPath, { driven, ollamaBaseUrl }), null, 2)}\n`,
   );
-  return { runRoot, vaultPath, backupPath, configHome, dataHome, machinePath, control };
+  return { runRoot, vaultPath, backupPath, configHome, dataHome, machinePath, control, configPath };
 }
 
 function processRows() {
@@ -317,12 +347,15 @@ while ((Get-Date) -lt $holdDeadline) { Start-Sleep -Seconds 30 }
 const WINDOWS_KEEP_AWAKE_REASON = 'Second Brain alpha harness run';
 
 // Run 20260921T023725Z died when Windows slept (Kernel-Power 42) seven minutes in. Fedora is held
-// by systemd-inhibit for the controller's lifetime; Windows by a power request whose holder the
-// controller stops by its reported PID, and which expires by itself if the controller dies.
+// by systemd-inhibit, with GNOME's idle lock inhibited while screenshots run. Windows uses a power
+// request whose holder the controller stops by its reported PID and which expires if it dies.
 async function keepAwake(sshHost, timeoutMs) {
   const holdMinutes = Math.ceil((3 * timeoutMs) / 60_000) + 15;
   const fedora = spawn('systemd-inhibit', [
     '--what=sleep:idle', '--who=alpha-harness', `--why=${WINDOWS_KEEP_AWAKE_REASON}`, 'sleep', 'infinity',
+  ], { stdio: 'ignore' });
+  const gnome = spawn('gnome-session-inhibit', [
+    '--inhibit=idle', `--reason=${WINDOWS_KEEP_AWAKE_REASON}`, '--inhibit-only',
   ], { stdio: 'ignore' });
   const windows = spawn('ssh', [
     sshHost, 'powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand',
@@ -332,6 +365,7 @@ async function keepAwake(sshHost, timeoutMs) {
   let lost;
   const release = () => {
     fedora.kill();
+    gnome.kill();
     windows.kill();
     if (holderPid) stopWindowsHolder(sshHost, holderPid);
   };
@@ -346,6 +380,7 @@ async function keepAwake(sshHost, timeoutMs) {
       });
       windows.on('exit', () => { clearTimeout(timer); rejectHeld(new Error('Windows keep-awake exited before holding')); });
       fedora.on('exit', () => { clearTimeout(timer); rejectHeld(new Error('systemd-inhibit exited before the run')); });
+      gnome.on('exit', () => { clearTimeout(timer); rejectHeld(new Error('GNOME idle inhibitor exited before the run')); });
     });
   } catch (error) {
     release();
@@ -354,6 +389,7 @@ async function keepAwake(sshHost, timeoutMs) {
   // Losing a hold mid-run means the machine may sleep again; the run reports it instead of
   // passing quietly.
   fedora.on('exit', () => { lost ??= 'systemd-inhibit exited during the run'; });
+  gnome.on('exit', () => { lost ??= 'GNOME idle inhibitor exited during the run'; });
   windows.on('exit', () => { lost ??= 'Windows keep-awake holder exited during the run'; });
   return { holdMinutes, release, lost: () => lost };
 }
@@ -383,6 +419,7 @@ function deployWindowsTools(sshHost) {
     join(REPO, 'scripts', 'sync-fixture.mjs'),
     join(REPO, 'scripts', 'windows', 'alpha-harness.ps1'),
     join(REPO, 'scripts', 'windows', 'sync-interrupt.ps1'),
+    join(REPO, 'scripts', 'windows', 'alpha-desktop.ps1'),
     `${sshHost}:D:/SecondBrainTest/sb88/tools/`,
   ], { timeout: 60_000 });
 }
@@ -453,6 +490,11 @@ export function redactTrace(json) {
     .replace(/,"host":"[^"]*"|"host":"[^"]*",?/g, '');
 }
 
+// Public: committed under docs/reports/evidence, so observation() redacts every line.
+function evidencePathFor(gate, runId) {
+  return join(REPO, 'docs', 'reports', 'evidence', `alpha-harness-${gate}-${runId}.jsonl`);
+}
+
 function observation(writer, event, machine, value = {}) {
   const line = { at: new Date().toISOString(), event, machine, ...value };
   appendFileSync(writer, `${redactTrace(JSON.stringify(line))}\n`, { flag: 'a' });
@@ -469,15 +511,28 @@ async function pollWindowsFixture({ sshHost, runId, evidencePath, predicate, dea
   fail('fixture polling timed out');
 }
 
-async function waitForWindowsProcesses(sshHost, runId, predicate, timeoutMs = 30_000) {
+// With sync on, the app starts its Syncthing sidecar and the watchdog that outlives a crash.
+// Reads until `predicate` holds for what `read` returns.
+async function waitForState(read, predicate, timeoutMs, what) {
   const deadline = Date.now() + timeoutMs;
-  let report;
+  let state;
   while (Date.now() < deadline) {
-    report = remoteWorker(sshHost, { action: 'report', root: WINDOWS_ROOT, runId });
-    if (predicate(report.processes)) return report;
+    state = read();
+    if (predicate(state)) return state;
     await sleep(500);
   }
-  fail(`Windows process state timed out: ${JSON.stringify(report)}`);
+  fail(`${what} timed out: ${JSON.stringify(state)}`);
+}
+
+// With sync on, the app starts its Syncthing sidecar and the watchdog that outlives a crash.
+const syncProcessesUp = (roles) => roles.includes('Sidecar') && roles.includes('Watchdog');
+
+function windowsReport(sshHost, runId) {
+  return remoteWorker(sshHost, { action: 'report', root: WINDOWS_ROOT, runId });
+}
+
+function waitForWindowsProcesses(sshHost, runId, predicate, timeoutMs = 30_000) {
+  return waitForState(() => windowsReport(sshHost, runId), (report) => predicate(report.processes), timeoutMs, 'Windows process state');
 }
 
 // Gate 2: interrupted restore. The restore journal and its stage and rollback directories sit
@@ -677,7 +732,7 @@ async function waitForDriver(port, timeoutMs = 30_000) {
   fail(`WebDriver on port ${port} did not answer: ${lastError?.message}`);
 }
 
-async function openApp(port, application) {
+async function openApp(port, application, readySelector = 'button=New Note') {
   // Only the controller needs webdriverio; the Windows worker copy runs without node_modules.
   const { remote } = await import('webdriverio');
   const browser = await remote({
@@ -687,7 +742,9 @@ async function openApp(port, application) {
     connectionRetryCount: 0,
     capabilities: { 'tauri:options': { application } },
   });
-  await browser.$('button=New Note').waitForDisplayed({ timeout: 60_000 });
+  await browser.$(readySelector).waitForDisplayed({ timeout: 60_000 });
+  // WebDriver's default window is small enough to fold the editor toolbar away.
+  await browser.setWindowSize(1280, 860);
   return browser;
 }
 
@@ -770,6 +827,10 @@ function parseOptions(args) {
     else if (name === '--linux-root') options.linuxRoot = resolve(value);
     else if (name === '--candidate') options.candidate = value;
     else if (name === '--timeout-minutes') options.timeoutMs = Number(value) * 60_000;
+    else if (name === '--windows-installer') options.windowsInstaller = value;
+    else if (name === '--fedora-rpm') options.fedoraRpm = resolve(value);
+    else if (name === '--run') options.runId = value;
+    else if (name === '--machine') options.machine = value;
     else fail(`unknown option: ${name}`);
   }
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) fail('timeout must be a positive number');
@@ -892,7 +953,7 @@ function prepareHarnessRun(options) {
 async function runSyncLocked(options) {
   const { candidateCommit, harnessCommit, fedoraPackage, recovered, runId } = prepareHarnessRun(options);
   const vaultId = randomUUID();
-  const evidencePath = join(REPO, 'docs', 'reports', 'evidence', `alpha-harness-sync-${runId}.jsonl`);
+  const evidencePath = evidencePathFor('sync', runId);
   mkdirSync(dirname(evidencePath), { recursive: true });
   const linux = prepareLinux(options.linuxRoot, runId, vaultId);
   let windowsPrepared = false;
@@ -908,7 +969,7 @@ async function runSyncLocked(options) {
   });
   observation(evidencePath, 'package-evidence', 'fedora', fedoraPackage);
   observation(evidencePath, 'keep-awake', 'controller', {
-    fedora: 'systemd-inhibit sleep:idle',
+    fedora: 'systemd-inhibit sleep:idle; gnome-session-inhibit idle',
     windows: `PowerSetRequest SystemRequired, ${options.holdMinutes} min`,
   });
   if (recovered.recovered) observation(evidencePath, 'stale-run-recovered', 'windows', recovered);
@@ -974,7 +1035,7 @@ async function runSyncLocked(options) {
     });
     observation(evidencePath, 'mid-transfer-proven', 'windows', { matching: partial.matching, missing: partial.missing });
 
-    const beforeStop = remoteWorker(options.sshHost, { action: 'report', root: WINDOWS_ROOT, runId });
+    const beforeStop = windowsReport(options.sshHost, runId);
     const oldSidecar = beforeStop.processes.find((process) => process.Role === 'Sidecar');
     if (!oldSidecar) fail('Windows sidecar was not running at interruption point');
     const interrupted = remoteWorker(options.sshHost, { action: 'interrupt-sidecar', root: WINDOWS_ROOT, runId });
@@ -1057,10 +1118,13 @@ function descendsFrom(rows, pid, ancestor) {
   return false;
 }
 
-function linuxRestoreMachine(root, runId, vaultId) {
-  const machine = prepareLinux(root, runId, vaultId, { restore: true });
+function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl, sync = false } = {}) {
+  const machine = prepareLinux(root, runId, vaultId, { driven: true, sync, ollamaBaseUrl });
+  const goodConfigPath = join(machine.runRoot, GOOD_CONFIG_NAME);
   const snapshotPath = join(machine.runRoot, 'vault-pre');
+  const notionAttributes = ['service', APP_IDENTIFIER, 'username', `integration:notion:${vaultId}`];
   let driver;
+  let entryLaunchAttempted = false;
   const apps = () => {
     const rows = processRows();
     return rows.filter((row) => row.executable === LINUX_APP && driver && descendsFrom(rows, row.pid, driver.pid));
@@ -1077,6 +1141,73 @@ function linuxRestoreMachine(root, runId, vaultId) {
     backups: () => readdirSync(machine.backupPath),
     snapshot: () => snapshotVault(machine.vaultPath, snapshotPath),
     reset: () => resetVault(machine.vaultPath, snapshotPath, machine.runRoot),
+    readNote: (relativePath) => readFileSync(join(machine.vaultPath, relativePath), 'utf8'),
+    session: fedoraSession,
+    async launchEntry() {
+      assertNoLinuxApp();
+      const logPath = join(machine.runRoot, 'desktop-entry.log');
+      const log = openSync(logPath, 'a');
+      entryLaunchAttempted = true;
+      const launcher = spawn('gio', ['launch', LINUX_DESKTOP_ENTRY], {
+        env: { ...process.env, XDG_CONFIG_HOME: machine.configHome, XDG_DATA_HOME: machine.dataHome },
+        stdio: ['ignore', log, log],
+      });
+      closeSync(log);
+      let launchError;
+      launcher.on('error', (error) => { launchError = error; });
+      try {
+        const [app] = await waitForState(
+          () => {
+            if (launchError) throw launchError;
+            const rows = processRows().filter((row) => row.executable === LINUX_APP
+              && !row.commandLine.includes('--helix-sync-watchdog'));
+            if (!rows.length && launcher.exitCode !== null) fail(`gio launch exited ${launcher.exitCode}: ${readFileSync(logPath, 'utf8')}`);
+            return rows;
+          },
+          (rows) => rows.length === 1, 30_000, 'Fedora desktop entry launch',
+        );
+        await sleep(2_000);
+        if (!processRows().some((row) => row.pid === app.pid && row.executable === LINUX_APP)) {
+          fail('Fedora desktop entry app exited after launch');
+        }
+        return { entry: LINUX_DESKTOP_ENTRY, executable: app.executable, pid: app.pid };
+      } finally {
+        // No app existed before this entry launch. Stop only exact PIDs it started.
+        for (const row of linuxReport(machine.machinePath)) killForCleanup(row.pid, 'SIGTERM');
+        if (launcher.exitCode === null) launcher.kill('SIGTERM');
+        await this.appsGone();
+        entryLaunchAttempted = false;
+      }
+    },
+    syncRunning: async () => ({
+      roles: await waitForState(() => linuxReport(machine.machinePath).map((row) => row.role), syncProcessesUp, 60_000, 'sync processes'),
+    }),
+    // Fedora's webview takes the file object itself, so nothing has to be staged on disk.
+    stageFile: () => null,
+    // The app's keyring entry: service is the app identifier, username the vault's account.
+    notionTokenStored: () => runCommandSync('secret-tool', ['lookup', ...notionAttributes], { accept: [0, 1] }).status === 0,
+    clearNotionToken() {
+      const found = this.notionTokenStored();
+      if (found) runCommandSync('secret-tool', ['clear', ...notionAttributes]);
+      return { found, left: this.notionTokenStored() };
+    },
+    patchConfig: (patch) => patchConfigFile(machine.configPath, patch),
+    breakConfig() {
+      copyFileSync(machine.configPath, goodConfigPath);
+      atomicWrite(machine.configPath, MALFORMED_CONFIG);
+    },
+    repairConfig() {
+      // The app keeps the damaged file beside the config and writes defaults; both are replaced.
+      const damaged = damagedConfigs(dirname(machine.configPath));
+      for (const name of damaged) renameSync(join(dirname(machine.configPath), name), join(machine.runRoot, name));
+      atomicWrite(machine.configPath, readFileSync(goodConfigPath));
+      return { damaged };
+    },
+    diagnosticsPath: join(machine.runRoot, 'diagnostics.zip'),
+    fetchDiagnostics(destination) {
+      copyFileSync(this.diagnosticsPath, destination);
+      return readFileSync(destination);
+    },
     async startDriver() {
       const log = openSync(join(machine.runRoot, 'tauri-driver.log'), 'a');
       driver = spawn('tauri-driver', ['--port', String(LINUX_DRIVER_PORT), '--native-port', String(LINUX_NATIVE_PORT)], {
@@ -1107,6 +1238,9 @@ function linuxRestoreMachine(root, runId, vaultId) {
       return { processes: survivors };
     },
     async cleanup() {
+      if (entryLaunchAttempted) {
+        for (const row of linuxReport(machine.machinePath)) killForCleanup(row.pid, 'SIGKILL');
+      }
       if (!driver) return this.appsGone();
       // Exact PIDs only: apps under this run's driver, then the driver's own children.
       for (const row of apps()) killForCleanup(row.pid, 'SIGKILL');
@@ -1123,18 +1257,25 @@ function linuxRestoreMachine(root, runId, vaultId) {
   };
 }
 
-function windowsRestoreMachine(sshHost, runId, vaultId, candidateCommit) {
+function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollamaBaseUrl, sync = false } = {}) {
   const runWindowsAction = (action, extra = {}, timeout = 45_000) => remoteWorker(
     sshHost, { action, root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP, ...extra }, timeout,
   );
   const longTimeoutMs = 5 * 60_000;
+  // Desktop-session actions wait for a scheduled task in the interactive session.
+  const desktopTimeoutMs = 6 * 60_000;
+  const fetchRemote = (remote, destination) => {
+    runCommandSync('scp', [`${sshHost}:${remote.replaceAll('\\', '/')}`, destination], { timeout: 60_000 });
+    return readFileSync(destination);
+  };
+  const diagnosticsPath = win32.join(windowsPaths(WINDOWS_ROOT, runId).runRoot, 'diagnostics.zip');
   let driverPid;
   let tunnel;
   return {
     name: 'windows',
     application: WINDOWS_APP,
     port: WINDOWS_TUNNEL_PORT,
-    prepare: () => runWindowsAction('prepare', { vaultId, candidateCommit, restore: true }),
+    prepare: () => runWindowsAction('prepare', { vaultId, candidateCommit, driven: true, sync, ollamaBaseUrl }),
     generate: () => runWindowsAction('generate', {}, longTimeoutMs),
     hash: () => runWindowsAction('hash', {}, longTimeoutMs),
     progress: () => runWindowsAction('progress'),
@@ -1142,6 +1283,54 @@ function windowsRestoreMachine(sshHost, runId, vaultId, candidateCommit) {
     backups: () => runWindowsAction('all-backups').backups,
     snapshot: () => runWindowsAction('snapshot', {}, longTimeoutMs),
     reset: () => runWindowsAction('reset', {}, longTimeoutMs),
+    readNote: (relativePath) => runWindowsAction('read-note', { relativePath }).content,
+    session: () => runWindowsAction('session'),
+    launchEntry: () => runWindowsAction('launch-entry', {}, desktopTimeoutMs),
+    syncRunning: async () => {
+      const roles = (processes) => processes.map((row) => row.Role);
+      const report = await waitForWindowsProcesses(sshHost, runId, (processes) => syncProcessesUp(roles(processes)), 60_000);
+      return { roles: roles(report.processes) };
+    },
+    stageFile: (name, content) => runWindowsAction('stage-file', { name, content }).path,
+    notionTokenStored: () => runWindowsAction('notion-token', { vaultId, remove: false }, desktopTimeoutMs).found,
+    clearNotionToken: () => runWindowsAction('notion-token', { vaultId, remove: true }, desktopTimeoutMs),
+    // #49: with the vault folder renamed away, the capture hotkey must raise the installed app's
+    // "vault unavailable" toast. The key press comes from the desktop session, like a user's.
+    async hotkeyCheck(screenshot) {
+      const renamed = runWindowsAction('rename-vault', { away: true });
+      let pressed;
+      try {
+        pressed = await withApp(this, async () => {
+          // Startup has to reach hotkey registration before the chord is sent.
+          await sleep(5_000);
+          return runWindowsAction('desktop', { mode: 'CaptureHotkey', image: 'hotkey-toast.png' }, desktopTimeoutMs);
+        }, 'body');
+      } catch (error) {
+        // Put the vault back without letting a failed rename hide why the hotkey failed.
+        try { runWindowsAction('rename-vault', { away: false }); } catch {}
+        throw error;
+      }
+      runWindowsAction('rename-vault', { away: false });
+      fetchRemote(pressed.image, screenshot);
+      // History keeps earlier runs' toasts, so the proof is a toast naming this run's vault. The
+      // app showed one per press, as its log says, yet the history holds one after each press:
+      // the second replaced the first (#153).
+      const { before, afterFirst, after } = pressed.toasts;
+      const captures = (toasts) => (toasts ?? []).filter((toast) => toast.startsWith('Quick capture')
+        && toast.includes("vault isn't available") && toast.includes(renamed.from));
+      const counts = { before: captures(before).length, afterFirst: captures(afterFirst).length, after: captures(after).length };
+      if (pressed.toastsShown !== 2 || counts.before !== 0 || counts.afterFirst !== 1 || counts.after !== 1) {
+        fail(`expected two toasts shown and one kept for ${renamed.from}: ${JSON.stringify({ toastsShown: pressed.toastsShown, counts, toasts: pressed.toasts })}`);
+      }
+      return { renamed: renamed.to, toast: captures(after)[0], toastsShown: pressed.toastsShown, counts };
+    },
+    install: (installer) => runWindowsAction('install', { installer, candidateCommit }, desktopTimeoutMs),
+    uninstall: () => runWindowsAction('uninstall', {}, 3 * 60_000),
+    patchConfig: (patch) => runWindowsAction('patch-config', { patch }).patched,
+    breakConfig: () => runWindowsAction('break-config'),
+    repairConfig: () => runWindowsAction('repair-config'),
+    diagnosticsPath,
+    fetchDiagnostics: (destination) => fetchRemote(diagnosticsPath, destination),
     async startDriver() {
       const started = runWindowsAction('start-driver');
       driverPid = started.pid;
@@ -1188,8 +1377,8 @@ async function waitForRestore(browser) {
   if (text !== 'Backup restored.') fail(`restore did not succeed in the app: ${text}`);
 }
 
-async function withApp(machine, action) {
-  const browser = await openApp(machine.port, machine.application);
+async function withApp(machine, action, readySelector) {
+  const browser = await openApp(machine.port, machine.application, readySelector);
   try {
     return await action(browser);
   } finally {
@@ -1288,26 +1477,48 @@ async function runRestore(args) {
   return runOnFedora(args, runRestoreLocked);
 }
 
-async function runRestoreLocked(options) {
-  const { candidateCommit, harnessCommit, fedoraPackage, recovered, runId } = prepareHarnessRun(options);
-  const evidencePath = join(REPO, 'docs', 'reports', 'evidence', `alpha-harness-restore-${runId}.jsonl`);
-  const screenshotDir = join(options.linuxRoot, 'evidence', `restore-${runId}`);
+// The opening the restore and walkthrough traces share: the candidate and its Fedora package,
+// the keep-awake holds, and any stale Windows run the preflight recovered.
+function openGateTrace(options, gate, { runStart = {}, packageChecks } = {}) {
+  const run = prepareHarnessRun(options);
+  const evidencePath = evidencePathFor(gate, run.runId);
+  const screenshotDir = join(options.linuxRoot, 'evidence', `${gate}-${run.runId}`);
   mkdirSync(dirname(evidencePath), { recursive: true });
   mkdirSync(screenshotDir, { recursive: true });
-  observation(evidencePath, 'run-start', 'controller', { runId, commit: candidateCommit, harnessCommit, killPoints: Object.keys(KILL_POINTS) });
-  observation(evidencePath, 'package-evidence', 'fedora', fedoraPackage);
+  observation(evidencePath, 'run-start', 'controller', { runId: run.runId, commit: run.candidateCommit, harnessCommit: run.harnessCommit, ...runStart });
+  observation(evidencePath, 'package-evidence', 'fedora', packageChecks ? { ...run.fedoraPackage, checks: packageChecks() } : run.fedoraPackage);
   observation(evidencePath, 'keep-awake', 'controller', {
-    fedora: 'systemd-inhibit sleep:idle',
+    fedora: 'systemd-inhibit sleep:idle; gnome-session-inhibit idle',
     windows: `PowerSetRequest SystemRequired, ${options.holdMinutes} min`,
   });
-  if (recovered.recovered) observation(evidencePath, 'stale-run-recovered', 'windows', recovered);
+  if (run.recovered.recovered) observation(evidencePath, 'stale-run-recovered', 'windows', run.recovered);
+  return { ...run, evidencePath, screenshotDir };
+}
+
+// Ends one machine's part of a gate, passed or failed: its processes stopped and its config
+// restored. Returns the error when that fails.
+async function finishMachine(machine, evidencePath) {
+  try {
+    const final = await machine?.cleanup(evidencePath);
+    if (final) observation(evidencePath, 'process-final', machine.name, final);
+    return undefined;
+  } catch (error) {
+    observation(evidencePath, 'cleanup-error', machine?.name ?? 'controller', { error: error.message });
+    return error;
+  }
+}
+
+async function runRestoreLocked(options) {
+  const { candidateCommit, runId, evidencePath, screenshotDir } = openGateTrace(options, 'restore', {
+    runStart: { killPoints: Object.keys(KILL_POINTS) },
+  });
 
   let runError;
   let cleanupError;
   const machines = [
-    () => linuxRestoreMachine(options.linuxRoot, runId, randomUUID()),
+    () => linuxDriverMachine(options.linuxRoot, runId, randomUUID()),
     // Built before prepare runs, so a prepare that fails halfway is still finalized.
-    () => windowsRestoreMachine(options.sshHost, runId, randomUUID(), candidateCommit),
+    () => windowsDriverMachine(options.sshHost, runId, randomUUID(), candidateCommit),
   ];
   for (const makeMachine of machines) {
     let machine;
@@ -1319,13 +1530,7 @@ async function runRestoreLocked(options) {
       runError = error;
       observation(evidencePath, 'run-failed', machine?.name ?? 'controller', { error: error.message });
     }
-    try {
-      const final = await machine?.cleanup(evidencePath);
-      if (final) observation(evidencePath, 'process-final', machine.name, final);
-    } catch (error) {
-      observation(evidencePath, 'cleanup-error', machine?.name ?? 'controller', { error: error.message });
-      cleanupError ??= error;
-    }
+    cleanupError ??= await finishMachine(machine, evidencePath);
     if (runError || cleanupError) break;
   }
 
@@ -1333,6 +1538,474 @@ async function runRestoreLocked(options) {
   if (cleanupError) throw cleanupError;
   observation(evidencePath, 'run-complete', 'controller');
   console.log(JSON.stringify({ runId, evidencePath, screenshotDir }));
+}
+
+// Enough of a ZIP reader for the diagnostic archive: stored and deflated members, no ZIP64.
+export function zipEntries(buffer) {
+  const end = buffer.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  if (end < 0) fail('diagnostic export is not a ZIP archive');
+  const count = buffer.readUInt16LE(end + 10);
+  let offset = buffer.readUInt32LE(end + 16);
+  const entries = new Map();
+  for (let index = 0; index < count; index += 1) {
+    if (buffer.readUInt32LE(offset) !== 0x02014b50) fail('diagnostic archive has a damaged directory');
+    const method = buffer.readUInt16LE(offset + 10);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const nameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const local = buffer.readUInt32LE(offset + 42);
+    const name = buffer.toString('utf8', offset + 46, offset + 46 + nameLength);
+    const dataStart = local + 30 + buffer.readUInt16LE(local + 26) + buffer.readUInt16LE(local + 28);
+    const data = buffer.subarray(dataStart, dataStart + compressedSize);
+    if (method !== 0 && method !== 8) fail(`diagnostic member ${name} uses compression ${method}`);
+    entries.set(name, method === 8 ? inflateRawSync(data) : data);
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+// Every planted value the default export must never contain, reported by member. A path is also
+// sought JSON-escaped and with either separator, the forms a JSON member or log holds.
+export function diagnosticLeaks(entries, planted) {
+  const forms = (value) => [...new Set([value, value.replaceAll('\\', '/'), value.replaceAll('/', '\\')]
+    .flatMap((form) => [form, JSON.stringify(form).slice(1, -1)]))];
+  const leaks = [];
+  for (const [name, data] of entries) {
+    const text = data.toString('utf8');
+    for (const [label, value] of Object.entries(planted)) {
+      if (value && forms(value).some((form) => text.includes(form) || name.includes(form))) leaks.push({ member: name, planted: label });
+    }
+  }
+  return leaks;
+}
+
+export async function ollamaEmbeddingModel(baseUrl) {
+  const response = await fetch(`${baseUrl}/api/tags`, { signal: AbortSignal.timeout(10_000) }).catch((error) => {
+    fail(`Ollama at ${baseUrl} is not answering (${error.message}); start it before the walkthrough`);
+  });
+  const { models = [] } = await response.json();
+  if (!models.some((model) => model.name.startsWith('embeddinggemma'))) fail(`Ollama at ${baseUrl} has no embeddinggemma model`);
+  return { embeddingModel: 'embeddinggemma' };
+}
+
+function fedoraSession() {
+  const locked = runCommandSync('gdbus', [
+    'call', '--session', '--dest', 'org.gnome.ScreenSaver', '--object-path', '/org/gnome/ScreenSaver',
+    '--method', 'org.gnome.ScreenSaver.GetActive',
+  ]).stdout;
+  return { locked: locked.includes('true') };
+}
+
+// The desktop entry is what the GNOME launcher runs; it must name the installed binary.
+function fedoraPackageChecks(rpmPath) {
+  if (!existsSync(LINUX_DESKTOP_ENTRY)) fail(`installed desktop entry missing: ${LINUX_DESKTOP_ENTRY}`);
+  const exec = /^Exec=(\S+)/m.exec(readFileSync(LINUX_DESKTOP_ENTRY, 'utf8'))?.[1];
+  const resolved = exec?.startsWith('/') ? exec : runCommandSync('sh', ['-c', `command -v "${exec}"`]).stdout;
+  if (resolved !== LINUX_APP) fail(`desktop entry runs ${exec}, not ${LINUX_APP}`);
+  // rpm -V prints nothing when every installed file still matches the package.
+  const verified = runCommandSync('rpm', ['-V', 'second-brain'], { accept: [0, 1] });
+  if (verified.status !== 0) fail(`installed package files changed: ${verified.stdout}`);
+  runCommandSync(join(REPO, 'scripts', 'verify-linux-package.sh'), [rpmPath], { timeout: 120_000 });
+  const installed = runCommandSync('rpm', ['-q', '--qf', '%{SHA256HEADER}', 'second-brain']).stdout;
+  const file = runCommandSync('rpm', ['-qp', '--qf', '%{SHA256HEADER}', rpmPath]).stdout;
+  if (installed !== file) fail(`installed package is not ${rpmPath}`);
+  return {
+    desktopEntry: LINUX_DESKTOP_ENTRY,
+    exec: resolved,
+    rpmVerify: 'clean',
+    rpm: { path: rpmPath, sha256: createHash('sha256').update(readFileSync(rpmPath)).digest('hex'), portalEntry: 'verified' },
+  };
+}
+
+function fedoraOllamaTunnel(sshHost) {
+  return spawn('ssh', [
+    '-N', '-o', 'ExitOnForwardFailure=yes',
+    '-L', `127.0.0.1:${FEDORA_OLLAMA_PORT}:${new URL(WINDOWS_OLLAMA_URL).host}`, sshHost,
+  ], { stdio: 'ignore' });
+}
+
+async function notionRequest(token, method, path, body) {
+  const response = await fetch(`https://api.notion.com/v1${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${token}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) fail(`Notion ${method} ${path} returned HTTP ${response.status}`);
+  return response.json();
+}
+
+function notionTitle(value) {
+  return (value ?? []).map((part) => part.plain_text).join('');
+}
+
+/**
+ * Proves the publish reached Notion, then archives the databases it went to. They are the ones
+ * in the vault's own registry, so a row left under the disposable page by an earlier run cannot
+ * count as this run's.
+ */
+async function notionVerifyAndClean({ token }, registry, titles) {
+  const databaseIds = Object.values(registry.databases).map((database) => database.database_id);
+  if (!databaseIds.length) fail('the vault registered no Notion databases');
+  const published = [];
+  const problems = [];
+  for (const id of databaseIds) {
+    try {
+      const rows = await notionRequest(token, 'POST', `/databases/${id}/query`, { page_size: 100 });
+      for (const row of rows.results) {
+        published.push(...Object.values(row.properties)
+          .filter((property) => property.type === 'title').map((property) => notionTitle(property.title)));
+      }
+    } catch (error) {
+      problems.push(error.message);
+    }
+  }
+  // Archived even when a query failed, so the run leaves nothing live under the page.
+  for (const id of databaseIds) {
+    try {
+      await notionRequest(token, 'PATCH', `/databases/${id}`, { archived: true });
+    } catch (error) {
+      problems.push(error.message);
+    }
+  }
+  if (problems.length) fail(problems.join('; '));
+  const missing = titles.filter((title) => !published.includes(title));
+  if (missing.length) fail(`not published to Notion: ${missing.join(', ')}`);
+  return { databases: databaseIds.length, archived: databaseIds.length, published };
+}
+
+const NOTION_REGISTRY = '.helixnotes/notion/databases.json';
+
+/**
+ * Runs after every machine's walkthrough, passed or not: the run's token leaves the OS keyring
+ * and its databases are archived. What was published is verified only when the walkthrough
+ * passed; a token its Disconnect left behind fails that run.
+ */
+async function notionCleanup(machine, notion, passed) {
+  // Every part runs and every problem is reported, so one failure cannot hide another.
+  const problems = [];
+  let token;
+  try {
+    token = machine.clearNotionToken();
+    if (token.left) problems.push("the run's Notion token could not be removed from the keyring");
+    if (passed && token.found) problems.push('Disconnect left the Notion token in the keyring');
+  } catch (error) {
+    problems.push(`keyring: ${error.message}`);
+  }
+  let registry;
+  try {
+    registry = JSON.parse(machine.readNote(NOTION_REGISTRY));
+  } catch (error) {
+    // A walkthrough that failed before Connect never created one.
+    if (passed) problems.push(`registry: ${error.message}`);
+  }
+  // The clip and the attachment note carry anchor and relative links (#152).
+  const titles = passed ? ['Walkthrough capture', 'Zettelkasten', 'Walkthrough attachment'] : [];
+  let databases = { databases: 0, archived: 0 };
+  try {
+    if (registry) databases = await notionVerifyAndClean(notion, registry, titles);
+  } catch (error) {
+    problems.push(`databases: ${error.message}`);
+  }
+  const result = { ...databases, tokenFound: token?.found, tokenLeft: token?.left };
+  if (problems.length) fail(`Notion cleanup: ${problems.join('; ')} ${JSON.stringify(result)}`);
+  return result;
+}
+
+const WALKTHROUGH_NOTES = {
+  semantic: {
+    category: 'Areas',
+    title: 'Sourdough starter',
+    body: 'Feed the sourdough starter with equal parts flour and water every twelve hours. See [[Walkthrough tasks]].',
+    query: 'how often should I feed my bread yeast culture',
+  },
+  tasks: { category: 'Resources', title: 'Walkthrough tasks', body: '- [ ] Walkthrough task to finish' },
+  offline: { category: 'Areas', title: 'Offline capture', body: 'Captured while the embedding backend is offline.' },
+};
+
+const CLIP_URL = 'https://en.wikipedia.org/wiki/Zettelkasten';
+
+async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, notion, requireUnlocked }) {
+  const walkthrough = await import('./alpha-walkthrough.mjs');
+  const type = walkthrough.typist(machine.name === 'windows');
+  const record = (event, value) => observation(evidencePath, event, machine.name, value);
+  let stepNumber = 0;
+  const sessionState = () => {
+    const state = machine.session();
+    if (state.locked || (requireUnlocked && state.desktopSession == null)) {
+      fail(`${machine.name} desktop is ${state.locked ? 'locked' : 'not signed in'}`);
+    }
+    return state;
+  };
+  // One screenshot per step, taken whether the step passed or failed. A step without a browser
+  // gets its screenshot from the action. The session is read as the step starts: the Windows
+  // desktop has to be unlocked for the step to run.
+  const step = async (browser, name, action) => {
+    stepNumber += 1;
+    const screenshot = join(screenshotDir, `${machine.name}-${String(stepNumber).padStart(2, '0')}-${name}.png`);
+    const session = sessionState();
+    try {
+      const result = await action(screenshot);
+      await browser?.saveScreenshot(screenshot);
+      record('step', { step: name, result, screenshot, session });
+      return result;
+    } catch (error) {
+      await browser?.saveScreenshot(screenshot).catch(() => {});
+      record('step-failed', { step: name, error: error.message, screenshot: existsSync(screenshot) ? screenshot : null });
+      throw error;
+    }
+  };
+
+  // Deleting the WebDriver session kills the app, so the window's own close has to finish
+  // first: its save-aware shutdown is what row A of the matrix measures.
+  const closeAndWait = async (browser) => {
+    await walkthrough.closeWindow(browser);
+    return machine.appsGone();
+  };
+
+  record('session', sessionState());
+  record('entry-launched', await machine.launchEntry());
+  record('driver-started', await machine.startDriver());
+  const planted = { secret: `sk-alpha-harness-${randomUUID()}` };
+  record('config-patched', { keys: machine.patchConfig({ openai_api_key: planted.secret }) });
+
+  let capture;
+  await withApp(machine, async (browser) => {
+    await step(browser, 'vault-open', () => walkthrough.vaultOpened(browser));
+    await step(browser, 'sync-running', () => machine.syncRunning());
+    capture = await step(browser, 'save-lifecycle', () => walkthrough.saveLifecycle(browser, type));
+    await closeAndWait(browser);
+  });
+  const saved = machine.readNote(capture.relativePath);
+  const missing = capture.expected.filter((text) => !saved.includes(text));
+  record('saves-survived-close', { note: capture.relativePath, missing });
+  if (missing.length) fail(`edits lost across navigation and close: ${JSON.stringify(missing)}`);
+
+  const { semantic, tasks } = WALKTHROUGH_NOTES;
+  await withApp(machine, async (browser) => {
+    await step(browser, 'fixture-notes', async () => {
+      await walkthrough.createNote(browser, type, semantic);
+      await walkthrough.createNote(browser, type, tasks);
+      return { notes: [semantic.title, tasks.title] };
+    });
+    await step(browser, 'keyword-search', () => walkthrough.search(browser, type, { mode: 'Keyword', query: 'sourdough', expected: semantic.title }));
+    await step(browser, 'semantic-index', () => walkthrough.waitForSemanticIndex(browser));
+    await step(browser, 'semantic-search', () => walkthrough.search(browser, type, { mode: 'Semantic', query: semantic.query, expected: semantic.title }));
+    await step(browser, 'graph', () => walkthrough.graph(browser));
+    await walkthrough.closeGraph(browser);
+    await step(browser, 'tasks', () => walkthrough.tasks(browser, { text: 'Walkthrough task' }));
+    await step(browser, 'trash-restore', () => walkthrough.trashAndRestore(browser, semantic));
+    await step(browser, 'note-history', () => walkthrough.noteHistory(browser, type, semantic));
+    await step(browser, 'backup', () => walkthrough.backupNow(browser));
+    await walkthrough.closeSettings(browser);
+    await step(browser, 'restore', () => walkthrough.restoreLatest(browser));
+    await walkthrough.closeSettings(browser);
+    await step(browser, 'web-clip', () => walkthrough.clipPage(browser, type, { url: CLIP_URL, category: 'Resources', expectedText: 'Zettelkasten' }));
+    // Its own note, not the clip: a reload of the freshly clipped note cancels the insert.
+    await step(browser, 'attach-file', async () => {
+      await walkthrough.createNote(browser, type, { category: 'Resources', title: 'Walkthrough attachment' });
+      const attachment = { name: 'walkthrough-attachment.txt', content: 'Attached by the alpha walkthrough.' };
+      return walkthrough.attachFile(browser, { ...attachment, path: machine.stageFile(attachment.name, attachment.content) });
+    });
+    await step(browser, 'notion-publish', () => walkthrough.notionPublish(browser, type, notion, () => {
+      const stored = machine.notionTokenStored();
+      if (!stored) fail("the keyring lookup does not find the connected vault's Notion token");
+      return stored;
+    }));
+    await step(browser, 'diagnostics-export', () => walkthrough.exportDiagnostics(browser, machine.diagnosticsPath));
+    await walkthrough.closeSettings(browser);
+    await closeAndWait(browser);
+  });
+
+  const archive = zipEntries(machine.fetchDiagnostics(join(screenshotDir, `${machine.name}-diagnostics.zip`)));
+  const leaks = diagnosticLeaks(archive, {
+    ...planted,
+    body: walkthrough.MARKER,
+    title: capture.title,
+    path: capture.relativePath,
+    vault,
+  });
+  record('diagnostics-checked', { members: [...archive.keys()], leaks });
+  if (leaks.length) fail(`diagnostic export leaked planted values: ${JSON.stringify(leaks)}`);
+
+  // AI offline: capture, editing, organization, and keyword search keep working.
+  record('config-patched', { keys: machine.patchConfig({ ollama_base_url: OFFLINE_OLLAMA_URL }) });
+  const { offline } = WALKTHROUGH_NOTES;
+  const offlineEdit = ' Edited while the embedding backend is offline.';
+  await withApp(machine, async (browser) => {
+    await step(browser, 'offline-capture', () => walkthrough.createNote(browser, type, offline).then(() => offline));
+    await step(browser, 'offline-edit', () => walkthrough.editNote(browser, type, { category: capture.category, title: capture.title, text: offlineEdit }));
+    await step(browser, 'offline-organize', () => walkthrough.moveNote(browser, { from: offline.category, to: 'Archives', title: offline.title }));
+    await step(browser, 'offline-keyword-search', () => walkthrough.search(browser, type, { mode: 'Keyword', query: 'offline', expected: offline.title }));
+    await closeAndWait(browser);
+  });
+  const offlineSaved = machine.readNote(capture.relativePath).includes(offlineEdit.trim());
+  record('offline-edit-saved', { note: capture.relativePath, saved: offlineSaved });
+  if (!offlineSaved) fail('the offline edit was not on disk after the app exited');
+
+  record('config-broken', machine.breakConfig() ?? {});
+  await withApp(machine, async (browser) => {
+    await step(browser, 'malformed-config', () => walkthrough.startupError(browser));
+  }, '.error');
+  const repaired = machine.repairConfig();
+  record('config-repaired', repaired);
+  // The app keeps the file it could not parse; this run's is the only one it may have left.
+  if (repaired.damaged.length !== 1) fail(`expected one damaged config kept, found ${JSON.stringify(repaired.damaged)}`);
+
+  if (machine.hotkeyCheck) await step(null, 'renamed-vault-hotkey', (screenshot) => machine.hotkeyCheck(screenshot));
+
+  // The last exit is a normal one, through the close button, with sync running.
+  await withApp(machine, async (browser) => {
+    await step(browser, 'final-launch', () => machine.syncRunning());
+    record('normal-exit', await closeAndWait(browser));
+  });
+  record('process-final', await machine.appsGone());
+}
+
+async function runWalkthrough(args) {
+  // Checked before runOnFedora takes the machines, so a missing input costs nothing.
+  const options = parseOptions(args);
+  if (!options.windowsInstaller) fail('--windows-installer names the candidate NSIS setup on the Windows machine');
+  if (!options.fedoraRpm) fail('--fedora-rpm names the installed candidate RPM, which verify-linux-package.sh checks');
+  notionCredentials();
+  return runOnFedora(args, runWalkthroughLocked);
+}
+
+function notionCredentials() {
+  const token = process.env.SECOND_BRAIN_NOTION_TOKEN;
+  const page = process.env.SECOND_BRAIN_NOTION_PAGE;
+  if (!token || !page) fail('set SECOND_BRAIN_NOTION_TOKEN and SECOND_BRAIN_NOTION_PAGE for the disposable Notion workspace');
+  return { token, page };
+}
+
+async function runWalkthroughLocked(options) {
+  const notion = notionCredentials();
+  // `--machine` runs one machine while a step is being fixed; only a run of both is the gate.
+  const machineNames = options.machine ? [options.machine] : ['fedora', 'windows'];
+  if (!machineNames.every((name) => ['fedora', 'windows'].includes(name))) fail(`--machine must be fedora or windows: ${options.machine}`);
+  const { candidateCommit, runId, evidencePath, screenshotDir } = openGateTrace(options, 'walkthrough', {
+    runStart: { clipUrl: CLIP_URL, machines: machineNames, gate: machineNames.length === 2 },
+    packageChecks: () => fedoraPackageChecks(options.fedoraRpm),
+  });
+  const controller = (event, value) => observation(evidencePath, event, 'controller', value);
+
+  const ollamaTunnel = fedoraOllamaTunnel(options.sshHost);
+  let runError;
+  let cleanupError;
+  try {
+    await sleep(2_000);
+    if (ollamaTunnel.exitCode !== null) fail(`Ollama tunnel exited ${ollamaTunnel.exitCode}; is port ${FEDORA_OLLAMA_PORT} taken?`);
+    controller('ollama', {
+      windows: remoteWorker(options.sshHost, { action: 'ollama', root: WINDOWS_ROOT, runId: 'preflight' }),
+      fedora: await ollamaEmbeddingModel(`http://127.0.0.1:${FEDORA_OLLAMA_PORT}`),
+    });
+    const machines = [
+      ['fedora', () => linuxDriverMachine(options.linuxRoot, runId, randomUUID(), { ollamaBaseUrl: `http://127.0.0.1:${FEDORA_OLLAMA_PORT}`, sync: true })],
+      ['windows', () => windowsDriverMachine(options.sshHost, runId, randomUUID(), candidateCommit, { ollamaBaseUrl: WINDOWS_OLLAMA_URL, sync: true })],
+    ].filter(([name]) => machineNames.includes(name)).map(([, make]) => make);
+    for (const makeMachine of machines) {
+      let machine;
+      let passed = false;
+      try {
+        machine = makeMachine();
+        if (machine.install) observation(evidencePath, 'installed', machine.name, machine.install(options.windowsInstaller));
+        const prepared = machine.prepare();
+        observation(evidencePath, 'prepared', machine.name, prepared);
+        await walkthroughGate(machine, {
+          vault: prepared.vault, evidencePath, screenshotDir, notion,
+          // #137: the Windows walkthrough must run on an unlocked interactive desktop.
+          requireUnlocked: machine.name === 'windows',
+        });
+        passed = true;
+      } catch (error) {
+        runError = error;
+        observation(evidencePath, 'run-failed', machine?.name ?? 'controller', { error: error.message });
+      }
+      if (machine) {
+        try {
+          observation(evidencePath, 'notion-checked', machine.name, await notionCleanup(machine, notion, passed));
+        } catch (error) {
+          observation(evidencePath, 'run-failed', machine.name, { error: error.message });
+          runError ??= error;
+        }
+      }
+      cleanupError ??= await finishMachine(machine, evidencePath);
+      if (!runError && !cleanupError) {
+        // The uninstall check compares against this; for the RPM that happens after the run.
+        const vaultBefore = machine.hash();
+        observation(evidencePath, 'vault-final', machine.name, vaultBefore);
+        if (machine.uninstall) {
+          try {
+            const removed = { ...machine.uninstall(), vaultUnchanged: machine.hash().sha256 === vaultBefore.sha256 };
+            observation(evidencePath, 'uninstalled', machine.name, removed);
+            assertUninstalled(machine.name, removed);
+          } catch (error) {
+            runError = error;
+            observation(evidencePath, 'run-failed', machine.name, { error: error.message });
+          } finally {
+            // Leave the machine with the candidate installed, as the run found it. A failure here
+            // is recorded without hiding one from the uninstall.
+            try {
+              observation(evidencePath, 'reinstalled', machine.name, machine.install(options.windowsInstaller));
+            } catch (error) {
+              observation(evidencePath, 'run-failed', machine.name, { error: `reinstall: ${error.message}` });
+              runError ??= error;
+            }
+          }
+        }
+      }
+      if (runError || cleanupError) break;
+    }
+  } finally {
+    ollamaTunnel.kill();
+  }
+
+  if (runError) throw runError;
+  if (cleanupError) throw cleanupError;
+  controller('run-complete', {
+    machines: machineNames,
+    gate: machineNames.length === 2,
+    fedoraUninstall: machineNames.includes('fedora')
+      ? `pending: run "alpha-harness.mjs walkthrough-uninstalled --run ${runId}" after rpm -e`
+      : 'not run',
+  });
+  console.log(JSON.stringify({ runId, evidencePath, screenshotDir }));
+}
+
+// The RPM needs root to remove, so Nicolas runs `sudo rpm -e second-brain` after the walkthrough
+// and this checks the result: the package is gone and the walkthrough's vault still has the hash
+// the run recorded after the app exited.
+function runWalkthroughUninstalled(args) {
+  const options = parseOptions(args);
+  if (!options.runId) fail('--run names the walkthrough run to check');
+  const evidencePath = evidencePathFor('walkthrough', options.runId);
+  if (!existsSync(evidencePath)) fail(`no walkthrough evidence for run ${options.runId}`);
+  const trace = readFileSync(evidencePath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  const complete = trace.find((line) => line.event === 'run-complete');
+  if (!complete?.gate) fail(`run ${options.runId} is not a completed walkthrough of both machines`);
+  if (trace.some((line) => line.event === 'uninstalled' && line.machine === 'fedora')) {
+    fail(`run ${options.runId} already has its Fedora uninstall result`);
+  }
+  const before = trace.find((line) => line.event === 'vault-final' && line.machine === 'fedora');
+  const vault = join(options.linuxRoot, 'runs', options.runId, 'fedora', 'vault');
+  const query = runCommandSync('rpm', ['-q', 'second-brain'], { accept: [0, 1] });
+  const result = {
+    packageRemoved: query.status === 1,
+    appRemoved: !existsSync(LINUX_APP),
+    desktopEntryRemoved: !existsSync(LINUX_DESKTOP_ENTRY),
+    vaultUnchanged: treeHash(vault).sha256 === before.sha256,
+  };
+  observation(evidencePath, 'uninstalled', 'fedora', result);
+  assertUninstalled('fedora', result);
+  console.log(JSON.stringify(result));
+}
+
+// Every field of an uninstall result is a check that has to hold.
+function assertUninstalled(machineName, result) {
+  if (Object.values(result).some((held) => held !== true)) {
+    fail(`${machineName} uninstall did not leave the expected state: ${JSON.stringify(result)}`);
+  }
 }
 
 // Windows keeps the run's processes, junction, tasks, and swapped config until this succeeds;
@@ -1439,6 +2112,43 @@ function removeRunArtifacts(tools, appPath, manifest, paths) {
   return { machineState: paths.machinePath, junctionRemoved, taskRemoved: WINDOWS_TASK };
 }
 
+// Runs alpha-desktop.ps1 in the interactive desktop session through a scheduled task.
+function runDesktopScript(tools, scriptArguments) {
+  const ran = windowsPowerShell(tools, [
+    '-Action', 'DesktopScript', '-TaskName', WINDOWS_DESKTOP_TASK,
+    '-ExecutablePath', win32.join(tools, 'alpha-desktop.ps1'), '-ScriptArguments', scriptArguments,
+  ]);
+  if (ran.result !== 0) fail(`desktop script failed with ${ran.result}: ${scriptArguments}`);
+  return ran;
+}
+
+// alpha-desktop.ps1 writes JSON with Set-Content, which adds a UTF-8 byte-order mark.
+function readDesktopJson(path) {
+  return JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
+}
+
+function damagedConfigs(configDirectory) {
+  return readdirSync(configDirectory).filter((name) => name.startsWith(DAMAGED_CONFIG_PREFIX));
+}
+
+function damagedBeforePath(paths) {
+  return win32.join(paths.runRoot, 'damaged-before-break.json');
+}
+
+// The app keeps a config it could not parse beside the new one. Those from before the run broke
+// the config are the user's, so only the run's own leaves the profile. The profile is on C: and
+// the run root on D:, where a rename fails with EXDEV, so it is copied and deleted.
+function moveRunDamagedConfigs(configDirectory, paths) {
+  if (!existsSync(damagedBeforePath(paths))) return [];
+  const before = JSON.parse(readFileSync(damagedBeforePath(paths), 'utf8'));
+  const damaged = damagedConfigs(configDirectory).filter((name) => !before.includes(name));
+  for (const name of damaged) {
+    copyFileSync(win32.join(configDirectory, name), win32.join(paths.runRoot, name));
+    unlinkSync(win32.join(configDirectory, name));
+  }
+  return damaged;
+}
+
 async function windowsWorker(request) {
   if (process.platform !== 'win32') fail('Windows worker must run on Windows');
   const root = win32.resolve(request.root);
@@ -1492,7 +2202,7 @@ async function windowsWorker(request) {
     const junction = runCommandSync('cmd.exe', ['/d', '/s', '/c', 'mklink', '/J', machineLink, paths.machinePath]);
     if (!junction.stdout) fail('could not create machine-state junction');
 
-    if (!request.restore) {
+    if (!request.driven || request.sync) {
       const control = makeControl(request.vaultId);
       atomicWrite(win32.join(paths.machinePath, 'sync-control.json'), `${JSON.stringify(control, null, 2)}\n`);
     }
@@ -1504,7 +2214,7 @@ async function windowsWorker(request) {
     writeFileSync(lockPath, `${JSON.stringify({ runId: request.runId, manifestPath: paths.manifestPath })}\n`, { flag: 'wx' });
     atomicWrite(
       configPath,
-      `${JSON.stringify(harnessConfig(original, paths.vaultPath, request.vaultId, paths.backupPath, { restore: request.restore }), null, 2)}\n`,
+      `${JSON.stringify(harnessConfig(original, paths.vaultPath, request.vaultId, paths.backupPath, { driven: request.driven, ollamaBaseUrl: request.ollamaBaseUrl }), null, 2)}\n`,
     );
     return {
       runRoot: paths.runRoot,
@@ -1540,6 +2250,33 @@ async function windowsWorker(request) {
       await sleep(500);
     }
     fail('scheduled task did not launch exactly one app process');
+  }
+
+  if (request.action === 'launch-entry') {
+    if (windowsInterrupt(tools, appPath, 'Report').processes.length) fail('installed app is already running');
+    const resultPath = win32.join(paths.runRoot, 'entry-launch.json');
+    runDesktopScript(tools, `-Mode LaunchShortcut -OutputPath "${resultPath}"`);
+    const { shortcut } = readDesktopJson(resultPath);
+    unlinkSync(resultPath);
+    const report = await waitForState(
+      () => windowsInterrupt(tools, appPath, 'Report'),
+      (state) => state.processes.filter((row) => row.Role === 'App').length === 1,
+      30_000, 'Windows Start-menu entry launch',
+    );
+    const app = report.processes.find((row) => row.Role === 'App');
+    try {
+      await sleep(2_000);
+      if (!windowsInterrupt(tools, appPath, 'Report').processes.some((row) => row.Id === app.Id && row.Role === 'App')) {
+        fail('Windows Start-menu entry app exited after launch');
+      }
+      return { entry: shortcut, executable: app.Path, pid: app.Id };
+    } finally {
+      windowsPowerShell(tools, ['-Action', 'StopPid', '-PidToStop', String(app.Id), '-ExecutablePath', appPath]);
+      await waitForState(
+        () => windowsInterrupt(tools, appPath, 'Report').processes,
+        (processes) => processes.length === 0, 60_000, 'Windows processes after Start-menu entry exit',
+      );
+    }
   }
 
   if (request.action === 'stop-app') {
@@ -1660,6 +2397,105 @@ async function windowsWorker(request) {
     return { stopped };
   }
 
+  if (request.action === 'read-note') {
+    const notePath = win32.join(paths.vaultPath, request.relativePath);
+    assertWindowsRoot(paths.vaultPath, notePath);
+    return { content: readFileSync(notePath, 'utf8') };
+  }
+
+  if (['patch-config', 'break-config', 'repair-config'].includes(request.action)) {
+    // Only the config this run swapped in, while this run still holds the lock on it.
+    const manifest = JSON.parse(readFileSync(paths.manifestPath, 'utf8'));
+    const lock = JSON.parse(readFileSync(win32.join(dirname(manifest.configPath), 'alpha-harness.lock.json'), 'utf8'));
+    if (manifest.runId !== request.runId || lock.runId !== request.runId) fail('config lock belongs to another run');
+    const goodConfigPath = win32.join(paths.runRoot, GOOD_CONFIG_NAME);
+    if (request.action === 'patch-config') return { patched: patchConfigFile(manifest.configPath, request.patch) };
+    if (request.action === 'break-config') {
+      writeFileSync(damagedBeforePath(paths), JSON.stringify(damagedConfigs(dirname(manifest.configPath))));
+      copyFileSync(manifest.configPath, goodConfigPath);
+      atomicWrite(manifest.configPath, MALFORMED_CONFIG);
+      return { broken: manifest.configPath };
+    }
+    const damaged = moveRunDamagedConfigs(dirname(manifest.configPath), paths);
+    atomicWrite(manifest.configPath, readFileSync(goodConfigPath));
+    return { damaged };
+  }
+
+  if (request.action === 'ollama') return ollamaEmbeddingModel(WINDOWS_OLLAMA_URL);
+
+  if (request.action === 'install') {
+    const installer = win32.resolve(request.installer);
+    assertWindowsRoot('D:\\SecondBrainTest', installer);
+    if (!existsSync(installer)) fail(`installer missing: ${installer}`);
+    if (existsSync(appPath) && windowsInterrupt(tools, appPath, 'Report').processes.length) {
+      fail('refusing to install while the app runs');
+    }
+    const installed = spawnSync(installer, ['/S', `/D=${dirname(appPath)}`], { windowsHide: true, timeout: 5 * 60_000 });
+    if (installed.error || installed.status !== 0) fail(`installer exited ${installed.status}: ${installed.error?.message ?? ''}`);
+    const shortcut = windowsPowerShell(tools, ['-Action', 'Shortcut', '-ExecutablePath', appPath]);
+    if (!shortcut.exists || !shortcut.matches) fail(`Start-menu entry does not run ${appPath}: ${JSON.stringify(shortcut)}`);
+    return {
+      installer: { path: installer, sha256: createHash('sha256').update(readFileSync(installer)).digest('hex') },
+      app: binaryEvidence(appPath, request.candidateCommit),
+      shortcut,
+    };
+  }
+
+  if (request.action === 'uninstall') {
+    if (windowsInterrupt(tools, appPath, 'Report').processes.length) fail('refusing to uninstall while the app runs');
+    const uninstaller = win32.join(dirname(appPath), 'uninstall.exe');
+    // The NSIS uninstaller copies itself to %TEMP% and returns before the files are gone.
+    const started = spawnSync(uninstaller, ['/S'], { windowsHide: true, timeout: 60_000 });
+    if (started.error || started.status !== 0) fail(`uninstaller exited ${started.status}: ${started.error?.message ?? ''}`);
+    const deadline = Date.now() + 2 * 60_000;
+    while (existsSync(appPath) && Date.now() < deadline) await sleep(500);
+    return {
+      appRemoved: !existsSync(appPath),
+      shortcutRemoved: !windowsPowerShell(tools, ['-Action', 'Shortcut', '-ExecutablePath', appPath]).exists,
+    };
+  }
+
+  if (request.action === 'notion-token') {
+    const resultPath = win32.join(paths.runRoot, 'notion-token.json');
+    // keyring's Windows store names a credential "<username>.<service>".
+    const target = `integration:notion:${request.vaultId}.${APP_IDENTIFIER}`;
+    runDesktopScript(tools, `-Mode NotionToken -OutputPath "${resultPath}" -CredentialTarget "${target}"${request.remove ? ' -RemoveCredential' : ''}`);
+    const found = readDesktopJson(resultPath);
+    unlinkSync(resultPath);
+    return found;
+  }
+
+  if (request.action === 'stage-file') {
+    const staged = win32.join(paths.runRoot, request.name);
+    assertWindowsRoot(paths.runRoot, staged);
+    writeFileSync(staged, request.content);
+    return { path: staged };
+  }
+
+  if (request.action === 'rename-vault') {
+    const moved = `${paths.vaultPath}-renamed`;
+    const [from, to] = request.away ? [paths.vaultPath, moved] : [moved, paths.vaultPath];
+    renameSync(from, to);
+    return { from, to };
+  }
+
+  if (request.action === 'desktop') {
+    const image = win32.join(paths.runRoot, request.image);
+    assertWindowsRoot(paths.runRoot, image);
+    // The app logs each vault-unavailable toast it shows (src-tauri/src/hotkey/windows.rs). No
+    // other copy of the app runs during a run, so the new lines are this run's.
+    const logDir = win32.join(process.env.LOCALAPPDATA, APP_IDENTIFIER, 'logs');
+    const countToastLogLines = () => readdirSync(logDir).filter((name) => name.endsWith('.log')).reduce((count, name) => (
+      count + readFileSync(win32.join(logDir, name), 'utf8').split('Showed the vault-unavailable notification').length - 1
+    ), 0);
+    const toastsShownBefore = countToastLogLines();
+    const ran = runDesktopScript(tools, `-Mode ${request.mode} -OutputPath "${image}" -Aumid ${APP_IDENTIFIER}`);
+    if (!existsSync(image)) fail(`desktop script wrote no screenshot: ${image}`);
+    return { image, ...ran, toastsShown: countToastLogLines() - toastsShownBefore, toasts: readDesktopJson(image.replace(/\.png$/, '.json')) };
+  }
+
+  if (request.action === 'session') return windowsPowerShell(tools, ['-Action', 'SessionState']);
+
   if (request.action === 'finalize') {
     const report = windowsInterrupt(tools, appPath, 'Report');
     if (report.processes.length) fail('refusing to restore config while installed processes remain');
@@ -1677,8 +2513,11 @@ async function windowsWorker(request) {
     const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
     if (lock.runId !== request.runId) fail('config lock belongs to another run');
     atomicWrite(manifest.configPath, readFileSync(manifest.originalPath));
+    // A run that failed between break-config and repair-config leaves the app's damaged copy.
+    // Moved while the lock still stands, so a failure here leaves the run for a retry to finish.
+    const damagedMoved = moveRunDamagedConfigs(dirname(manifest.configPath), paths);
     unlinkSync(lockPath);
-    return { restored: true, ...removeRunArtifacts(tools, appPath, manifest, paths) };
+    return { restored: true, damagedMoved, ...removeRunArtifacts(tools, appPath, manifest, paths) };
   }
 
   fail(`unknown Windows action: ${request.action}`);
@@ -1688,6 +2527,8 @@ async function main() {
   const [commandName, ...args] = process.argv.slice(2);
   if (commandName === 'sync') return runSync(args);
   if (commandName === 'restore') return runRestore(args);
+  if (commandName === 'walkthrough') return runWalkthrough(args);
+  if (commandName === 'walkthrough-uninstalled') return runWalkthroughUninstalled(args);
   if (commandName === '__kill-watch') {
     console.log(JSON.stringify(await killWatch(JSON.parse(Buffer.from(args[0], 'base64url').toString('utf8')))));
     return;
@@ -1698,7 +2539,11 @@ async function main() {
     console.log(JSON.stringify(result));
     return;
   }
-  console.error('usage: node scripts/alpha-harness.mjs sync|restore [--candidate <sha>] [--ssh sb-windows] [--linux-root ~/sb88] [--timeout-minutes 20]');
+  console.error([
+    'usage: node scripts/alpha-harness.mjs sync|restore [--candidate <sha>] [--ssh sb-windows] [--linux-root ~/sb88] [--timeout-minutes 20]',
+    '       node scripts/alpha-harness.mjs walkthrough --windows-installer <D:\\...setup.exe> --fedora-rpm <rpm> [--candidate <sha>] [--machine fedora|windows]',
+    '       node scripts/alpha-harness.mjs walkthrough-uninstalled --run <runId>',
+  ].join('\n'));
   process.exitCode = 2;
 }
 

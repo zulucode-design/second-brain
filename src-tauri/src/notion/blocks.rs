@@ -20,7 +20,7 @@
 //! local image has nothing for Notion to display. An external one could be embedded, but a
 //! URL Notion cannot fetch fails validation and takes the entire page create down with it —
 //! one unreachable image would make a whole note unpublishable. Images therefore become a
-//! paragraph naming the image and linking its source, which never fails.
+//! paragraph naming the image and linking its source when that is a URL, which never fails.
 //!
 //! **Anything unmapped degrades to a paragraph** rather than being dropped. A note that
 //! reads oddly in Notion is a smaller failure than a note missing content with no
@@ -33,6 +33,8 @@ use serde_json::{json, Value};
 
 /// Notion's cap on one rich-text run.
 const MAX_TEXT: usize = 2000;
+/// Notion's cap on a link's URL.
+const MAX_URL: usize = 2000;
 /// Notion's cap on runs in one rich-text array.
 const MAX_RUNS: usize = 100;
 /// Notion's cap on blocks in one request.
@@ -81,6 +83,17 @@ fn rich_text(text: &str, style: Style, link: Option<&str>) -> Vec<Value> {
             })
         })
         .collect()
+}
+
+/// The destination as Notion will take it, or `None` for one it would reject. Notion
+/// accepts only absolute URLs of up to 2,000 characters, and one link it rejects (an anchor,
+/// an attachment, a link to another note) fails the whole page create, so those keep their
+/// text and lose the link.
+fn notion_link(destination: &str) -> Option<String> {
+    let url = reqwest::Url::parse(destination).ok()?;
+    let accepted =
+        matches!(url.scheme(), "http" | "https" | "mailto") && url.as_str().len() <= MAX_URL;
+    accepted.then(|| url.into())
 }
 
 /// What kind of container the builder is currently inside.
@@ -389,12 +402,12 @@ pub fn to_blocks(markdown: &str) -> Vec<Value> {
             Event::Start(Tag::Strikethrough) => style.strikethrough = true,
             Event::End(TagEnd::Strikethrough) => style.strikethrough = false,
 
-            Event::Start(Tag::Link { dest_url, .. }) => link = Some(dest_url.to_string()),
+            Event::Start(Tag::Link { dest_url, .. }) => link = notion_link(&dest_url),
             Event::End(TagEnd::Link) => link = None,
 
             // An image cannot be displayed: local attachments are never uploaded, and an
             // external URL Notion cannot fetch fails validation and takes the whole page
-            // with it. Naming it and linking it always works.
+            // with it. Naming it, and linking it when its source is a URL, always works.
             Event::Start(Tag::Image {
                 dest_url, title, ..
             }) => {
@@ -404,7 +417,7 @@ pub fn to_blocks(markdown: &str) -> Vec<Value> {
                     title.to_string()
                 };
                 push_text!(&format!("[{label}: "));
-                link = Some(dest_url.to_string());
+                link = notion_link(&dest_url);
             }
             Event::End(TagEnd::Image) => {
                 link = None;
@@ -618,10 +631,61 @@ mod tests {
             !kinds(&blocks).contains(&"image".to_string()),
             "an image block risks failing the entire page"
         );
+        assert_eq!(text_of(&blocks[0]), "[image: diagram]");
+        let runs = blocks[0]["paragraph"]["rich_text"].as_array().unwrap();
+        assert!(
+            runs.iter().all(|r| r["text"]["link"].is_null()),
+            "a local attachment has no URL Notion accepts"
+        );
+    }
+
+    #[test]
+    fn an_external_image_links_its_source() {
+        let blocks = to_blocks("![chart](https://example.com/chart.png)");
         let runs = blocks[0]["paragraph"]["rich_text"].as_array().unwrap();
         assert!(runs
             .iter()
-            .any(|r| r["text"]["link"]["url"].as_str() == Some(".helixnotes/attachments/x.png")));
+            .any(|r| r["text"]["link"]["url"].as_str() == Some("https://example.com/chart.png")));
+    }
+
+    #[test]
+    fn a_link_notion_cannot_take_keeps_its_text_without_the_link() {
+        // #152: Notion rejects the whole page for one relative URL, so an anchor, an
+        // attachment, or a link to another note must not reach it as a link.
+        for destination in [
+            "#cite_note-1",
+            ".helixnotes/attachments/notes.txt",
+            "<./Other note.md>",
+            "../Areas/Other.md",
+            "javascript:alert(1)",
+        ] {
+            let blocks = to_blocks(&format!("see [the source]({destination}) here"));
+            let runs = blocks[0]["paragraph"]["rich_text"].as_array().unwrap();
+            assert!(
+                runs.iter().all(|r| r["text"]["link"].is_null()),
+                "{destination} must not be sent as a link"
+            );
+            assert_eq!(text_of(&blocks[0]), "see the source here");
+        }
+    }
+
+    #[test]
+    fn a_url_longer_than_notion_accepts_keeps_its_text_without_the_link() {
+        let long = format!("https://example.com/{}", "a".repeat(MAX_URL));
+        let blocks = to_blocks(&format!("[long]({long})"));
+        let runs = blocks[0]["paragraph"]["rich_text"].as_array().unwrap();
+        assert!(runs[0]["text"]["link"].is_null());
+        assert_eq!(text_of(&blocks[0]), "long");
+    }
+
+    #[test]
+    fn a_mail_link_keeps_its_destination() {
+        let blocks = to_blocks("[write](mailto:someone@example.com)");
+        let runs = blocks[0]["paragraph"]["rich_text"].as_array().unwrap();
+        assert_eq!(
+            runs[0]["text"]["link"]["url"],
+            json!("mailto:someone@example.com")
+        );
     }
 
     #[test]

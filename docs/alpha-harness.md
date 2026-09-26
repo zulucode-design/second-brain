@@ -1,7 +1,7 @@
 # Installed-app alpha harness
 
 Issue #137 tracks the unattended installed-package harness required by #88. Gates are built
-and run in matrix order. Gates 1 and 2 are implemented.
+and run in matrix order. Gates 1, 2, and 3 are implemented.
 
 ## Gate 1: interrupted sync recovery
 
@@ -79,12 +79,121 @@ tests in `backup.rs` (#142). Evidence is written to
 Never run two controllers at once. The Windows `recover` step cannot tell a stale lock from a live
 run's, so a second controller would restore the real Windows config under the first.
 
+## Gate 3: installed-package walkthrough
+
+Run from the Fedora 44 desktop session while `sb-windows` is reachable, with Ollama serving
+`embeddinggemma` on the Windows desktop and a disposable Notion page shared with an integration:
+
+```sh
+export SECOND_BRAIN_NOTION_TOKEN=ntn_... SECOND_BRAIN_NOTION_PAGE='<page title>'
+node scripts/alpha-harness.mjs walkthrough --candidate <sha> \
+  --windows-installer 'D:\SecondBrainTest\src\src-tauri\target\release\bundle\nsis\Second Brain_0.1.0-alpha.1_x64-setup.exe' \
+  --fedora-rpm ~/second-brain-candidate/src-tauri/target/release/bundle/rpm/<rpm>
+```
+
+`--machine fedora` or `--machine windows` runs one machine while a step is being fixed. Only a run
+of both machines counts as the gate; `run-start` and `run-complete` record the machines and
+`gate: true` only for a run of both.
+
+The RPM must already be installed (`sudo rpm -Uvh --replacepkgs <rpm>`). The controller checks it
+with `rpm -V`, `scripts/verify-linux-package.sh`, and the installed desktop entry's `Exec`. It
+installs the NSIS package silently and checks that the Start-menu entry targets the installed
+executable. Each machine first launches that installed entry and checks the app process, then
+stops it by PID. The matrix v2 walkthrough runs through `tauri-driver`, which launches the same
+installed binary, with one screenshot per step
+under `~/sb88/evidence/walkthrough-<run>/`:
+
+1. open a fresh vault showing the four PARA roots and no repair issues. Sync is on, unpaired, so the
+   Syncthing sidecar and its watchdog must be running;
+2. create a note, edit it, navigate away at once, reopen it, edit it again, and close the window
+   without waiting; both edits must be on disk after the app exits;
+3. keyword search, a semantic search once the index is complete, graph, tasks, trash restore,
+   note history, backup, and restore;
+4. clip `https://en.wikipedia.org/wiki/Zettelkasten` and attach a local file. The route from the
+   Windows test machine to the page stalled past the app's 20 s limit in one of 40 plain fetches,
+   so on either machine a clip the app reports as timed out is retried once, and the result
+   records it; any other clip error fails the step;
+5. publish to the disposable Notion page with no note failing, then disconnect, which removes the
+   token from the keyring. The controller reads the databases the run created from the vault's
+   `.helixnotes/notion/databases.json` and confirms, through the Notion API, that the capture, the
+   clip, and the attachment note arrived. The clip and the attachment note carry anchor and
+   relative links (#152). It also looks the run's token up in the OS keyring: `secret-tool` on
+   Fedora, and on Windows Credential Manager from the desktop session, because an SSH logon has
+   none. The lookup must find the token while the vault is connected, and not after Disconnect.
+   Whether or not the walkthrough passed, the controller archives the run's databases and deletes
+   a token that a failed step left;
+6. show the Export diagnostics button in Settings > Maintenance, export diagnostics, and search the
+   archive for a planted credential, a note body marker, a note title and path, and the vault path;
+7. with the embedding backend pointed at a closed port, capture a note, edit an existing one (the
+   edit must be on disk after exit), move a note, and keyword search;
+8. start with a malformed `config.json`, which must show the startup error and leave exactly one
+   damaged copy beside the config, then restore the run's configuration;
+9. on Windows only (#49): with the vault folder renamed, press Ctrl+Alt+N twice from the desktop
+   session. The app's log must record a toast shown for each press, and after each press its
+   notification history must hold exactly one "Quick capture" toast saying this run's vault isn't
+   available: the second replaced the first (#153);
+10. launch once more with the sidecar and watchdog running, exit through the window's close button,
+    and check that no app, sidecar, or watchdog is left.
+
+After the last step, the controller records each vault's tree hash. It uninstalls the Windows
+package, checks that the executable and Start-menu entry are gone and the vault hash is unchanged,
+and reinstalls the candidate, also when the uninstall fails. The RPM needs root, so after the run
+Nicolas runs `sudo rpm -e second-brain`, then:
+
+```sh
+node scripts/alpha-harness.mjs walkthrough-uninstalled --run <runId>
+```
+
+This appends the Fedora uninstall result to the same trace. It refuses a run with no completed
+Fedora walkthrough, and compares the vault with the hash the run recorded.
+
+WebDriver cannot answer native dialogs. The diagnostics export calls the button's own
+`export_diagnostics` command with the path the save dialog would return, and the trace says so.
+The file attachment goes to the editor's hidden file input, as the picker would deliver it: on
+Fedora through a `DataTransfer`, and on Windows, whose WebView2 ignores a synthetic file list, as
+the path of a file staged in the run folder, sent the way WebDriver uploads a file.
+WebKitWebDriver rejects key input, so Fedora types through `document.execCommand('insertText')`;
+Windows uses real WebDriver key actions.
+
+Before every step the Windows desktop must be signed in and unlocked: explorer.exe names the desktop
+session, and LogonUI.exe running in it means it is locked. Fedora must also be unlocked: its
+WebDriver screenshot timed out under the GNOME lock screen in run 20260926T144833Z. A GNOME idle
+inhibitor keeps that screen from locking during the run. The Windows keep-awake request
+comes from the SSH session, and Windows ignores a display request from there, so the per-step check
+is what proves the desktop stayed unlocked.
+
+The evidence trace is `docs/reports/evidence/alpha-harness-walkthrough-<timestamp>.jsonl`.
+
+## Running a gate from GitHub Actions
+
+`.github/workflows/alpha-harness.yml` runs one gate by `workflow_dispatch` from `main`. Its
+first job refuses a candidate unless the hosted `verify` and `windows-rust` checks passed on that
+commit. The second job runs on a self-hosted runner labelled `second-brain-alpha` and uses the
+`alpha-harness` environment, which holds the Notion secrets `SECOND_BRAIN_NOTION_TOKEN` and
+`SECOND_BRAIN_NOTION_PAGE`.
+
+The repository is public, so no runner stays registered. Before a dispatch, register one from a
+terminal in the Fedora desktop session, with a registration token from the repository's
+Actions > Runners page:
+
+```sh
+./config.sh --url https://github.com/zulucode-design/second-brain --token <token> \
+  --labels second-brain-alpha --ephemeral --unattended
+./run.sh
+```
+
+`--ephemeral` makes it take exactly one job and deregister. Starting it from the desktop terminal
+gives tauri-driver the session's display and D-Bus, which a system service would not have.
+For a walkthrough dispatch, the job waits up to 30 minutes after both machines finish for Nicolas
+to run `sudo rpm -e second-brain` on Fedora. It then runs `walkthrough-uninstalled`; the job cannot
+pass until package removal and vault preservation both pass. The runner needs no sudo access.
+
 ## Keeping both machines awake
 
 Run `20260921T023725Z` failed when Windows slept seven minutes in (Kernel-Power 42 at
 02:43:06Z). Every run now holds both machines awake before it touches either one:
 
-- Fedora: `systemd-inhibit --what=sleep:idle` for the controller's lifetime.
+- Fedora: `systemd-inhibit --what=sleep:idle` and `gnome-session-inhibit --inhibit=idle` for the controller's lifetime.
 - Windows: a `PowerSetRequest(PowerRequestSystemRequired)` held by a PowerShell started over
   SSH. It appears in `powercfg /requests` as "Second Brain alpha harness run". The holder
   reports its PID and the controller stops exactly that process when the run ends. Windows
@@ -113,9 +222,8 @@ names at the single point where it writes them.
 
 Windows launch uses the harness-owned `SecondBrainAlphaHarness` scheduled task with interactive
 logon and the exact installed executable under `D:\SecondBrainTest`. The task supplies desktop
-session placement only. Gate 3 must additionally keep or transfer an unlocked console session
-before WebDriver is introduced.
+session placement only. Key presses and full-desktop screenshots come from
+`scripts/windows/alpha-desktop.ps1`, which runs in the same session through a short-lived
+`SecondBrainAlphaHarnessDesktop` task.
 
 Gate 1 passed unattended on candidate `4ea6b9e` (run `20260921T114623Z`), so Gate 2 may start.
-`scripts/verify-linux-package.sh` and the unlocked-session check belong to Gate 3, where the
-walkthrough exercises the installed package's desktop entry and window.

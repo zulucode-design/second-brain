@@ -1,9 +1,10 @@
 param(
-  [ValidateSet('Metadata', 'EnsureTask', 'RunTask', 'RemoveTask', 'StopPid', 'FindProcess')][string]$Action,
+  [ValidateSet('Metadata', 'EnsureTask', 'RunTask', 'RemoveTask', 'StopPid', 'FindProcess', 'SessionState', 'Shortcut', 'DesktopScript')][string]$Action,
   [string]$TaskName,
   [string]$ExecutablePath,
   [string]$TaskArguments,
-  [int]$PidToStop
+  [int]$PidToStop,
+  [string]$ScriptArguments
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,17 +12,86 @@ $ProgressPreference = 'SilentlyContinue'
 
 function Get-NowUtc { (Get-Date).ToUniversalTime().ToString('o') }
 
-if (-not $Action -or -not $ExecutablePath) {
-  throw 'Action and ExecutablePath are required'
+if (-not $Action) { throw 'Action is required' }
+
+# The desktop session, where explorer.exe runs, is the one the app and its WebDriver run on; this
+# script runs in the SSH session. LogonUI.exe runs in a session exactly while its lock or sign-in
+# screen is showing.
+if ($Action -eq 'SessionState') {
+  $sshSession = (Get-Process -Id $PID).SessionId
+  $explorerRecords = @(Get-CimInstance Win32_Process -Filter "Name = 'explorer.exe'" | Where-Object { $_.SessionId -ne 0 })
+  $desktopSession = if ($explorerRecords.Count) { $explorerRecords[0].SessionId } else { $null }
+  $lockRecords = @(Get-Process -Name LogonUI -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $desktopSession })
+  [pscustomobject]@{
+    at = Get-NowUtc
+    action = 'session-state'
+    sshSession = $sshSession
+    desktopSession = $desktopSession
+    locked = [bool]$lockRecords.Count
+  } | ConvertTo-Json -Compress
+  exit 0
 }
+
+# ExecutablePath is the file the action works on: the installed app, or the script DesktopScript runs.
+if (-not $ExecutablePath) { throw 'ExecutablePath is required' }
 
 $resolvedExecutable = [IO.Path]::GetFullPath($ExecutablePath)
 $testRoot = [IO.Path]::GetFullPath('D:\SecondBrainTest') + '\'
 if (-not $resolvedExecutable.StartsWith($testRoot, [StringComparison]::OrdinalIgnoreCase)) {
   throw "refusing executable outside D:\SecondBrainTest: $resolvedExecutable"
 }
-if (-not (Test-Path -LiteralPath $resolvedExecutable -PathType Leaf)) {
+# Shortcut also runs after an uninstall, to prove the entry went with the executable.
+if ($Action -ne 'Shortcut' -and -not (Test-Path -LiteralPath $resolvedExecutable -PathType Leaf)) {
   throw "installed executable not found: $resolvedExecutable"
+}
+
+# ExecutablePath names the expected target; the Start-menu entry must resolve to exactly it.
+if ($Action -eq 'Shortcut') {
+  $shortcutPath = Join-Path ([Environment]::GetFolderPath('Programs')) 'Second Brain.lnk'
+  if (-not (Test-Path -LiteralPath $shortcutPath -PathType Leaf)) {
+    [pscustomobject]@{ at = Get-NowUtc; action = 'shortcut'; shortcut = $shortcutPath; exists = $false } | ConvertTo-Json -Compress
+    exit 0
+  }
+  $shortcutRecord = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcutPath)
+  $shortcutTarget = [IO.Path]::GetFullPath($shortcutRecord.TargetPath)
+  [pscustomobject]@{
+    at = Get-NowUtc
+    action = 'shortcut'
+    shortcut = $shortcutPath
+    exists = $true
+    target = $shortcutTarget
+    matches = $shortcutTarget.Equals($resolvedExecutable, [StringComparison]::OrdinalIgnoreCase)
+  } | ConvertTo-Json -Compress
+  exit 0
+}
+
+# Runs a harness script on the interactive desktop, where input and screen capture reach the
+# user's session. ExecutablePath is the script; it must live under D:\SecondBrainTest.
+if ($Action -eq 'DesktopScript') {
+  if (-not $TaskName) { throw 'TaskName is required' }
+  $interactiveUser = (Get-CimInstance Win32_ComputerSystem).UserName
+  if (-not $interactiveUser) { throw 'no interactive Windows user is logged in' }
+  $shellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $taskArgument = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$resolvedExecutable`" $ScriptArguments"
+  $taskAction = New-ScheduledTaskAction -Execute $shellPath -Argument $taskArgument
+  $taskPrincipal = New-ScheduledTaskPrincipal -UserId $interactiveUser -LogonType Interactive -RunLevel Limited
+  $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+  Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Principal $taskPrincipal -Settings $taskSettings -Force | Out-Null
+  try {
+    Start-ScheduledTask -TaskName $TaskName
+    $taskDeadline = (Get-Date).AddMinutes(5)
+    do {
+      Start-Sleep -Milliseconds 500
+      $taskState = (Get-ScheduledTask -TaskName $TaskName).State
+    } while ($taskState -eq 'Running' -and (Get-Date) -lt $taskDeadline)
+    if ($taskState -eq 'Running') { throw "desktop script $TaskName did not finish" }
+    $taskResult = (Get-ScheduledTaskInfo -TaskName $TaskName).LastTaskResult
+  } finally {
+    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+  }
+  [pscustomobject]@{ at = Get-NowUtc; action = 'desktop-script'; script = $resolvedExecutable; result = $taskResult } |
+    ConvertTo-Json -Compress
+  exit 0
 }
 
 if ($Action -eq 'Metadata') {

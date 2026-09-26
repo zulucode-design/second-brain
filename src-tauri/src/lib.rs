@@ -679,13 +679,12 @@ pub fn run() {
         }));
 
         // The app owns the key on Windows (ADR-0001), so registration goes through this
-        // plugin directly rather than the Linux portal's compositor handshake. Both are
-        // Windows-only dependencies (Cargo.toml), not merely Windows-only behaviour, so
-        // this has to be behind the same #[cfg] as the crates themselves.
+        // plugin directly rather than the Linux portal's compositor handshake. It is a
+        // Windows-only dependency (Cargo.toml), not merely Windows-only behaviour, so this
+        // has to be behind the same #[cfg] as the crate itself.
         #[cfg(target_os = "windows")]
         {
             builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
-            builder = builder.plugin(tauri_plugin_notification::init());
         }
 
         let window_state_builder = tauri_plugin_window_state::Builder::default();
