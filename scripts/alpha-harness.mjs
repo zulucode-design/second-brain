@@ -1227,12 +1227,14 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
         runCommandSync('scp', [
           `${sshHost}:${pressed.image.replaceAll('\\', '/')}`, join(screenshotDir, 'windows-hotkey-toast.png'),
         ], { timeout: 60_000 });
-        // A toast from an earlier run can stay in the history, so only a higher count proves this one.
-        const captures = (toasts) => toasts.filter((toast) => toast.startsWith('Quick capture') && toast.includes("vault isn't available"));
+        // History lists newest first and keeps earlier runs' toasts, so the proof is a new toast
+        // naming this run's vault.
+        const captures = (toasts) => toasts.filter((toast) => toast.startsWith('Quick capture')
+          && toast.includes("vault isn't available") && toast.includes(renamed.from));
         if (captures(pressed.toasts.after).length <= captures(pressed.toasts.before).length) {
-          fail(`no new "vault isn't available" capture toast after the hotkey: ${JSON.stringify(pressed.toasts)}`);
+          fail(`no new "vault isn't available" capture toast for ${renamed.from} after the hotkey: ${JSON.stringify(pressed.toasts)}`);
         }
-        return { renamed: renamed.to, toast: captures(pressed.toasts.after).at(-1), screenshot: join(screenshotDir, 'windows-hotkey-toast.png') };
+        return { renamed: renamed.to, toast: captures(pressed.toasts.after)[0], screenshot: join(screenshotDir, 'windows-hotkey-toast.png') };
       } finally {
         runWindowsAction('rename-vault', { away: false });
       }
