@@ -264,24 +264,33 @@ fn on_activation(app: &AppHandle) {
 /// Tell the user why the hotkey did not open the overlay, rather than nothing happening.
 fn notify_vault_unavailable(app: &AppHandle, path: &str) {
     let notice = super::vault_status::vault_unavailable_notice(path);
-    if let Err(error) = show_replacing_toast(&app.config().identifier, &notice.title, &notice.body) {
-        log::warn!("Could not show the vault-unavailable notification: {error}");
+    match show_vault_unavailable_toast(&app.config().identifier, &notice.title, &notice.body) {
+        Ok(()) => log::info!("Showed the vault-unavailable notification"),
+        Err(error) => log::warn!("Could not show the vault-unavailable notification: {error}"),
     }
 }
 
-/// Show a toast under a fixed tag and group, so repeated presses against a vault that is still
+/// Show the toast under a fixed tag and group, so repeated presses against a vault that is still
 /// missing replace one notification rather than stacking identical copies, as the Linux path's
 /// fixed id does. Straight through WinRT because `tauri-plugin-notification`'s Windows backend
 /// drops the id and sets no tag (#153).
-fn show_replacing_toast(app_id: &str, title: &str, body: &str) -> windows::core::Result<()> {
+fn show_vault_unavailable_toast(
+    app_id: &str,
+    title: &str,
+    body: &str,
+) -> windows::core::Result<()> {
     use windows::core::HSTRING;
-    use windows::UI::Notifications::{ToastNotification, ToastNotificationManager, ToastTemplateType};
+    use windows::UI::Notifications::{
+        ToastNotification, ToastNotificationManager, ToastTemplateType,
+    };
 
     let content = ToastNotificationManager::GetTemplateContent(ToastTemplateType::ToastText02)?;
     let lines = content.GetElementsByTagName(&HSTRING::from("text"))?;
     // Text nodes, not markup, so a path holding `&` or `<` stays text.
     for (index, text) in [title, body].into_iter().enumerate() {
-        lines.Item(index as u32)?.AppendChild(&content.CreateTextNode(&HSTRING::from(text))?)?;
+        lines
+            .Item(index as u32)?
+            .AppendChild(&content.CreateTextNode(&HSTRING::from(text))?)?;
     }
     let toast = ToastNotification::CreateToastNotification(&content)?;
     toast.SetTag(&HSTRING::from("vault-unavailable"))?;
