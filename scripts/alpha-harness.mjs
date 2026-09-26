@@ -1243,14 +1243,14 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
       }
       runWindowsAction('rename-vault', { away: false });
       fetchRemote(pressed.image, screenshot);
-      // History lists newest first and keeps earlier runs' toasts, so the proof is a new toast
-      // naming this run's vault.
+      // History keeps earlier runs' toasts, so the proof is a toast naming this run's vault. The
+      // hotkey was pressed twice, and the second toast must have replaced the first (#153).
       const captures = (toasts) => toasts.filter((toast) => toast.startsWith('Quick capture')
         && toast.includes("vault isn't available") && toast.includes(renamed.from));
-      if (captures(pressed.toasts.after).length <= captures(pressed.toasts.before).length) {
-        fail(`no new "vault isn't available" capture toast for ${renamed.from} after the hotkey: ${JSON.stringify(pressed.toasts)}`);
+      if (captures(pressed.toasts.before).length !== 0 || captures(pressed.toasts.after).length !== 1) {
+        fail(`expected one "vault isn't available" capture toast for ${renamed.from} after two presses: ${JSON.stringify(pressed.toasts)}`);
       }
-      return { renamed: renamed.to, toast: captures(pressed.toasts.after)[0] };
+      return { renamed: renamed.to, toast: captures(pressed.toasts.after)[0], presses: 2 };
     },
     install: (installer) => runWindowsAction('install', { installer, candidateCommit }, desktopTimeoutMs),
     uninstall: () => runWindowsAction('uninstall', {}, 3 * 60_000),

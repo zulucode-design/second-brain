@@ -83,7 +83,12 @@ function Get-ToastTexts {
 }
 
 $toastsBefore = @(Get-ToastTexts)
-if ($Mode -eq 'CaptureHotkey') { [AlphaHarness.Keys]::CaptureHotkey() }
+# Pressed twice: the second toast has to replace the first rather than stack under it (#153).
+if ($Mode -eq 'CaptureHotkey') {
+  [AlphaHarness.Keys]::CaptureHotkey()
+  Start-Sleep -Seconds 3
+  [AlphaHarness.Keys]::CaptureHotkey()
+}
 Start-Sleep -Milliseconds $SettleMilliseconds
 
 # The screen first: a toast banner shows for about five seconds, so reading the history before

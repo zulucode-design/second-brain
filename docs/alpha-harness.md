@@ -121,9 +121,9 @@ screenshot per step under `~/sb88/evidence/walkthrough-<run>/`:
 7. with the embedding backend pointed at a closed port, capture, edit, move, and keyword search;
 8. start with a malformed `config.json`, which must show the startup error, then restore the
    run's configuration;
-9. on Windows only (#49): with the vault folder renamed, press Ctrl+Alt+N from the desktop
-   session; the app's notification history must gain a new "Quick capture" toast saying this run's
-   vault isn't available;
+9. on Windows only (#49): with the vault folder renamed, press Ctrl+Alt+N twice from the desktop
+   session; the app's notification history must then hold exactly one "Quick capture" toast saying
+   this run's vault isn't available, the second having replaced the first (#153);
 10. exit through the window's close button and check that no app, sidecar, or watchdog is left.
 
 After the last step, the controller records each vault's tree hash. It uninstalls the Windows
