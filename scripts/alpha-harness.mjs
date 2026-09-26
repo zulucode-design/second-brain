@@ -1094,6 +1094,7 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl } = {}) {
   const machine = prepareLinux(root, runId, vaultId, { driven: true, ollamaBaseUrl });
   const goodConfigPath = join(machine.runRoot, 'config-before-break.json');
   const snapshotPath = join(machine.runRoot, 'vault-pre');
+  const notionAttributes = ['service', APP_IDENTIFIER, 'username', `integration:notion:${vaultId}`];
   let driver;
   const apps = () => {
     const rows = processRows();
@@ -1115,13 +1116,12 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl } = {}) {
     session: fedoraSession,
     // Fedora's webview takes the file object itself, so nothing has to be staged on disk.
     stageFile: () => null,
+    // The app's keyring entry: service is the app identifier, username the vault's account.
+    notionTokenStored: () => runCommandSync('secret-tool', ['lookup', ...notionAttributes], { accept: [0, 1] }).status === 0,
     clearNotionToken() {
-      // The app's keyring entry: service is the app identifier, username the vault's account.
-      const attributes = ['service', APP_IDENTIFIER, 'username', `integration:notion:${vaultId}`];
-      const stored = () => runCommandSync('secret-tool', ['lookup', ...attributes], { accept: [0, 1] }).status === 0;
-      const found = stored();
-      if (found) runCommandSync('secret-tool', ['clear', ...attributes]);
-      return { found, left: stored() };
+      const found = this.notionTokenStored();
+      if (found) runCommandSync('secret-tool', ['clear', ...notionAttributes]);
+      return { found, left: this.notionTokenStored() };
     },
     patchConfig(patch) {
       const current = JSON.parse(readFileSync(machine.configPath, 'utf8'));
@@ -1212,7 +1212,8 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
     readNote: (relativePath) => runWindowsAction('read-note', { relativePath }).content,
     session: () => runWindowsAction('session'),
     stageFile: (name, content) => runWindowsAction('stage-file', { name, content }).path,
-    clearNotionToken: () => runWindowsAction('notion-token', { vaultId }, 6 * 60_000),
+    notionTokenStored: () => runWindowsAction('notion-token', { vaultId, remove: false }, 6 * 60_000).found,
+    clearNotionToken: () => runWindowsAction('notion-token', { vaultId, remove: true }, 6 * 60_000),
     // #49: with the vault folder renamed away, the capture hotkey must raise the installed app's
     // "vault unavailable" toast. The key press comes from the desktop session, like a user's.
     async hotkeyCheck(screenshotDir) {
@@ -1588,17 +1589,25 @@ const NOTION_REGISTRY = '.helixnotes/notion/databases.json';
  * passed; a token its Disconnect left behind fails that run.
  */
 async function notionCleanup(machine, notion, passed) {
-  const token = machine.clearNotionToken();
+  // Each half runs even when the other throws, so a failed keyring check still archives.
+  let token;
+  let tokenError;
+  try {
+    token = machine.clearNotionToken();
+  } catch (error) {
+    tokenError = error;
+  }
   let registry;
   try {
     registry = JSON.parse(machine.readNote(NOTION_REGISTRY));
   } catch (error) {
     // A walkthrough that failed before Connect never created one.
-    if (passed) throw error;
+    if (passed) throw tokenError ?? error;
   }
   // The clip and the attachment note carry anchor and relative links (#152).
   const titles = passed ? ['Walkthrough capture', 'Zettelkasten', 'Walkthrough attachment'] : [];
   const databases = registry ? await notionVerifyAndClean(notion, registry, titles) : { databases: 0, archived: 0 };
+  if (tokenError) throw tokenError;
   const result = { ...databases, tokenFound: token.found, tokenLeft: token.left };
   if (token.left) fail(`the run's Notion token could not be removed from the keyring: ${JSON.stringify(result)}`);
   if (passed && token.found) fail(`Disconnect left the Notion token in the keyring: ${JSON.stringify(result)}`);
@@ -1693,7 +1702,11 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
       const attachment = { name: 'walkthrough-attachment.txt', content: 'Attached by the alpha walkthrough.' };
       return walkthrough.attachFile(browser, { ...attachment, path: machine.stageFile(attachment.name, attachment.content) });
     });
-    await step(browser, 'notion-publish', () => walkthrough.notionPublish(browser, type, notion));
+    await step(browser, 'notion-publish', () => walkthrough.notionPublish(browser, type, notion, () => {
+      const stored = machine.notionTokenStored();
+      if (!stored) fail("the keyring lookup does not find the connected vault's Notion token");
+      return stored;
+    }));
     await step(browser, 'diagnostics-export', () => walkthrough.exportDiagnostics(browser, machine.diagnosticsPath));
     await closeAndWait(browser);
   });
@@ -1813,8 +1826,14 @@ async function runWalkthroughLocked(options) {
             runError = error;
             observation(evidencePath, 'run-failed', machine.name, { error: error.message });
           } finally {
-            // Leave the machine with the candidate installed, as the run found it.
-            observation(evidencePath, 'reinstalled', machine.name, machine.install(options.windowsInstaller));
+            // Leave the machine with the candidate installed, as the run found it. A failure here
+            // is recorded without hiding one from the uninstall.
+            try {
+              observation(evidencePath, 'reinstalled', machine.name, machine.install(options.windowsInstaller));
+            } catch (error) {
+              observation(evidencePath, 'run-failed', machine.name, { error: `reinstall: ${error.message}` });
+              runError ??= error;
+            }
           }
         }
       }
@@ -1965,6 +1984,21 @@ function removeRunArtifacts(tools, appPath, manifest, paths) {
     windowsPowerShell(tools, ['-Action', 'RemoveTask', '-TaskName', WINDOWS_DRIVER_TASK, '-ExecutablePath', WINDOWS_DRIVER]);
   }
   return { machineState: paths.machinePath, junctionRemoved, taskRemoved: WINDOWS_TASK };
+}
+
+// Runs alpha-desktop.ps1 in the interactive desktop session through a scheduled task.
+function runDesktopScript(tools, scriptArguments) {
+  const ran = windowsPowerShell(tools, [
+    '-Action', 'DesktopScript', '-TaskName', WINDOWS_DESKTOP_TASK,
+    '-ExecutablePath', win32.join(tools, 'alpha-desktop.ps1'), '-ScriptArguments', scriptArguments,
+  ]);
+  if (ran.result !== 0) fail(`desktop script failed with ${ran.result}: ${scriptArguments}`);
+  return ran;
+}
+
+// alpha-desktop.ps1 writes JSON with Set-Content, which adds a UTF-8 byte-order mark.
+function readDesktopJson(path) {
+  return JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
 }
 
 function damagedConfigs(configDirectory) {
@@ -2274,14 +2308,10 @@ async function windowsWorker(request) {
 
   if (request.action === 'notion-token') {
     const resultPath = win32.join(paths.runRoot, 'notion-token.json');
-    const ran = windowsPowerShell(tools, [
-      '-Action', 'DesktopScript', '-TaskName', WINDOWS_DESKTOP_TASK,
-      '-ExecutablePath', win32.join(tools, 'alpha-desktop.ps1'),
-      // keyring's Windows store names a credential "<username>.<service>".
-      '-ScriptArguments', `-Mode NotionToken -ImagePath "${resultPath}" -CredentialTarget "integration:notion:${request.vaultId}.${APP_IDENTIFIER}"`,
-    ]);
-    if (ran.result !== 0) fail(`Notion token check failed with ${ran.result}`);
-    const found = JSON.parse(readFileSync(resultPath, 'utf8').replace(/^\uFEFF/, ''));
+    // keyring's Windows store names a credential "<username>.<service>".
+    const target = `integration:notion:${request.vaultId}.${APP_IDENTIFIER}`;
+    runDesktopScript(tools, `-Mode NotionToken -OutputPath "${resultPath}" -CredentialTarget "${target}"${request.remove ? ' -RemoveCredential' : ''}`);
+    const found = readDesktopJson(resultPath);
     unlinkSync(resultPath);
     return found;
   }
@@ -2303,16 +2333,9 @@ async function windowsWorker(request) {
   if (request.action === 'desktop') {
     const image = win32.join(paths.runRoot, request.image);
     assertWindowsRoot(paths.runRoot, image);
-    const ran = windowsPowerShell(tools, [
-      '-Action', 'DesktopScript', '-TaskName', WINDOWS_DESKTOP_TASK,
-      '-ExecutablePath', win32.join(tools, 'alpha-desktop.ps1'),
-      '-ScriptArguments', `-Mode ${request.mode} -ImagePath "${image}" -Aumid ${APP_IDENTIFIER}`,
-    ]);
-    if (ran.result !== 0) fail(`desktop script failed with ${ran.result}`);
+    const ran = runDesktopScript(tools, `-Mode ${request.mode} -OutputPath "${image}" -Aumid ${APP_IDENTIFIER}`);
     if (!existsSync(image)) fail(`desktop script wrote no screenshot: ${image}`);
-    // Set-Content writes UTF-8 with a byte-order mark.
-    const toasts = JSON.parse(readFileSync(image.replace(/\.png$/, '.json'), 'utf8').replace(/^\uFEFF/, ''));
-    return { image, ...ran, toasts };
+    return { image, ...ran, toasts: readDesktopJson(image.replace(/\.png$/, '.json')) };
   }
 
   if (request.action === 'session') return windowsPowerShell(tools, ['-Action', 'SessionState']);
@@ -2333,11 +2356,11 @@ async function windowsWorker(request) {
     }
     const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
     if (lock.runId !== request.runId) fail('config lock belongs to another run');
-    // A run that failed between break-config and repair-config leaves the app's damaged copy.
-    moveRunDamagedConfigs(dirname(manifest.configPath), paths);
     atomicWrite(manifest.configPath, readFileSync(manifest.originalPath));
     unlinkSync(lockPath);
-    return { restored: true, ...removeRunArtifacts(tools, appPath, manifest, paths) };
+    // A run that failed between break-config and repair-config leaves the app's damaged copy.
+    const damagedMoved = moveRunDamagedConfigs(dirname(manifest.configPath), paths);
+    return { restored: true, damagedMoved, ...removeRunArtifacts(tools, appPath, manifest, paths) };
   }
 
   fail(`unknown Windows action: ${request.action}`);

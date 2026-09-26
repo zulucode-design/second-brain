@@ -428,16 +428,23 @@ export async function startupError(browser) {
 // Connects this run's vault to a disposable Notion page, publishes once, then disconnects so
 // the token leaves the machine's keyring. The controller checks Notion itself afterwards. The
 // page title is a secret in the workflow, so neither the result nor an error names it.
-export async function notionPublish(browser, type, { token, page }) {
+//
+// `whileConnected` runs once the token is stored, so the controller can prove its keyring lookup
+// finds it; otherwise finding nothing after the disconnect would prove nothing.
+export async function notionPublish(browser, type, { token, page }, whileConnected) {
   await openSettingsTab(browser, 'Notion');
   await type(browser, browser.$('input[placeholder="ntn_…"]'), token);
   await pressText(browser, 'button.import-btn', 'Connect');
+  let failure;
   try {
     await pressTextWhenReady(browser, 'button.import-btn', 'Choose a page');
+    const stored = await whileConnected();
     await browser.waitUntil(async () => (await byText(browser, 'button.option-btn', page)).length === 1, {
       timeout: 60_000, timeoutMsg: 'the disposable Notion page is not shared with the integration',
     });
-    await pressText(browser, 'button.option-btn', page);
+    // Pressed directly: pressText would name the page in its error.
+    const [option] = await byText(browser, 'button.option-btn', page);
+    await press(browser, option);
     const toggle = browser.$('button[aria-label="Publish to Notion from this machine"]');
     await toggle.waitForExist({ timeout: 60_000 });
     if ((await toggle.getAttribute('aria-checked')) !== 'true') await press(browser, toggle);
@@ -452,7 +459,10 @@ export async function notionPublish(browser, type, { token, page }) {
     if (error) fail(`Notion publish failed: ${error}`);
     // A note Notion refuses is counted, not raised, so the summary is where it shows (#152).
     if (/\d+ failed|failing to publish/.test(text)) fail(`Notion publish left notes unpublished: ${summary}`);
-    return { summary };
+    return { summary, tokenStoredWhileConnected: stored };
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
     // Also after a failure, so the token does not stay in the keyring; the controller checks.
     // Disconnect appears once the connection settles; without one there is nothing to remove.
@@ -460,12 +470,17 @@ export async function notionPublish(browser, type, { token, page }) {
       async () => (await byText(browser, 'button.import-btn', 'Disconnect')).length === 1,
       { timeout: 30_000 },
     ).then(() => true, () => false);
-    if (connected) {
-      await pressText(browser, 'button.import-btn', 'Disconnect');
-      await browser.waitUntil(async () => (await byText(browser, 'button.import-btn', 'Connect')).length === 1, {
-        timeout: 30_000, timeoutMsg: 'Notion did not disconnect',
-      });
+    try {
+      if (connected) {
+        await pressText(browser, 'button.import-btn', 'Disconnect');
+        await browser.waitUntil(async () => (await byText(browser, 'button.import-btn', 'Connect')).length === 1, {
+          timeout: 30_000, timeoutMsg: 'Notion did not disconnect',
+        });
+      }
+      await closeSettings(browser);
+    } catch (error) {
+      // The publish failure is the cause worth reporting; the controller clears the token anyway.
+      if (!failure) throw error;
     }
-    await closeSettings(browser);
   }
 }

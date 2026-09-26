@@ -2,21 +2,23 @@
 # injected input reaches the foreground and the screen can be captured, toasts included.
 param(
   [ValidateSet('Screenshot', 'CaptureHotkey', 'NotionToken')][string]$Mode,
-  [string]$ImagePath,
+  # The screenshot to write, or for NotionToken the JSON result.
+  [string]$OutputPath,
   [string]$Aumid,
   [string]$CredentialTarget,
+  [switch]$RemoveCredential,
   [int]$SettleMilliseconds = 3000
 )
 
 $ErrorActionPreference = 'Stop'
 
-$imageFull = [IO.Path]::GetFullPath($ImagePath)
-if (-not $imageFull.StartsWith([IO.Path]::GetFullPath('D:\SecondBrainTest') + '\', [StringComparison]::OrdinalIgnoreCase)) {
-  throw "refusing to write outside D:\SecondBrainTest: $imageFull"
+$outputFull = [IO.Path]::GetFullPath($OutputPath)
+if (-not $outputFull.StartsWith([IO.Path]::GetFullPath('D:\SecondBrainTest') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+  throw "refusing to write outside D:\SecondBrainTest: $outputFull"
 }
 
 # An SSH logon has no Credential Manager (cmdkey there says "A specified logon session does not
-# exist"), so the run's Notion token is looked up here. One left behind is deleted and reported.
+# exist"), so the run's Notion token is looked up here, and with -RemoveCredential deleted.
 if ($Mode -eq 'NotionToken') {
   if (-not $CredentialTarget.StartsWith('integration:notion:')) { throw "not a Notion credential: $CredentialTarget" }
   Add-Type -TypeDefinition @'
@@ -42,10 +44,10 @@ namespace AlphaHarness {
 }
 '@
   $credentialFound = [AlphaHarness.Credentials]::Exists($CredentialTarget)
-  if ($credentialFound) { [AlphaHarness.Credentials]::Delete($CredentialTarget) }
+  if ($credentialFound -and $RemoveCredential) { [AlphaHarness.Credentials]::Delete($CredentialTarget) }
   $credentialLeft = [AlphaHarness.Credentials]::Exists($CredentialTarget)
   [pscustomobject]@{ found = $credentialFound; left = $credentialLeft } | ConvertTo-Json -Compress |
-    Set-Content -LiteralPath $imageFull -Encoding UTF8
+    Set-Content -LiteralPath $outputFull -Encoding UTF8
   exit 0
 }
 
@@ -85,7 +87,7 @@ Start-Sleep -Milliseconds $SettleMilliseconds
 $toastsAfter = @(Get-ToastTexts)
 if ($Aumid) {
   [pscustomobject]@{ aumid = $Aumid; before = $toastsBefore; after = $toastsAfter } | ConvertTo-Json -Depth 3 -Compress |
-    Set-Content -LiteralPath ([IO.Path]::ChangeExtension($imageFull, '.json')) -Encoding UTF8
+    Set-Content -LiteralPath ([IO.Path]::ChangeExtension($outputFull, '.json')) -Encoding UTF8
 }
 
 $screenBounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
@@ -93,7 +95,7 @@ $bitmap = New-Object System.Drawing.Bitmap $screenBounds.Width, $screenBounds.He
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 try {
   $graphics.CopyFromScreen($screenBounds.Left, $screenBounds.Top, 0, 0, $bitmap.Size)
-  $bitmap.Save($imageFull, [System.Drawing.Imaging.ImageFormat]::Png)
+  $bitmap.Save($outputFull, [System.Drawing.Imaging.ImageFormat]::Png)
 } finally {
   $graphics.Dispose()
   $bitmap.Dispose()

@@ -112,8 +112,8 @@ screenshot per step under `~/sb88/evidence/walkthrough-<run>/`:
    `.helixnotes/notion/databases.json` and confirms, through the Notion API, that the capture, the
    clip, and the attachment note arrived. The clip and the attachment note carry anchor and
    relative links (#152). It also looks the run's token up in the OS keyring: `secret-tool` on
-   Fedora, and on Windows `cmdkey` from the desktop session, because an SSH logon has no
-   Credential Manager. A token still there fails the run. Whether or not the walkthrough passed,
+   Fedora, and on Windows Credential Manager from the desktop session, because an SSH logon has
+   none. The lookup must find the token while the vault is connected, and not after Disconnect. Whether or not the walkthrough passed,
    the controller archives the run's databases and deletes a token that a failed step left;
 6. export diagnostics and search the archive for a planted credential, a note body marker, a
    note title and path, and the vault path;
