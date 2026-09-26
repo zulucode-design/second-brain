@@ -1118,7 +1118,7 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl, sync = false 
   const snapshotPath = join(machine.runRoot, 'vault-pre');
   const notionAttributes = ['service', APP_IDENTIFIER, 'username', `integration:notion:${vaultId}`];
   let driver;
-  let entryPid;
+  let entryLaunchAttempted = false;
   const apps = () => {
     const rows = processRows();
     return rows.filter((row) => row.executable === LINUX_APP && driver && descendsFrom(rows, row.pid, driver.pid));
@@ -1139,24 +1139,37 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl, sync = false 
     session: fedoraSession,
     async launchEntry() {
       assertNoLinuxApp();
-      runCommandSync('gio', ['launch', LINUX_DESKTOP_ENTRY], {
+      const logPath = join(machine.runRoot, 'desktop-entry.log');
+      const log = openSync(logPath, 'a');
+      entryLaunchAttempted = true;
+      const launcher = spawn('gio', ['launch', LINUX_DESKTOP_ENTRY], {
         env: { ...process.env, XDG_CONFIG_HOME: machine.configHome, XDG_DATA_HOME: machine.dataHome },
+        stdio: ['ignore', log, log],
       });
-      const [app] = await waitForState(
-        () => processRows().filter((row) => row.executable === LINUX_APP),
-        (rows) => rows.length === 1, 30_000, 'Fedora desktop entry launch',
-      );
-      entryPid = app.pid;
+      closeSync(log);
+      let launchError;
+      launcher.on('error', (error) => { launchError = error; });
       try {
+        const [app] = await waitForState(
+          () => {
+            if (launchError) throw launchError;
+            const rows = processRows().filter((row) => row.executable === LINUX_APP);
+            if (!rows.length && launcher.exitCode !== null) fail(`gio launch exited ${launcher.exitCode}: ${readFileSync(logPath, 'utf8')}`);
+            return rows;
+          },
+          (rows) => rows.length === 1, 30_000, 'Fedora desktop entry launch',
+        );
         await sleep(2_000);
         if (!processRows().some((row) => row.pid === app.pid && row.executable === LINUX_APP)) {
           fail('Fedora desktop entry app exited after launch');
         }
         return { entry: LINUX_DESKTOP_ENTRY, executable: app.executable, pid: app.pid };
       } finally {
-        killForCleanup(app.pid, 'SIGTERM');
+        // No app existed before this entry launch. Stop only exact PIDs it started.
+        for (const row of linuxReport(machine.machinePath)) killForCleanup(row.pid, 'SIGTERM');
+        if (launcher.exitCode === null) launcher.kill('SIGTERM');
         await this.appsGone();
-        entryPid = undefined;
+        entryLaunchAttempted = false;
       }
     },
     syncRunning: async () => ({
@@ -1218,7 +1231,7 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl, sync = false 
       return { processes: survivors };
     },
     async cleanup() {
-      if (entryPid) {
+      if (entryLaunchAttempted) {
         for (const row of linuxReport(machine.machinePath)) killForCleanup(row.pid, 'SIGKILL');
       }
       if (!driver) return this.appsGone();
