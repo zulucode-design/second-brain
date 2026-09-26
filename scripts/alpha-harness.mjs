@@ -1566,16 +1566,27 @@ async function notionVerifyAndClean({ token }, registry, titles) {
   const databaseIds = Object.values(registry.databases).map((database) => database.database_id);
   if (!databaseIds.length) fail('the vault registered no Notion databases');
   const published = [];
+  const problems = [];
   for (const id of databaseIds) {
-    const rows = await notionRequest(token, 'POST', `/databases/${id}/query`, { page_size: 100 });
-    for (const row of rows.results) {
-      published.push(...Object.values(row.properties)
-        .filter((property) => property.type === 'title').map((property) => notionTitle(property.title)));
+    try {
+      const rows = await notionRequest(token, 'POST', `/databases/${id}/query`, { page_size: 100 });
+      for (const row of rows.results) {
+        published.push(...Object.values(row.properties)
+          .filter((property) => property.type === 'title').map((property) => notionTitle(property.title)));
+      }
+    } catch (error) {
+      problems.push(error.message);
     }
   }
+  // Archived even when a query failed, so the run leaves nothing live under the page.
   for (const id of databaseIds) {
-    await notionRequest(token, 'PATCH', `/databases/${id}`, { archived: true });
+    try {
+      await notionRequest(token, 'PATCH', `/databases/${id}`, { archived: true });
+    } catch (error) {
+      problems.push(error.message);
+    }
   }
+  if (problems.length) fail(problems.join('; '));
   const missing = titles.filter((title) => !published.includes(title));
   if (missing.length) fail(`not published to Notion: ${missing.join(', ')}`);
   return { databases: databaseIds.length, archived: databaseIds.length, published };
