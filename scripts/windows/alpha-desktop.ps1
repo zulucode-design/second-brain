@@ -7,7 +7,8 @@ param(
   [string]$Aumid,
   [string]$CredentialTarget,
   [switch]$RemoveCredential,
-  [int]$SettleMilliseconds = 3000
+  # The banner was on screen from one to five seconds after the key press.
+  [int]$SettleMilliseconds = 1500
 )
 
 $ErrorActionPreference = 'Stop'
@@ -84,12 +85,9 @@ function Get-ToastTexts {
 $toastsBefore = @(Get-ToastTexts)
 if ($Mode -eq 'CaptureHotkey') { [AlphaHarness.Keys]::CaptureHotkey() }
 Start-Sleep -Milliseconds $SettleMilliseconds
-$toastsAfter = @(Get-ToastTexts)
-if ($Aumid) {
-  [pscustomobject]@{ aumid = $Aumid; before = $toastsBefore; after = $toastsAfter } | ConvertTo-Json -Depth 3 -Compress |
-    Set-Content -LiteralPath ([IO.Path]::ChangeExtension($outputFull, '.json')) -Encoding UTF8
-}
 
+# The screen first: a toast banner shows for about five seconds, so reading the history before
+# the capture let the banner leave the screenshot (run 20260926T050316Z).
 $screenBounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
 $bitmap = New-Object System.Drawing.Bitmap $screenBounds.Width, $screenBounds.Height
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
@@ -99,4 +97,10 @@ try {
 } finally {
   $graphics.Dispose()
   $bitmap.Dispose()
+}
+
+$toastsAfter = @(Get-ToastTexts)
+if ($Aumid) {
+  [pscustomobject]@{ aumid = $Aumid; before = $toastsBefore; after = $toastsAfter } | ConvertTo-Json -Depth 3 -Compress |
+    Set-Content -LiteralPath ([IO.Path]::ChangeExtension($outputFull, '.json')) -Encoding UTF8
 }
