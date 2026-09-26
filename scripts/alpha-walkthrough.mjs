@@ -369,11 +369,24 @@ export async function clipPage(browser, type, { url, category, expectedText }) {
   const dialog = browser.$('[role="dialog"]');
   await dialog.waitForDisplayed({ timeout: 10_000 });
   await type(browser, dialog.$('input'), url);
-  await press(browser, dialog.$(`button*=${category}`));
-  await browser.waitUntil(async () => (await editorText(browser)).includes(expectedText), {
-    timeout: 60_000, timeoutMsg: `clipped note does not contain "${expectedText}"`,
-  });
-  return { url, category, title: await openTitle(browser) };
+  // The Windows test machine's route to the page stalls past the app's 20 s limit about once in
+  // 40 fetches, outside the app too. The app then says so and keeps the dialog open, as a user
+  // would see it, so one retry is allowed on exactly that message, and the result records it.
+  const timedOut = 'The web page took too long to respond';
+  let retried = false;
+  for (;;) {
+    await press(browser, dialog.$(`button*=${category}`));
+    let outcome;
+    await browser.waitUntil(async () => {
+      if ((await editorText(browser)).includes(expectedText)) outcome = 'clipped';
+      else if ((await browser.execute(() => document.querySelector('[role="dialog"]')?.innerText ?? '')).includes(timedOut)) outcome = 'timed-out';
+      return outcome;
+    }, { timeout: 60_000, timeoutMsg: `clipped note does not contain "${expectedText}"` });
+    if (outcome === 'clipped') break;
+    if (retried) fail(`the clip timed out twice: ${timedOut}`);
+    retried = true;
+  }
+  return { url, category, title: await openTitle(browser), retriedAfterTimeout: retried };
 }
 
 // The file picker is a native dialog WebDriver cannot answer, so the file reaches the editor's
