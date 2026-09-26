@@ -506,26 +506,27 @@ async function pollWindowsFixture({ sshHost, runId, evidencePath, predicate, dea
 }
 
 // With sync on, the app starts its Syncthing sidecar and the watchdog that outlives a crash.
-async function waitForSyncProcesses(roles, timeoutMs = 60_000) {
+// Reads until `predicate` holds for what `read` returns.
+async function waitForState(read, predicate, timeoutMs, what) {
   const deadline = Date.now() + timeoutMs;
-  let running = [];
+  let state;
   while (Date.now() < deadline) {
-    running = roles();
-    if (running.includes('Sidecar') && running.includes('Watchdog')) return { roles: running };
-    await sleep(1_000);
-  }
-  fail(`sync processes did not start: ${JSON.stringify(running)}`);
-}
-
-async function waitForWindowsProcesses(sshHost, runId, predicate, timeoutMs = 30_000) {
-  const deadline = Date.now() + timeoutMs;
-  let report;
-  while (Date.now() < deadline) {
-    report = remoteWorker(sshHost, { action: 'report', root: WINDOWS_ROOT, runId });
-    if (predicate(report.processes)) return report;
+    state = read();
+    if (predicate(state)) return state;
     await sleep(500);
   }
-  fail(`Windows process state timed out: ${JSON.stringify(report)}`);
+  fail(`${what} timed out: ${JSON.stringify(state)}`);
+}
+
+// With sync on, the app starts its Syncthing sidecar and the watchdog that outlives a crash.
+const syncProcessesUp = (roles) => roles.includes('Sidecar') && roles.includes('Watchdog');
+
+function windowsReport(sshHost, runId) {
+  return remoteWorker(sshHost, { action: 'report', root: WINDOWS_ROOT, runId });
+}
+
+function waitForWindowsProcesses(sshHost, runId, predicate, timeoutMs = 30_000) {
+  return waitForState(() => windowsReport(sshHost, runId), (report) => predicate(report.processes), timeoutMs, 'Windows process state');
 }
 
 // Gate 2: interrupted restore. The restore journal and its stage and rollback directories sit
@@ -1028,7 +1029,7 @@ async function runSyncLocked(options) {
     });
     observation(evidencePath, 'mid-transfer-proven', 'windows', { matching: partial.matching, missing: partial.missing });
 
-    const beforeStop = remoteWorker(options.sshHost, { action: 'report', root: WINDOWS_ROOT, runId });
+    const beforeStop = windowsReport(options.sshHost, runId);
     const oldSidecar = beforeStop.processes.find((process) => process.Role === 'Sidecar');
     if (!oldSidecar) fail('Windows sidecar was not running at interruption point');
     const interrupted = remoteWorker(options.sshHost, { action: 'interrupt-sidecar', root: WINDOWS_ROOT, runId });
@@ -1135,7 +1136,9 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl, sync = false 
     reset: () => resetVault(machine.vaultPath, snapshotPath, machine.runRoot),
     readNote: (relativePath) => readFileSync(join(machine.vaultPath, relativePath), 'utf8'),
     session: fedoraSession,
-    syncRunning: () => waitForSyncProcesses(() => linuxReport(machine.machinePath).map((row) => row.role)),
+    syncRunning: async () => ({
+      roles: await waitForState(() => linuxReport(machine.machinePath).map((row) => row.role), syncProcessesUp, 60_000, 'sync processes'),
+    }),
     // Fedora's webview takes the file object itself, so nothing has to be staged on disk.
     stageFile: () => null,
     // The app's keyring entry: service is the app identifier, username the vault's account.
@@ -1236,7 +1239,11 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
     reset: () => runWindowsAction('reset', {}, longTimeoutMs),
     readNote: (relativePath) => runWindowsAction('read-note', { relativePath }).content,
     session: () => runWindowsAction('session'),
-    syncRunning: () => waitForSyncProcesses(() => remoteWorker(sshHost, { action: 'report', root: WINDOWS_ROOT, runId }).processes.map((row) => row.Role)),
+    syncRunning: async () => {
+      const roles = (processes) => processes.map((row) => row.Role);
+      const report = await waitForWindowsProcesses(sshHost, runId, (processes) => syncProcessesUp(roles(processes)), 60_000);
+      return { roles: roles(report.processes) };
+    },
     stageFile: (name, content) => runWindowsAction('stage-file', { name, content }).path,
     notionTokenStored: () => runWindowsAction('notion-token', { vaultId, remove: false }, desktopTimeoutMs).found,
     clearNotionToken: () => runWindowsAction('notion-token', { vaultId, remove: true }, desktopTimeoutMs),
@@ -1780,7 +1787,7 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
   const offlineEdit = ' Edited while the embedding backend is offline.';
   await withApp(machine, async (browser) => {
     await step(browser, 'offline-capture', () => walkthrough.createNote(browser, type, offline).then(() => offline));
-    await step(browser, 'offline-edit', () => walkthrough.editNote(browser, type, { category: 'Projects', title: capture.title, text: offlineEdit }));
+    await step(browser, 'offline-edit', () => walkthrough.editNote(browser, type, { category: capture.category, title: capture.title, text: offlineEdit }));
     await step(browser, 'offline-organize', () => walkthrough.moveNote(browser, { from: offline.category, to: 'Archives', title: offline.title }));
     await step(browser, 'offline-keyword-search', () => walkthrough.search(browser, type, { mode: 'Keyword', query: 'offline', expected: offline.title }));
     await closeAndWait(browser);

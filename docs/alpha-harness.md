@@ -108,9 +108,10 @@ under `~/sb88/evidence/walkthrough-<run>/`:
    without waiting; both edits must be on disk after the app exits;
 3. keyword search, a semantic search once the index is complete, graph, tasks, trash restore,
    note history, backup, and restore;
-4. clip `https://en.wikipedia.org/wiki/Zettelkasten` and attach a local file. The Windows test
-   machine's route to the page stalls past the app's 20 s limit about once in 40 fetches, so a clip
-   the app reports as timed out is retried once, and the result records it;
+4. clip `https://en.wikipedia.org/wiki/Zettelkasten` and attach a local file. The route from the
+   Windows test machine to the page stalled past the app's 20 s limit in one of 40 plain fetches,
+   so on either machine a clip the app reports as timed out is retried once, and the result
+   records it; any other clip error fails the step;
 5. publish to the disposable Notion page with no note failing, then disconnect, which removes the
    token from the keyring. The controller reads the databases the run created from the vault's
    `.helixnotes/notion/databases.json` and confirms, through the Notion API, that the capture, the

@@ -176,17 +176,18 @@ async function appendToNote(browser, type, text) {
 // Row A: edit, navigate away at once, reopen, edit again, then close without waiting. The
 // controller checks the file on disk after the app has exited.
 export async function saveLifecycle(browser, type) {
+  const category = 'Projects';
   const title = 'Walkthrough capture';
   const first = `First edit ${MARKER}.`;
   const second = ' Second edit after reopening.';
-  await createNote(browser, type, { category: 'Projects', title, body: first });
+  await createNote(browser, type, { category, title, body: first });
   await openCategory(browser, 'Areas');
-  await openCategory(browser, 'Projects');
+  await openCategory(browser, category);
   await openNote(browser, title);
   const reopened = await editorText(browser);
   if (!reopened.includes(first)) fail(`first edit missing after reopening: ${reopened}`);
   await appendToNote(browser, type, second);
-  return { title, relativePath: `Projects/${title}.md`, expected: [first, second.trim()] };
+  return { category, title, relativePath: `${category}/${title}.md`, expected: [first, second.trim()] };
 }
 
 // Offline editing: an existing note takes an edit. The controller checks the file after exit.
@@ -369,9 +370,10 @@ export async function clipPage(browser, type, { url, category, expectedText }) {
   const dialog = browser.$('[role="dialog"]');
   await dialog.waitForDisplayed({ timeout: 10_000 });
   await type(browser, dialog.$('input'), url);
-  // The Windows test machine's route to the page stalls past the app's 20 s limit about once in
-  // 40 fetches, outside the app too. The app then says so and keeps the dialog open, as a user
-  // would see it, so one retry is allowed on exactly that message, and the result records it.
+  // The route from the Windows test machine to the page stalled past the app's 20 s limit in one
+  // of 40 plain fetches (2026-09-26). The app then says so and keeps the dialog open, as a user
+  // would see it, so one retry is allowed on exactly that message (src-tauri/src/web_clipping.rs),
+  // and the result records it. Any other error fails at once, naming itself.
   const timedOut = 'The web page took too long to respond';
   let retried = false;
   for (;;) {
@@ -379,11 +381,12 @@ export async function clipPage(browser, type, { url, category, expectedText }) {
     let outcome;
     await browser.waitUntil(async () => {
       if ((await editorText(browser)).includes(expectedText)) outcome = 'clipped';
-      else if ((await browser.execute(() => document.querySelector('[role="dialog"]')?.innerText ?? '')).includes(timedOut)) outcome = 'timed-out';
+      else outcome = await browser.execute(() => document.querySelector('[role="dialog"] [role="alert"]')?.innerText || null);
       return outcome;
     }, { timeout: 60_000, timeoutMsg: `clipped note does not contain "${expectedText}"` });
     if (outcome === 'clipped') break;
-    if (retried) fail(`the clip timed out twice: ${timedOut}`);
+    if (!outcome.startsWith(timedOut)) fail(`the clip failed: ${outcome}`);
+    if (retried) fail(`the clip timed out twice: ${outcome}`);
     retried = true;
   }
   return { url, category, title: await openTitle(browser), retriedAfterTimeout: retried };
@@ -443,7 +446,7 @@ export async function exportDiagnostics(browser, path) {
       .then(() => done({ ok: true }), (error) => done({ ok: false, error: String(error) }));
   }, path);
   if (!result.ok) fail(`diagnostic export failed: ${result.error}`);
-  return { path, dialog: 'bypassed: export_diagnostics invoked with the run path' };
+  return { path, button: 'enabled', dialog: 'bypassed: export_diagnostics invoked with the run path' };
 }
 
 export async function startupError(browser) {
