@@ -83,10 +83,13 @@ function Get-ToastTexts {
 }
 
 $toastsBefore = @(Get-ToastTexts)
-# Pressed twice: the second toast has to replace the first rather than stack under it (#153).
+# Pressed twice, with the history read between: the second toast has to replace the first rather
+# than stack under it (#153). The gap lets the first toast reach the history.
+$toastsAfterFirst = $null
 if ($Mode -eq 'CaptureHotkey') {
   [AlphaHarness.Keys]::CaptureHotkey()
   Start-Sleep -Seconds 3
+  $toastsAfterFirst = @(Get-ToastTexts)
   [AlphaHarness.Keys]::CaptureHotkey()
 }
 Start-Sleep -Milliseconds $SettleMilliseconds
@@ -106,6 +109,6 @@ try {
 
 $toastsAfter = @(Get-ToastTexts)
 if ($Aumid) {
-  [pscustomobject]@{ aumid = $Aumid; before = $toastsBefore; after = $toastsAfter } | ConvertTo-Json -Depth 3 -Compress |
+  [pscustomobject]@{ aumid = $Aumid; before = $toastsBefore; afterFirst = $toastsAfterFirst; after = $toastsAfter } | ConvertTo-Json -Depth 3 -Compress |
     Set-Content -LiteralPath ([IO.Path]::ChangeExtension($outputFull, '.json')) -Encoding UTF8
 }

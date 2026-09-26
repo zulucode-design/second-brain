@@ -1244,13 +1244,16 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
       runWindowsAction('rename-vault', { away: false });
       fetchRemote(pressed.image, screenshot);
       // History keeps earlier runs' toasts, so the proof is a toast naming this run's vault. The
-      // hotkey was pressed twice, and the second toast must have replaced the first (#153).
-      const captures = (toasts) => toasts.filter((toast) => toast.startsWith('Quick capture')
+      // app showed one per press, as its log says, yet the history holds one after each press:
+      // the second replaced the first (#153).
+      const { before, afterFirst, after } = pressed.toasts;
+      const captures = (toasts) => (toasts ?? []).filter((toast) => toast.startsWith('Quick capture')
         && toast.includes("vault isn't available") && toast.includes(renamed.from));
-      if (captures(pressed.toasts.before).length !== 0 || captures(pressed.toasts.after).length !== 1) {
-        fail(`expected one "vault isn't available" capture toast for ${renamed.from} after two presses: ${JSON.stringify(pressed.toasts)}`);
+      const counts = { before: captures(before).length, afterFirst: captures(afterFirst).length, after: captures(after).length };
+      if (pressed.notified !== 2 || counts.before !== 0 || counts.afterFirst !== 1 || counts.after !== 1) {
+        fail(`expected two toasts shown and one kept for ${renamed.from}: ${JSON.stringify({ notified: pressed.notified, counts, toasts: pressed.toasts })}`);
       }
-      return { renamed: renamed.to, toast: captures(pressed.toasts.after)[0], presses: 2 };
+      return { renamed: renamed.to, toast: captures(after)[0], notified: pressed.notified, counts };
     },
     install: (installer) => runWindowsAction('install', { installer, candidateCommit }, desktopTimeoutMs),
     uninstall: () => runWindowsAction('uninstall', {}, 3 * 60_000),
@@ -1661,11 +1664,14 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
   let stepNumber = 0;
   const sessionState = () => {
     const state = machine.session();
-    if (requireUnlocked && state.locked) fail(`${machine.name} desktop is locked`);
+    if (requireUnlocked && (state.locked || state.desktopSession == null)) {
+      fail(`${machine.name} desktop is ${state.locked ? 'locked' : 'not signed in'}`);
+    }
     return state;
   };
   // One screenshot per step, taken whether the step passed or failed. A step without a browser
-  // gets its screenshot from the action.
+  // gets its screenshot from the action. The session is read as the step starts: the Windows
+  // desktop has to be unlocked for the step to run.
   const step = async (browser, name, action) => {
     stepNumber += 1;
     const screenshot = join(screenshotDir, `${machine.name}-${String(stepNumber).padStart(2, '0')}-${name}.png`);
@@ -1677,7 +1683,7 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
       return result;
     } catch (error) {
       await browser?.saveScreenshot(screenshot).catch(() => {});
-      record('step-failed', { step: name, error: error.message, screenshot });
+      record('step-failed', { step: name, error: error.message, screenshot: existsSync(screenshot) ? screenshot : null });
       throw error;
     }
   };
@@ -1765,7 +1771,10 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
   await withApp(machine, async (browser) => {
     await step(browser, 'malformed-config', () => walkthrough.startupError(browser));
   }, '.error');
-  record('config-repaired', machine.repairConfig());
+  const repaired = machine.repairConfig();
+  record('config-repaired', repaired);
+  // The app keeps the file it could not parse; this run's is the only one it may have left.
+  if (repaired.damaged.length !== 1) fail(`expected one damaged config kept, found ${JSON.stringify(repaired.damaged)}`);
 
   if (machine.hotkeyCheck) await step(null, 'renamed-vault-hotkey', (screenshot) => machine.hotkeyCheck(screenshot));
   record('process-final', await machine.appsGone());
@@ -2363,9 +2372,16 @@ async function windowsWorker(request) {
   if (request.action === 'desktop') {
     const image = win32.join(paths.runRoot, request.image);
     assertWindowsRoot(paths.runRoot, image);
+    // The app logs each vault-unavailable toast it shows. No other copy of the app runs during
+    // a run, so the new lines are this run's.
+    const logDir = win32.join(process.env.LOCALAPPDATA, APP_IDENTIFIER, 'logs');
+    const notifications = () => readdirSync(logDir).filter((name) => name.endsWith('.log')).reduce((count, name) => (
+      count + readFileSync(win32.join(logDir, name), 'utf8').split('Showed the vault-unavailable notification').length - 1
+    ), 0);
+    const notifiedBefore = notifications();
     const ran = runDesktopScript(tools, `-Mode ${request.mode} -OutputPath "${image}" -Aumid ${APP_IDENTIFIER}`);
     if (!existsSync(image)) fail(`desktop script wrote no screenshot: ${image}`);
-    return { image, ...ran, toasts: readDesktopJson(image.replace(/\.png$/, '.json')) };
+    return { image, ...ran, notified: notifications() - notifiedBefore, toasts: readDesktopJson(image.replace(/\.png$/, '.json')) };
   }
 
   if (request.action === 'session') return windowsPowerShell(tools, ['-Action', 'SessionState']);
