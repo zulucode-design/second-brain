@@ -1,9 +1,10 @@
 # Runs inside the interactive desktop session (started by alpha-harness.ps1 DesktopScript), where
 # injected input reaches the foreground and the screen can be captured, toasts included.
 param(
-  [ValidateSet('Screenshot', 'CaptureHotkey')][string]$Mode,
+  [ValidateSet('Screenshot', 'CaptureHotkey', 'NotionToken')][string]$Mode,
   [string]$ImagePath,
   [string]$Aumid,
+  [string]$CredentialTarget,
   [int]$SettleMilliseconds = 3000
 )
 
@@ -12,6 +13,40 @@ $ErrorActionPreference = 'Stop'
 $imageFull = [IO.Path]::GetFullPath($ImagePath)
 if (-not $imageFull.StartsWith([IO.Path]::GetFullPath('D:\SecondBrainTest') + '\', [StringComparison]::OrdinalIgnoreCase)) {
   throw "refusing to write outside D:\SecondBrainTest: $imageFull"
+}
+
+# An SSH logon has no Credential Manager (cmdkey there says "A specified logon session does not
+# exist"), so the run's Notion token is looked up here. One left behind is deleted and reported.
+if ($Mode -eq 'NotionToken') {
+  if (-not $CredentialTarget.StartsWith('integration:notion:')) { throw "not a Notion credential: $CredentialTarget" }
+  Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace AlphaHarness {
+  public static class Credentials {
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern bool CredReadW(string target, int type, int flags, out IntPtr credential);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern bool CredDeleteW(string target, int type, int flags);
+    [DllImport("advapi32.dll")] static extern void CredFree(IntPtr buffer);
+    // keyring stores its entries as generic credentials.
+    const int Generic = 1;
+    public static bool Exists(string target) {
+      IntPtr found;
+      if (!CredReadW(target, Generic, 0, out found)) return false;
+      CredFree(found);
+      return true;
+    }
+    public static void Delete(string target) { CredDeleteW(target, Generic, 0); }
+  }
+}
+'@
+  $credentialFound = [AlphaHarness.Credentials]::Exists($CredentialTarget)
+  if ($credentialFound) { [AlphaHarness.Credentials]::Delete($CredentialTarget) }
+  $credentialLeft = [AlphaHarness.Credentials]::Exists($CredentialTarget)
+  [pscustomobject]@{ found = $credentialFound; left = $credentialLeft } | ConvertTo-Json -Compress |
+    Set-Content -LiteralPath $imageFull -Encoding UTF8
+  exit 0
 }
 
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing

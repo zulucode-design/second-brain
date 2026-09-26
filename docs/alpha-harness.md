@@ -92,7 +92,8 @@ node scripts/alpha-harness.mjs walkthrough --candidate <sha> \
 ```
 
 `--machine fedora` or `--machine windows` runs one machine while a step is being fixed. Only a run
-of both machines counts as the gate.
+of both machines counts as the gate; `run-start` and `run-complete` record the machines and
+`gate: true` only for a run of both.
 
 The RPM must already be installed (`sudo rpm -Uvh --replacepkgs <rpm>`). The controller checks it
 with `rpm -V`, `scripts/verify-linux-package.sh`, and the installed desktop entry's `Exec`. It
@@ -108,34 +109,41 @@ screenshot per step under `~/sb88/evidence/walkthrough-<run>/`:
 4. clip `https://en.wikipedia.org/wiki/Zettelkasten` and attach a local file;
 5. publish to the disposable Notion page with no note failing, then disconnect, which removes the
    token from the keyring. The controller reads the databases the run created from the vault's
-   `.helixnotes/notion/databases.json` and archives them after confirming, through the Notion API,
-   that the capture, the clip, and the attachment note arrived. The clip and the attachment note
-   carry anchor and relative links (#152);
+   `.helixnotes/notion/databases.json` and confirms, through the Notion API, that the capture, the
+   clip, and the attachment note arrived. The clip and the attachment note carry anchor and
+   relative links (#152). It also looks the run's token up in the OS keyring: `secret-tool` on
+   Fedora, and on Windows `cmdkey` from the desktop session, because an SSH logon has no
+   Credential Manager. A token still there fails the run. Whether or not the walkthrough passed,
+   the controller archives the run's databases and deletes a token that a failed step left;
 6. export diagnostics and search the archive for a planted credential, a note body marker, a
    note title and path, and the vault path;
 7. with the embedding backend pointed at a closed port, capture, edit, move, and keyword search;
 8. start with a malformed `config.json`, which must show the startup error, then restore the
    run's configuration;
 9. on Windows only (#49): with the vault folder renamed, press Ctrl+Alt+N from the desktop
-   session; the app's notification history must gain a new "Quick capture" toast;
+   session; the app's notification history must gain a new "Quick capture" toast saying the vault
+   isn't available;
 10. exit through the window's close button and check that no app, sidecar, or watchdog is left.
 
-After the last step, the controller uninstalls the Windows package, checks that the executable and
-Start-menu entry are gone while the vault remains, and reinstalls the candidate. The RPM needs root,
-so after the run Nicolas runs `sudo rpm -e second-brain`, then:
+After the last step, the controller records each vault's tree hash. It uninstalls the Windows
+package, checks that the executable and Start-menu entry are gone and the vault hash is unchanged,
+and reinstalls the candidate, also when the uninstall fails. The RPM needs root, so after the run
+Nicolas runs `sudo rpm -e second-brain`, then:
 
 ```sh
 node scripts/alpha-harness.mjs walkthrough-uninstalled --run <runId>
 ```
 
-This appends the Fedora uninstall result to the same trace.
+This appends the Fedora uninstall result to the same trace. It refuses a run with no completed
+Fedora walkthrough, and compares the vault with the hash the run recorded.
 
 WebDriver cannot answer native dialogs. The diagnostics export calls the button's own
 `export_diagnostics` command with the path the save dialog would return, and the trace says so.
 The file attachment goes to the editor's hidden file input, as the picker would deliver it: on
 Fedora through a `DataTransfer`, and on Windows, whose WebView2 ignores a synthetic file list, as
-the path of a file staged in the run folder, sent the way WebDriver uploads a file. WebKitWebDriver rejects key input, so Fedora types through
-`document.execCommand('insertText')`; Windows uses real WebDriver key actions.
+the path of a file staged in the run folder, sent the way WebDriver uploads a file.
+WebKitWebDriver rejects key input, so Fedora types through `document.execCommand('insertText')`;
+Windows uses real WebDriver key actions.
 
 Before every step the Windows desktop must be unlocked; LogonUI.exe running in the desktop session
 means it is locked. Fedora's GNOME lock state is recorded, not required, because WebKitGTK keeps

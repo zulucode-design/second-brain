@@ -142,6 +142,24 @@ export async function vaultOpened(browser) {
   return { categories, repair };
 }
 
+function editorText(browser) {
+  return browser.execute(() => document.querySelector('.ProseMirror').innerText.trim());
+}
+
+// Types `text` at the end of the open note's body.
+async function appendToNote(browser, type, text) {
+  await browser.execute(() => {
+    const editor = document.querySelector('.ProseMirror');
+    editor.focus();
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+  });
+  await type(browser, browser.$('.ProseMirror'), text);
+}
+
 // Row A: edit, navigate away at once, reopen, edit again, then close without waiting. The
 // controller checks the file on disk after the app has exited.
 export async function saveLifecycle(browser, type) {
@@ -152,19 +170,9 @@ export async function saveLifecycle(browser, type) {
   await openCategory(browser, 'Areas');
   await openCategory(browser, 'Projects');
   await openNote(browser, title);
-  const reopened = await browser.execute(() => document.querySelector('.ProseMirror').innerText.trim());
+  const reopened = await editorText(browser);
   if (!reopened.includes(first)) fail(`first edit missing after reopening: ${reopened}`);
-  await browser.execute(() => {
-    const editor = document.querySelector('.ProseMirror');
-    editor.focus();
-    const range = document.createRange();
-    range.selectNodeContents(editor);
-    range.collapse(false);
-    const selection = window.getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
-  });
-  await type(browser, browser.$('.ProseMirror'), second);
+  await appendToNote(browser, type, second);
   return { title, relativePath: `Projects/${title}.md`, expected: [first, second.trim()] };
 }
 
@@ -190,15 +198,10 @@ async function searchFor(browser, type, mode, query) {
   return titles;
 }
 
-export async function keywordSearch(browser, type, { query, expected }) {
-  const titles = await searchFor(browser, type, 'Keyword', query);
-  if (!titles.includes(expected)) fail(`keyword search for "${query}" did not find "${expected}": ${JSON.stringify(titles)}`);
-  return { query, titles };
-}
-
-export async function semanticSearch(browser, type, { query, expected }) {
-  const titles = await searchFor(browser, type, 'Semantic', query);
-  if (!titles.includes(expected)) fail(`semantic search for "${query}" did not find "${expected}": ${JSON.stringify(titles)}`);
+// `mode` is the search panel's toggle: Keyword or Semantic.
+export async function search(browser, type, { mode, query, expected }) {
+  const titles = await searchFor(browser, type, mode, query);
+  if (!titles.includes(expected)) fail(`${mode.toLowerCase()} search for "${query}" did not find "${expected}": ${JSON.stringify(titles)}`);
   return { query, titles };
 }
 
@@ -294,7 +297,11 @@ export async function trashAndRestore(browser, { category, title }) {
   await browser.waitUntil(async () => (await noteRows(browser, title)).length === 0, {
     timeout: 15_000, timeoutMsg: `"${title}" stayed in the trash`,
   });
-  return { title, restored: true };
+  await openCategory(browser, category);
+  await browser.waitUntil(async () => (await noteRows(browser, title)).length === 1, {
+    timeout: 15_000, timeoutMsg: `"${title}" did not return to ${category}`,
+  });
+  return { title, restored: true, category };
 }
 
 export async function noteHistory(browser, type, { category, title }) {
@@ -303,22 +310,18 @@ export async function noteHistory(browser, type, { category, title }) {
   await press(browser, browser.$('button[title="Version history"]'));
   await press(browser, browser.$('button.history-create-btn'));
   await browser.$('.history-item').waitForDisplayed({ timeout: 15_000 });
-  const before = await browser.execute(() => document.querySelector('.ProseMirror').innerText.trim());
-  await browser.execute(() => {
-    const editor = document.querySelector('.ProseMirror');
-    editor.focus();
-    const range = document.createRange();
-    range.selectNodeContents(editor);
-    range.collapse(false);
-    window.getSelection().removeAllRanges();
-    window.getSelection().addRange(range);
+  const before = await editorText(browser);
+  const edit = ' Edit made after the version.';
+  await appendToNote(browser, type, edit);
+  // Without the edit on screen, a restore that did nothing would still match `before`.
+  await browser.waitUntil(async () => (await editorText(browser)).endsWith(edit.trim()), {
+    timeout: 15_000, timeoutMsg: 'the edit after the version did not reach the editor',
   });
-  await type(browser, browser.$('.ProseMirror'), ' Edit made after the version.');
   const items = await browser.$$('.history-item');
   await press(browser, items[0]);
   await press(browser, browser.$('button.history-restore-btn'));
   await browser.waitUntil(
-    async () => (await browser.execute(() => document.querySelector('.ProseMirror').innerText.trim())) === before,
+    async () => (await editorText(browser)) === before,
     { timeout: 15_000, timeoutMsg: 'restoring the version did not bring back its text' },
   );
   return { versions: items.length, restoredText: before };
@@ -423,34 +426,46 @@ export async function startupError(browser) {
 }
 
 // Connects this run's vault to a disposable Notion page, publishes once, then disconnects so
-// the token leaves the machine's keyring. The controller checks Notion itself afterwards.
+// the token leaves the machine's keyring. The controller checks Notion itself afterwards. The
+// page title is a secret in the workflow, so neither the result nor an error names it.
 export async function notionPublish(browser, type, { token, page }) {
   await openSettingsTab(browser, 'Notion');
   await type(browser, browser.$('input[placeholder="ntn_…"]'), token);
   await pressText(browser, 'button.import-btn', 'Connect');
-  await pressTextWhenReady(browser, 'button.import-btn', 'Choose a page');
-  await browser.waitUntil(async () => (await byText(browser, 'button.option-btn', page)).length === 1, {
-    timeout: 60_000, timeoutMsg: `Notion page "${page}" is not shared with the integration`,
-  });
-  await pressText(browser, 'button.option-btn', page);
-  const toggle = browser.$('button[aria-label="Publish to Notion from this machine"]');
-  await toggle.waitForExist({ timeout: 60_000 });
-  if ((await toggle.getAttribute('aria-checked')) !== 'true') await press(browser, toggle);
-  await pressTextWhenReady(browser, 'button.import-btn', 'Publish Now');
-  const summary = await waitForText(
-    browser, 'body',
-    (value) => /Last published:/.test(value) && !/Publishing/.test(value),
-    'Notion publish did not finish', 10 * 60_000,
-  );
-  const error = await browser.execute(() => document.querySelector('.import-result.error')?.innerText.trim() ?? null);
-  if (error) fail(`Notion publish failed: ${error}`);
-  // A note Notion refuses is counted, not raised, so the summary is where it shows (#152).
-  const failing = /\d+ failed|failing to publish/.exec(summary);
-  if (failing) fail(`Notion publish left notes unpublished: ${/Last published:[^\n]*(\n[^\n]*){0,2}/.exec(summary)?.[0]}`);
-  await pressTextWhenReady(browser, 'button.import-btn', 'Disconnect');
-  await browser.waitUntil(async () => (await byText(browser, 'button.import-btn', 'Connect')).length === 1, {
-    timeout: 30_000, timeoutMsg: 'Notion did not disconnect',
-  });
-  await closeSettings(browser);
-  return { page, summary: /Last published:[^\n]*(\n[^\n]*){0,2}/.exec(summary)?.[0] };
+  try {
+    await pressTextWhenReady(browser, 'button.import-btn', 'Choose a page');
+    await browser.waitUntil(async () => (await byText(browser, 'button.option-btn', page)).length === 1, {
+      timeout: 60_000, timeoutMsg: 'the disposable Notion page is not shared with the integration',
+    });
+    await pressText(browser, 'button.option-btn', page);
+    const toggle = browser.$('button[aria-label="Publish to Notion from this machine"]');
+    await toggle.waitForExist({ timeout: 60_000 });
+    if ((await toggle.getAttribute('aria-checked')) !== 'true') await press(browser, toggle);
+    await pressTextWhenReady(browser, 'button.import-btn', 'Publish Now');
+    const text = await waitForText(
+      browser, 'body',
+      (value) => /Last published:/.test(value) && !/Publishing/.test(value),
+      'Notion publish did not finish', 10 * 60_000,
+    );
+    const summary = /Last published:[^\n]*(\n[^\n]*){0,2}/.exec(text)?.[0];
+    const error = await browser.execute(() => document.querySelector('.import-result.error')?.innerText.trim() ?? null);
+    if (error) fail(`Notion publish failed: ${error}`);
+    // A note Notion refuses is counted, not raised, so the summary is where it shows (#152).
+    if (/\d+ failed|failing to publish/.test(text)) fail(`Notion publish left notes unpublished: ${summary}`);
+    return { summary };
+  } finally {
+    // Also after a failure, so the token does not stay in the keyring; the controller checks.
+    // Disconnect appears once the connection settles; without one there is nothing to remove.
+    const connected = await browser.waitUntil(
+      async () => (await byText(browser, 'button.import-btn', 'Disconnect')).length === 1,
+      { timeout: 30_000 },
+    ).then(() => true, () => false);
+    if (connected) {
+      await pressText(browser, 'button.import-btn', 'Disconnect');
+      await browser.waitUntil(async () => (await byText(browser, 'button.import-btn', 'Connect')).length === 1, {
+        timeout: 30_000, timeoutMsg: 'Notion did not disconnect',
+      });
+    }
+    await closeSettings(browser);
+  }
 }

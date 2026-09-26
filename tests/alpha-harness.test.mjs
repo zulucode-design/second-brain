@@ -260,13 +260,31 @@ test('diagnostic leak check names each planted value and the member that holds i
   ]);
 });
 
-test('walkthrough refuses to start without its installer or Notion workspace', () => {
+test('diagnostic leak check finds a Windows path escaped in JSON or written with forward slashes', () => {
+  const vault = 'D:\\SecondBrainTest\\sb88\\runs\\r1\\windows\\vault';
+  const entries = zipEntries(zipOf([
+    ['config.json', `{"vaults":[{"path":${JSON.stringify(vault)}}]}`, 8],
+    ['logs/app.log', 'opened D:/SecondBrainTest/sb88/runs/r1/windows/vault', 8],
+    ['manifest.json', '{"vault":"[redacted]"}', 8],
+  ]));
+  assert.deepEqual(diagnosticLeaks(entries, { vault }), [
+    { member: 'config.json', planted: 'vault' },
+    { member: 'logs/app.log', planted: 'vault' },
+  ]);
+});
+
+test('walkthrough refuses to start without its installer, RPM, or Notion workspace', () => {
   const script = fileURLToPath(new URL('../scripts/alpha-harness.mjs', import.meta.url));
   const env = { ...process.env, SECOND_BRAIN_NOTION_TOKEN: '', SECOND_BRAIN_NOTION_PAGE: '' };
   const noInstaller = spawnSync(process.execPath, [script, 'walkthrough'], { encoding: 'utf8', env });
   assert.equal(noInstaller.status, 1);
   assert.match(noInstaller.stderr, /--windows-installer/);
-  const noNotion = spawnSync(process.execPath, [script, 'walkthrough', '--windows-installer', 'D:\\setup.exe'], { encoding: 'utf8', env });
+  const noRpm = spawnSync(process.execPath, [script, 'walkthrough', '--windows-installer', 'D:\\setup.exe'], { encoding: 'utf8', env });
+  assert.equal(noRpm.status, 1);
+  assert.match(noRpm.stderr, /--fedora-rpm/);
+  const noNotion = spawnSync(process.execPath, [
+    script, 'walkthrough', '--windows-installer', 'D:\\setup.exe', '--fedora-rpm', 'candidate.rpm',
+  ], { encoding: 'utf8', env });
   assert.equal(noNotion.status, 1);
   assert.match(noNotion.stderr, /SECOND_BRAIN_NOTION_TOKEN/);
 });

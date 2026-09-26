@@ -12,18 +12,7 @@ $ProgressPreference = 'SilentlyContinue'
 
 function Get-NowUtc { (Get-Date).ToUniversalTime().ToString('o') }
 
-if (-not $Action -or -not $ExecutablePath) {
-  throw 'Action and ExecutablePath are required'
-}
-
-$resolvedExecutable = [IO.Path]::GetFullPath($ExecutablePath)
-$testRoot = [IO.Path]::GetFullPath('D:\SecondBrainTest') + '\'
-if (-not $resolvedExecutable.StartsWith($testRoot, [StringComparison]::OrdinalIgnoreCase)) {
-  throw "refusing executable outside D:\SecondBrainTest: $resolvedExecutable"
-}
-if (-not (Test-Path -LiteralPath $resolvedExecutable -PathType Leaf)) {
-  throw "installed executable not found: $resolvedExecutable"
-}
+if (-not $Action) { throw 'Action is required' }
 
 # The console session is the desktop the app and its WebDriver run on. LogonUI.exe runs in a
 # session exactly while its lock or sign-in screen is showing.
@@ -42,16 +31,33 @@ if ($Action -eq 'SessionState') {
   exit 0
 }
 
+# ExecutablePath is the file the action works on: the installed app, or the script DesktopScript runs.
+if (-not $ExecutablePath) { throw 'ExecutablePath is required' }
+
+$resolvedExecutable = [IO.Path]::GetFullPath($ExecutablePath)
+$testRoot = [IO.Path]::GetFullPath('D:\SecondBrainTest') + '\'
+if (-not $resolvedExecutable.StartsWith($testRoot, [StringComparison]::OrdinalIgnoreCase)) {
+  throw "refusing executable outside D:\SecondBrainTest: $resolvedExecutable"
+}
+# Shortcut also runs after an uninstall, to prove the entry went with the executable.
+if ($Action -ne 'Shortcut' -and -not (Test-Path -LiteralPath $resolvedExecutable -PathType Leaf)) {
+  throw "installed executable not found: $resolvedExecutable"
+}
+
 # ExecutablePath names the expected target; the Start-menu entry must resolve to exactly it.
 if ($Action -eq 'Shortcut') {
   $shortcutPath = Join-Path ([Environment]::GetFolderPath('Programs')) 'Second Brain.lnk'
-  if (-not (Test-Path -LiteralPath $shortcutPath -PathType Leaf)) { throw "Start-menu entry missing: $shortcutPath" }
+  if (-not (Test-Path -LiteralPath $shortcutPath -PathType Leaf)) {
+    [pscustomobject]@{ at = Get-NowUtc; action = 'shortcut'; shortcut = $shortcutPath; exists = $false } | ConvertTo-Json -Compress
+    exit 0
+  }
   $shortcutRecord = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcutPath)
   $shortcutTarget = [IO.Path]::GetFullPath($shortcutRecord.TargetPath)
   [pscustomobject]@{
     at = Get-NowUtc
     action = 'shortcut'
     shortcut = $shortcutPath
+    exists = $true
     target = $shortcutTarget
     matches = $shortcutTarget.Equals($resolvedExecutable, [StringComparison]::OrdinalIgnoreCase)
   } | ConvertTo-Json -Compress

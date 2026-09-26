@@ -23,7 +23,7 @@ on:
         description: Candidate NSIS setup on the Windows machine (walkthrough only)
         default: D:\SecondBrainTest\src\src-tauri\target\release\bundle\nsis\Second Brain_0.1.0-alpha.1_x64-setup.exe
       fedora_rpm:
-        description: Installed candidate RPM on the Fedora machine (walkthrough only)
+        description: Installed candidate RPM on the Fedora machine (required for walkthrough)
         default: ''
 
 permissions:
