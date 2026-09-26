@@ -13,7 +13,7 @@ async function importTypeScript(relativePath) {
   return import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
 }
 
-const { EditorMutationBarrier } = await importTypeScript('../src/lib/utils/editor-mutation-barrier.ts');
+const { EditorMutationBarrier, saveForCurrentDocument } = await importTypeScript('../src/lib/utils/editor-mutation-barrier.ts');
 const { relocateDocument, runSaveGatedAction } = await importTypeScript('../src/lib/utils/document-lifecycle.ts');
 const { SerializedNavigationController } = await importTypeScript('../src/lib/utils/navigation-controller.ts');
 const { GenerationGate } = await importTypeScript('../src/lib/utils/generation-gate.ts');
@@ -70,6 +70,55 @@ test('a producer validates its originating document before insertion, including 
     await barrier.drain();
     assert.equal(insertions, 0);
   }
+});
+
+test('saved attachment is reported if a note switch or same-path reload cancels insertion', async () => {
+  for (const replacementPath of ['/vault/two.md', '/vault/one.md']) {
+    const barrier = new EditorMutationBarrier();
+    barrier.setDocument('/vault/one.md');
+    const identity = barrier.capture();
+    const pendingSave = deferred();
+    const inserted = [];
+    const cancelled = [];
+    const operation = saveForCurrentDocument(
+      () => barrier.isCurrent(identity),
+      () => pendingSave.promise,
+      (path) => { inserted.push(path); return true; },
+      (saved) => cancelled.push(saved)
+    );
+    barrier.setDocument(replacementPath);
+    pendingSave.resolve('.helixnotes/attachments/file.txt');
+    await operation;
+    assert.deepEqual(inserted, []);
+    assert.deepEqual(cancelled, [true], 'the saved file must be reported');
+  }
+});
+
+test('attachment insertion succeeds only while its document is current', async () => {
+  const barrier = new EditorMutationBarrier();
+  barrier.setDocument('/vault/one.md');
+  const identity = barrier.capture();
+  const inserted = [];
+  const cancelled = [];
+  await saveForCurrentDocument(
+    () => barrier.isCurrent(identity),
+    async () => '.helixnotes/attachments/file.txt',
+    (path) => { inserted.push(path); return true; },
+    (saved) => cancelled.push(saved)
+  );
+  assert.deepEqual(inserted, ['.helixnotes/attachments/file.txt']);
+  assert.deepEqual(cancelled, []);
+});
+
+test('a rejected editor insertion reports an already saved attachment', async () => {
+  const cancelled = [];
+  await saveForCurrentDocument(
+    () => true,
+    async () => '.helixnotes/attachments/file.txt',
+    () => false,
+    (saved) => cancelled.push(saved)
+  );
+  assert.deepEqual(cancelled, [true]);
 });
 
 test('active relocation never mutates the filesystem when save fails or identity changed', async () => {
