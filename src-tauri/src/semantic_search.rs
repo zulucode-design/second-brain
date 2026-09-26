@@ -1,6 +1,6 @@
 //! Machine-local semantic retrieval derived from the Markdown vault.
 
-use crate::types::SearchResult;
+use crate::types::{NoteMeta, SearchResult};
 use crate::vault::para::ParaCategory;
 use rusqlite::{params, Connection, ErrorCode};
 use sha2::{Digest, Sha256};
@@ -141,6 +141,37 @@ pub struct SemanticIndex {
     embedding_outage_reported: AtomicBool,
     last_reported_unreadable: AtomicUsize,
     profile: String,
+}
+
+struct PreparedNote {
+    path: String,
+    key: String,
+    hash: String,
+    meta: NoteMeta,
+    body: String,
+}
+
+impl PreparedNote {
+    fn from_text(path: &Path, raw: &str) -> Self {
+        let filename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        let (meta, body) = crate::vault::frontmatter::parse_note(raw, filename);
+        let path = path.to_string_lossy().to_string();
+        let key = if meta.id.trim().is_empty() {
+            format!("path:{path}")
+        } else {
+            format!("id:{}", meta.id)
+        };
+        Self {
+            path,
+            key,
+            hash: content_hash(raw),
+            meta,
+            body,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -343,7 +374,7 @@ impl SemanticIndex {
 
     /// Queue a note from text already read, and wake the worker to embed it.
     fn queue_text(&self, path: &Path, raw: &str) -> Result<(), String> {
-        self.refresh_pending_text(path, raw)?;
+        self.refresh_pending_text(&PreparedNote::from_text(path, raw))?;
         if let Some(wake) = self.wake_worker.get() {
             let _ = wake.send(());
         }
@@ -351,24 +382,12 @@ impl SemanticIndex {
     }
 
     /// Refresh one durable pending row, without waking the background worker.
-    fn refresh_pending_text(&self, path: &Path, raw: &str) -> Result<(), String> {
-        let filename = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("");
-        let (meta, _) = crate::vault::frontmatter::parse_note(raw, filename);
-        let path_text = path.to_string_lossy().to_string();
-        let note_key = if meta.id.trim().is_empty() {
-            format!("path:{path_text}")
-        } else {
-            format!("id:{}", meta.id)
-        };
-        let raw_hash = content_hash(raw);
+    fn refresh_pending_text(&self, note: &PreparedNote) -> Result<(), String> {
         let database = self.database.lock().map_err(|error| error.to_string())?;
         database
             .execute(
                 "DELETE FROM pending_notes WHERE note_key = ?1 OR path = ?2",
-                params![note_key, path_text],
+                params![note.key, note.path],
             )
             .map_err(|error| error.to_string())?;
         // A change event does not mean the content changed: reindexing and file watchers
@@ -380,7 +399,7 @@ impl SemanticIndex {
                     SELECT 1 FROM notes
                     WHERE note_key = ?1 AND path = ?2 AND content_hash = ?3 AND profile = ?4
                  )",
-                params![note_key, path_text, raw_hash, self.profile.as_str()],
+                params![note.key, note.path, note.hash, self.profile.as_str()],
                 |row| row.get::<_, bool>(0),
             )
             .map_err(|error| error.to_string())?;
@@ -391,7 +410,7 @@ impl SemanticIndex {
             .execute(
                 "INSERT INTO pending_notes (note_key, path, content_hash, profile)
                  VALUES (?1, ?2, ?3, ?4)",
-                params![note_key, path_text, raw_hash, self.profile.as_str()],
+                params![note.key, note.path, note.hash, self.profile.as_str()],
             )
             .map_err(|error| error.to_string())?;
         Ok(())
@@ -400,20 +419,8 @@ impl SemanticIndex {
     /// Embed one queued note from its text. `Ok(false)` means inference is unavailable and
     /// the item was deliberately left in the durable queue; local storage failures remain real
     /// errors.
-    fn embed_pending_text(&self, path: &Path, raw: &str) -> Result<bool, String> {
-        let filename = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("");
-        let (meta, body) = crate::vault::frontmatter::parse_note(raw, filename);
-        let path_text = path.to_string_lossy().to_string();
-        let note_key = if meta.id.trim().is_empty() {
-            format!("path:{path_text}")
-        } else {
-            format!("id:{}", meta.id)
-        };
-        let raw_hash = content_hash(raw);
-        let chunks = chunks_for(&meta.title, &body);
+    fn embed_pending_text(&self, note: &PreparedNote) -> Result<bool, String> {
+        let chunks = chunks_for(&note.meta.title, &note.body);
         let inputs: Vec<String> = chunks.iter().map(|chunk| chunk.input.clone()).collect();
         let embeddings = match self.backend.embed(&inputs) {
             Ok(embeddings) => embeddings,
@@ -451,7 +458,7 @@ impl SemanticIndex {
                     SELECT 1 FROM pending_notes
                     WHERE note_key = ?1 AND path = ?2 AND content_hash = ?3 AND profile = ?4
                  )",
-                params![note_key, path_text, raw_hash, self.profile.as_str()],
+                params![note.key, note.path, note.hash, self.profile.as_str()],
                 |row| row.get::<_, bool>(0),
             )
             .map_err(|error| error.to_string())?;
@@ -461,7 +468,7 @@ impl SemanticIndex {
         transaction
             .execute(
                 "DELETE FROM notes WHERE note_key = ?1 OR path = ?2",
-                params![note_key, path_text],
+                params![note.key, note.path],
             )
             .map_err(|error| error.to_string())?;
         transaction
@@ -469,11 +476,11 @@ impl SemanticIndex {
                 "INSERT INTO notes (note_key, path, title, category, content_hash, profile)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
-                    note_key,
-                    path_text,
-                    meta.title,
-                    meta.category.map(|category| category.folder_name()),
-                    raw_hash,
+                    note.key,
+                    note.path,
+                    note.meta.title,
+                    note.meta.category.map(|category| category.folder_name()),
+                    note.hash,
                     self.profile.as_str(),
                 ],
             )
@@ -483,14 +490,14 @@ impl SemanticIndex {
                 .execute(
                     "INSERT INTO chunks (note_key, ordinal, text, embedding)
                      VALUES (?1, ?2, ?3, ?4)",
-                    params![note_key, ordinal as i64, chunk.snippet, encode(&embedding)],
+                    params![note.key, ordinal as i64, chunk.snippet, encode(&embedding)],
                 )
                 .map_err(|error| error.to_string())?;
         }
         transaction
             .execute(
                 "DELETE FROM pending_notes WHERE note_key = ?1",
-                params![note_key],
+                params![note.key],
             )
             .map_err(|error| error.to_string())?;
         transaction
@@ -601,8 +608,15 @@ impl SemanticIndex {
                 .map_err(|error| error.to_string())?;
             transaction.commit().map_err(|error| error.to_string())?;
         }
+        let mut unreadable = 0;
         for path in paths {
-            self.note_changed(&path)?;
+            match std::fs::read_to_string(&path) {
+                Ok(raw) => self.queue_text(&path, &raw)?,
+                Err(_) => unreadable += 1,
+            }
+        }
+        if unreadable > 0 {
+            log::warn!("Semantic rebuild skipped unreadable notes: {unreadable}");
         }
         Ok(())
     }
@@ -724,8 +738,9 @@ impl SemanticIndex {
                     continue;
                 }
             };
-            self.refresh_pending_text(&path, &raw)?;
-            if !self.embed_pending_text(&path, &raw)? {
+            let note = PreparedNote::from_text(&path, &raw);
+            self.refresh_pending_text(&note)?;
+            if !self.embed_pending_text(&note)? {
                 return Ok(RetryOutcome::BackendUnavailable);
             }
         }
@@ -1750,6 +1765,31 @@ mod tests {
             1,
             "the unreadable note stays queued"
         );
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn rebuild_skips_an_unreadable_note_and_queues_the_notes_after_it() {
+        let root = scratch("rebuild-unreadable");
+        let areas = root.join("Areas");
+        std::fs::create_dir_all(&areas).unwrap();
+        let broken = areas.join("Broken.md");
+        let later = areas.join("Later.md");
+        std::fs::write(&broken, [0xff, 0xfe]).unwrap();
+        write_note(&later, "later-id", "Later", "Areas", "coffee");
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
+                .unwrap();
+
+        index.rebuild_from_notes(&root).unwrap();
+        assert_eq!(index.status().unwrap().queued_notes, 1);
+        index.retry_pending().unwrap();
+        assert_eq!(index.status().unwrap().indexed_notes, 1);
+
+        write_note(&broken, "broken-id", "Broken", "Areas", "taxes");
+        index.reconcile_from_notes(&root).unwrap();
+        assert_eq!(index.status().unwrap().queued_notes, 1);
         drop(index);
         cleanup(root);
     }
