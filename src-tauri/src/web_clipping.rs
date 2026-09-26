@@ -92,6 +92,7 @@ where
 {
     let url = validate_source_url(raw_url)?;
     source(&url).map_err(|error| match error {
+        // scripts/alpha-walkthrough.mjs matches this text to retry a timed-out clip once.
         SourceError::Timeout => ClipError::Timeout(
             "The web page took too long to respond. Check your connection and try again."
                 .to_string(),
