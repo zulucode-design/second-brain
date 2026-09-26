@@ -195,6 +195,14 @@ function localTemplateConfig() {
 
 // Package F: a config.json that is not JSON must surface as a startup error, not a fresh start.
 const MALFORMED_CONFIG = '{ "vaults": [ not json\n';
+// The run's config, kept while MALFORMED_CONFIG is in its place.
+const GOOD_CONFIG_NAME = 'config-before-break.json';
+
+function patchConfigFile(configPath, patch) {
+  const current = JSON.parse(readFileSync(configPath, 'utf8'));
+  atomicWrite(configPath, `${JSON.stringify({ ...current, ...patch }, null, 2)}\n`);
+  return Object.keys(patch);
+}
 // The app keeps a config it could not parse beside the new one, under this prefix.
 const DAMAGED_CONFIG_PREFIX = 'config.json.damaged-';
 
@@ -1092,7 +1100,7 @@ function descendsFrom(rows, pid, ancestor) {
 
 function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl } = {}) {
   const machine = prepareLinux(root, runId, vaultId, { driven: true, ollamaBaseUrl });
-  const goodConfigPath = join(machine.runRoot, 'config-before-break.json');
+  const goodConfigPath = join(machine.runRoot, GOOD_CONFIG_NAME);
   const snapshotPath = join(machine.runRoot, 'vault-pre');
   const notionAttributes = ['service', APP_IDENTIFIER, 'username', `integration:notion:${vaultId}`];
   let driver;
@@ -1123,11 +1131,7 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl } = {}) {
       if (found) runCommandSync('secret-tool', ['clear', ...notionAttributes]);
       return { found, left: this.notionTokenStored() };
     },
-    patchConfig(patch) {
-      const current = JSON.parse(readFileSync(machine.configPath, 'utf8'));
-      atomicWrite(machine.configPath, `${JSON.stringify({ ...current, ...patch }, null, 2)}\n`);
-      return Object.keys(patch);
-    },
+    patchConfig: (patch) => patchConfigFile(machine.configPath, patch),
     breakConfig() {
       copyFileSync(machine.configPath, goodConfigPath);
       atomicWrite(machine.configPath, MALFORMED_CONFIG);
@@ -1141,7 +1145,7 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl } = {}) {
     },
     diagnosticsPath: join(machine.runRoot, 'diagnostics.zip'),
     fetchDiagnostics(destination) {
-      copyFileSync(join(machine.runRoot, 'diagnostics.zip'), destination);
+      copyFileSync(this.diagnosticsPath, destination);
       return readFileSync(destination);
     },
     async startDriver() {
@@ -1195,6 +1199,13 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
     sshHost, { action, root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP, ...extra }, timeout,
   );
   const longTimeoutMs = 5 * 60_000;
+  // Desktop-session actions wait for a scheduled task in the interactive session.
+  const desktopTimeoutMs = 6 * 60_000;
+  const fetchRemote = (remote, destination) => {
+    runCommandSync('scp', [`${sshHost}:${remote.replaceAll('\\', '/')}`, destination], { timeout: 60_000 });
+    return readFileSync(destination);
+  };
+  const diagnosticsPath = win32.join(windowsPaths(WINDOWS_ROOT, runId).runRoot, 'diagnostics.zip');
   let driverPid;
   let tunnel;
   return {
@@ -1212,44 +1223,42 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
     readNote: (relativePath) => runWindowsAction('read-note', { relativePath }).content,
     session: () => runWindowsAction('session'),
     stageFile: (name, content) => runWindowsAction('stage-file', { name, content }).path,
-    notionTokenStored: () => runWindowsAction('notion-token', { vaultId, remove: false }, 6 * 60_000).found,
-    clearNotionToken: () => runWindowsAction('notion-token', { vaultId, remove: true }, 6 * 60_000),
+    notionTokenStored: () => runWindowsAction('notion-token', { vaultId, remove: false }, desktopTimeoutMs).found,
+    clearNotionToken: () => runWindowsAction('notion-token', { vaultId, remove: true }, desktopTimeoutMs),
     // #49: with the vault folder renamed away, the capture hotkey must raise the installed app's
     // "vault unavailable" toast. The key press comes from the desktop session, like a user's.
-    async hotkeyCheck(screenshotDir) {
+    async hotkeyCheck(screenshot) {
       const renamed = runWindowsAction('rename-vault', { away: true });
+      let pressed;
       try {
-        const pressed = await withApp(this, async () => {
+        pressed = await withApp(this, async () => {
           // Startup has to reach hotkey registration before the chord is sent.
           await sleep(5_000);
-          return runWindowsAction('desktop', { mode: 'CaptureHotkey', image: 'hotkey-toast.png' }, 6 * 60_000);
+          return runWindowsAction('desktop', { mode: 'CaptureHotkey', image: 'hotkey-toast.png' }, desktopTimeoutMs);
         }, 'body');
-        runCommandSync('scp', [
-          `${sshHost}:${pressed.image.replaceAll('\\', '/')}`, join(screenshotDir, 'windows-hotkey-toast.png'),
-        ], { timeout: 60_000 });
-        // History lists newest first and keeps earlier runs' toasts, so the proof is a new toast
-        // naming this run's vault.
-        const captures = (toasts) => toasts.filter((toast) => toast.startsWith('Quick capture')
-          && toast.includes("vault isn't available") && toast.includes(renamed.from));
-        if (captures(pressed.toasts.after).length <= captures(pressed.toasts.before).length) {
-          fail(`no new "vault isn't available" capture toast for ${renamed.from} after the hotkey: ${JSON.stringify(pressed.toasts)}`);
-        }
-        return { renamed: renamed.to, toast: captures(pressed.toasts.after)[0], screenshot: join(screenshotDir, 'windows-hotkey-toast.png') };
-      } finally {
-        runWindowsAction('rename-vault', { away: false });
+      } catch (error) {
+        // Put the vault back without letting a failed rename hide why the hotkey failed.
+        try { runWindowsAction('rename-vault', { away: false }); } catch {}
+        throw error;
       }
+      runWindowsAction('rename-vault', { away: false });
+      fetchRemote(pressed.image, screenshot);
+      // History lists newest first and keeps earlier runs' toasts, so the proof is a new toast
+      // naming this run's vault.
+      const captures = (toasts) => toasts.filter((toast) => toast.startsWith('Quick capture')
+        && toast.includes("vault isn't available") && toast.includes(renamed.from));
+      if (captures(pressed.toasts.after).length <= captures(pressed.toasts.before).length) {
+        fail(`no new "vault isn't available" capture toast for ${renamed.from} after the hotkey: ${JSON.stringify(pressed.toasts)}`);
+      }
+      return { renamed: renamed.to, toast: captures(pressed.toasts.after)[0] };
     },
-    install: (installer) => runWindowsAction('install', { installer, candidateCommit }, 6 * 60_000),
+    install: (installer) => runWindowsAction('install', { installer, candidateCommit }, desktopTimeoutMs),
     uninstall: () => runWindowsAction('uninstall', {}, 3 * 60_000),
     patchConfig: (patch) => runWindowsAction('patch-config', { patch }).patched,
     breakConfig: () => runWindowsAction('break-config'),
     repairConfig: () => runWindowsAction('repair-config'),
-    diagnosticsPath: win32.join(windowsPaths(WINDOWS_ROOT, runId).runRoot, 'diagnostics.zip'),
-    fetchDiagnostics(destination) {
-      const remote = `${windowsPaths(WINDOWS_ROOT, runId).runRoot.replaceAll('\\', '/')}/diagnostics.zip`;
-      runCommandSync('scp', [`${sshHost}:${remote}`, destination], { timeout: 60_000 });
-      return readFileSync(destination);
-    },
+    diagnosticsPath,
+    fetchDiagnostics: (destination) => fetchRemote(diagnosticsPath, destination),
     async startDriver() {
       const started = runWindowsAction('start-driver');
       driverPid = started.pid;
@@ -1484,10 +1493,11 @@ export function zipEntries(buffer) {
   return entries;
 }
 
-// Every planted value the default export must never contain, reported by member. A Windows path
-// is also sought JSON-escaped and with forward slashes, the forms a JSON member or log holds.
+// Every planted value the default export must never contain, reported by member. A path is also
+// sought JSON-escaped and with either separator, the forms a JSON member or log holds.
 export function diagnosticLeaks(entries, planted) {
-  const forms = (value) => [...new Set([value, JSON.stringify(value).slice(1, -1), value.replaceAll('\\', '/')])];
+  const forms = (value) => [...new Set([value, value.replaceAll('\\', '/'), value.replaceAll('/', '\\')]
+    .flatMap((form) => [form, JSON.stringify(form).slice(1, -1)]))];
   const leaks = [];
   for (const [name, data] of entries) {
     const text = data.toString('utf8');
@@ -1517,9 +1527,8 @@ function fedoraSession() {
 
 // The desktop entry is what the GNOME launcher runs; it must name the installed binary.
 function fedoraPackageChecks(rpmPath) {
-  const entryPath = LINUX_DESKTOP_ENTRY;
-  if (!existsSync(entryPath)) fail(`installed desktop entry missing: ${entryPath}`);
-  const exec = /^Exec=(\S+)/m.exec(readFileSync(entryPath, 'utf8'))?.[1];
+  if (!existsSync(LINUX_DESKTOP_ENTRY)) fail(`installed desktop entry missing: ${LINUX_DESKTOP_ENTRY}`);
+  const exec = /^Exec=(\S+)/m.exec(readFileSync(LINUX_DESKTOP_ENTRY, 'utf8'))?.[1];
   const resolved = exec?.startsWith('/') ? exec : runCommandSync('sh', ['-c', `command -v "${exec}"`]).stdout;
   if (resolved !== LINUX_APP) fail(`desktop entry runs ${exec}, not ${LINUX_APP}`);
   // rpm -V prints nothing when every installed file still matches the package.
@@ -1530,7 +1539,7 @@ function fedoraPackageChecks(rpmPath) {
   const file = runCommandSync('rpm', ['-qp', '--qf', '%{SHA256HEADER}', rpmPath]).stdout;
   if (installed !== file) fail(`installed package is not ${rpmPath}`);
   return {
-    desktopEntry: entryPath,
+    desktopEntry: LINUX_DESKTOP_ENTRY,
     exec: resolved,
     rpmVerify: 'clean',
     rpm: { path: rpmPath, sha256: createHash('sha256').update(readFileSync(rpmPath)).digest('hex'), portalEntry: 'verified' },
@@ -1655,14 +1664,16 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
     if (requireUnlocked && state.locked) fail(`${machine.name} desktop is locked`);
     return state;
   };
-  // One screenshot per step, taken whether the step passed or failed.
+  // One screenshot per step, taken whether the step passed or failed. A step without a browser
+  // gets its screenshot from the action.
   const step = async (browser, name, action) => {
     stepNumber += 1;
     const screenshot = join(screenshotDir, `${machine.name}-${String(stepNumber).padStart(2, '0')}-${name}.png`);
+    const session = sessionState();
     try {
-      const result = await action();
+      const result = await action(screenshot);
       await browser?.saveScreenshot(screenshot);
-      record('step', { step: name, result, screenshot, session: sessionState() });
+      record('step', { step: name, result, screenshot, session });
       return result;
     } catch (error) {
       await browser?.saveScreenshot(screenshot).catch(() => {});
@@ -1756,7 +1767,7 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
   }, '.error');
   record('config-repaired', machine.repairConfig());
 
-  if (machine.hotkeyCheck) await step(null, 'renamed-vault-hotkey', () => machine.hotkeyCheck(screenshotDir));
+  if (machine.hotkeyCheck) await step(null, 'renamed-vault-hotkey', (screenshot) => machine.hotkeyCheck(screenshot));
   record('process-final', await machine.appsGone());
 }
 
@@ -1834,12 +1845,9 @@ async function runWalkthroughLocked(options) {
         observation(evidencePath, 'vault-final', machine.name, vaultBefore);
         if (machine.uninstall) {
           try {
-            const removed = machine.uninstall();
-            const vaultAfter = machine.hash();
-            observation(evidencePath, 'uninstalled', machine.name, { ...removed, vaultUnchanged: vaultAfter.sha256 === vaultBefore.sha256 });
-            if (!removed.appRemoved || !removed.shortcutRemoved || vaultAfter.sha256 !== vaultBefore.sha256) {
-              runError = new Error(`Windows uninstall did not leave the expected state: ${JSON.stringify({ removed, vaultBefore, vaultAfter })}`);
-            }
+            const removed = { ...machine.uninstall(), vaultUnchanged: machine.hash().sha256 === vaultBefore.sha256 };
+            observation(evidencePath, 'uninstalled', machine.name, removed);
+            assertUninstalled(machine.name, removed);
           } catch (error) {
             runError = error;
             observation(evidencePath, 'run-failed', machine.name, { error: error.message });
@@ -1883,7 +1891,10 @@ function runWalkthroughUninstalled(args) {
   if (!existsSync(evidencePath)) fail(`no walkthrough evidence for run ${options.runId}`);
   const trace = readFileSync(evidencePath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
   const complete = trace.find((line) => line.event === 'run-complete');
-  if (!complete?.machines?.includes('fedora')) fail(`run ${options.runId} did not complete a Fedora walkthrough`);
+  if (!complete?.gate) fail(`run ${options.runId} is not a completed walkthrough of both machines`);
+  if (trace.some((line) => line.event === 'uninstalled' && line.machine === 'fedora')) {
+    fail(`run ${options.runId} already has its Fedora uninstall result`);
+  }
   const before = trace.find((line) => line.event === 'vault-final' && line.machine === 'fedora');
   const vault = join(options.linuxRoot, 'runs', options.runId, 'fedora', 'vault');
   const query = runCommandSync('rpm', ['-q', 'second-brain'], { accept: [0, 1] });
@@ -1894,10 +1905,15 @@ function runWalkthroughUninstalled(args) {
     vaultUnchanged: treeHash(vault).sha256 === before.sha256,
   };
   observation(evidencePath, 'uninstalled', 'fedora', result);
-  if (!result.packageRemoved || !result.appRemoved || !result.desktopEntryRemoved || !result.vaultUnchanged) {
-    fail(`Fedora uninstall did not leave the expected state: ${JSON.stringify(result)}`);
-  }
+  assertUninstalled('fedora', result);
   console.log(JSON.stringify(result));
+}
+
+// Every field of an uninstall result is a check that has to hold.
+function assertUninstalled(machineName, result) {
+  if (Object.values(result).some((held) => held !== true)) {
+    fail(`${machineName} uninstall did not leave the expected state: ${JSON.stringify(result)}`);
+  }
 }
 
 // Windows keeps the run's processes, junction, tasks, and swapped config until this succeeds;
@@ -2273,12 +2289,8 @@ async function windowsWorker(request) {
     const manifest = JSON.parse(readFileSync(paths.manifestPath, 'utf8'));
     const lock = JSON.parse(readFileSync(win32.join(dirname(manifest.configPath), 'alpha-harness.lock.json'), 'utf8'));
     if (manifest.runId !== request.runId || lock.runId !== request.runId) fail('config lock belongs to another run');
-    const goodConfigPath = win32.join(paths.runRoot, 'config-before-break.json');
-    if (request.action === 'patch-config') {
-      const current = JSON.parse(readFileSync(manifest.configPath, 'utf8'));
-      atomicWrite(manifest.configPath, `${JSON.stringify({ ...current, ...request.patch }, null, 2)}\n`);
-      return { patched: Object.keys(request.patch) };
-    }
+    const goodConfigPath = win32.join(paths.runRoot, GOOD_CONFIG_NAME);
+    if (request.action === 'patch-config') return { patched: patchConfigFile(manifest.configPath, request.patch) };
     if (request.action === 'break-config') {
       writeFileSync(damagedBeforePath(paths), JSON.stringify(damagedConfigs(dirname(manifest.configPath))));
       copyFileSync(manifest.configPath, goodConfigPath);
@@ -2403,7 +2415,7 @@ async function main() {
   }
   console.error([
     'usage: node scripts/alpha-harness.mjs sync|restore [--candidate <sha>] [--ssh sb-windows] [--linux-root ~/sb88] [--timeout-minutes 20]',
-    '       node scripts/alpha-harness.mjs walkthrough --windows-installer <D:\\...setup.exe> [--fedora-rpm <rpm>] [--candidate <sha>] [--machine fedora|windows]',
+    '       node scripts/alpha-harness.mjs walkthrough --windows-installer <D:\\...setup.exe> --fedora-rpm <rpm> [--candidate <sha>] [--machine fedora|windows]',
     '       node scripts/alpha-harness.mjs walkthrough-uninstalled --run <runId>',
   ].join('\n'));
   process.exitCode = 2;

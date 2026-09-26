@@ -5,7 +5,6 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-
 import { deflateRawSync } from 'node:zlib';
 
 const {
@@ -270,6 +269,13 @@ test('diagnostic leak check finds a Windows path escaped in JSON or written with
   assert.deepEqual(diagnosticLeaks(entries, { vault }), [
     { member: 'config.json', planted: 'vault' },
     { member: 'logs/app.log', planted: 'vault' },
+  ]);
+});
+
+test('diagnostic leak check finds a forward-slash path written with backslashes', () => {
+  const entries = zipEntries(zipOf([['logs/app.log', 'saved Projects\\Walkthrough capture.md', 8]]));
+  assert.deepEqual(diagnosticLeaks(entries, { path: 'Projects/Walkthrough capture.md' }), [
+    { member: 'logs/app.log', planted: 'path' },
   ]);
 });
 

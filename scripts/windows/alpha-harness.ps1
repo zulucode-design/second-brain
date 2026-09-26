@@ -14,17 +14,18 @@ function Get-NowUtc { (Get-Date).ToUniversalTime().ToString('o') }
 
 if (-not $Action) { throw 'Action is required' }
 
-# The console session is the desktop the app and its WebDriver run on. LogonUI.exe runs in a
-# session exactly while its lock or sign-in screen is showing.
+# The desktop session, where explorer.exe runs, is the one the app and its WebDriver run on; this
+# script runs in the SSH session. LogonUI.exe runs in a session exactly while its lock or sign-in
+# screen is showing.
 if ($Action -eq 'SessionState') {
-  $consoleSession = (Get-Process -Id $PID).SessionId
+  $sshSession = (Get-Process -Id $PID).SessionId
   $explorerRecords = @(Get-CimInstance Win32_Process -Filter "Name = 'explorer.exe'" | Where-Object { $_.SessionId -ne 0 })
   $desktopSession = if ($explorerRecords.Count) { $explorerRecords[0].SessionId } else { $null }
   $lockRecords = @(Get-Process -Name LogonUI -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $desktopSession })
   [pscustomobject]@{
     at = Get-NowUtc
     action = 'session-state'
-    sshSession = $consoleSession
+    sshSession = $sshSession
     desktopSession = $desktopSession
     locked = [bool]$lockRecords.Count
   } | ConvertTo-Json -Compress

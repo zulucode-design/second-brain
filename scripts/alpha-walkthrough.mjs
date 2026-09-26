@@ -12,7 +12,7 @@ function fail(message) {
 
 // WebKitWebDriver answers element-click with "unsupported operation", so every click is a DOM
 // click; the app's handlers are plain onclick, which it triggers the same way.
-export async function press(browser, pending) {
+async function press(browser, pending) {
   const element = await pending;
   await element.waitForDisplayed({ timeout: 30_000 });
   // A DOM click on a disabled button is silently ignored.
@@ -21,13 +21,13 @@ export async function press(browser, pending) {
 }
 
 // WebKitWebDriver's getText returns '' for many visible elements, so text is read in the page.
-export async function textOf(browser, element) {
+async function textOf(browser, element) {
   return browser.execute((target) => target.innerText.trim(), await element);
 }
 
 // Elements under `selector` whose trimmed innerText equals `text`, or starts with it when
 // `prefix` is set (sidebar counts follow the category name).
-export async function byText(browser, selector, text, { prefix = false } = {}) {
+async function byText(browser, selector, text, { prefix = false } = {}) {
   return elements(browser, browser.execute((css, wanted, startsWith) => [...document.querySelectorAll(css)].filter((element) => {
     const value = element.innerText.trim();
     return startsWith ? value === wanted || value.startsWith(`${wanted} `) || value.startsWith(`${wanted}\n`) : value === wanted;
@@ -40,14 +40,14 @@ async function elements(browser, pending) {
 }
 
 // Notion's steps each wait on a network round trip before their next button exists.
-export async function pressTextWhenReady(browser, selector, text, timeout = 60_000) {
+async function pressTextWhenReady(browser, selector, text, timeout = 60_000) {
   await browser.waitUntil(async () => (await byText(browser, selector, text)).length === 1, {
     timeout, timeoutMsg: `no ${selector} reading "${text}" appeared`,
   });
   await pressText(browser, selector, text);
 }
 
-export async function pressText(browser, selector, text, options) {
+async function pressText(browser, selector, text, options) {
   const found = await byText(browser, selector, text, options);
   if (found.length !== 1) fail(`expected one ${selector} reading "${text}", found ${found.length}`);
   await press(browser, found[0]);
@@ -99,16 +99,23 @@ async function noteRows(browser, title) {
   return byText(browser, '.note-title', title);
 }
 
-// The list re-renders after a category change, so it is read once it shows the note.
+// The list re-renders after a category change, so it is read once it settles.
+async function waitForRows(browser, title, count, timeoutMsg) {
+  await browser.waitUntil(async () => (await noteRows(browser, title)).length === count, { timeout: 15_000, timeoutMsg });
+}
+
+function openTitle(browser) {
+  return browser.execute(() => document.querySelector('.editor-title input')?.value);
+}
+
+async function waitForTitle(browser, title, timeoutMsg) {
+  await browser.waitUntil(async () => (await openTitle(browser)) === title, { timeout: 15_000, timeoutMsg });
+}
+
 async function openNote(browser, title) {
-  await browser.waitUntil(async () => (await noteRows(browser, title)).length === 1, {
-    timeout: 15_000, timeoutMsg: `expected one note titled "${title}" in the list`,
-  });
+  await waitForRows(browser, title, 1, `expected one note titled "${title}" in the list`);
   await press(browser, (await noteRows(browser, title))[0]);
-  await browser.waitUntil(
-    async () => (await browser.execute(() => document.querySelector('.editor-title input')?.value)) === title,
-    { timeout: 15_000, timeoutMsg: `note "${title}" did not open` },
-  );
+  await waitForTitle(browser, title, `note "${title}" did not open`);
 }
 
 export async function createNote(browser, type, { category, title, body }) {
@@ -124,10 +131,7 @@ export async function createNote(browser, type, { category, title, body }) {
   }, titleInput);
   await type(browser, titleInput, title);
   await blurTitle(browser);
-  await browser.waitUntil(
-    async () => (await browser.execute(() => document.querySelector('.editor-title input')?.value)) === title,
-    { timeout: 15_000, timeoutMsg: `title "${title}" was not kept` },
-  );
+  await waitForTitle(browser, title, `title "${title}" was not kept`);
   if (body) await type(browser, browser.$('.ProseMirror'), body);
 }
 
@@ -140,13 +144,19 @@ export async function vaultOpened(browser) {
   let categories = [];
   await browser.waitUntil(async () => complete(categories = await sidebarRoots()), { timeout: 15_000 })
     .catch(() => fail(`PARA roots missing: ${JSON.stringify(categories)}`));
+  // The banner loads after the sidebar, so the backend's repair status is asked directly too.
+  const status = await browser.executeAsync((done) => {
+    window.__TAURI_INTERNALS__.invoke('get_repair_status')
+      .then((value) => done({ ok: true, value }), (error) => done({ ok: false, error: String(error) }));
+  });
+  if (!status.ok) fail(`repair status failed: ${status.error}`);
   const repair = await browser.execute(() => document.querySelector('.repair-banner')?.innerText ?? null);
-  if (repair) fail(`fresh vault shows repair issues: ${repair}`);
-  return { categories, repair };
+  if (status.value.issues.length || repair) fail(`fresh vault shows repair issues: ${JSON.stringify({ issues: status.value.issues, repair })}`);
+  return { categories, repairIssues: 0 };
 }
 
 function editorText(browser) {
-  return browser.execute(() => document.querySelector('.ProseMirror').innerText.trim());
+  return browser.execute(() => document.querySelector('.ProseMirror')?.innerText.trim() ?? '');
 }
 
 // Types `text` at the end of the open note's body.
@@ -208,7 +218,7 @@ export async function search(browser, type, { mode, query, expected }) {
   return { query, titles };
 }
 
-export async function openSettingsTab(browser, tab) {
+async function openSettingsTab(browser, tab) {
   await press(browser, browser.$('button[title="Settings"]'));
   await pressText(browser, 'button.tab-btn', tab);
 }
@@ -278,18 +288,14 @@ export async function moveNote(browser, { from, to, title }) {
   await noteMenu(browser, from, title, 'Move to...');
   await pressText(browser, '.move-picker-list button', to);
   await openCategory(browser, to);
-  await browser.waitUntil(async () => (await noteRows(browser, title)).length === 1, {
-    timeout: 15_000, timeoutMsg: `"${title}" did not arrive in ${to}`,
-  });
+  await waitForRows(browser, title, 1, `"${title}" did not arrive in ${to}`);
   return { title, from, to };
 }
 
 export async function trashAndRestore(browser, { category, title }) {
   await noteMenu(browser, category, title, 'Move to Trash');
   await openCategory(browser, 'Trash');
-  await browser.waitUntil(async () => (await noteRows(browser, title)).length === 1, {
-    timeout: 15_000, timeoutMsg: `"${title}" is not in the trash`,
-  });
+  await waitForRows(browser, title, 1, `"${title}" is not in the trash`);
   const [trashed] = await noteRows(browser, title);
   const restored = await browser.execute((target) => {
     const button = target.closest('.note-item')?.querySelector('.trash-row-btn[title="Restore"]');
@@ -297,13 +303,9 @@ export async function trashAndRestore(browser, { category, title }) {
     return Boolean(button);
   }, trashed);
   if (!restored) fail('trash row has no Restore action');
-  await browser.waitUntil(async () => (await noteRows(browser, title)).length === 0, {
-    timeout: 15_000, timeoutMsg: `"${title}" stayed in the trash`,
-  });
+  await waitForRows(browser, title, 0, `"${title}" stayed in the trash`);
   await openCategory(browser, category);
-  await browser.waitUntil(async () => (await noteRows(browser, title)).length === 1, {
-    timeout: 15_000, timeoutMsg: `"${title}" did not return to ${category}`,
-  });
+  await waitForRows(browser, title, 1, `"${title}" did not return to ${category}`);
   return { title, restored: true, category };
 }
 
@@ -357,12 +359,10 @@ export async function clipPage(browser, type, { url, category, expectedText }) {
   await dialog.waitForDisplayed({ timeout: 10_000 });
   await type(browser, dialog.$('input'), url);
   await press(browser, dialog.$(`button*=${category}`));
-  await browser.waitUntil(
-    async () => (await browser.execute(() => document.querySelector('.ProseMirror')?.innerText ?? '')).includes(expectedText),
-    { timeout: 60_000, timeoutMsg: `clipped note does not contain "${expectedText}"` },
-  );
-  const title = await browser.execute(() => document.querySelector('.editor-title input').value);
-  return { url, category, title };
+  await browser.waitUntil(async () => (await editorText(browser)).includes(expectedText), {
+    timeout: 60_000, timeoutMsg: `clipped note does not contain "${expectedText}"`,
+  });
+  return { url, category, title: await openTitle(browser) };
 }
 
 // The file picker is a native dialog WebDriver cannot answer, so the file reaches the editor's
@@ -400,10 +400,7 @@ export async function attachFile(browser, { name, content, path }) {
     if (delivered === 'refused') fail('the webview refused the file list');
   }
   try {
-    await browser.waitUntil(
-      async () => (await browser.execute(() => document.querySelector('.ProseMirror')?.innerText ?? '')).includes(name),
-      { timeout: 30_000 },
-    );
+    await browser.waitUntil(async () => (await editorText(browser)).includes(name), { timeout: 30_000 });
   } catch {
     const logged = await browser.execute(() => window.__attachErrors ?? []);
     fail(`attachment ${name} did not appear in the note (${delivered}); console: ${JSON.stringify(logged)}`);
