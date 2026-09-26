@@ -189,6 +189,17 @@ export async function saveLifecycle(browser, type) {
   return { title, relativePath: `Projects/${title}.md`, expected: [first, second.trim()] };
 }
 
+// Offline editing: an existing note takes an edit. The controller checks the file after exit.
+export async function editNote(browser, type, { category, title, text }) {
+  await openCategory(browser, category);
+  await openNote(browser, title);
+  await appendToNote(browser, type, text);
+  await browser.waitUntil(async () => (await editorText(browser)).endsWith(text.trim()), {
+    timeout: 15_000, timeoutMsg: `the edit to "${title}" did not reach the editor`,
+  });
+  return { title, appended: text.trim() };
+}
+
 // The close button runs the app's own save-aware shutdown.
 export async function closeWindow(browser) {
   await browser.execute(() => document.querySelector('button[title="Close"]').click());
@@ -408,9 +419,12 @@ export async function attachFile(browser, { name, content, path }) {
   return { name, delivered };
 }
 
-// The export button opens a native save dialog, which WebDriver cannot answer. The harness calls
-// the button's own command with the path the dialog would have returned.
+// The export button opens a native save dialog, which WebDriver cannot answer. The harness shows
+// the button, then calls its own command with the path the dialog would have returned.
 export async function exportDiagnostics(browser, path) {
+  await openSettingsTab(browser, 'Maintenance');
+  const [button] = await byText(browser, 'button', 'Export diagnostics');
+  if (!button || !(await button.isEnabled())) fail('Settings > Maintenance has no enabled Export diagnostics button');
   const result = await browser.executeAsync((target, done) => {
     window.__TAURI_INTERNALS__.invoke('export_diagnostics', { path: target })
       .then(() => done({ ok: true }), (error) => done({ ok: false, error: String(error) }));

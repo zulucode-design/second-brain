@@ -102,7 +102,8 @@ executable. Each machine then runs the matrix v2 walkthrough through `tauri-driv
 the installed binary the entry names rather than the entry itself, with one screenshot per step
 under `~/sb88/evidence/walkthrough-<run>/`:
 
-1. open a fresh vault showing the four PARA roots and no repair issues;
+1. open a fresh vault showing the four PARA roots and no repair issues. Sync is on, unpaired, so the
+   Syncthing sidecar and its watchdog must be running;
 2. create a note, edit it, navigate away at once, reopen it, edit it again, and close the window
    without waiting; both edits must be on disk after the app exits;
 3. keyword search, a semantic search once the index is complete, graph, tasks, trash restore,
@@ -117,16 +118,18 @@ under `~/sb88/evidence/walkthrough-<run>/`:
    none. The lookup must find the token while the vault is connected, and not after Disconnect.
    Whether or not the walkthrough passed, the controller archives the run's databases and deletes
    a token that a failed step left;
-6. export diagnostics and search the archive for a planted credential, a note body marker, a
-   note title and path, and the vault path;
-7. with the embedding backend pointed at a closed port, capture, edit, move, and keyword search;
+6. show the Export diagnostics button in Settings > Maintenance, export diagnostics, and search the
+   archive for a planted credential, a note body marker, a note title and path, and the vault path;
+7. with the embedding backend pointed at a closed port, capture a note, edit an existing one (the
+   edit must be on disk after exit), move a note, and keyword search;
 8. start with a malformed `config.json`, which must show the startup error and leave exactly one
    damaged copy beside the config, then restore the run's configuration;
 9. on Windows only (#49): with the vault folder renamed, press Ctrl+Alt+N twice from the desktop
    session. The app's log must record a toast shown for each press, and after each press its
    notification history must hold exactly one "Quick capture" toast saying this run's vault isn't
    available: the second replaced the first (#153);
-10. exit through the window's close button and check that no app, sidecar, or watchdog is left.
+10. launch once more with the sidecar and watchdog running, exit through the window's close button,
+    and check that no app, sidecar, or watchdog is left.
 
 After the last step, the controller records each vault's tree hash. It uninstalls the Windows
 package, checks that the executable and Start-menu entry are gone and the vault hash is unchanged,
@@ -149,10 +152,10 @@ WebKitWebDriver rejects key input, so Fedora types through `document.execCommand
 Windows uses real WebDriver key actions.
 
 Before every step the Windows desktop must be signed in and unlocked: explorer.exe names the desktop
-session, and LogonUI.exe running in it means it is locked. Fedora's GNOME lock state is recorded, not required, because WebKitGTK keeps
-running under the lock screen. The Windows keep-awake request comes from the SSH session, and
-Windows ignores a display request from there, so the per-step check is what proves the desktop
-stayed unlocked.
+session, and LogonUI.exe running in it means it is locked. Fedora's GNOME lock state is recorded,
+not required, because WebKitGTK keeps running under the lock screen. The Windows keep-awake request
+comes from the SSH session, and Windows ignores a display request from there, so the per-step check
+is what proves the desktop stayed unlocked.
 
 The evidence trace is `docs/reports/evidence/alpha-harness-walkthrough-<timestamp>.jsonl`.
 

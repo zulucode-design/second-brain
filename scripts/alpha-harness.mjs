@@ -206,7 +206,7 @@ function patchConfigFile(configPath, patch) {
 // The app keeps a config it could not parse beside the new one, under this prefix.
 const DAMAGED_CONFIG_PREFIX = 'config.json.damaged-';
 
-function prepareLinux(root, runId, vaultId, { driven = false, ollamaBaseUrl } = {}) {
+function prepareLinux(root, runId, vaultId, { driven = false, sync = !driven, ollamaBaseUrl } = {}) {
   requireFreeSpace(root);
   const runRoot = join(root, 'runs', runId, 'fedora');
   if (existsSync(runRoot)) fail(`run already exists: ${runRoot}`);
@@ -220,8 +220,9 @@ function prepareLinux(root, runId, vaultId, { driven = false, ollamaBaseUrl } = 
   mkdirSync(machinePath, { recursive: true });
   mkdirSync(backupPath, { recursive: true });
   makeVault(vaultPath, vaultId);
-  // Without a control file sync stays off, so driven gates run with no sidecar.
-  const control = driven ? null : makeControl(vaultId);
+  // Without a control file sync stays off. The restore gate runs so, with no sidecar; the
+  // walkthrough turns sync on, unpaired, so the sidecar and watchdog run and must exit.
+  const control = sync ? makeControl(vaultId) : null;
   if (control) atomicWrite(join(machinePath, 'sync-control.json'), `${JSON.stringify(control, null, 2)}\n`);
   atomicWrite(
     configPath,
@@ -502,6 +503,18 @@ async function pollWindowsFixture({ sshHost, runId, evidencePath, predicate, dea
     await sleep(POLL_MS);
   }
   fail('fixture polling timed out');
+}
+
+// With sync on, the app starts its Syncthing sidecar and the watchdog that outlives a crash.
+async function waitForSyncProcesses(roles, timeoutMs = 60_000) {
+  const deadline = Date.now() + timeoutMs;
+  let running = [];
+  while (Date.now() < deadline) {
+    running = roles();
+    if (running.includes('Sidecar') && running.includes('Watchdog')) return { roles: running };
+    await sleep(1_000);
+  }
+  fail(`sync processes did not start: ${JSON.stringify(running)}`);
 }
 
 async function waitForWindowsProcesses(sshHost, runId, predicate, timeoutMs = 30_000) {
@@ -1098,8 +1111,8 @@ function descendsFrom(rows, pid, ancestor) {
   return false;
 }
 
-function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl } = {}) {
-  const machine = prepareLinux(root, runId, vaultId, { driven: true, ollamaBaseUrl });
+function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl, sync = false } = {}) {
+  const machine = prepareLinux(root, runId, vaultId, { driven: true, sync, ollamaBaseUrl });
   const goodConfigPath = join(machine.runRoot, GOOD_CONFIG_NAME);
   const snapshotPath = join(machine.runRoot, 'vault-pre');
   const notionAttributes = ['service', APP_IDENTIFIER, 'username', `integration:notion:${vaultId}`];
@@ -1122,6 +1135,7 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl } = {}) {
     reset: () => resetVault(machine.vaultPath, snapshotPath, machine.runRoot),
     readNote: (relativePath) => readFileSync(join(machine.vaultPath, relativePath), 'utf8'),
     session: fedoraSession,
+    syncRunning: () => waitForSyncProcesses(() => linuxReport(machine.machinePath).map((row) => row.role)),
     // Fedora's webview takes the file object itself, so nothing has to be staged on disk.
     stageFile: () => null,
     // The app's keyring entry: service is the app identifier, username the vault's account.
@@ -1194,7 +1208,7 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl } = {}) {
   };
 }
 
-function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollamaBaseUrl } = {}) {
+function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollamaBaseUrl, sync = false } = {}) {
   const runWindowsAction = (action, extra = {}, timeout = 45_000) => remoteWorker(
     sshHost, { action, root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP, ...extra }, timeout,
   );
@@ -1212,7 +1226,7 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
     name: 'windows',
     application: WINDOWS_APP,
     port: WINDOWS_TUNNEL_PORT,
-    prepare: () => runWindowsAction('prepare', { vaultId, candidateCommit, driven: true, ollamaBaseUrl }),
+    prepare: () => runWindowsAction('prepare', { vaultId, candidateCommit, driven: true, sync, ollamaBaseUrl }),
     generate: () => runWindowsAction('generate', {}, longTimeoutMs),
     hash: () => runWindowsAction('hash', {}, longTimeoutMs),
     progress: () => runWindowsAction('progress'),
@@ -1222,6 +1236,7 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
     reset: () => runWindowsAction('reset', {}, longTimeoutMs),
     readNote: (relativePath) => runWindowsAction('read-note', { relativePath }).content,
     session: () => runWindowsAction('session'),
+    syncRunning: () => waitForSyncProcesses(() => remoteWorker(sshHost, { action: 'report', root: WINDOWS_ROOT, runId }).processes.map((row) => row.Role)),
     stageFile: (name, content) => runWindowsAction('stage-file', { name, content }).path,
     notionTokenStored: () => runWindowsAction('notion-token', { vaultId, remove: false }, desktopTimeoutMs).found,
     clearNotionToken: () => runWindowsAction('notion-token', { vaultId, remove: true }, desktopTimeoutMs),
@@ -1250,10 +1265,10 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
       const captures = (toasts) => (toasts ?? []).filter((toast) => toast.startsWith('Quick capture')
         && toast.includes("vault isn't available") && toast.includes(renamed.from));
       const counts = { before: captures(before).length, afterFirst: captures(afterFirst).length, after: captures(after).length };
-      if (pressed.notified !== 2 || counts.before !== 0 || counts.afterFirst !== 1 || counts.after !== 1) {
-        fail(`expected two toasts shown and one kept for ${renamed.from}: ${JSON.stringify({ notified: pressed.notified, counts, toasts: pressed.toasts })}`);
+      if (pressed.toastsShown !== 2 || counts.before !== 0 || counts.afterFirst !== 1 || counts.after !== 1) {
+        fail(`expected two toasts shown and one kept for ${renamed.from}: ${JSON.stringify({ toastsShown: pressed.toastsShown, counts, toasts: pressed.toasts })}`);
       }
-      return { renamed: renamed.to, toast: captures(after)[0], notified: pressed.notified, counts };
+      return { renamed: renamed.to, toast: captures(after)[0], toastsShown: pressed.toastsShown, counts };
     },
     install: (installer) => runWindowsAction('install', { installer, candidateCommit }, desktopTimeoutMs),
     uninstall: () => runWindowsAction('uninstall', {}, 3 * 60_000),
@@ -1703,6 +1718,7 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
   let capture;
   await withApp(machine, async (browser) => {
     await step(browser, 'vault-open', () => walkthrough.vaultOpened(browser));
+    await step(browser, 'sync-running', () => machine.syncRunning());
     capture = await step(browser, 'save-lifecycle', () => walkthrough.saveLifecycle(browser, type));
     await closeAndWait(browser);
   });
@@ -1743,6 +1759,7 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
       return stored;
     }));
     await step(browser, 'diagnostics-export', () => walkthrough.exportDiagnostics(browser, machine.diagnosticsPath));
+    await walkthrough.closeSettings(browser);
     await closeAndWait(browser);
   });
 
@@ -1760,12 +1777,17 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
   // AI offline: capture, editing, organization, and keyword search keep working.
   record('config-patched', { keys: machine.patchConfig({ ollama_base_url: OFFLINE_OLLAMA_URL }) });
   const { offline } = WALKTHROUGH_NOTES;
+  const offlineEdit = ' Edited while the embedding backend is offline.';
   await withApp(machine, async (browser) => {
     await step(browser, 'offline-capture', () => walkthrough.createNote(browser, type, offline).then(() => offline));
+    await step(browser, 'offline-edit', () => walkthrough.editNote(browser, type, { category: 'Projects', title: capture.title, text: offlineEdit }));
     await step(browser, 'offline-organize', () => walkthrough.moveNote(browser, { from: offline.category, to: 'Archives', title: offline.title }));
     await step(browser, 'offline-keyword-search', () => walkthrough.search(browser, type, { mode: 'Keyword', query: 'offline', expected: offline.title }));
     await closeAndWait(browser);
   });
+  const offlineSaved = machine.readNote(capture.relativePath).includes(offlineEdit.trim());
+  record('offline-edit-saved', { note: capture.relativePath, saved: offlineSaved });
+  if (!offlineSaved) fail('the offline edit was not on disk after the app exited');
 
   record('config-broken', machine.breakConfig() ?? {});
   await withApp(machine, async (browser) => {
@@ -1777,6 +1799,12 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
   if (repaired.damaged.length !== 1) fail(`expected one damaged config kept, found ${JSON.stringify(repaired.damaged)}`);
 
   if (machine.hotkeyCheck) await step(null, 'renamed-vault-hotkey', (screenshot) => machine.hotkeyCheck(screenshot));
+
+  // The last exit is a normal one, through the close button, with sync running.
+  await withApp(machine, async (browser) => {
+    await step(browser, 'final-launch', () => machine.syncRunning());
+    record('normal-exit', await closeAndWait(browser));
+  });
   record('process-final', await machine.appsGone());
 }
 
@@ -1818,8 +1846,8 @@ async function runWalkthroughLocked(options) {
       fedora: await ollamaEmbeddingModel(`http://127.0.0.1:${FEDORA_OLLAMA_PORT}`),
     });
     const machines = [
-      ['fedora', () => linuxDriverMachine(options.linuxRoot, runId, randomUUID(), { ollamaBaseUrl: `http://127.0.0.1:${FEDORA_OLLAMA_PORT}` })],
-      ['windows', () => windowsDriverMachine(options.sshHost, runId, randomUUID(), candidateCommit, { ollamaBaseUrl: WINDOWS_OLLAMA_URL })],
+      ['fedora', () => linuxDriverMachine(options.linuxRoot, runId, randomUUID(), { ollamaBaseUrl: `http://127.0.0.1:${FEDORA_OLLAMA_PORT}`, sync: true })],
+      ['windows', () => windowsDriverMachine(options.sshHost, runId, randomUUID(), candidateCommit, { ollamaBaseUrl: WINDOWS_OLLAMA_URL, sync: true })],
     ].filter(([name]) => machineNames.includes(name)).map(([, make]) => make);
     for (const makeMachine of machines) {
       let machine;
@@ -2119,7 +2147,7 @@ async function windowsWorker(request) {
     const junction = runCommandSync('cmd.exe', ['/d', '/s', '/c', 'mklink', '/J', machineLink, paths.machinePath]);
     if (!junction.stdout) fail('could not create machine-state junction');
 
-    if (!request.driven) {
+    if (!request.driven || request.sync) {
       const control = makeControl(request.vaultId);
       atomicWrite(win32.join(paths.machinePath, 'sync-control.json'), `${JSON.stringify(control, null, 2)}\n`);
     }
@@ -2372,16 +2400,16 @@ async function windowsWorker(request) {
   if (request.action === 'desktop') {
     const image = win32.join(paths.runRoot, request.image);
     assertWindowsRoot(paths.runRoot, image);
-    // The app logs each vault-unavailable toast it shows. No other copy of the app runs during
-    // a run, so the new lines are this run's.
+    // The app logs each vault-unavailable toast it shows (src-tauri/src/hotkey/windows.rs). No
+    // other copy of the app runs during a run, so the new lines are this run's.
     const logDir = win32.join(process.env.LOCALAPPDATA, APP_IDENTIFIER, 'logs');
-    const notifications = () => readdirSync(logDir).filter((name) => name.endsWith('.log')).reduce((count, name) => (
+    const countToastLogLines = () => readdirSync(logDir).filter((name) => name.endsWith('.log')).reduce((count, name) => (
       count + readFileSync(win32.join(logDir, name), 'utf8').split('Showed the vault-unavailable notification').length - 1
     ), 0);
-    const notifiedBefore = notifications();
+    const toastsShownBefore = countToastLogLines();
     const ran = runDesktopScript(tools, `-Mode ${request.mode} -OutputPath "${image}" -Aumid ${APP_IDENTIFIER}`);
     if (!existsSync(image)) fail(`desktop script wrote no screenshot: ${image}`);
-    return { image, ...ran, notified: notifications() - notifiedBefore, toasts: readDesktopJson(image.replace(/\.png$/, '.json')) };
+    return { image, ...ran, toastsShown: countToastLogLines() - toastsShownBefore, toasts: readDesktopJson(image.replace(/\.png$/, '.json')) };
   }
 
   if (request.action === 'session') return windowsPowerShell(tools, ['-Action', 'SessionState']);
