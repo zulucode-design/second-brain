@@ -47,7 +47,7 @@
 	import { listen } from '@tauri-apps/api/event';
 	import { debounce } from '$lib/utils/debounce';
 	import { SaveCoordinator, type SaveResult } from '$lib/utils/save-coordinator';
-	import { EditorMutationBarrier, type EditorDocumentIdentity } from '$lib/utils/editor-mutation-barrier';
+	import { EditorMutationBarrier, saveForCurrentDocument, type EditorDocumentIdentity } from '$lib/utils/editor-mutation-barrier';
 	import { relocateReported, reportSaveFailure } from '$lib/utils/document-lifecycle';
 	import { showToast } from '$lib/utils/toast';
 	import { NOTE_SAVED_EVENT, type NoteNavigationResult } from '$lib/utils/navigation';
@@ -5759,6 +5759,32 @@
 		return mutationBarrier.isCurrent(identity) && !!editor && !editor.isDestroyed;
 	}
 
+	function reportSkippedAsset(name: string, saved: boolean) {
+		showToast(saved
+			? `Saved ${name}, but it was not linked to a note. Find it in Settings → Maintenance → Find orphaned attachments.`
+			: `Could not insert ${name}: the note changed.`, 8000);
+	}
+
+	async function insertSavedAsset(
+		identity: EditorDocumentIdentity,
+		name: string,
+		save: () => Promise<string>,
+		insert: (relativePath: string) => boolean,
+	) {
+		await saveForCurrentDocument(
+			() => canApplyMutation(identity),
+			async () => {
+				try { return await save(); }
+				catch (error) {
+					showToast(`Could not save ${name}.`);
+					throw error;
+				}
+			},
+			insert,
+			(saved) => reportSkippedAsset(name, saved),
+		);
+	}
+
 	function handleFileDrop(event: DragEvent): boolean {
 		const files = event.dataTransfer?.files;
 		if (!files || files.length === 0) return false;
@@ -5809,10 +5835,9 @@
 	function insertClipboardImage() {
 		trackEditorMutation('Clipboard image fallback failed', async (identity) => {
 			const data = await readClipboardImage();
-			const relativePath = await saveImage('pasted-image.png', data);
-			if (!canApplyMutation(identity)) return;
-			const displaySrc = resolveImageSrc(relativePath);
-			editor!.chain().focus().setImage({ src: displaySrc }).run();
+			await insertSavedAsset(identity, 'clipboard image',
+				() => saveImage('pasted-image.png', data),
+				(relativePath) => editor!.chain().focus().setImage({ src: resolveImageSrc(relativePath) }).run());
 		});
 	}
 
@@ -5820,10 +5845,9 @@
 		trackEditorMutation('Failed to insert image', async (identity) => {
 			const buffer = await file.arrayBuffer();
 			const data = Array.from(new Uint8Array(buffer));
-			const relativePath = await saveImage(file.name, data);
-			if (!canApplyMutation(identity)) return;
-			const displaySrc = resolveImageSrc(relativePath);
-			editor!.chain().focus().setImage({ src: displaySrc }).run();
+			await insertSavedAsset(identity, file.name,
+				() => saveImage(file.name, data),
+				(relativePath) => editor!.chain().focus().setImage({ src: resolveImageSrc(relativePath) }).run());
 		});
 	}
 
@@ -5838,25 +5862,26 @@
 		trackEditorMutation('Failed to insert PDF', async (identity) => {
 			const buffer = await file.arrayBuffer();
 			const data = Array.from(new Uint8Array(buffer));
-			const relativePath = await saveAttachment(file.name, data);
-			if (!canApplyMutation(identity)) return;
-			const usePdfPreview = !isMobile && ($appConfig?.pdf_preview ?? false);
-			if (usePdfPreview) {
-				editor!.chain().focus().insertContent({
-					type: 'pdfEmbed',
-					attrs: { src: relativePath, name: file.name },
-				}).run();
-			} else {
-				const sizeKB = Math.round(file.size / 1024);
-				const label = `${file.name} (${sizeKB} kB)`;
-				editor!.chain().focus()
-					.insertContent(`<a href="${relativePath}">${label}</a> `)
-					.run();
-			}
+			await insertSavedAsset(identity, file.name, () => saveAttachment(file.name, data), (relativePath) => {
+				const usePdfPreview = !isMobile && ($appConfig?.pdf_preview ?? false);
+				if (usePdfPreview) {
+					return editor!.chain().focus().insertContent({
+						type: 'pdfEmbed',
+						attrs: { src: relativePath, name: file.name },
+					}).run();
+				} else {
+					const sizeKB = Math.round(file.size / 1024);
+					const label = `${file.name} (${sizeKB} kB)`;
+					return editor!.chain().focus()
+						.insertContent(`<a href="${relativePath}">${label}</a> `)
+						.run();
+				}
+			});
 		});
 	}
 
 	async function saveBlobImage(blobUrl: string): Promise<string | null> {
+		let saved = false;
 		try {
 			const resp = await fetch(blobUrl);
 			const blob = await resp.blob();
@@ -5865,9 +5890,12 @@
 			const buffer = await blob.arrayBuffer();
 			const data = Array.from(new Uint8Array(buffer));
 			const relativePath = await saveImage(name, data);
+			saved = true;
 			return resolveImageSrc(relativePath);
 		} catch (e) {
-			console.error('Failed to save blob image:', e);
+			console.error('Failed to save or link blob image:', e);
+			if (saved) reportSkippedAsset('pasted image', true);
+			else showToast('Could not save pasted image.');
 			return null;
 		}
 	}
@@ -5884,8 +5912,16 @@
 			}
 		});
 		for (const { blobUrl } of promises) {
+			if (!canApplyMutation(identity)) {
+				reportSkippedAsset('pasted image', false);
+				break;
+			}
 			const savedSrc = await saveBlobImage(blobUrl);
-			if (savedSrc && canApplyMutation(identity)) {
+			if (savedSrc && !canApplyMutation(identity)) {
+				reportSkippedAsset('pasted image', true);
+				break;
+			}
+			if (savedSrc) {
 				const currentTr = editor.state.tr;
 				// Re-find the node since positions may have shifted
 				let found = false;
@@ -5897,6 +5933,7 @@
 					}
 				});
 				if (found) editor.view.dispatch(currentTr);
+				else reportSkippedAsset('pasted image', true);
 			}
 		}
 		if (changed) {
@@ -5909,13 +5946,13 @@
 		trackEditorMutation('Failed to insert attachment', async (identity) => {
 			const buffer = await file.arrayBuffer();
 			const data = Array.from(new Uint8Array(buffer));
-			const relativePath = await saveAttachment(file.name, data);
-			if (!canApplyMutation(identity)) return;
-			const sizeKB = Math.round(file.size / 1024);
-			const label = `${file.name} (${sizeKB} kB)`;
-			editor!.chain().focus()
-				.insertContent(`<a href="${relativePath}">${label}</a> `)
-				.run();
+			await insertSavedAsset(identity, file.name, () => saveAttachment(file.name, data), (relativePath) => {
+				const sizeKB = Math.round(file.size / 1024);
+				const label = `${file.name} (${sizeKB} kB)`;
+				return editor!.chain().focus()
+					.insertContent(`<a href="${relativePath}">${label}</a> `)
+					.run();
+			});
 		});
 	}
 
@@ -5992,22 +6029,22 @@
 				trackEditorMutation('Failed to drop file', async (identity) => {
 					const data = await readFile(filePath);
 					if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) {
-						const relativePath = await saveImage(name, Array.from(data));
-						if (!canApplyMutation(identity)) return;
-						editor!.chain().focus().setImage({ src: resolveImageSrc(relativePath) }).run();
+						await insertSavedAsset(identity, name,
+							() => saveImage(name, Array.from(data)),
+							(relativePath) => editor!.chain().focus().setImage({ src: resolveImageSrc(relativePath) }).run());
 						return;
 					}
 
-					const relativePath = await saveAttachment(name, Array.from(data));
-					if (!canApplyMutation(identity)) return;
-					if (ext === 'pdf' && !isMobile && ($appConfig?.pdf_preview ?? false)) {
-						editor!.chain().focus().insertContent({
-							type: 'pdfEmbed',
-							attrs: { src: relativePath, name },
-						}).run();
-					} else {
-						editor!.chain().focus().insertContent(`<a href="${relativePath}">${name}</a> `).run();
-					}
+					await insertSavedAsset(identity, name, () => saveAttachment(name, Array.from(data)), (relativePath) => {
+						if (ext === 'pdf' && !isMobile && ($appConfig?.pdf_preview ?? false)) {
+							return editor!.chain().focus().insertContent({
+								type: 'pdfEmbed',
+								attrs: { src: relativePath, name },
+							}).run();
+						} else {
+							return editor!.chain().focus().insertContent(`<a href="${relativePath}">${name}</a> `).run();
+						}
+					});
 				});
 			}
 		}).then((unlisten) => {

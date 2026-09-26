@@ -95,3 +95,22 @@ export class EditorMutationBarrier {
 		return this.locked;
 	}
 }
+
+/** A saved file must either reach its originating document or be reported to the user. */
+export async function saveForCurrentDocument<T>(
+	isCurrent: () => boolean,
+	save: () => Promise<T>,
+	insert: (saved: T) => boolean,
+	cancelled: (saved: boolean) => void,
+): Promise<void> {
+	if (!isCurrent()) return cancelled(false);
+	const saved = await save();
+	if (!isCurrent()) return cancelled(true);
+	let inserted: boolean;
+	try { inserted = insert(saved); }
+	catch (error) {
+		cancelled(true);
+		throw error;
+	}
+	if (!inserted) cancelled(true);
+}
