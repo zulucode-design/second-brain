@@ -106,5 +106,11 @@ export async function saveForCurrentDocument<T>(
 	if (!isCurrent()) return cancelled(false);
 	const saved = await save();
 	if (!isCurrent()) return cancelled(true);
-	if (!insert(saved)) cancelled(true);
+	let inserted: boolean;
+	try { inserted = insert(saved); }
+	catch (error) {
+		cancelled(true);
+		throw error;
+	}
+	if (!inserted) cancelled(true);
 }

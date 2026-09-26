@@ -121,6 +121,17 @@ test('a rejected editor insertion reports an already saved attachment', async ()
   assert.deepEqual(cancelled, [true]);
 });
 
+test('a throwing editor insertion reports the saved attachment before surfacing the error', async () => {
+  const cancelled = [];
+  await assert.rejects(saveForCurrentDocument(
+    () => true,
+    async () => '.helixnotes/attachments/file.txt',
+    () => { throw new URIError('bad attachment URL'); },
+    (saved) => cancelled.push(saved)
+  ), URIError);
+  assert.deepEqual(cancelled, [true]);
+});
+
 test('active relocation never mutates the filesystem when save fails or identity changed', async () => {
   for (const currentPath of ['/vault/one.md', '/vault/other.md']) {
     let mutations = 0;

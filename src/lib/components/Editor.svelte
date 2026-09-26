@@ -5761,7 +5761,7 @@
 
 	function reportSkippedAsset(name: string, saved: boolean) {
 		showToast(saved
-			? `Saved ${name}, but the note changed before it could be linked. Find it in Settings → Maintenance → Find orphaned attachments.`
+			? `Saved ${name}, but it was not linked to a note. Find it in Settings → Maintenance → Find orphaned attachments.`
 			: `Could not insert ${name}: the note changed.`, 8000);
 	}
 
@@ -5881,6 +5881,7 @@
 	}
 
 	async function saveBlobImage(blobUrl: string): Promise<string | null> {
+		let saved = false;
 		try {
 			const resp = await fetch(blobUrl);
 			const blob = await resp.blob();
@@ -5889,10 +5890,12 @@
 			const buffer = await blob.arrayBuffer();
 			const data = Array.from(new Uint8Array(buffer));
 			const relativePath = await saveImage(name, data);
+			saved = true;
 			return resolveImageSrc(relativePath);
 		} catch (e) {
-			console.error('Failed to save blob image:', e);
-			showToast('Could not save pasted image.');
+			console.error('Failed to save or link blob image:', e);
+			if (saved) reportSkippedAsset('pasted image', true);
+			else showToast('Could not save pasted image.');
 			return null;
 		}
 	}
