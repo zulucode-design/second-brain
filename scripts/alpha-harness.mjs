@@ -1589,28 +1589,33 @@ const NOTION_REGISTRY = '.helixnotes/notion/databases.json';
  * passed; a token its Disconnect left behind fails that run.
  */
 async function notionCleanup(machine, notion, passed) {
-  // Each half runs even when the other throws, so a failed keyring check still archives.
+  // Every part runs and every problem is reported, so one failure cannot hide another.
+  const problems = [];
   let token;
-  let tokenError;
   try {
     token = machine.clearNotionToken();
+    if (token.left) problems.push("the run's Notion token could not be removed from the keyring");
+    if (passed && token.found) problems.push('Disconnect left the Notion token in the keyring');
   } catch (error) {
-    tokenError = error;
+    problems.push(`keyring: ${error.message}`);
   }
   let registry;
   try {
     registry = JSON.parse(machine.readNote(NOTION_REGISTRY));
   } catch (error) {
     // A walkthrough that failed before Connect never created one.
-    if (passed) throw tokenError ?? error;
+    if (passed) problems.push(`registry: ${error.message}`);
   }
   // The clip and the attachment note carry anchor and relative links (#152).
   const titles = passed ? ['Walkthrough capture', 'Zettelkasten', 'Walkthrough attachment'] : [];
-  const databases = registry ? await notionVerifyAndClean(notion, registry, titles) : { databases: 0, archived: 0 };
-  if (tokenError) throw tokenError;
-  const result = { ...databases, tokenFound: token.found, tokenLeft: token.left };
-  if (token.left) fail(`the run's Notion token could not be removed from the keyring: ${JSON.stringify(result)}`);
-  if (passed && token.found) fail(`Disconnect left the Notion token in the keyring: ${JSON.stringify(result)}`);
+  let databases = { databases: 0, archived: 0 };
+  try {
+    if (registry) databases = await notionVerifyAndClean(notion, registry, titles);
+  } catch (error) {
+    problems.push(`databases: ${error.message}`);
+  }
+  const result = { ...databases, tokenFound: token?.found, tokenLeft: token?.left };
+  if (problems.length) fail(`Notion cleanup: ${problems.join('; ')} ${JSON.stringify(result)}`);
   return result;
 }
 
@@ -2357,9 +2362,10 @@ async function windowsWorker(request) {
     const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
     if (lock.runId !== request.runId) fail('config lock belongs to another run');
     atomicWrite(manifest.configPath, readFileSync(manifest.originalPath));
-    unlinkSync(lockPath);
     // A run that failed between break-config and repair-config leaves the app's damaged copy.
+    // Moved while the lock still stands, so a failure here leaves the run for a retry to finish.
     const damagedMoved = moveRunDamagedConfigs(dirname(manifest.configPath), paths);
+    unlinkSync(lockPath);
     return { restored: true, damagedMoved, ...removeRunArtifacts(tools, appPath, manifest, paths) };
   }
 

@@ -429,8 +429,8 @@ export async function startupError(browser) {
 // the token leaves the machine's keyring. The controller checks Notion itself afterwards. The
 // page title is a secret in the workflow, so neither the result nor an error names it.
 //
-// `whileConnected` runs once the token is stored, so the controller can prove its keyring lookup
-// finds it; otherwise finding nothing after the disconnect would prove nothing.
+// `whileConnected` (required) runs once the token is stored, so the controller can prove its
+// keyring lookup finds it; otherwise finding nothing after the disconnect would prove nothing.
 export async function notionPublish(browser, type, { token, page }, whileConnected) {
   await openSettingsTab(browser, 'Notion');
   await type(browser, browser.$('input[placeholder="ntn_…"]'), token);
