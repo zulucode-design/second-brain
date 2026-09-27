@@ -166,7 +166,10 @@
     that frame is painted, then exits through its normal save-aware shutdown. The configuration must restore the
     5,000-word note. A mark without the sidebar, note list, or an editable editor counts as a failed run.</li>
     <li><strong>Editor:</strong> each single-character key press without a modifier in the rich editor records
-    <code>editor-key</code> from the input event timestamp to the next paint.</li>
+    <code>editor-key</code> from the keydown event timestamp to the next paint. The final run sends Windows keys through
+    WebDriver and Fedora keys through a temporary <code>/dev/uinput</code> keyboard compiled from
+    <code>scripts/perf-key-input.c</code> (WebKitWebDriver rejects keyboard actions). Both paths require the editor text
+    to grow by exactly 200 characters.</li>
     <li><strong>Graph:</strong> <code>graph-render</code> runs from graph view creation, which happens when the graph command
     opens it, until the frame after the first full-layout draw. It records node and edge counts.</li>
     <li><strong>Search:</strong> <code>semantic-search</code> runs from query submission after the input debounce until the
@@ -256,13 +259,17 @@
   preserves earlier <code>b6490f2</code> samples too. Fedora's
   <a href="evidence/88-perf-2026-09-27/fedora-final-search-before-convergence.jsonl">first search attempt</a>
   began while its semantic index was rebuilding (1,115 indexed, 8,885 waiting) and is excluded from the settled-index budget.
-  The queue reached 10,000 indexed and zero waiting before the final five-query run. Windows
-  <code>pnpm test:rust</code> passed at the same source commit: 550 tests passed, zero failed, five ignored.</p>
+  The queue reached 10,000 indexed and zero waiting before the final five-query run. The first
+  final interaction logs used synthetic editor insertion; they remain graph evidence only. Separate
+  <a href="evidence/88-perf-2026-09-27/fedora-final-native-editor.jsonl">Fedora</a> and
+  <a href="evidence/88-perf-2026-09-27/windows-final-native-editor.jsonl">Windows</a> editor logs use real OS key
+  events and supersede those editor samples. Windows <code>pnpm test:rust</code> passed at the same source commit:
+  550 tests passed, zero failed, five ignored.</p>
   <table>
     <tr><th>Measure</th><th>Fedora 44</th><th>Windows 11</th><th>Verdict</th></tr>
     <tr><td>Cold startup</td><td><a href="evidence/88-perf-2026-09-27/fedora-final-startup.jsonl">1690, 1347, 1289, 1305, 1301 ms</a>; median 1305, max 1690</td><td><a href="evidence/88-perf-2026-09-27/windows-final-startup.jsonl">3093, 2220, 2379, 2146, 2208 ms</a>; median 2220, max 3093</td><td><span class="s green">pass</span> both</td></tr>
-    <tr><td>Editor key to paint</td><td><a href="evidence/88-perf-2026-09-27/fedora-final-interactive.jsonl">200 keys</a>; p95 10 ms, max 19 ms</td><td><a href="evidence/88-perf-2026-09-27/windows-final-interactive.jsonl">200 keys</a>; p95 3.6 ms, max 10.2 ms</td><td><span class="s green">pass</span> both</td></tr>
-    <tr><td>Graph first draw, 10,000 nodes and 19,998 edges</td><td>330, 262, 250, 253, 257 ms; median 257, max 330</td><td>2103, 1746, 1776, 1729, 1708 ms; median 1746, max 2103</td><td><span class="s green">pass</span> both</td></tr>
+    <tr><td>Editor key to paint</td><td><a href="evidence/88-perf-2026-09-27/fedora-final-native-editor.jsonl">200 native keys</a>; p95 11 ms, max 28 ms</td><td><a href="evidence/88-perf-2026-09-27/windows-final-native-editor.jsonl">200 WebDriver keys</a>; p95 4 ms, max 17.3 ms</td><td><span class="s green">pass</span> both</td></tr>
+    <tr><td>Graph first draw, 10,000 nodes and 19,998 edges</td><td><a href="evidence/88-perf-2026-09-27/fedora-final-interactive.jsonl">330, 262, 250, 253, 257 ms</a>; median 257, max 330</td><td><a href="evidence/88-perf-2026-09-27/windows-final-interactive.jsonl">2103, 1746, 1776, 1729, 1708 ms</a>; median 1746, max 2103</td><td><span class="s green">pass</span> both</td></tr>
     <tr><td>Settled semantic retrieval</td><td><a href="evidence/88-perf-2026-09-27/fedora-final-search.jsonl">216, 160, 108, 123, 102 ms</a>; p95 216 ms</td><td><a href="evidence/88-perf-2026-09-27/windows-final-search.jsonl">173, 97, 102, 90, 89 ms</a>; p95 173 ms</td><td><span class="s green">pass</span> both</td></tr>
     <tr><td>Local exact scan</td><td>87.8, 65.9, 65.2, 64.4, 66.4 ms; p95 87.8 ms</td><td>75.7, 76.1, 74.4, 74.0, 73.2 ms; p95 76.1 ms</td><td><span class="s green">pass</span> both</td></tr>
   </table>

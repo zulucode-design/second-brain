@@ -3,6 +3,11 @@
 // The caller owns tauri-driver and sets SECOND_BRAIN_PERF_LOG in its environment.
 
 import { remote } from 'webdriverio';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const [application, portText, platform, mode = 'all'] = process.argv.slice(2);
 if (!application || !portText || !['fedora', 'windows'].includes(platform) || !['all', 'editor-only', 'graph-only', 'search-only'].includes(mode)) {
@@ -45,16 +50,23 @@ try {
     if (words < 5_000) throw new Error(`fixture note has only ${words} words`);
     await browser.pause(2000);
 
+    const editor = await browser.$('.editor-content[contenteditable="true"]');
+    await browser.execute((target) => target.focus(), editor);
     const before = await browser.execute(() => document.querySelector('.editor-content[contenteditable="true"]').innerText.length);
-    for (let index = 0; index < 200; index += 1) {
-      const inserted = await browser.execute(() => {
-        const target = document.querySelector('.editor-content[contenteditable="true"]');
-        target.focus();
-        target.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }));
-        return document.execCommand('insertText', false, 'x');
-      });
-      if (!inserted) throw new Error('WebView refused editor input');
-      await browser.pause(50);
+    if (platform === 'fedora') {
+      const temporaryDirectory = mkdtempSync(join(tmpdir(), 'second-brain-perf-keys-'));
+      const keyboard = join(temporaryDirectory, 'perf-key-input');
+      try {
+        execFileSync('cc', ['-O2', join(dirname(fileURLToPath(import.meta.url)), 'perf-key-input.c'), '-o', keyboard]);
+        execFileSync(keyboard, [], { timeout: 30_000 });
+      } finally {
+        rmSync(temporaryDirectory, { recursive: true, force: true });
+      }
+    } else {
+      for (let index = 0; index < 200; index += 1) {
+        await editor.addValue('x');
+        await browser.pause(50);
+      }
     }
     const after = await browser.execute(() => document.querySelector('.editor-content[contenteditable="true"]').innerText.length);
     if (after !== before + 200) throw new Error(`editor kept ${after - before} of 200 inserted keys`);
