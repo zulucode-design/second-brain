@@ -1,0 +1,11 @@
+{"embedMs":10.6892,"epochMs":1790531770911,"exactScanMs":68.2582,"kind":"semantic-backend","lockWaitMs":0.00009999999999999999,"results":20}
+{"epochMs":1790531770931,"kind":"semantic-search","ms":98.19999998807909,"results":20}
+{"embedMs":16.8187,"epochMs":1790531771430,"exactScanMs":87.03760000000001,"kind":"semantic-backend","lockWaitMs":0.00009999999999999999,"results":20}
+{"epochMs":1790531771436,"kind":"semantic-search","ms":109.30000001192091,"results":20}
+{"embedMs":17.143700000000003,"epochMs":1790531772020,"exactScanMs":83.88329999999999,"kind":"semantic-backend","lockWaitMs":0.00009999999999999999,"results":20}
+{"epochMs":1790531772087,"kind":"semantic-search","ms":168.2999999821186,"results":20}
+{"editorEditable":true,"epochMs":1790531772101,"kind":"startup-ready","noteList":true,"sidebar":true,"sinceNavigationMs":3382.0999999940395}
+{"embedMs":16.9697,"epochMs":1790531772488,"exactScanMs":68.5261,"kind":"semantic-backend","lockWaitMs":0.00009999999999999999,"results":20}
+{"epochMs":1790531772492,"kind":"semantic-search","ms":90.19999998807909,"results":20}
+{"embedMs":29.8562,"epochMs":1790531773005,"exactScanMs":110.6911,"kind":"semantic-backend","lockWaitMs":0.00019999999999999998,"results":20}
+{"epochMs":1790531773009,"kind":"semantic-search","ms":145.2000000178814,"results":20}

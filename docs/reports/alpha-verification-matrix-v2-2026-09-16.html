@@ -55,7 +55,7 @@
   historical record of package H's first measurements and the completed package D protocol.</p>
   <div class="gate"><strong>Gate status: not green.</strong> Packages A–G are implemented and D passed the real
   two-machine interruption protocol. The G3 product-identity/updater implementation is complete in the identity
-  prerequisite change, and the diagnostic export is implemented with archive-content regression coverage. The installed-package rerun on candidate <code>b6490f2</code> passed Fedora startup, editor, graph, and settled semantic retrieval. Windows still fails cold startup (#128), graph render (#126), and local semantic exact scan (#159). Windows editor recorded only 184 of 200 injected keys, so that row needs a complete rerun. Gate 3 installed-package walkthroughs passed on both supported machines. Initial semantic indexing speed is tracked after this gate in #158.</div>
+  prerequisite change, and the diagnostic export is implemented with archive-content regression coverage. The installed-package rerun on candidate <code>b6490f2</code> passed Fedora startup, editor, graph, and settled semantic retrieval. Windows editor passed on a complete 200-key rerun. Windows still fails cold startup (#128), graph render (#126), and local semantic exact scan (#159). Gate 3 installed-package walkthroughs passed on both supported machines. Initial semantic indexing speed is tracked after this gate in #158.</div>
 </header>
 
 <section>
@@ -96,7 +96,7 @@
     <tr><td>Diagnostic export</td><td>User starts the export. Default output contains no note body, planted secret, note path/title, provider response body, or credential field. Tests inspect the produced archive.</td><td>Settings → Maintenance creates a ZIP with build/OS/package metadata, redacted configuration, sync status and last terminal outcome, and redacted rotated logs. The archive test proves planted vault content, secret, note path/title/id, device id, Tailscale address, and credential field are absent. Gate 3 run <a href="evidence/alpha-harness-walkthrough-20260926T145821Z.jsonl"><code>20260926T145821Z</code></a> exported diagnostics from both installed packages through the Maintenance button's own <code>export_diagnostics</code> command, with the path the save dialog would return, because WebDriver cannot answer the native dialog. It found no planted credential, note body marker, note title or path, or vault path in any member, with either path separator, raw or JSON-escaped.</td><td>#88</td><td><span class="s green">verified</span></td></tr>
     <tr><td>Install failure propagation</td><td>A deterministic fixture makes <code>svelte-kit sync</code> fail and proves <code>pnpm install</code> returns nonzero.</td><td><code>tests/install-failure.test.mjs</code> runs <code>pnpm install --offline</code> against a temporary package using the repository's exact <code>prepare</code> command and an intentionally failing Svelte config; the test requires the install to fail with the fixture marker.</td><td>#88</td><td><span class="s green">verified</span></td></tr>
     <tr><td>Dependency audit</td><td><code>pnpm audit --prod</code> and <code>cargo audit --file src-tauri/Cargo.lock</code> report no known vulnerability, production licenses are recorded, and every Cargo warning has a reachability and disposition entry.</td><td>Five compatible Cargo updates remove every patched advisory. Remaining twelve warnings have reviewed accept/defer dispositions below; no package vulnerability remains. Production JavaScript and Rust license metadata is compatible with AGPL-3.0-or-later; <code>khroma</code>'s metadata omission was checked against its bundled MIT license.</td><td>#88</td><td><span class="s green">verified</span></td></tr>
-    <tr><td>Performance</td><td>All budgets below pass on both real target machines against the same 10,000-note fixture and candidate commit.</td><td>Installed packages from <code>b6490f2</code> were measured on both machines on 2026-09-27; raw timings and verdicts are below. Fedora passes its measured rows. Windows fails startup median, graph median, and semantic exact-scan p95. Its editor probe injected 200 keys but recorded 184, so this row remains incomplete. Earlier <code>8021755</code> failures and the improvements made since then remain documented below as history.</td><td>#88, #126, #128, #159</td><td><span class="s red">failing</span></td></tr>
+    <tr><td>Performance</td><td>All budgets below pass on both real target machines against the same 10,000-note fixture and candidate commit.</td><td>Installed packages from <code>b6490f2</code> were measured on both machines on 2026-09-27; raw timings and verdicts are below. Fedora passes its measured rows. Windows editor passes its complete rerun, but startup median, graph median, and semantic exact-scan p95 fail. Earlier <code>8021755</code> failures and the improvements made since then remain documented below as history.</td><td>#88, #126, #128, #159</td><td><span class="s red">failing</span></td></tr>
     <tr><td>Fedora package</td><td>RPM from the candidate commit installs, completes the walkthrough below, exits cleanly, and uninstalls without deleting the disposable vault.</td><td>Gate 3 run <a href="evidence/alpha-harness-walkthrough-20260926T145821Z.jsonl"><code>20260926T145821Z</code></a>: RPM from <code>8e62c08</code> (SHA-256 <code>636878da…</code>), installed by hand with <code>sudo rpm -Uvh</code> because it needs root, passed <code>rpm -V</code> and <code>scripts/verify-linux-package.sh</code>, and its desktop entry smoke-launched <code>/usr/bin/second-brain</code>. <code>tauri-driver</code> launched the same binary for the walkthrough. It completed with sync on, and the final launch, with the sidecar and watchdog running, exited through the window's close button and left no app, sidecar, or watchdog process. After <code>sudo rpm -e second-brain</code>, the package, binary, and desktop entry were gone and the vault's tree hash was unchanged.</td><td>#88</td><td><span class="s green">verified</span></td></tr>
     <tr><td>Windows package</td><td>NSIS package from the candidate commit installs, completes the walkthrough below including #49's notification, exits with no sidecar/watchdog left, and uninstalls without deleting the disposable vault.</td><td>Gate 3 run <a href="evidence/alpha-harness-walkthrough-20260926T145821Z.jsonl"><code>20260926T145821Z</code></a>: the NSIS setup from <code>8e62c08</code> (SHA-256 <code>d1799e2a…</code>) installed silently, and its Start-menu shortcut smoke-launched the installed <code>second-brain.exe</code>. <code>tauri-driver</code> launched the same executable for the walkthrough. It completed with sync on, and the final launch, with the sidecar and watchdog running, exited through the window's close button and left no app, sidecar, or watchdog process. With the vault folder renamed, Ctrl+Alt+N pressed twice from the desktop session made the app show a “Quick capture” toast naming the run's vault for each press, as its log records. The notification history held exactly one after each press, so the second replaced the first (#153). The toast is also on the screenshot. The silent uninstall removed the executable and the Start-menu entry and left the vault's tree hash unchanged, and the candidate was reinstalled.</td><td>#88, #49</td><td><span class="s green">verified</span></td></tr>
     <tr><td>Residual defects</td><td>Every open defect found by remediation has an explicit severity, alpha disposition, owner, and milestone; no P0/P1 remains.</td><td>#110 and indexing-throughput improvement #158 are P2; #111 and #112 are P3. All are deferred, non-blocking, assigned to zulucode-design, and scheduled for the v1 feature-complete beta milestone. Blocking performance defects #126, #128, and #159 remain in the performance row.</td><td>#76, #158</td><td><span class="s green">classified</span></td></tr>
@@ -207,7 +207,8 @@
   <a href="evidence/88-perf-2026-09-27/fedora-startup.jsonl">Fedora startup</a>,
   <a href="evidence/88-perf-2026-09-27/fedora-interactive.jsonl">Fedora interaction and search</a>,
   <a href="evidence/88-perf-2026-09-27/windows-startup.jsonl">Windows startup</a>,
-  <a href="evidence/88-perf-2026-09-27/windows-interactive.jsonl">Windows interaction</a>, and
+  <a href="evidence/88-perf-2026-09-27/windows-interactive.jsonl">Windows interaction</a>,
+  <a href="evidence/88-perf-2026-09-27/windows-editor-complete.jsonl">Windows editor rerun</a>, and
   <a href="evidence/88-perf-2026-09-27/windows-search-only.jsonl">Windows settled search</a>.
   Startup used <code>node scripts/perf-startup.mjs &lt;installed executable&gt; &lt;log&gt; 5</code>;
   interaction used <code>node scripts/perf-interactive.mjs &lt;installed executable&gt; &lt;driver port&gt; &lt;platform&gt;</code>,
@@ -217,18 +218,30 @@
   The Fedora interaction log contains an initial search immediately after editing that took 6418 ms,
   followed by a separate five-query search-only run after the queue returned to zero. This first search
   is retained as workload-contention evidence, not counted as a settled-index sample. Windows's separate
-  search-only run uses the same settled-index protocol.</p>
+  search-only run uses the same settled-index protocol. The first Windows editor run recorded 184 of
+  200 injected keys. A rerun waited two seconds after opening the note before typing and recorded all
+  200; the editor text grew by exactly 200 characters.</p>
   <table>
     <tr><th>Measure</th><th>Fedora 44</th><th>Windows 11</th><th>Verdict</th></tr>
     <tr><td>Cold startup</td><td>1437, 1478, 1463, 1480, 1549 ms; median 1478</td><td>3390, 3323, 3363, 3222, 3379 ms; median 3363</td><td><span class="s red">fail</span> Windows #128</td></tr>
-    <tr><td>Editor key to paint</td><td>200 samples; p95 17 ms, max 24 ms</td><td>200 keys injected, 184 samples recorded; recorded p95 17.1 ms, max 18.5 ms</td><td><span class="s grey">Windows rerun needed</span></td></tr>
+    <tr><td>Editor key to paint</td><td>200 samples; p95 17 ms, max 24 ms</td><td>200 samples in a separate installed-app rerun; p95 2.7 ms, max 8.6 ms</td><td><span class="s green">pass</span> both</td></tr>
     <tr><td>Graph first draw, 10,000 nodes and 19,998 edges</td><td>419, 412, 387, 353, 368 ms; median 387</td><td>3953, 2591, 2635, 2562, 2615 ms; median 2615</td><td><span class="s red">fail</span> Windows #126</td></tr>
     <tr><td>Settled semantic retrieval</td><td>Five queries; median 107 ms, p95 134 ms</td><td>Five queries; median 1593 ms, p95 1992 ms</td><td><span class="s green">pass</span> with narrow Windows margin</td></tr>
     <tr><td>Local exact scan</td><td>Five queries; median 65 ms, p95 76 ms</td><td>1955, 1577, 1606, 1214, 75 ms; p95 1955 ms</td><td><span class="s red">fail</span> Windows #159</td></tr>
   </table>
   <p>Initial embedding throughput has no gate budget. Both queues converged; #158 measures and improves
   full-rebuild throughput after the pre-alpha gate unless indexing breaks foreground use or convergence.
-  No indexing-speed change is needed to turn this gate green.</p>
+  No indexing-speed change is needed to turn this gate green. A local graph fix at <code>0b26e99</code>
+  eliminated unnecessary path resolution: a Windows no-bundle build drew in 1970, 1605, 1632,
+  1604, and 1588 ms (<a href="evidence/88-perf-2026-09-27/windows-graph-diagnostic.jsonl">raw log</a>),
+  but installed-package proof remains open. A Windows installed-app
+  <a href="evidence/88-perf-2026-09-27/windows-startup-repeat.jsonl">startup repeat</a> with the
+  temporary Ollama server stopped improved to a 3040 ms median, still above the 3000 ms budget.
+  Read-only SQLite probing found a 458 ms first vector read and 58/57 ms warm reads; a separate
+  <a href="evidence/88-perf-2026-09-27/windows-scan-diagnostic.jsonl">no-bundle semantic run</a>
+  measured 68–111 ms exact scans with no mutex wait.
+  The cause of the earlier 1214–1955 ms installed-app scans is not yet established, so #159 stays
+  blocking until a complete final installed-package rerun passes.</p>
 </section>
 
 <section>

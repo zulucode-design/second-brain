@@ -5,8 +5,8 @@
 import { remote } from 'webdriverio';
 
 const [application, portText, platform, mode = 'all'] = process.argv.slice(2);
-if (!application || !portText || !['fedora', 'windows'].includes(platform) || !['all', 'search-only'].includes(mode)) {
-  console.error('usage: perf-interactive.mjs <installed-executable> <driver-port> <fedora|windows> [all|search-only]');
+if (!application || !portText || !['fedora', 'windows'].includes(platform) || !['all', 'editor-only', 'graph-only', 'search-only'].includes(mode)) {
+  console.error('usage: perf-interactive.mjs <installed-executable> <driver-port> <fedora|windows> [all|editor-only|graph-only|search-only]');
   process.exit(2);
 }
 
@@ -25,7 +25,7 @@ try {
   await browser.$('button[title^="Search"]').waitForDisplayed({ timeout: 60_000 });
   await browser.setWindowSize(1280, 860);
 
-  if (mode === 'all') {
+  if (mode === 'all' || mode === 'editor-only') {
     await click('button[title^="Search"]');
     await browser.execute(() => {
       const input = document.querySelector('input[placeholder="Search notes..."]');
@@ -43,22 +43,26 @@ try {
     });
     const words = await browser.execute(() => document.querySelector('.editor-content')?.innerText.trim().split(/\s+/).length);
     if (words < 5_000) throw new Error(`fixture note has only ${words} words`);
+    await browser.pause(2000);
 
-    const editor = await browser.$('.editor-content[contenteditable="true"]');
-    await browser.execute((target) => target.focus(), editor);
+    const before = await browser.execute(() => document.querySelector('.editor-content[contenteditable="true"]').innerText.length);
     for (let index = 0; index < 200; index += 1) {
-      if (platform === 'windows') await browser.keys(['x']);
-      else {
-        const inserted = await browser.execute((target) => {
-          target.focus();
-          target.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }));
-          return document.execCommand('insertText', false, 'x');
-        }, editor);
-        if (!inserted) throw new Error('WebKit refused editor input');
-      }
+      const inserted = await browser.execute(() => {
+        const target = document.querySelector('.editor-content[contenteditable="true"]');
+        target.focus();
+        target.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }));
+        return document.execCommand('insertText', false, 'x');
+      });
+      if (!inserted) throw new Error('WebView refused editor input');
+      await browser.pause(50);
     }
+    const after = await browser.execute(() => document.querySelector('.editor-content[contenteditable="true"]').innerText.length);
+    if (after !== before + 200) throw new Error(`editor kept ${after - before} of 200 inserted keys`);
+    await browser.pause(1000);
     console.log(`editor: 200 keys on ${words}-word note`);
+  }
 
+  if (mode === 'all' || mode === 'graph-only') {
     for (let run = 1; run <= 5; run += 1) {
       await click('button[title="Graph View"]');
       await browser.waitUntil(async () => browser.execute(() => {
@@ -70,20 +74,22 @@ try {
     }
   }
 
-  for (let run = 1; run <= 5; run += 1) {
-    await click('button[title^="Search"]');
-    await click('.search-modes button:last-child');
-    await browser.execute(() => {
-      const input = document.querySelector('input[placeholder="Search notes..."]');
-      input.value = 'how to bake bread';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await browser.waitUntil(async () => browser.execute(() => document.querySelectorAll('.result-title').length > 0), {
-      timeout: 60_000, timeoutMsg: 'semantic search returned no results',
-    });
-    await browser.execute(() => document.querySelector('input[placeholder="Search notes..."]')
-      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
-    console.log(`semantic ${run}: results painted`);
+  if (mode === 'all' || mode === 'search-only') {
+    for (let run = 1; run <= 5; run += 1) {
+      await click('button[title^="Search"]');
+      await click('.search-modes button:last-child');
+      await browser.execute(() => {
+        const input = document.querySelector('input[placeholder="Search notes..."]');
+        input.value = 'how to bake bread';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await browser.waitUntil(async () => browser.execute(() => document.querySelectorAll('.result-title').length > 0), {
+        timeout: 60_000, timeoutMsg: 'semantic search returned no results',
+      });
+      await browser.execute(() => document.querySelector('input[placeholder="Search notes..."]')
+        .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+      console.log(`semantic ${run}: results painted`);
+    }
   }
 } finally {
   await browser.deleteSession();
