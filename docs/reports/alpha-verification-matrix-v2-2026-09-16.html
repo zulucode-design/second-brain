@@ -30,8 +30,8 @@
     h1 { margin: 0; font: 600 clamp(2rem, 5vw, 3.4rem)/1.05 var(--serif); letter-spacing: -0.03em; }
     h2 { margin-top: 0; font: 600 1.6rem/1.2 var(--serif); }
     .kicker { margin: 0 0 10px; color: var(--accent); font-size: 0.75rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
-    .gate { margin-top: 20px; padding: 14px 18px; border-radius: 12px; background: var(--bad-soft); }
-    .gate strong { color: var(--bad); }
+    .gate { margin-top: 20px; padding: 14px 18px; border-radius: 12px; background: var(--good-soft); }
+    .gate strong { color: var(--good); }
     .note { padding: 12px 16px; border-left: 4px solid var(--accent); background: var(--info-soft); }
     table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
     th, td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid var(--line); }
@@ -53,9 +53,12 @@
   <p>Version 2, recorded 2026-09-16 against <code>main</code> at <code>2a7d0c9</code>. This version supersedes
   <a href="alpha-verification-matrix-v1-2026-09-14.html">version 1</a> as the active gate. Version 1 remains the
   historical record of package H's first measurements and the completed package D protocol.</p>
-  <div class="gate"><strong>Gate status: not green.</strong> Packages A–G are implemented and D passed the real
-  two-machine interruption protocol. The G3 product-identity/updater implementation is complete in the identity
-  prerequisite change, and the diagnostic export is implemented with archive-content regression coverage. The installed-package rerun on candidate <code>b6490f2</code> passed Fedora startup, editor, graph, and settled semantic retrieval. Windows editor passed on a complete 200-key rerun. Windows still fails cold startup (#128), graph render (#126), and local semantic exact scan (#159). Gate 3 installed-package walkthroughs passed on both supported machines. Initial semantic indexing speed is tracked after this gate in #158.</div>
+  <div class="gate"><strong>Gate evidence: green.</strong> Packages A–G are implemented and D passed the real
+  two-machine interruption protocol. The G3 product-identity/updater prerequisite and diagnostic export are complete.
+  Gate 3 installed-package walkthroughs passed on both supported machines at <code>b6490f2</code>; narrow startup and
+  graph repairs in installed <code>095e765</code> passed every performance budget on Fedora and Windows. The earlier
+  Windows exact-scan spike remains a non-blocking P2 investigation (#159), and initial indexing throughput is tracked
+  after this gate in #158. Branch final review and hosted PR checks remain before closure.</div>
 </header>
 
 <section>
@@ -96,10 +99,10 @@
     <tr><td>Diagnostic export</td><td>User starts the export. Default output contains no note body, planted secret, note path/title, provider response body, or credential field. Tests inspect the produced archive.</td><td>Settings → Maintenance creates a ZIP with build/OS/package metadata, redacted configuration, sync status and last terminal outcome, and redacted rotated logs. The archive test proves planted vault content, secret, note path/title/id, device id, Tailscale address, and credential field are absent. Gate 3 run <a href="evidence/alpha-harness-walkthrough-20260926T145821Z.jsonl"><code>20260926T145821Z</code></a> exported diagnostics from both installed packages through the Maintenance button's own <code>export_diagnostics</code> command, with the path the save dialog would return, because WebDriver cannot answer the native dialog. It found no planted credential, note body marker, note title or path, or vault path in any member, with either path separator, raw or JSON-escaped.</td><td>#88</td><td><span class="s green">verified</span></td></tr>
     <tr><td>Install failure propagation</td><td>A deterministic fixture makes <code>svelte-kit sync</code> fail and proves <code>pnpm install</code> returns nonzero.</td><td><code>tests/install-failure.test.mjs</code> runs <code>pnpm install --offline</code> against a temporary package using the repository's exact <code>prepare</code> command and an intentionally failing Svelte config; the test requires the install to fail with the fixture marker.</td><td>#88</td><td><span class="s green">verified</span></td></tr>
     <tr><td>Dependency audit</td><td><code>pnpm audit --prod</code> and <code>cargo audit --file src-tauri/Cargo.lock</code> report no known vulnerability, production licenses are recorded, and every Cargo warning has a reachability and disposition entry.</td><td>Five compatible Cargo updates remove every patched advisory. Remaining twelve warnings have reviewed accept/defer dispositions below; no package vulnerability remains. Production JavaScript and Rust license metadata is compatible with AGPL-3.0-or-later; <code>khroma</code>'s metadata omission was checked against its bundled MIT license.</td><td>#88</td><td><span class="s green">verified</span></td></tr>
-    <tr><td>Performance</td><td>All budgets below pass on both real target machines against the same 10,000-note fixture and candidate commit.</td><td>Installed packages from <code>b6490f2</code> were measured on both machines on 2026-09-27; raw timings and verdicts are below. Fedora passes its measured rows. Windows editor passes its complete rerun, but startup median, graph median, and semantic exact-scan p95 fail. Earlier <code>8021755</code> failures and the improvements made since then remain documented below as history.</td><td>#88, #126, #128, #159</td><td><span class="s red">failing</span></td></tr>
+    <tr><td>Performance</td><td>All budgets below pass on both real target machines against the same 10,000-note fixture and candidate commit.</td><td>Installed packages from <code>095e765</code> passed startup, editor, graph, and settled semantic retrieval on Fedora 44 and Windows 11. All five final semantic queries on each machine returned 20 results with 10,000 notes indexed and zero waiting. Raw measurements and historical failures are below.</td><td>#88, #126, #128, #159</td><td><span class="s green">verified</span></td></tr>
     <tr><td>Fedora package</td><td>RPM from the candidate commit installs, completes the walkthrough below, exits cleanly, and uninstalls without deleting the disposable vault.</td><td>Gate 3 run <a href="evidence/alpha-harness-walkthrough-20260926T145821Z.jsonl"><code>20260926T145821Z</code></a>: RPM from <code>8e62c08</code> (SHA-256 <code>636878da…</code>), installed by hand with <code>sudo rpm -Uvh</code> because it needs root, passed <code>rpm -V</code> and <code>scripts/verify-linux-package.sh</code>, and its desktop entry smoke-launched <code>/usr/bin/second-brain</code>. <code>tauri-driver</code> launched the same binary for the walkthrough. It completed with sync on, and the final launch, with the sidecar and watchdog running, exited through the window's close button and left no app, sidecar, or watchdog process. After <code>sudo rpm -e second-brain</code>, the package, binary, and desktop entry were gone and the vault's tree hash was unchanged.</td><td>#88</td><td><span class="s green">verified</span></td></tr>
     <tr><td>Windows package</td><td>NSIS package from the candidate commit installs, completes the walkthrough below including #49's notification, exits with no sidecar/watchdog left, and uninstalls without deleting the disposable vault.</td><td>Gate 3 run <a href="evidence/alpha-harness-walkthrough-20260926T145821Z.jsonl"><code>20260926T145821Z</code></a>: the NSIS setup from <code>8e62c08</code> (SHA-256 <code>d1799e2a…</code>) installed silently, and its Start-menu shortcut smoke-launched the installed <code>second-brain.exe</code>. <code>tauri-driver</code> launched the same executable for the walkthrough. It completed with sync on, and the final launch, with the sidecar and watchdog running, exited through the window's close button and left no app, sidecar, or watchdog process. With the vault folder renamed, Ctrl+Alt+N pressed twice from the desktop session made the app show a “Quick capture” toast naming the run's vault for each press, as its log records. The notification history held exactly one after each press, so the second replaced the first (#153). The toast is also on the screenshot. The silent uninstall removed the executable and the Start-menu entry and left the vault's tree hash unchanged, and the candidate was reinstalled.</td><td>#88, #49</td><td><span class="s green">verified</span></td></tr>
-    <tr><td>Residual defects</td><td>Every open defect found by remediation has an explicit severity, alpha disposition, owner, and milestone; no P0/P1 remains.</td><td>#110 and indexing-throughput improvement #158 are P2; #111 and #112 are P3. All are deferred, non-blocking, assigned to zulucode-design, and scheduled for the v1 feature-complete beta milestone. Blocking performance defects #126, #128, and #159 remain in the performance row.</td><td>#76, #158</td><td><span class="s green">classified</span></td></tr>
+    <tr><td>Residual defects</td><td>Every open defect found by remediation has an explicit severity, alpha disposition, owner, and milestone; no P0/P1 remains.</td><td>#110, #158, and the earlier unexplained Windows exact-scan spike #159 are P2; #111 and #112 are P3. All are deferred, non-blocking, assigned to zulucode-design, and scheduled for the v1 feature-complete beta milestone. #126 and #128 passed the final installed-package budgets and can close after this change merges.</td><td>#76, #158, #159</td><td><span class="s green">classified</span></td></tr>
   </table>
 </section>
 
@@ -111,6 +114,7 @@
     <tr><td><a href="https://github.com/zulucode-design/second-brain/issues/111">#111</a> missing sync-run logging</td><td>P3; deferred, non-blocking. Observability gap only; sync data safety and terminal behavior are unchanged.</td><td>zulucode-design; v1 feature-complete beta</td></tr>
     <tr><td><a href="https://github.com/zulucode-design/second-brain/issues/112">#112</a> joining-vault config conflict</td><td>P3; deferred, non-blocking. Conflict file differs only in <code>created</code>; no note data is affected.</td><td>zulucode-design; v1 feature-complete beta</td></tr>
     <tr><td><a href="https://github.com/zulucode-design/second-brain/issues/158">#158</a> initial semantic indexing throughput</td><td>P2; deferred, non-blocking. Both 10,000-note queues converged. No full-index time budget exists; measure and improve throughput after the pre-alpha gate. Reclassify if foreground use or convergence fails.</td><td>zulucode-design; v1 feature-complete beta</td></tr>
+    <tr><td><a href="https://github.com/zulucode-design/second-brain/issues/159">#159</a> earlier Windows exact-scan spike</td><td>P2; deferred, non-blocking. The <code>b6490f2</code> run had 1214–1955 ms scans; the same 10,000-indexed-note protocol passed on installed <code>095e765</code> with 73–76 ms scans. Root cause remains unknown. Reclassify before alpha if the spike recurs or retrieval exceeds its budget.</td><td>zulucode-design; v1 feature-complete beta</td></tr>
   </table>
 </section>
 
@@ -242,6 +246,29 @@
   measured 68–111 ms exact scans with no mutex wait.
   The cause of the earlier 1214–1955 ms installed-app scans is not yet established, so #159 stays
   blocking until a complete final installed-package rerun passes.</p>
+  <h3>Final installed candidate 095e765 (2026-09-27)</h3>
+  <p>Fedora 44 used the installed RPM (SHA-256 <code>d706bae4d74113e527dfc3caba2b077425d42b4302b34dcb3cb84fa65f96c436</code>);
+  <code>rpm -V -p</code> passed and <code>/usr/bin/second-brain</code> embedded <code>095e765</code>.
+  Windows 11 used the installed NSIS package (SHA-256 <code>280E325FDDA7A6C1B7DA0304353FA6190F9B5C23015B7A8BA91F5F3DDBD7F9A4</code>);
+  its installed executable had SHA-256 <code>9D05B132F9192EFC0FCDA068FD47762D3AFBB649B51638424D84A6A737E56F7C</code>.
+  Both used the 10,000-note fixture. The final Windows search log contains only the five samples from this package;
+  <a href="evidence/88-perf-2026-09-27/windows-final-search-appended-history.jsonl">the original appended log</a>
+  preserves earlier <code>b6490f2</code> samples too. Fedora's
+  <a href="evidence/88-perf-2026-09-27/fedora-final-search-before-convergence.jsonl">first search attempt</a>
+  began while its semantic index was rebuilding (1,115 indexed, 8,885 waiting) and is excluded from the settled-index budget.
+  The queue reached 10,000 indexed and zero waiting before the final five-query run. Windows
+  <code>pnpm test:rust</code> passed at the same source commit: 550 tests passed, zero failed, five ignored.</p>
+  <table>
+    <tr><th>Measure</th><th>Fedora 44</th><th>Windows 11</th><th>Verdict</th></tr>
+    <tr><td>Cold startup</td><td><a href="evidence/88-perf-2026-09-27/fedora-final-startup.jsonl">1690, 1347, 1289, 1305, 1301 ms</a>; median 1305, max 1690</td><td><a href="evidence/88-perf-2026-09-27/windows-final-startup.jsonl">3093, 2220, 2379, 2146, 2208 ms</a>; median 2220, max 3093</td><td><span class="s green">pass</span> both</td></tr>
+    <tr><td>Editor key to paint</td><td><a href="evidence/88-perf-2026-09-27/fedora-final-interactive.jsonl">200 keys</a>; p95 10 ms, max 19 ms</td><td><a href="evidence/88-perf-2026-09-27/windows-final-interactive.jsonl">200 keys</a>; p95 3.6 ms, max 10.2 ms</td><td><span class="s green">pass</span> both</td></tr>
+    <tr><td>Graph first draw, 10,000 nodes and 19,998 edges</td><td>330, 262, 250, 253, 257 ms; median 257, max 330</td><td>2103, 1746, 1776, 1729, 1708 ms; median 1746, max 2103</td><td><span class="s green">pass</span> both</td></tr>
+    <tr><td>Settled semantic retrieval</td><td><a href="evidence/88-perf-2026-09-27/fedora-final-search.jsonl">216, 160, 108, 123, 102 ms</a>; p95 216 ms</td><td><a href="evidence/88-perf-2026-09-27/windows-final-search.jsonl">173, 97, 102, 90, 89 ms</a>; p95 173 ms</td><td><span class="s green">pass</span> both</td></tr>
+    <tr><td>Local exact scan</td><td>87.8, 65.9, 65.2, 64.4, 66.4 ms; p95 87.8 ms</td><td>75.7, 76.1, 74.4, 74.0, 73.2 ms; p95 76.1 ms</td><td><span class="s green">pass</span> both</td></tr>
+  </table>
+  <p>The Windows exact-scan failure recorded above did not recur on this final package, but its cause is still unknown.
+  #159 remains open for the earlier slow-scan investigation and is classified P2, non-blocking.
+  #158 owns initial semantic indexing throughput after the pre-alpha gate.</p>
 </section>
 
 <section>
@@ -268,9 +295,9 @@
     <li><s>Land the narrow G3 identity, migration, and updater-disable slice from #89.</s> Implemented and covered by source-contract plus Linux/Windows migration tests.</li>
     <li><s>Implement and test diagnostic export.</s> Completed with archive-content regression coverage; exercise it during the final package walkthrough.</li>
     <li><s>Prove install-failure propagation.</s> Completed with a deterministic temporary fixture. <s>Close dependency-audit evidence.</s></li>
-    <li>Choose one candidate commit and run hosted plus real-machine verification. Candidate <code>b6490f2</code> passed hosted checks and the installed-package walkthrough dispatch recorded above; performance requires repairs and a new candidate.</li>
-    <li>Run the performance protocol on the release candidate. The installed-package walkthroughs passed on <code>b6490f2</code>. Its 2026-09-27 performance rerun exposed Windows failures #126, #128, and #159, so a repaired candidate must rerun affected rows.</li>
-    <li><s>Classify residual defects.</s> #110–#112 now name severity, alpha disposition, owner, and milestone. Close #49, #88, and the H row in #76 only when every blocking row is green.</li>
+    <li><s>Choose a candidate and run hosted plus real-machine verification.</s> <code>b6490f2</code> passed hosted checks and the installed-package walkthrough dispatch recorded above. The narrow startup and graph repairs produced <code>095e765</code>; local <code>pnpm verify</code> and Windows <code>pnpm test:rust</code> passed, and its installed packages passed the affected performance rows. Hosted checks for this branch remain the PR gate.</li>
+    <li><s>Run the performance protocol on the release candidate.</s> The <code>b6490f2</code> run exposed Windows failures #126, #128, and #159. Installed <code>095e765</code> passed every budget on both machines. #159 remains open as a non-blocking P2 investigation because the earlier slow scans have no confirmed cause.</li>
+    <li><s>Classify residual defects.</s> #110–#112, #158, and #159 now name severity, alpha disposition, owner, and milestone. Close #49, #88, and the H row in #76 when the branch review and PR checks pass.</li>
   </ol>
 </section>
 
