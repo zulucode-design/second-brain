@@ -318,8 +318,8 @@ fn resync_autostart(app: &AppHandle) {
     let Ok(app_id) = super::configured_application_id() else {
         return;
     };
-    // While saves are blocked the loaded settings are defaults, not the user's; leave the
-    // entry as it is.
+    // While saves are blocked the loaded settings may be defaults rather than the user's, and
+    // any change could not be persisted anyway; leave the entry as it is.
     let Ok(Some(enabled)) = app
         .state::<AppState>()
         .config
