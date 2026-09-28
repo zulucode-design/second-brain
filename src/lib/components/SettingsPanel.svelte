@@ -2432,7 +2432,9 @@
 								</div>
 							</div>
 
-							{#if aiProvider}
+							{#if aiProvider && !aiProviderMetadata}
+								<p class="setting-hint" role="alert">Stored AI provider “{aiProvider}” is not supported in this build. AI writing requests are blocked. Choose a supported provider to resume.</p>
+							{:else if aiProvider}
 								{#if aiProviderMetadata?.hasConfigurableAddress}
 									<p class="setting-hint" style="color: var(--text-success, #4ade80); margin-top: -4px; margin-bottom: 12px;">Your data stays on your device. No text is sent to any external server.</p>
 								{:else}
