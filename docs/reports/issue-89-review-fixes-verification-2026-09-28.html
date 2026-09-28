@@ -49,7 +49,7 @@
     <tr><td>Tags depended on window width in compact layout.</td>
       <td>Tags always come from the backend, as in the full layout.</td></tr>
     <tr><td>Theme id list and apply/dark logic were copied in four components.</td>
-      <td>Moved once into <code>platform.ts</code> (<code>applyTheme</code>,
+      <td>Moved once into <code>theme.ts</code> (<code>applyTheme</code>,
       <code>isDarkTheme</code>).</td></tr>
     <tr><td>ADR-0001 still described <code>.deb</code>/AppImage entries and the
       <code>helixnotes</code> directory; leftover AppImage branch and "mobile" names.</td>
@@ -86,7 +86,15 @@
       <code>windows-rust</code> job runs; exercised by the next alpha harness run.</td></tr>
   </table>
 
-  <h2>Upgrade note</h2>
+  <h2>Upgrade notes</h2>
+  <ul>
+    <li>If the move cannot finish (for example, a sidecar left running by the previous build
+      holds a file open on Windows), settings saves stay blocked and the error is shown and
+      logged. The move resumes on the next launch once the file is free.</li>
+    <li>A vault already configured inside a OneDrive folder, including a Documents folder that
+      Windows redirects into OneDrive, is refused on the first launch after upgrading. The picker
+      names the product and asks for a local folder; ADR-0012 makes such vaults unsupported.</li>
+  </ul>
   <p>The first launch of a build with this change moves an existing install's settings. Until then
   the alpha harness's template config path (now under the identifier) does not exist; launch
   the new package once before a harness run.</p>

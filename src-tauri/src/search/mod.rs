@@ -65,7 +65,6 @@ fn commit_index(writer: &mut IndexWriter) -> Result<(), String> {
 
 /// The pre-vault-id index location: keyed by a hash of the vault's path, so it was
 /// orphaned whenever the vault folder moved. Only used to clean up the stale copy.
-#[cfg(desktop)]
 fn legacy_path_keyed_index(vault_path: &str) -> Option<std::path::PathBuf> {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();

@@ -4,7 +4,8 @@
 	import type { AiProvider } from '$lib/types';
 	import { importOutcomeView, type ImportDonePayload } from '$lib/utils/import-outcome';
 	import { AI_PROVIDER_METADATA, AI_PROVIDER_OPTIONS } from '$lib/utils/ai-provider';
-	import { applyTheme, isDarkTheme, isLinux, isWindows } from '$lib/platform';
+	import { isLinux, isWindows } from '$lib/platform';
+	import { applyTheme, isDarkTheme } from '$lib/theme';
 	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { listenAppEvent } from '$lib/events';
 	import { onMount } from 'svelte';

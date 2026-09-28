@@ -19,6 +19,15 @@ stale `helixnotes` launch, desktop-entry, and autostart references when found, a
 delete a vault. The first external-alpha package is the first supported installer baseline,
 so unofficial development packages receive no broader upgrade guarantee.
 
+> **Amended 2026-09-28 (#89).** Configuration, backups, and machine-local state had stayed in
+> the inherited `helixnotes` directories, which upstream HelixNotes also writes. They now live
+> under the application identifier's directories. The first launch moves state out of
+> `helixnotes` only when a directory named for the identifier already exists, which means
+> Second Brain ran on that machine before; otherwise `helixnotes` belongs to HelixNotes and is
+> never read. The decision is recorded once and does not repeat. Known limit: on a machine
+> where both an earlier Second Brain build and HelixNotes ran, the two share those files and
+> cannot be told apart, so the move takes them.
+
 The inherited `1.3.x` version line, `https://helixnotes.com/latest.json` endpoint, and
 HelixNotes signing key are not Second Brain release infrastructure. The in-app updater stays
 disabled until this project has its own GitHub release endpoint and signing key and verifies

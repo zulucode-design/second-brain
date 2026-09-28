@@ -3676,9 +3676,9 @@ fn app_config_path() -> Result<std::path::PathBuf, String> {
     Ok(app_dir.join("config.json"))
 }
 
-pub fn load_app_config() -> AppConfig {
-    if let Err(error) = crate::app_dirs::migrate_legacy_dirs() {
-        log::error!("{error}");
+/// `migration` is the result of `app_dirs::migrate_legacy_dirs`, run first by the caller.
+pub fn load_app_config(migration: &Result<(), String>) -> AppConfig {
+    if let Err(error) = migration {
         // A half-finished move must not be overwritten by fresh settings; it resumes next launch.
         return AppConfig {
             config_error: Some(format!(

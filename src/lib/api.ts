@@ -644,7 +644,6 @@ export async function aiAsk(
 }
 
 
-
 export async function getPendingOpenFile(): Promise<string | null> {
   return invoke("get_pending_open_file");
 }

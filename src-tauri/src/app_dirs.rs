@@ -60,8 +60,9 @@ fn migrate(config_home: &Path, data_home: &Path) -> io::Result<()> {
     fs::write(marker, "")
 }
 
-/// Rename each entry into `to`, keeping anything already there. A failure leaves the
-/// marker unwritten, so the next launch resumes where this one stopped.
+/// Rename each entry into `to`. A folder that already exists there is merged, so per-vault
+/// state under an existing `vaults/` still moves; an existing file wins and the older copy
+/// stays behind. A failure leaves the marker unwritten, so the next launch resumes.
 fn move_children(from: &Path, to: &Path) -> io::Result<()> {
     let entries = match fs::read_dir(from) {
         Ok(entries) => entries,
@@ -73,7 +74,13 @@ fn move_children(from: &Path, to: &Path) -> io::Result<()> {
         let entry = entry?;
         let target = to.join(entry.file_name());
         if !target.exists() {
-            fs::rename(entry.path(), target)?;
+            match fs::rename(entry.path(), &target) {
+                // A second launch racing this one moved it first.
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                result => result?,
+            }
+        } else if target.is_dir() && entry.path().is_dir() {
+            move_children(&entry.path(), &target)?;
         }
     }
     Ok(())
@@ -166,6 +173,19 @@ mod tests {
         homes.migrate();
         assert!(homes.config.join(LEGACY_DIR).join("config.json").is_file());
         assert!(!homes.config.join(APP_ID).join("config.json").exists());
+    }
+
+    #[test]
+    fn per_vault_state_merges_into_an_existing_folder() {
+        let homes = Homes::new();
+        homes.legacy_state();
+        fs::create_dir_all(homes.data.join(APP_ID).join("vaults").join("newer")).unwrap();
+
+        homes.migrate();
+
+        let vaults = homes.data.join(APP_ID).join("vaults");
+        assert!(vaults.join("id").is_dir());
+        assert!(vaults.join("newer").is_dir());
     }
 
     #[test]

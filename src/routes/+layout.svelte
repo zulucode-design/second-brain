@@ -4,7 +4,7 @@
 	import { resolvedTheme, appConfig, activeNotePath, compactLayout, customThemes } from '$lib/stores/app';
 	import { openFile, openUrl } from '$lib/api';
 	import { get } from 'svelte/store';
-	import { applyTheme } from '$lib/platform';
+	import { applyTheme } from '$lib/theme';
 	import ResizeHandles from '$lib/components/ResizeHandles.svelte';
 	import { resolveVaultFilePath } from '$lib/utils/paths';
 	import { requestNoteNavigation } from '$lib/utils/navigation';

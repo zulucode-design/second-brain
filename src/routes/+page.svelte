@@ -2,7 +2,7 @@
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { appConfig, vaultReady, theme } from '$lib/stores/app';
 	import { getAppConfig, openVault, setFontSize, registerSaveParticipant, acknowledgeSaveBeforeClose } from '$lib/api';
-	import { applyTheme, isDarkTheme } from '$lib/platform';
+	import { applyTheme, isDarkTheme } from '$lib/theme';
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import { listenAppEvent } from '$lib/events';
 	import { getCurrentWindow } from '@tauri-apps/api/window';

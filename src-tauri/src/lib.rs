@@ -282,7 +282,6 @@ fn acknowledge_save_before_close(
     }
 }
 
-#[cfg(desktop)]
 use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
@@ -300,14 +299,13 @@ pub fn run() {
         .install_default()
         .expect("Failed to install rustls crypto provider");
 
-    let config = commands::load_app_config();
-    #[cfg(desktop)]
+    // Before Tauri starts: it creates the directories the move uses to decide ownership.
+    let migration = app_dirs::migrate_legacy_dirs();
+    let config = commands::load_app_config(&migration);
     let show_tray = config.show_tray_icon;
-    #[cfg(desktop)]
     // Whether a tray icon exists at all is decided here and cannot change without a restart,
     // because the icon is built once in `setup`. Whether closing *hides* to it is read live
     // from the config at close time — see the `CloseRequested` arm.
-    #[cfg(desktop)]
     let tray_exists = show_tray;
     let app_state = AppState::new(config);
 
@@ -338,6 +336,10 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            // The logger starts with the builder, after the move ran.
+            if let Err(error) = &migration {
+                log::error!("{error}");
+            }
             if let Ok(mut handle) = app.state::<AppState>().app_handle.lock() {
                 *handle = Some(app.handle().clone());
             }
@@ -433,13 +435,11 @@ pub fn run() {
                 }
             }
 
-            #[cfg(desktop)]
             if show_tray {
                 setup_tray(app)?;
             }
 
             // Check CLI args for a .md file path on initial launch
-            #[cfg(desktop)]
             {
                 let file_arg = std::env::args().skip(1).find(|a| {
                     let a = a.trim();
@@ -613,7 +613,6 @@ pub fn run() {
             });
         });
 
-    #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             // Always show/focus the main window, rebuilding it if a previous close
@@ -770,7 +769,6 @@ pub fn run() {
 /// capture overlay, and it is safe for the same reason: it runs from an event callback, long
 /// after the event loop is up. Doing it during `setup` is what deadlocks on Linux — see that
 /// function for the full account.
-#[cfg(desktop)]
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
