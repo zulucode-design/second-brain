@@ -21,7 +21,7 @@ jobs:
       - name: Install Linux build dependencies
         run: |
           dnf install -y \
-            git curl tar gzip gcc gcc-c++ \
+            git curl tar gzip gcc gcc-c++ shadow-utils util-linux \
             webkit2gtk4.1-devel \
             libappindicator-gtk3-devel \
             librsvg2-devel \
@@ -47,7 +47,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run project verification
-        run: pnpm verify
+        run: |
+          useradd --uid 1000 --home-dir "$HOME" verifier
+          chown -R verifier:verifier "$HOME" "$GITHUB_WORKSPACE"
+          runuser --user verifier --preserve-environment -- pnpm verify
 
       - name: Prepare pinned Syncthing sidecar
         run: pnpm sidecar:prepare
