@@ -14,8 +14,11 @@ function rustStruct(name, source = rustTypes) {
   return body;
 }
 
+// Fields never serialized (`skip` or `skip_serializing`) are runtime-only and not part of the wire model.
 function rustFields(name, source = rustTypes) {
-  return Object.fromEntries([...rustStruct(name, source).matchAll(/^\s*pub (\w+): (.+),$/gm)].map(([, field, type]) => [field, type]));
+  return Object.fromEntries([...rustStruct(name, source).matchAll(/(#\[serde\([^\]]*\)\]\s*)?^\s*pub (\w+): (.+),$/gm)]
+    .filter(([, attribute]) => !/\bskip(_serializing)?\b(?!_)/.test(attribute ?? ''))
+    .map(([, , field, type]) => [field, type]));
 }
 
 function rustOptionalFields(name) {
@@ -77,9 +80,6 @@ function tsLiterals(name) {
 test('persisted Rust and TypeScript models retain field types and nullability', () => {
   for (const name of ['AppConfig', 'VaultConfig', 'VaultState', 'CustomTheme', 'CustomThemeColors']) {
     const rust = rustFields(name);
-    delete rust.legacy_vaults;
-    delete rust.config_save_blocked;
-    delete rust.legacy_move_incomplete;
     const frontend = tsFields(name);
     assert.deepEqual(Object.keys(frontend).sort(), Object.keys(rust).sort(), `${name} fields diverged`);
     assert.deepEqual(tsOptionalFields(name), rustOptionalFields(name), `${name} optional fields diverged`);

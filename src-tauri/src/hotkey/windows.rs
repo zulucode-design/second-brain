@@ -318,12 +318,16 @@ fn resync_autostart(app: &AppHandle) {
     let Ok(app_id) = super::configured_application_id() else {
         return;
     };
-    let enabled = app
+    // While saves are blocked the loaded settings are defaults, not the user's; leave the
+    // entry as it is.
+    let Ok(Some(enabled)) = app
         .state::<AppState>()
         .config
         .lock()
-        .map(|config| config.autostart)
-        .unwrap_or(false);
+        .map(|config| (!config.config_save_blocked).then_some(config.autostart))
+    else {
+        return;
+    };
 
     if let Err(error) = crate::autostart::sync(enabled, &app_id, &exec) {
         log::warn!("Could not update the autostart entry: {error}");
