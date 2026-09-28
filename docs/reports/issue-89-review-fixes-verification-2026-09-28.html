@@ -80,6 +80,11 @@
     <tr><td>Configured vault inside a folder containing a Dropbox <code>.dropbox</code> file.</td>
       <td class="pass">Pass. Open refused with "This folder is managed by Dropbox…"; nothing written
       into the vault; no offer to return to it.</td></tr>
+    <tr><td>Move fails partway: legacy data directory made read-only, then
+      <code>open_vault</code> invoked from the page.</td>
+      <td class="pass">Pass. Startup shows "…could not be moved… Permission denied"; opening a
+      vault is refused with "still being moved"; no new vault state written; legacy data
+      intact.</td></tr>
     <tr><td>Windows: <code>%APPDATA%</code>/<code>%LOCALAPPDATA%</code> move and OneDrive detection
       on an installed package.</td>
       <td class="open">Not run live. Covered by the Rust unit tests that CI's
@@ -89,8 +94,8 @@
   <h2>Upgrade notes</h2>
   <ul>
     <li>If the move cannot finish (for example, a sidecar left running by the previous build
-      holds a file open on Windows), settings saves stay blocked and the error is shown and
-      logged. The move resumes on the next launch once the file is free.</li>
+      holds a file open on Windows), settings saves and opening a vault stay blocked, and the
+      error is shown and logged. The move resumes on the next launch once the file is free.</li>
     <li>A vault already configured inside a OneDrive folder, including a Documents folder that
       Windows redirects into OneDrive, is refused on the first launch after upgrading. The picker
       names the product and asks for a local folder; ADR-0012 makes such vaults unsupported.</li>

@@ -301,7 +301,7 @@ pub fn run() {
 
     // Before Tauri starts: it creates the directories the move uses to decide ownership.
     let migration = app_dirs::migrate_legacy_dirs();
-    let config = commands::load_app_config(&migration);
+    let config = commands::load_app_config(migration.as_ref().err().map(String::as_str));
     let show_tray = config.show_tray_icon;
     // Whether a tray icon exists at all is decided here and cannot change without a restart,
     // because the icon is built once in `setup`. Whether closing *hides* to it is read live

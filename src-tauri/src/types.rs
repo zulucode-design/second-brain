@@ -295,6 +295,11 @@ pub struct AppConfig {
     /// destroy the only copy. Every settings save is refused while this is set.
     #[serde(skip)]
     pub config_save_blocked: bool,
+    /// Runtime-only: state from an earlier build is still partly in the `helixnotes`
+    /// directories. Opening a vault would write fresh machine state beside it, so it is refused
+    /// until a later launch finishes the move.
+    #[serde(skip)]
+    pub legacy_move_incomplete: bool,
     #[serde(default = "default_ai_model")]
     pub ai_model: String,
     #[serde(default)]
@@ -410,6 +415,7 @@ impl Default for AppConfig {
             secret_store_error: None,
             config_error: None,
             config_save_blocked: false,
+            legacy_move_incomplete: false,
             ai_model: "claude-sonnet-4-6".to_string(),
             ai_writing_style: None,
             default_view_mode: false,

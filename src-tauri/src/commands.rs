@@ -296,15 +296,30 @@ fn rebuild_search_now(
 
 const SEMANTIC_RECONCILE_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Why a vault must not be opened, checked before anything is written for it.
+fn vault_open_refusal(legacy_move_incomplete: bool, path: &Path) -> Option<String> {
+    if legacy_move_incomplete {
+        return Some(
+            "Settings from an earlier Second Brain build are still being moved. Restart Second Brain to finish, then open the vault.".to_string(),
+        );
+    }
+    crate::vault::sync_product::managing_product(path).map(|product| format!(
+        "This folder is managed by {product}. Second Brain syncs the vault itself, so choose a folder on a local disk or directly attached drive that no other sync app manages."
+    ))
+}
+
 fn open_vault_path(
     app: AppHandle,
     state: &State<'_, AppState>,
     path: String,
 ) -> Result<(), String> {
-    if let Some(product) = crate::vault::sync_product::managing_product(Path::new(&path)) {
-        return Err(format!(
-            "This folder is managed by {product}. Second Brain syncs the vault itself, so choose a folder on a local disk or directly attached drive that no other sync app manages."
-        ));
+    let move_incomplete = state
+        .config
+        .lock()
+        .map_err(|error| error.to_string())?
+        .legacy_move_incomplete;
+    if let Some(refusal) = vault_open_refusal(move_incomplete, Path::new(&path)) {
+        return Err(refusal);
     }
     let _note_mutation = state
         .note_mutation
@@ -3676,15 +3691,16 @@ fn app_config_path() -> Result<std::path::PathBuf, String> {
     Ok(app_dir.join("config.json"))
 }
 
-/// `migration` is the result of `app_dirs::migrate_legacy_dirs`, run first by the caller.
-pub fn load_app_config(migration: &Result<(), String>) -> AppConfig {
-    if let Err(error) = migration {
+/// `move_error` is the failure from `app_dirs::migrate_legacy_dirs`, run first by the caller.
+pub fn load_app_config(move_error: Option<&str>) -> AppConfig {
+    if let Some(error) = move_error {
         // A half-finished move must not be overwritten by fresh settings; it resumes next launch.
         return AppConfig {
             config_error: Some(format!(
                 "{error}. Settings cannot be saved until it completes; restart to retry."
             )),
             config_save_blocked: true,
+            legacy_move_incomplete: true,
             ..AppConfig::default()
         };
     }
@@ -4099,6 +4115,17 @@ mod config_startup_tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
         assert_eq!(load_app_config_from(&path, &EmptyStore).theme, "dark");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_incomplete_directory_move_blocks_opening_any_vault() {
+        let loaded = load_app_config(Some("moving failed"));
+        assert!(loaded.legacy_move_incomplete && loaded.config_save_blocked);
+
+        let vault = std::env::temp_dir();
+        let refusal = vault_open_refusal(true, &vault).unwrap();
+        assert!(refusal.contains("still being moved"));
+        assert_eq!(vault_open_refusal(false, &vault), None);
     }
 
     #[test]

@@ -79,6 +79,7 @@ test('persisted Rust and TypeScript models retain field types and nullability', 
     const rust = rustFields(name);
     delete rust.legacy_vaults;
     delete rust.config_save_blocked;
+    delete rust.legacy_move_incomplete;
     const frontend = tsFields(name);
     assert.deepEqual(Object.keys(frontend).sort(), Object.keys(rust).sort(), `${name} fields diverged`);
     assert.deepEqual(tsOptionalFields(name), rustOptionalFields(name), `${name} optional fields diverged`);
