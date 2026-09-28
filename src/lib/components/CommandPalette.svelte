@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { showCommandPalette, showSearch, theme, sourceMode, viewMode, activeNotebook, activeTag } from '$lib/stores/app';
+	import { showCommandPalette, showSearch, theme, viewMode, activeNotebook, activeTag } from '$lib/stores/app';
 	import { setTheme, reindex } from '$lib/api';
 
 	// onNavigate runs the parent's view-change handler (refreshes the note list and reveals it
 	// if it was hidden), so opening a view here behaves exactly like clicking it in the sidebar.
-	let { onNavigate = () => {} }: { onNavigate?: () => void } = $props();
+	let { onNavigate = () => {}, onToggleSource }: { onNavigate?: () => void; onToggleSource: () => void } = $props();
 
 	function openView(mode: 'all' | 'quickaccess' | 'tasks' | 'unfiled' | 'trash') {
 		$viewMode = mode;
@@ -133,7 +133,7 @@
 			id: 'toggle-source',
 			label: 'Toggle Source/WYSIWYG Mode',
 			action: () => {
-				$sourceMode = !$sourceMode;
+				onToggleSource();
 				$showCommandPalette = false;
 			}
 		},

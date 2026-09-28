@@ -26,7 +26,6 @@
 	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'sync' | 'maintenance' | 'ai' | 'notion';
 	let activeTab = $state<Tab>('styling');
 
-
 	// Vault maintenance state
 	let vaultStats = $state<VaultStats | null>(null);
 	let vaultStatsError = $state(false);
@@ -1316,15 +1315,14 @@
 						</svg>
 						Styling
 					</button>
-					{#if !isCompact}
+
 					<button class="tab-btn" class:active={activeTab === 'import'} onclick={() => activeTab = 'import'}>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M8 5H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V7a2 2 0 00-2-2h-4"/>
 						</svg>
 						Import
 					</button>
-				{/if}
-					{#if !isCompact}
+
 					<button class="tab-btn" class:active={activeTab === 'backup'} onclick={() => { activeTab = 'backup'; loadBackups(); }}>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M21 12a9 9 0 00-9-9 9.75 9.75 0 00-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 009 9 9.75 9.75 0 006.74-2.74L21 16"/><path d="M16 16h5v5"/>
@@ -1335,7 +1333,7 @@
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7h-9"/><path d="m16 3 4 4-4 4"/><path d="M4 17h9"/><path d="m8 21-4-4 4-4"/></svg>
 						Sync
 					</button>
-					{/if}
+
 					<button class="tab-btn" class:active={activeTab === 'maintenance'} onclick={() => activeTab = 'maintenance'}>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>
@@ -1395,7 +1393,6 @@
 								</div>
 							</div>
 
-							{#if !isCompact}
 							<div class="settings-section">
 								<h3>Sidebar</h3>
 								<p class="setting-desc" style="margin: 0 0 10px;">Hide navigation items you don't use, leaving search and the notebook tree. Any item you hide stays reachable from the command palette ({modKey}+P).</p>
@@ -1424,7 +1421,6 @@
 									</button>
 								</label>
 							</div>
-							{/if}
 
 							{#if !$compactLayout}
 							<div class="settings-section">
@@ -1488,13 +1484,11 @@
 									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 										<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
 									</svg>
-									Switch Vault
+									Change vault folder
 								</button>
 							</div>
 							{/if}
 
-
-							{#if !isCompact}
 							<div class="settings-section">
 								<h3>Performance</h3>
 								<label class="setting-toggle">
@@ -1589,7 +1583,7 @@
 								</p>
 							</div>
 							{/if}
-						{/if}
+
 						</div>
 					{:else if activeTab === 'maintenance'}
 						<div class="tab-content">
@@ -1723,7 +1717,7 @@
 										<span class="toggle-knob"></span>
 									</button>
 								</label>
-								{#if !isCompact}
+
 								<label class="setting-toggle" style="margin-top: 12px;">
 									<span class="setting-label">
 										<span class="setting-name">Show line numbers</span>
@@ -1733,7 +1727,7 @@
 										<span class="toggle-knob"></span>
 									</button>
 								</label>
-								{/if}
+
 								<label class="setting-toggle" style="margin-top: 12px;">
 									<span class="setting-label">
 										<span class="setting-name">Open notes in View Mode</span>
@@ -1754,7 +1748,6 @@
 								</label>
 							</div>
 
-
 							<div class="settings-section">
 								<h3>Wiki Links & Graph</h3>
 								<label class="setting-toggle">
@@ -1768,8 +1761,6 @@
 								</label>
 							</div>
 
-
-							{#if !isCompact}
 							<div class="settings-section">
 								<h3>PDF Preview</h3>
 								<label class="setting-toggle">
@@ -1801,7 +1792,7 @@
 									<span class="setting-hint">Default height for PDF previews in notes</span>
 								</div>
 							{/if}
-						{/if}
+
 						</div>
 					{:else if activeTab === 'styling'}
 						<div class="tab-content">
@@ -1974,11 +1965,11 @@
 													<button class="icon-btn" title="Edit" onclick={() => openEditCustomThemeEditor(ct)}>
 														<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 00-3.986-3.987L3.842 16.174a2 2 0 00-.5.83l-1.321 4.352a.5.5 0 00.623.622l4.353-1.32a2 2 0 00.83-.497z"/></svg>
 													</button>
-													{#if !isCompact}
+
 													<button class="icon-btn" title="Export" disabled={customThemeExportingId === ct.id} onclick={() => handleExportCustomTheme(ct)}>
 														<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
 													</button>
-													{/if}
+
 													<button class="icon-btn danger" title="Delete" onclick={() => removeCustomTheme(ct)}>
 														<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
 													</button>
@@ -1990,14 +1981,12 @@
 									<p class="setting-hint" style="margin-top: 8px;">No custom themes yet. Create one to define your own colors.</p>
 								{/if}
 
-								{#if !isCompact}
 									<div class="custom-theme-io">
 										<button class="backup-link-btn" onclick={handleImportCustomThemes} disabled={customThemeImporting}>
 											<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
 											{customThemeImporting ? 'Importing...' : 'Import theme'}
 										</button>
 									</div>
-								{/if}
 
 								{#if customThemeMessage}
 									<div class="import-result {customThemeMessage.type}" style="margin-top: 10px;">
@@ -2122,7 +2111,6 @@
 								</div>
 							</div>
 
-							{#if !isCompact}
 								<div class="settings-section">
 									<h3>Interface Scale</h3>
 									<div class="font-size-options">
@@ -2138,9 +2126,7 @@
 									</div>
 									<p class="setting-hint">Zooms the whole app: every panel, menu, and the editor. Use Default (100%) to reset.</p>
 								</div>
-							{/if}
 
-							{#if !isCompact}
 								<div class="settings-section">
 									<h3>Note Width</h3>
 									<div class="font-size-options">
@@ -2156,7 +2142,6 @@
 									</div>
 									<p class="setting-hint">Caps the width of the note text for easier reading on wide screens; the column stays centered. Most noticeable in Focus Mode. "Full" uses the entire width.</p>
 								</div>
-							{/if}
 
 							<div class="settings-section">
 								<h3>Line Height</h3>
@@ -2290,7 +2275,7 @@
 								</label>
 
 								<div class="backup-actions">
-									{#if !isCompact}
+
 									<button class="backup-link-btn" onclick={handleSelectBackupFolder}>
 										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 											<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
@@ -2300,7 +2285,7 @@
 									{#if $appConfig?.backup_location}
 										<p class="backup-path">{$appConfig.backup_location}</p>
 									{/if}
-									{/if}
+
 									<button class="backup-link-btn" onclick={handleBackupNow} disabled={backupLoading}>
 										{#if backupLoading}
 											<svg class="spinner-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
@@ -3775,7 +3760,6 @@
 		color: var(--text-tertiary);
 	}
 
-
 	.import-result.info {
 		background: color-mix(in srgb, var(--accent) 10%, transparent);
 		color: var(--accent);
@@ -3802,19 +3786,12 @@
 
 	.settings-panel.compact .settings-tabs {
 		flex-direction: row;
+		flex-wrap: wrap;
 		min-width: 0;
 		border-right: none;
 		border-bottom: 1px solid var(--border-light);
 		padding: 8px 8px 0;
-		overflow-x: auto;
-		overflow-y: hidden;
-		-webkit-overflow-scrolling: touch;
-		scrollbar-width: none;
 		gap: 0;
-	}
-
-	.settings-panel.compact .settings-tabs::-webkit-scrollbar {
-		display: none;
 	}
 
 	.settings-panel.compact .tab-btn {

@@ -787,6 +787,10 @@
 		else if ($compactView === 'notelist') $compactView = 'sidebar';
 	}
 
+	function toggleSourceMode() {
+		if (!$holdingPreview) $sourceMode = !$sourceMode;
+	}
+
 	async function trashOpenNote(path: string): Promise<boolean> {
 		if ($shutdownPending || path !== $activeNotePath || $viewerNote || $viewMode === 'trash') return false;
 		try {
@@ -887,8 +891,7 @@
 					editor?.forceSave();
 					return;
 				case 'toggle-source':
-					if ($holdingPreview) return;
-					$sourceMode = !$sourceMode;
+					toggleSourceMode();
 					return;
 				case 'open-new-window':
 					if ($activeNotePath && $activeNote && !$holdingPreview) {
@@ -1367,7 +1370,7 @@
 						</svg>
 					</button>
 					{/if}
-					<button class="compact-header-btn" class:active={$sourceMode} onclick={() => ($sourceMode = !$sourceMode)} title={$sourceMode ? 'Rich Editor' : 'Source Mode'}>
+					<button class="compact-header-btn" class:active={$sourceMode} onclick={toggleSourceMode} title={$sourceMode ? 'Rich Editor' : 'Source Mode'}>
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
 						</svg>
@@ -1501,7 +1504,7 @@
 {/if}
 
 <SearchPanel onOpenResult={navigateToPath} />
-<CommandPalette onNavigate={handleViewChanged} />
+<CommandPalette onNavigate={handleViewChanged} onToggleSource={toggleSourceMode} />
 <SettingsPanel onRequestVaultSwitch={requestVaultSwitch} onBeforeRestore={prepareForRestore} onAfterRestore={refreshAfterRestore} />
 <InfoPanel />
 
