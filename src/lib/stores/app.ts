@@ -113,7 +113,7 @@ export const viewerNote = writable<{ path: string; content: string } | null>(
   null,
 );
 
-// Mobile state
+// Compact navigation state
 export const compactView = writable<"sidebar" | "notelist" | "editor">(
   "sidebar",
 );
