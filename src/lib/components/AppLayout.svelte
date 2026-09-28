@@ -148,35 +148,29 @@
 			repairBusy = false;
 		}
 	}
-	async function applyStartupTarget(target: StartupTarget): Promise<boolean> {
+	function applyStartupTarget(target: StartupTarget): boolean {
 		if (target.mode === 'notebook') {
 			const vault = $appConfig?.active_vault;
 			const notebook = target.notebookPath === '' && vault
 				? { name: 'Unfiled Notes', path: vault, relative_path: '', children: [], note_count: $rootNoteCount }
 				: findNotebookByPath($notebooks, target.notebookPath);
 			if (!notebook) return false;
-			const changed = $viewMode !== 'notebook' || $activeNotebook?.relative_path !== notebook.relative_path;
 			$viewMode = 'notebook';
 			$activeNotebook = notebook;
 			$activeTag = null;
-			if (changed) await noteList?.refresh();
 			return true;
 		}
 
 		if (target.mode === 'tag') {
-			const changed = $viewMode !== 'tag' || $activeTag !== target.tag;
 			$viewMode = 'tag';
 			$activeTag = target.tag;
 			$activeNotebook = null;
-			if (changed) await noteList?.refresh();
 			return true;
 		}
 
-		const changed = $viewMode !== target.mode || $activeNotebook !== null || $activeTag !== null;
 		$viewMode = target.mode;
 		$activeNotebook = null;
 		$activeTag = null;
-		if (changed) await noteList?.refresh();
 		return true;
 	}
 
@@ -1105,8 +1099,9 @@
 			prefetchPromise = readNote(lastNotePath).catch(() => null);
 		}
 
-		// Run sidebar and note list refresh in parallel
-		await Promise.all([sidebar?.refresh({ deferTags: true }), noteList?.refresh()]);
+		// The sidebar supplies notebook identities for the saved view. Select that view
+		// before loading notes, so startup reads the chosen list only once.
+		await sidebar?.refresh({ deferTags: true });
 		if (!alive()) return;
 
 		// Full-vault attachment scans cause navigation stalls on mobile storage.
@@ -1141,10 +1136,12 @@
 			lastTag
 		});
 		if (startupGate.isCurrent(restoration) && alive()) {
-			if (!(await applyStartupTarget(startupTarget)) && startupGate.isCurrent(restoration) && alive()) {
-				await applyStartupTarget({ mode: normalizeStartupView($appConfig?.startup_view) });
+			if (!applyStartupTarget(startupTarget) && startupGate.isCurrent(restoration) && alive()) {
+				applyStartupTarget({ mode: normalizeStartupView($appConfig?.startup_view) });
 			}
 		}
+		if (!alive()) return;
+		await noteList?.refresh();
 		if (!alive()) return;
 
 		// Reopen the last note only when session restoration is enabled and no interaction

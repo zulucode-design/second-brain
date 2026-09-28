@@ -1760,23 +1760,29 @@ pub fn get_graph_data(state: State<'_, AppState>) -> Result<crate::types::GraphD
     let mut contents: Vec<String> = Vec::new();
 
     let hn_dir = operations::helixnotes_dir(vault_path);
-    for entry in walkdir::WalkDir::new(vault)
+    let entries: Vec<_> = walkdir::WalkDir::new(vault)
         .into_iter()
         // Cross-platform exclusion (string "/.helixnotes/" checks miss Windows
         // backslash paths; is_hidden also covers .stversions/.stfolder/.trash/.git).
         .filter_entry(|e| !operations::is_hidden(e.path()) && !e.path().starts_with(&hn_dir))
         .filter_map(|e| e.ok())
-    {
+        .filter(|entry| {
+            entry.path().is_file()
+                && entry.path().extension().and_then(|e| e.to_str()) == Some("md")
+        })
+        .collect();
+    // Resolving every ordinary file costs about a second on a 10,000-note Windows vault.
+    // Preserve symlink deduplication whenever the walk actually contains a symlink.
+    let has_symlinks = entries.iter().any(|entry| entry.file_type().is_symlink());
+    for entry in entries {
         let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
         let path_str = path.to_string_lossy().to_string();
-        if path.extension().and_then(|e| e.to_str()) != Some("md") {
-            continue;
-        }
         // Deduplicate by canonical path (handles symlinks)
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let canonical = if has_symlinks {
+            path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+        } else {
+            path.to_path_buf()
+        };
         let canonical_str = canonical.to_string_lossy().to_string();
         if !seen_paths.insert(canonical_str) {
             continue;
