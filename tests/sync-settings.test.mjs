@@ -104,12 +104,12 @@ test('the Syncthing device ID uses native clipboard copy with confirmation', asy
 test('a delayed local attachment is presented as not synced yet', async () => {
   const editor = await source('src/lib/components/Editor.svelte');
   assert.match(editor, /Attachment not synced yet/);
-  assert.match(editor, /listen\('sync-done', retryDelayedAttachments\)/);
+  assert.match(editor, /listenAppEvent\('syncDone', retryDelayedAttachments\)/);
 });
 
 test('a completed sync refreshes the live workspace without an app restart', async () => {
   const layout = await source('src/lib/components/AppLayout.svelte');
-  assert.match(layout, /listen<BulkMutationTerminal>\('sync-done'/);
+  assert.match(layout, /listenAppEvent\('syncDone'/);
   assert.match(layout, /refreshAfterSync/);
   assert.match(layout, /Promise\.all\(\[sidebar\?\.refresh\(\), noteList\?\.refresh\(true\), refreshUnfiled\(\)\]\)/);
   assert.match(layout, /event\.payload\.outcome !== 'failure'/);

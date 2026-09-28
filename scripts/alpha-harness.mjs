@@ -116,9 +116,10 @@ function syncPort(vaultId) {
 // made, so a scheduled backup would add one it did not expect.
 export function harnessConfig(config, vaultPath, vaultId, backupPath, { driven = false, ollamaBaseUrl } = {}) {
   const next = structuredClone(config);
-  next.vaults = [{ path: vaultPath, name: 'Alpha Harness', vault_id: vaultId }];
+  delete next.vaults;
+  next.vault = { path: vaultPath, name: 'Alpha Harness', vault_id: vaultId };
   next.active_vault = vaultPath;
-  next.active_bookmark_id = null;
+  delete next.active_bookmark_id;
   next.backup_location = backupPath;
   next.backup_max_count = Math.max(10, Number(next.backup_max_count) || 0);
   if (driven) {

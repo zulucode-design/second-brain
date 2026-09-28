@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
-	import { listen } from '@tauri-apps/api/event';
+	import { listenAppEvent } from '$lib/events';
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import Editor from './Editor.svelte';
@@ -24,7 +24,6 @@
 
 	const appWindow = getCurrentWindow();
 	const appWebview = getCurrentWebview();
-	const isMac = navigator.platform.startsWith('Mac');
 	let editor = $state<Editor>(null!);
 	let unlistenFileChange: (() => void) | null = null;
 	let unlistenUiScale: (() => void) | null = null;
@@ -171,7 +170,7 @@
 		window.addEventListener(NAVIGATE_NOTE_EVENT, handleNavigationRequest);
 		removeNavigationRequest = () => window.removeEventListener(NAVIGATE_NOTE_EVENT, handleNavigationRequest);
 
-		const uiScaleUnlisten = await listen<number>('ui-scale-changed', (event) => {
+		const uiScaleUnlisten = await listenAppEvent('uiScaleChanged', (event) => {
 			if (alive()) void applyUiScale(event.payload);
 		});
 		if (!alive()) { uiScaleUnlisten(); return; }
@@ -195,7 +194,7 @@
 		}
 		if (!alive()) return;
 
-		const fileChangeUnlisten = await listen<FileEvent>('file-changed', async (event) => {
+		const fileChangeUnlisten = await listenAppEvent('fileChanged', async (event) => {
 			if (!alive() || event.payload.path !== currentPath || event.payload.event_type !== 'modify' || $editorDirty) return;
 			const watchedPath = currentPath;
 			try {
@@ -234,7 +233,7 @@
 		<div class="shutdown-lock" aria-label="Saving before close" aria-busy="true"></div>
 	{/if}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="nw-titlebar" class:macos={isMac} onmousedown={handleMouseDown}>
+	<div class="nw-titlebar" onmousedown={handleMouseDown}>
 		<div class="nw-titlebar-brand">
 			<svg width="14" height="14" viewBox="0 0 48 48" fill="none">
 				<rect width="48" height="48" rx="12" fill="var(--accent)" />
@@ -269,7 +268,6 @@
 				</svg>
 			</button>
 		</div>
-		{#if !isMac}
 		<div class="titlebar-controls">
 			<button class="titlebar-btn" onclick={() => appWindow.minimize()} title="Minimize">
 				<svg width="10" height="10" viewBox="0 0 10 10">
@@ -295,7 +293,6 @@
 				</svg>
 			</button>
 		</div>
-		{/if}
 	</div>
 
 	{#if loadError}
@@ -336,9 +333,6 @@
 		-webkit-app-region: drag;
 	}
 
-	.nw-titlebar.macos {
-		padding-left: 78px;
-	}
 
 	.nw-titlebar-brand {
 		display: flex;

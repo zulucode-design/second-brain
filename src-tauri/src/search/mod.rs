@@ -9,9 +9,8 @@ use std::sync::Mutex;
 #[cfg(any(windows, test))]
 use std::time::Duration;
 use tantivy::collector::TopDocs;
-#[cfg(desktop)]
 use tantivy::directory::MmapDirectory;
-#[cfg(any(mobile, test))]
+#[cfg(test)]
 use tantivy::directory::RamDirectory;
 use tantivy::query::{BooleanQuery, FuzzyTermQuery, Occur, PhrasePrefixQuery, Query, TermQuery};
 use tantivy::schema::*;
@@ -296,14 +295,6 @@ impl SearchIndex {
         let fields = build_search_schema();
         let schema = fields.schema.clone();
 
-        // Mobile: use in-memory index (flock is unreliable on the sandboxed/FUSE filesystem)
-        // Desktop: use mmap directory for persistent index on disk
-        #[cfg(mobile)]
-        let index = {
-            let dir = RamDirectory::create();
-            Index::open_or_create(dir, schema.clone()).map_err(|e| e.to_string())?
-        };
-        #[cfg(desktop)]
         let index = {
             // No in-vault fallback: an index inside a synced vault is the situation this
             // whole layout exists to prevent, so a machine with nowhere to put it fails
@@ -355,9 +346,6 @@ impl SearchIndex {
                 .build(),
         );
 
-        #[cfg(mobile)]
-        let heap_size = 15_000_000;
-        #[cfg(desktop)]
         let heap_size = 50_000_000;
 
         let writer = index.writer(heap_size).map_err(|e| e.to_string())?;

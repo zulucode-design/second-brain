@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { isMobile } from '$lib/platform';
+		import { compactLayout } from '$lib/stores/app';
+	const isCompact = $derived($compactLayout);
 
 	type Dir =
 		| 'North' | 'South' | 'East' | 'West'
@@ -12,7 +13,7 @@
 	let maximized = $state(false);
 
 	onMount(() => {
-		if (isMobile) return;
+		if (isCompact) return;
 		const win = getCurrentWindow();
 		appWindow = win;
 		const refresh = () => win.isMaximized().then((m) => (maximized = m)).catch(() => {});

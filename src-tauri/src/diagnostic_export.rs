@@ -53,7 +53,7 @@ impl Redactor {
         {
             redactor.add(value);
         }
-        for vault in &config.vaults {
+        if let Some(vault) = &config.vault {
             redactor.add(&vault.path);
             // Restore stage, rollback, and journal paths are siblings of the vault (#142).
             // A filesystem root would redact every path separator, so it is skipped.
@@ -68,16 +68,12 @@ impl Redactor {
             if let Some(value) = vault.vault_id.as_deref() {
                 redactor.add(value);
             }
-            if let Some(value) = vault.bookmark_id.as_deref() {
-                redactor.add(value);
-            }
             if let Some(value) = vault.notion.token.as_deref() {
                 redactor.add(value);
             }
         }
         for value in [
             config.active_vault.as_deref(),
-            config.active_bookmark_id.as_deref(),
             config.backup_location.as_deref(),
         ]
         .into_iter()
@@ -322,7 +318,7 @@ mod tests {
             ai_api_key: Some(secret.to_string()),
             ..Default::default()
         };
-        config.vaults.push(crate::types::VaultConfig {
+        config.vault = Some(crate::types::VaultConfig {
             path: vault.to_string_lossy().into_owned(),
             name: "Private Vault".to_string(),
             vault_id: Some("5f934749-17da-4dd3-a219-88f9b9ef2277".to_string()),

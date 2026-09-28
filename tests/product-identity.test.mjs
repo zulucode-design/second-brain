@@ -53,5 +53,5 @@ test('the stable app id and legacy config location preserve existing credentials
   ]);
 
   assert.match(secretStore, /const SERVICE: &str = "io\.github\.zulucodedesign\.SecondBrain";/);
-  assert.match(commands, /config_dir\.join\("helixnotes"\)/);
+  assert.match(commands, /dirs::config_dir\(\)[\s\S]{0,100}\.join\("helixnotes"\)/);
 });

@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { showSearch, appConfig, mobileView, notebooks, activeNotebook, activeTag, viewMode } from '$lib/stores/app';
+	import { showSearch, appConfig, compactView, notebooks, activeNotebook, activeTag, viewMode } from '$lib/stores/app';
 	import { searchNotes, semanticSearch } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
 	import { startTimer } from '$lib/perf-probe';
 	import { PARA_CATEGORIES, type SearchResult, type NotebookEntry, type ParaCategory } from '$lib/types';
-	import { isMobile } from '$lib/platform';
+		import { compactLayout } from '$lib/stores/app';
+	const isCompact = $derived($compactLayout);
 
 	let { onOpenResult = async (_path: string) => false }: {
 		onOpenResult?: (path: string) => Promise<boolean>;
@@ -165,7 +166,7 @@
 				$activeTag = null;
 				$viewMode = 'all';
 			}
-			if (isMobile) $mobileView = 'editor';
+			if (isCompact) $compactView = 'editor';
 		} catch (e) {
 			console.error('Failed to open search result:', e);
 		}
@@ -194,7 +195,7 @@
 					oninput={handleInput}
 					onkeydown={handleKeydown}
 				/>
-				{#if !isMobile}<kbd class="search-esc">Esc</kbd>{/if}
+				{#if !isCompact}<kbd class="search-esc">Esc</kbd>{/if}
 			</div>
 			<div class="search-options">
 				<div class="search-modes" aria-label="Search mode">

@@ -235,6 +235,14 @@ ends after the note is safely stored and its semantic indexing work is durably q
 
 Requires OS-level global hotkey registration on both Windows and Linux.
 
+### Command palette
+
+The command palette is a keyboard shortcut to existing local actions: search; opening All
+Notes, Quick Access, Tasks, Unfiled Notes, or Trash; choosing a built-in theme; toggling
+source mode; and rebuilding keyword search. It does not add a separate command system,
+run arbitrary code, switch vaults, or trigger AI or publishing work. New commands belong
+there only when they use the same guarded action as the corresponding visible control.
+
 ---
 
 ## 6. AI

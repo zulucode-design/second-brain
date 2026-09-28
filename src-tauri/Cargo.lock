@@ -4415,7 +4415,6 @@ dependencies = [
  "legible",
  "log",
  "notify",
- "objc2-app-kit",
  "png 0.17.16",
  "pulldown-cmark",
  "quick-xml",
@@ -4436,7 +4435,6 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-fs",
  "tauri-plugin-global-shortcut",
- "tauri-plugin-ios-vault-access",
  "tauri-plugin-log",
  "tauri-plugin-opener",
  "tauri-plugin-shell",
@@ -5397,15 +5395,6 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "tauri-plugin-ios-vault-access"
-version = "0.1.0"
-dependencies = [
- "serde",
- "tauri",
- "tauri-plugin",
 ]
 
 [[package]]

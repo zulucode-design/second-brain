@@ -11,7 +11,8 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    container: registry.fedoraproject.org/fedora:44@sha256:1ccd18224d9b302fe62d3cefd0a9e0724c365ea8ac3bfb017c569540fe76433a
+    timeout-minutes: 60
 
     steps:
       - name: Check out repository
@@ -19,13 +20,13 @@ jobs:
 
       - name: Install Linux build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
+          dnf install -y \
+            git curl tar gzip \
+            webkit2gtk4.1-devel \
+            libappindicator-gtk3-devel \
+            librsvg2-devel \
             patchelf \
-            rpm \
+            rpm-build \
             cpio
 
       - name: Install pnpm
@@ -51,16 +52,10 @@ jobs:
       - name: Prepare pinned Syncthing sidecar
         run: pnpm sidecar:prepare
 
-      # Both formats: deb and rpm are configured separately in tauri.conf.json, and rpm is
-      # the shipping path for this project's own Linux machine. Checking only one leaves the
-      # other free to break into a silent "App info not found" on install.
-      - name: Build unsigned Linux packages
+      - name: Build unsigned Fedora package
         run: >-
-          pnpm exec tauri build --bundles deb,rpm --ci --no-sign
+          pnpm exec tauri build --bundles rpm --ci --no-sign
           --config '{"bundle":{"externalBin":["binaries/syncthing"],"createUpdaterArtifacts":false}}'
-
-      - name: Verify portal desktop entry in Debian package
-        run: scripts/verify-linux-package.sh "$(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -print -quit)"
 
       - name: Verify portal desktop entry in RPM package
         run: scripts/verify-linux-package.sh "$(find src-tauri/target/release/bundle/rpm -maxdepth 1 -name '*.rpm' -print -quit)"

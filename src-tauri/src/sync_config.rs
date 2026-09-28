@@ -109,38 +109,6 @@ pub(crate) fn retire_webdav(
     Ok(cleaned)
 }
 
-/// Durably retain the keyring address before a vault is removed from `config.json`.
-///
-/// An invalid or unreadable marker blocks the removal rather than allowing the last stable
-/// vault ID for a historical credential to be lost. Cleanup itself remains startup-owned.
-pub(crate) fn reserve_webdav_retirement(config_path: &Path, vault_id: &str) -> Result<(), String> {
-    if vault_id.is_empty() {
-        return Ok(());
-    }
-
-    let marker_path = marker_path(config_path)?;
-    let mut marker = read_marker(&marker_path)?.unwrap_or_else(|| RetirementMarker {
-        version: RETIREMENT_VERSION,
-        ..Default::default()
-    });
-    if marker.version != RETIREMENT_VERSION {
-        return Err(format!(
-            "Unsupported WebDAV retirement marker version {}",
-            marker.version
-        ));
-    }
-    if !marker
-        .pending_vault_ids
-        .iter()
-        .any(|pending| pending == vault_id)
-    {
-        marker.pending_vault_ids.push(vault_id.to_string());
-        marker.pending_vault_ids.sort();
-    }
-    marker.complete = false;
-    write_marker(&marker_path, &marker)
-}
-
 fn marker_path(config_path: &Path) -> Result<PathBuf, String> {
     let parent = config_path
         .parent()
@@ -280,7 +248,7 @@ mod tests {
             )
             .unwrap();
 
-        let error = reserve_webdav_retirement(&config_path, "stable-id").unwrap_err();
+        let error = retire_webdav(&config_path, original, &store).unwrap_err();
 
         assert!(error.contains("marker is invalid"));
         assert_eq!(std::fs::read_to_string(&config_path).unwrap(), original);
@@ -290,12 +258,7 @@ mod tests {
             .is_some());
 
         std::fs::remove_file(&marker_path).unwrap();
-        reserve_webdav_retirement(&config_path, "stable-id").unwrap();
-        let without_vault = r#"{"vaults":[]}"#;
-        write_durable_private_file(&config_path, without_vault.as_bytes()).unwrap();
-
-        let persisted = std::fs::read_to_string(&config_path).unwrap();
-        retire_webdav(&config_path, &persisted, &store).unwrap();
+        retire_webdav(&config_path, original, &store).unwrap();
 
         assert!(store
             .get(&SecretId::WebdavPassword("stable-id".to_string()))

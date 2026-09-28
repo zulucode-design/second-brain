@@ -230,7 +230,7 @@ fn scan_dir_recursive(dir: &Path, vault_root: &str) -> Vec<NotebookEntry> {
     });
 
     // Scan sibling notebooks in parallel: each subtree is independent, so
-    // overlapping the per-directory read_dir calls hides FUSE latency on Android.
+    // overlapping the per-directory read_dir calls hides filesystem latency.
     // par_iter().collect() preserves the (already-sorted) order.
     let paths: Vec<PathBuf> = dirs.iter().map(|e| e.path()).collect();
     paths
@@ -382,144 +382,45 @@ pub fn scan_notes(vault_path: &str, notebook_path: Option<&str>) -> Result<Vec<N
         return Err("Path does not exist".to_string());
     }
 
-    // On mobile, use metadata-only scan (no file reads) for fast listing on sandboxed FS
-    #[cfg(mobile)]
-    {
-        // Collect candidate .md paths first, then read their metadata in parallel.
-        // Overlapping the per-file reads hides FUSE latency on Android (matches the
-        // desktop path below). The previous version also did an extra read_dir purely
-        // for debug logging, which doubled the directory I/O on the sandboxed FS.
-        let paths: Vec<PathBuf> = if !recursive_scan {
-            match fs::read_dir(root) {
-                Ok(rd) => rd
-                    .filter_map(|e| e.ok())
-                    .map(|e| e.path())
-                    .filter(|p| {
-                        p.is_file()
-                            && !is_hidden(p)
-                            && p.extension().and_then(|x| x.to_str()) == Some("md")
-                    })
-                    .collect(),
-                Err(_) => Vec::new(),
-            }
-        } else {
-            let hn_dir = helixnotes_dir(vault_path);
-            WalkDir::new(root)
-                .into_iter()
-                // filter_entry skips descending into hidden dirs (unlike filter)
-                .filter_entry(|e| !is_hidden(e.path()) && !e.path().starts_with(&hn_dir))
-                .filter_map(|e| e.ok())
-                .map(|e| e.path().to_path_buf())
-                .filter(|p| {
-                    p.is_file()
-                        && !is_hidden(p)
-                        && p.extension().and_then(|x| x.to_str()) == Some("md")
-                })
-                .collect()
-        };
+    let md_files: Vec<PathBuf> = if !recursive_scan {
+        fs::read_dir(root)
+            .map_err(|e| e.to_string())?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.is_file() && !is_hidden(p) && p.extension().and_then(|x| x.to_str()) == Some("md")
+            })
+            .collect()
+    } else {
+        WalkDir::new(root)
+            .into_iter()
+            .filter_entry(|e| {
+                !is_hidden(e.path()) && !e.path().starts_with(helixnotes_dir(vault_path))
+            })
+            .filter_map(|e| e.ok())
+            .map(|e| e.path().to_path_buf())
+            .filter(|p| {
+                p.is_file() && !is_hidden(p) && p.extension().and_then(|x| x.to_str()) == Some("md")
+            })
+            .collect()
+    };
 
-        let mut notes: Vec<NoteEntry> = paths
-            .par_iter()
-            .filter_map(|path| read_note_entry_metadata_only(path, vault_root).ok())
-            .collect();
+    let mut notes: Vec<NoteEntry> = md_files
+        .par_iter()
+        .filter_map(|path| read_note_entry_fast(path, vault_root).ok())
+        .collect();
 
-        if let Some(category) = category_filter {
-            notes.retain(|note| note.meta.category == Some(category));
-        }
-
-        log::info!("scan_notes: mobile scan found {} notes", notes.len());
-        notes.sort_by_key(|note| std::cmp::Reverse(note.meta.modified));
-        return Ok(notes);
+    if let Some(category) = category_filter {
+        notes.retain(|note| note.meta.category == Some(category));
     }
 
-    #[cfg(desktop)]
-    {
-        let md_files: Vec<PathBuf> = if !recursive_scan {
-            fs::read_dir(root)
-                .map_err(|e| e.to_string())?
-                .filter_map(|e| e.ok())
-                .map(|e| e.path())
-                .filter(|p| {
-                    p.is_file()
-                        && !is_hidden(p)
-                        && p.extension().and_then(|x| x.to_str()) == Some("md")
-                })
-                .collect()
-        } else {
-            WalkDir::new(root)
-                .into_iter()
-                .filter_entry(|e| {
-                    !is_hidden(e.path()) && !e.path().starts_with(helixnotes_dir(vault_path))
-                })
-                .filter_map(|e| e.ok())
-                .map(|e| e.path().to_path_buf())
-                .filter(|p| {
-                    p.is_file()
-                        && !is_hidden(p)
-                        && p.extension().and_then(|x| x.to_str()) == Some("md")
-                })
-                .collect()
-        };
-
-        let mut notes: Vec<NoteEntry> = md_files
-            .par_iter()
-            .filter_map(|path| read_note_entry_fast(path, vault_root).ok())
-            .collect();
-
-        if let Some(category) = category_filter {
-            notes.retain(|note| note.meta.category == Some(category));
-        }
-
-        notes.sort_by_key(|note| std::cmp::Reverse(note.meta.modified));
-        Ok(notes)
-    }
+    notes.sort_by_key(|note| std::cmp::Reverse(note.meta.modified));
+    Ok(notes)
 }
 
 fn read_note_entry(path: &Path, vault_root: &Path) -> Result<NoteEntry, String> {
     let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
     read_note_entry_from_str(&raw, path, vault_root)
-}
-
-/// Android-only: reads just the frontmatter (first 2KB) for tags/title/pinned,
-/// uses filesystem timestamps for dates. No preview text.
-#[cfg(mobile)]
-fn read_note_entry_metadata_only(path: &Path, vault_root: &Path) -> Result<NoteEntry, String> {
-    // Read first 2KB - enough for frontmatter with tags, title, pinned
-    let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
-    let mut buf = vec![0u8; 2048];
-    let bytes_read = file.read(&mut buf).map_err(|e| e.to_string())?;
-    buf.truncate(bytes_read);
-    let raw = String::from_utf8_lossy(&buf);
-
-    let filename = path
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-
-    let (mut meta, content) = frontmatter::parse_note(&raw, &filename);
-
-    // Always use filesystem timestamps on Android (faster than parsing date strings)
-    if let Ok(fs_meta) = fs::metadata(path) {
-        if let Ok(m) = fs_meta.modified() {
-            meta.modified = m.into();
-        }
-        if let Ok(c) = fs_meta.created() {
-            meta.created = c.into();
-        }
-    }
-
-    let relative =
-        crate::vault::path::to_portable_string(path.strip_prefix(vault_root).unwrap_or(path));
-
-    let preview = frontmatter::extract_preview(&content, 120);
-
-    Ok(NoteEntry {
-        path: path.to_string_lossy().to_string(),
-        relative_path: relative,
-        meta,
-        preview,
-    })
 }
 
 /// Fast version: reads only the first ~2KB of the file (enough for frontmatter + preview).
@@ -589,7 +490,7 @@ pub fn read_vault_note(vault_path: &str, path: &str) -> Result<NoteContent, Stri
 /// no vault path, so it cannot widen the validators every mutation command uses.
 pub fn read_external_note(path: &str) -> Result<NoteContent, String> {
     let requested = Path::new(path);
-    // Case-insensitive: a file association on Windows or macOS hands back whatever case the
+    // Case-insensitive: a Windows file association hands back whatever case the
     // filesystem stored, and `NOTE.MD` is the same Markdown file.
     let is_markdown = requested
         .extension()

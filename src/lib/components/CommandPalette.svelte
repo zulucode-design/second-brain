@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { showCommandPalette, showSearch, theme, sourceMode, viewMode, activeNotebook, activeTag } from '$lib/stores/app';
 	import { setTheme, reindex } from '$lib/api';
-	import { darkThemes } from '$lib/platform';
 
 	// onNavigate runs the parent's view-change handler (refreshes the note list and reveals it
 	// if it was hidden), so opening a view here behaves exactly like clicking it in the sidebar.
@@ -22,7 +21,7 @@
 		action: () => void;
 	}
 
-	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
+	const modKey = 'Ctrl';
 
 	let query = $state('');
 	let selectedIndex = $state(0);
@@ -69,7 +68,6 @@
 			action: () => {
 				$theme = 'light';
 				setTheme('light');
-				applyTheme('light');
 				$showCommandPalette = false;
 			}
 		},
@@ -79,7 +77,6 @@
 			action: () => {
 				$theme = 'dark';
 				setTheme('dark');
-				applyTheme('dark');
 				$showCommandPalette = false;
 			}
 		},
@@ -95,42 +92,42 @@
 		{
 			id: 'theme-solarized-light',
 			label: 'Switch to Solarized Light Theme',
-			action: () => { $theme = 'solarized-light'; setTheme('solarized-light'); applyTheme('solarized-light'); $showCommandPalette = false; }
+			action: () => { $theme = 'solarized-light'; setTheme('solarized-light'); $showCommandPalette = false; }
 		},
 		{
 			id: 'theme-solarized-dark',
 			label: 'Switch to Solarized Dark Theme',
-			action: () => { $theme = 'solarized-dark'; setTheme('solarized-dark'); applyTheme('solarized-dark'); $showCommandPalette = false; }
+			action: () => { $theme = 'solarized-dark'; setTheme('solarized-dark'); $showCommandPalette = false; }
 		},
 		{
 			id: 'theme-catppuccin',
 			label: 'Switch to Catppuccin Theme',
-			action: () => { $theme = 'catppuccin'; setTheme('catppuccin'); applyTheme('catppuccin'); $showCommandPalette = false; }
+			action: () => { $theme = 'catppuccin'; setTheme('catppuccin'); $showCommandPalette = false; }
 		},
 		{
 			id: 'theme-nord',
 			label: 'Switch to Nord Theme',
-			action: () => { $theme = 'nord'; setTheme('nord'); applyTheme('nord'); $showCommandPalette = false; }
+			action: () => { $theme = 'nord'; setTheme('nord'); $showCommandPalette = false; }
 		},
 		{
 			id: 'theme-tokyo-night',
 			label: 'Switch to Tokyo Night Theme',
-			action: () => { $theme = 'tokyo-night'; setTheme('tokyo-night'); applyTheme('tokyo-night'); $showCommandPalette = false; }
+			action: () => { $theme = 'tokyo-night'; setTheme('tokyo-night'); $showCommandPalette = false; }
 		},
 		{
 			id: 'theme-github-light',
 			label: 'Switch to GitHub Light Theme',
-			action: () => { $theme = 'github-light'; setTheme('github-light'); applyTheme('github-light'); $showCommandPalette = false; }
+			action: () => { $theme = 'github-light'; setTheme('github-light'); $showCommandPalette = false; }
 		},
 		{
 			id: 'theme-github-dark',
 			label: 'Switch to GitHub Dark Theme',
-			action: () => { $theme = 'github-dark'; setTheme('github-dark'); applyTheme('github-dark'); $showCommandPalette = false; }
+			action: () => { $theme = 'github-dark'; setTheme('github-dark'); $showCommandPalette = false; }
 		},
 		{
 			id: 'theme-dracula',
 			label: 'Switch to Dracula Theme',
-			action: () => { $theme = 'dracula'; setTheme('dracula'); applyTheme('dracula'); $showCommandPalette = false; }
+			action: () => { $theme = 'dracula'; setTheme('dracula'); $showCommandPalette = false; }
 		},
 		{
 			id: 'toggle-source',
@@ -178,18 +175,7 @@
 		}
 	}
 
-	function applyTheme(t: string) {
-		const namedThemes = ['solarized-light', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-light', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'light-coffee', 'dark-coffee', 'cotton-candy', 'crimson', 'cloud', 'peach', 'material-dark', 'material-light', 'monokai', 'rose-pine', 'everforest', 'horizon', 'cyberpunk', 'black', 'one-dark'];
-		const root = document.documentElement;
-		root.classList.remove('dark');
-		root.removeAttribute('data-theme');
-		if (namedThemes.includes(t)) {
-			root.setAttribute('data-theme', t);
-			if (darkThemes.includes(t)) root.classList.add('dark');
-		} else if (t === 'dark') {
-			root.classList.add('dark');
-		}
-	}
+
 </script>
 
 {#if $showCommandPalette}

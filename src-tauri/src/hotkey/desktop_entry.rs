@@ -1,7 +1,6 @@
 //! Making the app id resolvable when nothing installed a desktop entry for us.
 //!
-//! The portal will not accept an app id it cannot find an installed `.desktop` for. A deb or
-//! rpm ships one (`bundle.linux.{deb,rpm}.files`), so those are fine. An **AppImage installs
+//! The portal will not accept an app id it cannot find an installed `.desktop` for. The Fedora RPM ships one (`bundle.linux.rpm.files`), so it is fine. An **AppImage installs
 //! nothing** — it is a single file the user runs from wherever they put it — so without help
 //! the hotkey is permanently unavailable there, reporting `AppIdRejected`.
 //!
@@ -189,12 +188,10 @@ mod tests {
         let expected_destination = format!("/usr/share/applications/{id}.desktop");
         let expected_source = format!("linux/{id}.desktop");
 
-        for package in ["deb", "rpm"] {
-            assert_eq!(
-                config["bundle"]["linux"][package]["files"][&expected_destination],
-                expected_source
-            );
-        }
+        assert_eq!(
+            config["bundle"]["linux"]["rpm"]["files"][&expected_destination],
+            expected_source
+        );
 
         let packaged_entry =
             include_str!("../../linux/io.github.zulucodedesign.SecondBrain.desktop");

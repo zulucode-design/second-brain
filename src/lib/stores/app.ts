@@ -1,5 +1,4 @@
 import { writable, derived, get } from "svelte/store";
-import { isMobile } from "$lib/platform";
 import { compareNaturalNames } from "$lib/utils/natural-sort";
 import type {
   AiStatus,
@@ -9,8 +8,6 @@ import type {
   NoteEntry,
   NoteContent,
   NotebookEntry,
-  VaultConfig,
-  VaultState,
   ViewMode,
   SortMode,
 } from "$lib/types";
@@ -18,14 +15,6 @@ import type {
 // App state
 export const appConfig = writable<AppConfig | null>(null);
 
-// Resolve the active vault's machine-local configuration entry.
-export function activeVaultConfig(c: AppConfig | null): VaultConfig | null {
-  if (!c?.active_vault) return null;
-  if (c.active_bookmark_id) {
-    return c.vaults.find((v) => v.bookmark_id === c.active_bookmark_id) ?? null;
-  }
-  return c.vaults.find((v) => !v.bookmark_id && v.path === c.active_vault) ?? null;
-}
 export const vaultReady = writable(false);
 
 /**
@@ -125,7 +114,7 @@ export const viewerNote = writable<{ path: string; content: string } | null>(
 );
 
 // Mobile state
-export const mobileView = writable<"sidebar" | "notelist" | "editor">(
+export const compactView = writable<"sidebar" | "notelist" | "editor">(
   "sidebar",
 );
 
@@ -168,8 +157,8 @@ export const resolvedTheme = derived(
   },
 );
 
-// True only on the Android/iOS build. Reconfirmed from the backend at startup (see +layout). (#63)
-export const platformIsMobile = writable<boolean>(isMobile);
+// Compact navigation follows the window width on supported desktops (see +layout).
+export const compactLayout = writable<boolean>(false);
 
 // Note navigation history
 interface NavHistoryState { stack: string[]; index: number; skipping: boolean; }
@@ -243,45 +232,5 @@ export const sortedNotes = derived(
     };
 
     return [...pinned.sort(sortFn), ...unpinned.sort(sortFn)];
-  },
-);
-
-export const vaultState = derived(
-  [
-    activeNotePath,
-    sidebarWidth,
-    notelistWidth,
-    outlineWidth,
-    sidebarCollapsed,
-    notelistCollapsed,
-    collapsedNotebooks,
-    notebookSortMode,
-    notebookOrder,
-    noteOrder,
-  ],
-  ([
-    $activeNotePath,
-    $sidebarWidth,
-    $notelistWidth,
-    $outlineWidth,
-    $sidebarCollapsed,
-    $notelistCollapsed,
-    $collapsedNotebooks,
-    $notebookSortMode,
-    $notebookOrder,
-    $noteOrder,
-  ]) => {
-    return {
-      last_open_note: $activeNotePath,
-      sidebar_width: $sidebarWidth,
-      notelist_width: $notelistWidth,
-      outline_width: $outlineWidth,
-      sidebar_collapsed: $sidebarCollapsed,
-      notelist_collapsed: $notelistCollapsed,
-      collapsed_notebooks: $collapsedNotebooks,
-      notebook_sort_mode: $notebookSortMode,
-      notebook_order: $notebookOrder,
-      note_order: $noteOrder,
-    } satisfies VaultState;
   },
 );

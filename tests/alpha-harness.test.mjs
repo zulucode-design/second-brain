@@ -27,9 +27,10 @@ test('harness config changes only active vault and backup ownership', () => {
   const next = harnessConfig(original, '/test/vault', 'test-id', '/test/backups');
 
   assert.deepEqual(original.vaults[0].notion, { enabled: true }, 'input stays untouched');
-  assert.deepEqual(next.vaults, [{ path: '/test/vault', name: 'Alpha Harness', vault_id: 'test-id' }]);
+  assert.deepEqual(next.vault, { path: '/test/vault', name: 'Alpha Harness', vault_id: 'test-id' });
+  assert.equal(next.vaults, undefined);
   assert.equal(next.active_vault, '/test/vault');
-  assert.equal(next.active_bookmark_id, null);
+  assert.equal(next.active_bookmark_id, undefined);
   assert.equal(next.backup_location, '/test/backups');
   assert.equal(next.backup_max_count, 10);
   assert.equal(next.theme, 'dark');

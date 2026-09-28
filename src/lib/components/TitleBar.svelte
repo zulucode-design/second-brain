@@ -18,8 +18,7 @@
 	} = $props();
 
 	const appWindow = getCurrentWindow();
-	const isMac = navigator.platform.startsWith('Mac');
-	const modKey = isMac ? '⌘' : 'Ctrl';
+	const modKey = 'Ctrl';
 	let maximized = $state(false);
 
 	async function checkMaximized() {
@@ -71,7 +70,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="titlebar" class:macos={isMac} onmousedown={handleMouseDown}>
+<div class="titlebar" onmousedown={handleMouseDown}>
 	<div class="titlebar-brand">
 		<svg width="18" height="18" viewBox="0 0 48 48" fill="none">
 			<rect width="48" height="48" rx="12" fill="var(--accent)" />
@@ -90,7 +89,7 @@
 		</div>
 	{/if}
 	<div class="titlebar-actions">
-		<button class="switch-vault-btn" onclick={onRequestVaultSwitch} disabled={$shutdownPending} title="Switch Vault">
+		<button class="switch-vault-btn" onclick={onRequestVaultSwitch} disabled={$shutdownPending} title="Change vault folder">
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
 			</svg>
@@ -125,7 +124,6 @@
 			New Note
 		</button>
 	</div>
-	{#if !isMac}
 	<div class="titlebar-controls">
 		<button class="titlebar-btn" onclick={minimize} title="Minimize">
 			<svg width="10" height="10" viewBox="0 0 10 10">
@@ -151,7 +149,6 @@
 			</svg>
 		</button>
 	</div>
-	{/if}
 </div>
 
 <style>
@@ -278,8 +275,4 @@
 		color: white;
 	}
 
-	/* macOS: add left padding for native traffic light buttons */
-	.titlebar.macos .titlebar-brand {
-		padding-left: 78px;
-	}
 </style>

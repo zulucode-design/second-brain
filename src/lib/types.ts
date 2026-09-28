@@ -124,15 +124,14 @@ export interface NoteContent {
 export interface VaultConfig {
   path: string;
   name: string;
-  bookmark_id?: string | null;
   /** Stable identity from `.helixnotes/vault_id`, used only for machine-local state. */
   vault_id?: string | null;
-}
-
-export interface ExternalVaultResult {
-  bookmarkId: string;
-  path: string;
-  name: string;
+  notion: {
+    enabled: boolean;
+    token: string | null;
+    poll_minutes: number | null;
+    last_run: string | null;
+  };
 }
 
 export interface CustomThemeColors {
@@ -159,9 +158,8 @@ export type StartupView = "all" | "quickaccess" | "tasks";
 export type AiProvider = 'anthropic' | 'openai' | 'ollama' | 'openai_compatible';
 
 export interface AppConfig {
-  vaults: VaultConfig[];
+  vault: VaultConfig | null;
   active_vault: string | null;
-  active_bookmark_id?: string | null;
   theme: string;
   system_light_theme: string;
   system_dark_theme: string;

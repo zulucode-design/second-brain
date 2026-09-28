@@ -66,9 +66,9 @@ fn active_vault(config: &AppConfig) -> Result<PathBuf, String> {
 
 fn settings_of(config: &AppConfig) -> NotionSettings {
     config
-        .active_vault
+        .vault
         .as_ref()
-        .and_then(|active| config.vaults.iter().find(|vault| &vault.path == active))
+        .filter(|vault| config.active_vault.as_deref() == Some(vault.path.as_str()))
         .map(|vault| vault.notion.clone())
         .unwrap_or_default()
 }
@@ -84,10 +84,10 @@ fn update_settings(
         .clone()
         .ok_or_else(|| "No active vault".to_string())?;
     let vault = candidate
-        .vaults
-        .iter_mut()
-        .find(|vault| vault.path == active)
-        .ok_or_else(|| "The active vault is not in the vault list".to_string())?;
+        .vault
+        .as_mut()
+        .filter(|vault| vault.path == active)
+        .ok_or_else(|| "The configured vault does not match the active vault".to_string())?;
     change(&mut vault.notion)?;
     crate::commands::commit_secret_config(&mut config, candidate)
 }
@@ -342,14 +342,14 @@ pub fn notion_publish_now(app: AppHandle) -> Result<(), String> {
                     Ok(())
                 })
                 .await;
-                let _ = app.emit("notion-publish-finished", &summary);
+                let _ = app.emit(crate::events::NOTION_PUBLISH_FINISHED, &summary);
             }
             Err(error) => {
                 // A fatal error is almost always a revoked token, and the only useful
                 // response is to tell the user to reconnect rather than retry quietly.
                 write_last_run(&vault, None, Some(&error.message()));
                 let _ = app.emit(
-                    "notion-publish-failed",
+                    crate::events::NOTION_PUBLISH_FAILED,
                     serde_json::json!({ "error": error.message(), "fatal": error.is_fatal() }),
                 );
             }
@@ -389,7 +389,7 @@ async fn publish_once(
             if let Ok(mut current) = app.state::<AppState>().notion_progress.lock() {
                 *current = Some(progress);
             }
-            let _ = app.emit("notion-publish-progress", progress);
+            let _ = app.emit(crate::events::NOTION_PUBLISH_PROGRESS, progress);
         },
     )
     .await
