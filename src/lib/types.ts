@@ -125,7 +125,7 @@ export interface VaultConfig {
   path: string;
   name: string;
   /** Stable identity from `.helixnotes/vault_id`, used only for machine-local state. */
-  vault_id?: string | null;
+  vault_id: string | null;
   notion: {
     enabled: boolean;
     token: string | null;
@@ -193,7 +193,8 @@ export interface AppConfig {
   last_backup_time: string | null;
   backup_include_attachments: boolean;
   max_versions_per_note: number;
-  ai_provider: AiProvider | null;
+  /** Stored provider IDs may be newer than this build's selectable providers. */
+  ai_provider: string | null;
   ai_api_key: string | null;
   openai_api_key: string | null;
   ollama_base_url: string | null;
@@ -220,22 +221,22 @@ export interface VaultState {
   last_open_note: string | null;
   sidebar_width: number;
   notelist_width: number;
-  outline_width?: number;
+  outline_width: number;
   sidebar_collapsed: boolean;
   notelist_collapsed: boolean;
   collapsed_notebooks: string[];
-  notebook_sort_mode?: string;
-  notebook_order?: Record<string, number>;
-  note_order?: Record<string, number>;
-  sort_mode?: string;
-  group_notes_by_date?: boolean;
-  last_view_mode?: string;
-  last_notebook?: string | null;
-  last_tag?: string | null;
-  tasks_layout?: string;
-  tasks_hide_completed?: boolean;
-  tasks_only_flagged?: boolean;
-  tasks_sort?: string;
+  notebook_sort_mode: string;
+  notebook_order: Record<string, number>;
+  note_order: Record<string, number>;
+  sort_mode: string;
+  group_notes_by_date: boolean;
+  last_view_mode: string;
+  last_notebook: string | null;
+  last_tag: string | null;
+  tasks_layout: string;
+  tasks_hide_completed: boolean;
+  tasks_only_flagged: boolean;
+  tasks_sort: string;
 }
 
 export interface SearchResult {

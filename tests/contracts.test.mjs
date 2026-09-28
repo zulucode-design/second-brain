@@ -20,6 +20,18 @@ function tsFields(name) {
   return Object.fromEntries(node.members.map((member) => [member.name.getText(tsTypes), member.type]));
 }
 
+function tsOptionalFields(name) {
+  const node = tsTypes.statements.find((statement) => ts.isInterfaceDeclaration(statement) && statement.name.text === name);
+  assert.ok(node);
+  return node.members.filter((member) => member.questionToken).map((member) => member.name.getText(tsTypes)).sort();
+}
+
+function rustOptionalFields(name) {
+  const body = rustTypes.match(new RegExp(`pub struct ${name} \\{([\\s\\S]*?)\\n\\}`))?.[1];
+  assert.ok(body);
+  return [...body.matchAll(/#\[serde\([^\]]*skip_serializing_if[^\]]*\)\]\s*pub (\w+):/g)].map((match) => match[1]).sort();
+}
+
 function rustShape(type) {
   if (type.startsWith('Option<')) return `${rustShape(type.slice(7, -1))}|null`;
   if (type.startsWith('Vec<')) return `${rustShape(type.slice(4, -1))}[]`;
@@ -30,7 +42,12 @@ function rustShape(type) {
   if (type === 'String') return 'string';
   if (type === 'bool') return 'boolean';
   if (/^(u|i|f)\d+$/.test(type)) return 'number';
-  if (['VaultConfig', 'CustomTheme', 'CustomThemeColors', 'StartupView', 'AiProvider'].includes(type)) return type;
+  if (type === 'AiProvider') {
+    assert.match(rustTypes, /Unknown\(String\)/);
+    assert.match(rustTypes, /serialize_str\(self\.id\(\)\)/);
+    return 'string';
+  }
+  if (['VaultConfig', 'CustomTheme', 'CustomThemeColors', 'StartupView'].includes(type)) return type;
   assert.fail(`Unmapped persisted Rust type: ${type}`);
 }
 
@@ -60,6 +77,7 @@ test('persisted Rust and TypeScript models retain field types and nullability', 
     delete rust.config_save_blocked;
     const frontend = tsFields(name);
     assert.deepEqual(Object.keys(frontend).sort(), Object.keys(rust).sort(), `${name} fields diverged`);
+    assert.deepEqual(tsOptionalFields(name), rustOptionalFields(name), `${name} optional fields diverged`);
     for (const [field, type] of Object.entries(rust)) {
       if (name === 'VaultConfig' && field === 'notion') continue;
       assert.equal(tsShape(frontend[field]), rustShape(type).split('|').sort().join('|'), `${name}.${field} type diverged`);
@@ -77,7 +95,7 @@ test('persisted Rust and TypeScript models retain field types and nullability', 
   const startupVariants = rustTypes.match(/pub enum StartupView \{([\s\S]*?)\n\}/)?.[1];
   assert.ok(startupVariants);
   assert.deepEqual(tsLiterals('StartupView'), [...startupVariants.matchAll(/^\s*(\w+),$/gm)].map((match) => match[1].toLowerCase()).sort());
-  const rustProviders = [...rustTypes.matchAll(/Self::\w+ => "(anthropic|openai|ollama|openai_compatible)"/g)].map((match) => match[1]);
+  const rustProviders = [...rustTypes.matchAll(/Self::\w+ => "([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual(tsLiterals('AiProvider'), [...new Set(rustProviders)].sort());
 });
 

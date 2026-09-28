@@ -253,9 +253,9 @@
 	}
 
 	// AI state
-	let aiProvider = $state<AiProvider | null>($appConfig?.ai_provider ?? null);
+	let aiProvider = $state<string | null>($appConfig?.ai_provider ?? null);
 	let aiProviderMetadata = $derived(
-		aiProvider ? AI_PROVIDER_METADATA[aiProvider] : null,
+		aiProvider && Object.hasOwn(AI_PROVIDER_METADATA, aiProvider) ? AI_PROVIDER_METADATA[aiProvider as AiProvider] : null,
 	);
 	let aiApiKey = $derived.by(() => {
 		switch (aiProviderMetadata?.keySlot) {

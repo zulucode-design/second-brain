@@ -20,7 +20,6 @@ import type {
   VersionEntry,
   TaskItem,
   StartupView,
-  AiProvider,
   RepairStatus,
   SemanticStatus,
   SaveCommitOutcome,
@@ -616,7 +615,7 @@ export async function createVersion(
 // ── AI ──
 
 export async function setAiSettings(
-  provider: AiProvider | null,
+  provider: string | null,
   apiKey: string | null,
   model: string,
   writingStyle: string | null,
