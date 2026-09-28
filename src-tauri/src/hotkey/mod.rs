@@ -22,8 +22,6 @@ use std::fmt;
 
 pub mod capture;
 #[cfg(target_os = "linux")]
-pub mod desktop_entry;
-#[cfg(target_os = "linux")]
 pub mod portal;
 #[cfg(target_os = "linux")]
 pub mod startup;
@@ -68,7 +66,7 @@ pub const STATUS_EVENT: &str = crate::events::HOTKEY_STATUS_CHANGED;
 /// narrower than any one of them. Measured, each against the thing that enforces it:
 ///
 /// - **Tauri's bundler** rejects `_` outright: "must contain only alphanumeric characters
-///   (A-Z, a-z, and 0-9), hyphens (-), and periods (.)". A `.deb` build fails before it starts.
+///   (A-Z, a-z, and 0-9), hyphens (-), and periods (.)". An `.rpm` build fails before it starts.
 /// - **The Flatpak app-id rules**, which `ashpd` enforces client-side, allow `_` anywhere but
 ///   permit `-` **only in the final segment**. `ashpd` refuses to send anything else, so the
 ///   portal never sees it.
@@ -164,8 +162,6 @@ pub enum Unavailable {
     /// The shortcut cannot be useful because its capture surface could not be prepared.
     /// Shared with Windows: see `window::CaptureWindowUnavailable`.
     CaptureWindow(window::CaptureWindowUnavailable),
-    /// An AppImage could not create the user-level desktop entry the portal requires.
-    AppImageIntegration { detail: String },
     /// No `GlobalShortcuts` implementation on this desktop.
     NoPortal,
     /// The portal will not accept our app id, which in practice means it cannot find an
@@ -199,10 +195,6 @@ impl Unavailable {
     pub fn reason(&self) -> String {
         match self {
             Self::CaptureWindow(cause) => cause.reason(),
-            Self::AppImageIntegration { detail } => format!(
-                "Quick capture could not prepare the AppImage desktop entry ({detail}). Check \
-                 that your user data directory is writable, then restart the app."
-            ),
             Self::NoPortal => "This desktop has no global shortcuts portal, so a system-wide \
                  hotkey cannot be registered. Quick capture still works from inside the app."
                 .to_string(),
@@ -415,19 +407,6 @@ mod tests {
             "the common case is simply being asked again"
         );
         assert!(reason.contains("flatpak permission-reset io.github.example.App"));
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn an_appimage_integration_failure_names_the_failed_local_setup() {
-        let cause = Unavailable::AppImageIntegration {
-            detail: "permission denied while writing the desktop entry".to_string(),
-        };
-        let reason = cause.reason();
-
-        assert!(reason.contains("AppImage desktop entry"));
-        assert!(reason.contains("permission denied"));
-        assert!(!reason.contains("dev-desktop-entry.sh"));
     }
 
     #[cfg(target_os = "linux")]

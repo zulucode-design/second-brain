@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { focusMode, readOnly, shutdownPending, holdingPreview, appConfig } from '$lib/stores/app';
+	import { focusMode, readOnly, shutdownPending, holdingPreview, viewerNote, appConfig } from '$lib/stores/app';
 	import NoteSwitcher from './NoteSwitcher.svelte';
 
 	let {
@@ -99,7 +99,7 @@
 				<path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/>
 			</svg>
 		</button>{/if}
-		{#if !$holdingPreview}<button class="switch-vault-btn" class:active={$readOnly} onclick={() => { if (!$shutdownPending) $readOnly = !$readOnly; }} disabled={$shutdownPending} title={$readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}>
+		{#if !$holdingPreview && !$viewerNote}<button class="switch-vault-btn" class:active={$readOnly} onclick={() => { if (!$shutdownPending) $readOnly = !$readOnly; }} disabled={$shutdownPending} title={$readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}>
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				{#if $readOnly}
 					<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />

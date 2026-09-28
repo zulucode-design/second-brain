@@ -2489,9 +2489,9 @@ pub fn set_general_settings(
     // The stored preference is the source of truth; the OS-level entry is a projection of
     // it, kept in sync every time it could have changed rather than left to drift.
     #[cfg(target_os = "linux")]
-    if let (Some(config_home), Some(exec), Ok(app_id)) = (
+    if let (Some(config_home), Ok(exec), Ok(app_id)) = (
         dirs::config_dir(),
-        hotkey::desktop_entry::current_executable(),
+        std::env::current_exe(),
         hotkey::configured_application_id(),
     ) {
         if let Err(error) = crate::autostart::sync(config.autostart, &config_home, &app_id, &exec) {

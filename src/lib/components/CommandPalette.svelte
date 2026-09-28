@@ -14,6 +14,12 @@
 		onNavigate();
 	}
 
+	function switchTheme(id: string) {
+		$theme = id;
+		setTheme(id);
+		$showCommandPalette = false;
+	}
+
 	interface Command {
 		id: string;
 		label: string;
@@ -65,69 +71,57 @@
 		{
 			id: 'theme-light',
 			label: 'Switch to Light Theme',
-			action: () => {
-				$theme = 'light';
-				setTheme('light');
-				$showCommandPalette = false;
-			}
+			action: () => switchTheme('light')
 		},
 		{
 			id: 'theme-dark',
 			label: 'Switch to Dark Theme',
-			action: () => {
-				$theme = 'dark';
-				setTheme('dark');
-				$showCommandPalette = false;
-			}
+			action: () => switchTheme('dark')
 		},
 		{
 			id: 'theme-system',
 			label: 'Use System Theme',
-			action: () => {
-				$theme = 'system';
-				setTheme('system');
-				$showCommandPalette = false;
-			}
+			action: () => switchTheme('system')
 		},
 		{
 			id: 'theme-solarized-light',
 			label: 'Switch to Solarized Light Theme',
-			action: () => { $theme = 'solarized-light'; setTheme('solarized-light'); $showCommandPalette = false; }
+			action: () => switchTheme('solarized-light')
 		},
 		{
 			id: 'theme-solarized-dark',
 			label: 'Switch to Solarized Dark Theme',
-			action: () => { $theme = 'solarized-dark'; setTheme('solarized-dark'); $showCommandPalette = false; }
+			action: () => switchTheme('solarized-dark')
 		},
 		{
 			id: 'theme-catppuccin',
 			label: 'Switch to Catppuccin Theme',
-			action: () => { $theme = 'catppuccin'; setTheme('catppuccin'); $showCommandPalette = false; }
+			action: () => switchTheme('catppuccin')
 		},
 		{
 			id: 'theme-nord',
 			label: 'Switch to Nord Theme',
-			action: () => { $theme = 'nord'; setTheme('nord'); $showCommandPalette = false; }
+			action: () => switchTheme('nord')
 		},
 		{
 			id: 'theme-tokyo-night',
 			label: 'Switch to Tokyo Night Theme',
-			action: () => { $theme = 'tokyo-night'; setTheme('tokyo-night'); $showCommandPalette = false; }
+			action: () => switchTheme('tokyo-night')
 		},
 		{
 			id: 'theme-github-light',
 			label: 'Switch to GitHub Light Theme',
-			action: () => { $theme = 'github-light'; setTheme('github-light'); $showCommandPalette = false; }
+			action: () => switchTheme('github-light')
 		},
 		{
 			id: 'theme-github-dark',
 			label: 'Switch to GitHub Dark Theme',
-			action: () => { $theme = 'github-dark'; setTheme('github-dark'); $showCommandPalette = false; }
+			action: () => switchTheme('github-dark')
 		},
 		{
 			id: 'theme-dracula',
 			label: 'Switch to Dracula Theme',
-			action: () => { $theme = 'dracula'; setTheme('dracula'); $showCommandPalette = false; }
+			action: () => switchTheme('dracula')
 		},
 		{
 			id: 'toggle-source',

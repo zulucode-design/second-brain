@@ -3241,10 +3241,11 @@
 	$effect(() => {
 		const ro = $readOnly;
 		const shuttingDown = $shutdownPending;
+		const preview = !!$viewerNote || $holdingPreview;
 		untrack(() => {
 			if (editor) {
 				if (ro && !shuttingDown && $editorDirty) forceSave();
-				editor.setEditable(!ro && !shuttingDown);
+				editor.setEditable(!ro && !shuttingDown && !preview);
 			}
 		});
 	});
@@ -6406,7 +6407,7 @@
 						class="source-editor"
 						bind:this={sourceElement}
 						bind:value={sourceContent}
-						readonly={$readOnly || $shutdownPending}
+						readonly={$readOnly || $shutdownPending || !!$viewerNote || $holdingPreview}
 						oninput={() => {
 							$editorDirty = true;
 							markDirty();
@@ -6468,7 +6469,7 @@
 							class:with-line-numbers={$appConfig?.show_line_numbers}
 							bind:this={sourceElement}
 							bind:value={sourceContent}
-							readonly={$readOnly || $shutdownPending}
+							readonly={$readOnly || $shutdownPending || !!$viewerNote || $holdingPreview}
 							oninput={() => {
 								$editorDirty = true;
 								markDirty();

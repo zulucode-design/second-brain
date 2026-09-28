@@ -127,21 +127,6 @@ async fn register(app: &AppHandle) -> RegistrationAttempt {
         }
     };
 
-    // An AppImage installs no desktop entry, so the portal cannot resolve its app id until it
-    // writes one for itself. This is a registration prerequisite, not a best-effort side effect:
-    // proceeding after it fails would misreport the later portal rejection as an app-id problem.
-    let appimage = super::desktop_entry::running_as_appimage();
-    let data_home = data_home();
-    if let Err(cause) = prepare_appimage_entry(
-        appimage.as_deref(),
-        data_home.as_deref(),
-        |data_home, appimage| {
-            super::desktop_entry::ensure_appimage_entry(data_home, &app_id, appimage)
-        },
-    ) {
-        return RegistrationAttempt::inactive(HotkeyStatus::unavailable(&cause));
-    }
-
     match portal::register(&app_id).await {
         Ok(registration) => {
             let status = HotkeyStatus::registered(
@@ -189,32 +174,6 @@ async fn register(app: &AppHandle) -> RegistrationAttempt {
         }
         Err(cause) => RegistrationAttempt::inactive(HotkeyStatus::unavailable(&cause)),
     }
-}
-
-fn prepare_appimage_entry<Ensure, Error>(
-    appimage: Option<&std::path::Path>,
-    data_home: Option<&std::path::Path>,
-    ensure: Ensure,
-) -> Result<(), Unavailable>
-where
-    Ensure: FnOnce(
-        &std::path::Path,
-        &std::path::Path,
-    ) -> Result<super::desktop_entry::Integration, Error>,
-    Error: std::fmt::Display,
-{
-    let Some(appimage) = appimage else {
-        return Ok(());
-    };
-    let data_home = data_home.ok_or_else(|| Unavailable::AppImageIntegration {
-        detail: "no user data directory is available".to_string(),
-    })?;
-    let outcome =
-        ensure(data_home, appimage).map_err(|error| Unavailable::AppImageIntegration {
-            detail: error.to_string(),
-        })?;
-    log::info!("AppImage desktop entry: {outcome:?}");
-    Ok(())
 }
 
 fn show_capture_window(app: &AppHandle) -> Result<(), Unavailable> {
@@ -331,7 +290,7 @@ fn resync_autostart(app: &AppHandle) {
     let Some(config_home) = dirs::config_dir() else {
         return;
     };
-    let Some(exec) = super::desktop_entry::current_executable() else {
+    let Ok(exec) = std::env::current_exe() else {
         log::warn!("Could not resolve this app's own executable path for autostart");
         return;
     };
@@ -356,13 +315,6 @@ fn a_vault_was_configured(app: &AppHandle) -> bool {
         .lock()
         .map(|config| config.active_vault.is_some())
         .unwrap_or(false)
-}
-
-fn data_home() -> Option<std::path::PathBuf> {
-    std::env::var_os("XDG_DATA_HOME")
-        .map(std::path::PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-        .or_else(dirs::data_dir)
 }
 
 #[cfg(test)]
@@ -392,23 +344,6 @@ mod tests {
 
         assert!(matches!(result, Err(Unavailable::CaptureWindow(_))));
         assert!(!registration_attempted.load(Ordering::SeqCst));
-    }
-
-    #[test]
-    fn an_appimage_without_a_user_data_directory_is_not_ready_to_register() {
-        let result = prepare_appimage_entry(
-            Some(std::path::Path::new("/home/u/SecondBrain.AppImage")),
-            None,
-            |_, _| {
-                Ok::<_, std::io::Error>(super::super::desktop_entry::Integration::AlreadyCurrent)
-            },
-        );
-
-        assert!(matches!(
-            result,
-            Err(Unavailable::AppImageIntegration { ref detail })
-                if detail.contains("user data directory")
-        ));
     }
 
     #[test]
