@@ -79,9 +79,7 @@ fn machine_root() -> Result<PathBuf, String> {
 /// than silently writing recovery manifests into a synced folder.
 #[cfg(not(test))]
 fn machine_root() -> Result<PathBuf, String> {
-    dirs::data_local_dir()
-        .map(|dir| dir.join("helixnotes"))
-        .ok_or_else(|| "No per-machine data directory is available on this system".to_string())
+    crate::app_dirs::machine_root()
 }
 
 /// How long to wait for another process to finish claiming the identity.

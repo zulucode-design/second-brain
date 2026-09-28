@@ -27,7 +27,6 @@
 		action: () => void;
 	}
 
-	const modKey = 'Ctrl';
 
 	let query = $state('');
 	let selectedIndex = $state(0);
@@ -37,7 +36,7 @@
 		{
 			id: 'search',
 			label: 'Search Notes',
-			shortcut: `${modKey}+F`,
+			shortcut: `Ctrl+F`,
 			action: () => {
 				$showCommandPalette = false;
 				$showSearch = true;

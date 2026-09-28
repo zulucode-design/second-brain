@@ -4,8 +4,7 @@
 	import type { AiProvider } from '$lib/types';
 	import { importOutcomeView, type ImportDonePayload } from '$lib/utils/import-outcome';
 	import { AI_PROVIDER_METADATA, AI_PROVIDER_OPTIONS } from '$lib/utils/ai-provider';
-	import { darkThemes, isLinux, isWindows } from '$lib/platform';
-	const isCompact = $derived($compactLayout);
+	import { applyTheme, isDarkTheme, isLinux, isWindows } from '$lib/platform';
 	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { listenAppEvent } from '$lib/events';
 	import { onMount } from 'svelte';
@@ -14,8 +13,8 @@
 	import type { OrphanAttachment } from '$lib/api';
 	import type { ImportResult, BackupEntry, CustomTheme, CustomThemeColors, StartupView, VaultStats, SemanticStatus, SyncStatus, BulkMutationTerminal, SyncConflict } from '$lib/types';
 	import { normalizeStartupView } from '$lib/utils/startup-view';
+	const isCompact = $derived($compactLayout);
 
-	const modKey = 'Ctrl';
 
 	let { onRequestVaultSwitch = async () => false, onBeforeRestore, onAfterRestore }: {
 		onRequestVaultSwitch?: () => Promise<boolean>;
@@ -598,10 +597,7 @@
 		}
 	}
 
-	let isThemeDark = $derived(
-		darkThemes.includes($resolvedTheme) ||
-		($resolvedTheme.startsWith('custom-') && ($customThemes.find(c => c.id === $resolvedTheme)?.is_dark ?? false))
-	);
+	let isThemeDark = $derived(isDarkTheme($resolvedTheme, $customThemes));
 
 	const themePresets = [
 		{ id: 'system', label: 'System', bg: '#ffffff', sidebar: '#1a1b26', accent: '#5b6abf' },
@@ -811,34 +807,7 @@
 	}
 
 	function restoreCurrentTheme() {
-		const root = document.documentElement;
-		const varsToClear = ['--bg-primary','--bg-secondary','--bg-tertiary','--bg-hover','--bg-active','--bg-editor','--text-primary','--text-secondary','--border-color','--border-light','--text-tertiary'];
-		root.classList.remove('dark');
-		root.removeAttribute('data-theme');
-		for (const v of varsToClear) root.style.removeProperty(v);
-		const namedThemes = ['solarized-light','solarized-dark','catppuccin','nord','tokyo-night','github-light','github-dark','dracula','blueberry','forest-green','gruvbox','midnight-tide','cherry-blossom','synthwave','ember','moonlit','light-coffee','dark-coffee','cotton-candy','crimson','cloud','peach','material-dark','material-light','monokai','rose-pine','everforest','horizon','cyberpunk','black','one-dark'];
-		if ($resolvedTheme.startsWith('custom-')) {
-			const ct = $customThemes.find(c => c.id === $resolvedTheme);
-			if (ct) {
-				root.style.setProperty('--bg-primary', ct.colors.bg_primary);
-				root.style.setProperty('--bg-secondary', ct.colors.bg_secondary);
-				root.style.setProperty('--bg-tertiary', ct.colors.bg_tertiary);
-				root.style.setProperty('--bg-hover', ct.colors.bg_hover);
-				root.style.setProperty('--bg-active', ct.colors.bg_active);
-				root.style.setProperty('--bg-editor', ct.colors.bg_editor);
-				root.style.setProperty('--text-primary', ct.colors.text_primary);
-				root.style.setProperty('--text-secondary', ct.colors.text_secondary);
-				root.style.setProperty('--border-color', ct.colors.border_color);
-				root.style.setProperty('--border-light', ct.colors.border_color);
-				root.style.setProperty('--text-tertiary', ct.colors.text_secondary);
-				if (ct.is_dark) root.classList.add('dark');
-			}
-		} else if (namedThemes.includes($resolvedTheme)) {
-			root.setAttribute('data-theme', $resolvedTheme);
-			if (darkThemes.includes($resolvedTheme)) root.classList.add('dark');
-		} else if ($resolvedTheme === 'dark') {
-			root.classList.add('dark');
-		}
+		applyTheme($resolvedTheme, $customThemes);
 	}
 
 	async function saveCustomThemeEditor() {
@@ -1395,7 +1364,7 @@
 
 							<div class="settings-section">
 								<h3>Sidebar</h3>
-								<p class="setting-desc" style="margin: 0 0 10px;">Hide navigation items you don't use, leaving search and the notebook tree. Any item you hide stays reachable from the command palette ({modKey}+P).</p>
+								<p class="setting-desc" style="margin: 0 0 10px;">Hide navigation items you don't use, leaving search and the notebook tree. Any item you hide stays reachable from the command palette (Ctrl+P).</p>
 								<label class="setting-toggle">
 									<span class="setting-label"><span class="setting-name">All Notes</span></span>
 									<button class="toggle-switch" class:on={showAllNotes} role="switch" aria-checked={showAllNotes} aria-label="Show All Notes" onclick={() => { showAllNotes = !showAllNotes; saveGeneralSettings(); }}>
@@ -1422,7 +1391,7 @@
 								</label>
 							</div>
 
-							{#if !$compactLayout}
+							{#if !isCompact}
 							<div class="settings-section">
 								<h3>Interface</h3>
 								<label class="setting-toggle">

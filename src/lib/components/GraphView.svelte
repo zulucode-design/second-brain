@@ -4,9 +4,9 @@
 	import { onDestroy } from 'svelte';
 	import { getGraphData } from '$lib/api';
 	import { activeNotePath, appConfig } from '$lib/stores/app';
-		import { compactLayout } from '$lib/stores/app';
-	const isCompact = $derived($compactLayout);
+	import { compactLayout } from '$lib/stores/app';
 	import { asyncViewState, type LoadStatus } from '$lib/utils/async-view-state';
+	const isCompact = $derived($compactLayout);
 
 	let { onclose, onnavigate }: {
 		onclose: () => void;

@@ -71,7 +71,6 @@
 		onSetTaskDue?: (t: TaskItem, d: string | null) => Promise<void>;
 	} = $props();
 
-	const modKey = 'Ctrl';
 	let multiSelectMode = $state(false);
 	let trashNotebooks = $state<TrashNotebookEntry[]>([]);
 	let trashBusy = $state<string | null>(null);
@@ -107,23 +106,8 @@
 		}
 	}
 
-	/** Derive tags from current $notes store (avoids re-scanning files on compact) */
-	function deriveTagsFromNotes() {
-		const tagMap = new Map<string, number>();
-		for (const note of $notes) {
-			for (const tag of note.meta.tags) {
-				tagMap.set(tag, (tagMap.get(tag) ?? 0) + 1);
-			}
-		}
-		$tags = Array.from(tagMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-	}
-
 	async function refreshTags() {
-		if (isCompact) {
-			deriveTagsFromNotes();
-		} else {
-			try { $tags = await getAllTags(); } catch (_) {}
-		}
+		try { $tags = await getAllTags(); } catch (_) {}
 	}
 
 	let compact = $derived($appConfig?.compact_notes ?? false);
@@ -995,7 +979,7 @@
 		<span class="list-title">{viewTitle}</span>
 		<div class="list-actions">
 			{#if !isCompact}
-				<button class="icon-btn" onclick={() => ($notelistCollapsed = true)} title={`Hide notes list (${modKey}+Shift+\\)`} aria-label="Hide notes list">
+				<button class="icon-btn" onclick={() => ($notelistCollapsed = true)} title={`Hide notes list (Ctrl+Shift+\\)`} aria-label="Hide notes list">
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<line x1="4" y1="6" x2="16" y2="6" />
 						<line x1="4" y1="12" x2="16" y2="12" />
@@ -1025,7 +1009,7 @@
 				</button>
 			{/if}
 			{#if $viewMode !== 'trash' && $viewMode !== 'quickaccess'}
-				<button class={isCompact ? 'compact-create-btn' : 'icon-btn'} onclick={handleCreateNote} title={`New note (${modKey}+N)`}>
+				<button class={isCompact ? 'compact-create-btn' : 'icon-btn'} onclick={handleCreateNote} title={`New note (Ctrl+N)`}>
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={isCompact ? '3' : '2'} stroke-linecap="round" stroke-linejoin="round">
 						<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
 					</svg>

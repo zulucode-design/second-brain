@@ -27,8 +27,7 @@
 	import { readFile } from '@tauri-apps/plugin-fs';
 	import { convertFileSrc } from '@tauri-apps/api/core';
 	import type { NotebookEntry, RelocationOutcome } from '$lib/types';
-		import { compactLayout } from '$lib/stores/app';
-	const isCompact = $derived($compactLayout);
+	import { compactLayout } from '$lib/stores/app';
 	import { decodeNoteDragPaths } from '$lib/utils/note-drag';
 	import {
 		canCreateNotebookUnder,
@@ -44,13 +43,13 @@
 		normalizeNotebookIconKey,
 		type NotebookIconId
 	} from '$lib/utils/notebook-icons';
+	const isCompact = $derived($compactLayout);
 
 	let { onViewChanged = () => {}, onRelocateActiveDocument = async (_path: string, _reason: string, _mutation: () => Promise<RelocationOutcome>) => null }: {
 		onViewChanged?: () => void;
 		onRelocateActiveDocument?: (path: string, reason: string, mutation: () => Promise<RelocationOutcome>) => Promise<string | null>;
 	} = $props();
 
-	const modKey = 'Ctrl';
 
 	const unfiledCount = $derived($unfiledNotes.length);
 
@@ -143,34 +142,19 @@
 	 * note list for the same files, and startup should not wait for it (#128). */
 	export async function refresh({ deferTags = false }: { deferTags?: boolean } = {}) {
 		try {
-			if (isCompact) {
-				// On compact, parallelize and skip getAllTags (derive from $notes instead)
-				const [nbs, icons, qaNotes, rootCount] = await Promise.all([
-					getNotebooks(),
-					getNotebookIcons(),
-					getQuickAccess(),
-					countRootNotes(),
-				]);
-				$notebooks = nbs;
-				$notebookIcons = icons;
-				$quickAccessPaths = qaNotes.map(n => n.relative_path);
-				$rootNoteCount = rootCount;
-			} else {
-				const [nbs, rootCount] = await Promise.all([getNotebooks(), countRootNotes()]);
-				$notebooks = nbs;
-				$rootNoteCount = rootCount;
-				if (!deferTags) $tags = await getAllTags();
-				$notebookIcons = await getNotebookIcons();
-				const qaNotes = await getQuickAccess();
-				$quickAccessPaths = qaNotes.map(n => n.relative_path);
-			}
+			const [nbs, rootCount] = await Promise.all([getNotebooks(), countRootNotes()]);
+			$notebooks = nbs;
+			$rootNoteCount = rootCount;
+			if (!deferTags) $tags = await getAllTags();
+			$notebookIcons = await getNotebookIcons();
+			const qaNotes = await getQuickAccess();
+			$quickAccessPaths = qaNotes.map(n => n.relative_path);
 		} catch (e) {
 			console.error('Failed to refresh sidebar:', e);
 		}
 	}
 
 	export async function refreshTags() {
-		if (isCompact) return;
 		try {
 			$tags = await getAllTags();
 		} catch (e) {
@@ -779,7 +763,7 @@
 				{/if}
 			</svg>
 		</button>
-			<button class="icon-btn" onclick={() => ($showSearch = true)} title={`Search (${modKey}+F)`}>
+			<button class="icon-btn" onclick={() => ($showSearch = true)} title={`Search (Ctrl+F)`}>
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<circle cx="11" cy="11" r="8" />
 					<line x1="21" y1="21" x2="16.65" y2="16.65" />

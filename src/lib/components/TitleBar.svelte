@@ -18,7 +18,6 @@
 	} = $props();
 
 	const appWindow = getCurrentWindow();
-	const modKey = 'Ctrl';
 	let maximized = $state(false);
 
 	async function checkMaximized() {
@@ -117,7 +116,7 @@
 				<path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
 			</svg>
 		</button>
-		<button class="new-note-btn" onclick={onNewNote} disabled={$shutdownPending} title={`New Note (${modKey}+N)`}>
+		<button class="new-note-btn" onclick={onNewNote} disabled={$shutdownPending} title={`New Note (Ctrl+N)`}>
 			<svg width="14" height="14" viewBox="0 0 14 14" fill="none">
 				<path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
 			</svg>

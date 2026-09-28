@@ -113,7 +113,7 @@ export const viewerNote = writable<{ path: string; content: string } | null>(
   null,
 );
 
-// Compact navigation state
+// Which panel the compact layout shows (CONTEXT.md: compact layout).
 export const compactView = writable<"sidebar" | "notelist" | "editor">(
   "sidebar",
 );

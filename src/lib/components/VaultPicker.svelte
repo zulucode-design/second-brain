@@ -53,7 +53,7 @@
 		try {
 			await openVault(selectedFolder);
 			$appConfig = await getAppConfig();
-			await releaseVaultSwitch();
+			// The vault is open, so show it; unmounting the picker releases the switch gate.
 			$vaultReady = true;
 		} catch (cause) {
 			error = String(cause);
@@ -75,7 +75,7 @@
 	<div class="picker-card">
 		<h1>Second Brain</h1>
 		<p>Choose one local folder for your notes. An existing Markdown vault can be opened here.</p>
-		{#if $appConfig?.active_vault}
+		{#if $appConfig?.active_vault && !initialError}
 			<p class="current">Current vault: <strong>{$appConfig.active_vault}</strong></p>
 		{:else if $appConfig?.vault}
 			<p class="current">Previous vault: <strong>{$appConfig.vault.path}</strong></p>
@@ -91,7 +91,8 @@
 			</button>
 		{/if}
 		{#if error}<p class="error" role="alert">{error}</p>{/if}
-		{#if $appConfig?.active_vault}
+		{#if $appConfig?.active_vault && !initialError}
+			<!-- After a failed startup open there is no open vault to return to. -->
 			<button class="back" onclick={returnToVault} disabled={loading}>Back to current vault</button>
 		{/if}
 	</div>

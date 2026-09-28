@@ -74,7 +74,9 @@ fn legacy_path_keyed_index(vault_path: &str) -> Option<std::path::PathBuf> {
         .iter()
         .map(|b| format!("{:02x}", b))
         .collect();
-    dirs::data_local_dir().map(|d| d.join("helixnotes").join("search").join(key))
+    crate::app_dirs::machine_root()
+        .ok()
+        .map(|d| d.join("search").join(key))
 }
 
 /// True for characters in the CJK / Japanese / Korean blocks, which are written

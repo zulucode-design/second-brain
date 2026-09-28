@@ -6,4 +6,5 @@ pub mod para;
 pub(crate) mod path;
 pub mod relocation;
 pub mod repair;
+pub mod sync_product;
 pub mod watcher;

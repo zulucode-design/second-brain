@@ -142,20 +142,27 @@ fn strip_webdav(document: &mut Value) -> Result<(bool, Vec<String>), String> {
     let mut found = strip_settings(root);
     let mut vault_ids = Vec::new();
 
-    if let Some(vaults) = root.get_mut("vaults").and_then(Value::as_array_mut) {
-        for vault in vaults {
-            let Some(vault) = vault.as_object_mut() else {
-                continue;
-            };
-            if let Some(vault_id) = vault
-                .get("vault_id")
-                .and_then(Value::as_str)
-                .filter(|vault_id| !vault_id.is_empty())
-            {
-                vault_ids.push(vault_id.to_string());
-            }
-            found |= strip_settings(vault);
+    // Legacy `vaults` list and the single `vault` entry that replaced it.
+    let mut vaults: Vec<&mut Value> = Vec::new();
+    for (key, value) in root.iter_mut() {
+        match (key.as_str(), value) {
+            ("vaults", Value::Array(list)) => vaults.extend(list.iter_mut()),
+            ("vault", value) => vaults.push(value),
+            _ => {}
         }
+    }
+    for vault in vaults {
+        let Some(vault) = vault.as_object_mut() else {
+            continue;
+        };
+        if let Some(vault_id) = vault
+            .get("vault_id")
+            .and_then(Value::as_str)
+            .filter(|vault_id| !vault_id.is_empty())
+        {
+            vault_ids.push(vault_id.to_string());
+        }
+        found |= strip_settings(vault);
     }
 
     vault_ids.sort();

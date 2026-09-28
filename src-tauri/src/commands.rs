@@ -301,6 +301,11 @@ fn open_vault_path(
     state: &State<'_, AppState>,
     path: String,
 ) -> Result<(), String> {
+    if let Some(product) = crate::vault::sync_product::managing_product(Path::new(&path)) {
+        return Err(format!(
+            "This folder is managed by {product}. Second Brain syncs the vault itself, so choose a folder on a local disk or directly attached drive that no other sync app manages."
+        ));
+    }
     let _note_mutation = state
         .note_mutation
         .lock()
@@ -3068,19 +3073,8 @@ fn validate_external_url(url: &str) -> Result<(), String> {
 
 #[cfg(target_os = "linux")]
 fn open_linux(argument: &std::ffi::OsStr) -> Result<(), String> {
-    let mut command = std::process::Command::new("xdg-open");
-    command.arg(argument);
-    if std::env::var("APPIMAGE").is_ok() {
-        command
-            .env_remove("LD_LIBRARY_PATH")
-            .env_remove("LD_PRELOAD")
-            .env_remove("GIO_LAUNCHED_DESKTOP_FILE")
-            .env_remove("GIO_LAUNCHED_DESKTOP_FILE_PID");
-        if let Ok(original_path) = std::env::var("PATH_ORIG") {
-            command.env("PATH", original_path);
-        }
-    }
-    command
+    std::process::Command::new("xdg-open")
+        .arg(argument)
         .spawn()
         .map(|_| ())
         .map_err(|error| format!("Failed to open item: {error}"))
@@ -3677,14 +3671,23 @@ pub fn ai_ask(
 // ── Helpers ──
 
 fn app_config_path() -> Result<std::path::PathBuf, String> {
-    let app_dir = dirs::config_dir()
-        .ok_or_else(|| "Config directory not available yet".to_string())?
-        .join("helixnotes");
+    let app_dir = crate::app_dirs::config_root()?;
     std::fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
     Ok(app_dir.join("config.json"))
 }
 
 pub fn load_app_config() -> AppConfig {
+    if let Err(error) = crate::app_dirs::migrate_legacy_dirs() {
+        log::error!("{error}");
+        // A half-finished move must not be overwritten by fresh settings; it resumes next launch.
+        return AppConfig {
+            config_error: Some(format!(
+                "{error}. Settings cannot be saved until it completes; restart to retry."
+            )),
+            config_save_blocked: true,
+            ..AppConfig::default()
+        };
+    }
     app_config_path()
         .map(|path| load_app_config_from(&path, &crate::secret_store::OsSecretStore))
         .unwrap_or_default()

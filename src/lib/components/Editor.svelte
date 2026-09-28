@@ -66,8 +66,8 @@
 	import TagSuggestInput from './TagSuggestInput.svelte';
 	import ImageViewer from './ImageViewer.svelte';
 	import { compactLayout } from '$lib/stores/app';
-	const isCompact = $derived($compactLayout);
 	import ResizeHandle from './ResizeHandle.svelte';
+	const isCompact = $derived($compactLayout);
 
 	let {
 		onMoveToTrash,
@@ -85,7 +85,6 @@
 		onRelocateActiveDocument?: (path: string, reason: string, mutation: () => Promise<RelocationOutcome>) => Promise<string | null>;
 	} = $props();
 
-	const modKey = 'Ctrl';
 	const sourceHighlighter = hljs.newInstance();
 	sourceHighlighter.registerLanguage('markdown', markdownLanguage);
 	const SOURCE_HIGHLIGHT_MAX_CHARS = 32_000;
@@ -657,7 +656,7 @@
 	}
 
 	let mathObserver: IntersectionObserver | null = null;
-	const mathPending = new WeakMap<Element, () => void>();
+	const mathPending = new Map<Element, () => void>();
 	function observeMath(dom: HTMLElement, render: () => void) {
 		if (!mathObserver) {
 			const root = (editorElement?.closest('.editor-body') as Element) ?? null;
@@ -1615,15 +1614,13 @@
 				const toolbar = document.createElement('div');
 				toolbar.className = 'mermaid-render-toolbar';
 
-				{
-					const copyBtn = document.createElement('button');
-					copyBtn.type = 'button';
-					copyBtn.className = 'mermaid-render-action';
-					copyBtn.title = 'Copy as PNG';
-					copyBtn.textContent = 'Copy';
-					copyBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); copyDiagram(container); };
-					toolbar.appendChild(copyBtn);
-				}
+				const copyBtn = document.createElement('button');
+				copyBtn.type = 'button';
+				copyBtn.className = 'mermaid-render-action';
+				copyBtn.title = 'Copy as PNG';
+				copyBtn.textContent = 'Copy';
+				copyBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); copyDiagram(container); };
+				toolbar.appendChild(copyBtn);
 
 				const saveBtn = document.createElement('button');
 				saveBtn.type = 'button';
@@ -4460,6 +4457,7 @@
 		}
 		mathObserver?.disconnect();
 		mathObserver = null;
+		mathPending.clear();
 		editorReady = false;
 		closeSlashMenu();
 	}
@@ -4472,6 +4470,7 @@
 		}
 		mathObserver?.disconnect();
 		mathObserver = null;
+		mathPending.clear();
 
 		isLargeDoc = content.length > LARGE_DOC_CHARS;
 		const html = markdownToHtml(content);
@@ -6018,6 +6017,19 @@
 		}
 	});
 
+	// Crossing the compact breakpoint swaps the rich editor's element. Move the live editor
+	// onto the new one: rebuilding it would drop undo history and leave a moment with no
+	// document for a pending save to capture.
+	$effect(() => {
+		const element = editorElement;
+		if (!element || !editor || editor.view.dom.parentElement === element) return;
+		element.appendChild(editor.view.dom);
+		// Lazy math rendering watches the scroll container, which was replaced too.
+		mathObserver?.disconnect();
+		mathObserver = null;
+		for (const [dom, render] of [...mathPending]) observeMath(dom as HTMLElement, render);
+	});
+
 	// Tauri drag-drop listener for OS file drops (browser DragEvent doesn't have files in Tauri)
 	let unlistenDragDrop: (() => void) | null = null;
 	$effect(() => {
@@ -6099,8 +6111,8 @@
 			</div>
 			<p>Select a note or create a new one</p>
 			<div class="shortcuts-hint">
-				<span><kbd>{modKey}</kbd>+<kbd>N</kbd> New note</span>
-				<span><kbd>{modKey}</kbd>+<kbd>P</kbd> Quick open</span>
+				<span><kbd>Ctrl</kbd>+<kbd>N</kbd> New note</span>
+				<span><kbd>Ctrl</kbd>+<kbd>P</kbd> Quick open</span>
 			</div>
 		</div>
 	{:else}
@@ -6209,7 +6221,7 @@
 					class="icon-btn"
 					class:active={noteSearchOpen}
 					onclick={() => noteSearchOpen ? closeNoteSearch() : openNoteSearch()}
-					title={`Find in note (${modKey}+F)`}
+					title={`Find in note (Ctrl+F)`}
 				>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -6734,7 +6746,7 @@
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div class="editor-formatting-bar" style={isCompact ? `${keyboardHeight > 0 ? `bottom: ${keyboardHeight}px;` : ''}${anyDropdownOpen ? 'overflow: visible;' : ''}` : ''} onclick={handleFormattingBarClick} onkeydown={(e) => { if (e.key === 'Escape') closeFormattingDropdowns(); }}>
 				{#if isCompact}
-				<!-- ═══ MOBILE formatting bar: compact, relevant buttons only ═══ -->
+				<!-- ═══ Compact formatting bar: relevant buttons only ═══ -->
 
 				<!-- Insert (+) dropdown - at front like desktop -->
 				<div class="fmt-dropdown-wrap">
@@ -6971,16 +6983,16 @@
 				<div class="fmt-sep"></div>
 
 				<!-- Text formatting -->
-				<button class="fmt-btn" class:active={isEditorActive('bold')} onclick={() => editor?.chain().focus().toggleBold().run()} title={`Bold (${modKey}+B)`}>
+				<button class="fmt-btn" class:active={isEditorActive('bold')} onclick={() => editor?.chain().focus().toggleBold().run()} title={`Bold (Ctrl+B)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h9a4 4 0 010 8H7a1 1 0 01-1-1V5a1 1 0 011-1h7a4 4 0 010 8"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={isEditorActive('italic')} onclick={() => editor?.chain().focus().toggleItalic().run()} title={`Italic (${modKey}+I)`}>
+				<button class="fmt-btn" class:active={isEditorActive('italic')} onclick={() => editor?.chain().focus().toggleItalic().run()} title={`Italic (Ctrl+I)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={isEditorActive('underline')} onclick={() => editor?.chain().focus().toggleUnderline().run()} title={`Underline (${modKey}+U)`}>
+				<button class="fmt-btn" class:active={isEditorActive('underline')} onclick={() => editor?.chain().focus().toggleUnderline().run()} title={`Underline (Ctrl+U)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4v6a6 6 0 0012 0V4"/><line x1="4" x2="20" y1="20" y2="20"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={isEditorActive('strike')} onclick={() => editor?.chain().focus().toggleStrike().run()} title={`Strikethrough (${modKey}+Shift+X)`}>
+				<button class="fmt-btn" class:active={isEditorActive('strike')} onclick={() => editor?.chain().focus().toggleStrike().run()} title={`Strikethrough (Ctrl+Shift+X)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4H9a3 3 0 00-2.83 4"/><path d="M14 12a4 4 0 010 8H6"/><line x1="4" x2="20" y1="12" y2="12"/></svg>
 				</button>
 
@@ -7006,50 +7018,50 @@
 				<div class="fmt-sep"></div>
 
 				<!-- Link -->
-				<button class="fmt-btn" class:active={isEditorActive('link')} onclick={addLinkFromToolbar} title={`Link (${modKey}+K)`}>
+				<button class="fmt-btn" class:active={isEditorActive('link')} onclick={addLinkFromToolbar} title={`Link (Ctrl+K)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
 				</button>
 
 				<div class="fmt-sep"></div>
 
 				<!-- Lists -->
-				<button class="fmt-btn" class:active={isEditorActive('bulletList')} onclick={toggleBulletList} title={`Bullet List (${modKey}+Shift+8)`}>
+				<button class="fmt-btn" class:active={isEditorActive('bulletList')} onclick={toggleBulletList} title={`Bullet List (Ctrl+Shift+8)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={isEditorActive('orderedList')} onclick={() => editor?.chain().focus().toggleOrderedList().run()} title={`Ordered List (${modKey}+Shift+7)`}>
+				<button class="fmt-btn" class:active={isEditorActive('orderedList')} onclick={() => editor?.chain().focus().toggleOrderedList().run()} title={`Ordered List (Ctrl+Shift+7)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5h10"/><path d="M11 12h10"/><path d="M11 19h10"/><path d="M4 4h1v5"/><path d="M4 9h2"/><path d="M6.5 20H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 00-2.6-1.02"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={isEditorActive('taskList')} onclick={toggleTaskList} title={`Task List (${modKey}+Shift+9)`}>
+				<button class="fmt-btn" class:active={isEditorActive('taskList')} onclick={toggleTaskList} title={`Task List (Ctrl+Shift+9)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 5h8"/><path d="M13 12h8"/><path d="M13 19h8"/><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/></svg>
 				</button>
 
 				<div class="fmt-sep"></div>
 
 				<!-- Undo / Redo -->
-				<button class="fmt-btn" onclick={() => editor?.chain().focus().undo().run()} title={`Undo (${modKey}+Z)`}>
+				<button class="fmt-btn" onclick={() => editor?.chain().focus().undo().run()} title={`Undo (Ctrl+Z)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 015.5 5.5 5.5 5.5 0 01-5.5 5.5H11"/></svg>
 				</button>
-				<button class="fmt-btn" onclick={() => editor?.chain().focus().redo().run()} title={`Redo (${modKey}+Shift+Z)`}>
+				<button class="fmt-btn" onclick={() => editor?.chain().focus().redo().run()} title={`Redo (Ctrl+Shift+Z)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 004 14.5 5.5 5.5 0 009.5 20H13"/></svg>
 				</button>
 
 				<div class="fmt-sep"></div>
 
 				<!-- Code & Code Block -->
-				<button class="fmt-btn" class:active={isEditorActive('code')} onclick={() => editor?.chain().focus().toggleCode().run()} title={`Inline Code (${modKey}+E)`}>
+				<button class="fmt-btn" class:active={isEditorActive('code')} onclick={() => editor?.chain().focus().toggleCode().run()} title={`Inline Code (Ctrl+E)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={isEditorActive('codeBlock')} onclick={() => editor?.chain().focus().toggleCodeBlock().run()} title={`Code Block (${modKey}+Alt+C)`}>
+				<button class="fmt-btn" class:active={isEditorActive('codeBlock')} onclick={() => editor?.chain().focus().toggleCodeBlock().run()} title={`Code Block (Ctrl+Alt+C)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m10 9-3 3 3 3"/><path d="m14 15 3-3-3-3"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
 				</button>
 
 				<!-- Blockquote -->
-				<button class="fmt-btn" class:active={isEditorActive('blockquote')} onclick={() => editor?.chain().focus().toggleBlockquote().run()} title={`Quote (${modKey}+Shift+B)`}>
+				<button class="fmt-btn" class:active={isEditorActive('blockquote')} onclick={() => editor?.chain().focus().toggleBlockquote().run()} title={`Quote (Ctrl+Shift+B)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 5H3"/><path d="M21 12H8"/><path d="M21 19H8"/><path d="M3 12v7"/></svg>
 				</button>
 
 				<!-- Collapsible Section -->
-				<button class="fmt-btn" class:active={isEditorActive('details')} onclick={() => insertDetails()} title={`Collapsible Section (${modKey}+.)`}>
+				<button class="fmt-btn" class:active={isEditorActive('details')} onclick={() => insertDetails()} title={`Collapsible Section (Ctrl+.)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="13" height="7" x="8" y="3" rx="1"/><path d="m2 9 3 3-3 3"/><rect width="13" height="7" x="8" y="14" rx="1"/></svg>
 				</button>
 
@@ -7095,7 +7107,7 @@
 
 				<!-- Highlight -->
 				<div class="fmt-dropdown-wrap">
-					<button class="fmt-btn" class:active={isEditorActive('highlight')} onclick={(e) => { e.stopPropagation(); highlightDropdown = !highlightDropdown; headingDropdown = false; colorDropdown = false; tablePickerOpen = false; alignDropdown = false; insertDropdown = false; }} title={`Highlight (${modKey}+Shift+H)`}>
+					<button class="fmt-btn" class:active={isEditorActive('highlight')} onclick={(e) => { e.stopPropagation(); highlightDropdown = !highlightDropdown; headingDropdown = false; colorDropdown = false; tablePickerOpen = false; alignDropdown = false; insertDropdown = false; }} title={`Highlight (Ctrl+Shift+H)`}>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 01-2.8 0l-5.2-5.2a2 2 0 010-2.8L14 4"/></svg>
 						<span class="color-indicator" style="background: {getEditorAttributes('highlight').color || 'var(--accent)'}"></span>
 					</button>
@@ -7284,23 +7296,23 @@
 			<button onclick={ctxCut}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
 				Cut
-				<span class="text-ctx-shortcut">{modKey}+X</span>
+				<span class="text-ctx-shortcut">Ctrl+X</span>
 			</button>
 			<button onclick={ctxCopy}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
 				Copy
-				<span class="text-ctx-shortcut">{modKey}+C</span>
+				<span class="text-ctx-shortcut">Ctrl+C</span>
 			</button>
 			<button onclick={ctxPaste}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
 				Paste
-				<span class="text-ctx-shortcut">{modKey}+V</span>
+				<span class="text-ctx-shortcut">Ctrl+V</span>
 			</button>
 			<div class="text-ctx-sep"></div>
 			<button onclick={ctxSelectAll}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 7h8M8 12h8M8 17h8"/></svg>
 				Select All
-				<span class="text-ctx-shortcut">{modKey}+A</span>
+				<span class="text-ctx-shortcut">Ctrl+A</span>
 			</button>
 			<div class="text-ctx-sep"></div>
 			<!-- Heading submenu -->
@@ -7315,17 +7327,17 @@
 			<button onclick={ctxBold}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M6 4h8a4 4 0 014 4 4 4 0 01-4 4H6zm0 8h9a4 4 0 014 4 4 4 0 01-4 4H6z"/></svg>
 				Bold
-				<span class="text-ctx-shortcut">{modKey}+B</span>
+				<span class="text-ctx-shortcut">Ctrl+B</span>
 			</button>
 			<button onclick={ctxItalic}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/></svg>
 				Italic
-				<span class="text-ctx-shortcut">{modKey}+I</span>
+				<span class="text-ctx-shortcut">Ctrl+I</span>
 			</button>
 			<button onclick={ctxUnderline}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v7a6 6 0 006 6 6 6 0 006-6V3"/><line x1="4" y1="21" x2="20" y2="21"/></svg>
 				Underline
-				<span class="text-ctx-shortcut">{modKey}+U</span>
+				<span class="text-ctx-shortcut">Ctrl+U</span>
 			</button>
 			<button onclick={ctxStrike}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4H9a3 3 0 00-3 3 3 3 0 003 3h6"/><line x1="4" y1="12" x2="20" y2="12"/><path d="M8 20h7a3 3 0 003-3 3 3 0 00-3-3H8"/></svg>
@@ -7343,7 +7355,7 @@
 			<button onclick={ctxLink}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
 				Add Link
-				<span class="text-ctx-shortcut">{modKey}+K</span>
+				<span class="text-ctx-shortcut">Ctrl+K</span>
 			</button>
 			<button onclick={ctxCode}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
@@ -7562,7 +7574,7 @@
 				{/if}
 			</div>
 			<div class="math-modal-footer">
-				<span class="math-modal-hint">{modKey}+Enter to {mathModal.editPos !== null ? 'update' : 'insert'} · Esc to cancel</span>
+				<span class="math-modal-hint">Ctrl+Enter to {mathModal.editPos !== null ? 'update' : 'insert'} · Esc to cancel</span>
 				<div class="math-modal-actions">
 					<button type="button" onclick={cancelMathModal}>Cancel</button>
 					<button type="button" class="primary" onclick={commitMathModal} disabled={!mathModal.tex.trim()}>

@@ -19,6 +19,7 @@ truth; indexes and queues are machine-local projections that may be deleted and 
 | **Bulk mutation** | An operation that rewrites many vault files in one run, such as an Obsidian import, a backup restore, or a peer sync. Only one runs at a time; a second is refused, not queued. |
 | **Terminal outcome** | How a bulk mutation ended: *success*, *changed-incomplete*, or *failure*. Reported as the `success`, `outcome`, and `error` fields. |
 | **Changed-incomplete** | The terminal outcome in which the vault changed on disk but the operation did not finish, so the vault holds a mix of old and new files. Distinct from *failure*, which means nothing changed. |
+| **Compact layout** | The single-panel layout shown while the window is 768 px wide or narrower, on any supported platform. It shows one panel at a time (sidebar, note list, or editor), recorded as the compact view. |
 
 Use **semantic search** for retrieval by meaning. Do not use “AI search” as a synonym: the
 writing tools and their selectable provider are a separate capability.

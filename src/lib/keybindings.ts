@@ -1,6 +1,6 @@
 import { writable } from "svelte/store";
 
-// A single key combination. `mod` means Ctrl on Windows/Linux and Cmd on macOS.
+// A single key combination. `mod` means Ctrl.
 // `code` is a KeyboardEvent.code value (layout-independent), e.g. "KeyN",
 // "Backslash", "ArrowLeft", "F11".
 export interface Binding {

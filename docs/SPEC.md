@@ -79,7 +79,9 @@ behavior remains as platform-neutral **compact layout**.
 
 Vaults are supported on local filesystems and directly attached drives. A vault inside a
 folder managed by another synchronization product is unsupported because Second Brain's
-bundled sidecar owns synchronization. NAS storage is deferred for post-v1 investigation,
+bundled sidecar owns synchronization. Opening a vault inside a detected OneDrive, Dropbox, or
+Nextcloud/ownCloud folder is refused; the vault picker asks the user to confirm the folder is
+not managed by a product detection cannot see. NAS storage is deferred for post-v1 investigation,
 not rejected. External-alpha performance is verified with 10,000 notes; this is a tested
 baseline rather than an enforced maximum.
 

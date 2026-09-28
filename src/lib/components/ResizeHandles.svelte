@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-		import { compactLayout } from '$lib/stores/app';
+	import { compactLayout } from '$lib/stores/app';
 	const isCompact = $derived($compactLayout);
 
 	type Dir =

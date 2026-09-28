@@ -2,7 +2,7 @@
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { appConfig, vaultReady, theme } from '$lib/stores/app';
 	import { getAppConfig, openVault, setFontSize, registerSaveParticipant, acknowledgeSaveBeforeClose } from '$lib/api';
-	import { darkThemes } from '$lib/platform';
+	import { applyTheme, isDarkTheme } from '$lib/platform';
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import { listenAppEvent } from '$lib/events';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -224,16 +224,7 @@
 			const themeValue = rawTheme === 'system'
 				? (prefersDark ? config.system_dark_theme || 'dark' : config.system_light_theme || 'light')
 				: rawTheme;
-			const root = document.documentElement;
-			const namedThemes = ['solarized-light', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-light', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'light-coffee', 'dark-coffee', 'cotton-candy', 'crimson', 'cloud', 'peach', 'material-dark', 'material-light', 'monokai', 'rose-pine', 'everforest', 'horizon', 'cyberpunk', 'black', 'one-dark'];
-			root.classList.remove('dark');
-			root.removeAttribute('data-theme');
-			if (namedThemes.includes(themeValue)) {
-				root.setAttribute('data-theme', themeValue);
-				if (darkThemes.includes(themeValue)) root.classList.add('dark');
-			} else if (themeValue === 'dark') {
-				root.classList.add('dark');
-			}
+			applyTheme(themeValue, config.custom_themes);
 
 			// Apply saved font settings
 			if (config.font_size) applyEditorFontSize(config.font_size);
@@ -259,8 +250,7 @@
 			}
 			// Apply saved accent
 			if (config.accent_color) {
-				const customTheme = config.custom_themes.find(theme => theme.id === themeValue);
-				const isDark = darkThemes.includes(themeValue) || (customTheme?.is_dark ?? false);
+				const isDark = isDarkTheme(themeValue, config.custom_themes);
 				let color: string | null = null;
 				if (config.accent_color.startsWith('#')) {
 					color = config.accent_color;

@@ -8,28 +8,32 @@ const rustTypes = read('src-tauri/src/types.rs');
 const notionTypes = read('src-tauri/src/notion/config.rs');
 const tsTypes = ts.createSourceFile('types.ts', read('src/lib/types.ts'), ts.ScriptTarget.Latest, true);
 
-function rustFields(name, source = rustTypes) {
+function rustStruct(name, source = rustTypes) {
   const body = source.match(new RegExp(`pub struct ${name} \\{([\\s\\S]*?)\\n\\}`))?.[1];
   assert.ok(body, `Rust ${name} missing`);
-  return Object.fromEntries([...body.matchAll(/^\s*pub (\w+): (.+),$/gm)].map(([, field, type]) => [field, type]));
+  return body;
 }
 
-function tsFields(name) {
-  const node = tsTypes.statements.find((statement) => ts.isInterfaceDeclaration(statement) && statement.name.text === name);
-  assert.ok(node, `TypeScript ${name} missing`);
-  return Object.fromEntries(node.members.map((member) => [member.name.getText(tsTypes), member.type]));
-}
-
-function tsOptionalFields(name) {
-  const node = tsTypes.statements.find((statement) => ts.isInterfaceDeclaration(statement) && statement.name.text === name);
-  assert.ok(node);
-  return node.members.filter((member) => member.questionToken).map((member) => member.name.getText(tsTypes)).sort();
+function rustFields(name, source = rustTypes) {
+  return Object.fromEntries([...rustStruct(name, source).matchAll(/^\s*pub (\w+): (.+),$/gm)].map(([, field, type]) => [field, type]));
 }
 
 function rustOptionalFields(name) {
-  const body = rustTypes.match(new RegExp(`pub struct ${name} \\{([\\s\\S]*?)\\n\\}`))?.[1];
-  assert.ok(body);
-  return [...body.matchAll(/#\[serde\([^\]]*skip_serializing_if[^\]]*\)\]\s*pub (\w+):/g)].map((match) => match[1]).sort();
+  return [...rustStruct(name).matchAll(/#\[serde\([^\]]*skip_serializing_if[^\]]*\)\]\s*pub (\w+):/g)].map((match) => match[1]).sort();
+}
+
+function tsInterface(name) {
+  const node = tsTypes.statements.find((statement) => ts.isInterfaceDeclaration(statement) && statement.name.text === name);
+  assert.ok(node, `TypeScript ${name} missing`);
+  return node;
+}
+
+function tsFields(name) {
+  return Object.fromEntries(tsInterface(name).members.map((member) => [member.name.getText(tsTypes), member.type]));
+}
+
+function tsOptionalFields(name) {
+  return tsInterface(name).members.filter((member) => member.questionToken).map((member) => member.name.getText(tsTypes)).sort();
 }
 
 function rustShape(type) {

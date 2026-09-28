@@ -9,7 +9,7 @@
 
 use tauri::{AppHandle, Emitter, Manager};
 
-use super::{portal, Availability, HotkeyStatus, Unavailable, STATUS_EVENT};
+use super::{portal, Availability, HotkeyStatus, Unavailable};
 use crate::state::AppState;
 
 type ActivationListener = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
@@ -277,7 +277,7 @@ fn publish(app: &AppHandle, status: HotkeyStatus) {
     if let Ok(mut stored) = app.state::<AppState>().hotkey_status.lock() {
         *stored = status.clone();
     }
-    let _ = app.emit(STATUS_EVENT, status);
+    let _ = app.emit(crate::events::HOTKEY_STATUS_CHANGED, status);
 }
 
 /// Make the on-disk autostart entry match the stored preference.

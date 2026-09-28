@@ -4,7 +4,7 @@
 	import { debounce } from '$lib/utils/debounce';
 	import { startTimer } from '$lib/perf-probe';
 	import { PARA_CATEGORIES, type SearchResult, type NotebookEntry, type ParaCategory } from '$lib/types';
-		import { compactLayout } from '$lib/stores/app';
+	import { compactLayout } from '$lib/stores/app';
 	const isCompact = $derived($compactLayout);
 
 	let { onOpenResult = async (_path: string) => false }: {

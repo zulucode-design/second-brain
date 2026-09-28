@@ -53,13 +53,6 @@ pub const PREFERRED_TRIGGER: &str = "CTRL+ALT+n";
 /// the hotkey shows an existing window rather than waiting on a WebView to load.
 pub const WINDOW_LABEL: &str = "capture";
 
-/// Emitted to the capture window when it is shown, so the field can take the caret. The
-/// window cannot infer this: it is shown and hidden repeatedly without ever being reloaded.
-pub const SHOWN_EVENT: &str = crate::events::QUICK_CAPTURE_SHOWN;
-
-/// Emitted when the hotkey's registration state changes, so settings never shows a stale one.
-pub const STATUS_EVENT: &str = crate::events::HOTKEY_STATUS_CHANGED;
-
 /// A reverse-DNS application identifier accepted by Tauri's bundler *and* the portal.
 ///
 /// Three sets of rules apply at once, and they contradict each other, so the intersection is

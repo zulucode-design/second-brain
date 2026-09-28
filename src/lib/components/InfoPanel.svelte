@@ -12,10 +12,9 @@
 		bindingsEqual,
 		type ActionDef,
 	} from '$lib/keybindings';
-		import { compactLayout } from '$lib/stores/app';
+	import { compactLayout } from '$lib/stores/app';
 	const isCompact = $derived($compactLayout);
 
-	const modKey = 'Ctrl';
 
 	// Customizable shortcuts, grouped for display.
 	const actionGroups: { title: string; actions: ActionDef[] }[] = [
@@ -190,15 +189,15 @@
 						<div class="shortcut-row"><span class="shortcut-desc">Close panel / exit focus</span><span class="shortcut-keys"><kbd>Esc</kbd></span></div>
 
 						<h4 class="shortcuts-group-title">Formatting</h4>
-						<div class="shortcut-row"><span class="shortcut-desc">Bold</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>B</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Italic</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>I</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Underline</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>U</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Strikethrough</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Code</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>E</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Link</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>K</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Collapsible section</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>.</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Undo</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Z</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Redo</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Bold</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>B</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Italic</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>I</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Underline</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>U</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Strikethrough</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Code</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>E</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Link</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>K</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Collapsible section</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>.</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Undo</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>Z</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Redo</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Move line up / down</span><span class="shortcut-keys"><kbd>Alt</kbd>+<kbd>↑↓</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Move list item up / down</span><span class="shortcut-keys"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↑↓</kbd></span></div>
 

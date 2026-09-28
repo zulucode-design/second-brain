@@ -101,14 +101,14 @@ test('Windows launch task targets the logged-in desktop identity', () => {
 test('public traces drop account names, home paths, and host names', () => {
   const line = JSON.stringify({
     vault: `${homedir()}/sb88/runs/x/fedora/vault`,
-    machineLink: 'C:\\Users\\Someone\\AppData\\Local\\helixnotes\\vaults\\id',
+    machineLink: 'C:\\Users\\Someone\\AppData\\Local\\io.github.zulucodedesign.SecondBrain\\vaults\\id',
     host: 'DESKTOP-EXAMPLE',
     matching: 5000,
   });
   const redacted = redactTrace(line);
   assert.deepEqual(JSON.parse(redacted), {
     vault: '~/sb88/runs/x/fedora/vault',
-    machineLink: '%USERPROFILE%\\AppData\\Local\\helixnotes\\vaults\\id',
+    machineLink: '%USERPROFILE%\\AppData\\Local\\io.github.zulucodedesign.SecondBrain\\vaults\\id',
     matching: 5000,
   });
   assert.deepEqual(JSON.parse(redactTrace(JSON.stringify({ matching: 1, host: 'last' }))), { matching: 1 });
