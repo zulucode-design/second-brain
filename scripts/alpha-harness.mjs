@@ -44,7 +44,7 @@ const WINDOWS_NATIVE_DRIVER = 'D:\\SecondBrainTest\\sb88\\driver\\msedge\\msedge
 const WINDOWS_DRIVER_TASK = 'SecondBrainAlphaHarnessDriver';
 const WINDOWS_DRIVER_PORT = 4444;
 const WINDOWS_DESKTOP_TASK = 'SecondBrainAlphaHarnessDesktop';
-const WINDOWS_OLLAMA_URL = 'http://127.0.0.1:11434';
+const DEFAULT_WINDOWS_OLLAMA_PORT = 11434;
 // Fedora reaches the desktop's Ollama through the controller's own tunnel on this port.
 const FEDORA_OLLAMA_PORT = 11435;
 // Nothing listens on the discard port, so the app sees its embedding backend as offline.
@@ -62,6 +62,11 @@ const DEVICE_ID = /^[A-Z2-7]{7}(?:-[A-Z2-7]{7}){7}$/;
 
 function fail(message) {
   throw new Error(message);
+}
+
+function windowsOllamaUrl(port) {
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) fail('--ollama-port must be an integer from 1024 to 65535');
+  return `http://127.0.0.1:${port}`;
 }
 
 function sleep(milliseconds) {
@@ -812,11 +817,12 @@ async function readAndDismissNotice(browser, screenshotPath) {
   return { ...notice, dismissedMs: Date.now() - started };
 }
 
-function parseOptions(args) {
+export function parseOptions(args) {
   const options = {
     sshHost: 'sb-windows',
     linuxRoot: join(homedir(), 'sb88'),
     timeoutMs: DEFAULT_TIMEOUT_MS,
+    ollamaPort: DEFAULT_WINDOWS_OLLAMA_PORT,
     candidate: 'HEAD',
   };
   for (let index = 0; index < args.length; index += 2) {
@@ -827,6 +833,7 @@ function parseOptions(args) {
     else if (name === '--linux-root') options.linuxRoot = resolve(value);
     else if (name === '--candidate') options.candidate = value;
     else if (name === '--timeout-minutes') options.timeoutMs = Number(value) * 60_000;
+    else if (name === '--ollama-port') options.ollamaPort = Number(value);
     else if (name === '--windows-installer') options.windowsInstaller = value;
     else if (name === '--fedora-rpm') options.fedoraRpm = resolve(value);
     else if (name === '--run') options.runId = value;
@@ -834,6 +841,7 @@ function parseOptions(args) {
     else fail(`unknown option: ${name}`);
   }
   if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) fail('timeout must be a positive number');
+  windowsOllamaUrl(options.ollamaPort);
   return options;
 }
 
@@ -1618,10 +1626,10 @@ function fedoraPackageChecks(rpmPath) {
   };
 }
 
-function fedoraOllamaTunnel(sshHost) {
+function fedoraOllamaTunnel(sshHost, windowsOllamaBaseUrl) {
   return spawn('ssh', [
     '-N', '-o', 'ExitOnForwardFailure=yes',
-    '-L', `127.0.0.1:${FEDORA_OLLAMA_PORT}:${new URL(WINDOWS_OLLAMA_URL).host}`, sshHost,
+    '-L', `127.0.0.1:${FEDORA_OLLAMA_PORT}:${new URL(windowsOllamaBaseUrl).host}`, sshHost,
   ], { stdio: 'ignore' });
 }
 
@@ -1881,6 +1889,7 @@ function notionCredentials() {
 
 async function runWalkthroughLocked(options) {
   const notion = notionCredentials();
+  const windowsOllamaBaseUrl = windowsOllamaUrl(options.ollamaPort);
   // `--machine` runs one machine while a step is being fixed; only a run of both is the gate.
   const machineNames = options.machine ? [options.machine] : ['fedora', 'windows'];
   if (!machineNames.every((name) => ['fedora', 'windows'].includes(name))) fail(`--machine must be fedora or windows: ${options.machine}`);
@@ -1890,19 +1899,19 @@ async function runWalkthroughLocked(options) {
   });
   const controller = (event, value) => observation(evidencePath, event, 'controller', value);
 
-  const ollamaTunnel = fedoraOllamaTunnel(options.sshHost);
+  const ollamaTunnel = fedoraOllamaTunnel(options.sshHost, windowsOllamaBaseUrl);
   let runError;
   let cleanupError;
   try {
     await sleep(2_000);
     if (ollamaTunnel.exitCode !== null) fail(`Ollama tunnel exited ${ollamaTunnel.exitCode}; is port ${FEDORA_OLLAMA_PORT} taken?`);
     controller('ollama', {
-      windows: remoteWorker(options.sshHost, { action: 'ollama', root: WINDOWS_ROOT, runId: 'preflight' }),
+      windows: remoteWorker(options.sshHost, { action: 'ollama', root: WINDOWS_ROOT, runId: 'preflight', ollamaPort: options.ollamaPort }),
       fedora: await ollamaEmbeddingModel(`http://127.0.0.1:${FEDORA_OLLAMA_PORT}`),
     });
     const machines = [
       ['fedora', () => linuxDriverMachine(options.linuxRoot, runId, randomUUID(), { ollamaBaseUrl: `http://127.0.0.1:${FEDORA_OLLAMA_PORT}`, sync: true })],
-      ['windows', () => windowsDriverMachine(options.sshHost, runId, randomUUID(), candidateCommit, { ollamaBaseUrl: WINDOWS_OLLAMA_URL, sync: true })],
+      ['windows', () => windowsDriverMachine(options.sshHost, runId, randomUUID(), candidateCommit, { ollamaBaseUrl: windowsOllamaBaseUrl, sync: true })],
     ].filter(([name]) => machineNames.includes(name)).map(([, make]) => make);
     for (const makeMachine of machines) {
       let machine;
@@ -1956,6 +1965,17 @@ async function runWalkthroughLocked(options) {
         }
       }
       if (runError || cleanupError) break;
+    }
+    if (!runError && !cleanupError) {
+      try {
+        controller('ollama-final', {
+          windows: remoteWorker(options.sshHost, { action: 'ollama', root: WINDOWS_ROOT, runId: 'final', ollamaPort: options.ollamaPort }),
+          fedora: await ollamaEmbeddingModel(`http://127.0.0.1:${FEDORA_OLLAMA_PORT}`),
+        });
+      } catch (error) {
+        runError = error;
+        controller('run-failed', { error: error.message });
+      }
     }
   } finally {
     ollamaTunnel.kill();
@@ -2421,7 +2441,7 @@ async function windowsWorker(request) {
     return { damaged };
   }
 
-  if (request.action === 'ollama') return ollamaEmbeddingModel(WINDOWS_OLLAMA_URL);
+  if (request.action === 'ollama') return ollamaEmbeddingModel(windowsOllamaUrl(request.ollamaPort));
 
   if (request.action === 'install') {
     const installer = win32.resolve(request.installer);
@@ -2541,7 +2561,7 @@ async function main() {
   }
   console.error([
     'usage: node scripts/alpha-harness.mjs sync|restore [--candidate <sha>] [--ssh sb-windows] [--linux-root ~/sb88] [--timeout-minutes 20]',
-    '       node scripts/alpha-harness.mjs walkthrough --windows-installer <D:\\...setup.exe> --fedora-rpm <rpm> [--candidate <sha>] [--machine fedora|windows]',
+    '       node scripts/alpha-harness.mjs walkthrough --windows-installer <D:\\...setup.exe> --fedora-rpm <rpm> [--candidate <sha>] [--machine fedora|windows] [--ollama-port 11434]',
     '       node scripts/alpha-harness.mjs walkthrough-uninstalled --run <runId>',
   ].join('\n'));
   process.exitCode = 2;

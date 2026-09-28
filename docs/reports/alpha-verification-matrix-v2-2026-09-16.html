@@ -281,6 +281,23 @@
 
 <section>
   <h2>Final package walkthrough</h2>
+  <p class="note"><strong>2026-09-24: Windows inference cleanup defect.</strong> Four orphaned
+  <code>llama-server.exe</code> workers were reported holding about 7 GB of GPU memory after their
+  Ollama parents exited. Their model paths were under <code>D:\SecondBrainTest\ollama-models</code>.
+  Nicolas stopped the orphans; a subsequent process scan found no remaining Ollama servers or workers.
+  The harness treated Ollama as an external prerequisite, so separately started test servers were outside
+  its cleanup. Temporary servers must now use <code>scripts/windows/ollama-gate.ps1</code>, which contains
+  the server and descendants in a Windows Job Object and expires after a bounded lease. A native
+  Windows regression (<code>tests/windows/ollama-gate.test.ps1</code>) with synthetic PowerShell
+  parent and child processes passed on 2026-09-28 for normal cleanup,
+  parent exit, and forced supervisor termination while preserving an unrelated process. An actual
+  <code>ollama serve</code> smoke run under a 15-second lease also exited with its recorded server PID
+  gone and port 11436 no longer listening. No model was loaded in that run, so an actual
+  Ollama model worker has not been exercised under this supervisor; verify its PID in the next gate
+  that loads a model. This establishes a bounded path for gate-owned servers without rerunning or
+  upgrading any earlier product gate result. The walkthrough now checks both Ollama endpoints
+  again before recording a pass, so an expired lease found at completion fails the gate.
+  See <a href="../alpha-harness.md">the harness instructions</a>.</p>
   <p>Run once on each supported machine against packages built from the same candidate commit. Record OS version,
   package filename and SHA-256, commit, start/end time, screenshots, and relevant diagnostic export.</p>
   <ol>
