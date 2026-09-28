@@ -16,7 +16,6 @@ int main(void) {
     int fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
     if (fd < 0) { perror("open uinput"); return 1; }
     if (ioctl(fd, UI_SET_EVBIT, EV_KEY) < 0 || ioctl(fd, UI_SET_KEYBIT, KEY_X) < 0 ||
-        ioctl(fd, UI_SET_KEYBIT, KEY_ESC) < 0 || ioctl(fd, UI_SET_KEYBIT, KEY_A) < 0 ||
         ioctl(fd, UI_SET_EVBIT, EV_SYN) < 0) { perror("configure uinput"); close(fd); return 1; }
     struct uinput_setup setup = {0};
     setup.id.bustype = BUS_USB;
