@@ -13,7 +13,7 @@
 
 use tauri::{AppHandle, Emitter, Manager};
 
-use super::{Cause, SHOWN_EVENT, WINDOW_LABEL};
+use super::{Cause, WINDOW_LABEL};
 
 /// The capture window could not be prepared or shown. Shared by both backends' `Unavailable`
 /// enums (`super::Unavailable::CaptureWindow` on Linux, `super::windows::Unavailable::CaptureWindow`
@@ -92,6 +92,6 @@ pub fn show_capture_window(app: &AppHandle) -> Result<(), String> {
     // The field decides its own focus: the window may have been shown while the webview was
     // still mounting, and only it knows when the textarea exists.
     window
-        .emit(SHOWN_EVENT, ())
+        .emit(crate::events::QUICK_CAPTURE_SHOWN, ())
         .map_err(|error| error.to_string())
 }

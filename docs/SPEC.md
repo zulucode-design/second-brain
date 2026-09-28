@@ -79,7 +79,9 @@ behavior remains as platform-neutral **compact layout**.
 
 Vaults are supported on local filesystems and directly attached drives. A vault inside a
 folder managed by another synchronization product is unsupported because Second Brain's
-bundled sidecar owns synchronization. NAS storage is deferred for post-v1 investigation,
+bundled sidecar owns synchronization. Opening a vault inside a detected OneDrive, Dropbox, or
+Nextcloud/ownCloud folder is refused; the vault picker asks the user to confirm the folder is
+not managed by a product detection cannot see. NAS storage is deferred for post-v1 investigation,
 not rejected. External-alpha performance is verified with 10,000 notes; this is a tested
 baseline rather than an enforced maximum.
 
@@ -234,6 +236,14 @@ Step 4 is required for v1 feature-complete beta, not external alpha. External-al
 ends after the note is safely stored and its semantic indexing work is durably queued.
 
 Requires OS-level global hotkey registration on both Windows and Linux.
+
+### Command palette
+
+The command palette is a keyboard shortcut to existing local actions: search; opening All
+Notes, Quick Access, Tasks, Unfiled Notes, or Trash; choosing a built-in theme; toggling
+source mode; and rebuilding keyword search. It does not add a separate command system,
+run arbitrary code, switch vaults, or trigger AI or publishing work. New commands belong
+there only when they use the same guarded action as the corresponding visible control.
 
 ---
 

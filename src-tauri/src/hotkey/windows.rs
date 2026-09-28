@@ -15,7 +15,7 @@
 use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
-use super::{Availability, Cause, HotkeyStatus, PREFERRED_TRIGGER, STATUS_EVENT};
+use super::{Availability, Cause, HotkeyStatus, PREFERRED_TRIGGER};
 use crate::state::AppState;
 
 /// Why the hotkey is not registered, in terms that map to something the user can do.
@@ -303,7 +303,7 @@ fn store_and_publish(app: &AppHandle, status: HotkeyStatus) {
     if let Ok(mut stored) = app.state::<AppState>().hotkey_status.lock() {
         *stored = status.clone();
     }
-    let _ = tauri::Emitter::emit(app, STATUS_EVENT, status);
+    let _ = tauri::Emitter::emit(app, crate::events::HOTKEY_STATUS_CHANGED, status);
 }
 
 /// Make the on-disk autostart entry match the stored preference. Mirrors
@@ -318,12 +318,16 @@ fn resync_autostart(app: &AppHandle) {
     let Ok(app_id) = super::configured_application_id() else {
         return;
     };
-    let enabled = app
+    // While saves are blocked the loaded settings may be defaults rather than the user's, and
+    // any change could not be persisted anyway; leave the entry as it is.
+    let Ok(Some(enabled)) = app
         .state::<AppState>()
         .config
         .lock()
-        .map(|config| config.autostart)
-        .unwrap_or(false);
+        .map(|config| (!config.config_save_blocked).then_some(config.autostart))
+    else {
+        return;
+    };
 
     if let Err(error) = crate::autostart::sync(enabled, &app_id, &exec) {
         log::warn!("Could not update the autostart entry: {error}");

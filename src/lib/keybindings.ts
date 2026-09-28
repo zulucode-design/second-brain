@@ -1,6 +1,6 @@
 import { writable } from "svelte/store";
 
-// A single key combination. `mod` means Ctrl on Windows/Linux and Cmd on macOS.
+// A single key combination. `mod` means Ctrl.
 // `code` is a KeyboardEvent.code value (layout-independent), e.g. "KeyN",
 // "Backslash", "ArrowLeft", "F11".
 export interface Binding {
@@ -123,8 +123,6 @@ export function bindingsEqual(a: Binding, b: Binding): boolean {
   return !!a.mod === !!b.mod && !!a.shift === !!b.shift && !!a.alt === !!b.alt && a.code === b.code;
 }
 
-const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
-
 const CODE_LABELS: Record<string, string> = {
   Backslash: "\\",
   BracketLeft: "[",
@@ -156,9 +154,9 @@ function codeToLabel(code: string): string {
 // Ordered list of key labels for rendering, e.g. ["Ctrl", "Shift", "N"].
 export function bindingToKeys(b: Binding): string[] {
   const keys: string[] = [];
-  if (b.mod) keys.push(isMac ? "⌘" : "Ctrl");
-  if (b.alt) keys.push(isMac ? "⌥" : "Alt");
-  if (b.shift) keys.push(isMac ? "⇧" : "Shift");
+  if (b.mod) keys.push("Ctrl");
+  if (b.alt) keys.push("Alt");
+  if (b.shift) keys.push("Shift");
   keys.push(codeToLabel(b.code));
   return keys;
 }

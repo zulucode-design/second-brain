@@ -1,6 +1,7 @@
 mod ai;
 mod ai_health;
 mod ai_provider;
+mod app_dirs;
 mod asset_scope;
 mod autostart;
 mod backup;
@@ -8,6 +9,7 @@ mod bulk_mutation;
 mod commands;
 mod diagnostic_export;
 mod durable;
+mod events;
 mod history;
 mod hotkey;
 mod image_proxy;
@@ -44,7 +46,7 @@ pub fn run_sync_watchdog_if_requested() -> bool {
 
 fn release_shutdown(app: &tauri::AppHandle, request_id: &str) {
     let _ = app.emit(
-        "save-close-released",
+        crate::events::SAVE_CLOSE_RELEASED,
         shutdown::SaveBeforeCloseRequest {
             request_id: request_id.to_string(),
         },
@@ -155,7 +157,7 @@ fn begin_shutdown(app: &tauri::AppHandle, intent: shutdown::ShutdownIntent) {
     };
     let mut delivery_failed = false;
     for label in notify.intersection(&registered) {
-        if let Err(error) = app.emit_to(label, "save-before-close", payload.clone()) {
+        if let Err(error) = app.emit_to(label, crate::events::SAVE_BEFORE_CLOSE, payload.clone()) {
             log::error!("Could not request a save from {label}: {error}");
             delivery_failed = true;
         }
@@ -223,10 +225,13 @@ fn begin_vault_switch(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn end_vault_switch(app: tauri::AppHandle) {
-    if let Ok(mut state) = app.state::<AppState>().shutdown.lock() {
-        state.end_vault_switch();
-    }
+fn end_vault_switch(app: tauri::AppHandle) -> Result<(), String> {
+    app.state::<AppState>()
+        .shutdown
+        .lock()
+        .map_err(|error| error.to_string())?
+        .end_vault_switch();
+    Ok(())
 }
 
 #[tauri::command]
@@ -277,14 +282,12 @@ fn acknowledge_save_before_close(
     }
 }
 
-#[cfg(desktop)]
 use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder},
 };
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Work around blank window from WebKitGTK DMABUF/GBM allocation failures on some Linux GPUs.
     #[cfg(target_os = "linux")]
@@ -296,31 +299,25 @@ pub fn run() {
         .install_default()
         .expect("Failed to install rustls crypto provider");
 
-    let config = commands::load_app_config();
-    #[cfg(desktop)]
+    // Before Tauri starts: it creates the directories the move uses to decide ownership.
+    let migration = app_dirs::migrate_legacy_dirs();
+    let config = commands::load_app_config(migration.as_ref().err().map(String::as_str));
     let show_tray = config.show_tray_icon;
-    #[cfg(desktop)]
     // Whether a tray icon exists at all is decided here and cannot change without a restart,
     // because the icon is built once in `setup`. Whether closing *hides* to it is read live
     // from the config at close time — see the `CloseRequested` arm.
-    #[cfg(desktop)]
     let tray_exists = show_tray;
     let app_state = AppState::new(config);
 
-    // Inject the compile-time platform so the frontend never sniffs the (sometimes
-    // mobile-looking) WebKitGTK user-agent. (#63)
     let platform_init = format!(
-        "window.__HELIX_PLATFORM__={{mobile:{},android:{},ios:{},linux:{},windows:{}}};",
-        cfg!(mobile),
-        cfg!(target_os = "android"),
-        cfg!(target_os = "ios"),
+        "window.__SECOND_BRAIN_PLATFORM__={{linux:{},windows:{}}};",
         cfg!(target_os = "linux"),
         cfg!(target_os = "windows"),
     );
 
     let mut builder = tauri::Builder::default()
         .plugin(
-            tauri::plugin::Builder::<tauri::Wry>::new("helix-platform")
+            tauri::plugin::Builder::<tauri::Wry>::new("second-brain-platform")
                 .js_init_script(platform_init)
                 .build(),
         )
@@ -338,22 +335,14 @@ pub fn run() {
                 }
             }
         })
-        .on_page_load(|webview, payload| {
-            #[cfg(target_os = "macos")]
-            if webview.label() == "main"
-                && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
-            {
-                queue_macos_traffic_light_fix(&webview.window());
-            }
-            #[cfg(not(target_os = "macos"))]
-            let _ = (webview, payload);
-        })
         .setup(move |app| {
+            // The logger starts with the builder, after the move ran.
+            if let Err(error) = &migration {
+                log::error!("{error}");
+            }
             if let Ok(mut handle) = app.state::<AppState>().app_handle.lock() {
                 *handle = Some(app.handle().clone());
             }
-            #[cfg(target_os = "ios")]
-            app.handle().plugin(tauri_plugin_ios_vault_access::init())?;
 
             // Track the AI backend from launch, so features are shown as unavailable
             // before the user tries one rather than after it fails.
@@ -399,21 +388,6 @@ pub fn run() {
             hotkey::startup::spawn(app.handle().clone());
             #[cfg(target_os = "windows")]
             hotkey::windows::spawn(app.handle().clone());
-
-            // On mobile, set config dir from Tauri's path resolver, then reload config
-            #[cfg(mobile)]
-            {
-                if let Ok(config_dir) = app.path().config_dir() {
-                    commands::set_mobile_config_dir(config_dir);
-                } else if let Ok(data_dir) = app.path().data_dir() {
-                    commands::set_mobile_config_dir(data_dir);
-                }
-                // Reload config now that the mobile config dir is available
-                let reloaded = commands::load_app_config();
-                let _ = app.state::<AppState>().config.lock().map(|mut cfg| {
-                    *cfg = reloaded;
-                });
-            }
 
             let active_vault = app
                 .state::<AppState>()
@@ -461,13 +435,11 @@ pub fn run() {
                 }
             }
 
-            #[cfg(desktop)]
             if show_tray {
                 setup_tray(app)?;
             }
 
             // Check CLI args for a .md file path on initial launch
-            #[cfg(desktop)]
             {
                 let file_arg = std::env::args().skip(1).find(|a| {
                     let a = a.trim();
@@ -509,9 +481,6 @@ pub fn run() {
             perf_probe_enabled,
             record_perf_sample,
             commands::open_vault,
-            commands::choose_external_vault,
-            commands::restore_external_vault,
-            commands::remove_vault,
             commands::get_app_config,
             diagnostic_export::export_diagnostics,
             commands::set_theme,
@@ -613,7 +582,6 @@ pub fn run() {
             notion::commands::notion_visible_pages,
             notion::commands::notion_setup,
             notion::commands::notion_publish_now,
-            commands::is_mobile_platform,
             commands::get_pending_open_file,
             sync_sidecar::sync_status,
             sync_sidecar::sync_set_enabled,
@@ -645,7 +613,6 @@ pub fn run() {
             });
         });
 
-    #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             // Always show/focus the main window, rebuilding it if a previous close
@@ -673,7 +640,7 @@ pub fn run() {
                         }
                         let _ = asset_scope::allow_external_note_assets(app, &resolved);
                     }
-                    let _ = app.emit("open-file", resolved_str.to_string());
+                    let _ = app.emit(crate::events::OPEN_FILE, resolved_str.to_string());
                 }
             }
         }));
@@ -699,21 +666,6 @@ pub fn run() {
         builder = builder.plugin(window_state_builder.build());
 
         builder = builder.on_window_event(move |window, event| {
-            #[cfg(target_os = "macos")]
-            if window.label() == "main"
-                && matches!(
-                    event,
-                    tauri::WindowEvent::Resized(_)
-                        | tauri::WindowEvent::Focused(true)
-                        | tauri::WindowEvent::ScaleFactorChanged { .. }
-                        | tauri::WindowEvent::ThemeChanged(_)
-                )
-            {
-                // AppKit can restore the default button Y position after window-state
-                // changes. Queue this pass so it runs after AppKit finishes its layout.
-                queue_macos_traffic_light_fix(window);
-            }
-
             match event {
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     let authorized = window
@@ -817,7 +769,6 @@ pub fn run() {
 /// capture overlay, and it is safe for the same reason: it runs from an event callback, long
 /// after the event loop is up. Doing it during `setup` is what deadlocks on Linux — see that
 /// function for the full account.
-#[cfg(desktop)]
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -906,60 +857,4 @@ fn percent_decode(input: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&output).to_string()
-}
-
-#[cfg(target_os = "macos")]
-fn queue_macos_traffic_light_fix(window: &tauri::Window) {
-    let window_on_main = window.clone();
-    let _ = window.run_on_main_thread(move || {
-        fix_macos_traffic_lights(&window_on_main);
-    });
-}
-
-#[cfg(target_os = "macos")]
-fn fix_macos_traffic_lights(window: &tauri::Window) {
-    use objc2_app_kit::{NSView, NSWindow, NSWindowButton};
-
-    const TITLEBAR_HEIGHT: f64 = 34.0;
-    const LEFT_INSET: f64 = 12.0;
-
-    let ns_window_ptr = match window.ns_window() {
-        Ok(ptr) => ptr,
-        Err(_) => return,
-    };
-    let ns_window: &NSWindow = unsafe { &*(ns_window_ptr as *const NSWindow) };
-
-    let close = match ns_window.standardWindowButton(NSWindowButton::CloseButton) {
-        Some(button) => button,
-        None => return,
-    };
-    let miniaturize = match ns_window.standardWindowButton(NSWindowButton::MiniaturizeButton) {
-        Some(button) => button,
-        None => return,
-    };
-    let zoom = match ns_window.standardWindowButton(NSWindowButton::ZoomButton) {
-        Some(button) => button,
-        None => return,
-    };
-
-    let window_height = ns_window.frame().size.height;
-    if window_height <= 0.0 {
-        return;
-    }
-
-    let close_frame = NSView::frame(&close);
-    let button_spacing = NSView::frame(&miniaturize).origin.x - close_frame.origin.x;
-    for (index, button) in [&close, &miniaturize, &zoom].into_iter().enumerate() {
-        let button_superview = match unsafe { button.superview() } {
-            Some(view) => view,
-            None => return,
-        };
-        let mut frame = NSView::frame(button);
-        let top_inset = ((TITLEBAR_HEIGHT - frame.size.height) / 2.0).max(0.0);
-        let mut target = frame.origin;
-        target.y = window_height - top_inset - frame.size.height;
-        frame.origin.y = button_superview.convertPoint_fromView(target, None).y;
-        frame.origin.x = LEFT_INSET + index as f64 * button_spacing;
-        button.setFrameOrigin(frame.origin);
-    }
 }

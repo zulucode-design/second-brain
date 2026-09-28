@@ -427,7 +427,7 @@ pub async fn check_now(app: &tauri::AppHandle) -> (AiStatus, bool) {
     // Only announce transitions: a poller that emitted every probe would make the UI
     // churn on a status that did not move.
     if changed.changed {
-        let _ = app.emit("ai-status-changed", status.clone());
+        let _ = app.emit(crate::events::AI_STATUS_CHANGED, status.clone());
     }
 
     (status, tracking)

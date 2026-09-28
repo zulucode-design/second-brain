@@ -12,9 +12,9 @@
 		bindingsEqual,
 		type ActionDef,
 	} from '$lib/keybindings';
-	import { isMobile } from '$lib/platform';
+	import { compactLayout } from '$lib/stores/app';
+	const isCompact = $derived($compactLayout);
 
-	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
 
 	// Customizable shortcuts, grouped for display.
 	const actionGroups: { title: string; actions: ActionDef[] }[] = [
@@ -81,14 +81,14 @@
 		if (capturingId === id) stopCapture();
 	}
 
-	let activeTab = $state<'about' | 'shortcuts'>(isMobile ? 'about' : 'shortcuts');
+	let activeTab = $state<'about' | 'shortcuts'>('shortcuts');
 	let appVersion = $state('...');
 
 	getVersion().then(v => appVersion = v).catch(() => appVersion = '0.0.0');
 
 	function close() {
 		$showInfo = false;
-		activeTab = isMobile ? 'about' : 'shortcuts';
+		activeTab = isCompact ? 'about' : 'shortcuts';
 	}
 
 	function closeFromOverlay(event: MouseEvent) {
@@ -117,7 +117,7 @@
 			</div>
 
 			<div class="info-body">
-				{#if !isMobile}
+				{#if !isCompact}
 				<div class="info-tabs">
 					<button class="info-tab" class:active={activeTab === 'shortcuts'} onclick={() => activeTab = 'shortcuts'}>Shortcuts</button>
 					<button class="info-tab" class:active={activeTab === 'about'} onclick={() => activeTab = 'about'}>About</button>
@@ -155,7 +155,7 @@
 					</div>
 				{:else}
 					<div class="shortcuts-section">
-						{#if !isMobile}
+						{#if !isCompact}
 							<p class="shortcuts-hint">Click a shortcut to rebind it, right-click to reset.</p>
 						{/if}
 						{#each actionGroups as group}
@@ -163,7 +163,7 @@
 							{#each group.actions as action}
 								<div class="shortcut-row">
 									<span class="shortcut-desc">{action.label}</span>
-									{#if isMobile}
+									{#if isCompact}
 										<span class="shortcut-keys">{#each bindingToKeys($keybindings[action.id]) as key, i}{#if i > 0}+{/if}<kbd>{key}</kbd>{/each}</span>
 									{:else}
 										<button
@@ -189,15 +189,15 @@
 						<div class="shortcut-row"><span class="shortcut-desc">Close panel / exit focus</span><span class="shortcut-keys"><kbd>Esc</kbd></span></div>
 
 						<h4 class="shortcuts-group-title">Formatting</h4>
-						<div class="shortcut-row"><span class="shortcut-desc">Bold</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>B</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Italic</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>I</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Underline</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>U</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Strikethrough</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Code</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>E</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Link</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>K</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Collapsible section</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>.</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Undo</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Z</kbd></span></div>
-						<div class="shortcut-row"><span class="shortcut-desc">Redo</span><span class="shortcut-keys"><kbd>{modKey}</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Bold</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>B</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Italic</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>I</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Underline</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>U</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Strikethrough</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Code</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>E</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Link</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>K</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Collapsible section</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>.</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Undo</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>Z</kbd></span></div>
+						<div class="shortcut-row"><span class="shortcut-desc">Redo</span><span class="shortcut-keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Move line up / down</span><span class="shortcut-keys"><kbd>Alt</kbd>+<kbd>↑↓</kbd></span></div>
 						<div class="shortcut-row"><span class="shortcut-desc">Move list item up / down</span><span class="shortcut-keys"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>↑↓</kbd></span></div>
 
@@ -479,7 +479,7 @@
 		line-height: 1.4;
 	}
 
-	/* Mobile */
+	/* Compact */
 	@media (max-width: 600px) {
 		.info-panel {
 			width: 100%;

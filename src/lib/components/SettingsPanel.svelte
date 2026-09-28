@@ -1,20 +1,21 @@
 <script lang="ts">
-	import { showSettings, theme, resolvedTheme, appConfig, platformIsMobile, notebookSortMode, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
+	import { showSettings, theme, resolvedTheme, appConfig, compactLayout, notebookSortMode, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
 	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, notionStatus, notionConnect, notionDisconnect, notionSetEnabled, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex, getSyncStatus, setSyncEnabled, pairSyncDevice, syncNow, listSyncConflicts, resolveSyncConflict, copyTextToClipboard, exportDiagnostics } from '$lib/api';
 	import type { AiProvider } from '$lib/types';
 	import { importOutcomeView, type ImportDonePayload } from '$lib/utils/import-outcome';
 	import { AI_PROVIDER_METADATA, AI_PROVIDER_OPTIONS } from '$lib/utils/ai-provider';
-	import { darkThemes, isMobile, isAndroid, isLinux, isWindows } from '$lib/platform';
+	import { isLinux, isWindows } from '$lib/platform';
+	import { applyTheme, isDarkTheme } from '$lib/theme';
 	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
-	import { listen } from '@tauri-apps/api/event';
+	import { listenAppEvent } from '$lib/events';
 	import { onMount } from 'svelte';
 	import { describeSummary, describeSkipped, nextStep, type NotionStatus, type NotionSummary, type VisiblePage } from '$lib/utils/notion-settings';
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import type { OrphanAttachment } from '$lib/api';
 	import type { ImportResult, BackupEntry, CustomTheme, CustomThemeColors, StartupView, VaultStats, SemanticStatus, SyncStatus, BulkMutationTerminal, SyncConflict } from '$lib/types';
 	import { normalizeStartupView } from '$lib/utils/startup-view';
+	const isCompact = $derived($compactLayout);
 
-	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
 
 	let { onRequestVaultSwitch = async () => false, onBeforeRestore, onAfterRestore }: {
 		onRequestVaultSwitch?: () => Promise<boolean>;
@@ -24,7 +25,6 @@
 
 	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'sync' | 'maintenance' | 'ai' | 'notion';
 	let activeTab = $state<Tab>('styling');
-
 
 	// Vault maintenance state
 	let vaultStats = $state<VaultStats | null>(null);
@@ -161,7 +161,7 @@
 	async function handleBackupNow() {
 		backupLoading = true;
 		backupMessage = null;
-		const unlisten = await listen<{ success: boolean; entry?: BackupEntry; error?: string }>('backup-done', async (event) => {
+		const unlisten = await listenAppEvent('backupDone', async (event) => {
 			const data = event.payload;
 			if (data.success) {
 				backupMessage = { type: 'success', text: 'Backup created successfully' };
@@ -192,7 +192,7 @@
 		}
 		backupLoading = true;
 		backupMessage = null;
-		const unlisten = await listen<{ success: boolean; outcome: 'success' | 'changed-incomplete' | 'failure'; error?: string }>('restore-done', async (event) => {
+		const unlisten = await listenAppEvent('restoreDone', async (event) => {
 			const data = event.payload;
 			if (data.outcome !== 'failure') await onAfterRestore?.();
 			if (data.success) {
@@ -253,9 +253,9 @@
 	}
 
 	// AI state
-	let aiProvider = $state<AiProvider | null>($appConfig?.ai_provider ?? null);
+	let aiProvider = $state<string | null>($appConfig?.ai_provider ?? null);
 	let aiProviderMetadata = $derived(
-		aiProvider ? AI_PROVIDER_METADATA[aiProvider] : null,
+		aiProvider && Object.hasOwn(AI_PROVIDER_METADATA, aiProvider) ? AI_PROVIDER_METADATA[aiProvider as AiProvider] : null,
 	);
 	let aiApiKey = $derived.by(() => {
 		switch (aiProviderMetadata?.keySlot) {
@@ -339,7 +339,7 @@
 	async function handleTestAi() {
 		aiTestLoading = true;
 		aiTestMessage = null;
-		const unlisten = await listen<{ success: boolean; message?: string; error?: string }>('ai-test-result', (event) => {
+		const unlisten = await listenAppEvent('aiTestResult', (event) => {
 			const data = event.payload;
 			if (data.success) {
 				aiTestMessage = { type: 'success', text: 'Connection successful!' };
@@ -475,23 +475,23 @@
 		const unlisteners: Array<() => void> = [];
 		const registerUnlistener = (unlisten: () => void) => disposed ? unlisten() : unlisteners.push(unlisten);
 
-		void listen<{ done: number; total: number }>('notion-publish-progress', (event) => {
+		void listenAppEvent('notionPublishProgress', (event) => {
 			notionPublishing = true;
 			notionProgress = event.payload;
 		}).then(registerUnlistener);
-		void listen<NotionSummary>('notion-publish-finished', async (event) => {
+		void listenAppEvent('notionPublishFinished', async (event) => {
 			notionPublishing = false;
 			notionProgress = null;
 			notionMessage = { type: 'success', text: describeSummary(event.payload), at: 'publish' };
 			await refreshNotion();
 		}).then(registerUnlistener);
-		void listen<{ error: string; fatal: boolean }>('notion-publish-failed', async (event) => {
+		void listenAppEvent('notionPublishFailed', async (event) => {
 			notionPublishing = false;
 			notionProgress = null;
 			notionMessage = { type: 'error', text: event.payload.error, at: 'publish' };
 			await refreshNotion();
 		}).then(registerUnlistener);
-		void listen<BulkMutationTerminal>('sync-done', async (event) => {
+		void listenAppEvent('syncDone', async (event) => {
 			syncBusy = false;
 			syncMessage = event.payload.success
 				? { type: 'success', text: 'Both devices are up to date.' }
@@ -598,10 +598,7 @@
 		}
 	}
 
-	let isThemeDark = $derived(
-		darkThemes.includes($resolvedTheme) ||
-		($resolvedTheme.startsWith('custom-') && ($customThemes.find(c => c.id === $resolvedTheme)?.is_dark ?? false))
-	);
+	let isThemeDark = $derived(isDarkTheme($resolvedTheme, $customThemes));
 
 	const themePresets = [
 		{ id: 'system', label: 'System', bg: '#ffffff', sidebar: '#1a1b26', accent: '#5b6abf' },
@@ -811,34 +808,7 @@
 	}
 
 	function restoreCurrentTheme() {
-		const root = document.documentElement;
-		const varsToClear = ['--bg-primary','--bg-secondary','--bg-tertiary','--bg-hover','--bg-active','--bg-editor','--text-primary','--text-secondary','--border-color','--border-light','--text-tertiary'];
-		root.classList.remove('dark');
-		root.removeAttribute('data-theme');
-		for (const v of varsToClear) root.style.removeProperty(v);
-		const namedThemes = ['solarized-light','solarized-dark','catppuccin','nord','tokyo-night','github-light','github-dark','dracula','blueberry','forest-green','gruvbox','midnight-tide','cherry-blossom','synthwave','ember','moonlit','light-coffee','dark-coffee','cotton-candy','crimson','cloud','peach','material-dark','material-light','monokai','rose-pine','everforest','horizon','cyberpunk','black','one-dark'];
-		if ($resolvedTheme.startsWith('custom-')) {
-			const ct = $customThemes.find(c => c.id === $resolvedTheme);
-			if (ct) {
-				root.style.setProperty('--bg-primary', ct.colors.bg_primary);
-				root.style.setProperty('--bg-secondary', ct.colors.bg_secondary);
-				root.style.setProperty('--bg-tertiary', ct.colors.bg_tertiary);
-				root.style.setProperty('--bg-hover', ct.colors.bg_hover);
-				root.style.setProperty('--bg-active', ct.colors.bg_active);
-				root.style.setProperty('--bg-editor', ct.colors.bg_editor);
-				root.style.setProperty('--text-primary', ct.colors.text_primary);
-				root.style.setProperty('--text-secondary', ct.colors.text_secondary);
-				root.style.setProperty('--border-color', ct.colors.border_color);
-				root.style.setProperty('--border-light', ct.colors.border_color);
-				root.style.setProperty('--text-tertiary', ct.colors.text_secondary);
-				if (ct.is_dark) root.classList.add('dark');
-			}
-		} else if (namedThemes.includes($resolvedTheme)) {
-			root.setAttribute('data-theme', $resolvedTheme);
-			if (darkThemes.includes($resolvedTheme)) root.classList.add('dark');
-		} else if ($resolvedTheme === 'dark') {
-			root.classList.add('dark');
-		}
+		applyTheme($resolvedTheme, $customThemes);
 	}
 
 	async function saveCustomThemeEditor() {
@@ -989,7 +959,7 @@
 		importResult = null;
 		importError = null;
 
-		const unlistenDone = await listen<ImportDonePayload>('import-done', async (event) => {
+		const unlistenDone = await listenAppEvent('importDone', async (event) => {
 			const view = importOutcomeView(event.payload);
 			importResult = view.result;
 			importError = view.error;
@@ -1283,8 +1253,8 @@
 
 {#if $showSettings}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="settings-overlay" class:mobile={isMobile} onclick={closeSettingsFromOverlay} onkeydown={handleOverlayKeydown}>
-		<div class="settings-panel" class:mobile={isMobile} role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
+	<div class="settings-overlay" class:compact={isCompact} onclick={closeSettingsFromOverlay} onkeydown={handleOverlayKeydown}>
+		<div class="settings-panel" class:compact={isCompact} role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
 			<div class="settings-header">
 				<h2 id="settings-title">Settings</h2>
 				<button class="close-btn" onclick={close} aria-label="Close settings">
@@ -1315,15 +1285,14 @@
 						</svg>
 						Styling
 					</button>
-					{#if !isMobile}
+
 					<button class="tab-btn" class:active={activeTab === 'import'} onclick={() => activeTab = 'import'}>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M8 5H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V7a2 2 0 00-2-2h-4"/>
 						</svg>
 						Import
 					</button>
-				{/if}
-					{#if !isMobile}
+
 					<button class="tab-btn" class:active={activeTab === 'backup'} onclick={() => { activeTab = 'backup'; loadBackups(); }}>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M21 12a9 9 0 00-9-9 9.75 9.75 0 00-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 009 9 9.75 9.75 0 006.74-2.74L21 16"/><path d="M16 16h5v5"/>
@@ -1334,7 +1303,7 @@
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7h-9"/><path d="m16 3 4 4-4 4"/><path d="M4 17h9"/><path d="m8 21-4-4 4-4"/></svg>
 						Sync
 					</button>
-					{/if}
+
 					<button class="tab-btn" class:active={activeTab === 'maintenance'} onclick={() => activeTab = 'maintenance'}>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>
@@ -1394,10 +1363,9 @@
 								</div>
 							</div>
 
-							{#if !isMobile}
 							<div class="settings-section">
 								<h3>Sidebar</h3>
-								<p class="setting-desc" style="margin: 0 0 10px;">Hide navigation items you don't use, leaving search and the notebook tree. Any item you hide stays reachable from the command palette ({modKey}+P).</p>
+								<p class="setting-desc" style="margin: 0 0 10px;">Hide navigation items you don't use, leaving search and the notebook tree. Any item you hide stays reachable from the command palette (Ctrl+P).</p>
 								<label class="setting-toggle">
 									<span class="setting-label"><span class="setting-name">All Notes</span></span>
 									<button class="toggle-switch" class:on={showAllNotes} role="switch" aria-checked={showAllNotes} aria-label="Show All Notes" onclick={() => { showAllNotes = !showAllNotes; saveGeneralSettings(); }}>
@@ -1423,9 +1391,8 @@
 									</button>
 								</label>
 							</div>
-							{/if}
 
-							{#if !$platformIsMobile}
+							{#if !isCompact}
 							<div class="settings-section">
 								<h3>Interface</h3>
 								<label class="setting-toggle">
@@ -1479,7 +1446,7 @@
 								</div>
 							</div>
 
-							{#if isMobile}
+							{#if isCompact}
 							<div class="settings-section">
 								<h3>Vault</h3>
 								<p class="setting-desc" style="margin-bottom: 12px; color: var(--text-tertiary); font-size: 13px;">Current: <strong style="color: var(--text-primary);">{$appConfig?.active_vault?.split('/').pop() ?? 'Unknown'}</strong></p>
@@ -1487,13 +1454,11 @@
 									<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 										<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
 									</svg>
-									Switch Vault
+									Change vault folder
 								</button>
 							</div>
 							{/if}
 
-
-							{#if !isMobile}
 							<div class="settings-section">
 								<h3>Performance</h3>
 								<label class="setting-toggle">
@@ -1588,7 +1553,7 @@
 								</p>
 							</div>
 							{/if}
-						{/if}
+
 						</div>
 					{:else if activeTab === 'maintenance'}
 						<div class="tab-content">
@@ -1722,7 +1687,7 @@
 										<span class="toggle-knob"></span>
 									</button>
 								</label>
-								{#if !isMobile}
+
 								<label class="setting-toggle" style="margin-top: 12px;">
 									<span class="setting-label">
 										<span class="setting-name">Show line numbers</span>
@@ -1732,7 +1697,7 @@
 										<span class="toggle-knob"></span>
 									</button>
 								</label>
-								{/if}
+
 								<label class="setting-toggle" style="margin-top: 12px;">
 									<span class="setting-label">
 										<span class="setting-name">Open notes in View Mode</span>
@@ -1753,7 +1718,6 @@
 								</label>
 							</div>
 
-
 							<div class="settings-section">
 								<h3>Wiki Links & Graph</h3>
 								<label class="setting-toggle">
@@ -1767,8 +1731,6 @@
 								</label>
 							</div>
 
-
-							{#if !isMobile}
 							<div class="settings-section">
 								<h3>PDF Preview</h3>
 								<label class="setting-toggle">
@@ -1800,7 +1762,7 @@
 									<span class="setting-hint">Default height for PDF previews in notes</span>
 								</div>
 							{/if}
-						{/if}
+
 						</div>
 					{:else if activeTab === 'styling'}
 						<div class="tab-content">
@@ -1973,11 +1935,11 @@
 													<button class="icon-btn" title="Edit" onclick={() => openEditCustomThemeEditor(ct)}>
 														<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 00-3.986-3.987L3.842 16.174a2 2 0 00-.5.83l-1.321 4.352a.5.5 0 00.623.622l4.353-1.32a2 2 0 00.83-.497z"/></svg>
 													</button>
-													{#if !isMobile}
+
 													<button class="icon-btn" title="Export" disabled={customThemeExportingId === ct.id} onclick={() => handleExportCustomTheme(ct)}>
 														<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
 													</button>
-													{/if}
+
 													<button class="icon-btn danger" title="Delete" onclick={() => removeCustomTheme(ct)}>
 														<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
 													</button>
@@ -1989,14 +1951,12 @@
 									<p class="setting-hint" style="margin-top: 8px;">No custom themes yet. Create one to define your own colors.</p>
 								{/if}
 
-								{#if !isMobile}
 									<div class="custom-theme-io">
 										<button class="backup-link-btn" onclick={handleImportCustomThemes} disabled={customThemeImporting}>
 											<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
 											{customThemeImporting ? 'Importing...' : 'Import theme'}
 										</button>
 									</div>
-								{/if}
 
 								{#if customThemeMessage}
 									<div class="import-result {customThemeMessage.type}" style="margin-top: 10px;">
@@ -2121,7 +2081,6 @@
 								</div>
 							</div>
 
-							{#if !isMobile}
 								<div class="settings-section">
 									<h3>Interface Scale</h3>
 									<div class="font-size-options">
@@ -2137,9 +2096,7 @@
 									</div>
 									<p class="setting-hint">Zooms the whole app: every panel, menu, and the editor. Use Default (100%) to reset.</p>
 								</div>
-							{/if}
 
-							{#if !isMobile}
 								<div class="settings-section">
 									<h3>Note Width</h3>
 									<div class="font-size-options">
@@ -2155,7 +2112,6 @@
 									</div>
 									<p class="setting-hint">Caps the width of the note text for easier reading on wide screens; the column stays centered. Most noticeable in Focus Mode. "Full" uses the entire width.</p>
 								</div>
-							{/if}
 
 							<div class="settings-section">
 								<h3>Line Height</h3>
@@ -2289,7 +2245,7 @@
 								</label>
 
 								<div class="backup-actions">
-									{#if !isMobile}
+
 									<button class="backup-link-btn" onclick={handleSelectBackupFolder}>
 										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 											<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
@@ -2299,7 +2255,7 @@
 									{#if $appConfig?.backup_location}
 										<p class="backup-path">{$appConfig.backup_location}</p>
 									{/if}
-									{/if}
+
 									<button class="backup-link-btn" onclick={handleBackupNow} disabled={backupLoading}>
 										{#if backupLoading}
 											<svg class="spinner-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity="0.25" /><path d="M12 2a10 10 0 019.95 9" /></svg>
@@ -2446,7 +2402,9 @@
 								</div>
 							</div>
 
-							{#if aiProvider}
+							{#if aiProvider && !aiProviderMetadata}
+								<p class="setting-hint" role="alert">Stored AI provider “{aiProvider}” is not supported in this build. AI writing requests are blocked. Choose a supported provider to resume.</p>
+							{:else if aiProvider}
 								{#if aiProviderMetadata?.hasConfigurableAddress}
 									<p class="setting-hint" style="color: var(--text-success, #4ade80); margin-top: -4px; margin-bottom: 12px;">Your data stays on your device. No text is sent to any external server.</p>
 								{:else}
@@ -2622,7 +2580,7 @@
 
 								<div class="settings-section">
 									<h3>Usage</h3>
-									{#if isMobile}
+									{#if isCompact}
 									<p class="import-desc">Use the AI button in the toolbar or header to access AI writing tools: improve, fix grammar, rewrite, summarize, translate, and more.</p>
 								{:else}
 									<p class="import-desc">Select text in the editor and right-click to access AI writing tools: improve, fix grammar, rewrite, summarize, translate, and more.</p>
@@ -3774,20 +3732,19 @@
 		color: var(--text-tertiary);
 	}
 
-
 	.import-result.info {
 		background: color-mix(in srgb, var(--accent) 10%, transparent);
 		color: var(--accent);
 	}
 
-	/* ═══ Mobile ═══ */
+	/* ═══ Compact ═══ */
 
-	.settings-overlay.mobile {
+	.settings-overlay.compact {
 		align-items: stretch;
 		justify-content: stretch;
 	}
 
-	.settings-panel.mobile {
+	.settings-panel.compact {
 		width: 100%;
 		height: 100%;
 		max-height: 100%;
@@ -3795,28 +3752,21 @@
 		border: none;
 	}
 
-	.settings-panel.mobile .settings-content {
+	.settings-panel.compact .settings-content {
 		flex-direction: column;
 	}
 
-	.settings-panel.mobile .settings-tabs {
+	.settings-panel.compact .settings-tabs {
 		flex-direction: row;
+		flex-wrap: wrap;
 		min-width: 0;
 		border-right: none;
 		border-bottom: 1px solid var(--border-light);
 		padding: 8px 8px 0;
-		overflow-x: auto;
-		overflow-y: hidden;
-		-webkit-overflow-scrolling: touch;
-		scrollbar-width: none;
 		gap: 0;
 	}
 
-	.settings-panel.mobile .settings-tabs::-webkit-scrollbar {
-		display: none;
-	}
-
-	.settings-panel.mobile .tab-btn {
+	.settings-panel.compact .tab-btn {
 		flex-shrink: 0;
 		flex-direction: column;
 		gap: 4px;
@@ -3825,56 +3775,56 @@
 		border-radius: 8px 8px 0 0;
 	}
 
-	.settings-panel.mobile .tab-btn.active {
+	.settings-panel.compact .tab-btn.active {
 		border-bottom: 2px solid var(--accent);
 		border-radius: 8px 8px 0 0;
 	}
 
-	.settings-panel.mobile .settings-header {
+	.settings-panel.compact .settings-header {
 		padding-top: calc(env(safe-area-inset-top, 12px) + 12px);
 	}
 
-	.settings-panel.mobile .settings-body {
+	.settings-panel.compact .settings-body {
 		padding: 16px;
 	}
 
-	.settings-panel.mobile .setting-name {
+	.settings-panel.compact .setting-name {
 		font-size: 14px;
 	}
 
-	.settings-panel.mobile .setting-desc {
+	.settings-panel.compact .setting-desc {
 		font-size: 12px;
 	}
 
-	.settings-panel.mobile .toggle-switch {
+	.settings-panel.compact .toggle-switch {
 		width: 44px;
 		height: 26px;
 	}
 
-	.settings-panel.mobile .toggle-knob {
+	.settings-panel.compact .toggle-knob {
 		width: 22px;
 		height: 22px;
 	}
 
-	.settings-panel.mobile .toggle-switch.on .toggle-knob {
+	.settings-panel.compact .toggle-switch.on .toggle-knob {
 		transform: translateX(18px);
 	}
 
-	.settings-panel.mobile .option-btn {
+	.settings-panel.compact .option-btn {
 		padding: 12px 10px;
 		font-size: 14px;
 	}
 
-	.settings-panel.mobile .theme-btn {
+	.settings-panel.compact .theme-btn {
 		padding: 12px 10px;
 		font-size: 14px;
 	}
 
-	.settings-panel.mobile .font-size-options {
+	.settings-panel.compact .font-size-options {
 		gap: 8px;
 	}
 
-	.settings-panel.mobile .font-size-btn {
+	.settings-panel.compact .font-size-btn {
 		padding: 12px 6px;
 	}
 

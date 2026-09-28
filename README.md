@@ -30,7 +30,8 @@ and transcription arrive in the v1 feature-complete beta.
 links you made. AI-detected similarity edges and promotion to real links arrive in the v1
 feature-complete beta.
 
-**Local AI, no cloud** — external alpha uses Ollama for semantic search. Grounded note Q&A,
+**Local semantic search; optional cloud writing** — external alpha uses Ollama for semantic
+search. Writing providers can use OpenAI or Anthropic when configured. Grounded note Q&A,
 similarity workflows, and whisper.cpp transcription arrive in the v1 feature-complete beta.
 A weaker second machine reaches the stronger one over a private Tailscale network. Ollama
 has no authentication of its own, so the endpoint must never be bound to a public interface
@@ -46,6 +47,8 @@ rather than silently overwritten.
 Second Brain supports one logical vault replicated across Windows 11 x86-64 and Fedora 44
 Workstation x86-64. Other desktop and mobile operating systems are not supported. A
 10,000-note vault is the external-alpha tested baseline, not a hard limit.
+The vault belongs on a local filesystem or directly attached drive; folders managed by
+another sync product are unsupported. NAS storage remains under investigation.
 
 **Notion for reading anywhere** — optionally publish your notes to Notion so they are
 readable from a phone or browser when neither machine is to hand. This is a read-only view:

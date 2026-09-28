@@ -1,11 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import '../app.css';
-	import { resolvedTheme, appConfig, activeNotePath, platformIsMobile, customThemes } from '$lib/stores/app';
-	import { openFile, openUrl, isMobilePlatform } from '$lib/api';
+	import { resolvedTheme, appConfig, activeNotePath, compactLayout, customThemes } from '$lib/stores/app';
+	import { openFile, openUrl } from '$lib/api';
 	import { get } from 'svelte/store';
-	import { darkThemes, isMobile, isAndroid } from '$lib/platform';
-	import type { CustomTheme } from '$lib/types';
+	import { applyTheme } from '$lib/theme';
 	import ResizeHandles from '$lib/components/ResizeHandles.svelte';
 	import { resolveVaultFilePath } from '$lib/utils/paths';
 	import { requestNoteNavigation } from '$lib/utils/navigation';
@@ -31,64 +30,8 @@
 		}
 	});
 
-	const CUSTOM_THEME_VARS = [
-		'--bg-primary', '--bg-secondary', '--bg-tertiary',
-		'--bg-hover', '--bg-active', '--bg-editor',
-		'--text-primary', '--text-secondary', '--border-color',
-		'--border-light', '--text-tertiary',
-	];
-
-	// A custom theme carries nine colors, but the stylesheet also reads --border-light and
-	// --text-tertiary. Named themes set those in their own :root[data-theme] block; a custom theme
-	// has no such block, so without these they fall back to the light defaults in app.css and a dark
-	// custom theme draws near-white dividers. Derive them from the closest color the theme does have.
-	function applyCustomThemeVars(root: HTMLElement, ct: CustomTheme) {
-		root.style.setProperty('--bg-primary', ct.colors.bg_primary);
-		root.style.setProperty('--bg-secondary', ct.colors.bg_secondary);
-		root.style.setProperty('--bg-tertiary', ct.colors.bg_tertiary);
-		root.style.setProperty('--bg-hover', ct.colors.bg_hover);
-		root.style.setProperty('--bg-active', ct.colors.bg_active);
-		root.style.setProperty('--bg-editor', ct.colors.bg_editor);
-		root.style.setProperty('--text-primary', ct.colors.text_primary);
-		root.style.setProperty('--text-secondary', ct.colors.text_secondary);
-		root.style.setProperty('--border-color', ct.colors.border_color);
-		root.style.setProperty('--border-light', ct.colors.border_color);
-		root.style.setProperty('--text-tertiary', ct.colors.text_secondary);
-	}
-
-	function clearCustomThemeVars(root: HTMLElement) {
-		for (const v of CUSTOM_THEME_VARS) root.style.removeProperty(v);
-	}
-
-	function applyTheme(t: string, themes: CustomTheme[] = []) {
-		const namedThemes = ['solarized-light', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-light', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'light-coffee', 'dark-coffee', 'cotton-candy', 'crimson', 'cloud', 'peach', 'material-dark', 'material-light', 'monokai', 'rose-pine', 'everforest', 'horizon', 'cyberpunk', 'black', 'one-dark'];
-		const root = document.documentElement;
-		root.classList.remove('dark');
-		root.removeAttribute('data-theme');
-		clearCustomThemeVars(root);
-		if (t.startsWith('custom-')) {
-			const ct = themes.find(c => c.id === t);
-			if (ct) {
-				applyCustomThemeVars(root, ct);
-				if (ct.is_dark) root.classList.add('dark');
-			}
-		} else if (namedThemes.includes(t)) {
-			root.setAttribute('data-theme', t);
-			if (darkThemes.includes(t)) root.classList.add('dark');
-		} else if (t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-			root.classList.add('dark');
-		}
-	}
-
 	function openLocalFile(path: string) {
-		if (isAndroid) {
-			const bridge = (window as any).Android;
-			if (bridge && typeof bridge.openFile === 'function') {
-				bridge.openFile(path);
-			}
-		} else {
-			openFile(path).catch((err) => console.error('Failed to open file:', err));
-		}
+		openFile(path).catch((err) => console.error('Failed to open file:', err));
 	}
 
 	function resolveAndHandleLink(href: string) {
@@ -110,10 +53,14 @@
 		}
 	}
 
-	// Replace the user-agent guess with the backend's compile-time platform.
+	// Compact layout follows window width on both supported desktops.
 	onMount(() => {
-		if (isCaptureWindow) return;
-		isMobilePlatform().then((m) => platformIsMobile.set(m)).catch(() => {});
+		// Same breakpoint as the compact media query in app.css.
+		const query = window.matchMedia('(max-width: 768px)');
+		const update = () => compactLayout.set(query.matches);
+		update();
+		query.addEventListener('change', update);
+		return () => query.removeEventListener('change', update);
 	});
 
 	// Intercept all link clicks in capture phase to prevent webview navigation
@@ -141,49 +88,9 @@
 
 		document.addEventListener('click', handleLinkClick, true);
 
-		// On Android WebView, tapping a link can trigger native navigation before
-		// the JS click event fires (causing 404s for relative .md links).
-		// We intercept touchend: if it's a tap (not a scroll) on an <a>, we
-		// preventDefault to block the native navigation and handle it ourselves.
-		let touchStartY = 0;
-		function handleTouchStart(e: TouchEvent) {
-			touchStartY = e.touches[0]?.clientY ?? 0;
-		}
-		function handleTouchEnd(e: TouchEvent) {
-			const touch = e.changedTouches[0];
-			if (!touch) return;
-			const endY = touch.clientY;
-			// If the finger moved > 10px, it's a scroll, not a tap
-			if (Math.abs(endY - touchStartY) > 10) return;
-			// Android WebView may report e.target as the editor root for elements
-			// inside contenteditable="false" blocks; use elementFromPoint instead
-			const el = (document.elementFromPoint(touch.clientX, touch.clientY) ?? e.target) as HTMLElement;
-			// PDF/attachment embeds: check for data-open-file on target or ancestors
-			const fileTarget = el?.closest('[data-open-file]') as HTMLElement | null;
-			if (fileTarget) {
-				e.preventDefault();
-				openLocalFile(fileTarget.getAttribute('data-open-file')!);
-				return;
-			}
-			const target = el?.closest('a');
-			if (!target) return;
-			const href = target.getAttribute('href');
-			if (!href) return;
-			e.preventDefault();
-			resolveAndHandleLink(href);
-		}
-
-		if (isMobile) {
-			document.addEventListener('touchstart', handleTouchStart, { capture: true, passive: true });
-			document.addEventListener('touchend', handleTouchEnd, true);
-		}
 
 		return () => {
 			document.removeEventListener('click', handleLinkClick, true);
-			if (isMobile) {
-				document.removeEventListener('touchstart', handleTouchStart, true);
-				document.removeEventListener('touchend', handleTouchEnd, true);
-			}
 		};
 	});
 
@@ -192,7 +99,7 @@
 	// off, a file dropped outside a drop zone would make the webview navigate to / open
 	// that file, replacing the app. Swallow any drag that bubbles up unhandled. Real drop
 	// zones (editor, sidebar reordering) call preventDefault in their own handlers first;
-	// these bubble-phase listeners only act as a fallback. On macOS/Linux OS file drops are
+	// these bubble-phase listeners only act as a fallback. On Linux OS file drops are
 	// intercepted natively and never surface as HTML5 events, so this is a harmless no-op there.
 	onMount(() => {
 		function preventNavigate(e: DragEvent) {
@@ -207,7 +114,7 @@
 	});
 </script>
 
-<svelte:document oncontextmenu={(e) => { if (!isMobile) e.preventDefault(); }} />
+<svelte:document oncontextmenu={(e) => { e.preventDefault(); }} />
 
 <svelte:head>
 	<title>Second Brain</title>

@@ -44,7 +44,7 @@
 	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, readOnly, shutdownPending, holdingPreview, quickAccessPaths, notes, canGoBack, canGoForward, viewerNote, viewMode, notebooks, outlineWidth, aiStatus, aiUsable } from '$lib/stores/app';
 	import { saveNote, saveImage, saveAttachment, readClipboardImage, addQuickAccess, removeQuickAccess, getQuickAccess, getNoteVersions, getNoteVersionContent, createVersion, aiAsk, getAllNoteTitles, readNote, renameNote } from '$lib/api';
 	import type { VersionEntry, AiStreamEvent, NoteTitleEntry, TaskItem as TaskRecord, NoteMeta, NoteContent, RelocationOutcome } from '$lib/types';
-	import { listen } from '@tauri-apps/api/event';
+	import { listenAppEvent } from '$lib/events';
 	import { debounce } from '$lib/utils/debounce';
 	import { SaveCoordinator, type SaveResult } from '$lib/utils/save-coordinator';
 	import { EditorMutationBarrier, saveForCurrentDocument, type EditorDocumentIdentity } from '$lib/utils/editor-mutation-barrier';
@@ -65,8 +65,9 @@
 	import GraphView from './GraphView.svelte';
 	import TagSuggestInput from './TagSuggestInput.svelte';
 	import ImageViewer from './ImageViewer.svelte';
-	import { isMobile, isAndroid } from '$lib/platform';
+	import { compactLayout } from '$lib/stores/app';
 	import ResizeHandle from './ResizeHandle.svelte';
+	const isCompact = $derived($compactLayout);
 
 	let {
 		onMoveToTrash,
@@ -84,14 +85,13 @@
 		onRelocateActiveDocument?: (path: string, reason: string, mutation: () => Promise<RelocationOutcome>) => Promise<string | null>;
 	} = $props();
 
-	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
 	const sourceHighlighter = hljs.newInstance();
 	sourceHighlighter.registerLanguage('markdown', markdownLanguage);
 	const SOURCE_HIGHLIGHT_MAX_CHARS = 32_000;
 
-	// Track virtual keyboard height on mobile via visualViewport
+	// Track virtual keyboard height on compact via visualViewport
 	let keyboardHeight = $state(0);
-	if (isMobile && typeof window !== 'undefined' && window.visualViewport) {
+	if (typeof window !== 'undefined' && window.visualViewport) {
 		const vv = window.visualViewport;
 		const update = () => { keyboardHeight = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)); };
 		vv.addEventListener('resize', update);
@@ -387,7 +387,7 @@
 	}
 
 	async function scrollToHeading(pos: number) {
-		if (isMobile) {
+		if (isCompact) {
 			showOutline = false;
 			await tick();
 		}
@@ -395,7 +395,7 @@
 		editor.commands.setTextSelection(pos + 1);
 		editor.commands.scrollIntoView();
 		editor.view.focus();
-		if (isMobile) {
+		if (isCompact) {
 			const heading = editor.view.nodeDOM(pos);
 			if (heading instanceof HTMLElement) heading.scrollIntoView({ block: 'start' });
 		}
@@ -656,7 +656,7 @@
 	}
 
 	let mathObserver: IntersectionObserver | null = null;
-	const mathPending = new WeakMap<Element, () => void>();
+	const mathPending = new Map<Element, () => void>();
 	function observeMath(dom: HTMLElement, render: () => void) {
 		if (!mathObserver) {
 			const root = (editorElement?.closest('.editor-body') as Element) ?? null;
@@ -895,7 +895,7 @@
 		renderHTML({ HTMLAttributes }) {
 			const src = HTMLAttributes.src || '';
 			const name = HTMLAttributes.name || 'file.pdf';
-			const showInline = !isMobile && ($appConfig?.pdf_preview ?? false);
+			const showInline = !isCompact && ($appConfig?.pdf_preview ?? false);
 			if (showInline) {
 				const vaultRoot = $appConfig?.active_vault ?? '';
 				const pdfHeight = $appConfig?.pdf_height ?? 600;
@@ -906,10 +906,10 @@
 					['p', { class: 'pdf-label' }, name],
 				];
 			}
-			// Non-inline: render as a clickable link (mobile + desktop with setting off)
-			return ['div', mergeAttributes({ 'data-pdf-src': src, 'data-pdf-name': name, class: 'pdf-embed-mobile' }),
-				['a', { href: decodeURIComponent(src), class: 'pdf-link-mobile' },
-					['span', { class: 'pdf-icon-mobile' }, '\uD83D\uDCC4'],
+			// Non-inline: render as a clickable link (compact + desktop with setting off)
+			return ['div', mergeAttributes({ 'data-pdf-src': src, 'data-pdf-name': name, class: 'pdf-embed-compact' }),
+				['a', { href: decodeURIComponent(src), class: 'pdf-link-compact' },
+					['span', { class: 'pdf-icon-compact' }, '\uD83D\uDCC4'],
 					['span', {}, name],
 				],
 			];
@@ -1614,15 +1614,13 @@
 				const toolbar = document.createElement('div');
 				toolbar.className = 'mermaid-render-toolbar';
 
-				if (!isAndroid) {
-					const copyBtn = document.createElement('button');
-					copyBtn.type = 'button';
-					copyBtn.className = 'mermaid-render-action';
-					copyBtn.title = 'Copy as PNG';
-					copyBtn.textContent = 'Copy';
-					copyBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); copyDiagram(container); };
-					toolbar.appendChild(copyBtn);
-				}
+				const copyBtn = document.createElement('button');
+				copyBtn.type = 'button';
+				copyBtn.className = 'mermaid-render-action';
+				copyBtn.title = 'Copy as PNG';
+				copyBtn.textContent = 'Copy';
+				copyBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); copyDiagram(container); };
+				toolbar.appendChild(copyBtn);
 
 				const saveBtn = document.createElement('button');
 				saveBtn.type = 'button';
@@ -2227,10 +2225,10 @@
 
 		let x = coords.left;
 
-		// Keep menu within viewport (account for virtual keyboard on mobile)
+		// Keep menu within viewport (account for virtual keyboard on compact)
 		if (x + 240 > window.innerWidth) x = window.innerWidth - 250;
 		const vv1 = window.visualViewport;
-		const visibleBottom = isMobile && vv1 ? vv1.height + (vv1.offsetTop || 0) : window.innerHeight;
+		const visibleBottom = isCompact && vv1 ? vv1.height + (vv1.offsetTop || 0) : window.innerHeight;
 		const menuHeight = 300;
 		let y = coords.bottom + 4;
 		if (y + menuHeight > visibleBottom) y = coords.top - menuHeight - 4;
@@ -2383,7 +2381,7 @@
 		let x = coords.left;
 		if (x + 200 > window.innerWidth) x = window.innerWidth - 210;
 		const vv2 = window.visualViewport;
-		const visibleBottom = isMobile && vv2 ? vv2.height + (vv2.offsetTop || 0) : window.innerHeight;
+		const visibleBottom = isCompact && vv2 ? vv2.height + (vv2.offsetTop || 0) : window.innerHeight;
 		const menuH = 180;
 		let y = coords.bottom + 4;
 		if (y + menuH > visibleBottom) y = coords.top - menuH - 4;
@@ -2766,7 +2764,7 @@
 						},
 						handleTextInput: (view, from, to, text) => {
 							if (!$appConfig?.enable_wiki_links) return false;
-							// Detect [[ opening: flag so onTransaction opens the menu on mobile
+							// Detect [[ opening: flag so onTransaction opens the menu on compact
 							if (text === '[') {
 								const charBefore = from > 0 ? view.state.doc.textBetween(from - 1, from) : '';
 								if (charBefore === '[') wikiLinkTypedByUser = true;
@@ -2862,7 +2860,7 @@
 		let x = coords.left;
 		if (x + 280 > window.innerWidth) x = window.innerWidth - 290;
 		const vv = window.visualViewport;
-		const visibleBottom = isMobile && vv ? vv.height + (vv.offsetTop || 0) : window.innerHeight;
+		const visibleBottom = isCompact && vv ? vv.height + (vv.offsetTop || 0) : window.innerHeight;
 		const menuHeight = 360;
 		let y = coords.bottom + 4;
 		if (y + menuHeight > visibleBottom) y = coords.top - menuHeight - 4;
@@ -3099,7 +3097,7 @@
 	}
 
 	const saveCoordinator = new SaveCoordinator<EditorSaveSnapshot>({
-		delayMs: isMobile ? 1500 : 500,
+		delayMs: 500,
 		prepare: prepareSaveSnapshot,
 		capture: captureSaveSnapshot,
 		persist: async ({ path, meta, body, expectedRevision }) => {
@@ -3240,10 +3238,11 @@
 	$effect(() => {
 		const ro = $readOnly;
 		const shuttingDown = $shutdownPending;
+		const preview = !!$viewerNote || $holdingPreview;
 		untrack(() => {
 			if (editor) {
 				if (ro && !shuttingDown && $editorDirty) forceSave();
-				editor.setEditable(!ro && !shuttingDown);
+				editor.setEditable(!ro && !shuttingDown && !preview);
 			}
 		});
 	});
@@ -3501,7 +3500,7 @@
 			pendingContent = content;
 			isLoadingNote = false;
 		}
-		if (!isMobile && showOutline) scheduleOutline();
+		if (!isCompact && showOutline) scheduleOutline();
 		scheduleTaskReveal(path, revealTarget, revealRequest);
 	}
 
@@ -4271,13 +4270,13 @@
 		src = src.replace(/<div[^>]*data-pdf-src="([^"]*)"[^>]*data-pdf-name="([^"]*)"[^>]*>[^<]*<\/div>/gi, (_, pdfSrc, name) => {
 			const vaultRoot = $appConfig?.active_vault ?? '';
 			const absPath = normalizePath(`${vaultRoot}/${decodeURIComponent(pdfSrc)}`);
-			const showInline = !isMobile && ($appConfig?.pdf_preview ?? false);
+			const showInline = !isCompact && ($appConfig?.pdf_preview ?? false);
 			if (showInline) {
 				const pdfHeight = $appConfig?.pdf_height ?? 600;
 				const displaySrc = convertFileSrc(absPath);
 				return `<div data-pdf-src="${pdfSrc}" data-pdf-name="${name}" class="pdf-embed"><iframe src="${displaySrc}" width="100%" height="${pdfHeight}px"></iframe><p class="pdf-label">${name}</p></div>`;
 			}
-			return `<div data-pdf-src="${pdfSrc}" data-pdf-name="${name}" class="pdf-embed-mobile"><a href="${decodeURIComponent(pdfSrc)}" class="pdf-link-mobile">\uD83D\uDCC4 ${name}</a></div>`;
+			return `<div data-pdf-src="${pdfSrc}" data-pdf-name="${name}" class="pdf-embed-compact"><a href="${decodeURIComponent(pdfSrc)}" class="pdf-link-compact">\uD83D\uDCC4 ${name}</a></div>`;
 		});
 
 		// Pre-process: render KaTeX math - only outside fenced code blocks
@@ -4381,7 +4380,7 @@
 	}
 
 	// When editorElement appears in DOM, initialize TipTap.
-	// On mobile, pre-create editor with empty content so first note load is fast.
+	// On compact, pre-create editor with empty content so first note load is fast.
 	$effect(() => {
 		if (editorElement && !editor) {
 			if (pendingContent !== null) {
@@ -4392,7 +4391,7 @@
 					wordCount = countWords(text);
 					charCount = text.replace(/\s/g, '').length;
 				}
-			} else if (isMobile && !lastSourceMode) {
+			} else if (isCompact && !lastSourceMode) {
 				createEditor('');
 			}
 		}
@@ -4458,6 +4457,7 @@
 		}
 		mathObserver?.disconnect();
 		mathObserver = null;
+		mathPending.clear();
 		editorReady = false;
 		closeSlashMenu();
 	}
@@ -4470,6 +4470,7 @@
 		}
 		mathObserver?.disconnect();
 		mathObserver = null;
+		mathPending.clear();
 
 		isLargeDoc = content.length > LARGE_DOC_CHARS;
 		const html = markdownToHtml(content);
@@ -4658,7 +4659,7 @@
 						}
 					},
 					// Let task-list checkboxes be ticked in View Mode (read-only) without
-					// entering edit mode - e.g. a shopping list on mobile, where editing would
+					// entering edit mode - e.g. a shopping list on compact, where editing would
 					// pop the soft keyboard. TipTap leaves the checkbox clickable in read-only
 					// but reverts the toggle on `change`; we intercept the click, cancel the
 					// native toggle, and dispatch the attr change ourselves so it persists via
@@ -4748,10 +4749,10 @@
 						editorState++;
 					});
 				}
-				// On mobile, only check menus when they're already open or user just typed trigger char
-				if (!isMobile || slashMenu || slashTypedByUser) updateSlashMenu();
-				if (!isMobile || wikiLinkMenu || wikiLinkTypedByUser) updateWikiLinkMenu();
-				if (!isMobile || taskMetaMenu || taskMetaTypedByUser) updateTaskMetaMenu();
+				// On compact, only check menus when they're already open or user just typed trigger char
+				if (!isCompact || slashMenu || slashTypedByUser) updateSlashMenu();
+				if (!isCompact || wikiLinkMenu || wikiLinkTypedByUser) updateWikiLinkMenu();
+				if (!isCompact || taskMetaMenu || taskMetaTypedByUser) updateTaskMetaMenu();
 				// Detect when cursor leaves a wiki-link mark and trigger rename check
 				if ($appConfig?.enable_wiki_links && editor) {
 					const curMarks = editor.state.selection.$from.marks();
@@ -4769,7 +4770,7 @@
 				}
 				$editorDirty = true;
 				markDirty();
-				if (!isMobile && showOutline) scheduleOutline();
+				if (!isCompact && showOutline) scheduleOutline();
 				if (showInfo) scheduleCounts();
 			},
 		});
@@ -4924,8 +4925,8 @@
 			const currentSize = node?.attrs.size || 'full';
 			const imgSrc = node?.attrs.src || (target as HTMLImageElement).src || '';
 			const imgAlt = node?.attrs.alt || (target as HTMLImageElement).alt || '';
-			const toolbarW = isAndroid ? 188 : isMobile ? 130 : 250;
-			const toolbarH = isAndroid ? 48 : 38;
+			const toolbarW = isCompact ? 130 : 250;
+			const toolbarH = 38;
 			const x = Math.max(8, Math.min(event.clientX, window.innerWidth - toolbarW - 8));
 			const y = Math.max(8, Math.min(event.clientY, window.innerHeight - toolbarH - 8));
 			imageToolbar = { pos, x, y, size: currentSize, src: imgSrc, alt: imgAlt };
@@ -5415,7 +5416,7 @@
 				aiSelectionFrom = 0;
 				aiSelectionTo = 0;
 			}
-			aiMenu = isMobile ? { x: 0, y: 0 } : { x: Math.max(4, window.innerWidth / 2 - 110), y: 100 };
+			aiMenu = isCompact ? { x: 0, y: 0 } : { x: Math.max(4, window.innerWidth / 2 - 110), y: 100 };
 			return;
 		}
 
@@ -5481,8 +5482,8 @@
 		aiTranslateMenu = false;
 		aiCustomPrompt = '';
 
-		if (isMobile) {
-			// Mobile: bottom sheet, no positioning needed
+		if (isCompact) {
+			// Compact: bottom sheet, no positioning needed
 			aiMenu = { x: 0, y: 0 };
 		} else if (hasSelection) {
 			const coords = editor.view.coordsAtPos(from);
@@ -5541,7 +5542,7 @@
 		if (aiStreamUnlisten) { aiStreamUnlisten(); aiStreamUnlisten = null; }
 
 		const requestId = crypto.randomUUID();
-		const unlisten = await listen<AiStreamEvent>('ai-stream', (event) => {
+		const unlisten = await listenAppEvent('aiStream', (event) => {
 			const data = event.payload;
 			if (data.event_type === 'text' && data.text) {
 				aiResult = (aiResult ?? '') + data.text;
@@ -5863,7 +5864,7 @@
 			const buffer = await file.arrayBuffer();
 			const data = Array.from(new Uint8Array(buffer));
 			await insertSavedAsset(identity, file.name, () => saveAttachment(file.name, data), (relativePath) => {
-				const usePdfPreview = !isMobile && ($appConfig?.pdf_preview ?? false);
+				const usePdfPreview = !isCompact && ($appConfig?.pdf_preview ?? false);
 				if (usePdfPreview) {
 					return editor!.chain().focus().insertContent({
 						type: 'pdfEmbed',
@@ -5974,7 +5975,7 @@
 			const target = caretNonWs > 0 ? scanAlign(sourceContent, docNonWs, { stopAtNw: caretNonWs }).srcOffset : 0;
 			tick().then(() => {
 				if (!sourceElement) return;
-				if (!isMobile) sourceElement.focus();
+				if (!isCompact) sourceElement.focus();
 				sourceElement.setSelectionRange(target, target);
 				scrollSourceToOffset(target);
 			});
@@ -5990,11 +5991,11 @@
 				const pos = Math.min(docPosForNonWsCount(editor.state.doc, nwBefore), editor.state.doc.content.size);
 				const sel = TextSelection.near(editor.state.doc.resolve(pos));
 				editor.view.dispatch(editor.state.tr.setSelection(sel).scrollIntoView());
-				if (!isMobile) editor.view.focus();
+				if (!isCompact) editor.view.focus();
 				requestAnimationFrame(() => editor?.commands.scrollIntoView());
 			};
-			if (isMobile) {
-				// Mobile: editor stays in DOM, just update its content
+			if (isCompact) {
+				// Compact: editor stays in DOM, just update its content
 				const content = srcText || ($activeNote?.content ?? '');
 				if (editor) {
 					ignoreNextUpdate = true;
@@ -6014,6 +6015,19 @@
 				});
 			}
 		}
+	});
+
+	// Crossing the compact breakpoint swaps the rich editor's element. Move the live editor
+	// onto the new one: rebuilding it would drop undo history and leave a moment with no
+	// document for a pending save to capture.
+	$effect(() => {
+		const element = editorElement;
+		if (!element || !editor || editor.view.dom.parentElement === element) return;
+		element.appendChild(editor.view.dom);
+		// Lazy math rendering watches the scroll container, which was replaced too.
+		mathObserver?.disconnect();
+		mathObserver = null;
+		for (const [dom, render] of [...mathPending]) observeMath(dom as HTMLElement, render);
 	});
 
 	// Tauri drag-drop listener for OS file drops (browser DragEvent doesn't have files in Tauri)
@@ -6036,7 +6050,7 @@
 					}
 
 					await insertSavedAsset(identity, name, () => saveAttachment(name, Array.from(data)), (relativePath) => {
-						if (ext === 'pdf' && !isMobile && ($appConfig?.pdf_preview ?? false)) {
+						if (ext === 'pdf' && !isCompact && ($appConfig?.pdf_preview ?? false)) {
 							return editor!.chain().focus().insertContent({
 								type: 'pdfEmbed',
 								attrs: { src: relativePath, name },
@@ -6063,14 +6077,14 @@
 	let unlistenFileChange: (() => void) | null = null;
 	let unlistenSyncDone: (() => void) | null = null;
 	if ($appConfig?.enable_wiki_links) {
-		listen('file-changed', () => {
+		listenAppEvent('fileChanged', () => {
 			if (!componentDestroyed && $appConfig?.enable_wiki_links) refreshWikiLinkTitles();
 		}).then((unlisten) => {
 			if (componentDestroyed) unlisten();
 			else unlistenFileChange = unlisten;
 		});
 	}
-	listen('sync-done', retryDelayedAttachments).then((unlisten) => {
+	listenAppEvent('syncDone', retryDelayedAttachments).then((unlisten) => {
 		if (componentDestroyed) unlisten();
 		else unlistenSyncDone = unlisten;
 	});
@@ -6086,7 +6100,7 @@
 	});
 </script>
 
-<div class="editor-container" class:mobile={isMobile}>
+<div class="editor-container" class:compact={isCompact}>
 	{#if !$activeNote}
 		<div class="empty-editor">
 			<div class="empty-icon">
@@ -6097,8 +6111,8 @@
 			</div>
 			<p>Select a note or create a new one</p>
 			<div class="shortcuts-hint">
-				<span><kbd>{modKey}</kbd>+<kbd>N</kbd> New note</span>
-				<span><kbd>{modKey}</kbd>+<kbd>P</kbd> Quick open</span>
+				<span><kbd>Ctrl</kbd>+<kbd>N</kbd> New note</span>
+				<span><kbd>Ctrl</kbd>+<kbd>P</kbd> Quick open</span>
 			</div>
 		</div>
 	{:else}
@@ -6125,7 +6139,7 @@
 			</div>
 		{/if}
 		{#if !$viewerNote}
-		<div class="editor-toolbar" class:mobile={isMobile}>
+		<div class="editor-toolbar" class:compact={isCompact}>
 			<div class="editor-title">
 				<input
 					bind:this={titleInput}
@@ -6185,7 +6199,7 @@
 					}}
 				/>
 			</div>
-			{#if !isMobile && !$holdingPreview}
+			{#if !isCompact && !$holdingPreview}
 			<div class="toolbar-actions">
 				{#if $canGoBack || $canGoForward}
 				<div class="nav-history-btns">
@@ -6207,7 +6221,7 @@
 					class="icon-btn"
 					class:active={noteSearchOpen}
 					onclick={() => noteSearchOpen ? closeNoteSearch() : openNoteSearch()}
-					title={`Find in note (${modKey}+F)`}
+					title={`Find in note (Ctrl+F)`}
 				>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -6397,15 +6411,15 @@
 			{/if}
 			<div class="editor-body-row">
 			<div class="editor-body">
-				{#if isMobile}
-					<!-- Mobile: both views always in DOM, toggled via display to avoid slow editor re-creation -->
+				{#if isCompact}
+					<!-- Compact: both views always in DOM, toggled via display to avoid slow editor re-creation -->
 					<div class="source-editor-layer" style={$sourceMode ? '' : 'display:none'}>
 						<pre class="source-highlight" aria-hidden="true" bind:this={sourceHighlightElement}><code>{@html sourceHighlightHtml}</code></pre>
 					<textarea
 						class="source-editor"
 						bind:this={sourceElement}
 						bind:value={sourceContent}
-						readonly={$readOnly || $shutdownPending}
+						readonly={$readOnly || $shutdownPending || !!$viewerNote || $holdingPreview}
 						oninput={() => {
 							$editorDirty = true;
 							markDirty();
@@ -6467,7 +6481,7 @@
 							class:with-line-numbers={$appConfig?.show_line_numbers}
 							bind:this={sourceElement}
 							bind:value={sourceContent}
-							readonly={$readOnly || $shutdownPending}
+							readonly={$readOnly || $shutdownPending || !!$viewerNote || $holdingPreview}
 							oninput={() => {
 								$editorDirty = true;
 								markDirty();
@@ -6683,7 +6697,7 @@
 							</span>
 						</div>
 						{/if}
-						{#if !isMobile && $activeNotePath}
+						{#if !isCompact && $activeNotePath}
 						<div class="info-note-path">
 							<div class="info-note-path-header">
 								<span class="info-key">Path on disk</span>
@@ -6730,9 +6744,9 @@
 
 		{#if editorReady && !$sourceMode && !$viewerNote}
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
-			<div class="editor-formatting-bar" style={isMobile ? `${keyboardHeight > 0 ? `bottom: ${keyboardHeight}px;` : ''}${anyDropdownOpen ? 'overflow: visible;' : ''}` : ''} onclick={handleFormattingBarClick} onkeydown={(e) => { if (e.key === 'Escape') closeFormattingDropdowns(); }}>
-				{#if isMobile}
-				<!-- ═══ MOBILE formatting bar: compact, relevant buttons only ═══ -->
+			<div class="editor-formatting-bar" style={isCompact ? `${keyboardHeight > 0 ? `bottom: ${keyboardHeight}px;` : ''}${anyDropdownOpen ? 'overflow: visible;' : ''}` : ''} onclick={handleFormattingBarClick} onkeydown={(e) => { if (e.key === 'Escape') closeFormattingDropdowns(); }}>
+				{#if isCompact}
+				<!-- ═══ Compact formatting bar: relevant buttons only ═══ -->
 
 				<!-- Insert (+) dropdown - at front like desktop -->
 				<div class="fmt-dropdown-wrap">
@@ -6745,12 +6759,6 @@
 								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 00-2.828 0L6 21"/></svg>
 								Image
 							</button>
-							{#if isAndroid}
-								<button onclick={() => { insertDropdown = false; document.querySelector<HTMLInputElement>('#insert-camera-input')?.click(); }}>
-									<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
-									Take Photo
-								</button>
-							{/if}
 							<button onclick={() => { insertDropdown = false; document.querySelector<HTMLInputElement>('#insert-file-input')?.click(); }}>
 								<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22a2 2 0 01-2-2V4a2 2 0 012-2h8a2.4 2.4 0 011.704.706l3.588 3.588A2.4 2.4 0 0120 8v12a2 2 0 01-2 2z"/><path d="M14 2v5a1 1 0 001 1h5"/></svg>
 								File
@@ -6840,7 +6848,7 @@
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 5h8"/><path d="M13 12h8"/><path d="M13 19h8"/><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/></svg>
 				</button>
 
-				<!-- Indent / Outdent (no Tab key on mobile soft keyboards) -->
+				<!-- Indent / Outdent (no Tab key on compact soft keyboards) -->
 				<button class="fmt-btn" onclick={() => {
 					if (!editor) return;
 					// Try list indent first - run() returns true if it succeeded
@@ -6975,16 +6983,16 @@
 				<div class="fmt-sep"></div>
 
 				<!-- Text formatting -->
-				<button class="fmt-btn" class:active={isEditorActive('bold')} onclick={() => editor?.chain().focus().toggleBold().run()} title={`Bold (${modKey}+B)`}>
+				<button class="fmt-btn" class:active={isEditorActive('bold')} onclick={() => editor?.chain().focus().toggleBold().run()} title={`Bold (Ctrl+B)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h9a4 4 0 010 8H7a1 1 0 01-1-1V5a1 1 0 011-1h7a4 4 0 010 8"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={isEditorActive('italic')} onclick={() => editor?.chain().focus().toggleItalic().run()} title={`Italic (${modKey}+I)`}>
+				<button class="fmt-btn" class:active={isEditorActive('italic')} onclick={() => editor?.chain().focus().toggleItalic().run()} title={`Italic (Ctrl+I)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={isEditorActive('underline')} onclick={() => editor?.chain().focus().toggleUnderline().run()} title={`Underline (${modKey}+U)`}>
+				<button class="fmt-btn" class:active={isEditorActive('underline')} onclick={() => editor?.chain().focus().toggleUnderline().run()} title={`Underline (Ctrl+U)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4v6a6 6 0 0012 0V4"/><line x1="4" x2="20" y1="20" y2="20"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={isEditorActive('strike')} onclick={() => editor?.chain().focus().toggleStrike().run()} title={`Strikethrough (${modKey}+Shift+X)`}>
+				<button class="fmt-btn" class:active={isEditorActive('strike')} onclick={() => editor?.chain().focus().toggleStrike().run()} title={`Strikethrough (Ctrl+Shift+X)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4H9a3 3 0 00-2.83 4"/><path d="M14 12a4 4 0 010 8H6"/><line x1="4" x2="20" y1="12" y2="12"/></svg>
 				</button>
 
@@ -7010,50 +7018,50 @@
 				<div class="fmt-sep"></div>
 
 				<!-- Link -->
-				<button class="fmt-btn" class:active={isEditorActive('link')} onclick={addLinkFromToolbar} title={`Link (${modKey}+K)`}>
+				<button class="fmt-btn" class:active={isEditorActive('link')} onclick={addLinkFromToolbar} title={`Link (Ctrl+K)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
 				</button>
 
 				<div class="fmt-sep"></div>
 
 				<!-- Lists -->
-				<button class="fmt-btn" class:active={isEditorActive('bulletList')} onclick={toggleBulletList} title={`Bullet List (${modKey}+Shift+8)`}>
+				<button class="fmt-btn" class:active={isEditorActive('bulletList')} onclick={toggleBulletList} title={`Bullet List (Ctrl+Shift+8)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5h13"/><path d="M8 12h13"/><path d="M8 19h13"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={isEditorActive('orderedList')} onclick={() => editor?.chain().focus().toggleOrderedList().run()} title={`Ordered List (${modKey}+Shift+7)`}>
+				<button class="fmt-btn" class:active={isEditorActive('orderedList')} onclick={() => editor?.chain().focus().toggleOrderedList().run()} title={`Ordered List (Ctrl+Shift+7)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5h10"/><path d="M11 12h10"/><path d="M11 19h10"/><path d="M4 4h1v5"/><path d="M4 9h2"/><path d="M6.5 20H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 00-2.6-1.02"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={isEditorActive('taskList')} onclick={toggleTaskList} title={`Task List (${modKey}+Shift+9)`}>
+				<button class="fmt-btn" class:active={isEditorActive('taskList')} onclick={toggleTaskList} title={`Task List (Ctrl+Shift+9)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 5h8"/><path d="M13 12h8"/><path d="M13 19h8"/><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/></svg>
 				</button>
 
 				<div class="fmt-sep"></div>
 
 				<!-- Undo / Redo -->
-				<button class="fmt-btn" onclick={() => editor?.chain().focus().undo().run()} title={`Undo (${modKey}+Z)`}>
+				<button class="fmt-btn" onclick={() => editor?.chain().focus().undo().run()} title={`Undo (Ctrl+Z)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 015.5 5.5 5.5 5.5 0 01-5.5 5.5H11"/></svg>
 				</button>
-				<button class="fmt-btn" onclick={() => editor?.chain().focus().redo().run()} title={`Redo (${modKey}+Shift+Z)`}>
+				<button class="fmt-btn" onclick={() => editor?.chain().focus().redo().run()} title={`Redo (Ctrl+Shift+Z)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 004 14.5 5.5 5.5 0 009.5 20H13"/></svg>
 				</button>
 
 				<div class="fmt-sep"></div>
 
 				<!-- Code & Code Block -->
-				<button class="fmt-btn" class:active={isEditorActive('code')} onclick={() => editor?.chain().focus().toggleCode().run()} title={`Inline Code (${modKey}+E)`}>
+				<button class="fmt-btn" class:active={isEditorActive('code')} onclick={() => editor?.chain().focus().toggleCode().run()} title={`Inline Code (Ctrl+E)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>
 				</button>
-				<button class="fmt-btn" class:active={isEditorActive('codeBlock')} onclick={() => editor?.chain().focus().toggleCodeBlock().run()} title={`Code Block (${modKey}+Alt+C)`}>
+				<button class="fmt-btn" class:active={isEditorActive('codeBlock')} onclick={() => editor?.chain().focus().toggleCodeBlock().run()} title={`Code Block (Ctrl+Alt+C)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m10 9-3 3 3 3"/><path d="m14 15 3-3-3-3"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
 				</button>
 
 				<!-- Blockquote -->
-				<button class="fmt-btn" class:active={isEditorActive('blockquote')} onclick={() => editor?.chain().focus().toggleBlockquote().run()} title={`Quote (${modKey}+Shift+B)`}>
+				<button class="fmt-btn" class:active={isEditorActive('blockquote')} onclick={() => editor?.chain().focus().toggleBlockquote().run()} title={`Quote (Ctrl+Shift+B)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 5H3"/><path d="M21 12H8"/><path d="M21 19H8"/><path d="M3 12v7"/></svg>
 				</button>
 
 				<!-- Collapsible Section -->
-				<button class="fmt-btn" class:active={isEditorActive('details')} onclick={() => insertDetails()} title={`Collapsible Section (${modKey}+.)`}>
+				<button class="fmt-btn" class:active={isEditorActive('details')} onclick={() => insertDetails()} title={`Collapsible Section (Ctrl+.)`}>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="13" height="7" x="8" y="3" rx="1"/><path d="m2 9 3 3-3 3"/><rect width="13" height="7" x="8" y="14" rx="1"/></svg>
 				</button>
 
@@ -7099,7 +7107,7 @@
 
 				<!-- Highlight -->
 				<div class="fmt-dropdown-wrap">
-					<button class="fmt-btn" class:active={isEditorActive('highlight')} onclick={(e) => { e.stopPropagation(); highlightDropdown = !highlightDropdown; headingDropdown = false; colorDropdown = false; tablePickerOpen = false; alignDropdown = false; insertDropdown = false; }} title={`Highlight (${modKey}+Shift+H)`}>
+					<button class="fmt-btn" class:active={isEditorActive('highlight')} onclick={(e) => { e.stopPropagation(); highlightDropdown = !highlightDropdown; headingDropdown = false; colorDropdown = false; tablePickerOpen = false; alignDropdown = false; insertDropdown = false; }} title={`Highlight (Ctrl+Shift+H)`}>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 01-2.8 0l-5.2-5.2a2 2 0 010-2.8L14 4"/></svg>
 						<span class="color-indicator" style="background: {getEditorAttributes('highlight').color || 'var(--accent)'}"></span>
 					</button>
@@ -7224,9 +7232,6 @@
 
 	<!-- Hidden file inputs for Insert dropdown -->
 	<input type="file" id="insert-image-input" accept="image/*" style="display:none" onchange={handleImageInput} />
-	{#if isAndroid}
-		<input type="file" id="insert-camera-input" accept="image/*" capture="environment" style="display:none" onchange={handleImageInput} />
-	{/if}
 	<input type="file" id="insert-file-input" style="display:none" onchange={(e) => {
 		const file = (e.target as HTMLInputElement).files?.[0];
 		if (file) {
@@ -7291,23 +7296,23 @@
 			<button onclick={ctxCut}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
 				Cut
-				<span class="text-ctx-shortcut">{modKey}+X</span>
+				<span class="text-ctx-shortcut">Ctrl+X</span>
 			</button>
 			<button onclick={ctxCopy}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
 				Copy
-				<span class="text-ctx-shortcut">{modKey}+C</span>
+				<span class="text-ctx-shortcut">Ctrl+C</span>
 			</button>
 			<button onclick={ctxPaste}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
 				Paste
-				<span class="text-ctx-shortcut">{modKey}+V</span>
+				<span class="text-ctx-shortcut">Ctrl+V</span>
 			</button>
 			<div class="text-ctx-sep"></div>
 			<button onclick={ctxSelectAll}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 7h8M8 12h8M8 17h8"/></svg>
 				Select All
-				<span class="text-ctx-shortcut">{modKey}+A</span>
+				<span class="text-ctx-shortcut">Ctrl+A</span>
 			</button>
 			<div class="text-ctx-sep"></div>
 			<!-- Heading submenu -->
@@ -7322,17 +7327,17 @@
 			<button onclick={ctxBold}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M6 4h8a4 4 0 014 4 4 4 0 01-4 4H6zm0 8h9a4 4 0 014 4 4 4 0 01-4 4H6z"/></svg>
 				Bold
-				<span class="text-ctx-shortcut">{modKey}+B</span>
+				<span class="text-ctx-shortcut">Ctrl+B</span>
 			</button>
 			<button onclick={ctxItalic}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/></svg>
 				Italic
-				<span class="text-ctx-shortcut">{modKey}+I</span>
+				<span class="text-ctx-shortcut">Ctrl+I</span>
 			</button>
 			<button onclick={ctxUnderline}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v7a6 6 0 006 6 6 6 0 006-6V3"/><line x1="4" y1="21" x2="20" y2="21"/></svg>
 				Underline
-				<span class="text-ctx-shortcut">{modKey}+U</span>
+				<span class="text-ctx-shortcut">Ctrl+U</span>
 			</button>
 			<button onclick={ctxStrike}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4H9a3 3 0 00-3 3 3 3 0 003 3h6"/><line x1="4" y1="12" x2="20" y2="12"/><path d="M8 20h7a3 3 0 003-3 3 3 0 00-3-3H8"/></svg>
@@ -7350,7 +7355,7 @@
 			<button onclick={ctxLink}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
 				Add Link
-				<span class="text-ctx-shortcut">{modKey}+K</span>
+				<span class="text-ctx-shortcut">Ctrl+K</span>
 			</button>
 			<button onclick={ctxCode}>
 				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
@@ -7497,17 +7502,17 @@
 {#if imageToolbar}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="img-toolbar-overlay" onclick={(e) => closeFromOverlay(e, () => (imageToolbar = null))} onkeydown={(e) => closeOnEscape(e, () => (imageToolbar = null))}>
-		<div class="img-toolbar" class:mobile-viewer-toolbar={isAndroid} style="left: {imageToolbar.x}px; top: {imageToolbar.y}px">
+		<div class="img-toolbar" class:compact-viewer-toolbar={isCompact} style="left: {imageToolbar.x}px; top: {imageToolbar.y}px">
 			<button class:active={imageToolbar.size === 'small'} onclick={() => setImageSize('small')} title="Small (33%)">S</button>
 			<button class:active={imageToolbar.size === 'medium'} onclick={() => setImageSize('medium')} title="Medium (50%)">M</button>
 			<button class:active={imageToolbar.size === 'full'} onclick={() => setImageSize('full')} title="Full width">L</button>
-			{#if isAndroid}
+			{#if isCompact}
 				<span class="img-toolbar-sep"></span>
 				<button class="img-toolbar-view" onclick={openImageViewer} title="View and zoom image" aria-label="View and zoom image">
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 00-2 2v3M16 3h3a2 2 0 012 2v3M8 21H5a2 2 0 01-2-2v-3M16 21h3a2 2 0 002-2v-3"/></svg>
 				</button>
 			{/if}
-			{#if !isMobile && !imageToolbar.src.startsWith('imgproxy:') && !imageToolbar.src.startsWith('http://imgproxy.localhost') && !imageToolbar.src.startsWith('https://imgproxy.localhost')}
+			{#if !isCompact && !imageToolbar.src.startsWith('imgproxy:') && !imageToolbar.src.startsWith('http://imgproxy.localhost') && !imageToolbar.src.startsWith('https://imgproxy.localhost')}
 				<span class="img-toolbar-sep"></span>
 				<button onclick={copyImageToClipboard} title="Copy image">
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
@@ -7569,7 +7574,7 @@
 				{/if}
 			</div>
 			<div class="math-modal-footer">
-				<span class="math-modal-hint">{modKey}+Enter to {mathModal.editPos !== null ? 'update' : 'insert'} · Esc to cancel</span>
+				<span class="math-modal-hint">Ctrl+Enter to {mathModal.editPos !== null ? 'update' : 'insert'} · Esc to cancel</span>
 				<div class="math-modal-actions">
 					<button type="button" onclick={cancelMathModal}>Cancel</button>
 					<button type="button" class="primary" onclick={commitMathModal} disabled={!mathModal.tex.trim()}>
@@ -7885,8 +7890,8 @@
 
 {#if aiMenu}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="ai-menu-overlay" class:mobile={isMobile} onclick={(e) => closeFromOverlay(e, closeAiMenu)} onkeydown={(e) => closeOnEscape(e, closeAiMenu)}>
-		<div class="ai-menu" class:mobile={isMobile} style={isMobile ? '' : `left: ${aiMenu.x}px; top: ${aiMenu.y}px`}>
+	<div class="ai-menu-overlay" class:compact={isCompact} onclick={(e) => closeFromOverlay(e, closeAiMenu)} onkeydown={(e) => closeOnEscape(e, closeAiMenu)}>
+		<div class="ai-menu" class:compact={isCompact} style={isCompact ? '' : `left: ${aiMenu.x}px; top: ${aiMenu.y}px`}>
 			{#if aiResult !== null || aiLoading}
 				<!-- Checked before availability: a result already on screen must survive the
 				     backend going away mid-generation, or the user loses work they can see
@@ -8554,7 +8559,7 @@
 
 	/* Inset the scrollbar off the window's right edge so the window resize handle
 	   (ResizeHandles in +layout) has clean space and doesn't swallow the scrollbar. */
-	.editor-container:not(.mobile) .editor-body {
+	.editor-container:not(.compact) .editor-body {
 		margin-right: 8px;
 	}
 
@@ -8917,7 +8922,7 @@
 		overflow: hidden;
 	}
 
-	.editor-container:not(.mobile) :global(.tiptap-wrapper .tiptap) {
+	.editor-container:not(.compact) :global(.tiptap-wrapper .tiptap) {
 		min-height: calc(100% + var(--editor-scroll-past-end, 65vh));
 		padding-bottom: var(--editor-scroll-past-end, 65vh);
 	}
@@ -10171,7 +10176,7 @@
 		display: block;
 	}
 
-	.img-toolbar.mobile-viewer-toolbar button {
+	.img-toolbar.compact-viewer-toolbar button {
 		min-width: 40px;
 		min-height: 40px;
 		padding: 8px 12px;
@@ -10909,10 +10914,10 @@
 		color: var(--text-tertiary, #aaa);
 		white-space: nowrap;
 	}
-	:global(.tiptap .pdf-embed-mobile) {
+	:global(.tiptap .pdf-embed-compact) {
 		margin: 8px 0;
 	}
-	:global(.tiptap .pdf-link-mobile) {
+	:global(.tiptap .pdf-link-compact) {
 		display: flex;
 		align-items: center;
 		gap: 10px;
@@ -10926,10 +10931,10 @@
 		text-decoration: none;
 		cursor: pointer;
 	}
-	:global(.tiptap .pdf-link-mobile:active) {
+	:global(.tiptap .pdf-link-compact:active) {
 		background: var(--bg-hover);
 	}
-	:global(.tiptap .pdf-icon-mobile) {
+	:global(.tiptap .pdf-icon-compact) {
 		font-size: 20px;
 		line-height: 1;
 	}
@@ -11491,14 +11496,14 @@
 		font-weight: 500;
 	}
 
-	/* ═══ MOBILE (class-based, not media-query, for Android high-DPI) ═══ */
-	.editor-container.mobile {
+	/* ═══ COMPACT LAYOUT ═══ */
+	.editor-container.compact {
 		height: 100%;
 		min-height: 0;
 		overflow: hidden;
 	}
 
-	.editor-container.mobile .editor-toolbar {
+	.editor-container.compact .editor-toolbar {
 		padding: 8px 16px 6px 16px;
 		flex-shrink: 0;
 		flex-direction: column;
@@ -11506,11 +11511,11 @@
 		gap: 2px;
 	}
 
-	.editor-container.mobile .toolbar-actions {
+	.editor-container.compact .toolbar-actions {
 		gap: 4px;
 	}
 
-	.editor-container.mobile .toolbar-actions .icon-btn {
+	.editor-container.compact .toolbar-actions .icon-btn {
 		min-width: 32px;
 		min-height: 32px;
 		display: flex;
@@ -11518,38 +11523,38 @@
 		justify-content: center;
 	}
 
-	.editor-container.mobile .toolbar-actions .save-indicator,
-	.editor-container.mobile .toolbar-actions .readonly-indicator {
+	.editor-container.compact .toolbar-actions .save-indicator,
+	.editor-container.compact .toolbar-actions .readonly-indicator {
 		font-size: 12px;
 	}
 
-	.editor-container.mobile .editor-title input {
+	.editor-container.compact .editor-title input {
 		font-size: 20px;
 		padding: 4px 0;
 	}
 
-	.editor-container.mobile .editor-body-wrapper {
+	.editor-container.compact .editor-body-wrapper {
 		flex: 1;
 		min-height: 0;
 		overflow: hidden;
 	}
 
-	.editor-container.mobile .editor-body-row {
+	.editor-container.compact .editor-body-row {
 		min-height: 0;
 	}
 
-	.editor-container.mobile .editor-body {
+	.editor-container.compact .editor-body {
 		min-height: 0;
 		overflow-y: auto;
 		-webkit-overflow-scrolling: touch;
 		padding: 0;
 	}
 
-	.editor-container.mobile .tiptap-wrapper {
+	.editor-container.compact .tiptap-wrapper {
 		min-height: 0;
 	}
 
-	.editor-container.mobile .editor-formatting-bar {
+	.editor-container.compact .editor-formatting-bar {
 		position: fixed;
 		bottom: 0;
 		left: 0;
@@ -11566,23 +11571,23 @@
 		border-top: 1px solid var(--border-color);
 	}
 
-	.editor-container.mobile .editor-formatting-bar::-webkit-scrollbar {
+	.editor-container.compact .editor-formatting-bar::-webkit-scrollbar {
 		display: none;
 	}
 
-	.editor-container.mobile .fmt-btn {
+	.editor-container.compact .fmt-btn {
 		min-width: 38px;
 		height: 38px;
 		flex-shrink: 0;
 		padding: 6px;
 	}
 
-	.editor-container.mobile .fmt-sep {
+	.editor-container.compact .fmt-sep {
 		height: 20px;
 		margin: 0 2px;
 	}
 
-	.editor-container.mobile .fmt-dropdown {
+	.editor-container.compact .fmt-dropdown {
 		position: absolute;
 		bottom: calc(100% + 4px);
 		left: 0;
@@ -11593,13 +11598,13 @@
 		overflow-y: auto;
 	}
 
-	.editor-container.mobile .fmt-dropdown button {
+	.editor-container.compact .fmt-dropdown button {
 		padding: 12px 16px;
 		font-size: 15px;
 		min-height: 44px;
 	}
 
-	.editor-container.mobile .insert-dropdown {
+	.editor-container.compact .insert-dropdown {
 		position: absolute;
 		bottom: calc(100% + 4px);
 		left: 0;
@@ -11608,23 +11613,23 @@
 		max-width: calc(100vw - 16px);
 	}
 
-	.editor-container.mobile .shortcuts-hint {
+	.editor-container.compact .shortcuts-hint {
 		display: none;
 	}
 
-	.editor-container.mobile .empty-editor p {
+	.editor-container.compact .empty-editor p {
 		font-size: 16px;
 	}
 
-	.editor-container.mobile :global(.editor-content) {
+	.editor-container.compact :global(.editor-content) {
 		padding: 8px 16px 220px !important;
 		/* Respect the user's font-size setting; 16px is the default. (issue #100)
 		   Auto-zoom isn't a concern: the viewport sets user-scalable=no. */
 		font-size: var(--editor-font-size, 16px) !important;
 	}
 
-	.editor-container.mobile .source-highlight,
-	.editor-container.mobile .source-editor {
+	.editor-container.compact .source-highlight,
+	.editor-container.compact .source-editor {
 		padding: 8px 16px 220px;
 		font-size: var(--editor-font-size, 15px);
 		white-space: pre-wrap;
@@ -11632,17 +11637,17 @@
 		overflow-x: hidden;
 	}
 
-	.editor-container.mobile .editor-body-row {
+	.editor-container.compact .editor-body-row {
 		position: relative;
 	}
 
-	.editor-container.mobile .editor-body-row:has(.history-panel) > .editor-body,
-	.editor-container.mobile .editor-body-row:has(.outline-panel) > .editor-body {
+	.editor-container.compact .editor-body-row:has(.history-panel) > .editor-body,
+	.editor-container.compact .editor-body-row:has(.outline-panel) > .editor-body {
 		display: none;
 	}
 
-	.editor-container.mobile .history-panel,
-	.editor-container.mobile .outline-panel {
+	.editor-container.compact .history-panel,
+	.editor-container.compact .outline-panel {
 		position: static;
 		flex: 1;
 		min-height: 0;
@@ -11651,21 +11656,21 @@
 		border-left: none;
 	}
 
-	.editor-container.mobile .history-item {
+	.editor-container.compact .history-item {
 		padding: 12px 12px;
 		min-height: 48px;
 	}
 
-	.editor-container.mobile .history-list {
+	.editor-container.compact .history-list {
 		padding-bottom: 80px;
 	}
 
-	.editor-container.mobile .history-restore-btn {
+	.editor-container.compact .history-restore-btn {
 		padding: 14px 16px;
 		font-size: 15px;
 	}
 
-	.editor-container.mobile .history-actions {
+	.editor-container.compact .history-actions {
 		position: fixed;
 		bottom: 0;
 		left: 0;
@@ -11677,24 +11682,24 @@
 		z-index: 51;
 	}
 
-	.editor-container.mobile .note-search-bar {
+	.editor-container.compact .note-search-bar {
 		padding: 8px 12px;
 	}
 
-	.editor-container.mobile .note-search-bar input {
+	.editor-container.compact .note-search-bar input {
 		padding: 8px 10px;
 		font-size: 15px;
 	}
 
-	/* ═══ AI Menu - Mobile Bottom Sheet ═══ */
-	.ai-menu-overlay.mobile {
+	/* ═══ AI Menu - Compact Bottom Sheet ═══ */
+	.ai-menu-overlay.compact {
 		background: rgba(0, 0, 0, 0.35);
 		display: flex;
 		align-items: flex-end;
 		justify-content: center;
 	}
 
-	.ai-menu.mobile {
+	.ai-menu.compact {
 		position: relative;
 		left: auto !important;
 		top: auto !important;
@@ -11707,69 +11712,69 @@
 		padding: 8px 4px calc(env(safe-area-inset-bottom, 0px) + 8px);
 	}
 
-	.ai-menu.mobile .ai-menu-label {
+	.ai-menu.compact .ai-menu-label {
 		padding: 10px 16px 6px;
 		font-size: 12px;
 	}
 
-	.ai-menu.mobile .ai-menu-item {
+	.ai-menu.compact .ai-menu-item {
 		padding: 12px 16px;
 		font-size: 15px;
 		min-height: 44px;
 		border-radius: 8px;
 	}
 
-	.ai-menu.mobile .ai-menu-sep {
+	.ai-menu.compact .ai-menu-sep {
 		margin: 4px 8px;
 	}
 
-	.ai-menu.mobile .ai-result-header {
+	.ai-menu.compact .ai-result-header {
 		padding: 12px 16px 8px;
 	}
 
-	.ai-menu.mobile .ai-result-body {
+	.ai-menu.compact .ai-result-body {
 		padding: 8px 16px;
 		font-size: 15px;
 		max-height: 40vh;
 	}
 
-	.ai-menu.mobile .ai-result-actions {
+	.ai-menu.compact .ai-result-actions {
 		padding: 8px 16px 4px;
 		gap: 10px;
 	}
 
-	.ai-menu.mobile .ai-result-actions button {
+	.ai-menu.compact .ai-result-actions button {
 		padding: 10px 16px;
 		font-size: 14px;
 		min-height: 44px;
 	}
 
-	.ai-menu.mobile .ai-custom-body {
+	.ai-menu.compact .ai-custom-body {
 		padding: 8px 12px;
 	}
 
-	.ai-menu.mobile .ai-custom-input {
+	.ai-menu.compact .ai-custom-input {
 		font-size: 15px;
 		min-height: 80px;
 	}
 
-	.ai-menu.mobile .ai-custom-submit {
+	.ai-menu.compact .ai-custom-submit {
 		padding: 10px 16px;
 		font-size: 14px;
 		min-height: 44px;
 	}
 
-	.ai-menu.mobile .ai-custom-header {
+	.ai-menu.compact .ai-custom-header {
 		padding: 10px 12px;
 		font-size: 15px;
 	}
 
-	.ai-menu.mobile .ai-back-btn {
+	.ai-menu.compact .ai-back-btn {
 		min-width: 44px;
 		min-height: 44px;
 	}
 
-	.ai-menu.mobile .ai-error {
+	.ai-menu.compact .ai-error {
 		padding: 12px 16px;
 		font-size: 14px;
 	}
@@ -11980,17 +11985,17 @@
 		padding: 1px 5px;
 	}
 
-	.editor-container.mobile .editor-body-row:has(.info-panel) > .editor-body {
+	.editor-container.compact .editor-body-row:has(.info-panel) > .editor-body {
 		display: none;
 	}
 
-	.editor-container.mobile .info-panel {
+	.editor-container.compact .info-panel {
 		width: 100%;
 		border-left: none;
 		border-top: 1px solid var(--border-light);
 	}
 
-	.editor-container.mobile .info-trash-btn {
+	.editor-container.compact .info-trash-btn {
 		min-height: 44px;
 		font-size: 14px;
 	}

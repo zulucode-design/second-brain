@@ -1029,8 +1029,7 @@ html,
 body {
   height: 100%;
   overflow: hidden;
-  /* Stop the Android WebView from auto-scaling ("boosting") text, which ignores our
-       CSS font-size and makes the font-size setting do nothing on Android. (issue #100) */
+  /* Keep text sizing predictable across narrow and full windows. */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   font-family: var(
@@ -1139,7 +1138,7 @@ body.resizing {
   }
 }
 
-/* ── Mobile (Android/iOS) ── */
+/* ── Compact windows ── */
 @media (max-width: 768px) {
   body {
     -webkit-tap-highlight-color: transparent;

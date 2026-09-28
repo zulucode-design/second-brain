@@ -46,12 +46,20 @@ test('the inherited updater is absent from packages and runtime', async () => {
   assert.equal(JSON.parse(files[2]).bundle.createUpdaterArtifacts, false);
 });
 
-test('the stable app id and legacy config location preserve existing credentials and settings', async () => {
-  const [secretStore, commands] = await Promise.all([
+test('the stable app id keys credentials and machine-level state', async () => {
+  const [secretStore, appDirs] = await Promise.all([
     read('src-tauri/src/secret_store.rs'),
-    read('src-tauri/src/commands.rs'),
+    read('src-tauri/src/app_dirs.rs'),
   ]);
 
   assert.match(secretStore, /const SERVICE: &str = "io\.github\.zulucodedesign\.SecondBrain";/);
-  assert.match(commands, /config_dir\.join\("helixnotes"\)/);
+  assert.match(appDirs, /pub const APP_ID: &str = "io\.github\.zulucodedesign\.SecondBrain";/);
+});
+
+test('no Rust source addresses the HelixNotes machine directories except the one-time move', async () => {
+  const { readdir } = await import('node:fs/promises');
+  const files = await readdir(new URL('../src-tauri/src', import.meta.url), { recursive: true });
+  for (const file of files.filter((name) => name.endsWith('.rs') && name !== 'app_dirs.rs')) {
+    assert.doesNotMatch(await read(`src-tauri/src/${file}`), /join\("helixnotes"\)/, file);
+  }
 });

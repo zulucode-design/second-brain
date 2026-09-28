@@ -116,9 +116,10 @@ function syncPort(vaultId) {
 // made, so a scheduled backup would add one it did not expect.
 export function harnessConfig(config, vaultPath, vaultId, backupPath, { driven = false, ollamaBaseUrl } = {}) {
   const next = structuredClone(config);
-  next.vaults = [{ path: vaultPath, name: 'Alpha Harness', vault_id: vaultId }];
+  delete next.vaults;
+  next.vault = { path: vaultPath, name: 'Alpha Harness', vault_id: vaultId };
   next.active_vault = vaultPath;
-  next.active_bookmark_id = null;
+  delete next.active_bookmark_id;
   next.backup_location = backupPath;
   next.backup_max_count = Math.max(10, Number(next.backup_max_count) || 0);
   if (driven) {
@@ -188,7 +189,7 @@ function makeVault(vaultPath, vaultId) {
 
 function localTemplateConfig() {
   const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), '.config');
-  const path = join(configHome, 'helixnotes', 'config.json');
+  const path = join(configHome, APP_IDENTIFIER, 'config.json');
   if (!existsSync(path)) fail(`installed app config is missing: ${path}`);
   return JSON.parse(readFileSync(path, 'utf8'));
 }
@@ -214,8 +215,8 @@ function prepareLinux(root, runId, vaultId, { driven = false, sync = !driven, ol
   const backupPath = join(runRoot, 'backups');
   const configHome = join(runRoot, 'xdg-config');
   const dataHome = join(runRoot, 'xdg-data');
-  const configPath = join(configHome, 'helixnotes', 'config.json');
-  const machinePath = join(dataHome, 'helixnotes', 'vaults', vaultId);
+  const configPath = join(configHome, APP_IDENTIFIER, 'config.json');
+  const machinePath = join(dataHome, APP_IDENTIFIER, 'vaults', vaultId);
   mkdirSync(dirname(configPath), { recursive: true });
   mkdirSync(machinePath, { recursive: true });
   mkdirSync(backupPath, { recursive: true });
@@ -2159,7 +2160,7 @@ async function windowsWorker(request) {
   const appPath = request.appPath ? win32.resolve(request.appPath) : WINDOWS_APP;
 
   if (request.action === 'recover') {
-    const configPath = win32.join(process.env.APPDATA, 'helixnotes', 'config.json');
+    const configPath = win32.join(process.env.APPDATA, APP_IDENTIFIER, 'config.json');
     const lockPath = win32.join(dirname(configPath), 'alpha-harness.lock.json');
     if (!existsSync(lockPath)) return { recovered: false };
     const report = windowsInterrupt(tools, appPath, 'Report');
@@ -2189,12 +2190,12 @@ async function windowsWorker(request) {
     mkdirSync(paths.machinePath, { recursive: true });
     makeVault(paths.vaultPath, request.vaultId);
 
-    const configPath = win32.join(process.env.APPDATA, 'helixnotes', 'config.json');
+    const configPath = win32.join(process.env.APPDATA, APP_IDENTIFIER, 'config.json');
     if (!existsSync(configPath)) fail(`installed app config is missing: ${configPath}`);
     const originalPath = win32.join(paths.runRoot, 'original-config.json');
     copyFileSync(configPath, originalPath);
     const original = JSON.parse(readFileSync(configPath, 'utf8'));
-    const localVaults = win32.join(process.env.LOCALAPPDATA, 'helixnotes', 'vaults');
+    const localVaults = win32.join(process.env.LOCALAPPDATA, APP_IDENTIFIER, 'vaults');
     const machineLink = win32.join(localVaults, request.vaultId);
     mkdirSync(localVaults, { recursive: true });
     if (existsSync(machineLink)) fail(`machine-state path already exists: ${machineLink}`);
@@ -2500,7 +2501,7 @@ async function windowsWorker(request) {
     const report = windowsInterrupt(tools, appPath, 'Report');
     if (report.processes.length) fail('refusing to restore config while installed processes remain');
     const manifest = JSON.parse(readFileSync(paths.manifestPath, 'utf8'));
-    if (manifest.runId !== request.runId || win32.resolve(manifest.configPath) !== win32.resolve(win32.join(process.env.APPDATA, 'helixnotes', 'config.json'))) {
+    if (manifest.runId !== request.runId || win32.resolve(manifest.configPath) !== win32.resolve(win32.join(process.env.APPDATA, APP_IDENTIFIER, 'config.json'))) {
       fail('run journal does not match requested config');
     }
     const lockPath = win32.join(dirname(manifest.configPath), 'alpha-harness.lock.json');

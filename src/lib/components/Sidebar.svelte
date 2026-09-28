@@ -27,7 +27,7 @@
 	import { readFile } from '@tauri-apps/plugin-fs';
 	import { convertFileSrc } from '@tauri-apps/api/core';
 	import type { NotebookEntry, RelocationOutcome } from '$lib/types';
-	import { isMobile } from '$lib/platform';
+	import { compactLayout } from '$lib/stores/app';
 	import { decodeNoteDragPaths } from '$lib/utils/note-drag';
 	import {
 		canCreateNotebookUnder,
@@ -43,13 +43,13 @@
 		normalizeNotebookIconKey,
 		type NotebookIconId
 	} from '$lib/utils/notebook-icons';
+	const isCompact = $derived($compactLayout);
 
 	let { onViewChanged = () => {}, onRelocateActiveDocument = async (_path: string, _reason: string, _mutation: () => Promise<RelocationOutcome>) => null }: {
 		onViewChanged?: () => void;
 		onRelocateActiveDocument?: (path: string, reason: string, mutation: () => Promise<RelocationOutcome>) => Promise<string | null>;
 	} = $props();
 
-	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
 
 	const unfiledCount = $derived($unfiledNotes.length);
 
@@ -142,34 +142,19 @@
 	 * note list for the same files, and startup should not wait for it (#128). */
 	export async function refresh({ deferTags = false }: { deferTags?: boolean } = {}) {
 		try {
-			if (isMobile) {
-				// On mobile, parallelize and skip getAllTags (derive from $notes instead)
-				const [nbs, icons, qaNotes, rootCount] = await Promise.all([
-					getNotebooks(),
-					getNotebookIcons(),
-					getQuickAccess(),
-					countRootNotes(),
-				]);
-				$notebooks = nbs;
-				$notebookIcons = icons;
-				$quickAccessPaths = qaNotes.map(n => n.relative_path);
-				$rootNoteCount = rootCount;
-			} else {
-				const [nbs, rootCount] = await Promise.all([getNotebooks(), countRootNotes()]);
-				$notebooks = nbs;
-				$rootNoteCount = rootCount;
-				if (!deferTags) $tags = await getAllTags();
-				$notebookIcons = await getNotebookIcons();
-				const qaNotes = await getQuickAccess();
-				$quickAccessPaths = qaNotes.map(n => n.relative_path);
-			}
+			const [nbs, rootCount] = await Promise.all([getNotebooks(), countRootNotes()]);
+			$notebooks = nbs;
+			$rootNoteCount = rootCount;
+			if (!deferTags) $tags = await getAllTags();
+			$notebookIcons = await getNotebookIcons();
+			const qaNotes = await getQuickAccess();
+			$quickAccessPaths = qaNotes.map(n => n.relative_path);
 		} catch (e) {
 			console.error('Failed to refresh sidebar:', e);
 		}
 	}
 
 	export async function refreshTags() {
-		if (isMobile) return;
 		try {
 			$tags = await getAllTags();
 		} catch (e) {
@@ -188,7 +173,7 @@
 		const vault = $appConfig?.active_vault;
 		if (!vault) return;
 		if ($viewMode === 'notebook' && $activeNotebook?.relative_path === '') {
-			if (isMobile) {
+			if (isCompact) {
 				onViewChanged();
 				return;
 			}
@@ -204,7 +189,7 @@
 	async function selectNotebook(nb: NotebookEntry) {
 		// Deselect if clicking the already-active notebook; expand/collapse is the chevron's job
 		if ($viewMode === 'notebook' && $activeNotebook?.path === nb.path) {
-			if (isMobile) {
+			if (isCompact) {
 				onViewChanged();
 				return;
 			}
@@ -766,8 +751,8 @@
 
 <svelte:window onclick={handleWindowClick} onkeydown={(e) => { if (e.key === 'Escape') iconPickerNotebook = null; }} />
 
-<aside class="sidebar" class:collapsed={$sidebarCollapsed} class:mobile={isMobile} class:nav-empty={!anyNavItem}>
-	{#if !isMobile}
+<aside class="sidebar" class:collapsed={$sidebarCollapsed} class:compact={isCompact} class:nav-empty={!anyNavItem}>
+	{#if !isCompact}
 	<div class="sidebar-header">
 		<button class="collapse-btn" onclick={() => ($sidebarCollapsed = !$sidebarCollapsed)} title="Toggle sidebar">
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -778,7 +763,7 @@
 				{/if}
 			</svg>
 		</button>
-			<button class="icon-btn" onclick={() => ($showSearch = true)} title={`Search (${modKey}+F)`}>
+			<button class="icon-btn" onclick={() => ($showSearch = true)} title={`Search (Ctrl+F)`}>
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<circle cx="11" cy="11" r="8" />
 					<line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -930,7 +915,7 @@
 					{@render notebookItem(nb, 0)}
 				{/each}
 			</div>
-		{#if isMobile && $tags.length > 0}
+		{#if isCompact && $tags.length > 0}
 				<div class="tags-section-inline">
 					<button class="section-header" onclick={() => tagsCollapsed = !tagsCollapsed}>
 						<span class="section-title">Tags</span>
@@ -955,7 +940,7 @@
 			{/if}
 		</div>
 
-		{#if !isMobile && $tags.length > 0}
+		{#if !isCompact && $tags.length > 0}
 			<div class="tags-section">
 				<button class="section-header" onclick={() => tagsCollapsed = !tagsCollapsed}>
 					<span class="section-title">Tags</span>
@@ -1002,11 +987,11 @@
 
 {#if contextMenu}
 	{@const menuPolicy = notebookUiPolicy(contextMenu.notebook.relative_path)}
-	{#if isMobile}
+	{#if isCompact}
 		<button type="button" class="context-menu-backdrop" aria-label="Close notebook actions" onclick={closeContextMenu}></button>
 	{/if}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="context-menu" class:mobile={isMobile} style="left: {contextMenu.x}px; top: {contextMenu.y}px" onmousedown={(e) => e.stopPropagation()}>
+	<div class="context-menu" class:compact={isCompact} style="left: {contextMenu.x}px; top: {contextMenu.y}px" onmousedown={(e) => e.stopPropagation()}>
 		{#if menuPolicy.createChild}<button onclick={() => startNewSubNotebook(contextMenu!.notebook)}>
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" /><line x1="12" y1="11" x2="12" y2="17" /><line x1="9" y1="14" x2="15" y2="14" /></svg>
 			New Sub-notebook
@@ -1027,7 +1012,7 @@
 {/if}
 
 {#if iconPickerNotebook}
-	<div class="icon-picker-overlay" class:mobile={isMobile}>
+	<div class="icon-picker-overlay" class:compact={isCompact}>
 		<button class="icon-picker-backdrop" aria-label="Close icon picker" onclick={() => iconPickerNotebook = null}></button>
 		<div bind:this={iconPickerElement} class="icon-picker" role="dialog" aria-modal="true" aria-label={`Choose an icon for ${iconPickerNotebook.name}`} tabindex="-1">
 			<header class="icon-picker-header">
@@ -1071,11 +1056,11 @@
 {/if}
 
 {#if trashContextMenu}
-	{#if isMobile}
+	{#if isCompact}
 		<button type="button" class="context-menu-backdrop" aria-label="Close trash actions" onclick={() => trashContextMenu = null}></button>
 	{/if}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="context-menu" class:mobile={isMobile} style="left: {trashContextMenu.x}px; top: {trashContextMenu.y}px" onmousedown={(e) => e.stopPropagation()}>
+	<div class="context-menu" class:compact={isCompact} style="left: {trashContextMenu.x}px; top: {trashContextMenu.y}px" onmousedown={(e) => e.stopPropagation()}>
 		<button class="danger" onclick={handleEmptyTrash}>
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" />
@@ -1088,7 +1073,7 @@
 {#if deleteConfirm}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="delete-confirm-overlay" onclick={dismissDeleteConfirm} onkeydown={(e) => { if (e.key === 'Escape') deleteConfirm = null; }}>
-		<div class="delete-confirm" class:mobile={isMobile} role="alertdialog" aria-modal="true" aria-labelledby="delete-confirm-title" tabindex="-1">
+		<div class="delete-confirm" class:compact={isCompact} role="alertdialog" aria-modal="true" aria-labelledby="delete-confirm-title" tabindex="-1">
 			<h4 id="delete-confirm-title">Delete "{deleteConfirm.name}"?</h4>
 			<p>This notebook contains {deleteConfirm.note_count} note{deleteConfirm.note_count === 1 ? '' : 's'} that will be permanently deleted.</p>
 			<div class="delete-confirm-actions">
@@ -1233,7 +1218,7 @@
 				</span>
 			{/if}
 		</button>
-		{#if isMobile}
+		{#if isCompact}
 			<button
 				type="button"
 				class="notebook-actions-btn"
@@ -1900,7 +1885,7 @@
 		background: transparent;
 	}
 
-	.icon-picker-overlay.mobile {
+	.icon-picker-overlay.compact {
 		place-items: end center;
 		padding:
 			20px
@@ -1909,16 +1894,16 @@
 			calc(12px + env(safe-area-inset-left, 0px));
 	}
 
-	.icon-picker-overlay.mobile .icon-picker {
+	.icon-picker-overlay.compact .icon-picker {
 		width: 100%;
 		max-height: calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
 	}
 
-	.icon-picker-overlay.mobile .icon-picker-option {
+	.icon-picker-overlay.compact .icon-picker-option {
 		min-height: 64px;
 	}
 
-	.icon-picker-overlay.mobile .icon-picker-actions button {
+	.icon-picker-overlay.compact .icon-picker-actions button {
 		min-height: 44px;
 		font-size: 14px;
 	}
@@ -1990,113 +1975,113 @@
 		opacity: 0.9;
 	}
 
-	/* ═══ MOBILE (class-based for Android high-DPI) ═══ */
-	.sidebar.mobile {
+	/* Compact window layout */
+	.sidebar.compact {
 		width: 100% !important;
 		min-width: 100%;
 		border-right: none;
 	}
 
-	.sidebar.mobile.collapsed {
+	.sidebar.compact.collapsed {
 		width: 100% !important;
 		min-width: 100%;
 		max-width: 100%;
 	}
 
-	.sidebar.mobile .sidebar-header {
+	.sidebar.compact .sidebar-header {
 		padding: 10px 12px;
 	}
 
-	.sidebar.mobile .collapse-btn {
+	.sidebar.compact .collapse-btn {
 		display: none;
 	}
 
-	.sidebar.mobile .nav-item {
+	.sidebar.compact .nav-item {
 		padding: 12px 14px;
 		font-size: 15px;
 		min-height: 48px;
 		gap: 12px;
 	}
 
-	.sidebar.mobile .nav-item svg {
+	.sidebar.compact .nav-item svg {
 		width: 20px;
 		height: 20px;
 	}
 
-	.sidebar.mobile .section {
+	.sidebar.compact .section {
 		padding-bottom: 180px;
 	}
 
-	.sidebar.mobile .tags-section-inline {
+	.sidebar.compact .tags-section-inline {
 		border-top: 1px solid var(--border-light);
 		padding: 4px 0;
 		margin-top: 8px;
 	}
 
-	.sidebar.mobile .section-header {
+	.sidebar.compact .section-header {
 		padding: 12px 16px 6px;
 		min-height: 44px;
 	}
 
-	.sidebar.mobile .section-title {
+	.sidebar.compact .section-title {
 		font-size: 12px;
 	}
 
-	.sidebar.mobile .icon-btn,
-	.sidebar.mobile .icon-btn-sm {
+	.sidebar.compact .icon-btn,
+	.sidebar.compact .icon-btn-sm {
 		min-width: 44px;
 		min-height: 44px;
 		padding: 10px;
 	}
 
-	.sidebar.mobile .notebook-item {
+	.sidebar.compact .notebook-item {
 		padding: 2px 56px 2px 12px;
 		min-height: 48px;
 		gap: 10px;
 		font-size: 15px;
 	}
 
-	.sidebar.mobile .notebook-icon {
+	.sidebar.compact .notebook-icon {
 		width: 24px;
 		height: 24px;
 	}
 
-	.sidebar.mobile .notebook-builtin-icon {
+	.sidebar.compact .notebook-builtin-icon {
 		width: 24px;
 		height: 24px;
 	}
 
-	.sidebar.mobile .new-notebook-input {
+	.sidebar.compact .new-notebook-input {
 		padding: 4px 12px;
 	}
 
-	.sidebar.mobile .new-notebook-parent {
+	.sidebar.compact .new-notebook-parent {
 		padding: 10px 0 10px 12px;
 		font-size: 15px;
 	}
 
-	.sidebar.mobile .new-notebook-input input {
+	.sidebar.compact .new-notebook-input input {
 		padding: 10px 12px;
 		font-size: 15px;
 	}
 
-	.sidebar.mobile .rename-input {
+	.sidebar.compact .rename-input {
 		padding: 10px 12px;
 		font-size: 15px;
 	}
 
-	.sidebar.mobile .tag-item {
+	.sidebar.compact .tag-item {
 		padding: 10px 16px;
 		min-height: 44px;
 		font-size: 14px;
 	}
 
-	.sidebar.mobile .sidebar-footer {
+	.sidebar.compact .sidebar-footer {
 		padding: 8px 12px;
 		display: none;
 	}
 
-	.context-menu.mobile {
+	.context-menu.compact {
 		left: calc(12px + env(safe-area-inset-left, 0px)) !important;
 		right: calc(12px + env(safe-area-inset-right, 0px));
 		top: auto !important;
@@ -2108,28 +2093,28 @@
 		padding: 6px;
 	}
 
-	.context-menu.mobile button {
+	.context-menu.compact button {
 		padding: 12px 16px;
 		font-size: 15px;
 		min-height: 44px;
 		border-radius: 8px;
 	}
 
-	.delete-confirm.mobile {
+	.delete-confirm.compact {
 		max-width: calc(100vw - 40px);
 		padding: 24px;
 	}
 
-	.delete-confirm.mobile h4 {
+	.delete-confirm.compact h4 {
 		font-size: 16px;
 	}
 
-	.delete-confirm.mobile p {
+	.delete-confirm.compact p {
 		font-size: 14px;
 	}
 
-	.delete-confirm.mobile .delete-confirm-cancel,
-	.delete-confirm.mobile .delete-confirm-btn {
+	.delete-confirm.compact .delete-confirm-cancel,
+	.delete-confirm.compact .delete-confirm-btn {
 		padding: 10px 20px;
 		font-size: 14px;
 		min-height: 44px;

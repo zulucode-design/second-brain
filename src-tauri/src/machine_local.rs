@@ -75,17 +75,11 @@ fn machine_root() -> Result<PathBuf, String> {
 
 /// Root of all machine-local state, shared by every vault on this machine.
 ///
-/// Mobile injects its sandbox directory at startup because `dirs::data_local_dir()` is
-/// not reliable there. There is deliberately no in-vault fallback: failing to open a
-/// vault is better than silently writing recovery manifests into a synced folder.
+/// There is deliberately no in-vault fallback: failing to open a vault is better
+/// than silently writing recovery manifests into a synced folder.
 #[cfg(not(test))]
 fn machine_root() -> Result<PathBuf, String> {
-    if let Some(mobile) = crate::commands::mobile_config_dir() {
-        return Ok(mobile.join("helixnotes"));
-    }
-    dirs::data_local_dir()
-        .map(|dir| dir.join("helixnotes"))
-        .ok_or_else(|| "No per-machine data directory is available on this system".to_string())
+    crate::app_dirs::machine_root()
 }
 
 /// How long to wait for another process to finish claiming the identity.

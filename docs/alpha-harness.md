@@ -208,7 +208,7 @@ hold is lost before it finishes.
 
 Fedora gets isolated `XDG_CONFIG_HOME` and `XDG_DATA_HOME` directories. Windows does not honor
 those variables for known folders, so the worker journals the original
-`%APPDATA%\helixnotes\config.json`, swaps only the active vault and backup location, and restores
+`%APPDATA%\io.github.zulucodedesign.SecondBrain\config.json`, swaps only the active vault and backup location, and restores
 the original bytes after all exact-path process checks are empty. A global lock prevents a
 second run from replacing that journal. Fresh vault IDs prevent any existing machine-local
 vault state from being reused. A junction directs the new Windows machine state into the run

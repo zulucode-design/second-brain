@@ -17,7 +17,7 @@
 		noteOrder,
 		notebooks,
 		tags,
-		mobileView,
+		compactView,
 		unfiledNotes,
 		holdingPreview
 	} from '$lib/stores/app';
@@ -53,7 +53,8 @@
 	import { PARA_CATEGORIES } from '$lib/types';
 	import TasksView from './TasksView.svelte';
 	import TagSuggestInput from './TagSuggestInput.svelte';
-	import { isMobile, isAndroid } from '$lib/platform';
+	import { compactLayout } from '$lib/stores/app';
+	const isCompact = $derived($compactLayout);
 
 	let { onOpenNote = async (_path: string, _task?: TaskItem, _holding?: boolean) => false, onNoteMoved = () => {}, onBeforeNoteSwitch = async () => true, onBeforeNoteDuplicate = async () => true, onBeforeOpenWindow = async () => true, onRelocateActiveDocument = async (_path: string, _reason: string, _mutation: () => Promise<RelocationOutcome>) => null, onUpdateActiveMetadata = async (_path: string, _patch: Partial<NoteMeta>, _reason: string) => false, onNoteCreated = () => {}, onRequestCreateNote = () => {}, onToggleTask = async (_t: TaskItem) => {}, onSetTaskPriority = async (_t: TaskItem, _p: string | null) => {}, onSetTaskDue = async (_t: TaskItem, _d: string | null) => {} }: {
 		onOpenNote?: (path: string, task?: TaskItem, holding?: boolean) => Promise<boolean>;
@@ -70,7 +71,6 @@
 		onSetTaskDue?: (t: TaskItem, d: string | null) => Promise<void>;
 	} = $props();
 
-	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
 	let multiSelectMode = $state(false);
 	let trashNotebooks = $state<TrashNotebookEntry[]>([]);
 	let trashBusy = $state<string | null>(null);
@@ -106,23 +106,8 @@
 		}
 	}
 
-	/** Derive tags from current $notes store (avoids re-scanning files on mobile) */
-	function deriveTagsFromNotes() {
-		const tagMap = new Map<string, number>();
-		for (const note of $notes) {
-			for (const tag of note.meta.tags) {
-				tagMap.set(tag, (tagMap.get(tag) ?? 0) + 1);
-			}
-		}
-		$tags = Array.from(tagMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-	}
-
 	async function refreshTags() {
-		if (isMobile) {
-			deriveTagsFromNotes();
-		} else {
-			try { $tags = await getAllTags(); } catch (_) {}
-		}
+		try { $tags = await getAllTags(); } catch (_) {}
 	}
 
 	let compact = $derived($appConfig?.compact_notes ?? false);
@@ -142,7 +127,7 @@
 	let batchMovePicker = $state(false);
 	let batchTagEdit = $state(false);
 
-	// Mobile long-press selection
+	// Compact long-press selection
 	let longPressTimer: ReturnType<typeof setTimeout> | null = null;
 	let longPressTriggered = false;
 	let touchStartPos = { x: 0, y: 0 };
@@ -378,7 +363,7 @@
 
 	async function selectNote(note: NoteEntry) {
 		if ($activeNotePath === note.path) {
-			if (isMobile) $mobileView = 'editor';
+			if (isCompact) $compactView = 'editor';
 			return;
 		}
 		try {
@@ -816,8 +801,8 @@
 	}
 
 	function handleNoteClick(e: MouseEvent, note: NoteEntry) {
-		// Mobile: if long-press just fired, ignore the click
-		if (isMobile && longPressTriggered) {
+		// Compact: if long-press just fired, ignore the click
+		if (isCompact && longPressTriggered) {
 			longPressTriggered = false;
 			e.preventDefault();
 			return;
@@ -827,8 +812,8 @@
 			selectNote(note);
 			return;
 		}
-		// Mobile: if in selection mode (or Android multi-select mode), tap toggles selection
-		if (isMobile && (selectedPaths.size > 0 || multiSelectMode)) {
+		// Compact: if in selection mode (or compact multi-select mode), tap toggles selection
+		if (isCompact && (selectedPaths.size > 0 || multiSelectMode)) {
 			const next = new Set(selectedPaths);
 			if (next.has(note.path)) {
 				next.delete(note.path);
@@ -959,7 +944,7 @@
 	function openSortMenu(e: MouseEvent) {
 		e.stopPropagation();
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-		const menuWidth = isMobile ? 220 : 180;
+		const menuWidth = isCompact ? 220 : 180;
 		let x = rect.left;
 		if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 8;
 		if (x < 4) x = 4;
@@ -989,12 +974,12 @@
 	}
 }} />
 
-<div class="note-list" class:mobile={isMobile}>
+<div class="note-list" class:compact={isCompact}>
 	<div class="list-header">
 		<span class="list-title">{viewTitle}</span>
 		<div class="list-actions">
-			{#if !isMobile}
-				<button class="icon-btn" onclick={() => ($notelistCollapsed = true)} title={`Hide notes list (${modKey}+Shift+\\)`} aria-label="Hide notes list">
+			{#if !isCompact}
+				<button class="icon-btn" onclick={() => ($notelistCollapsed = true)} title={`Hide notes list (Ctrl+Shift+\\)`} aria-label="Hide notes list">
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<line x1="4" y1="6" x2="16" y2="6" />
 						<line x1="4" y1="12" x2="16" y2="12" />
@@ -1004,7 +989,7 @@
 				</button>
 			{/if}
 			{#if $viewMode !== 'tasks'}
-			{#if isAndroid}
+			{#if isCompact}
 				<button class="icon-btn" class:active-toggle={multiSelectMode} onclick={() => { multiSelectMode = !multiSelectMode; if (!multiSelectMode) clearSelection(); }} title="Multi-select">
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<rect x="3" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" />{#if multiSelectMode}<polyline points="6 6.5 7 7.5 9 5.5" stroke-width="2" /><polyline points="6 17.5 7 18.5 9 16.5" stroke-width="2" />{/if}<line x1="14" y1="6.5" x2="21" y2="6.5" /><line x1="14" y1="17.5" x2="21" y2="17.5" />
@@ -1024,8 +1009,8 @@
 				</button>
 			{/if}
 			{#if $viewMode !== 'trash' && $viewMode !== 'quickaccess'}
-				<button class={isMobile ? 'mobile-create-btn' : 'icon-btn'} onclick={handleCreateNote} title={`New note (${modKey}+N)`}>
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={isMobile ? '3' : '2'} stroke-linecap="round" stroke-linejoin="round">
+				<button class={isCompact ? 'compact-create-btn' : 'icon-btn'} onclick={handleCreateNote} title={`New note (Ctrl+N)`}>
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width={isCompact ? '3' : '2'} stroke-linecap="round" stroke-linejoin="round">
 						<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
 					</svg>
 				</button>
@@ -1210,10 +1195,10 @@
 							startRename(note);
 						}
 					}}
-					ontouchstart={(e) => { if (isMobile && !isAndroid && rowPolicy.contextMenu) handleTouchStart(e, note); }}
-					ontouchmove={(e) => { if (isMobile && !isAndroid) handleTouchMove(e); }}
-					ontouchend={() => { if (isMobile && !isAndroid) handleTouchEnd(); }}
-					ontouchcancel={() => { if (isMobile && !isAndroid) handleTouchEnd(); }}
+					ontouchstart={(e) => { if (isCompact && rowPolicy.contextMenu) handleTouchStart(e, note); }}
+					ontouchmove={(e) => { if (isCompact) handleTouchMove(e); }}
+					ontouchend={() => { if (isCompact) handleTouchEnd(); }}
+					ontouchcancel={() => { if (isCompact) handleTouchEnd(); }}
 					oncontextmenu={(e) => {
 						e.preventDefault();
 						if (!rowPolicy.contextMenu) return;
@@ -1385,7 +1370,7 @@
 	     and future, instead of patching them one at a time. Buttons that should close the
 	     menu already do so themselves. -->
 	<!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
-	<div class="context-menu" class:mobile={isMobile} style="left: {contextMenu.x}px; top: {contextMenu.y}px" role="group" aria-label="Note actions" onmousedown={(e) => e.stopPropagation()} onclick={(e) => e.stopPropagation()}>
+	<div class="context-menu" class:compact={isCompact} style="left: {contextMenu.x}px; top: {contextMenu.y}px" role="group" aria-label="Note actions" onmousedown={(e) => e.stopPropagation()} onclick={(e) => e.stopPropagation()}>
 		{#if selectedPaths.size > 1 && selectedPaths.has(contextMenu.note.path)}
 			<!-- Batch context menu -->
 			{#if $viewMode === 'trash'}
@@ -1535,7 +1520,7 @@
 				</svg>
 				Open in New Window
 			</button>
-			{#if !isMobile}
+			{#if !isCompact}
 			<button onclick={async () => { const n = contextMenu!.note; contextMenu = null; try { await revealFile(n.path); } catch (e) { console.error('Failed to reveal in file manager:', e); } }}>
 				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
@@ -1561,7 +1546,7 @@
 				</svg>
 				Move to...
 			</button>
-			{#if !isMobile}
+			{#if !isCompact}
 			<button onclick={async () => { const n = contextMenu!.note; contextMenu = null; await selectNote(n); setTimeout(() => window.print(), 300); }}>
 				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
@@ -1580,7 +1565,7 @@
 {/if}
 
 {#if sortMenu}
-	<div class="sort-menu" class:mobile={isMobile} style="left: {sortMenu.x}px; top: {sortMenu.y}px">
+	<div class="sort-menu" class:compact={isCompact} style="left: {sortMenu.x}px; top: {sortMenu.y}px">
 		<div class="sort-menu-title">Sort by</div>
 		<button class:active={$sortMode === 'modified'} onclick={() => setSortMode('modified')}>
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1799,7 +1784,7 @@
 		color: var(--danger);
 		background: color-mix(in srgb, var(--danger) 10%, transparent);
 	}
-	.note-list.mobile .trash-row-actions {
+	.note-list.compact .trash-row-actions {
 		display: flex;
 	}
 
@@ -2190,105 +2175,105 @@
 		border-bottom: 2px solid var(--accent);
 	}
 
-	/* ═══ MOBILE (class-based for Android high-DPI) ═══ */
-	.note-list.mobile {
+	/* ═══ COMPACT LAYOUT ═══ */
+	.note-list.compact {
 		border-right: none;
 	}
 
-	.note-list.mobile .list-header {
+	.note-list.compact .list-header {
 		padding: 12px 16px;
 	}
 
-	.note-list.mobile .list-actions {
+	.note-list.compact .list-actions {
 		gap: 10px;
 	}
 
-	.note-list.mobile .list-title {
+	.note-list.compact .list-title {
 		font-size: 16px;
 	}
 
-	.note-list.mobile .icon-btn {
+	.note-list.compact .icon-btn {
 		min-width: 44px;
 		min-height: 44px;
 		padding: 10px;
 	}
 
-	.note-list.mobile .list-content {
+	.note-list.compact .list-content {
 		padding: 4px 8px 180px;
 	}
 
-	.note-list.mobile .list-content.tasks-mode {
+	.note-list.compact .list-content.tasks-mode {
 		padding-bottom: 0;
 		overflow: hidden;
 	}
 
-	.note-list.mobile .note-item {
+	.note-list.compact .note-item {
 		padding: 14px 16px;
 		min-height: 56px;
 		border-radius: 10px;
 		margin-bottom: 2px;
 	}
 
-	.note-list.mobile .note-item.compact {
+	.note-list.compact .note-item.compact {
 		padding: 10px 16px;
 		min-height: 48px;
 	}
 
-	.note-list.mobile .note-title {
+	.note-list.compact .note-title {
 		font-size: 15px;
 	}
 
-	.note-list.mobile .note-preview {
+	.note-list.compact .note-preview {
 		font-size: 13px;
 		margin-top: 4px;
 	}
 
-	.note-list.mobile .note-meta {
+	.note-list.compact .note-meta {
 		margin-top: 6px;
 	}
 
-	.note-list.mobile .note-date {
+	.note-list.compact .note-date {
 		font-size: 12px;
 	}
 
-	.note-list.mobile .mini-tag {
+	.note-list.compact .mini-tag {
 		font-size: 11px;
 		padding: 2px 6px;
 	}
 
-	.note-list.mobile .rename-input {
+	.note-list.compact .rename-input {
 		padding: 10px 12px;
 		font-size: 15px;
 	}
 
-	.note-list.mobile .empty-state {
+	.note-list.compact .empty-state {
 		padding: 64px 24px;
 		font-size: 15px;
 	}
 
-	.note-list.mobile .btn-link {
+	.note-list.compact .btn-link {
 		font-size: 15px;
 	}
 
-	.note-list.mobile .selection-bar {
+	.note-list.compact .selection-bar {
 		padding: 8px 16px;
 		border-radius: 12px;
 		margin: 4px 8px;
 		border-bottom: none;
 	}
 
-	.note-list.mobile .selection-count {
+	.note-list.compact .selection-count {
 		font-size: 13px;
 	}
 
-	.note-list.mobile .selection-action {
+	.note-list.compact .selection-action {
 		padding: 6px 14px;
 		font-size: 13px;
 		min-height: 36px;
 		border-radius: 10px;
 	}
 
-	.context-menu.mobile {
+	.context-menu.compact {
 		min-width: 220px;
 		border-radius: 12px;
 		padding: 6px;
@@ -2296,45 +2281,45 @@
 		overflow-y: auto;
 	}
 
-	.context-menu.mobile button {
+	.context-menu.compact button {
 		padding: 12px 16px;
 		font-size: 15px;
 		min-height: 44px;
 		border-radius: 8px;
 	}
 
-	.sort-menu.mobile {
+	.sort-menu.compact {
 		min-width: 220px;
 		border-radius: 12px;
 		padding: 6px;
 	}
 
-	.sort-menu.mobile button {
+	.sort-menu.compact button {
 		padding: 12px 16px;
 		font-size: 15px;
 		min-height: 44px;
 		border-radius: 8px;
 	}
 
-	.note-list.mobile .batch-move-picker {
+	.note-list.compact .batch-move-picker {
 		min-width: 80vw;
 		max-width: 90vw;
 		max-height: 60vh;
 	}
 
-	.note-list.mobile .batch-move-header {
+	.note-list.compact .batch-move-header {
 		padding: 14px 16px;
 		font-size: 15px;
 	}
 
-	.note-list.mobile .batch-move-picker .move-picker-list button {
+	.note-list.compact .batch-move-picker .move-picker-list button {
 		padding: 12px 16px;
 		font-size: 15px;
 		min-height: 44px;
 	}
 
-	/* Mobile create note button (round, accent-colored) */
-	.mobile-create-btn {
+	/* Compact create note button (round, accent-colored) */
+	.compact-create-btn {
 		background: var(--accent);
 		color: white;
 		border: none;
@@ -2348,7 +2333,7 @@
 		flex-shrink: 0;
 	}
 
-	.mobile-create-btn:active {
+	.compact-create-btn:active {
 		opacity: 0.8;
 	}
 

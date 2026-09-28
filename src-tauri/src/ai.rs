@@ -59,7 +59,7 @@ pub fn ai_request(
             };
             if let Err(e) = result {
                 let _ = app.emit(
-                    "ai-stream",
+                    crate::events::AI_STREAM,
                     AiStreamEvent {
                         event_type: "error".to_string(),
                         text: None,
@@ -129,7 +129,7 @@ async fn stream_anthropic(
                 if let Some(data) = line.strip_prefix("data: ") {
                     if data == "[DONE]" {
                         let _ = app.emit(
-                            "ai-stream",
+                            crate::events::AI_STREAM,
                             AiStreamEvent {
                                 event_type: "done".to_string(),
                                 text: None,
@@ -146,7 +146,7 @@ async fn stream_anthropic(
                             "content_block_delta" => {
                                 if let Some(text) = parsed["delta"]["text"].as_str() {
                                     let _ = app.emit(
-                                        "ai-stream",
+                                        crate::events::AI_STREAM,
                                         AiStreamEvent {
                                             event_type: "text".to_string(),
                                             text: Some(text.to_string()),
@@ -157,7 +157,7 @@ async fn stream_anthropic(
                             }
                             "message_stop" => {
                                 let _ = app.emit(
-                                    "ai-stream",
+                                    crate::events::AI_STREAM,
                                     AiStreamEvent {
                                         event_type: "done".to_string(),
                                         text: None,
@@ -171,7 +171,7 @@ async fn stream_anthropic(
                                     .as_str()
                                     .unwrap_or("Unknown API error");
                                 let _ = app.emit(
-                                    "ai-stream",
+                                    crate::events::AI_STREAM,
                                     AiStreamEvent {
                                         event_type: "error".to_string(),
                                         text: None,
@@ -189,7 +189,7 @@ async fn stream_anthropic(
     }
 
     let _ = app.emit(
-        "ai-stream",
+        crate::events::AI_STREAM,
         AiStreamEvent {
             event_type: "done".to_string(),
             text: None,
@@ -273,7 +273,7 @@ async fn stream_openai(
                 if let Some(data) = line.strip_prefix("data: ") {
                     if data == "[DONE]" {
                         let _ = app.emit(
-                            "ai-stream",
+                            crate::events::AI_STREAM,
                             AiStreamEvent {
                                 event_type: "done".to_string(),
                                 text: None,
@@ -288,7 +288,7 @@ async fn stream_openai(
                         if let Some(content) = parsed["choices"][0]["delta"]["content"].as_str() {
                             if !content.is_empty() {
                                 let _ = app.emit(
-                                    "ai-stream",
+                                    crate::events::AI_STREAM,
                                     AiStreamEvent {
                                         event_type: "text".to_string(),
                                         text: Some(content.to_string()),
@@ -302,7 +302,7 @@ async fn stream_openai(
                         if let Some(reason) = parsed["choices"][0]["finish_reason"].as_str() {
                             if reason == "stop" || reason == "length" {
                                 let _ = app.emit(
-                                    "ai-stream",
+                                    crate::events::AI_STREAM,
                                     AiStreamEvent {
                                         event_type: "done".to_string(),
                                         text: None,
@@ -316,7 +316,7 @@ async fn stream_openai(
                         // Check for error in stream
                         if let Some(err) = parsed["error"]["message"].as_str() {
                             let _ = app.emit(
-                                "ai-stream",
+                                crate::events::AI_STREAM,
                                 AiStreamEvent {
                                     event_type: "error".to_string(),
                                     text: None,
@@ -332,7 +332,7 @@ async fn stream_openai(
     }
 
     let _ = app.emit(
-        "ai-stream",
+        crate::events::AI_STREAM,
         AiStreamEvent {
             event_type: "done".to_string(),
             text: None,

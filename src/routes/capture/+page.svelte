@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { listen } from '@tauri-apps/api/event';
+	import { listenAppEvent } from '$lib/events';
 	import { quickCaptureNote } from '$lib/api';
 	import {
 		CAPTURE_CATEGORIES,
@@ -98,7 +98,7 @@
 	onMount(() => {
 		// The window is created hidden at startup so the hotkey never waits on a WebView. It is
 		// shown by the backend on activation, and that is when the field needs the caret.
-		const shown = listen('quick-capture-shown', () => {
+		const shown = listenAppEvent('quickCaptureShown', () => {
 			phase = 'writing';
 			confirmingDiscard = false;
 			error = null;

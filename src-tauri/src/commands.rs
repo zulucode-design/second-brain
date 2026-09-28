@@ -24,7 +24,7 @@ fn publish_repair_status(
         .map_err(|error| error.to_string())?
         .clone()
     {
-        let _ = app.emit("repair-status-changed", status);
+        let _ = app.emit(crate::events::REPAIR_STATUS_CHANGED, status);
     }
     Ok(())
 }
@@ -292,51 +292,35 @@ fn rebuild_search_now(
     Ok(())
 }
 
-fn clear_vault_runtime(state: &State<'_, AppState>) -> Result<(), String> {
-    *state.watcher.lock().map_err(|error| error.to_string())? = None;
-    *state
-        .search_index
-        .lock()
-        .map_err(|error| error.to_string())? = None;
-    *state
-        .semantic_index
-        .lock()
-        .map_err(|error| error.to_string())? = None;
-    Ok(())
-}
-
 // ── Vault Management ──
 
-#[cfg(target_os = "ios")]
-use tauri_plugin_ios_vault_access::{FolderSelection, IosVaultAccessExt};
-
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExternalVaultResult {
-    pub bookmark_id: String,
-    pub path: String,
-    pub name: String,
-}
-
-#[cfg(target_os = "ios")]
-impl From<FolderSelection> for ExternalVaultResult {
-    fn from(selection: FolderSelection) -> Self {
-        Self {
-            bookmark_id: selection.bookmark_id,
-            path: selection.path,
-            name: selection.name,
-        }
-    }
-}
-
 const SEMANTIC_RECONCILE_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Why a vault must not be opened, checked before anything is written for it.
+fn vault_open_refusal(legacy_move_incomplete: bool, path: &Path) -> Option<String> {
+    if legacy_move_incomplete {
+        return Some(
+            "Settings from an earlier Second Brain build are still being moved. Restart Second Brain to finish, then open the vault.".to_string(),
+        );
+    }
+    crate::vault::sync_product::managing_product(path).map(|product| format!(
+        "This folder is managed by {product}. Second Brain syncs the vault itself, so choose a folder on a local disk or directly attached drive that no other sync app manages."
+    ))
+}
 
 fn open_vault_path(
     app: AppHandle,
     state: &State<'_, AppState>,
     path: String,
-    external: Option<(String, String)>,
 ) -> Result<(), String> {
+    let move_incomplete = state
+        .config
+        .lock()
+        .map_err(|error| error.to_string())?
+        .legacy_move_incomplete;
+    if let Some(refusal) = vault_open_refusal(move_incomplete, Path::new(&path)) {
+        return Err(refusal);
+    }
     let _note_mutation = state
         .note_mutation
         .lock()
@@ -472,78 +456,18 @@ fn open_vault_path(
         ollama_token,
     )?);
     semantic.start_background();
-    #[cfg(target_os = "ios")]
-    {
-        if external.is_some() {
-            if let Err(error) = search.rebuild(&path) {
-                repair_status.record(repair::RepairIssue {
-                    key: "search:index".to_string(),
-                    stage: repair::RepairStage::Search,
-                    message: format!("Search rebuild while opening the vault failed: {error}"),
-                    paths: vec![path.clone()],
-                });
-            } else {
-                repair_status.clear_stage(repair::RepairStage::Search);
-            }
-        } else {
-            let search_bg = search.clone();
-            let vault = path.clone();
-            let app_handle = app.clone();
-            std::thread::spawn(move || match search_bg.rebuild(&vault) {
-                Ok(()) => log::info!("mobile: search index rebuild complete"),
-                Err(error) => {
-                    let state = app_handle.state::<AppState>();
-                    let _ = record_repair_issue(
-                        &state,
-                        &vault,
-                        repair::RepairIssue {
-                            key: "search:index".to_string(),
-                            stage: repair::RepairStage::Search,
-                            message: format!("Background search rebuild failed: {error}"),
-                            paths: vec![vault.clone()],
-                        },
-                    );
-                }
-            });
-        }
-    }
-    #[cfg(all(mobile, not(target_os = "ios")))]
-    {
-        let search_bg = search.clone();
-        let vault = path.clone();
-        let app_handle = app.clone();
-        std::thread::spawn(move || match search_bg.rebuild(&vault) {
-            Ok(()) => log::info!("mobile: search index rebuild complete"),
-            Err(error) => {
-                let state = app_handle.state::<AppState>();
-                let _ = record_repair_issue(
-                    &state,
-                    &vault,
-                    repair::RepairIssue {
-                        key: "search:index".to_string(),
-                        stage: repair::RepairStage::Search,
-                        message: format!("Background search rebuild failed: {error}"),
-                        paths: vec![vault.clone()],
-                    },
-                );
-            }
+    // Reconcile rather than rebuild: on an ordinary open almost nothing changed, and
+    // reconcile touches only what did. It falls back to a full rebuild internally if
+    // reconciliation itself fails, so this is never worse than what ran here before.
+    if let Err(error) = search.reconcile(&path) {
+        repair_status.record(repair::RepairIssue {
+            key: "search:index".to_string(),
+            stage: repair::RepairStage::Search,
+            message: format!("Search index update while opening the vault failed: {error}"),
+            paths: vec![path.clone()],
         });
-    }
-    #[cfg(desktop)]
-    {
-        // Reconcile rather than rebuild: on an ordinary open almost nothing changed, and
-        // reconcile touches only what did. It falls back to a full rebuild internally if
-        // reconciliation itself fails, so this is never worse than what ran here before.
-        if let Err(error) = search.reconcile(&path) {
-            repair_status.record(repair::RepairIssue {
-                key: "search:index".to_string(),
-                stage: repair::RepairStage::Search,
-                message: format!("Search index update while opening the vault failed: {error}"),
-                paths: vec![path.clone()],
-            });
-        } else {
-            repair_status.clear_stage(repair::RepairStage::Search);
-        }
+    } else {
+        repair_status.clear_stage(repair::RepairStage::Search);
     }
 
     repair::save(&path, &repair_status)?;
@@ -553,59 +477,33 @@ fn open_vault_path(
     asset_scope::allow_vault_assets(&app, Path::new(&path))?;
     let stable_vault_id = crate::machine_local::vault_id(Path::new(&path))?;
 
-    // Update config. External vaults use the bookmark as their stable identity;
-    // the resolved path is refreshed whenever the vault opens.
+    // Replace the configured vault only after the new one is ready. The old directory is
+    // never modified or deleted by this configuration change.
     let mut search_slot = state.search_index.lock().map_err(|e| e.to_string())?;
     let mut semantic_slot = state.semantic_index.lock().map_err(|e| e.to_string())?;
     let mut watcher_slot = state.watcher.lock().map_err(|e| e.to_string())?;
     let mut config = state.config.lock().map_err(|e| e.to_string())?;
     let mut next = config.clone();
-    let active_bookmark_id = external
+    let name = Path::new(&path)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let notion = next
+        .vault
         .as_ref()
-        .map(|(bookmark_id, _)| bookmark_id.clone());
-    if let Some((bookmark_id, name)) = external {
-        if let Some(vault) = next
-            .vaults
-            .iter_mut()
-            .find(|vault| vault.bookmark_id.as_deref() == Some(bookmark_id.as_str()))
-        {
-            vault.path.clone_from(&path);
-            vault.name = name;
-            vault.vault_id = Some(stable_vault_id.clone());
-        } else {
-            next.vaults.push(VaultConfig {
-                path: path.clone(),
-                name,
-                bookmark_id: Some(bookmark_id),
-                vault_id: Some(stable_vault_id.clone()),
-                ..Default::default()
-            });
-        }
-    } else {
-        let name = std::path::Path::new(&path)
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        if let Some(vault) = next.vaults.iter_mut().find(|vault| {
-            vault.bookmark_id.is_none()
-                && (vault.path == path
-                    || vault.vault_id.as_deref() == Some(stable_vault_id.as_str()))
-        }) {
-            vault.path.clone_from(&path);
-            vault.name = name;
-            vault.vault_id = Some(stable_vault_id.clone());
-        } else {
-            next.vaults.push(VaultConfig {
-                path: path.clone(),
-                name,
-                vault_id: Some(stable_vault_id.clone()),
-                ..Default::default()
-            });
-        }
-    }
+        .filter(|vault| {
+            vault.path == path || vault.vault_id.as_deref() == Some(stable_vault_id.as_str())
+        })
+        .map(|vault| vault.notion.clone())
+        .unwrap_or_default();
+    next.vault = Some(VaultConfig {
+        path: path.clone(),
+        name,
+        vault_id: Some(stable_vault_id),
+        notion,
+    });
     next.active_vault = Some(path.clone());
-    next.active_bookmark_id = active_bookmark_id;
     // Compatibility projection for existing callers; the in-vault file is authoritative.
     next.max_versions_per_note = shared_settings.max_versions_per_note;
     save_app_config(&next)?;
@@ -649,7 +547,7 @@ fn open_vault_path(
 /// unfinished for a launch that had no vault.
 #[allow(unused_variables)]
 fn register_hotkey_now_a_vault_exists(app: &AppHandle) {
-    // Only when there is genuinely nothing bound. Opening a second vault, or reopening the
+    // Only when there is genuinely nothing bound. Reopening the
     // same one, must not re-register a hotkey this app already holds: on Windows that asks
     // the OS for a combination we are ourselves already holding, which comes back as
     // `AlreadyRegistered` and would be reported to the user as "already used by another
@@ -677,172 +575,7 @@ pub async fn open_vault(
     path: String,
 ) -> Result<(), String> {
     let _transition = state.vault_transition.lock().await;
-    open_vault_path(app.clone(), &state, path, None)?;
-    #[cfg(target_os = "ios")]
-    app.ios_vault_access().release_active()?;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn choose_external_vault(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<Option<ExternalVaultResult>, String> {
-    let _transition = state.vault_transition.lock().await;
-    #[cfg(target_os = "ios")]
-    {
-        let picker_app = app.clone();
-        let selection = tauri::async_runtime::spawn_blocking(move || {
-            picker_app.ios_vault_access().choose_folder()
-        })
-        .await
-        .map_err(|error| error.to_string())??;
-        if selection.cancelled {
-            return Ok(None);
-        }
-        let result = ExternalVaultResult::from(selection);
-        let bookmark_was_registered = state
-            .config
-            .lock()
-            .map_err(|error| error.to_string())?
-            .vaults
-            .iter()
-            .any(|vault| vault.bookmark_id.as_deref() == Some(result.bookmark_id.as_str()));
-        if let Err(error) = open_vault_path(
-            app.clone(),
-            &state,
-            result.path.clone(),
-            Some((result.bookmark_id.clone(), result.name.clone())),
-        ) {
-            if bookmark_was_registered {
-                let _ = app.ios_vault_access().rollback_staged();
-            } else {
-                let _ = app.ios_vault_access().forget_bookmark(&result.bookmark_id);
-            }
-            return Err(error);
-        }
-        app.ios_vault_access().commit_staged()?;
-        Ok(Some(result))
-    }
-    #[cfg(not(target_os = "ios"))]
-    {
-        let _ = (&app, &state);
-        Err("Files folders are only available on iOS.".to_string())
-    }
-}
-
-#[tauri::command]
-pub async fn restore_external_vault(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    bookmark_id: String,
-) -> Result<ExternalVaultResult, String> {
-    let _transition = state.vault_transition.lock().await;
-    #[cfg(target_os = "ios")]
-    {
-        let resolver_app = app.clone();
-        let selection = tauri::async_runtime::spawn_blocking(move || {
-            resolver_app.ios_vault_access().resolve_folder(&bookmark_id)
-        })
-        .await
-        .map_err(|error| error.to_string())??;
-        let result = ExternalVaultResult::from(selection);
-        if let Err(error) = open_vault_path(
-            app.clone(),
-            &state,
-            result.path.clone(),
-            Some((result.bookmark_id.clone(), result.name.clone())),
-        ) {
-            let _ = app.ios_vault_access().rollback_staged();
-            return Err(error);
-        }
-        app.ios_vault_access().commit_staged()?;
-        Ok(result)
-    }
-    #[cfg(not(target_os = "ios"))]
-    {
-        let _ = (&app, &state, &bookmark_id);
-        Err("Files folders are only available on iOS.".to_string())
-    }
-}
-
-#[tauri::command]
-pub async fn remove_vault(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    path: String,
-    bookmark_id: Option<String>,
-) -> Result<(), String> {
-    let _transition = state.vault_transition.lock().await;
-    let mut config = state.config.lock().map_err(|error| error.to_string())?;
-    let target = if let Some(bookmark_id) = bookmark_id.as_deref() {
-        config
-            .vaults
-            .iter()
-            .find(|vault| vault.bookmark_id.as_deref() == Some(bookmark_id))
-    } else {
-        config
-            .vaults
-            .iter()
-            .find(|vault| vault.bookmark_id.is_none() && vault.path == path)
-    }
-    .map(|vault| {
-        let is_active = if let Some(bookmark_id) = vault.bookmark_id.as_deref() {
-            config.active_bookmark_id.as_deref() == Some(bookmark_id)
-        } else {
-            config.active_bookmark_id.is_none()
-                && config.active_vault.as_deref() == Some(vault.path.as_str())
-        };
-        (
-            vault.path.clone(),
-            vault.bookmark_id.clone(),
-            vault.vault_id.clone(),
-            is_active,
-        )
-    });
-
-    let Some((target_path, target_bookmark, target_vault_id, is_active)) = target else {
-        return Ok(());
-    };
-
-    let old = config.clone();
-    let mut next = old.clone();
-    if let Some(id) = target_bookmark.as_deref() {
-        next.vaults
-            .retain(|vault| vault.bookmark_id.as_deref() != Some(id));
-    } else {
-        next.vaults
-            .retain(|vault| vault.bookmark_id.is_some() || vault.path != target_path);
-    }
-    if is_active {
-        next.active_vault = None;
-        next.active_bookmark_id = None;
-    }
-    if let Some(vault_id) = target_vault_id.as_deref() {
-        let config_path = app_config_path()?;
-        crate::sync_config::reserve_webdav_retirement(&config_path, vault_id)?;
-    }
-    save_app_config(&next)?;
-
-    #[cfg(target_os = "ios")]
-    if let Some(id) = target_bookmark.as_deref() {
-        if let Err(error) = app.ios_vault_access().forget_bookmark(id) {
-            return match save_app_config(&old) {
-                Ok(()) => Err(error),
-                Err(rollback_error) => Err(format!(
-                    "{error} Configuration rollback also failed: {rollback_error}"
-                )),
-            };
-        }
-    }
-    #[cfg(not(target_os = "ios"))]
-    let _ = (&app, &target_bookmark);
-
-    if is_active {
-        clear_vault_runtime(&state)?;
-    }
-    *config = next;
-
+    open_vault_path(app, &state, path)?;
     Ok(())
 }
 
@@ -996,7 +729,7 @@ pub fn set_font_size(app: AppHandle, state: State<'_, AppState>, size: u32) -> R
     drop(config);
 
     use tauri::Emitter;
-    app.emit("editor-font-size-changed", size)
+    app.emit(crate::events::EDITOR_FONT_SIZE_CHANGED, size)
         .map_err(|e| e.to_string())
 }
 
@@ -1024,7 +757,7 @@ pub fn set_ui_scale(app: AppHandle, state: State<'_, AppState>, scale: f64) -> R
     drop(config);
 
     use tauri::Emitter;
-    app.emit("ui-scale-changed", scale)
+    app.emit(crate::events::UI_SCALE_CHANGED, scale)
         .map_err(|error| error.to_string())
 }
 
@@ -1953,7 +1686,7 @@ pub fn get_tasks(state: State<'_, AppState>) -> Result<Vec<crate::types::TaskIte
         .map(|e| e.into_path())
         .collect();
 
-    // Read and parse each note in parallel; on Android every read_to_string is a FUSE round-trip.
+    // Read and parse each note in parallel; each read_to_string may be a filesystem round-trip.
     let tasks: Vec<crate::types::TaskItem> = paths
         .par_iter()
         .flat_map(|path| {
@@ -2590,7 +2323,6 @@ pub fn save_vault_state(state: State<'_, AppState>, vault_state: VaultState) -> 
 // ── Clipboard ──
 
 /// Copy text to the system clipboard through the native backend.
-#[cfg(desktop)]
 #[tauri::command]
 pub fn copy_text_to_clipboard(text: String) -> Result<(), String> {
     let mut clipboard =
@@ -2600,15 +2332,8 @@ pub fn copy_text_to_clipboard(text: String) -> Result<(), String> {
         .map_err(|e| format!("Failed to copy text: {}", e))
 }
 
-#[cfg(mobile)]
-#[tauri::command]
-pub fn copy_text_to_clipboard(_text: String) -> Result<(), String> {
-    Err("Text clipboard copy is only supported on desktop".to_string())
-}
-
 /// Read image from system clipboard (bypasses WebKitGTK clipboard bug).
 /// Returns PNG bytes as Vec<u8>, or error if no image on clipboard.
-#[cfg(desktop)]
 #[tauri::command]
 pub fn read_clipboard_image() -> Result<Vec<u8>, String> {
     let mut clipboard =
@@ -2636,14 +2361,7 @@ pub fn read_clipboard_image() -> Result<Vec<u8>, String> {
     Ok(buf)
 }
 
-#[cfg(mobile)]
-#[tauri::command]
-pub fn read_clipboard_image() -> Result<Vec<u8>, String> {
-    Err("Clipboard image reading not supported on Android".to_string())
-}
-
 /// Copy an image file to the system clipboard.
-#[cfg(desktop)]
 #[tauri::command]
 pub fn copy_image_to_clipboard(app: AppHandle, path: String) -> Result<(), String> {
     ensure_readable_path(&app, Path::new(&path))?;
@@ -2665,14 +2383,7 @@ pub fn copy_image_to_clipboard(app: AppHandle, path: String) -> Result<(), Strin
     Ok(())
 }
 
-#[cfg(mobile)]
-#[tauri::command]
-pub fn copy_image_to_clipboard(_app: AppHandle, _path: String) -> Result<(), String> {
-    Err("Clipboard image copy not supported on Android".to_string())
-}
-
 /// Copy PNG bytes directly to the system clipboard.
-#[cfg(desktop)]
 #[tauri::command]
 pub fn copy_png_to_clipboard(data: Vec<u8>) -> Result<(), String> {
     let img =
@@ -2690,12 +2401,6 @@ pub fn copy_png_to_clipboard(data: Vec<u8>) -> Result<(), String> {
         .set_image(img_data)
         .map_err(|e| format!("Failed to set clipboard image: {}", e))?;
     Ok(())
-}
-
-#[cfg(mobile)]
-#[tauri::command]
-pub fn copy_png_to_clipboard(_data: Vec<u8>) -> Result<(), String> {
-    Err("Clipboard image copy not supported on Android".to_string())
 }
 
 // ── Attachments ──
@@ -2804,9 +2509,9 @@ pub fn set_general_settings(
     // The stored preference is the source of truth; the OS-level entry is a projection of
     // it, kept in sync every time it could have changed rather than left to drift.
     #[cfg(target_os = "linux")]
-    if let (Some(config_home), Some(exec), Ok(app_id)) = (
+    if let (Some(config_home), Ok(exec), Ok(app_id)) = (
         dirs::config_dir(),
-        hotkey::desktop_entry::current_executable(),
+        std::env::current_exe(),
         hotkey::configured_application_id(),
     ) {
         if let Err(error) = crate::autostart::sync(config.autostart, &config_home, &app_id, &exec) {
@@ -2927,7 +2632,7 @@ pub fn get_vault_stats(state: State<'_, AppState>) -> Result<VaultStats, String>
         .filter(|path| is_counted_vault_file(Path::new(vault_path), path))
         .collect();
 
-    // Stat files in parallel; each metadata() is a FUSE round-trip on Android.
+    // Stat files in parallel; each metadata() may be a filesystem round-trip.
     let (total_notes, total_attachments, notes_size, attachments_size) = paths
         .par_iter()
         .map(|path| {
@@ -2967,7 +2672,7 @@ pub fn import_obsidian(app: AppHandle) -> Result<(), String> {
         use tauri::Emitter;
         let (result, terminal) = do_import_obsidian(&app, &vault_path);
         let _ = app.emit(
-            "import-done",
+            crate::events::IMPORT_DONE,
             import_done_payload(result.as_ref(), &terminal),
         );
     });
@@ -3383,19 +3088,8 @@ fn validate_external_url(url: &str) -> Result<(), String> {
 
 #[cfg(target_os = "linux")]
 fn open_linux(argument: &std::ffi::OsStr) -> Result<(), String> {
-    let mut command = std::process::Command::new("xdg-open");
-    command.arg(argument);
-    if std::env::var("APPIMAGE").is_ok() {
-        command
-            .env_remove("LD_LIBRARY_PATH")
-            .env_remove("LD_PRELOAD")
-            .env_remove("GIO_LAUNCHED_DESKTOP_FILE")
-            .env_remove("GIO_LAUNCHED_DESKTOP_FILE_PID");
-        if let Ok(original_path) = std::env::var("PATH_ORIG") {
-            command.env("PATH", original_path);
-        }
-    }
-    command
+    std::process::Command::new("xdg-open")
+        .arg(argument)
         .spawn()
         .map(|_| ())
         .map_err(|error| format!("Failed to open item: {error}"))
@@ -3428,7 +3122,7 @@ mod external_access_tests {
     #[test]
     fn external_urls_allow_supported_schemes() {
         for url in [
-            "https://helixnotes.com",
+            "https://example.com",
             "http://example.com",
             "mailto:hello@example.com",
             "tel:+123456789",
@@ -3613,7 +3307,7 @@ pub fn create_backup(app: AppHandle) -> Result<(), String> {
                 // Cleanup old backups
                 let _ = crate::backup::cleanup_old_backups(&backup_dir, max_count);
                 let _ = app.emit(
-                    "backup-done",
+                    crate::events::BACKUP_DONE,
                     serde_json::json!({
                         "success": true,
                         "entry": entry,
@@ -3622,7 +3316,7 @@ pub fn create_backup(app: AppHandle) -> Result<(), String> {
             }
             Err(e) => {
                 let _ = app.emit(
-                    "backup-done",
+                    crate::events::BACKUP_DONE,
                     serde_json::json!({
                         "success": false,
                         "error": e,
@@ -3683,7 +3377,7 @@ pub fn restore_backup(app: AppHandle, backup_path: String) -> Result<(), String>
             }
         };
         let _ = app.emit(
-            "restore-done",
+            crate::events::RESTORE_DONE,
             serde_json::json!({
                 "success": terminal.success,
                 "outcome": terminal.outcome,
@@ -3856,7 +3550,7 @@ pub fn set_ai_settings(
     drop(config);
 
     if let Some(status) = invalidated_status {
-        let _ = app.emit("ai-status-changed", status);
+        let _ = app.emit(crate::events::AI_STATUS_CHANGED, status);
         let refresh_app = app.clone();
         tauri::async_runtime::spawn(async move {
             crate::ai_health::check_now(&refresh_app).await;
@@ -3895,13 +3589,13 @@ pub fn test_ai_connection(app: AppHandle) -> Result<(), String> {
         match result {
             Ok(msg) => {
                 let _ = app.emit(
-                    "ai-test-result",
+                    crate::events::AI_TEST_RESULT,
                     serde_json::json!({ "success": true, "message": msg }),
                 );
             }
             Err(e) => {
                 let _ = app.emit(
-                    "ai-test-result",
+                    crate::events::AI_TEST_RESULT,
                     serde_json::json!({ "success": false, "error": e }),
                 );
             }
@@ -3991,37 +3685,25 @@ pub fn ai_ask(
 
 // ── Helpers ──
 
-// On mobile (Android + iOS) the OS config dir is injected at startup via the Tauri
-// path resolver, since dirs::config_dir() is not reliable in the app sandbox.
-static MOBILE_CONFIG_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-
-#[cfg(mobile)]
-pub fn set_mobile_config_dir(path: std::path::PathBuf) {
-    let _ = MOBILE_CONFIG_DIR.set(path);
-}
-
-/// The injected mobile directory, or `None` on desktop where it is never set.
-// Unused under `cfg(test)`, where machine-local state is rooted in a temp directory.
-#[cfg_attr(test, allow(dead_code))]
-pub fn mobile_config_dir() -> Option<std::path::PathBuf> {
-    MOBILE_CONFIG_DIR.get().cloned()
-}
-
 fn app_config_path() -> Result<std::path::PathBuf, String> {
-    // Prefer the injected mobile dir when present (set only on mobile); fall back to
-    // the platform config dir on desktop.
-    let app_dir = if let Some(mobile_dir) = MOBILE_CONFIG_DIR.get() {
-        mobile_dir.join("helixnotes")
-    } else if let Some(config_dir) = dirs::config_dir() {
-        config_dir.join("helixnotes")
-    } else {
-        return Err("Config directory not available yet".to_string());
-    };
+    let app_dir = crate::app_dirs::config_root()?;
     std::fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
     Ok(app_dir.join("config.json"))
 }
 
-pub fn load_app_config() -> AppConfig {
+/// `move_error` is the failure from `app_dirs::migrate_legacy_dirs`, run first by the caller.
+pub fn load_app_config(move_error: Option<&str>) -> AppConfig {
+    if let Some(error) = move_error {
+        // A half-finished move must not be overwritten by fresh settings; it resumes next launch.
+        return AppConfig {
+            config_error: Some(format!(
+                "{error}. Settings cannot be saved until it completes; restart to retry."
+            )),
+            config_save_blocked: true,
+            legacy_move_incomplete: true,
+            ..AppConfig::default()
+        };
+    }
     app_config_path()
         .map(|path| load_app_config_from(&path, &crate::secret_store::OsSecretStore))
         .unwrap_or_default()
@@ -4031,6 +3713,7 @@ fn load_app_config_from(
     path: &std::path::Path,
     store: &dyn crate::secret_store::SecretStore,
 ) -> AppConfig {
+    let mut retirement_error = None;
     let mut config = match read_app_config(path) {
         ConfigRead::Loaded(contents) => {
             let contents = match crate::sync_config::retire_webdav(path, &contents, store) {
@@ -4039,6 +3722,7 @@ fn load_app_config_from(
                     log::warn!(
                         "WebDAV retirement is incomplete and will retry at startup: {error}"
                     );
+                    retirement_error = Some(error);
                     // Current AppConfig has no WebDAV fields, so even the historical JSON
                     // cannot restore a production execution path while cleanup waits to retry.
                     contents
@@ -4046,7 +3730,7 @@ fn load_app_config_from(
             };
             match parse_app_config(&contents) {
                 Ok(config) => config,
-                Err(damage) => damaged_config(path, damage),
+                Err(damage) => damaged_config(path, *damage),
             }
         }
         ConfigRead::Absent => AppConfig::default(),
@@ -4054,7 +3738,7 @@ fn load_app_config_from(
             path,
             ConfigDamage {
                 reason: format!("config.json could not be read: {error}"),
-                recovered_vaults: Vec::new(),
+                recovered_vault: None,
             },
         ),
     };
@@ -4066,12 +3750,21 @@ fn load_app_config_from(
         }
         return config;
     }
-    let identity_migration = populate_vault_ids(&mut config);
+    if let Some(error) = retirement_error {
+        config.config_error = Some(format!(
+            "Legacy WebDAV credential cleanup is incomplete; fix its retirement marker or unlock the OS secret store, then restart. Settings cannot be saved meanwhile: {error}"
+        ));
+        config.config_save_blocked = true;
+    }
+    let vault_migration = migrate_single_vault(&mut config);
+    let identity_migration = populate_vault_id(&mut config);
 
     match crate::secret_store::hydrate_config(&mut config, store) {
         Ok(outcome) => {
             config.secret_store_error = None;
-            if identity_migration || outcome.migrated_plaintext {
+            if !config.config_save_blocked
+                && (vault_migration || identity_migration || outcome.migrated_plaintext)
+            {
                 if let Err(save_error) = save_app_config_to(path, &config) {
                     if outcome.migrated_plaintext {
                         let rollback_error =
@@ -4115,33 +3808,40 @@ fn read_app_config(path: &std::path::Path) -> ConfigRead {
 
 struct ConfigDamage {
     reason: String,
-    recovered_vaults: Vec<VaultConfig>,
+    recovered_vault: Option<VaultConfig>,
 }
 
 /// Malformed (not JSON) and incompatible (JSON, but not an `AppConfig`) are reported
-/// differently. Either way, every vault entry that still parses is returned for recovery.
-fn parse_app_config(contents: &str) -> Result<AppConfig, ConfigDamage> {
-    let document: serde_json::Value =
-        serde_json::from_str(contents).map_err(|error| ConfigDamage {
+/// differently. The active vault entry is returned for recovery when it still parses.
+fn parse_app_config(contents: &str) -> Result<AppConfig, Box<ConfigDamage>> {
+    let document: serde_json::Value = serde_json::from_str(contents).map_err(|error| {
+        Box::new(ConfigDamage {
             reason: format!("config.json is malformed: {error}"),
-            recovered_vaults: Vec::new(),
-        })?;
-    serde_json::from_value(document.clone()).map_err(|error| ConfigDamage {
-        reason: format!("config.json is incompatible with this version: {error}"),
-        recovered_vaults: document
-            .get("vaults")
-            .and_then(serde_json::Value::as_array)
-            .map(|vaults| {
-                vaults
-                    .iter()
-                    .filter_map(|vault| serde_json::from_value(vault.clone()).ok())
-                    .collect()
-            })
-            .unwrap_or_default(),
+            recovered_vault: None,
+        })
+    })?;
+    serde_json::from_value(document.clone()).map_err(|error| {
+        Box::new(ConfigDamage {
+            reason: format!("config.json is incompatible with this version: {error}"),
+            recovered_vault: document
+                .get("vault")
+                .and_then(|vault| serde_json::from_value(vault.clone()).ok())
+                .or_else(|| {
+                    let active = document.get("active_vault")?.as_str()?;
+                    document
+                        .get("vaults")?
+                        .as_array()?
+                        .iter()
+                        .find(|vault| {
+                            vault.get("path").and_then(serde_json::Value::as_str) == Some(active)
+                        })
+                        .and_then(|vault| serde_json::from_value(vault.clone()).ok())
+                }),
+        })
     })
 }
 
-/// Startup config for a damaged `config.json`: defaults plus the recovered vault list, no
+/// Startup config for a damaged `config.json`: defaults plus the recovered vault, no
 /// active vault, and an error the vault picker shows. The damaged file is copied aside
 /// (owner-only, since it may hold credentials) first; if that fails, saving stays blocked.
 fn damaged_config(path: &std::path::Path, damage: ConfigDamage) -> AppConfig {
@@ -4176,25 +3876,61 @@ fn damaged_config(path: &std::path::Path, damage: ConfigDamage) -> AppConfig {
     };
     log::error!("{message}");
     AppConfig {
-        vaults: damage.recovered_vaults,
+        vault: damage.recovered_vault,
         config_error: Some(message),
         config_save_blocked,
         ..AppConfig::default()
     }
 }
 
-fn populate_vault_ids(config: &mut AppConfig) -> bool {
-    let mut changed = false;
-    for vault in &mut config.vaults {
-        if vault.vault_id.is_some() {
-            continue;
-        }
-        if let Ok(identity) = crate::machine_local::vault_id(std::path::Path::new(&vault.path)) {
-            vault.vault_id = Some(identity);
-            changed = true;
-        }
+fn migrate_single_vault(config: &mut AppConfig) -> bool {
+    let mut changed = !config.legacy_vaults.is_empty();
+    let selected = config.active_vault.as_deref().map(|active| {
+        config
+            .vault
+            .as_ref()
+            .filter(|vault| vault.path == active)
+            .cloned()
+            .or_else(|| {
+                config
+                    .legacy_vaults
+                    .iter()
+                    .find(|vault| vault.path == active)
+                    .cloned()
+            })
+            .unwrap_or_else(|| VaultConfig {
+                path: active.to_string(),
+                name: std::path::Path::new(active)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+                ..Default::default()
+            })
+    });
+    if config.vault.as_ref().map(|vault| vault.path.as_str())
+        != selected.as_ref().map(|vault| vault.path.as_str())
+    {
+        changed = true;
     }
+    config.vault = selected;
+    config.legacy_vaults.clear();
     changed
+}
+
+fn populate_vault_id(config: &mut AppConfig) -> bool {
+    let Some(vault) = config
+        .vault
+        .as_mut()
+        .filter(|vault| vault.vault_id.is_none())
+    else {
+        return false;
+    };
+    if let Ok(identity) = crate::machine_local::vault_id(std::path::Path::new(&vault.path)) {
+        vault.vault_id = Some(identity);
+        return true;
+    }
+    false
 }
 
 fn write_private_file(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
@@ -4237,7 +3973,7 @@ mod config_startup_tests {
         let dir = scratch();
         let loaded = load_app_config_from(&dir.join("config.json"), &EmptyStore);
         assert!(loaded.config_error.is_none());
-        assert!(loaded.vaults.is_empty());
+        assert!(loaded.vault.is_none());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -4281,13 +4017,60 @@ mod config_startup_tests {
             .as_deref()
             .unwrap()
             .contains("incompatible"));
-        assert_eq!(loaded.vaults.len(), 1);
-        assert_eq!(loaded.vaults[0].path, "/vaults/work");
+        assert_eq!(loaded.vault.as_ref().unwrap().path, "/vaults/work");
         assert!(
             loaded.active_vault.is_none(),
             "a damaged config must not auto-open a vault"
         );
         assert_eq!(preserved_copies(&dir).len(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_vault_list_keeps_only_the_active_vault_and_its_credential() {
+        use crate::secret_store::{test_support::MemoryStore, SecretId, SecretStore};
+
+        let dir = scratch();
+        let active = dir.join("active");
+        let inactive = dir.join("inactive");
+        std::fs::create_dir(&active).unwrap();
+        std::fs::create_dir(&inactive).unwrap();
+        std::fs::write(inactive.join("untouched.md"), "old vault data").unwrap();
+        let path = dir.join("config.json");
+        let mut legacy = serde_json::to_value(AppConfig::default()).unwrap();
+        legacy["active_vault"] = serde_json::json!(active.to_string_lossy());
+        legacy["vaults"] = serde_json::json!([
+            {"path": inactive, "name": "Inactive", "vault_id": "inactive-id"},
+            {"path": active, "name": "Active", "vault_id": "active-id",
+             "notion": {"token": "active-secret"}}
+        ]);
+        std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let store = MemoryStore::default();
+
+        let loaded = load_app_config_from(&path, &store);
+
+        assert_eq!(loaded.vault.as_ref().unwrap().name, "Active");
+        assert!(loaded.legacy_vaults.is_empty());
+        assert_eq!(
+            loaded.vault.as_ref().unwrap().notion.token.as_deref(),
+            Some("active-secret")
+        );
+        assert_eq!(
+            store
+                .get(&SecretId::NotionToken("active-id".into()))
+                .unwrap()
+                .as_deref(),
+            Some("active-secret")
+        );
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(saved.get("vaults").is_none());
+        assert_eq!(saved["vault"]["name"], "Active");
+        assert!(!saved.to_string().contains("active-secret"));
+        assert_eq!(
+            std::fs::read_to_string(inactive.join("untouched.md")).unwrap(),
+            "old vault data"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -4332,6 +4115,17 @@ mod config_startup_tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
         assert_eq!(load_app_config_from(&path, &EmptyStore).theme, "dark");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_incomplete_directory_move_blocks_opening_any_vault() {
+        let loaded = load_app_config(Some("moving failed"));
+        assert!(loaded.legacy_move_incomplete && loaded.config_save_blocked);
+
+        let vault = std::env::temp_dir();
+        let refusal = vault_open_refusal(true, &vault).unwrap();
+        assert!(refusal.contains("still being moved"));
+        assert_eq!(vault_open_refusal(false, &vault), None);
     }
 
     #[test]
@@ -4387,7 +4181,7 @@ mod secret_config_tests {
             unreachable!()
         }
         fn delete(&self, _id: &SecretId) -> Result<(), String> {
-            unreachable!()
+            Err("The OS secret store is unavailable or locked".to_string())
         }
     }
 
@@ -4448,14 +4242,21 @@ mod secret_config_tests {
     }
 
     #[test]
-    fn an_invalid_retirement_marker_does_not_block_other_secret_hydration_or_updates() {
+    fn an_invalid_retirement_marker_hydrates_secrets_but_preserves_legacy_vault_ids() {
         let dir = std::env::temp_dir().join(format!(
             "helixnotes-invalid-webdav-retirement-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.json");
-        std::fs::write(&path, serde_json::to_string(&AppConfig::default()).unwrap()).unwrap();
+        let mut old = serde_json::to_value(AppConfig::default()).unwrap();
+        old["active_vault"] = serde_json::json!("/vaults/active");
+        old["vaults"] = serde_json::json!([
+            {"path": "/vaults/inactive", "name": "Inactive", "vault_id": "inactive-id"},
+            {"path": "/vaults/active", "name": "Active", "vault_id": "active-id"}
+        ]);
+        let original = serde_json::to_string(&old).unwrap();
+        std::fs::write(&path, &original).unwrap();
         std::fs::write(dir.join("webdav-retirement-v1.json"), "not valid json").unwrap();
         let store = MemoryStore::default();
         store
@@ -4466,18 +4267,10 @@ mod secret_config_tests {
 
         assert_eq!(loaded.ai_api_key.as_deref(), Some("existing-anthropic-key"));
         assert!(loaded.secret_store_error.is_none());
-
-        let mut updated = loaded.clone();
-        updated.ai_api_key = Some("rotated-anthropic-key".to_string());
-        crate::secret_store::apply_config_changes(&loaded, &updated, &store).unwrap();
-        assert_eq!(
-            store
-                .0
-                .borrow()
-                .get(&SecretId::AnthropicApiKey)
-                .map(String::as_str),
-            Some("rotated-anthropic-key")
-        );
+        assert_eq!(loaded.vault.as_ref().unwrap().path, "/vaults/active");
+        assert!(loaded.config_save_blocked);
+        assert!(ensure_config_writable(&loaded).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -4509,6 +4302,46 @@ mod secret_config_tests {
             "the recovery copy must not become a runtime fallback"
         );
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn legacy_active_notion_token_survives_a_settings_save_while_keyring_is_locked() {
+        let dir = std::env::temp_dir().join(format!(
+            "sb-locked-vault-migration-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("config.json");
+        let mut old = serde_json::to_value(AppConfig::default()).unwrap();
+        old["active_vault"] = serde_json::json!("/vaults/active");
+        old["vaults"] = serde_json::json!([
+            {"path": "/vaults/inactive", "name": "Inactive"},
+            {"path": "/vaults/active", "name": "Active", "vault_id": "active-id",
+             "notion": {"token": "keep-this-token"}}
+        ]);
+        std::fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+        // This development config already completed WebDAV retirement. Only the
+        // separate Notion keyring read is unavailable for this startup.
+        std::fs::write(
+            dir.join("webdav-retirement-v1.json"),
+            r#"{"version":1,"legacy_configuration_found":false,"configuration_retired":true,"pending_vault_ids":[],"complete":true}"#,
+        )
+        .unwrap();
+        let recovery: AppConfig = serde_json::from_value(old).unwrap();
+        let mut loaded = load_app_config_from(&path, &UnavailableStore);
+        assert!(loaded.secret_store_error.is_some());
+        assert!(!loaded.config_save_blocked);
+        loaded.theme = "dark".into();
+
+        save_app_config_with_recovery(&path, &loaded, Some(&recovery)).unwrap();
+
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["vault"]["notion"]["token"], "keep-this-token");
+        assert_eq!(saved["vault"]["path"], "/vaults/active");
+        assert!(saved.get("vaults").is_none());
+        assert_eq!(saved["theme"], "dark");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
 
@@ -4577,19 +4410,12 @@ fn save_app_config_with_recovery(
 ) -> Result<(), String> {
     let mut persisted = crate::secret_store::redacted_config(config);
     if let Some(recovery) = recovery {
-        crate::secret_store::copy_plaintext_recovery(recovery, &mut persisted);
+        let mut selected = recovery.clone();
+        migrate_single_vault(&mut selected);
+        crate::secret_store::copy_plaintext_recovery(&selected, &mut persisted);
     }
     let data = serde_json::to_string_pretty(&persisted).map_err(|error| error.to_string())?;
     write_private_file(path, data.as_bytes())
-}
-
-// ── Install Type Detection ──
-
-#[tauri::command]
-pub fn is_mobile_platform() -> bool {
-    // Compile-time platform: true only for the Android/iOS builds. Authoritative, unlike the
-    // webview user-agent, which some desktop WebKitGTK builds report mobile-looking (issue #63).
-    cfg!(mobile)
 }
 
 #[cfg(test)]

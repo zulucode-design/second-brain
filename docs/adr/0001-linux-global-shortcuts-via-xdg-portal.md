@@ -137,10 +137,9 @@ If the app later owns a D-Bus well-known name — for MPRIS, notification action
 single-instance guard — that name can be derived from this separator-free identifier without
 special casing.
 
-This is safe: config, backups, and the search index all key off a hardcoded `"helixnotes"`
-string (`commands.rs`, `backup.rs`, `search/mod.rs`), not the bundle identifier. Renaming
-the identifier orphans nothing. Renaming that directory string *would*, and is out of
-scope.
+Config, backups, and machine-local state originally keyed off a hardcoded `"helixnotes"`
+directory, not the bundle identifier. Since #89 they live under the identifier
+(`app_dirs.rs`, ADR-0011), so renaming the identifier would now orphan them.
 
 A dev build therefore needs a desktop entry before the portal will talk to it — but a
 **user-level** entry in `~/.local/share/applications/` is enough, so no packaged install is
@@ -151,9 +150,13 @@ succeed. `scripts/dev-desktop-entry.sh` installs it.
 A **packaged** build needs the same thing, and does not get it for free. The bundler names
 the generated entry after the product, giving `HelixNotes.desktop`, which the portal cannot
 match to the app id — so an installed build would fail exactly where a dev build succeeds.
-`bundle.linux.{deb,rpm}.files` therefore installs an entry named for the app id, and
+`bundle.linux.rpm.files` therefore installs an entry named for the app id, and
 `desktopTemplate` marks the generated one `NoDisplay=true` so the app appears once in the
 launcher rather than twice.
+
+> **Amended by ADR-0012 (#89).** Fedora's RPM is the only Linux package; `.deb` and AppImage
+> builds and the AppImage self-written entry below were removed. The paragraphs on AppImage
+> record why that code existed.
 
 **AppImage installs nothing at all** — it is one file the user runs from wherever they put
 it — so it gets no entry from either mechanism, and the hotkey would be permanently

@@ -19,9 +19,7 @@ import type {
   BackupEntry,
   VersionEntry,
   TaskItem,
-  ExternalVaultResult,
   StartupView,
-  AiProvider,
   RepairStatus,
   SemanticStatus,
   SaveCommitOutcome,
@@ -32,18 +30,6 @@ import type {
 
 export async function openVault(path: string): Promise<void> {
   return invoke("open_vault", { path });
-}
-
-export async function chooseExternalVault(): Promise<ExternalVaultResult | null> {
-  return invoke("choose_external_vault");
-}
-
-export async function restoreExternalVault(bookmarkId: string): Promise<ExternalVaultResult> {
-  return invoke("restore_external_vault", { bookmarkId });
-}
-
-export async function removeVault(path: string, bookmarkId?: string | null): Promise<void> {
-  return invoke("remove_vault", { path, bookmarkId: bookmarkId ?? null });
 }
 
 export async function getAppConfig(): Promise<AppConfig> {
@@ -629,7 +615,7 @@ export async function createVersion(
 // ── AI ──
 
 export async function setAiSettings(
-  provider: AiProvider | null,
+  provider: string | null,
   apiKey: string | null,
   model: string,
   writingStyle: string | null,
@@ -657,9 +643,6 @@ export async function aiAsk(
   return invoke("ai_ask", { action, text, customPrompt, requestId });
 }
 
-export async function isMobilePlatform(): Promise<boolean> {
-  return invoke("is_mobile_platform");
-}
 
 export async function getPendingOpenFile(): Promise<string | null> {
   return invoke("get_pending_open_file");

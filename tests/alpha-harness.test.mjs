@@ -27,9 +27,10 @@ test('harness config changes only active vault and backup ownership', () => {
   const next = harnessConfig(original, '/test/vault', 'test-id', '/test/backups');
 
   assert.deepEqual(original.vaults[0].notion, { enabled: true }, 'input stays untouched');
-  assert.deepEqual(next.vaults, [{ path: '/test/vault', name: 'Alpha Harness', vault_id: 'test-id' }]);
+  assert.deepEqual(next.vault, { path: '/test/vault', name: 'Alpha Harness', vault_id: 'test-id' });
+  assert.equal(next.vaults, undefined);
   assert.equal(next.active_vault, '/test/vault');
-  assert.equal(next.active_bookmark_id, null);
+  assert.equal(next.active_bookmark_id, undefined);
   assert.equal(next.backup_location, '/test/backups');
   assert.equal(next.backup_max_count, 10);
   assert.equal(next.theme, 'dark');
@@ -100,14 +101,14 @@ test('Windows launch task targets the logged-in desktop identity', () => {
 test('public traces drop account names, home paths, and host names', () => {
   const line = JSON.stringify({
     vault: `${homedir()}/sb88/runs/x/fedora/vault`,
-    machineLink: 'C:\\Users\\Someone\\AppData\\Local\\helixnotes\\vaults\\id',
+    machineLink: 'C:\\Users\\Someone\\AppData\\Local\\io.github.zulucodedesign.SecondBrain\\vaults\\id',
     host: 'DESKTOP-EXAMPLE',
     matching: 5000,
   });
   const redacted = redactTrace(line);
   assert.deepEqual(JSON.parse(redacted), {
     vault: '~/sb88/runs/x/fedora/vault',
-    machineLink: '%USERPROFILE%\\AppData\\Local\\helixnotes\\vaults\\id',
+    machineLink: '%USERPROFILE%\\AppData\\Local\\io.github.zulucodedesign.SecondBrain\\vaults\\id',
     matching: 5000,
   });
   assert.deepEqual(JSON.parse(redactTrace(JSON.stringify({ matching: 1, host: 'last' }))), { matching: 1 });

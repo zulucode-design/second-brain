@@ -1284,7 +1284,7 @@ fn publish_sync_terminal(app: &AppHandle, terminal: crate::bulk_mutation::BulkMu
     if let Ok(mut runtime) = app.state::<AppState>().sync_sidecar.runtime.lock() {
         runtime.last_terminal = Some(terminal.clone());
     }
-    let _ = app.emit("sync-done", terminal);
+    let _ = app.emit(crate::events::SYNC_DONE, terminal);
 }
 
 fn run_sync(app: AppHandle, vault: PathBuf, control: ControlState, peer: Peer) {

@@ -1,11 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { listen } from '@tauri-apps/api/event';
+	import { listenAppEvent } from '$lib/events';
 	import { getTasks } from '$lib/api';
 	import { debounce } from '$lib/utils/debounce';
 	import { NOTE_SAVED_EVENT } from '$lib/utils/navigation';
 	import { tasksLayout, tasksHideCompleted, tasksOnlyFlagged, tasksSort, appConfig } from '$lib/stores/app';
-	import { isAndroid } from '$lib/platform';
 	import { asyncViewState, type LoadStatus } from '$lib/utils/async-view-state';
 	import type { TaskItem, FileEvent } from '$lib/types';
 
@@ -45,7 +44,7 @@
 
 	onMount(() => {
 		load();
-		listen<FileEvent>('file-changed', () => debouncedLoad()).then((u) => (unlisten = u));
+		listenAppEvent('fileChanged', () => debouncedLoad()).then((u) => (unlisten = u));
 		const onNoteSaved = (event: Event) => {
 			const { path, hasTasks } = (event as CustomEvent<{ path: string; hasTasks: boolean }>).detail;
 			if (hasTasks || tasks.some((task) => task.note_path === path)) debouncedLoad();
@@ -120,8 +119,8 @@
 	}
 
 	// ── Calendar ──
-	// Layout persists per-vault (tasksLayout store -> VaultState). Android is always List.
-	const viewLayout = $derived(isAndroid ? 'list' : $tasksLayout);
+	// Layout persists per-vault (tasksLayout store -> VaultState).
+	const viewLayout = $derived($tasksLayout);
 	const calNow = new Date();
 	let calMonth = $state(calNow.getMonth());
 	let calYear = $state(calNow.getFullYear());
@@ -213,12 +212,10 @@
 		<input class="tasks-filter" type="text" placeholder="Filter tasks…" bind:value={taskQuery} onkeydown={(e) => { if (e.key === 'Escape') taskQuery = ''; }} aria-label="Filter tasks by text" />
 		<button class="tasks-ctl" class:active={$tasksHideCompleted} onclick={() => ($tasksHideCompleted = !$tasksHideCompleted)} title="Hide completed tasks">Hide done</button>
 		<button class="tasks-ctl" class:active={$tasksOnlyFlagged} onclick={() => ($tasksOnlyFlagged = !$tasksOnlyFlagged)} title="Only show tasks with a due date or priority">Flagged</button>
-		{#if !isAndroid}
-			<div class="tasks-layout">
+					<div class="tasks-layout">
 				<button class="tasks-ctl" class:active={viewLayout === 'list'} onclick={() => ($tasksLayout = 'list')} title="List view">List</button>
 				<button class="tasks-ctl" class:active={viewLayout === 'calendar'} onclick={() => ($tasksLayout = 'calendar')} title="Calendar view">Calendar</button>
 			</div>
-		{/if}
 		{#if viewLayout === 'list'}
 			<div class="tasks-sort">
 				{#each [['due', 'Due'], ['priority', 'Priority'], ['note', 'Note']] as [v, label]}

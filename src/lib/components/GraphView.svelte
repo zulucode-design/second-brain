@@ -4,8 +4,9 @@
 	import { onDestroy } from 'svelte';
 	import { getGraphData } from '$lib/api';
 	import { activeNotePath, appConfig } from '$lib/stores/app';
-	import { isMobile } from '$lib/platform';
+	import { compactLayout } from '$lib/stores/app';
 	import { asyncViewState, type LoadStatus } from '$lib/utils/async-view-state';
+	const isCompact = $derived($compactLayout);
 
 	let { onclose, onnavigate }: {
 		onclose: () => void;
@@ -481,8 +482,8 @@
 			ctx.stroke();
 		} else {
 			ctx.strokeStyle = borderColor;
-			ctx.lineWidth = isMobile ? 1.5 : 1;
-			ctx.globalAlpha = isMobile ? 0.65 : 0.35;
+			ctx.lineWidth = isCompact ? 1.5 : 1;
+			ctx.globalAlpha = isCompact ? 0.65 : 0.35;
 			ctx.beginPath();
 			for (let i = 0; i < edges.length; i++) {
 				if (localEdgeSet && !localEdgeSet.has(i)) continue;
@@ -492,9 +493,9 @@
 			}
 			ctx.stroke();
 
-			// On mobile draw arrowheads always (no hover available)
+			// On compact draw arrowheads always (no hover available)
 			// Sizes divided by zoom so they stay fixed screen size regardless of zoom level
-			if (isMobile) {
+			if (isCompact) {
 				ctx.fillStyle = borderColor;
 				ctx.globalAlpha = 0.6;
 				const al = 8 / zoom, aw = 4 / zoom;
@@ -860,7 +861,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="graph-overlay" onkeydown={handleKeydown}>
-	<div class="graph-panel" class:mobile={isMobile}>
+	<div class="graph-panel" class:compact={isCompact}>
 		<div class="graph-header">
 			<h3>Graph View</h3>
 			<div class="graph-search">
@@ -989,7 +990,7 @@
 		flex-shrink: 0;
 	}
 
-	.graph-panel.mobile {
+	.graph-panel.compact {
 		width: 100vw;
 		height: 100vh;
 		max-width: none;
@@ -998,19 +999,19 @@
 		border: none;
 	}
 
-	.graph-panel.mobile .graph-header {
+	.graph-panel.compact .graph-header {
 		padding-top: calc(env(safe-area-inset-top, 36px) + 12px);
 	}
 
-	.graph-panel.mobile .graph-header h3 {
+	.graph-panel.compact .graph-header h3 {
 		display: none;
 	}
 
-	.graph-panel.mobile .graph-stats {
+	.graph-panel.compact .graph-stats {
 		display: none;
 	}
 
-	.graph-panel.mobile .graph-search {
+	.graph-panel.compact .graph-search {
 		max-width: none;
 	}
 

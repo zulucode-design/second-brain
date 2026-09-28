@@ -35,10 +35,9 @@ impl From<&str> for RestoreError {
     }
 }
 
-/// Returns the default backup directory (~/.config/helixnotes/backups/)
+/// Returns the default backup directory, `backups/` under the app's config root.
 pub fn default_backup_dir() -> Result<PathBuf, String> {
-    let config_dir = dirs::config_dir().ok_or("Cannot find config directory")?;
-    let dir = config_dir.join("helixnotes").join("backups");
+    let dir = crate::app_dirs::config_root()?.join("backups");
     if !dir.exists() {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     }

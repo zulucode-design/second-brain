@@ -44,8 +44,8 @@ pub fn entry_contents(name: &str, exec: &Path) -> String {
 
 /// Whether what is on disk already points at `exec`.
 ///
-/// The binary moves: an update installs to a new path, an AppImage gets re-downloaded. An
-/// entry naming the old location does not error — it just silently starts nothing — so a
+/// The binary can move when an update replaces the installation. An entry naming the old
+/// location does not error — it just silently starts nothing — so a
 /// stale `Exec` has to be rewritten rather than left alone.
 pub fn is_current(existing: Option<&str>, exec: &Path) -> bool {
     let Some(existing) = existing else {

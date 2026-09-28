@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { installEditorKeyProbe, markStartupReady } from '$lib/perf-probe';
-	import { onMount, onDestroy, tick } from 'svelte';
-	import { listen } from '@tauri-apps/api/event';
+	import { onMount, onDestroy, tick, untrack } from 'svelte';
+	import { listenAppEvent } from '$lib/events';
 	import Sidebar from './Sidebar.svelte';
 	import NoteList from './NoteList.svelte';
 	import Editor from './Editor.svelte';
@@ -36,10 +36,9 @@
 		showInfo,
 		showSettings,
 		sourceMode,
-		mobileView,
+		compactView,
 		appConfig,
 		quickAccessPaths,
-		tags,
 		notes,
 		notebooks,
 		rootNoteCount,
@@ -56,7 +55,7 @@
 		notebookSortMode,
 		notebookOrder,
 		noteOrder,
-		platformIsMobile,
+		compactLayout,
 		unfiledNotes,
 		aiStatus,
 		hotkeyStatus,
@@ -71,10 +70,8 @@
 	import { PARA_CATEGORIES } from '$lib/types';
 
 	const appWindow = getCurrentWindow();
-	const isMac = navigator.platform.startsWith('Mac');
-	const isMobile = $derived($platformIsMobile);
 	import { loadVaultState, saveVaultState, readNote, readExternalNote, readUnfiledNote, deleteNote, createBackup, getPendingOpenFile, addQuickAccess, removeQuickAccess, getQuickAccess, setTheme, notionStatus, notionPublishNow, setTaskDone, setTaskPriority, setTaskDue, findOrphanedAttachments, trashOrphanedAttachments, listUnfiledNotes, getAiStatus, getHotkeyStatus, getRepairStatus, retryRepairs, dismissRestoreNotice, clipWebPage, beginVaultSwitch, endVaultSwitch } from '$lib/api';
-	import { darkThemes, isAndroid } from '$lib/platform';
+	import { isDarkTheme } from '$lib/theme';
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow, closeSecondaryWindowsForVaultSwitch } from '$lib/utils/window';
 	import { normalizeStartupView, resolveStartupTarget } from '$lib/utils/startup-view';
@@ -89,6 +86,11 @@
 	import { repairBanner } from '$lib/utils/repair-banner';
 	import type { VaultState, FileEvent, NotebookEntry, TaskItem, AiStatus, HotkeyStatus, RepairStatus, ParaCategory, NoteContent, BulkMutationTerminal } from '$lib/types';
 	import type { StartupTarget } from '$lib/utils/startup-view';
+	const isCompact = $derived($compactLayout);
+	// Narrowing the window while a note is open keeps that note in view.
+	$effect(() => {
+		if (isCompact && untrack(() => $activeNotePath)) $compactView = 'editor';
+	});
 
 	function findNotebookByPath(list: NotebookEntry[], relPath: string): NotebookEntry | null {
 		for (const nb of list) {
@@ -180,7 +182,7 @@
 	let readOnlyBeforeClose = false;
 	let removeNavigationRequest: (() => void) | null = null;
 
-	// Mobile editor header helpers
+	// Compact editor header helpers
 	let noteRelativePath = $derived($activeNotePath && $appConfig?.active_vault ? $activeNotePath.replace($appConfig.active_vault + '/', '') : '');
 	let isQuickAccess = $derived(noteRelativePath ? $quickAccessPaths.includes(noteRelativePath) : false);
 	let backupInterval: ReturnType<typeof setInterval> | null = null;
@@ -218,7 +220,7 @@
 		const interval = parseFrequencyMs(config.backup_frequency);
 		const last = config.last_backup_time ? new Date(config.last_backup_time).getTime() : 0;
 		if (Date.now() - last >= interval) {
-			const unlisten = await listen('backup-done', (event: any) => {
+			const unlisten = await listenAppEvent('backupDone', (event) => {
 				if (lifetimeGate.isCurrent(lifetime) && event.payload?.success) {
 					const cur = get(appConfig);
 					if (cur) appConfig.set({ ...cur, last_backup_time: new Date().toISOString() });
@@ -421,7 +423,7 @@
 	async function navigateToPathResult(path: string, task?: TaskItem, holding = false): Promise<NoteNavigationResult> {
 		if (!path || $shutdownPending) return 'blocked';
 		if ($activeNotePath === path && !$viewerNote) {
-			if (isMobile) $mobileView = 'editor';
+			if (isCompact) $compactView = 'editor';
 			return 'navigated';
 		}
 
@@ -473,14 +475,13 @@
 	}
 
 	async function handleOpenFile(filePath: string) {
-		// Case-insensitive: a Windows or macOS file association can hand back `NOTE.MD`.
+		// Case-insensitive: a Windows file association can hand back `NOTE.MD`.
 		if (!filePath || !filePath.toLowerCase().endsWith('.md')) return;
 		const config = get(appConfig);
 		const vaultRoot = config?.active_vault;
 		const isExternal = isExternalNotePath(vaultRoot, filePath);
 
 		if (isExternal) {
-			if (isAndroid) return;
 			await afterCurrentNoteSaved('Opening the file', async () => {
 				try {
 					const content = await readExternalNote(filePath);
@@ -568,7 +569,7 @@
 		$viewerNote = null;
 		taskNoteOpened = true;
 		editor?.loadNote(path, content.content, task, holding, content.revision);
-		if (isMobile) $mobileView = 'editor';
+		if (isCompact) $compactView = 'editor';
 	}
 
 	async function selectNoteFromSwitcher(path: string): Promise<boolean> {
@@ -597,7 +598,7 @@
 		} else {
 			noteList?.refresh();
 		}
-		if (isMobile) $mobileView = 'notelist';
+		if (isCompact) $compactView = 'notelist';
 	}
 
 	async function prepareForRestore(): Promise<boolean> {
@@ -619,7 +620,7 @@
 
 	function requestNoteCreation() {
 		if ($shutdownPending || $viewMode === 'quickaccess' || $viewMode === 'trash' || $viewMode === 'unfiled') return;
-		if (!isMobile && $notelistCollapsed) $notelistCollapsed = false;
+		if (!isCompact && $notelistCollapsed) $notelistCollapsed = false;
 		noteCreationTitle = 'Untitled';
 		noteCreationSource = 'list';
 		openNoteCreationDialog();
@@ -648,7 +649,7 @@
 
 	function requestWebClip() {
 		if ($shutdownPending || $viewMode === 'quickaccess' || $viewMode === 'trash' || $viewMode === 'unfiled') return;
-		if (!isMobile && $notelistCollapsed) $notelistCollapsed = false;
+		if (!isCompact && $notelistCollapsed) $notelistCollapsed = false;
 		suggestedWebClipNotebook = suggestedNotebookForCreation(
 			$viewMode,
 			$activeNotebook?.relative_path
@@ -672,7 +673,7 @@
 			if ($shutdownPending || !(await ensureCurrentNoteSaved('Opening the clipped note')) || $shutdownPending) return;
 			if (!commitNote(entry.path, content)) return;
 			webClipOpen = false;
-			if (isMobile) $mobileView = 'editor';
+			if (isCompact) $compactView = 'editor';
 		} catch (error) {
 			webClipError = webClipFailureMessage(error);
 		} finally {
@@ -694,7 +695,7 @@
 			noteCreationOpen = false;
 			await tick();
 			editor?.focusTitle();
-			if (isMobile) $mobileView = 'editor';
+			if (isCompact) $compactView = 'editor';
 		} catch {
 			noteCreationError = 'Could not create the note. Choose a category to retry, or cancel.';
 		} finally {
@@ -785,65 +786,13 @@
 		}
 	}
 
-	// Android back gesture / hardware back button support
-	// We maintain a simple counter of how many views deep we are.
-	// sidebar=0, notelist=1, editor=2. Each forward nav pushes, back pops.
-	let historyDepth = 0;
-	let navFromPopstate = false;
-
-	if (get(platformIsMobile)) {
-		history.replaceState({ mobileView: 'sidebar', depth: 0 }, '');
-
-		$effect(() => {
-			const view = $mobileView;
-			if (navFromPopstate) {
-				navFromPopstate = false;
-				return;
-			}
-			const targetDepth = view === 'sidebar' ? 0 : view === 'notelist' ? 1 : 2;
-			if (targetDepth > historyDepth) {
-				// Forward navigation - push entries for each level skipped
-				for (let d = historyDepth + 1; d <= targetDepth; d++) {
-					const v = d === 1 ? 'notelist' : 'editor';
-					history.pushState({ mobileView: v, depth: d }, '');
-				}
-				historyDepth = targetDepth;
-			} else if (targetDepth < historyDepth) {
-				const steps = historyDepth - targetDepth;
-				historyDepth = targetDepth;
-				navFromPopstate = true; // suppress the popstate that history.go triggers
-				history.go(-steps);
-			}
-		});
-
-		window.addEventListener('popstate', (e) => {
-			if (navFromPopstate) {
-				navFromPopstate = false;
-				return;
-			}
-			// If a modal is open, close it instead of navigating
-			if ($showSettings || $showInfo || $showSearch || $showCommandPalette) {
-				$showSettings = false;
-				$showInfo = false;
-				$showSearch = false;
-				$showCommandPalette = false;
-				// Re-push the current state so the next back still works
-				history.pushState({ mobileView: $mobileView, depth: historyDepth }, '');
-				return;
-			}
-			const state = e.state;
-			const targetDepth = state?.depth ?? 0;
-			historyDepth = targetDepth;
-			navFromPopstate = true;
-			if (targetDepth === 0) $mobileView = 'sidebar';
-			else if (targetDepth === 1) $mobileView = 'notelist';
-			else $mobileView = 'editor';
-		});
+	function compactBack() {
+		if ($compactView === 'editor') $compactView = 'notelist';
+		else if ($compactView === 'notelist') $compactView = 'sidebar';
 	}
 
-	function mobileBack() {
-		if ($mobileView === 'editor') $mobileView = 'notelist';
-		else if ($mobileView === 'notelist') $mobileView = 'sidebar';
+	function toggleSourceMode() {
+		if (!$holdingPreview) $sourceMode = !$sourceMode;
 	}
 
 	async function trashOpenNote(path: string): Promise<boolean> {
@@ -860,7 +809,7 @@
 				$activeNotePath = null;
 			}
 			noteList?.refresh(true).catch((error) => console.error('Failed to refresh notes after trashing:', error));
-			if (isMobile) $mobileView = 'notelist';
+			if (isCompact) $compactView = 'notelist';
 			return true;
 		} catch (error) {
 			console.error('Failed to move open note to Trash:', error);
@@ -922,8 +871,7 @@
 					createAndFocusNote();
 					return;
 				case 'toggle-theme': {
-					const customTheme = $customThemes.find(theme => theme.id === $resolvedTheme);
-					const isDark = darkThemes.includes($resolvedTheme) || (customTheme?.is_dark ?? false);
+					const isDark = isDarkTheme($resolvedTheme, $customThemes);
 					const next = isDark ? 'light' : 'dark';
 					$theme = next;
 					setTheme(next);
@@ -946,8 +894,7 @@
 					editor?.forceSave();
 					return;
 				case 'toggle-source':
-					if ($holdingPreview) return;
-					$sourceMode = !$sourceMode;
+					toggleSourceMode();
 					return;
 				case 'open-new-window':
 					if ($activeNotePath && $activeNote && !$holdingPreview) {
@@ -1039,7 +986,7 @@
 		window.addEventListener(NAVIGATE_NOTE_EVENT, handleNavigationRequest);
 		removeNavigationRequest = () => window.removeEventListener(NAVIGATE_NOTE_EVENT, handleNavigationRequest);
 
-		unlistenSyncDone = await listen<BulkMutationTerminal>('sync-done', async (event) => {
+		unlistenSyncDone = await listenAppEvent('syncDone', async (event) => {
 			if (alive() && event.payload.outcome !== 'failure') await refreshAfterSync();
 		});
 		if (!alive()) { unlistenSyncDone(); unlistenSyncDone = null; return; }
@@ -1083,7 +1030,7 @@
 			repairError = String(error);
 		}
 		if (!alive()) return;
-		const repairUnlisten = await listen<RepairStatus>('repair-status-changed', (event) => {
+		const repairUnlisten = await listenAppEvent('repairStatusChanged', (event) => {
 			if (!alive()) return;
 			repairStatus = event.payload;
 			repairError = '';
@@ -1093,40 +1040,30 @@
 
 		const restoreLastSession = $appConfig?.restore_last_session === true;
 
-		// On mobile, prefetch last-opened note so first tap is instant
-		let prefetchPromise: Promise<any> | null = null;
-		if (isMobile && restoreLastSession && lastNotePath) {
-			prefetchPromise = readNote(lastNotePath).catch(() => null);
-		}
-
 		// The sidebar supplies notebook identities for the saved view. Select that view
 		// before loading notes, so startup reads the chosen list only once.
 		await sidebar?.refresh({ deferTags: true });
 		if (!alive()) return;
 
-		// Full-vault attachment scans cause navigation stalls on mobile storage.
-		// Mobile users can run the same cleanup explicitly from the Info panel.
-		if (!isMobile) {
-			orphanScanTimer = setTimeout(async () => {
-				if (!alive() || get(editorDirty)) return; // skip if user is actively editing
-				try {
-					const orphans = await findOrphanedAttachments();
-					if (!alive()) return;
-					if (orphans.length > 0) {
-						if (get(editorDirty)) return; // re-check after async scan
-						const moved = await trashOrphanedAttachments(orphans.map((o) => o.name));
-						if (moved > 0) {
-							const toast = document.createElement('div');
-							toast.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--bg-secondary);color:var(--text-primary);padding:10px 18px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);border:1px solid var(--border-color);font-size:13px;z-index:10000;opacity:0;transition:opacity .3s;pointer-events:none';
-							toast.textContent = `Moved ${moved} orphaned attachment${moved > 1 ? 's' : ''} to trash`;
-							document.body.appendChild(toast);
-							requestAnimationFrame(() => (toast.style.opacity = '1'));
-							setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 4000);
-						}
+		orphanScanTimer = setTimeout(async () => {
+			if (!alive() || get(editorDirty)) return; // skip if user is actively editing
+			try {
+				const orphans = await findOrphanedAttachments();
+				if (!alive()) return;
+				if (orphans.length > 0) {
+					if (get(editorDirty)) return; // re-check after async scan
+					const moved = await trashOrphanedAttachments(orphans.map((o) => o.name));
+					if (moved > 0) {
+						const toast = document.createElement('div');
+						toast.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--bg-secondary);color:var(--text-primary);padding:10px 18px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);border:1px solid var(--border-color);font-size:13px;z-index:10000;opacity:0;transition:opacity .3s;pointer-events:none';
+						toast.textContent = `Moved ${moved} orphaned attachment${moved > 1 ? 's' : ''} to trash`;
+						document.body.appendChild(toast);
+						requestAnimationFrame(() => (toast.style.opacity = '1'));
+						setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 4000);
 					}
-				} catch (_) {}
-			}, 3000);
-		}
+				}
+			} catch (_) {}
+		}, 3000);
 
 		const startupTarget = resolveStartupTarget({
 			startupView: $appConfig?.startup_view,
@@ -1146,7 +1083,7 @@
 
 		// Reopen the last note only when session restoration is enabled and no interaction
 		// has advanced the startup generation. Commit through the navigation queue.
-		if (restoreLastSession && !isMobile && lastNotePath && startupGate.isCurrent(restoration)) {
+		if (restoreLastSession && lastNotePath && startupGate.isCurrent(restoration)) {
 			const restoreRun = navigationQueue.then(async () => {
 				if (!alive() || !startupGate.isCurrent(restoration) || $activeNotePath || $editorDirty || $shutdownPending) return;
 				try {
@@ -1167,61 +1104,18 @@
 		void sidebar?.refreshTags();
 		void installEditorKeyProbe();
 
-		// On mobile, derive tags from the scanned notes (avoids a separate full-scan Rust call)
-		if (isMobile) {
-			const tagMap = new Map<string, number>();
-			for (const note of $notes) {
-				for (const tag of note.meta.tags) {
-					tagMap.set(tag, (tagMap.get(tag) ?? 0) + 1);
-				}
-			}
-			$tags = Array.from(tagMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-		}
-
-		// On mobile, auto-load the last-opened note so it's ready when the user taps it
-		if (isMobile && prefetchPromise) {
-			prefetchPromise.then((noteContent) => {
-				if (alive() && startupGate.isCurrent(restoration) && noteContent && lastNotePath && !$activeNotePath && !$editorDirty) {
-					$activeNote = noteContent;
-					$activeNotePath = lastNotePath;
-					$editorDirty = false;
-					editor?.loadNote(lastNotePath, noteContent.content, undefined, false, noteContent.revision);
-				}
-			});
-		}
-
-		if (isMobile) {
-			// Mobile: debounce file-changed heavily and skip when actively editing
-			// (our own saves trigger the watcher, causing expensive refreshes on FUSE)
-			const debouncedRefresh = debounce(async () => {
-				if (get(editorDirty)) return; // user is still typing, skip
-				await Promise.all([sidebar?.refresh(), noteList?.refresh(true)]);
-				// Re-derive tags from refreshed notes
-				const tagMap = new Map<string, number>();
-				for (const note of get(notes)) {
-					for (const tag of note.meta.tags) {
-						tagMap.set(tag, (tagMap.get(tag) ?? 0) + 1);
-					}
-				}
-				tags.set(Array.from(tagMap.entries()).sort((a, b) => a[0].localeCompare(b[0])));
-		}, 10000);
-			unlistenFileChange = await listen<FileEvent>('file-changed', () => {
-				if (alive()) debouncedRefresh();
-			});
-		} else {
-			const debouncedDesktopRefresh = debounce(async () => {
-				await Promise.all([sidebar?.refresh(), noteList?.refresh(true)]);
-			}, 300);
-			unlistenFileChange = await listen<FileEvent>('file-changed', () => {
-				if (alive()) debouncedDesktopRefresh();
-			});
-		}
+		const debouncedVaultRefresh = debounce(async () => {
+			await Promise.all([sidebar?.refresh(), noteList?.refresh(true)]);
+		}, 300);
+		unlistenFileChange = await listenAppEvent('fileChanged', () => {
+			if (alive()) debouncedVaultRefresh();
+		});
 		if (!alive()) { unlistenFileChange?.(); return; }
 
 
 		// The backend polls for reachability and announces changes, so AI features come
 		// back on their own when the other machine wakes, with no restart.
-		unlistenAiStatus = await listen<AiStatus>('ai-status-changed', (event) => {
+		unlistenAiStatus = await listenAppEvent('aiStatusChanged', (event) => {
 			if (alive()) $aiStatus = event.payload;
 		});
 		if (!alive()) { unlistenAiStatus(); unlistenAiStatus = null; return; }
@@ -1235,7 +1129,7 @@
 
 		// Registration happens once at startup and can take a moment (the very first launch
 		// may prompt), so the panel needs to hear about it rather than poll for it.
-		unlistenHotkeyStatus = await listen<HotkeyStatus>('hotkey-status-changed', (event) => {
+		unlistenHotkeyStatus = await listenAppEvent('hotkeyStatusChanged', (event) => {
 			if (alive()) $hotkeyStatus = event.payload;
 		});
 		if (!alive()) { unlistenHotkeyStatus(); unlistenHotkeyStatus = null; return; }
@@ -1247,7 +1141,7 @@
 			console.error('Failed to read hotkey status:', e);
 		}
 
-		unlistenOpenFile = await listen<string>('open-file', async (event) => {
+		unlistenOpenFile = await listenAppEvent('openFile', async (event) => {
 			if (alive()) await handleOpenFile(event.payload);
 		});
 		if (!alive()) { unlistenOpenFile(); unlistenOpenFile = null; return; }
@@ -1297,7 +1191,7 @@
 	});
 </script>
 
-<svelte:window onkeydown={handleKeydown} onmousedown={isMobile ? undefined : handleMouseDown} />
+<svelte:window onkeydown={handleKeydown} onmousedown={isCompact ? undefined : handleMouseDown} />
 
 {#if $shutdownPending}
 	<div class="shutdown-lock" aria-label="Saving before close" aria-busy="true"></div>
@@ -1389,19 +1283,27 @@
 	</div>
 {/if}
 
-{#if isMobile}
-	<!-- ═══ MOBILE LAYOUT ═══ -->
-	<div class="mobile-shell">
-		<!-- Mobile Header -->
-		<div class="mobile-header">
-			{#if $mobileView !== 'sidebar'}
-				<button class="mobile-header-btn" onclick={mobileBack} aria-label="Go back">
+<!-- Rendered by whichever layout is active. -->
+{#snippet sidebarView()}
+	<Sidebar bind:this={sidebar} onViewChanged={handleViewChanged} onRelocateActiveDocument={relocateActiveDocument} />
+{/snippet}
+{#snippet noteListView()}
+	<NoteList bind:this={noteList} onOpenNote={navigateToPath} onBeforeNoteSwitch={() => ensureCurrentNoteSaved('Navigation')} onBeforeNoteDuplicate={() => ensureCurrentNoteSaved('Duplicating the note')} onBeforeOpenWindow={() => ensureCurrentNoteSaved('Opening a secondary window')} onRelocateActiveDocument={relocateActiveDocument} onUpdateActiveMetadata={updateActiveMetadata} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); }} onRequestCreateNote={requestNoteCreation} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
+{/snippet}
+
+<!-- One shell for both layouts, so Editor stays mounted when the window crosses the compact
+     breakpoint: remounting it would drop unsaved edits and reload stale content. -->
+<div class={isCompact ? 'compact-shell' : 'app-shell'}>
+	{#if isCompact}
+		<div class="compact-header">
+			{#if $compactView !== 'sidebar'}
+				<button class="compact-header-btn" onclick={compactBack} aria-label="Go back">
 					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<path d="M15 18l-6-6 6-6"/>
 					</svg>
 				</button>
 			{:else}
-				<div class="mobile-header-brand">
+				<div class="compact-header-brand">
 					<svg width="22" height="22" viewBox="0 0 48 48" fill="none">
 						<rect width="48" height="48" rx="12" fill="var(--accent)" />
 						<circle cx="16" cy="16" r="3.5" fill="white" opacity="0.9" />
@@ -1411,18 +1313,18 @@
 					</svg>
 				</div>
 			{/if}
-			{#if $mobileView !== 'editor'}
-				<span class="mobile-header-title">
-					{#if $mobileView === 'sidebar'}
+			{#if $compactView !== 'editor'}
+				<span class="compact-header-title">
+					{#if $compactView === 'sidebar'}
 						Second Brain
 					{:else}
 						{#if $viewMode === 'notebook'}{$activeNotebook?.name ?? 'Notebook'}{:else if $viewMode === 'tag'}#{$activeTag}{:else if $viewMode === 'quickaccess'}Quick Access{:else if $viewMode === 'tasks'}Tasks{:else if $viewMode === 'unfiled'}Unfiled{:else if $viewMode === 'trash'}Trash{:else}All Notes{/if}
 					{/if}
 				</span>
 			{/if}
-			<div class="mobile-header-actions">
-				{#if $mobileView === 'editor' && !$holdingPreview}
-					<button class="mobile-header-btn" class:active={$readOnly} onclick={() => { if (!$shutdownPending) $readOnly = !$readOnly; }} disabled={$shutdownPending} title={$readOnly ? 'Edit' : 'View'}>
+			<div class="compact-header-actions">
+				{#if $compactView === 'editor' && !$holdingPreview && !$viewerNote}
+					<button class="compact-header-btn" class:active={$readOnly} onclick={() => { if (!$shutdownPending) $readOnly = !$readOnly; }} disabled={$shutdownPending} title={$readOnly ? 'Edit' : 'View'}>
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							{#if $readOnly}
 								<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
@@ -1433,17 +1335,17 @@
 							{/if}
 						</svg>
 					</button>
-					<button class="mobile-header-btn" onclick={() => editor?.openNoteSearch()} title="Find in note">
+					<button class="compact-header-btn" onclick={() => editor?.openNoteSearch()} title="Find in note">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
 						</svg>
 					</button>
-					<button class="mobile-header-btn" class:active={$activeNote?.meta.pinned} onclick={() => editor?.togglePinned()} disabled={$shutdownPending} title="Pin">
+					<button class="compact-header-btn" class:active={$activeNote?.meta.pinned} onclick={() => editor?.togglePinned()} disabled={$shutdownPending} title="Pin">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M12 17v5"/><path d="M9 2h6l-1 7h4l-2 4H8l-2-4h4L9 2z"/>
 						</svg>
 					</button>
-					<button class="mobile-header-btn" class:active={isQuickAccess} onclick={async () => {
+					<button class="compact-header-btn" class:active={isQuickAccess} onclick={async () => {
 						if (!noteRelativePath) return;
 						try {
 							if (isQuickAccess) { await removeQuickAccess(noteRelativePath); } else { await addQuickAccess(noteRelativePath); }
@@ -1454,18 +1356,18 @@
 							<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
 						</svg>
 					</button>
-					<button class="mobile-header-btn" onclick={() => editor?.toggleOutlinePanel()} title="Outline">
+					<button class="compact-header-btn" onclick={() => editor?.toggleOutlinePanel()} title="Outline">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><circle cx="4" cy="12" r="1" fill="currentColor"/><circle cx="4" cy="18" r="1" fill="currentColor"/>
 						</svg>
 					</button>
-					<button class="mobile-header-btn" onclick={() => editor?.toggleHistoryPanel()} title="History">
+					<button class="compact-header-btn" onclick={() => editor?.toggleHistoryPanel()} title="History">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
 						</svg>
 					</button>
 					{#if $appConfig?.enable_wiki_links}
-					<button class="mobile-header-btn" onclick={() => editor?.toggleGraphView()} title="Graph View">
+					<button class="compact-header-btn" onclick={() => editor?.toggleGraphView()} title="Graph View">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/>
 							<line x1="8.5" y1="7.5" x2="15.5" y2="16.5"/><line x1="15.5" y1="7.5" x2="8.5" y2="16.5"/>
@@ -1473,38 +1375,38 @@
 					</button>
 					{/if}
 					{#if $appConfig?.ai_provider}
-					<button class="mobile-header-btn" onclick={() => editor?.triggerAiMenu()} title="AI Actions">
+					<button class="compact-header-btn" onclick={() => editor?.triggerAiMenu()} title="AI Actions">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M12 8V4l-2-2"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M9 13v2"/><path d="M15 13v2"/>
 						</svg>
 					</button>
 					{/if}
-					<button class="mobile-header-btn" class:active={$sourceMode} onclick={() => ($sourceMode = !$sourceMode)} title={$sourceMode ? 'Rich Editor' : 'Source Mode'}>
+					<button class="compact-header-btn" class:active={$sourceMode} onclick={toggleSourceMode} title={$sourceMode ? 'Rich Editor' : 'Source Mode'}>
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
 						</svg>
 					</button>
 					{:else}
-						<button class="mobile-header-btn" onclick={requestWebClip} title="Clip web page">
+						<button class="compact-header-btn" onclick={requestWebClip} title="Clip web page">
 							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 								<path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
 								<path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
 							</svg>
 						</button>
-						<button class="mobile-header-btn" onclick={() => ($showSearch = true)} title="Search">
+						<button class="compact-header-btn" onclick={() => ($showSearch = true)} title="Search">
 							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 								<circle cx="11" cy="11" r="8" />
 							<line x1="21" y1="21" x2="16.65" y2="16.65" />
 						</svg>
 					</button>
-					<button class="mobile-header-btn" onclick={() => ($showInfo = true)} title="Info">
+					<button class="compact-header-btn" onclick={() => ($showInfo = true)} title="Info">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<circle cx="12" cy="12" r="10" />
 							<line x1="12" y1="16" x2="12" y2="12" />
 							<line x1="12" y1="8" x2="12.01" y2="8" />
 						</svg>
 					</button>
-					<button class="mobile-header-btn" onclick={() => ($showSettings = true)} title="Settings">
+					<button class="compact-header-btn" onclick={() => ($showSettings = true)} title="Settings">
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<circle cx="12" cy="12" r="3" />
 							<path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
@@ -1513,109 +1415,94 @@
 				{/if}
 			</div>
 		</div>
-
-		<!-- Mobile Content -->
-		<div class="mobile-content">
-			<div class="mobile-panel" class:active={$mobileView === 'sidebar'}>
-				<Sidebar bind:this={sidebar} onViewChanged={handleViewChanged} onRelocateActiveDocument={relocateActiveDocument} />
-			</div>
-			<div class="mobile-panel" class:active={$mobileView === 'notelist'}>
-				<NoteList bind:this={noteList} onOpenNote={navigateToPath} onBeforeNoteSwitch={() => ensureCurrentNoteSaved('Navigation')} onBeforeNoteDuplicate={() => ensureCurrentNoteSaved('Duplicating the note')} onBeforeOpenWindow={() => ensureCurrentNoteSaved('Opening a secondary window')} onRelocateActiveDocument={relocateActiveDocument} onUpdateActiveMetadata={updateActiveMetadata} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); }} onRequestCreateNote={requestNoteCreation} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
-			</div>
-			<div class="mobile-panel" class:active={$mobileView === 'editor'}>
-				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} onNavigateNote={navigateToPath} onNavigateWikiNote={navigateToPathResult} onNavigateHistory={navigateHistory} onRelocateActiveDocument={relocateActiveDocument} />
+	{:else if $focusMode}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="focus-topbar" onmousedown={(e) => { if (!(e.target as HTMLElement).closest('button')) appWindow.startDragging(); }}>
+			<span class="focus-title">{$activeNote?.meta.title || 'Untitled'}</span>
+			<div class="focus-controls">
+				<button class="focus-btn focus-active" onclick={() => ($focusMode = false)} title="Exit focus mode (Escape)">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/>
+					</svg>
+				</button>
+				{#if !$holdingPreview && !$viewerNote}<button class="focus-btn" class:focus-active={$readOnly} onclick={() => ($readOnly = !$readOnly)} title={$readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}>
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						{#if $readOnly}
+							<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+							<circle cx="12" cy="12" r="3" />
+						{:else}
+							<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94" />
+							<path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19" />
+							<line x1="1" y1="1" x2="23" y2="23" />
+						{/if}
+					</svg>
+				</button>{/if}
+									<button class="focus-btn" onmousedown={(e) => e.stopPropagation()} onclick={() => appWindow.minimize()} title="Minimize">
+					<svg width="10" height="10" viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+				</button>
+				<button class="focus-btn" onmousedown={(e) => e.stopPropagation()} onclick={() => appWindow.toggleMaximize()} title="Maximize">
+					<svg width="10" height="10" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+				</button>
+				<button class="focus-btn focus-close" onmousedown={(e) => e.stopPropagation()} onclick={() => appWindow.close()} title="Close">
+					<svg width="10" height="10" viewBox="0 0 10 10"><line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+				</button>
 			</div>
 		</div>
-
-	</div>
-{:else}
-	<!-- ═══ DESKTOP LAYOUT ═══ -->
-	<div class="app-shell">
-		{#if $focusMode}
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
-			<div class="focus-topbar" class:macos={isMac} onmousedown={(e) => { if (!(e.target as HTMLElement).closest('button')) appWindow.startDragging(); }}>
-				<span class="focus-title">{$activeNote?.meta.title || 'Untitled'}</span>
-				<div class="focus-controls">
-					<button class="focus-btn focus-active" onclick={() => ($focusMode = false)} title="Exit focus mode (Escape)">
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<path d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3"/>
-						</svg>
-					</button>
-					{#if !$holdingPreview}<button class="focus-btn" class:focus-active={$readOnly} onclick={() => ($readOnly = !$readOnly)} title={$readOnly ? 'Switch to Edit Mode' : 'Switch to View Mode'}>
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							{#if $readOnly}
-								<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-								<circle cx="12" cy="12" r="3" />
-							{:else}
-								<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94" />
-								<path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19" />
-								<line x1="1" y1="1" x2="23" y2="23" />
-							{/if}
-						</svg>
-					</button>{/if}
-					{#if !isMac}
-					<button class="focus-btn" onmousedown={(e) => e.stopPropagation()} onclick={() => appWindow.minimize()} title="Minimize">
-						<svg width="10" height="10" viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-					</button>
-					<button class="focus-btn" onmousedown={(e) => e.stopPropagation()} onclick={() => appWindow.toggleMaximize()} title="Maximize">
-						<svg width="10" height="10" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
-					</button>
-					<button class="focus-btn focus-close" onmousedown={(e) => e.stopPropagation()} onclick={() => appWindow.close()} title="Close">
-						<svg width="10" height="10" viewBox="0 0 10 10"><line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-					</button>
-					{/if}
-				</div>
+	{:else}
+		<TitleBar onNewNote={createAndFocusNote} onClipWeb={requestWebClip} onSelectNote={selectNoteFromSwitcher} onOpenWindow={openNoteInSecondaryWindow} onRequestVaultSwitch={requestVaultSwitch} />
+	{/if}
+	<div class={isCompact ? 'compact-content' : 'app-layout'}>
+		{#if isCompact}
+			<div class="compact-panel" class:active={$compactView === 'sidebar'}>
+				{@render sidebarView()}
 			</div>
-		{:else}
-			<TitleBar onNewNote={createAndFocusNote} onClipWeb={requestWebClip} onSelectNote={selectNoteFromSwitcher} onOpenWindow={openNoteInSecondaryWindow} onRequestVaultSwitch={requestVaultSwitch} />
-		{/if}
-		<div class="app-layout">
-			{#if !$focusMode}
-				<div class="sidebar-panel" style="width: {$sidebarCollapsed ? 44 : $sidebarWidth}px">
-					<Sidebar bind:this={sidebar} onViewChanged={handleViewChanged} onRelocateActiveDocument={relocateActiveDocument} />
-				</div>
+			<div class="compact-panel" class:active={$compactView === 'notelist'}>
+				{@render noteListView()}
+			</div>
+		{:else if !$focusMode}
+			<div class="sidebar-panel" style="width: {$sidebarCollapsed ? 44 : $sidebarWidth}px">
+				{@render sidebarView()}
+			</div>
 
-				{#if !$sidebarCollapsed}
-					<ResizeHandle onResize={handleSidebarResize} />
-				{/if}
-
-				{#if !$notelistCollapsed}
-					<div class="notelist-panel" style="width: {$notelistWidth}px">
-						<NoteList bind:this={noteList} onOpenNote={navigateToPath} onBeforeNoteSwitch={() => ensureCurrentNoteSaved('Navigation')} onBeforeNoteDuplicate={() => ensureCurrentNoteSaved('Duplicating the note')} onBeforeOpenWindow={() => ensureCurrentNoteSaved('Opening a secondary window')} onRelocateActiveDocument={relocateActiveDocument} onUpdateActiveMetadata={updateActiveMetadata} onNoteMoved={() => sidebar?.refresh()} onNoteCreated={() => { editor?.focusTitle(); }} onRequestCreateNote={requestNoteCreation} onToggleTask={toggleTask} onSetTaskPriority={changeTaskPriority} onSetTaskDue={changeTaskDue} />
-					</div>
-
-					<ResizeHandle onResize={handleNotelistResize} />
-				{:else}
-					<div class="notelist-restore-panel">
-						<button class="notelist-restore-btn" onclick={revealNoteList} title={`Show notes list (${isMac ? '⌘' : 'Ctrl'}+Shift+\\)`} aria-label="Show notes list">
-							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-								<line x1="8" y1="6" x2="20" y2="6" />
-								<line x1="8" y1="12" x2="20" y2="12" />
-								<line x1="8" y1="18" x2="20" y2="18" />
-								<polyline points="5 8 3 12 5 16" />
-							</svg>
-						</button>
-					</div>
-				{/if}
+			{#if !$sidebarCollapsed}
+				<ResizeHandle onResize={handleSidebarResize} />
 			{/if}
 
-			<div class="editor-panel">
-				<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} onNavigateNote={navigateToPath} onNavigateWikiNote={navigateToPathResult} onNavigateHistory={navigateHistory} onRelocateActiveDocument={relocateActiveDocument} />
-				{#if $viewMode === 'tasks' && !taskNoteOpened}
-					<div class="tasks-editor-placeholder">
-						<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-							<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+			{#if !$notelistCollapsed}
+				<div class="notelist-panel" style="width: {$notelistWidth}px">
+					{@render noteListView()}
+				</div>
+
+				<ResizeHandle onResize={handleNotelistResize} />
+			{:else}
+				<div class="notelist-restore-panel">
+					<button class="notelist-restore-btn" onclick={revealNoteList} title={`Show notes list (Ctrl+Shift+\\)`} aria-label="Show notes list">
+						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<line x1="8" y1="6" x2="20" y2="6" />
+							<line x1="8" y1="12" x2="20" y2="12" />
+							<line x1="8" y1="18" x2="20" y2="18" />
+							<polyline points="5 8 3 12 5 16" />
 						</svg>
-						<p>Select a task to open its note</p>
-					</div>
-				{/if}
-			</div>
+					</button>
+				</div>
+			{/if}
+		{/if}
+		<div class={isCompact ? 'compact-panel' : 'editor-panel'} class:active={isCompact && $compactView === 'editor'}>
+			<Editor bind:this={editor} onMoveToTrash={trashOpenNote} onRequestCreateLinkedNote={requestLinkedNoteCreation} onNavigateNote={navigateToPath} onNavigateWikiNote={navigateToPathResult} onNavigateHistory={navigateHistory} onRelocateActiveDocument={relocateActiveDocument} />
+			{#if !isCompact && $viewMode === 'tasks' && !taskNoteOpened}
+				<div class="tasks-editor-placeholder">
+					<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+					</svg>
+					<p>Select a task to open its note</p>
+				</div>
+			{/if}
 		</div>
 	</div>
-{/if}
+</div>
 
 <SearchPanel onOpenResult={navigateToPath} />
-<CommandPalette onNavigate={handleViewChanged} />
+<CommandPalette onNavigate={handleViewChanged} onToggleSource={toggleSourceMode} />
 <SettingsPanel onRequestVaultSwitch={requestVaultSwitch} onBeforeRestore={prepareForRestore} onAfterRestore={refreshAfterRestore} />
 <InfoPanel />
 
@@ -1928,12 +1815,9 @@
 		color: white;
 	}
 
-	.focus-topbar.macos {
-		padding-left: 78px;
-	}
 
-	/* ═══ MOBILE STYLES ═══ */
-	.mobile-shell {
+	/* ═══ COMPACT LAYOUT STYLES ═══ */
+	.compact-shell {
 		display: flex;
 		flex-direction: column;
 		height: 100dvh;
@@ -1947,7 +1831,7 @@
 		background: var(--bg-primary);
 	}
 
-	.mobile-header {
+	.compact-header {
 		display: flex;
 		align-items: center;
 		height: 52px;
@@ -1958,13 +1842,13 @@
 		gap: 4px;
 	}
 
-	.mobile-header-brand {
+	.compact-header-brand {
 		display: flex;
 		align-items: center;
 		padding: 0 8px;
 	}
 
-	.mobile-header-title {
+	.compact-header-title {
 		flex: 1;
 		font-size: 17px;
 		font-weight: 600;
@@ -1975,14 +1859,14 @@
 		padding: 0 4px;
 	}
 
-	.mobile-header-actions {
+	.compact-header-actions {
 		display: flex;
 		align-items: center;
 		gap: 2px;
 		margin-left: auto;
 	}
 
-	.mobile-header-btn {
+	.compact-header-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -1995,26 +1879,26 @@
 		cursor: pointer;
 	}
 
-	.mobile-header-btn svg {
+	.compact-header-btn svg {
 		width: 16px;
 		height: 16px;
 	}
 
-	.mobile-header-btn:active {
+	.compact-header-btn:active {
 		background: var(--bg-hover);
 	}
 
-	.mobile-header-btn.active {
+	.compact-header-btn.active {
 		color: var(--accent);
 	}
 
-	.mobile-content {
+	.compact-content {
 		flex: 1;
 		overflow: hidden;
 		position: relative;
 	}
 
-	.mobile-panel {
+	.compact-panel {
 		position: absolute;
 		inset: 0;
 		overflow: hidden;
@@ -2024,7 +1908,7 @@
 		flex-direction: column;
 	}
 
-	.mobile-panel.active {
+	.compact-panel.active {
 		visibility: visible;
 		pointer-events: auto;
 	}

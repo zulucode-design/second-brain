@@ -18,6 +18,7 @@ pub enum AiApiProtocol {
 pub enum AiSettingsError {
     MissingApiKey,
     MissingBaseUrl,
+    UnsupportedProvider,
 }
 
 impl fmt::Display for AiSettingsError {
@@ -28,6 +29,9 @@ impl fmt::Display for AiSettingsError {
             Self::MissingBaseUrl => {
                 formatter.write_str("No base URL configured for the OpenAI Compatible provider.")
             }
+            Self::UnsupportedProvider => formatter.write_str(
+                "Stored AI provider is not supported in this build. Choose a provider in Settings > AI.",
+            ),
         }
     }
 }
@@ -180,20 +184,12 @@ impl<'a> ConfiguredAiProvider<'a> {
     }
 
     pub fn request_settings(&self) -> Result<AiRequestSettings, AiSettingsError> {
-        let api_key = self
-            .api_key()
-            .map(str::trim)
-            .filter(|key| !key.is_empty())
-            .map(str::to_string);
-        if self.requires_api_key() && api_key.is_none() {
-            return Err(AiSettingsError::MissingApiKey);
-        }
-
         let (protocol, endpoint) = match &self.provider {
-            AiProvider::Anthropic | AiProvider::Unknown(_) => (
+            AiProvider::Anthropic => (
                 AiApiProtocol::AnthropicMessages,
                 ANTHROPIC_API_URL.to_string(),
             ),
+            AiProvider::Unknown(_) => return Err(AiSettingsError::UnsupportedProvider),
             AiProvider::OpenAi => (
                 AiApiProtocol::OpenAiChatCompletions,
                 OPENAI_API_URL.to_string(),
@@ -215,6 +211,15 @@ impl<'a> ConfiguredAiProvider<'a> {
                 ),
             ),
         };
+
+        let api_key = self
+            .api_key()
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .map(str::to_string);
+        if self.requires_api_key() && api_key.is_none() {
+            return Err(AiSettingsError::MissingApiKey);
+        }
 
         Ok(AiRequestSettings {
             protocol,
@@ -251,7 +256,7 @@ impl<'a> ConfiguredAiProvider<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AiApiProtocol, ConfiguredAiProvider, ProbeProtocol};
+    use super::{AiApiProtocol, AiSettingsError, ConfiguredAiProvider, ProbeProtocol};
     use crate::types::{AiProvider, AppConfig};
 
     #[test]
@@ -320,5 +325,17 @@ mod tests {
         assert!(ConfiguredAiProvider::from_config(&anthropic_without_key)
             .request_settings()
             .is_err());
+
+        let unknown_with_anthropic_key = AppConfig {
+            ai_provider: Some(AiProvider::Unknown("future_local".to_string())),
+            ai_api_key: Some("existing-secret".to_string()),
+            ..AppConfig::default()
+        };
+        assert_eq!(
+            ConfiguredAiProvider::from_config(&unknown_with_anthropic_key)
+                .request_settings()
+                .err(),
+            Some(AiSettingsError::UnsupportedProvider)
+        );
     }
 }

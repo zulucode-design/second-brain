@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Issue #89 — review fixes and manual verification</title>
+  <style>
+    body { max-width: 60rem; margin: 2rem auto; padding: 0 1.25rem; font: 16px/1.6 Inter, ui-sans-serif, system-ui, sans-serif; color: #20241f; background: #fffdf8; }
+    h1, h2 { line-height: 1.25; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    th, td { border: 1px solid #d7d1c5; padding: 0.5rem 0.65rem; text-align: left; vertical-align: top; }
+    th { background: #f7f4ec; }
+    .pass { color: #276c43; font-weight: 600; }
+    .open { color: #a34b16; font-weight: 600; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #171a17; color: #e6e8e3; }
+      th { background: #232723; }
+      th, td { border-color: #3a4039; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Issue #89 — review fixes and manual verification</h1>
+  <p>2026-09-28. The final Spec and Standards review of PR #162 at <code>6d4e99c</code> found gaps that
+  tests did not catch. This report records what changed and what was checked in the real app.</p>
+
+  <h2>Findings fixed</h2>
+  <table>
+    <tr><th>Finding</th><th>Fix</th></tr>
+    <tr><td>Config, backups, and machine-local state still lived in the <code>helixnotes</code>
+      directories that upstream HelixNotes also uses. Single-vault migration then rewrote that
+      shared <code>config.json</code> (ADR-0011).</td>
+      <td><code>app_dirs.rs</code> keeps them under <code>io.github.zulucodedesign.SecondBrain</code>.
+      A one-time move runs only when a Second Brain identifier directory already exists, so a
+      HelixNotes-only machine is never touched. A marker stops it from repeating. A failed move
+      blocks settings saves and retries next launch.</td></tr>
+    <tr><td>Compact layout followed window width, but each layout mounted its own <code>Editor</code>.
+      Crossing the breakpoint destroyed the editor with an unsaved edit pending and reloaded
+      stale content.</td>
+      <td>Both layouts share one shell, so <code>Editor</code> stays mounted. The live TipTap view
+      moves to the layout's new element. Entering compact layout with a note open shows the
+      editor. The breakpoint is 768 px, matching <code>app.css</code>.</td></tr>
+    <tr><td>G4: configuration inside another sync product's folder was only warned about.</td>
+      <td><code>vault/sync_product.rs</code> refuses vaults inside OneDrive roots (Windows
+      environment), Dropbox roots, and Nextcloud/ownCloud roots. The picker keeps its
+      confirmation for products detection cannot see.</td></tr>
+    <tr><td>Tags depended on window width in compact layout.</td>
+      <td>Tags always come from the backend, as in the full layout.</td></tr>
+    <tr><td>Theme id list and apply/dark logic were copied in four components.</td>
+      <td>Moved once into <code>theme.ts</code> (<code>applyTheme</code>,
+      <code>isDarkTheme</code>).</td></tr>
+    <tr><td>ADR-0001 still described <code>.deb</code>/AppImage entries and the
+      <code>helixnotes</code> directory; leftover AppImage branch and "mobile" names.</td>
+      <td>ADR-0001 amended; <code>open_linux</code> AppImage branch removed; comments renamed;
+      <strong>Compact layout</strong> added to <code>CONTEXT.md</code>.</td></tr>
+    <tr><td>Picker offered "Back to current vault" after that vault failed to open.</td>
+      <td>Hidden after a failed startup open; "Select previous folder" remains.</td></tr>
+  </table>
+
+  <h2>Manual verification (Fedora, release build, isolated XDG directories)</h2>
+  <p>Driven with <code>tauri-driver</code> against <code>src-tauri/target/release/second-brain</code>,
+  with <code>XDG_CONFIG_HOME</code> and <code>XDG_DATA_HOME</code> under <code>/tmp/sb89</code>, so
+  no real configuration was read or changed.</p>
+  <table>
+    <tr><th>Scenario</th><th>Result</th></tr>
+    <tr><td>Earlier Second Brain state: identifier directory exists, config and machine state in
+      <code>helixnotes</code>, two vaults listed.</td>
+      <td class="pass">Pass. Config and <code>vaults/&lt;id&gt;</code> moved; the
+      <code>helixnotes</code> config is gone from the old place; one vault kept; the other vault's
+      folder untouched.</td></tr>
+    <tr><td>Type into a note, narrow to 600 px within the 500 ms save delay; type again, widen to
+      1200 px.</td>
+      <td class="pass">Pass. Same ProseMirror node throughout; editor visible in compact layout;
+      both edits on disk; no error toast.</td></tr>
+    <tr><td>HelixNotes-only machine: only <code>helixnotes/config.json</code> present.</td>
+      <td class="pass">Pass. Vault picker shown; HelixNotes <code>config.json</code> byte-identical
+      (sha256 <code>d40fb123…</code>).</td></tr>
+    <tr><td>Configured vault inside a folder containing a Dropbox <code>.dropbox</code> file.</td>
+      <td class="pass">Pass. Open refused with "This folder is managed by Dropbox…"; nothing written
+      into the vault; no offer to return to it.</td></tr>
+    <tr><td>Move fails partway: legacy data directory made read-only, then
+      <code>open_vault</code> invoked from the page.</td>
+      <td class="pass">Pass. Startup shows "…could not be moved… Permission denied"; opening a
+      vault is refused with "still being moved"; no new vault state written; legacy data
+      intact.</td></tr>
+    <tr><td>Windows: <code>%APPDATA%</code>/<code>%LOCALAPPDATA%</code> move and OneDrive detection
+      on an installed package.</td>
+      <td class="open">Not run live. Covered by the Rust unit tests that CI's
+      <code>windows-rust</code> job runs; exercised by the next alpha harness run.</td></tr>
+  </table>
+
+  <h2>Upgrade notes</h2>
+  <ul>
+    <li>If the move cannot finish (for example, a sidecar left running by the previous build
+      holds a file open on Windows), settings saves and opening a vault stay blocked, and the
+      error is shown and logged. The move resumes on the next launch once the file is free.</li>
+    <li>A vault already configured inside a OneDrive folder, including a Documents folder that
+      Windows redirects into OneDrive, is refused on the first launch after upgrading. The picker
+      names the product and asks for a local folder; ADR-0012 makes such vaults unsupported.</li>
+  </ul>
+  <p>The first launch of a build with this change moves an existing install's settings. Until then
+  the alpha harness's template config path (now under the identifier) does not exist; launch
+  the new package once before a harness run.</p>
+</body>
+</html>

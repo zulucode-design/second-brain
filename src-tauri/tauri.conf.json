@@ -16,7 +16,7 @@
         "label": "main",
         "width": 1200,
         "height": 800,
-        "minWidth": 800,
+        "minWidth": 480,
         "minHeight": 500,
         "resizable": true,
         "fullscreen": false,
@@ -37,35 +37,21 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["rpm", "nsis"],
     "createUpdaterArtifacts": false,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
-      "icons/icon.icns",
       "icons/icon.ico"
     ],
     "linux": {
-      "deb": {
-        "depends": [],
-        "desktopTemplate": "linux/generated.desktop.hbs",
-        "files": {
-          "/usr/share/applications/io.github.zulucodedesign.SecondBrain.desktop": "linux/io.github.zulucodedesign.SecondBrain.desktop"
-        }
-      },
-      "appimage": {
-        "bundleMediaFramework": false
-      },
       "rpm": {
         "desktopTemplate": "linux/generated.desktop.hbs",
         "files": {
           "/usr/share/applications/io.github.zulucodedesign.SecondBrain.desktop": "linux/io.github.zulucodedesign.SecondBrain.desktop"
         }
       }
-    },
-    "macOS": {
-      "entitlements": "entitlements.plist"
     }
   }
 }

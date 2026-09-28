@@ -90,8 +90,6 @@ pub struct RelocationOutcome {
 pub struct VaultConfig {
     pub path: String,
     pub name: String,
-    #[serde(default)]
-    pub bookmark_id: Option<String>,
     /// Stable identity copied from `.helixnotes/vault_id` for machine-local lookups that
     /// must still work before or after the vault folder moves.
     #[serde(default)]
@@ -198,10 +196,12 @@ impl<'de> Deserialize<'de> for AiProvider {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
-    pub vaults: Vec<VaultConfig>,
-    pub active_vault: Option<String>,
     #[serde(default)]
-    pub active_bookmark_id: Option<String>,
+    pub vault: Option<VaultConfig>,
+    /// Read only during migration from development builds with a recent-vault list.
+    #[serde(default, rename = "vaults", skip_serializing)]
+    pub legacy_vaults: Vec<VaultConfig>,
+    pub active_vault: Option<String>,
     pub theme: String,
     /// Themes used when `theme` is "system": the frontend picks one by the OS color scheme.
     /// Default to the plain "light"/"dark" schemes so existing configs keep their behavior.
@@ -295,6 +295,11 @@ pub struct AppConfig {
     /// destroy the only copy. Every settings save is refused while this is set.
     #[serde(skip)]
     pub config_save_blocked: bool,
+    /// Runtime-only: state from an earlier build is still partly in the `helixnotes`
+    /// directories. Opening a vault would write fresh machine state beside it, so it is refused
+    /// until a later launch finishes the move.
+    #[serde(skip)]
+    pub legacy_move_incomplete: bool,
     #[serde(default = "default_ai_model")]
     pub ai_model: String,
     #[serde(default)]
@@ -364,9 +369,9 @@ fn default_system_dark_theme() -> String {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            vaults: Vec::new(),
+            vault: None,
+            legacy_vaults: Vec::new(),
             active_vault: None,
-            active_bookmark_id: None,
             theme: "system".to_string(),
             system_light_theme: default_system_light_theme(),
             system_dark_theme: default_system_dark_theme(),
@@ -410,6 +415,7 @@ impl Default for AppConfig {
             secret_store_error: None,
             config_error: None,
             config_save_blocked: false,
+            legacy_move_incomplete: false,
             ai_model: "claude-sonnet-4-6".to_string(),
             ai_writing_style: None,
             default_view_mode: false,
@@ -445,6 +451,8 @@ pub struct VaultState {
     #[serde(default)]
     pub sort_mode: String,
     #[serde(default)]
+    pub group_notes_by_date: bool,
+    #[serde(default)]
     pub last_view_mode: String,
     #[serde(default)]
     pub last_notebook: Option<String>,
@@ -474,6 +482,7 @@ impl Default for VaultState {
             notebook_order: std::collections::HashMap::new(),
             note_order: std::collections::HashMap::new(),
             sort_mode: String::new(),
+            group_notes_by_date: false,
             last_view_mode: String::new(),
             last_notebook: None,
             last_tag: None,

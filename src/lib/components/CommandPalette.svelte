@@ -1,11 +1,10 @@
 <script lang="ts">
-	import { showCommandPalette, showSearch, theme, sourceMode, viewMode, activeNotebook, activeTag } from '$lib/stores/app';
+	import { showCommandPalette, showSearch, theme, viewMode, activeNotebook, activeTag } from '$lib/stores/app';
 	import { setTheme, reindex } from '$lib/api';
-	import { darkThemes } from '$lib/platform';
 
 	// onNavigate runs the parent's view-change handler (refreshes the note list and reveals it
 	// if it was hidden), so opening a view here behaves exactly like clicking it in the sidebar.
-	let { onNavigate = () => {} }: { onNavigate?: () => void } = $props();
+	let { onNavigate = () => {}, onToggleSource }: { onNavigate?: () => void; onToggleSource: () => void } = $props();
 
 	function openView(mode: 'all' | 'quickaccess' | 'tasks' | 'unfiled' | 'trash') {
 		$viewMode = mode;
@@ -15,6 +14,12 @@
 		onNavigate();
 	}
 
+	function switchTheme(id: string) {
+		$theme = id;
+		setTheme(id);
+		$showCommandPalette = false;
+	}
+
 	interface Command {
 		id: string;
 		label: string;
@@ -22,7 +27,6 @@
 		action: () => void;
 	}
 
-	const modKey = navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl';
 
 	let query = $state('');
 	let selectedIndex = $state(0);
@@ -32,7 +36,7 @@
 		{
 			id: 'search',
 			label: 'Search Notes',
-			shortcut: `${modKey}+F`,
+			shortcut: `Ctrl+F`,
 			action: () => {
 				$showCommandPalette = false;
 				$showSearch = true;
@@ -66,77 +70,63 @@
 		{
 			id: 'theme-light',
 			label: 'Switch to Light Theme',
-			action: () => {
-				$theme = 'light';
-				setTheme('light');
-				applyTheme('light');
-				$showCommandPalette = false;
-			}
+			action: () => switchTheme('light')
 		},
 		{
 			id: 'theme-dark',
 			label: 'Switch to Dark Theme',
-			action: () => {
-				$theme = 'dark';
-				setTheme('dark');
-				applyTheme('dark');
-				$showCommandPalette = false;
-			}
+			action: () => switchTheme('dark')
 		},
 		{
 			id: 'theme-system',
 			label: 'Use System Theme',
-			action: () => {
-				$theme = 'system';
-				setTheme('system');
-				$showCommandPalette = false;
-			}
+			action: () => switchTheme('system')
 		},
 		{
 			id: 'theme-solarized-light',
 			label: 'Switch to Solarized Light Theme',
-			action: () => { $theme = 'solarized-light'; setTheme('solarized-light'); applyTheme('solarized-light'); $showCommandPalette = false; }
+			action: () => switchTheme('solarized-light')
 		},
 		{
 			id: 'theme-solarized-dark',
 			label: 'Switch to Solarized Dark Theme',
-			action: () => { $theme = 'solarized-dark'; setTheme('solarized-dark'); applyTheme('solarized-dark'); $showCommandPalette = false; }
+			action: () => switchTheme('solarized-dark')
 		},
 		{
 			id: 'theme-catppuccin',
 			label: 'Switch to Catppuccin Theme',
-			action: () => { $theme = 'catppuccin'; setTheme('catppuccin'); applyTheme('catppuccin'); $showCommandPalette = false; }
+			action: () => switchTheme('catppuccin')
 		},
 		{
 			id: 'theme-nord',
 			label: 'Switch to Nord Theme',
-			action: () => { $theme = 'nord'; setTheme('nord'); applyTheme('nord'); $showCommandPalette = false; }
+			action: () => switchTheme('nord')
 		},
 		{
 			id: 'theme-tokyo-night',
 			label: 'Switch to Tokyo Night Theme',
-			action: () => { $theme = 'tokyo-night'; setTheme('tokyo-night'); applyTheme('tokyo-night'); $showCommandPalette = false; }
+			action: () => switchTheme('tokyo-night')
 		},
 		{
 			id: 'theme-github-light',
 			label: 'Switch to GitHub Light Theme',
-			action: () => { $theme = 'github-light'; setTheme('github-light'); applyTheme('github-light'); $showCommandPalette = false; }
+			action: () => switchTheme('github-light')
 		},
 		{
 			id: 'theme-github-dark',
 			label: 'Switch to GitHub Dark Theme',
-			action: () => { $theme = 'github-dark'; setTheme('github-dark'); applyTheme('github-dark'); $showCommandPalette = false; }
+			action: () => switchTheme('github-dark')
 		},
 		{
 			id: 'theme-dracula',
 			label: 'Switch to Dracula Theme',
-			action: () => { $theme = 'dracula'; setTheme('dracula'); applyTheme('dracula'); $showCommandPalette = false; }
+			action: () => switchTheme('dracula')
 		},
 		{
 			id: 'toggle-source',
 			label: 'Toggle Source/WYSIWYG Mode',
 			action: () => {
-				$sourceMode = !$sourceMode;
+				onToggleSource();
 				$showCommandPalette = false;
 			}
 		},
@@ -178,18 +168,7 @@
 		}
 	}
 
-	function applyTheme(t: string) {
-		const namedThemes = ['solarized-light', 'solarized-dark', 'catppuccin', 'nord', 'tokyo-night', 'github-light', 'github-dark', 'dracula', 'blueberry', 'forest-green', 'gruvbox', 'midnight-tide', 'cherry-blossom', 'synthwave', 'ember', 'moonlit', 'light-coffee', 'dark-coffee', 'cotton-candy', 'crimson', 'cloud', 'peach', 'material-dark', 'material-light', 'monokai', 'rose-pine', 'everforest', 'horizon', 'cyberpunk', 'black', 'one-dark'];
-		const root = document.documentElement;
-		root.classList.remove('dark');
-		root.removeAttribute('data-theme');
-		if (namedThemes.includes(t)) {
-			root.setAttribute('data-theme', t);
-			if (darkThemes.includes(t)) root.classList.add('dark');
-		} else if (t === 'dark') {
-			root.classList.add('dark');
-		}
-	}
+
 </script>
 
 {#if $showCommandPalette}

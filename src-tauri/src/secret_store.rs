@@ -8,7 +8,6 @@ pub(crate) enum SecretId {
     OllamaApiKey,
     OpenAiCompatibleApiKey,
     WebdavPassword(String),
-    #[allow(dead_code)] // The credential slot is consumed by the in-flight issue #12 branch.
     NotionToken(String),
 }
 
@@ -35,19 +34,19 @@ impl SecretId {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 impl OsSecretStore {
     fn entry(id: &SecretId) -> Result<keyring::v1::Entry, String> {
         keyring::v1::Entry::new(SERVICE, &id.account()).map_err(store_error)
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn store_error(error: keyring::Error) -> String {
     format!("The OS secret store is unavailable or locked: {error}")
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 impl SecretStore for OsSecretStore {
     fn get(&self, id: &SecretId) -> Result<Option<String>, String> {
         match Self::entry(id)?.get_password() {
@@ -69,7 +68,7 @@ impl SecretStore for OsSecretStore {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 impl SecretStore for OsSecretStore {
     fn get(&self, _id: &SecretId) -> Result<Option<String>, String> {
         Err("The OS secret store is unavailable on this platform".to_string())
@@ -153,25 +152,14 @@ pub(crate) fn copy_plaintext_recovery(from: &AppConfig, to: &mut AppConfig) {
     to.ollama_api_key.clone_from(&from.ollama_api_key);
     to.openai_compatible_api_key
         .clone_from(&from.openai_compatible_api_key);
-    for source in &from.vaults {
-        if source.notion.token.is_none() {
-            continue;
-        }
-        if let Some(target) = to.vaults.iter_mut().find(|target| {
-            source
-                .vault_id
-                .as_deref()
-                .zip(target.vault_id.as_deref())
-                .is_some_and(|(source, target)| source == target)
-                || source
-                    .bookmark_id
-                    .as_deref()
-                    .zip(target.bookmark_id.as_deref())
-                    .is_some_and(|(source, target)| source == target)
-                || (source.bookmark_id.is_none()
-                    && target.bookmark_id.is_none()
-                    && source.path == target.path)
-        }) {
+    if let (Some(source), Some(target)) = (&from.vault, &mut to.vault) {
+        if source
+            .vault_id
+            .as_deref()
+            .zip(target.vault_id.as_deref())
+            .is_some_and(|(a, b)| a == b)
+            || source.path == target.path
+        {
             target.notion.token.clone_from(&source.notion.token);
         }
     }
@@ -284,7 +272,7 @@ fn credential_bindings(config: &AppConfig) -> Vec<(SecretId, Option<String>)> {
             config.openai_compatible_api_key.clone(),
         ),
     ];
-    for vault in &config.vaults {
+    if let Some(vault) = &config.vault {
         if let Some(identity) = vault_identity(vault) {
             bindings.push((
                 SecretId::NotionToken(identity.to_string()),
@@ -302,7 +290,7 @@ fn clear_credentials(config: &mut AppConfig) {
     }
     // A missing vault identity must not make an unaddressable token survive in runtime
     // memory or in the redacted disk projection.
-    for vault in &mut config.vaults {
+    if let Some(vault) = &mut config.vault {
         vault.notion.token = None;
     }
 }
@@ -318,9 +306,9 @@ fn assign(config: &mut AppConfig, id: &SecretId, value: Option<String>) {
         SecretId::WebdavPassword(_) => {}
         SecretId::NotionToken(identity) => {
             if let Some(vault) = config
-                .vaults
-                .iter_mut()
-                .find(|vault| vault_identity(vault) == Some(identity.as_str()))
+                .vault
+                .as_mut()
+                .filter(|vault| vault_identity(vault) == Some(identity.as_str()))
             {
                 vault.notion.token = value;
             }
@@ -329,7 +317,7 @@ fn assign(config: &mut AppConfig, id: &SecretId, value: Option<String>) {
 }
 
 fn unaddressable_plaintext(config: &AppConfig) -> Option<String> {
-    if config.vaults.iter().any(|vault| {
+    if config.vault.as_ref().is_some_and(|vault| {
         vault
             .notion
             .token
@@ -396,7 +384,7 @@ mod tests {
             openai_api_key: Some("openai-secret".to_string()),
             ollama_api_key: Some("ollama-secret".to_string()),
             openai_compatible_api_key: Some("compatible-secret".to_string()),
-            vaults: vec![VaultConfig {
+            vault: Some(VaultConfig {
                 path: "/vaults/life".to_string(),
                 name: "Life".to_string(),
                 vault_id: Some("life-vault-id".to_string()),
@@ -404,8 +392,7 @@ mod tests {
                     token: Some("notion-secret".to_string()),
                     ..Default::default()
                 },
-                ..Default::default()
-            }],
+            }),
             ..Default::default()
         };
         let store = MemoryStore::default();
@@ -421,7 +408,7 @@ mod tests {
             Some("compatible-secret")
         );
         assert_eq!(
-            config.vaults[0].notion.token.as_deref(),
+            config.vault.as_ref().unwrap().notion.token.as_deref(),
             Some("notion-secret")
         );
         let stored = store.0.borrow();
@@ -463,25 +450,14 @@ mod tests {
             openai_api_key: Some("openai-secret".to_string()),
             ollama_api_key: Some("ollama-secret".to_string()),
             openai_compatible_api_key: Some("compatible-secret".to_string()),
-            vaults: vec![
-                VaultConfig {
-                    path: "/vaults/life".to_string(),
-                    vault_id: Some("life-vault-id".to_string()),
-                    notion: crate::notion::config::NotionSettings {
-                        token: Some("notion-secret".to_string()),
-                        ..Default::default()
-                    },
+            vault: Some(VaultConfig {
+                path: "/vaults/unidentified".to_string(),
+                notion: crate::notion::config::NotionSettings {
+                    token: Some("unaddressable-notion-secret".to_string()),
                     ..Default::default()
                 },
-                VaultConfig {
-                    path: "/vaults/unidentified".to_string(),
-                    notion: crate::notion::config::NotionSettings {
-                        token: Some("unaddressable-notion-secret".to_string()),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-            ],
+                ..Default::default()
+            }),
             ..Default::default()
         };
 
@@ -492,7 +468,6 @@ mod tests {
             "openai-secret",
             "ollama-secret",
             "compatible-secret",
-            "notion-secret",
             "unaddressable-notion-secret",
         ] {
             assert!(!json.contains(secret), "persisted plaintext: {secret}");
@@ -554,7 +529,7 @@ mod tests {
     fn notion_token_follows_the_vault_id_when_the_folder_moves() {
         let store = MemoryStore::default();
         let mut before_move = AppConfig {
-            vaults: vec![VaultConfig {
+            vault: Some(VaultConfig {
                 path: "/old/location".to_string(),
                 vault_id: Some("stable-vault-id".to_string()),
                 notion: crate::notion::config::NotionSettings {
@@ -562,23 +537,23 @@ mod tests {
                     ..Default::default()
                 },
                 ..Default::default()
-            }],
+            }),
             ..Default::default()
         };
         hydrate_config(&mut before_move, &store).unwrap();
         let mut after_move = AppConfig {
-            vaults: vec![VaultConfig {
+            vault: Some(VaultConfig {
                 path: "/new/location".to_string(),
                 vault_id: Some("stable-vault-id".to_string()),
                 ..Default::default()
-            }],
+            }),
             ..Default::default()
         };
 
         hydrate_config(&mut after_move, &store).unwrap();
 
         assert_eq!(
-            after_move.vaults[0].notion.token.as_deref(),
+            after_move.vault.as_ref().unwrap().notion.token.as_deref(),
             Some("follow-the-vault")
         );
     }
