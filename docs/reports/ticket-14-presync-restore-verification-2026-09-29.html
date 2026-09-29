@@ -36,9 +36,8 @@
   <code>create_backup_with_prefix</code> (now <code>create_backup_of_kind</code>) skipped hidden entries with <code>continue</code>. For a
   directory that skips only the directory entry and never its children. Syncthing keeps a marker file in
   every synced folder's <code>.stfolder</code>, so every pre-sync ZIP carried
-  <code>.stfolder/syncthing-folder-687dd2.txt</code>. The same leak took in the entries of any
-  <code>.git</code>, <code>.obsidian</code>, or <code>.stversions</code> folder whose names do not
-  start with a dot. The restore
+  <code>.stfolder/syncthing-folder-687dd2.txt</code>. The same leak took in every entry not named with a leading dot
+  inside a <code>.git</code>, <code>.obsidian</code>, or <code>.stversions</code> folder. The restore
   staged <code>.stfolder</code>, but a restore never moves live top-level dot entries aside. The publish
   therefore met the live <code>.stfolder</code> and rolled back. Any vault with a top-level dot folder
   containing an entry whose name does not start with a dot, synced or not, failed the same way.</p>
@@ -72,7 +71,8 @@
 
   <h2>Manual verification (Fedora 44, release build, isolated XDG directories)</h2>
   <p>A copy of the failing run's isolated profile and vault (<code>~/sb88/runs/i14-restore-check</code>)
-  was opened with the release binary from commit <code>7d998b3</code>, which includes the review fixes, driven by <code>tauri-driver</code>
+  was opened with the release binary from commit <code>7d998b3</code>, which includes the first round of review fixes (later commits change only
+  comments, a constant list of the same two kinds, and report prose), driven by <code>tauri-driver</code>
   with <code>XDG_CONFIG_HOME</code> and <code>XDG_DATA_HOME</code> inside that copy. Sync was disabled
   with no peer, so nothing was sent to the other machine. The archive was the one that failed:
   <code>helixnotes-pre-sync-2026-09-29T03-25-00.zip</code>.</p>

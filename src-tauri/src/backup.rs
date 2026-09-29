@@ -458,8 +458,8 @@ fn plan_commit(journal: &mut RestoreJournal) -> Result<(), String> {
         }
         journal.present.push(name);
     }
-    // Archives made before the #14 fix carry the contents of `.stfolder` and other dot folders; those
-    // stay in the stage and are removed with it.
+    // Archives made before the #14 fix carry the contents of `.stfolder` and other dot folders;
+    // those stay in the stage and are removed with it.
     for name in entry_names(&journal.stage)? {
         if restore_replaces(&name) {
             journal.staged.push(name);
