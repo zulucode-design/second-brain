@@ -8,11 +8,20 @@ import { fileURLToPath } from 'node:url';
 import { deflateRawSync } from 'node:zlib';
 
 const {
-  acquireControllerLock, diagnosticLeaks, harnessConfig, killDue, mutateFixture, pairedSyncthingConfig, recoveryOutcome, redactTrace,
+  acquireControllerLock, diagnosticLeaks, harnessConfig, killDue, mutateFixture, pairedSyncthingConfig, parseOptions,
+  recoveryOutcome, redactTrace,
   restoreProgress, snapshotVault, treeHash, zipEntries,
 } = await import(
   new URL('../scripts/alpha-harness.mjs', import.meta.url)
 );
+
+test('walkthrough accepts only a loopback Ollama port', () => {
+  assert.equal(parseOptions(['--ollama-port', '11436']).ollamaPort, 11436);
+  assert.equal(parseOptions([]).ollamaPort, 11434);
+  for (const port of ['0', '70000', '11436.5', 'not-a-port']) {
+    assert.throws(() => parseOptions(['--ollama-port', port]), /--ollama-port must be an integer/);
+  }
+});
 
 test('harness config changes only active vault and backup ownership', () => {
   const original = {

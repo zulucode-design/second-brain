@@ -91,6 +91,10 @@ node scripts/alpha-harness.mjs walkthrough --candidate <sha> \
   --fedora-rpm ~/second-brain-candidate/src-tauri/target/release/bundle/rpm/<rpm>
 ```
 
+The walkthrough uses the existing Windows Ollama service on port 11434 by default. For a
+gate-owned temporary server, add `--ollama-port 11436`; the Windows app, Windows preflight,
+and Fedora SSH tunnel then use that port.
+
 `--machine fedora` or `--machine windows` runs one machine while a step is being fixed. Only a run
 of both machines counts as the gate; `run-start` and `run-complete` record the machines and
 `gate: true` only for a run of both.
@@ -170,7 +174,8 @@ The evidence trace is `docs/reports/evidence/alpha-harness-walkthrough-<timestam
 first job refuses a candidate unless the hosted `verify` and `windows-rust` checks passed on that
 commit. The second job runs on a self-hosted runner labelled `second-brain-alpha` and uses the
 `alpha-harness` environment, which holds the Notion secrets `SECOND_BRAIN_NOTION_TOKEN` and
-`SECOND_BRAIN_NOTION_PAGE`.
+`SECOND_BRAIN_NOTION_PAGE`. Set the dispatch `ollama_port` input to 11436 when using a
+gate-owned server; the default 11434 uses the existing user service.
 
 The repository is public, so no runner stays registered. Before a dispatch, register one from a
 terminal in the Fedora desktop session, with a registration token from the repository's
@@ -205,6 +210,53 @@ The run refuses to start if either hold is not in place within 60 seconds, and f
 hold is lost before it finishes.
 
 ## Machine-state safety
+
+### Temporary Ollama servers on Windows
+
+Before a gate uses Ollama, decide who owns the server. An existing user service stays
+user-owned: leave its process and configuration alone. If a gate needs a temporary server,
+start `scripts/windows/ollama-gate.ps1` before the gate in a dedicated PowerShell process.
+The harness selects its port but does not start or stop that process. Keep its companion
+`owned-process.cs` beside it when copying it to Windows:
+
+```powershell
+powershell.exe -NoProfile -File scripts/windows/ollama-gate.ps1 -Port 11436 -LifetimeSeconds 3600
+```
+
+Run the walkthrough with `--ollama-port 11436` and probe `/api/tags` before sending requests.
+The output records the supervisor PID and server PID; record them with the gate evidence.
+The default endpoint is `http://127.0.0.1:11436`, separate from the usual user service on
+11434. The harness forwards the selected port to Fedora over SSH and checks both endpoints
+again before recording a passed walkthrough. The one-hour default lease
+must exceed the whole gate run; increase it for longer runs, up to 7200 seconds.
+The wrapper uses the installed Ollama and its existing model store; it does not download models.
+
+Whoever starts the temporary server must stop the exact supervisor PID after the gate and
+wait for it to exit. The Windows Job Object then terminates the server and all descendants.
+The same cleanup happens if the supervisor is killed or the server exits early. If SSH or
+the controller disappears without stopping the supervisor, its finite lease expires and
+closes the job. An expiry before the final endpoint check fails the gate; treat any expiry
+while gate work is still running as a failed gate. Capture process
+creation times with the PID if cleanup is deferred to a later session; refuse a reused PID.
+
+Do not start a bare background `ollama serve` for a gate or stop only its parent process.
+Windows does not terminate children when a parent exits. Recent Ollama releases load models
+in `llama-server.exe`, which can survive as an orphan holding GPU memory. An absent
+`ollama.exe` process is therefore insufficient cleanup evidence. While a model is loaded,
+record worker PIDs and creation times from the recorded server's process tree (for direct
+children, query `Get-CimInstance Win32_Process -Filter "ParentProcessId = $serverPid"` with
+`$serverPid` set to the emitted server PID). After cleanup,
+check the exact server and observed worker PIDs. The Job Object owns descendants even when no
+worker was observed; the regression below tests that guarantee with synthetic child processes.
+Do not sweep processes by name or adopt existing orphans.
+
+Run the lifecycle regression on Windows without loading any model:
+
+```powershell
+powershell.exe -NoProfile -File tests/windows/ollama-gate.test.ps1
+```
+
+### App state
 
 Fedora gets isolated `XDG_CONFIG_HOME` and `XDG_DATA_HOME` directories. Windows does not honor
 those variables for known folders, so the worker journals the original

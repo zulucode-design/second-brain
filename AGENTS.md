@@ -66,6 +66,12 @@ locked. Claude sessions on this machine also run a blocking hook
 
 ## Agent skills
 
+### Ollama in Windows gates
+
+Before starting or stopping Ollama for verification, follow
+`docs/alpha-harness.md` (Temporary Ollama servers on Windows). Gate-owned servers must
+use the bounded job supervisor; cleanup must cover model workers as well as the server.
+
 ### Issue tracker
 
 Issues live in this repo's GitHub Issues (`zulucode-design/second-brain`),
