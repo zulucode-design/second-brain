@@ -84,6 +84,10 @@ jobs:
           SECOND_BRAIN_NOTION_TOKEN: ${{ secrets.SECOND_BRAIN_NOTION_TOKEN }}
           SECOND_BRAIN_NOTION_PAGE: ${{ secrets.SECOND_BRAIN_NOTION_PAGE }}
         run: |
+          set -o pipefail
+          # Reuse the isolated installed-app migration fixture as the Fedora template.
+          export XDG_CONFIG_HOME="$HOME/sb88/runs/post162-fedora-migration/xdg-config"
+          test -f "$XDG_CONFIG_HOME/io.github.zulucodedesign.SecondBrain/config.json"
           args=("$GATE" --candidate "$CANDIDATE")
           if [[ "$GATE" == walkthrough ]]; then
             args+=(--windows-installer "$WINDOWS_INSTALLER")
