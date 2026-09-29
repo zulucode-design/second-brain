@@ -13,6 +13,9 @@ use crate::types::BackupEntry;
 
 const MAX_ARCHIVE_ENTRIES: usize = 100_000;
 const MAX_ARCHIVE_BYTES: u64 = 100 * 1024 * 1024 * 1024;
+const BACKUP_PREFIX: &str = "helixnotes-backup";
+/// The Backup settings list labels archives with this prefix "Before sync".
+const PRE_SYNC_PREFIX: &str = "helixnotes-pre-sync";
 
 #[derive(Debug)]
 pub struct RestoreError {
@@ -64,17 +67,12 @@ pub fn create_backup(
     backup_dir: &Path,
     include_attachments: bool,
 ) -> Result<BackupEntry, String> {
-    create_backup_with_prefix(
-        vault_path,
-        backup_dir,
-        include_attachments,
-        "helixnotes-backup",
-    )
+    create_backup_with_prefix(vault_path, backup_dir, include_attachments, BACKUP_PREFIX)
 }
 
 /// Create the identifiable, full-vault recovery point required before incoming sync.
 pub fn create_pre_sync_backup(vault_path: &str, backup_dir: &Path) -> Result<BackupEntry, String> {
-    create_backup_with_prefix(vault_path, backup_dir, true, "helixnotes-pre-sync")
+    create_backup_with_prefix(vault_path, backup_dir, true, PRE_SYNC_PREFIX)
 }
 
 fn create_backup_with_prefix(
@@ -104,33 +102,23 @@ fn create_backup_with_prefix(
         .compression_method(zip::CompressionMethod::Deflated)
         .compression_level(Some(6));
 
-    let helixnotes_dir = vault.join(".helixnotes");
-    let attachments_dir = helixnotes_dir.join("attachments");
+    let attachments_dir = vault.join(METADATA_DIR).join("attachments");
+    // A restore replaces the top-level visible entries and the metadata directory's entries,
+    // and never touches other top-level dot entries (`.stfolder`, `.git`, `.obsidian`). The
+    // archive holds exactly what a restore replaces: those dot entries stay out, and every
+    // subtree that goes in goes in whole, nested dot entries included. Attachments are the
+    // sole configurable exclusion because they can dominate backup size.
+    let walker = WalkDir::new(vault).into_iter().filter_entry(|entry| {
+        let outside_restore = entry.depth() == 1
+            && entry.file_name().to_string_lossy().starts_with('.')
+            && entry.file_name() != METADATA_DIR;
+        !outside_restore && (include_attachments || entry.path() != attachments_dir)
+    });
 
-    for entry in WalkDir::new(vault) {
+    for entry in walker {
         let entry =
             entry.map_err(|error| format!("Failed to traverse vault for backup: {error}"))?;
         let path = entry.path();
-
-        // `.helixnotes` contains vault-scoped recoverable data. Attachments are the
-        // sole configurable exclusion because they can dominate backup size.
-        if path.starts_with(&helixnotes_dir)
-            && !include_attachments
-            && path.starts_with(&attachments_dir)
-        {
-            continue;
-        }
-
-        // Skip hidden files/directories (except .helixnotes which we handle above)
-        if path != vault {
-            if let Some(name) = path.file_name() {
-                let name_str = name.to_string_lossy();
-                if name_str.starts_with('.') && name_str != ".helixnotes" {
-                    continue;
-                }
-            }
-        }
-
         let relative = path.strip_prefix(vault).map_err(|e| e.to_string())?;
 
         if path.is_dir() {
@@ -181,32 +169,20 @@ pub fn list_backups(backup_dir: &Path) -> Result<Vec<BackupEntry>, String> {
                 .to_string();
             let meta = fs::metadata(&path).map_err(|e| e.to_string())?;
 
-            // Parse timestamp from filename: helixnotes-backup-YYYY-MM-DDTHH-MM-SS.zip
-            let created = if let Some(ts) = filename
-                .strip_prefix("helixnotes-backup-")
-                .and_then(|s| s.strip_suffix(".zip"))
-            {
-                // ts = "2026-02-08T18-09-15" → "2026-02-08T18:09:15Z"
-                if let Some(t_pos) = ts.find('T') {
-                    let date_part = &ts[..t_pos];
-                    let time_part = &ts[t_pos + 1..];
-                    let time_colons = time_part.replace('-', ":");
-                    format!("{}T{}Z", date_part, time_colons)
-                } else {
-                    meta.modified()
-                        .map(|t| {
-                            let dt: chrono::DateTime<Utc> = t.into();
-                            dt.to_rfc3339()
-                        })
-                        .unwrap_or_default()
-                }
-            } else {
-                meta.modified()
-                    .map(|t| {
-                        let dt: chrono::DateTime<Utc> = t.into();
-                        dt.to_rfc3339()
-                    })
-                    .unwrap_or_default()
+            // Both backup kinds are named `<prefix>-YYYY-MM-DDTHH-MM-SS.zip`, in UTC.
+            let stamped = [BACKUP_PREFIX, PRE_SYNC_PREFIX]
+                .into_iter()
+                .find_map(|prefix| filename.strip_prefix(prefix)?.strip_prefix('-'))
+                .and_then(|rest| rest.strip_suffix(".zip"))
+                .and_then(|stamp| {
+                    chrono::NaiveDateTime::parse_from_str(stamp, "%Y-%m-%dT%H-%M-%S").ok()
+                });
+            let created = match stamped {
+                Some(time) => time.and_utc().to_rfc3339(),
+                None => meta
+                    .modified()
+                    .map(|t| chrono::DateTime::<Utc>::from(t).to_rfc3339())
+                    .unwrap_or_default(),
             };
 
             entries.push(BackupEntry {
@@ -461,8 +437,11 @@ fn plan_commit(journal: &mut RestoreJournal) -> Result<(), String> {
         }
         journal.present.push(name);
     }
+    // Top-level dot entries are never displaced, so they are never published either. Archives
+    // made before #14 carry the contents of `.stfolder` and other dot folders; those stay in
+    // the stage and are removed with it.
     for name in entry_names(&journal.stage)? {
-        if name != METADATA_DIR {
+        if !name.starts_with('.') {
             journal.staged.push(name);
         }
     }
@@ -1010,8 +989,8 @@ pub fn cleanup_old_backups(backup_dir: &Path, max_count: u32) -> Result<(), Stri
 mod tests {
     use super::{
         create_backup, create_pre_sync_backup, delete_backup, extract_and_validate_with,
-        recover_interrupted_restore, recover_with, restore_backup, restore_backup_with, Interrupt,
-        RecoveredRestore, RestoreStep,
+        list_backups, recover_interrupted_restore, recover_with, restore_backup,
+        restore_backup_with, Interrupt, RecoveredRestore, RestoreStep,
     };
     use std::collections::BTreeMap;
     use std::fs;
@@ -1532,16 +1511,24 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// The #14 failure: every synced vault has a `.stfolder` with a marker file in it, and
+    /// archives made before #14 carried that marker. The restore must go through and leave the
+    /// live dot folders exactly as they are.
     #[test]
-    fn a_dot_folder_in_both_vault_and_backup_survives_a_failed_restore() {
+    fn dot_folders_in_an_old_archive_leave_the_live_ones_untouched() {
         let (root, vault, backups, _) = restore_fixture("dot-folder");
-        fs::create_dir_all(vault.join(".obsidian")).unwrap();
-        fs::write(vault.join(".obsidian/app.json"), "live settings").unwrap();
-        let before = tree(&vault);
-        let backup = backups.join("with-dot-folder.zip");
+        fs::create_dir_all(vault.join(".stfolder")).unwrap();
+        fs::write(
+            vault.join(".stfolder/syncthing-folder-live.txt"),
+            "live marker",
+        )
+        .unwrap();
+        fs::write(vault.join(".stignore"), "live ignores").unwrap();
+        let backup = backups.join("helixnotes-pre-sync-2026-09-29T03-25-00.zip");
         let mut writer = zip::ZipWriter::new(fs::File::create(&backup).unwrap());
         for (path, body) in [
             ("note.md", "restored"),
+            (".stfolder/syncthing-folder-old.txt", "old marker"),
             (".obsidian/app.json", "backup settings"),
         ] {
             writer
@@ -1551,12 +1538,110 @@ mod tests {
         }
         writer.finish().unwrap();
 
-        let error = restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap())
-            .unwrap_err();
+        restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap()).unwrap();
 
-        assert!(!error.changed, "{}", error.message);
-        assert_eq!(tree(&vault), before);
+        assert_eq!(
+            fs::read_to_string(vault.join("note.md")).unwrap(),
+            "restored"
+        );
+        assert!(!vault.join("Projects").exists());
+        let dot_entries: Vec<_> = tree(&vault)
+            .into_iter()
+            .filter(|(path, _)| {
+                path.to_string_lossy().starts_with('.') && !path.starts_with(".helixnotes")
+            })
+            .collect();
+        assert_eq!(
+            dot_entries,
+            vec![
+                (
+                    PathBuf::from(".stfolder/syncthing-folder-live.txt"),
+                    b"live marker".to_vec()
+                ),
+                (PathBuf::from(".stignore"), b"live ignores".to_vec()),
+            ]
+        );
         assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_backup_holds_exactly_what_a_restore_replaces() {
+        let root =
+            std::env::temp_dir().join(format!("second-brain-backup-shape-{}", Uuid::new_v4()));
+        let vault = root.join("vault");
+        let backups = root.join("backups");
+        for (path, body) in [
+            ("Projects/note.md", "before"),
+            ("Projects/.obsidian/app.json", "nested settings"),
+            ("Projects/.draft.md", "nested hidden note"),
+            (".helixnotes/vault_id", "vault-id"),
+            (".stfolder/syncthing-folder-live.txt", "marker"),
+            (".stignore", "ignores"),
+            (".git/HEAD", "ref"),
+        ] {
+            let path = vault.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+
+        let entry = create_pre_sync_backup(vault.to_str().unwrap(), &backups).unwrap();
+        let archive = ZipArchive::new(fs::File::open(&entry.path).unwrap()).unwrap();
+        let mut names: Vec<&str> = archive.file_names().collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                ".helixnotes/",
+                ".helixnotes/vault_id",
+                "Projects/",
+                "Projects/.draft.md",
+                "Projects/.obsidian/",
+                "Projects/.obsidian/app.json",
+                "Projects/note.md",
+            ]
+        );
+        drop(archive);
+
+        let before = tree(&vault);
+        fs::write(vault.join("Projects/note.md"), "after").unwrap();
+        fs::remove_file(vault.join("Projects/.draft.md")).unwrap();
+        restore_backup(vault.to_str().unwrap(), &backups, &entry.path).unwrap();
+        assert_eq!(tree(&vault), before);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn both_backup_kinds_are_dated_from_their_names() {
+        let root =
+            std::env::temp_dir().join(format!("second-brain-backup-list-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        for name in [
+            "helixnotes-backup-2026-09-28T10-00-00.zip",
+            "helixnotes-pre-sync-2026-09-29T03-25-00.zip",
+        ] {
+            fs::write(root.join(name), "").unwrap();
+        }
+
+        let dated: Vec<(String, String)> = list_backups(&root)
+            .unwrap()
+            .into_iter()
+            .map(|entry| (entry.filename, entry.created))
+            .collect();
+
+        assert_eq!(
+            dated,
+            vec![
+                (
+                    "helixnotes-pre-sync-2026-09-29T03-25-00.zip".to_string(),
+                    "2026-09-29T03:25:00+00:00".to_string()
+                ),
+                (
+                    "helixnotes-backup-2026-09-28T10-00-00.zip".to_string(),
+                    "2026-09-28T10:00:00+00:00".to_string()
+                ),
+            ]
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
