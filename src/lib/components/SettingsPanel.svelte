@@ -2191,7 +2191,7 @@
 									<p class="setting-hint">{sync.peerConnected ? 'Reachable over Tailscale' : 'Not currently reachable — open Tailscale and Second Brain on the other machine.'}</p>
 									<button class="import-btn" disabled={syncBusy || !sync.enabled} onclick={handleSyncNow}>{syncBusy ? 'Syncing…' : 'Sync now'}</button>
 									<p class="setting-hint">For an immediate transfer, press Sync now on both machines within 30 seconds. Automatic runs align every five minutes.</p>
-									<p class="setting-hint">A full recovery backup is taken before any incoming changes are applied. If that backup fails, nothing is received.</p>
+									<p class="setting-hint">A full recovery backup is taken before any incoming changes are applied.</p>
 								</div>
 							{/if}
 							{#if syncConflicts.length}

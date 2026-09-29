@@ -88,8 +88,8 @@ is fixed:
    observation window;
 5. re-pause both folder and device on success or error (with a drop guard as a second cleanup
    path); pausing also returns the folder to `sendonly`;
-6. when changes were received, reconcile the shared settings projection, keyword index, and
-   semantic index;
+6. when the run took its backup (changes were incoming), reconcile the shared settings
+   projection, keyword index, and semantic index;
 7. release watcher suppression and emit exactly one `success`, `changed-incomplete`, or
    `failure` terminal outcome. A run that ends without having taken its backup reports `failure`,
    never `changed-incomplete`, whatever the error, because its folder never left send-only and

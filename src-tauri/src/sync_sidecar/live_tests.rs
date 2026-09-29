@@ -102,13 +102,12 @@ fn patch(node: &Node, path: &str, body: serde_json::Value) {
     rest(node, reqwest::Method::PATCH, path, Some(body));
 }
 
+fn folder_path() -> String {
+    format!("/rest/config/folders/{FOLDER}")
+}
+
 fn folder(node: &Node) -> serde_json::Value {
-    rest(
-        node,
-        reqwest::Method::GET,
-        &format!("/rest/config/folders/{FOLDER}"),
-        None,
-    )
+    rest(node, reqwest::Method::GET, &folder_path(), None)
 }
 
 fn start(root: &Path, name: &'static str, gui_port: u16, listen_port: u16) -> Node {
@@ -316,11 +315,7 @@ fn only_a_batch_with_incoming_changes_takes_a_backup_and_it_comes_first() {
             before,
             "nothing arrives while B's index is withheld"
         );
-        patch(
-            &b,
-            &format!("/rest/config/folders/{FOLDER}"),
-            serde_json::json!({"paused": false}),
-        );
+        patch(&b, &folder_path(), serde_json::json!({"paused": false}));
         run.join().unwrap()
     });
     assert_eq!(run_a.result, Ok(()));

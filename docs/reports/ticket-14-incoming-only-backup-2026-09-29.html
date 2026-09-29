@@ -56,7 +56,7 @@
     <li>A batch resumes the folder <code>sendonly</code>, type and resume in one change. The first time the folder
     needs anything, it takes the full pre-sync backup, prunes, and only then switches the folder to
     <code>sendreceive</code>. The vault is written only after that backup exists. A batch with nothing incoming
-    takes no backup. Pairing also configures the folder send-only.</li>
+    takes no backup.</li>
     <li>If the backup fails, the run ends with "Sync aborted because its safety backup failed", the folder still
     send-only, and nothing received. It reports <code>failure</code>, because the vault is unchanged. Outgoing
     changes may already have reached the peer, whose own batch backs up before applying them. The same holds for
@@ -66,13 +66,14 @@
     <li>Delayed indexes: the stability window restarts whenever the peer's remote sequence changes. A send-only
     device keeps watching what it needs through the 60-second handoff hold, and backs up and receives if anything
     appears there. Anything later waits for the next batch, and it can never land without a backup.</li>
-    <li>A batch that received nothing skips the projection rebuild, because the vault is as it was.</li>
+    <li>A batch that took no backup skips the projection rebuild, because its folder never left send-only and the
+    vault is as it was.</li>
     <li>Pausing the folder, at the end of every batch and in the cleanup guard, also returns it to
     <code>sendonly</code>. Pairing, in the app and in the installed-package harness, configures it send-only.</li>
     <li>Pruning keeps the newest <code>backup_max_count</code> archives, but always keeps the newest scheduled or
     manual backup among them, in place of the oldest one that would otherwise stay.</li>
-    <li>The Sync settings hint now reads "A full recovery backup is taken before any incoming changes are applied.
-    If that backup fails, nothing is received."</li>
+    <li>The Sync settings hint now reads "A full recovery backup is taken before any incoming changes are
+    applied."</li>
     <li>The installed sync gate in <code>scripts/alpha-harness.mjs</code> now requires a pre-sync backup on the
     receiving Windows machine only, and records any on Fedora.</li>
   </ul>
