@@ -2176,7 +2176,8 @@ export function restoreWindowState(manifest) {
 }
 
 // Compares the live file with the hash taken before the run, not with the journal copy, so a
-// damaged copy fails too. Returns that hash, or null when the file was absent before and after.
+// damaged copy fails too. Returns that hash, or null when the file was absent before and after or
+// the journal predates #167.
 export function checkWindowStateRestored(manifest) {
   if (!manifest.windowStatePath) return null;
   const present = existsSync(manifest.windowStatePath);
@@ -2184,17 +2185,22 @@ export function checkWindowStateRestored(manifest) {
     if (present) fail(`${manifest.windowStatePath} did not exist before the run but exists now`);
     return null;
   }
-  const current = present && createHash('sha256').update(readFileSync(manifest.windowStatePath)).digest('hex');
+  const current = present ? createHash('sha256').update(readFileSync(manifest.windowStatePath)).digest('hex') : null;
   if (current !== manifest.originalWindowStateSha256) fail(`${manifest.windowStatePath} does not match its pre-run hash`);
   return current;
 }
 
+// Evidence for a restored window state; the flag tells an absent file from a journal before #167.
+function windowStateEvidence(manifest) {
+  return { windowStateJournaled: Boolean(manifest.windowStatePath), windowStateSha256: checkWindowStateRestored(manifest) };
+}
+
 // Restores config.json and the window state from the journal, checks the window state, and
-// returns its SHA-256.
+// returns its evidence.
 function restoreJournaledFiles(manifest) {
   atomicWrite(manifest.configPath, readFileSync(manifest.originalPath));
   restoreWindowState(manifest);
-  return checkWindowStateRestored(manifest);
+  return windowStateEvidence(manifest);
 }
 
 function damagedBeforePath(paths) {
@@ -2235,12 +2241,9 @@ async function windowsWorker(request) {
     if (manifest.runId !== lock.runId || win32.resolve(manifest.configPath) !== win32.resolve(configPath)) {
       fail('stale harness journal is inconsistent');
     }
-    const windowStateSha256 = restoreJournaledFiles(manifest);
+    const windowState = restoreJournaledFiles(manifest);
     unlinkSync(lockPath);
-    return {
-      recovered: true, runId: manifest.runId, runRoot: dirname(lock.manifestPath),
-      windowStateJournaled: Boolean(manifest.windowStatePath), windowStateSha256,
-    };
+    return { recovered: true, runId: manifest.runId, runRoot: dirname(lock.manifestPath), ...windowState };
   }
 
   if (request.action === 'prepare') {
@@ -2581,17 +2584,17 @@ async function windowsWorker(request) {
       const current = readFileSync(manifest.configPath);
       const original = readFileSync(manifest.originalPath);
       if (!current.equals(original)) fail('config lock is gone but original config is not restored');
-      const windowStateSha256 = checkWindowStateRestored(manifest);
-      return { restored: true, alreadyRestored: true, windowStateSha256, ...removeRunArtifacts(tools, appPath, manifest, paths) };
+      const windowState = windowStateEvidence(manifest);
+      return { restored: true, alreadyRestored: true, ...windowState, ...removeRunArtifacts(tools, appPath, manifest, paths) };
     }
     const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
     if (lock.runId !== request.runId) fail('config lock belongs to another run');
-    const windowStateSha256 = restoreJournaledFiles(manifest);
+    const windowState = restoreJournaledFiles(manifest);
     // A run that failed between break-config and repair-config leaves the app's damaged copy.
     // Moved while the lock still stands, so a failure here leaves the run for a retry to finish.
     const damagedMoved = moveRunDamagedConfigs(dirname(manifest.configPath), paths);
     unlinkSync(lockPath);
-    return { restored: true, damagedMoved, windowStateSha256, ...removeRunArtifacts(tools, appPath, manifest, paths) };
+    return { restored: true, damagedMoved, ...windowState, ...removeRunArtifacts(tools, appPath, manifest, paths) };
   }
 
   fail(`unknown Windows action: ${request.action}`);

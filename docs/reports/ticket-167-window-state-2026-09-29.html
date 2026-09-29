@@ -43,9 +43,9 @@
       hash. It compares with the recorded hash, not the journal copy, so a damaged copy also fails.
       It returns that hash (<code>windowStateSha256</code>, null when the file is absent). The
       controller records it in the <code>config-restored</code> evidence event after
-      <code>finalize</code> and in <code>stale-run-recovered</code> after <code>recover</code>, where
-      <code>windowStateJournaled</code> tells a journal from before this change apart from an absent
-      file.</td></tr>
+      <code>finalize</code> and in <code>stale-run-recovered</code> after <code>recover</code>. Both results also carry
+      <code>windowStateJournaled</code>, which tells a journal from before this change apart from an
+      absent file.</td></tr>
     <tr><td><code>finalize</code> after <code>recover</code></td>
       <td>When the lock is already gone, the same comparison runs, as it does for
       <code>config.json</code>.</td></tr>
@@ -66,9 +66,9 @@
   <code>D:\SecondBrainTest\sb167\profile-backup</code> first. No app was launched: the script wrote the
   changed window state itself,
   using the off-screen geometry from the original report. No harness lock existed and no app process
-  ran before the check. The table is from the last rerun, after both review rounds (run directories
-  <code>a3</code>, <code>b3</code>, <code>c3</code>, <code>d3</code>). Two earlier passes on the
-  code before those fixes gave the same results for A to C.</p>
+  ran before the check. The table is from the last rerun, on the final code (run directories
+  <code>a4</code>, <code>b4</code>, <code>c4</code>, <code>d4</code>). Earlier passes on the code
+  before the review fixes gave the same results.</p>
   <table>
     <tr><th>Case</th><th>Result</th><th>Status</th></tr>
     <tr><td>Before</td>
@@ -84,15 +84,15 @@
       <code>windowStateJournaled: true</code>) and removed the lock. The later <code>finalize</code> took the lock-gone path, reported
       <code>alreadyRestored</code> with the same hash, and removed the junction.</td>
       <td class="pass">pass</td></tr>
-    <tr><td>D: journal copy damaged, <code>finalize</code>, repair, <code>finalize</code> again</td>
-      <td>With the run's <code>original-window-state.json</code> overwritten, <code>finalize</code> failed
-      and left the lock in place, and the live file stayed changed (<code>449f95ef…</code>). After the
-      copy was put back from the safety copy, a second <code>finalize</code> restored
-      <code>34278064…</code> and removed the lock.</td>
-      <td class="pass">pass</td></tr>
     <tr><td>C: file absent before the run, created during it</td>
       <td>The file was set aside and <code>prepare</code> reported null. The run created it, and <code>finalize</code> removed it and returned
       <code>windowStateSha256: null</code>. The script then put the original back.</td>
+      <td class="pass">pass</td></tr>
+    <tr><td>D: journal copy damaged, <code>finalize</code>, repair, <code>finalize</code> again</td>
+      <td>With the run's <code>original-window-state.json</code> overwritten, <code>finalize</code> failed
+      and left the lock in place; the live file held the damaged copy's bytes (<code>449f95ef…</code>). After the
+      copy was put back from the safety copy, a second <code>finalize</code> restored
+      <code>34278064…</code> and removed the lock.</td>
       <td class="pass">pass</td></tr>
     <tr><td>After</td>
       <td><code>config.json</code> <code>0bfb1539…</code>, <code>.window-state.json</code> <code>34278064…</code>, no lock: the real profile matches its pre-check state byte for byte.</td>
@@ -104,7 +104,7 @@
   on a new candidate closes the app through its close button, so the plugin saves on exit and the
   <code>config-restored</code> event must carry the pre-run hash.</p>
   <p>Out of scope, as the issue notes: manual checks that launch the installed app outside the harness
-  still write per-vault state into the real <code>%LOCALAPPDATA%</code> folder, and whoever runs them
-  must remove it.</p>
+  still change the real <code>.window-state.json</code> and write per-vault state into the real
+  <code>%LOCALAPPDATA%</code> folder, and whoever runs them must restore or remove both.</p>
 </body>
 </html>
