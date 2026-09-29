@@ -8,9 +8,9 @@ import { fileURLToPath } from 'node:url';
 import { deflateRawSync } from 'node:zlib';
 
 const {
-  acquireControllerLock, diagnosticLeaks, harnessConfig, killDue, mutateFixture, pairedSyncthingConfig, parseOptions,
-  recoveryOutcome, redactTrace,
-  restoreProgress, snapshotVault, treeHash, zipEntries,
+  acquireControllerLock, checkWindowStateRestored, diagnosticLeaks, harnessConfig, journalWindowState, killDue, mutateFixture,
+  pairedSyncthingConfig, parseOptions, recoveryOutcome, redactTrace,
+  restoreProgress, restoreWindowState, snapshotVault, treeHash, zipEntries,
 } = await import(
   new URL('../scripts/alpha-harness.mjs', import.meta.url)
 );
@@ -147,6 +147,32 @@ test('snapshot refuses to overwrite existing evidence', (t) => {
 
   assert.throws(() => snapshotVault(vault, snapshot), /snapshot already exists/);
   assert.equal(readFileSync(join(snapshot, 'note.md'), 'utf8'), 'old');
+});
+
+test('window state is put back as it was, or removed when the run created it', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'alpha-harness-window-state-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const live = join(root, '.window-state.json');
+  const copy = join(root, 'original-window-state.json');
+
+  writeFileSync(live, '{"main":{"x":10}}');
+  const existed = journalWindowState(live, copy);
+  writeFileSync(live, '{"main":{"x":-1236}}');
+  assert.throws(() => checkWindowStateRestored(existed), /does not match its pre-run copy/);
+  restoreWindowState(existed);
+  assert.equal(readFileSync(live, 'utf8'), '{"main":{"x":10}}');
+  assert.match(checkWindowStateRestored(existed), /^[0-9a-f]{64}$/);
+
+  rmSync(live);
+  rmSync(copy);
+  const absent = journalWindowState(live, copy);
+  assert.equal(absent.originalWindowStatePath, null);
+  writeFileSync(live, '{"main":{"x":10}}');
+  assert.throws(() => checkWindowStateRestored(absent), /did not exist before the run/);
+  restoreWindowState(absent);
+  assert.equal(checkWindowStateRestored(absent), null);
+
+  assert.equal(checkWindowStateRestored({}), null, 'journals from before #167 have nothing to check');
 });
 
 test('restore rejects an invalid timeout before touching either machine', () => {

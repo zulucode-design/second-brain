@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Issue #167 — the harness restores the Windows window state</title>
+  <style>
+    body { max-width: 60rem; margin: 2rem auto; padding: 0 1.25rem; font: 16px/1.6 Inter, ui-sans-serif, system-ui, sans-serif; color: #20241f; background: #fffdf8; }
+    h1, h2 { line-height: 1.25; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    th, td { border: 1px solid #d7d1c5; padding: 0.5rem 0.65rem; text-align: left; vertical-align: top; }
+    th { background: #f7f4ec; }
+    .pass { color: #276c43; font-weight: 600; }
+    .open { color: #a34b16; font-weight: 600; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #171a17; color: #e6e8e3; }
+      th { background: #232723; }
+      th, td { border-color: #3a4039; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Issue #167 — the harness restores the Windows window state</h1>
+  <p>2026-09-29. On Windows the alpha harness journaled only
+  <code>%APPDATA%\io.github.zulucodedesign.SecondBrain\config.json</code>. Every launch of the installed
+  app also writes <code>.window-state.json</code> in that folder through
+  <code>tauri-plugin-window-state</code>, and nothing put it back. After the candidate <code>96a3e5b</code>
+  runs, the real profile held an off-screen window position and a compact size, and it was restored
+  by hand.</p>
+
+  <h2>Fix</h2>
+  <table>
+    <tr><th>Step</th><th>Change in <code>scripts/alpha-harness.mjs</code></th></tr>
+    <tr><td><code>prepare</code></td>
+      <td>Copies <code>.window-state.json</code> to <code>original-window-state.json</code> in the run
+      directory, or records that it did not exist. Both paths go into the run's journal.</td></tr>
+    <tr><td><code>finalize</code> and <code>recover</code></td>
+      <td>Wherever <code>config.json</code> is restored, the window state is restored too, or removed if
+      the run created it. The worker then compares the file with its pre-run copy, fails if they differ,
+      and returns its SHA-256 (<code>windowStateSha256</code>, null when the file is absent), which the
+      controller records in the <code>config-restored</code> evidence event.</td></tr>
+    <tr><td><code>finalize</code> after <code>recover</code></td>
+      <td>When the lock is already gone, the same comparison runs, as it does for
+      <code>config.json</code>.</td></tr>
+    <tr><td>Older journals</td>
+      <td>A journal written before this change has no window-state fields; its runs are recovered as
+      before, with nothing to restore.</td></tr>
+  </table>
+  <p>A new test in <code>tests/alpha-harness.test.mjs</code> covers both cases (file present and changed;
+  file absent and created by the run), the failing comparison before restore, and an older journal.</p>
+
+  <h2>Manual verification (Windows 11, real profile)</h2>
+  <p>The branch's harness was copied to an isolated root, <code>D:\SecondBrainTest\sb167\tools</code>,
+  so the shared <code>sb88\tools</code> copy was left alone. A proof script called the worker's own
+  <code>prepare</code>, <code>finalize</code>, and <code>recover</code> actions against the real profile
+  and the installed candidate <code>7e67b29</code>. The real profile's two files were copied to
+  <code>D:\SecondBrainTest\sb167\profile-backup</code> first. The harness stops the app with a forced
+  kill, which skips the plugin's save on exit, so the script wrote the changed window state itself,
+  using the off-screen geometry from the original report. No harness lock existed and no app process
+  ran before the check.</p>
+  <table>
+    <tr><th>Case</th><th>Result</th><th>Status</th></tr>
+    <tr><td>Before</td>
+      <td><code>config.json</code> <code>0bfb1539…</code>, <code>.window-state.json</code> <code>34278064…</code>, no lock.</td>
+      <td></td></tr>
+    <tr><td>A: run changes the file, <code>finalize</code></td>
+      <td>During the run both files differed. <code>finalize</code> returned
+      <code>windowStateSha256</code> <code>34278064…</code> and removed the junction; both files matched
+      their pre-run hashes and the lock was gone.</td>
+      <td class="pass">pass</td></tr>
+    <tr><td>B: run changes the file, <code>recover</code>, then <code>finalize</code></td>
+      <td><code>recover</code> restored both files (window state <code>34278064…</code>) and removed the
+      lock. The later <code>finalize</code> took the lock-gone path, reported
+      <code>alreadyRestored</code> with the same hash, and removed the junction.</td>
+      <td class="pass">pass</td></tr>
+    <tr><td>C: file absent before the run, created during it</td>
+      <td>The file was set aside, the run created it, and <code>finalize</code> removed it and returned
+      <code>windowStateSha256: null</code>. The script then put the original back.</td>
+      <td class="pass">pass</td></tr>
+    <tr><td>After</td>
+      <td><code>config.json</code> <code>0bfb1539…</code>, <code>.window-state.json</code> <code>34278064…</code>, no lock: the real profile matches its pre-check state byte for byte.</td>
+      <td class="pass">pass</td></tr>
+  </table>
+
+  <h2>Still open</h2>
+  <p class="open">Not checked here: a window state saved by the app itself. The next Gate 3 walkthrough
+  on a new candidate closes the app through its close button, so the plugin saves on exit and the
+  <code>config-restored</code> event must carry the pre-run hash.</p>
+  <p>Out of scope, as the issue notes: manual checks that launch the installed app outside the harness
+  still write per-vault state into the real <code>%LOCALAPPDATA%</code> folder, and whoever runs them
+  must remove it.</p>
+</body>
+</html>
