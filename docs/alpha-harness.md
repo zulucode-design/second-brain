@@ -183,7 +183,7 @@ The controller copies the Fedora app's `config.json` as each run's template. It 
 if the file is missing. The real profile gains that file only when an installed #89 build first
 launches against it. Until then, set the `fedora_config_home` input to the absolute path of an
 isolated XDG config directory whose migrated `config.json` exists, such as the one left by an
-installed-package migration check. The workflow quotes the value, so `~` is not expanded.
+installed-package migration check. `~` is not expanded, so give an absolute path.
 
 The repository is public, so no runner stays registered. Before a dispatch, register one from a
 terminal in the Fedora desktop session, with a registration token from the repository's
