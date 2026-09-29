@@ -15,6 +15,8 @@ const MAX_ARCHIVE_ENTRIES: usize = 100_000;
 const MAX_ARCHIVE_BYTES: u64 = 100 * 1024 * 1024 * 1024;
 
 impl BackupKind {
+    const ALL: [Self; 2] = [Self::Backup, Self::PreSync];
+
     /// Archives are named `<prefix>-YYYY-MM-DDTHH-MM-SS.zip`, in UTC.
     fn prefix(self) -> &'static str {
         match self {
@@ -115,8 +117,8 @@ fn create_backup_of_kind(
         .compression_level(Some(6));
 
     let attachments_dir = vault.join(METADATA_DIR).join("attachments");
-    // The archive holds exactly what a restore can replace: the top-level entries a restore
-    // replaces and the metadata directory, each subtree whole, nested dot entries included.
+    // The archive holds exactly what a restore touches: the top-level entries it replaces and
+    // the metadata directory, each subtree whole, nested dot entries included.
     // Attachments are the sole configurable exclusion because they can dominate backup size.
     let walker = WalkDir::new(vault).into_iter().filter_entry(|entry| {
         let name = entry.file_name().to_string_lossy();
@@ -179,7 +181,7 @@ pub fn list_backups(backup_dir: &Path) -> Result<Vec<BackupEntry>, String> {
                 .to_string();
             let meta = fs::metadata(&path).map_err(|e| e.to_string())?;
 
-            let named = [BackupKind::Backup, BackupKind::PreSync]
+            let named = BackupKind::ALL
                 .into_iter()
                 .find_map(|kind| Some((kind, filename.strip_prefix(kind.prefix())?)));
             let kind = named.map_or(BackupKind::Backup, |(kind, _)| kind);
@@ -456,7 +458,7 @@ fn plan_commit(journal: &mut RestoreJournal) -> Result<(), String> {
         }
         journal.present.push(name);
     }
-    // Archives made before #14 carry the contents of `.stfolder` and other dot folders; those
+    // Archives made before the #14 fix carry the contents of `.stfolder` and other dot folders; those
     // stay in the stage and are removed with it.
     for name in entry_names(&journal.stage)? {
         if restore_replaces(&name) {

@@ -40,8 +40,8 @@
   <code>.git</code>, <code>.obsidian</code>, or <code>.stversions</code> folder whose names do not
   start with a dot. The restore
   staged <code>.stfolder</code>, but a restore never moves live top-level dot entries aside. The publish
-  therefore met the live <code>.stfolder</code> and rolled back. Any vault with a non-empty top-level dot
-  folder, synced or not, failed the same way.</p>
+  therefore met the live <code>.stfolder</code> and rolled back. Any vault with a top-level dot folder
+  containing an entry whose name does not start with a dot, synced or not, failed the same way.</p>
 
   <h2>Fix</h2>
   <table>
@@ -60,7 +60,8 @@
       or <strong>Before sync</strong>. <code>list_backups</code> now dates pre-sync archives from their
       names, as it already did for scheduled ones.</td></tr>
   </table>
-  <p>Two new tests and one rewritten test fail against <code>main</code> and pass with the fix. The
+  <p>Two new tests and one rewritten test fail against <code>main</code> (one of them does not compile
+  there, because <code>BackupKind</code> is new) and pass with the fix. The
   rewritten test, formerly <code>a_dot_folder_in_both_vault_and_backup_survives_a_failed_restore</code>,
   expected such a restore to fail cleanly; as
   <code>dot_folders_in_an_old_archive_leave_the_live_ones_untouched</code> it restores an old-style
