@@ -2311,7 +2311,7 @@
 											<div class="backup-item">
 												<div class="backup-info">
 													<span class="backup-date">{formatBackupDate(entry.created)}</span>
-													<span class="backup-size">{entry.filename.startsWith('helixnotes-pre-sync-') ? 'Before sync' : 'Backup'} · {formatBackupSize(entry.size)}</span>
+													<span class="backup-meta">{entry.kind === 'preSync' ? 'Before sync' : 'Backup'} · {formatBackupSize(entry.size)}</span>
 												</div>
 												<div class="backup-item-actions">
 													<button class="backup-action-btn" title="Restore" onclick={() => restoreConfirm = entry}>
@@ -3517,7 +3517,7 @@
 		color: var(--text-primary);
 	}
 
-	.backup-size {
+	.backup-meta {
 		font-size: 11px;
 		color: var(--text-tertiary);
 	}

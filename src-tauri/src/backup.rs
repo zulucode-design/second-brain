@@ -9,13 +9,20 @@ use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::ZipArchive;
 
-use crate::types::BackupEntry;
+use crate::types::{BackupEntry, BackupKind};
 
 const MAX_ARCHIVE_ENTRIES: usize = 100_000;
 const MAX_ARCHIVE_BYTES: u64 = 100 * 1024 * 1024 * 1024;
-const BACKUP_PREFIX: &str = "helixnotes-backup";
-/// The Backup settings list labels archives with this prefix "Before sync".
-const PRE_SYNC_PREFIX: &str = "helixnotes-pre-sync";
+
+impl BackupKind {
+    /// Archives are named `<prefix>-YYYY-MM-DDTHH-MM-SS.zip`, in UTC.
+    fn prefix(self) -> &'static str {
+        match self {
+            Self::Backup => "helixnotes-backup",
+            Self::PreSync => "helixnotes-pre-sync",
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct RestoreError {
@@ -67,19 +74,24 @@ pub fn create_backup(
     backup_dir: &Path,
     include_attachments: bool,
 ) -> Result<BackupEntry, String> {
-    create_backup_with_prefix(vault_path, backup_dir, include_attachments, BACKUP_PREFIX)
+    create_backup_of_kind(
+        vault_path,
+        backup_dir,
+        include_attachments,
+        BackupKind::Backup,
+    )
 }
 
 /// Create the identifiable, full-vault recovery point required before incoming sync.
 pub fn create_pre_sync_backup(vault_path: &str, backup_dir: &Path) -> Result<BackupEntry, String> {
-    create_backup_with_prefix(vault_path, backup_dir, true, PRE_SYNC_PREFIX)
+    create_backup_of_kind(vault_path, backup_dir, true, BackupKind::PreSync)
 }
 
-fn create_backup_with_prefix(
+fn create_backup_of_kind(
     vault_path: &str,
     backup_dir: &Path,
     include_attachments: bool,
-    prefix: &str,
+    kind: BackupKind,
 ) -> Result<BackupEntry, String> {
     let vault = Path::new(vault_path);
     if !vault.is_dir() {
@@ -92,7 +104,7 @@ fn create_backup_with_prefix(
 
     let now = Utc::now();
     let timestamp = now.format("%Y-%m-%dT%H-%M-%S").to_string();
-    let filename = format!("{prefix}-{timestamp}.zip");
+    let filename = format!("{}-{timestamp}.zip", kind.prefix());
     let backup_path = backup_dir.join(&filename);
 
     let file = fs::File::create(&backup_path)
@@ -103,16 +115,13 @@ fn create_backup_with_prefix(
         .compression_level(Some(6));
 
     let attachments_dir = vault.join(METADATA_DIR).join("attachments");
-    // A restore replaces the top-level visible entries and the metadata directory's entries,
-    // and never touches other top-level dot entries (`.stfolder`, `.git`, `.obsidian`). The
-    // archive holds exactly what a restore replaces: those dot entries stay out, and every
-    // subtree that goes in goes in whole, nested dot entries included. Attachments are the
-    // sole configurable exclusion because they can dominate backup size.
+    // The archive holds exactly what a restore can replace: the top-level entries a restore
+    // replaces and the metadata directory, each subtree whole, nested dot entries included.
+    // Attachments are the sole configurable exclusion because they can dominate backup size.
     let walker = WalkDir::new(vault).into_iter().filter_entry(|entry| {
-        let outside_restore = entry.depth() == 1
-            && entry.file_name().to_string_lossy().starts_with('.')
-            && entry.file_name() != METADATA_DIR;
-        !outside_restore && (include_attachments || entry.path() != attachments_dir)
+        let name = entry.file_name().to_string_lossy();
+        let in_restore = entry.depth() != 1 || name == METADATA_DIR || restore_replaces(&name);
+        in_restore && (include_attachments || entry.path() != attachments_dir)
     });
 
     for entry in walker {
@@ -146,6 +155,7 @@ fn create_backup_with_prefix(
         path: backup_path.to_string_lossy().to_string(),
         size: meta.len(),
         created: now.to_rfc3339(),
+        kind,
     })
 }
 
@@ -169,11 +179,12 @@ pub fn list_backups(backup_dir: &Path) -> Result<Vec<BackupEntry>, String> {
                 .to_string();
             let meta = fs::metadata(&path).map_err(|e| e.to_string())?;
 
-            // Both backup kinds are named `<prefix>-YYYY-MM-DDTHH-MM-SS.zip`, in UTC.
-            let stamped = [BACKUP_PREFIX, PRE_SYNC_PREFIX]
+            let named = [BackupKind::Backup, BackupKind::PreSync]
                 .into_iter()
-                .find_map(|prefix| filename.strip_prefix(prefix)?.strip_prefix('-'))
-                .and_then(|rest| rest.strip_suffix(".zip"))
+                .find_map(|kind| Some((kind, filename.strip_prefix(kind.prefix())?)));
+            let kind = named.map_or(BackupKind::Backup, |(kind, _)| kind);
+            let stamped = named
+                .and_then(|(_, rest)| rest.strip_prefix('-')?.strip_suffix(".zip"))
                 .and_then(|stamp| {
                     chrono::NaiveDateTime::parse_from_str(stamp, "%Y-%m-%dT%H-%M-%S").ok()
                 });
@@ -190,6 +201,7 @@ pub fn list_backups(backup_dir: &Path) -> Result<Vec<BackupEntry>, String> {
                 path: path.to_string_lossy().to_string(),
                 size: meta.len(),
                 created,
+                kind,
             });
         }
     }
@@ -266,7 +278,7 @@ struct RestoreJournal {
     /// The subset of `present` moved aside: everything not starting with a dot.
     #[serde(default)]
     displaced: Vec<String>,
-    /// Top-level staged entries, except the metadata directory.
+    /// Top-level staged entries, except dot entries (the metadata directory among them).
     #[serde(default)]
     staged: Vec<String>,
     /// Entries of the staged metadata directory.
@@ -426,22 +438,28 @@ fn restore_backup_with(
     }
 }
 
+/// Whether a restore replaces the top-level vault entry `name` wholesale. Dot entries
+/// (`.stfolder`, `.git`, `.obsidian`) are never displaced or published; the metadata directory
+/// is merged entry by entry instead.
+fn restore_replaces(name: &str) -> bool {
+    !name.starts_with('.')
+}
+
 /// Record every name the commit will move, before it moves anything.
 fn plan_commit(journal: &mut RestoreJournal) -> Result<(), String> {
     for name in entry_names(&journal.vault)? {
         if name == METADATA_DIR {
             continue;
         }
-        if !name.starts_with('.') {
+        if restore_replaces(&name) {
             journal.displaced.push(name.clone());
         }
         journal.present.push(name);
     }
-    // Top-level dot entries are never displaced, so they are never published either. Archives
-    // made before #14 carry the contents of `.stfolder` and other dot folders; those stay in
-    // the stage and are removed with it.
+    // Archives made before #14 carry the contents of `.stfolder` and other dot folders; those
+    // stay in the stage and are removed with it.
     for name in entry_names(&journal.stage)? {
-        if !name.starts_with('.') {
+        if restore_replaces(&name) {
             journal.staged.push(name);
         }
     }
@@ -992,6 +1010,7 @@ mod tests {
         list_backups, recover_interrupted_restore, recover_with, restore_backup,
         restore_backup_with, Interrupt, RecoveredRestore, RestoreStep,
     };
+    use crate::types::BackupKind;
     use std::collections::BTreeMap;
     use std::fs;
     use std::io::{Seek, SeekFrom, Write};
@@ -1263,6 +1282,7 @@ mod tests {
         fs::write(vault.join(".helixnotes/attachments/file.bin"), "binary").unwrap();
         let entry = create_pre_sync_backup(vault.to_str().unwrap(), &backups).unwrap();
         assert!(entry.filename.starts_with("helixnotes-pre-sync-"));
+        assert_eq!(entry.kind, BackupKind::PreSync);
         let mut archive = ZipArchive::new(fs::File::open(entry.path).unwrap()).unwrap();
         assert!(archive.by_name("note.md").is_ok());
         assert!(archive.by_name(".helixnotes/attachments/file.bin").is_ok());
@@ -1623,10 +1643,10 @@ mod tests {
             fs::write(root.join(name), "").unwrap();
         }
 
-        let dated: Vec<(String, String)> = list_backups(&root)
+        let dated: Vec<(String, String, BackupKind)> = list_backups(&root)
             .unwrap()
             .into_iter()
-            .map(|entry| (entry.filename, entry.created))
+            .map(|entry| (entry.filename, entry.created, entry.kind))
             .collect();
 
         assert_eq!(
@@ -1634,11 +1654,13 @@ mod tests {
             vec![
                 (
                     "helixnotes-pre-sync-2026-09-29T03-25-00.zip".to_string(),
-                    "2026-09-29T03:25:00+00:00".to_string()
+                    "2026-09-29T03:25:00+00:00".to_string(),
+                    BackupKind::PreSync
                 ),
                 (
                     "helixnotes-backup-2026-09-28T10-00-00.zip".to_string(),
-                    "2026-09-28T10:00:00+00:00".to_string()
+                    "2026-09-28T10:00:00+00:00".to_string(),
+                    BackupKind::Backup
                 ),
             ]
         );

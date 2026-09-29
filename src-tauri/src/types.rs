@@ -569,6 +569,17 @@ pub struct BackupEntry {
     pub path: String,
     pub size: u64,
     pub created: String,
+    pub kind: BackupKind,
+}
+
+/// What a backup was taken for; the Backup settings list shows it next to each archive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BackupKind {
+    /// Scheduled, or made with "Backup now".
+    Backup,
+    /// Taken immediately before a sync batch (#14).
+    PreSync,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

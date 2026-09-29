@@ -321,6 +321,8 @@ export interface BackupEntry {
   path: string;
   size: number;
   created: string;
+  /** `preSync`: taken immediately before a sync batch; `backup`: scheduled or "Backup now". */
+  kind: 'backup' | 'preSync';
 }
 
 export interface VersionEntry {
