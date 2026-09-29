@@ -3498,7 +3498,7 @@ pub fn set_ai_settings(
     ollama_api_key: Option<String>,
     openai_compatible_base_url: Option<String>,
     openai_compatible_api_key: Option<String>,
-) -> Result<(), String> {
+) -> Result<AppConfig, String> {
     let state = app.state::<AppState>();
     let mut config = state.config.lock().map_err(|e| e.to_string())?;
     let generation = state
@@ -3523,8 +3523,7 @@ pub fn set_ai_settings(
         }
         Some(AiProvider::Anthropic | AiProvider::Unknown(_)) | None => candidate.ai_api_key = key,
     }
-    candidate.ai_provider = provider;
-    candidate.ai_model = model;
+    candidate.select_ai_model(provider, model);
     candidate.ai_writing_style = writing_style.filter(|s| !s.trim().is_empty());
     let next_target = crate::ai_health::health_target(&candidate, generation);
     let semantic_settings_changed = candidate.ollama_base_url != config.ollama_base_url
@@ -3534,6 +3533,7 @@ pub fn set_ai_settings(
     // Persist both halves first: a failed keyring or config-file write must not change the
     // live provider or health identity for the rest of this process.
     commit_secret_config(&mut config, candidate)?;
+    let saved = config.clone();
     let invalidated_status = if health_settings_changed {
         let mut health = state.ai_health.lock().map_err(|e| e.to_string())?;
         health.generation += 1;
@@ -3559,7 +3559,7 @@ pub fn set_ai_settings(
     if semantic_settings_changed {
         restart_semantic_index(&app)?;
     }
-    Ok(())
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -3952,6 +3952,36 @@ mod config_startup_tests {
         fn delete(&self, _id: &crate::secret_store::SecretId) -> Result<(), String> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn remembered_ai_models_survive_a_save_and_reload() {
+        let dir = scratch();
+        let path = dir.join("config.json");
+        let mut config = AppConfig::default();
+        config.select_ai_model(Some(AiProvider::Ollama), "gemma3".to_string());
+        config.select_ai_model(Some(AiProvider::OpenAi), "gpt-5-mini".to_string());
+        save_app_config_to(&path, &config).unwrap();
+
+        let ConfigRead::Loaded(contents) = read_app_config(&path) else {
+            panic!("config.json was not written");
+        };
+        // Keys stay the provider IDs users already have in their config files.
+        assert!(contents.contains(r#""ollama": "gemma3""#), "{contents}");
+        let loaded = parse_app_config(&contents)
+            .map_err(|damage| damage.reason)
+            .unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert_eq!(loaded.ai_models, config.ai_models);
+        assert_eq!(
+            loaded
+                .ai_models
+                .get(&AiProvider::Ollama)
+                .map(String::as_str),
+            Some("gemma3")
+        );
+        assert_eq!(loaded.ai_model, "gpt-5-mini");
     }
 
     fn scratch() -> std::path::PathBuf {
