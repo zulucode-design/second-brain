@@ -33,11 +33,12 @@
 
   <h2>Cause</h2>
   <p>The evidence note suspected <code>plan_commit</code>. The fault was in the backup. The walk in
-  <code>create_backup_with_prefix</code> skipped hidden entries with <code>continue</code>. For a
+  <code>create_backup_with_prefix</code> (now <code>create_backup_of_kind</code>) skipped hidden entries with <code>continue</code>. For a
   directory that skips only the directory entry and never its children. Syncthing keeps a marker file in
   every synced folder's <code>.stfolder</code>, so every pre-sync ZIP carried
-  <code>.stfolder/syncthing-folder-687dd2.txt</code>. The same leak took in the contents of any
-  non-empty <code>.git</code>, <code>.obsidian</code>, or <code>.stversions</code>. The restore
+  <code>.stfolder/syncthing-folder-687dd2.txt</code>. The same leak took in the entries of any
+  <code>.git</code>, <code>.obsidian</code>, or <code>.stversions</code> folder whose names do not
+  start with a dot. The restore
   staged <code>.stfolder</code>, but a restore never moves live top-level dot entries aside. The publish
   therefore met the live <code>.stfolder</code> and rolled back. Any vault with a non-empty top-level dot
   folder, synced or not, failed the same way.</p>
@@ -54,19 +55,23 @@
       <td><code>plan_commit</code> never publishes a top-level staged dot entry. Archives made before the
       fix restore, and their dot folders are removed with the stage.</td></tr>
     <tr><td>Backup list</td>
-      <td>Each archive in Settings &gt; Backup is labelled <strong>Before sync</strong> or
-      <strong>Backup</strong>. <code>list_backups</code> now dates pre-sync archives from their names,
-      as it already did for scheduled ones.</td></tr>
+      <td>Each listed archive carries a <code>kind</code> (<code>backup</code> or <code>preSync</code>),
+      set in Rust from its filename prefix, and Settings &gt; Backup labels it <strong>Backup</strong>
+      or <strong>Before sync</strong>. <code>list_backups</code> now dates pre-sync archives from their
+      names, as it already did for scheduled ones.</td></tr>
   </table>
-  <p>Three new tests fail against <code>main</code> and pass with the fix. One restores an old-style
-  archive into a vault with a live <code>.stfolder</code> and fails on <code>main</code> with the
-  production error. One checks that a backup's names are exactly what a restore replaces, and that a
-  round trip restores the vault byte for byte. One checks that both archive kinds are dated from their
-  names. The earlier test that expected such a restore to fail cleanly now expects it to succeed.</p>
+  <p>Two new tests and one rewritten test fail against <code>main</code> and pass with the fix. The
+  rewritten test, formerly <code>a_dot_folder_in_both_vault_and_backup_survives_a_failed_restore</code>,
+  expected such a restore to fail cleanly; as
+  <code>dot_folders_in_an_old_archive_leave_the_live_ones_untouched</code> it restores an old-style
+  archive into a vault with a live <code>.stfolder</code>, and on <code>main</code> it fails with the
+  production error. One new test checks that a backup's names are exactly what a restore replaces,
+  and that a round trip restores the vault byte for byte. The other checks that both archive kinds are
+  dated from their names and carry their kind.</p>
 
   <h2>Manual verification (Fedora 44, release build, isolated XDG directories)</h2>
   <p>A copy of the failing run's isolated profile and vault (<code>~/sb88/runs/i14-restore-check</code>)
-  was opened with the release binary from commit <code>a1c7bb2</code>, driven by <code>tauri-driver</code>
+  was opened with the release binary from commit <code>7d998b3</code>, which includes the review fixes, driven by <code>tauri-driver</code>
   with <code>XDG_CONFIG_HOME</code> and <code>XDG_DATA_HOME</code> inside that copy. Sync was disabled
   with no peer, so nothing was sent to the other machine. The archive was the one that failed:
   <code>helixnotes-pre-sync-2026-09-29T03-25-00.zip</code>.</p>
@@ -98,7 +103,9 @@
       <td class="pass">Pass. Both <code>tauri-driver</code> PIDs were stopped by their exact PID; no app
       process remained.</td></tr>
   </table>
-  <p>Screenshots stay outside the repository in <code>~/sb88/evidence/i14</code>.</p>
+  <p>The same checks passed first on the build from <code>a1c7bb2</code>, before the review fixes, on a
+  separate copy of the same profile. Screenshots stay outside the repository in
+  <code>~/sb88/evidence/i14</code>.</p>
 
   <h2>Still open under #14</h2>
   <ul>
