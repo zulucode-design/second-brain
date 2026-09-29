@@ -74,18 +74,38 @@ Each manual or scheduled run uses the shared bulk-mutation lease from issue #83.
 is fixed:
 
 1. exclude other bulk and note mutations and suppress watcher delivery;
-2. create an identifiable full-vault pre-sync backup outside the vault, always including
-   attachments; abort without resuming Syncthing if this fails;
-3. resume the configured folder and paired device, require Tailscale reachability, request a
-   scan, and wait for fifteen seconds of continuously clean bilateral completion observations:
-   the local database must contain the peer's remote sequence, need nothing, and report no pull
-   errors, while peer completion must report a valid shared folder and need no items, deletions,
-   or bytes; any late index activity or pull error resets the observation window;
-4. re-pause both folder and device on success or error (with a drop guard as a second cleanup
+2. resume the configured folder as `sendonly` (type and resume in one change) and the paired
+   device, require Tailscale reachability, and request a scan. A send-only folder receives the
+   peer's index and reports what it would need, but Syncthing writes nothing to the vault;
+3. the first time the folder needs anything (a file, directory, or deletion), create an
+   identifiable full-vault pre-sync backup outside the vault, always including attachments, and
+   only then switch the folder to `sendreceive`. If the backup fails, the run ends with the folder
+   still send-only and nothing received. A run with nothing incoming takes no backup (#14);
+4. wait for fifteen seconds of continuously clean bilateral completion observations: the local
+   database must contain the peer's remote sequence, need nothing, and report no pull errors,
+   while peer completion must report a valid shared folder and need no items, deletions, or bytes;
+   any change of the peer's remote sequence, other late index activity, or a pull error resets the
+   observation window;
+5. re-pause both folder and device on success or error (with a drop guard as a second cleanup
    path);
-5. reconcile the shared settings projection, keyword index, and semantic index;
-6. release watcher suppression and emit exactly one `success`, `changed-incomplete`, or
-   `failure` terminal outcome.
+6. when changes were received, reconcile the shared settings projection, keyword index, and
+   semantic index;
+7. release watcher suppression and emit exactly one `success`, `changed-incomplete`, or
+   `failure` terminal outcome. A run that received nothing reports `failure`, never
+   `changed-incomplete`, because the vault is as it was.
+
+A peer's index can arrive late: after a pause the connection can take many seconds to return, and
+until then the local database still holds the previous batch's index, so a send-only folder can
+report needing nothing when the peer has changes. That is safe, because nothing is written in
+send-only mode, and the rules above keep it rare. A send-only device also keeps watching what it
+needs during the 60-second handoff hold below, and backs up and receives if anything appears
+there. An index that arrives even later waits for the next batch, and never lands without a
+backup. Pairing configures the folder send-only as well, so nothing but a guarded run can let
+Syncthing write to the vault.
+
+Pruning after a pre-sync backup keeps the newest `backup_max_count` archives, but always keeps
+the newest scheduled or manual backup among them, so frequent batches cannot leave only
+minutes-old recovery points.
 
 The app owns the guard, backup, terminal event, projections, and conflict UI. Syncthing owns
 file reconciliation, delete/move propagation, delayed arrival, and conflict-copy creation.

@@ -32,7 +32,9 @@ Windows worker and the existing fixture/interruption scripts to
 5. closes and relaunches both installed apps, then polls the deterministic fixture until both
    replicas contain exactly 5,000 notes with no conflicts, duplicate IDs, wrong content, or
    strays;
-6. requires pre-sync backups and no app, watchdog, sidecar, or orphan after exit.
+6. requires a pre-sync backup on the receiving Windows machine, records any on Fedora (a machine
+   backs up only before a batch that brings it changes), and requires no app, watchdog, sidecar,
+   or orphan after exit.
 
 Every fixture poll and lifecycle observation is appended immediately to
 `docs/reports/evidence/alpha-harness-sync-<timestamp>.jsonl`. A failed run keeps its trace and

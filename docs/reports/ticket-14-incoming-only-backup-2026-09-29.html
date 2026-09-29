@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Issue #14 — backups only before incoming changes</title>
+  <style>
+    body { max-width: 60rem; margin: 2rem auto; padding: 0 1.25rem; font: 16px/1.6 Inter, ui-sans-serif, system-ui, sans-serif; color: #20241f; background: #fffdf8; }
+    h1, h2 { line-height: 1.25; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    th, td { border: 1px solid #d7d1c5; padding: 0.5rem 0.65rem; text-align: left; vertical-align: top; }
+    th { background: #f7f4ec; }
+    .pass { color: #276c43; font-weight: 600; }
+    .open { color: #a34b16; font-weight: 600; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #171a17; color: #e6e8e3; }
+      th { background: #232723; }
+      th, td { border-color: #3a4039; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Issue #14 — backups only before incoming changes</h1>
+  <p>2026-09-29. The second of two #14 pull requests. Until now every sync batch took a full pre-sync backup,
+  every five minutes on both machines, whether or not anything arrived. Pruning kept the newest
+  <code>backup_max_count</code> archives from one shared pool, so with sync on, every scheduled backup was gone
+  within about 25 minutes. Nicolas chose to back up only when a batch actually brings changes, and asked for delayed
+  indexes to be handled. This report records the design evidence, the change, and its verification. The first
+  pull request is recorded in <a href="ticket-14-presync-restore-verification-2026-09-29.html">its own
+  report</a>.</p>
+
+  <h2>Spike: what a send-only folder does</h2>
+  <p>A paused Syncthing folder exchanges no index, so the app cannot learn about incoming changes before it
+  resumes. Syncthing's documentation says a <code>sendonly</code> folder still receives changes from other devices,
+  so it can go out of sync, but applies none of them. Two disposable Syncthing 2.1.5 instances on loopback, the
+  version the app bundles, showed:</p>
+  <table>
+    <tr><th>Observation</th><th>Result</th></tr>
+    <tr><td>Both folders send-only, the peer holding a file this side lacks.</td>
+      <td>The peer's index arrived within 2 s. <code>needTotalItems</code> was 1 and <code>/rest/db/need</code> named
+      the file. In 24 s of watching, nothing was written to the vault.</td></tr>
+    <tr><td>The peer deletes a file this side has.</td>
+      <td><code>needDeletes</code> became 1 and the file stayed.</td></tr>
+    <tr><td>Switch to <code>sendreceive</code> while connected.</td>
+      <td>The file arrived, or the deletion applied, within about 2 s, without a reconnect.</td></tr>
+    <tr><td>Pause both sides, change the peer, resume both send-only.</td>
+      <td>For about 19 s the local side reported needing nothing: the connection took 18 s to return, and the
+      index arrived 1 s later. During that time <code>remoteSequence</code> still held the previous batch's value.
+      No Syncthing endpoint or event reports that a peer's index has fully arrived.</td></tr>
+  </table>
+
+  <h2>Change</h2>
+  <ul>
+    <li>A batch resumes the folder <code>sendonly</code>, type and resume in one change. The first time the folder
+    needs anything, it takes the full pre-sync backup, prunes, and only then switches the folder to
+    <code>sendreceive</code>. The vault is written only after that backup exists. A batch with nothing incoming
+    takes no backup. Pairing also configures the folder send-only.</li>
+    <li>If the backup fails, the run ends with "Sync aborted because its safety backup failed", the folder still
+    send-only, and nothing received. It reports <code>failure</code>, because the vault is unchanged. Outgoing
+    changes may already have reached the peer, whose own batch backs up before applying them.</li>
+    <li>Delayed indexes: the stability window restarts whenever the peer's remote sequence changes. A send-only
+    device keeps watching what it needs through the 60-second handoff hold, and backs up and receives if anything
+    appears there. Anything later waits for the next batch, and it can never land without a backup.</li>
+    <li>A batch that received nothing skips the projection rebuild, because the vault is as it was.</li>
+    <li>Pruning keeps the newest <code>backup_max_count</code> archives, but always keeps the newest scheduled or
+    manual backup among them, in place of the oldest one that would otherwise stay.</li>
+    <li>The Sync settings hint now reads "A full recovery backup is taken before any incoming changes are applied.
+    If that backup fails, nothing is received and sync pauses."</li>
+    <li>The installed sync gate in <code>scripts/alpha-harness.mjs</code> now requires a pre-sync backup on the
+    receiving Windows machine only, and records any on Fedora.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <table>
+    <tr><th>Check</th><th>Result</th></tr>
+    <tr><td>Live test <code>sync_sidecar::live_tests</code>: two real bundled Syncthing processes on loopback,
+      each batch driven through <code>sync_batch</code>, the function a sync run calls. The backup callback waits
+      3 s and then records the vault, so any transfer that could land ahead of the backup shows up in the
+      record.</td>
+      <td class="pass">Pass, in 248 s:
+      <ul>
+        <li>First batch: only the empty side backed up, and its backup saw an empty vault; the note then arrived.</li>
+        <li>Second batch, nothing changed: neither side backed up.</li>
+        <li>Third batch, a note deleted and another added: only the receiving side backed up, its backup still
+        held the deleted note, and afterwards the vault held exactly the new note.</li>
+        <li>A failing backup: the run returned the safety-backup error, the vault was unchanged 5 s later, and
+        the folder was paused and still send-only.</li>
+        <li>No Syncthing process remained afterwards.</li>
+      </ul></td></tr>
+    <tr><td>The same live test with the batch resuming the folder as <code>sendreceive</code>, to show the test
+      detects writing before the backup.</td>
+      <td class="pass">Failed as it should: the receiving side's backup recorded <code>note.md</code> already
+      present.</td></tr>
+    <tr><td>Unit tests: a moving peer index restarts the stability window; a change during the handoff hold ends
+      the hold to be received; pruning keeps the newest scheduled backup among frequent pre-sync ones.</td>
+      <td class="pass">Pass, with the existing sync and backup tests.</td></tr>
+    <tr><td><code>pnpm verify</code>.</td><td class="pass">Pass.</td></tr>
+  </table>
+  <p>The live test is ignored by default. Run it with
+  <code>pnpm test:rust sync_sidecar::live_tests -- --ignored --nocapture</code> after
+  <code>node scripts/prepare-syncthing.mjs</code>.</p>
+
+  <h2>Still open under #14</h2>
+  <p>These need installed packages on both machines, after this pull request merges:</p>
+  <ul>
+    <li class="open">The pre-sync restore rerun from the first pull request, on Fedora and Windows.</li>
+    <li class="open">A batch with nothing incoming leaves no new backup; a batch with changes leaves exactly one.</li>
+    <li class="open">Retention at the minimum limit of 5 across at least six pre-sync archives, keeping the newest
+    scheduled backup.</li>
+    <li class="open">A backup that cannot be taken, for example to an unwritable backup folder, ends the batch with
+    nothing received.</li>
+    <li class="open">Routine sync time, recorded with the vault and archive size, against an accepted budget.</li>
+  </ul>
+</body>
+</html>
