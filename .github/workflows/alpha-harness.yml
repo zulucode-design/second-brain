@@ -40,8 +40,7 @@ concurrency:
 jobs:
   candidate-verified:
     runs-on: ubuntu-22.04
-    # This candidate's one-off verification branch dispatches before its evidence PR lands.
-    if: github.ref == 'refs/heads/main' || (github.ref == 'refs/heads/prealpha/post162-verification' && inputs.candidate == '96a3e5b60306890e3daba22d993aa7a984bb96ea')
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       checks: read
@@ -85,9 +84,6 @@ jobs:
           SECOND_BRAIN_NOTION_PAGE: ${{ secrets.SECOND_BRAIN_NOTION_PAGE }}
         run: |
           set -o pipefail
-          # Reuse the isolated installed-app migration fixture as the Fedora template.
-          export XDG_CONFIG_HOME="$HOME/sb88/runs/post162-fedora-migration/xdg-config"
-          test -f "$XDG_CONFIG_HOME/io.github.zulucodedesign.SecondBrain/config.json"
           args=("$GATE" --candidate "$CANDIDATE")
           if [[ "$GATE" == walkthrough ]]; then
             args+=(--windows-installer "$WINDOWS_INSTALLER")
