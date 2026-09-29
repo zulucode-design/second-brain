@@ -29,7 +29,7 @@ on:
         description: Windows Ollama port for walkthrough (11436 for a gate-owned server)
         default: '11434'
       fedora_config_home:
-        description: Fedora XDG config directory holding the app's config.json template (default ~/.config)
+        description: Absolute Fedora XDG config directory holding the app's config.json template (default ~/.config)
         default: ''
 
 permissions:
