@@ -114,16 +114,16 @@
   <code>pnpm test:rust sync_sidecar::live_tests -- --ignored --nocapture</code> after
   <code>node scripts/prepare-syncthing.mjs</code>.</p>
 
-  <h2>Still open under #14</h2>
-  <p>These need installed packages on both machines, after this pull request merges:</p>
-  <ul>
-    <li class="open">The pre-sync restore rerun from the first pull request, on Fedora and Windows.</li>
-    <li class="open">A batch with nothing incoming leaves no new backup; a batch with changes leaves exactly one.</li>
-    <li class="open">Retention at the minimum limit of 5 across at least six pre-sync archives, keeping the newest
-    scheduled backup.</li>
-    <li class="open">A backup that cannot be taken, for example to an unwritable backup folder, ends the batch with
-    nothing received.</li>
-    <li class="open">Routine sync time, recorded with the vault and archive size, against an accepted budget.</li>
-  </ul>
+  <h2>Installed-package follow-up (2026-09-29)</h2>
+  <p class="pass">Passed on installed Fedora and Windows packages from <code>7e67b29</code>.
+  A batch with nothing incoming took no ZIP. Each of six incoming batches per machine took exactly one
+  archive matching the pre-transfer vault; at the UI minimum of 5, pruning kept the manual archive and
+  four newest pre-sync archives. Unwritable backup directories produced the safety-backup-failed message,
+  terminal failure, and no received changes. Both pre-sync restores passed through Settings &gt; Backup.</p>
+  <p>Maximum archive-write / total-batch times were 0.721 s / 87.441 s on Fedora and 1.235 s / 88.091 s
+  on Windows, for 5,000 notes plus an 8 MiB attachment. All samples passed the 2 s / 120 s budget accepted
+  by the implementing Claude session under Nicolas's delegation. See the
+  <a href="ticket-14-installed-packages-2026-09-29.html">installed-package report and raw evidence</a> for the fixture,
+  method, individual measurements, cleanup, and the independent scheduler-notice follow-up #172.</p>
 </body>
 </html>
