@@ -90,7 +90,10 @@
   whose app sources differ from the candidate. The verification branch permits a candidate-matched
   dispatch. A second dispatch stopped before either walkthrough because the real Fedora profile
   has no post-migration identifier config; the controller now uses the isolated Fedora migration
-  fixture as its template. Gate 3, real Ollama worker cleanup (#161), and the unresolved #28/#14 checks listed
+  fixture as its template. A third dispatch passed Fedora's walkthrough but stalled on Windows
+  relaunch because the controller waited for a wide-layout button before resizing the persisted
+  compact window; its <a href="evidence/alpha-harness-walkthrough-20260929T030248Z.jsonl">raw trace</a>
+  records the failure. The controller now resizes before waiting for that button. Gate 3, real Ollama worker cleanup (#161), and the unresolved #28/#14 checks listed
   in #76 remain pending.</p>
 </section>
 
