@@ -28,6 +28,9 @@ on:
       ollama_port:
         description: Windows Ollama port for walkthrough (11436 for a gate-owned server)
         default: '11434'
+      fedora_config_home:
+        description: Fedora XDG config directory holding the app's config.json template (default ~/.config)
+        default: ''
 
 permissions:
   contents: read
@@ -80,10 +83,13 @@ jobs:
           WINDOWS_INSTALLER: ${{ inputs.windows_installer }}
           FEDORA_RPM: ${{ inputs.fedora_rpm }}
           OLLAMA_PORT: ${{ inputs.ollama_port }}
+          FEDORA_CONFIG_HOME: ${{ inputs.fedora_config_home }}
           SECOND_BRAIN_NOTION_TOKEN: ${{ secrets.SECOND_BRAIN_NOTION_TOKEN }}
           SECOND_BRAIN_NOTION_PAGE: ${{ secrets.SECOND_BRAIN_NOTION_PAGE }}
         run: |
+          # Without pipefail, tee hides a failed harness run and the uninstall step still runs.
           set -o pipefail
+          if [[ -n "$FEDORA_CONFIG_HOME" ]]; then export XDG_CONFIG_HOME="$FEDORA_CONFIG_HOME"; fi
           args=("$GATE" --candidate "$CANDIDATE")
           if [[ "$GATE" == walkthrough ]]; then
             args+=(--windows-installer "$WINDOWS_INSTALLER")
@@ -93,7 +99,7 @@ jobs:
           node scripts/alpha-harness.mjs "${args[@]}" | tee "$RUNNER_TEMP/alpha-harness-result.json"
 
       - name: Verify manual Fedora uninstall
-        if: inputs.gate == 'walkthrough' && success()
+        if: inputs.gate == 'walkthrough'
         run: |
           run_id=$(node -p "JSON.parse(require('node:fs').readFileSync(process.env.RUNNER_TEMP + '/alpha-harness-result.json', 'utf8').trim().split('\n').at(-1)).runId")
           echo 'Remove the candidate RPM now: sudo rpm -e second-brain'

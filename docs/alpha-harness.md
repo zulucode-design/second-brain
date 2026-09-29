@@ -177,6 +177,13 @@ commit. The second job runs on a self-hosted runner labelled `second-brain-alpha
 `SECOND_BRAIN_NOTION_PAGE`. Set the dispatch `ollama_port` input to 11436 when using a
 gate-owned server; the default 11434 uses the existing user service.
 
+The controller copies the Fedora app's `config.json` as each run's template. It reads it from
+`$XDG_CONFIG_HOME/io.github.zulucodedesign.SecondBrain/`, or `~/.config` when unset, and stops if
+the file is missing. The real profile gains that file only when an installed #89 build first
+launches against it. Until then, set the `fedora_config_home` input to an isolated XDG config
+directory whose migrated `config.json` exists, such as the one left by an installed-package
+migration check.
+
 The repository is public, so no runner stays registered. Before a dispatch, register one from a
 terminal in the Fedora desktop session, with a registration token from the repository's
 Actions > Runners page:
@@ -192,6 +199,8 @@ gives tauri-driver the session's display and D-Bus, which a system service would
 For a walkthrough dispatch, the job waits up to 30 minutes after both machines finish for Nicolas
 to run `sudo rpm -e second-brain` on Fedora. It then runs `walkthrough-uninstalled`; the job cannot
 pass until package removal and vault preservation both pass. The runner needs no sudo access.
+If the walkthrough fails, the job skips that wait, so the candidate RPM stays installed until
+Nicolas removes it by hand.
 
 ## Keeping both machines awake
 
