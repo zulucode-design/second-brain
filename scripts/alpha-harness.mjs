@@ -149,7 +149,7 @@ export function pairedSyncthingConfig(config, { vaultId, vaultPath, peerId, peer
     id: vaultId,
     label: 'Second Brain Vault',
     path: vaultPath,
-    type: 'sendreceive',
+    type: 'sendonly',
     paused: true,
     devices: [{ deviceID: peerId }],
     fsWatcherEnabled: true,
@@ -1085,7 +1085,9 @@ async function runSyncLocked(options) {
 
     const linuxBackups = readdirSync(linux.backupPath).filter((name) => name.startsWith('helixnotes-pre-sync-'));
     const windowsBackups = remoteWorker(options.sshHost, { action: 'backups', root: WINDOWS_ROOT, runId }).backups;
-    if (!linuxBackups.length || !windowsBackups.length) fail('pre-sync backup missing on one machine');
+    // A machine backs up only before a batch that brings it changes (#14). Windows receives the
+    // fixture, so it must have one; Fedora has one only if something reached it too.
+    if (!windowsBackups.length) fail('pre-sync backup missing on the receiving machine');
     observation(evidencePath, 'pre-sync-backups', 'controller', { fedora: linuxBackups, windows: windowsBackups });
     completed = true;
   } catch (error) {

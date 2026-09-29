@@ -415,7 +415,7 @@ async fn apply_pairing(control: &ControlState, vault: &Path, peer: &Peer) -> Res
         "folders".into(),
         serde_json::json!([{
             "id": machine_local::vault_id(vault)?, "label": "Second Brain Vault",
-            "path": vault.to_string_lossy(), "type": "sendreceive", "paused": true,
+            "path": vault.to_string_lossy(), "type": "sendonly", "paused": true,
             "devices": [{"deviceID": peer.device_id}], "fsWatcherEnabled": true
         }]),
     );
@@ -929,11 +929,12 @@ pub async fn sync_pair(
     sync_status(app).await
 }
 
-fn set_folder_paused(
+fn patch_folder(
     client: &reqwest::blocking::Client,
     control: &ControlState,
     folder_id: &str,
-    paused: bool,
+    fields: serde_json::Value,
+    action: &str,
 ) -> Result<(), String> {
     client
         .patch(endpoint(
@@ -941,17 +942,60 @@ fn set_folder_paused(
             &format!("/rest/config/folders/{folder_id}"),
         ))
         .header("X-API-Key", &control.api_key)
-        .json(&serde_json::json!({ "paused": paused }))
+        .json(&fields)
         .send()
         .map_err(|error| error.to_string())?
         .error_for_status()
-        .map_err(|error| {
-            format!(
-                "Could not {} the sync folder: {error}",
-                if paused { "pause" } else { "resume" }
-            )
-        })?;
+        .map_err(|error| format!("Could not {action} the sync folder: {error}"))?;
     Ok(())
+}
+
+/// Pausing also returns the folder to `sendonly`, so a folder that fails to stay paused still
+/// cannot write to the vault outside a batch.
+fn pause_folder(
+    client: &reqwest::blocking::Client,
+    control: &ControlState,
+    folder_id: &str,
+) -> Result<(), String> {
+    patch_folder(
+        client,
+        control,
+        folder_id,
+        serde_json::json!({ "paused": true, "type": "sendonly" }),
+        "pause",
+    )
+}
+
+/// Syncthing writes to the vault only in `sendreceive`. A batch resumes the folder `sendonly`,
+/// which still receives the peer's index and reports what it would need but applies nothing, and
+/// switches with `receive_into_folder` only once its safety backup exists (#14). Type and resume
+/// go in one change, so the folder is never running as `sendreceive` from an earlier batch.
+fn resume_folder_send_only(
+    client: &reqwest::blocking::Client,
+    control: &ControlState,
+    folder_id: &str,
+) -> Result<(), String> {
+    patch_folder(
+        client,
+        control,
+        folder_id,
+        serde_json::json!({ "type": "sendonly", "paused": false }),
+        "resume",
+    )
+}
+
+fn receive_into_folder(
+    client: &reqwest::blocking::Client,
+    control: &ControlState,
+    folder_id: &str,
+) -> Result<(), String> {
+    patch_folder(
+        client,
+        control,
+        folder_id,
+        serde_json::json!({ "type": "sendreceive" }),
+        "receive changes into",
+    )
 }
 
 fn set_device_paused(
@@ -1042,15 +1086,11 @@ struct FolderPauseGuard<'a> {
 
 impl FolderPauseGuard<'_> {
     fn pause(mut self) -> Result<(), String> {
-        let folder = set_folder_paused(self.client, self.control, self.folder_id, true);
+        let folder = pause_folder(self.client, self.control, self.folder_id);
         let device = set_device_paused(self.client, self.control, self.device_id, true);
         let result = match (folder, device) {
             (Ok(()), Ok(())) => Ok(()),
-            (folder, device) => Err([folder.err(), device.err()]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join("; ")),
+            (folder, device) => Err(join_errors([folder.err(), device.err()])),
         };
         if result.is_ok() {
             self.armed = false;
@@ -1064,7 +1104,7 @@ impl Drop for FolderPauseGuard<'_> {
         if !self.armed {
             return;
         }
-        if let Err(error) = set_folder_paused(self.client, self.control, self.folder_id, true) {
+        if let Err(error) = pause_folder(self.client, self.control, self.folder_id) {
             log::error!("Sync safety cleanup failed: {error}");
         }
         if let Err(error) = set_device_paused(self.client, self.control, self.device_id, true) {
@@ -1093,20 +1133,33 @@ fn peer_connected(
         .unwrap_or(false))
 }
 
+fn join_errors<const N: usize>(errors: [Option<String>; N]) -> String {
+    errors.into_iter().flatten().collect::<Vec<_>>().join("; ")
+}
+
+/// Items the local folder still needs from the peer (files, directories, and deletions).
+fn needed_items(local_status: &serde_json::Value) -> Option<u64> {
+    local_status
+        .get("needTotalItems")
+        .and_then(|value| value.as_u64())
+}
+
+/// How far into the peer's index the local database has received, if it has any of it.
+fn peer_sequence(local_status: &serde_json::Value, peer_id: &str) -> Option<u64> {
+    local_status
+        .get("remoteSequence")
+        .and_then(|sequences| sequences.get(peer_id))
+        .and_then(|sequence| sequence.as_u64())
+}
+
 fn convergence_observation_is_complete(
     local_status: &serde_json::Value,
     remote_completion: Option<&serde_json::Value>,
     peer_id: &str,
 ) -> bool {
     let idle = local_status.get("state").and_then(|value| value.as_str()) == Some("idle");
-    let needed = local_status
-        .get("needTotalItems")
-        .and_then(|value| value.as_u64())
-        .unwrap_or(1);
-    let received_peer_index = local_status
-        .get("remoteSequence")
-        .and_then(|value| value.as_object())
-        .is_some_and(|sequences| sequences.contains_key(peer_id));
+    let needed = needed_items(local_status).unwrap_or(1);
+    let received_peer_index = peer_sequence(local_status, peer_id).is_some();
     let peer_complete = remote_completion.is_some_and(|completion| {
         completion
             .get("remoteState")
@@ -1142,6 +1195,7 @@ struct SyncProgress {
     completion: CompletionLatch,
     observations: usize,
     last_pull_error: Option<usize>,
+    peer_sequence: Option<u64>,
 }
 
 impl SyncProgress {
@@ -1155,11 +1209,15 @@ impl SyncProgress {
         if pull_errors(local_status) > 0 {
             self.last_pull_error = Some(self.observations);
         }
-        self.completion.observe(convergence_observation_is_complete(
-            local_status,
-            remote_completion,
-            peer_id,
-        ))
+        // A peer's index can arrive late or in parts (#14). While it is still moving, what this
+        // device needs is not settled, so the stability window starts again.
+        let sequence = peer_sequence(local_status, peer_id);
+        let index_moved = sequence != self.peer_sequence;
+        self.peer_sequence = sequence;
+        self.completion.observe(
+            !index_moved
+                && convergence_observation_is_complete(local_status, remote_completion, peer_id),
+        )
     }
 
     fn failure(&self) -> &'static str {
@@ -1193,11 +1251,89 @@ impl CompletionLatch {
     }
 }
 
+fn folder_status(
+    client: &reqwest::blocking::Client,
+    control: &ControlState,
+    folder_id: &str,
+) -> Result<serde_json::Value, String> {
+    client
+        .get(endpoint(control, "/rest/db/status"))
+        .header("X-API-Key", &control.api_key)
+        .query(&[("folder", folder_id)])
+        .send()
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| error.to_string())?
+        .json()
+        .map_err(|error| error.to_string())
+}
+
+fn peer_completion(
+    client: &reqwest::blocking::Client,
+    control: &ControlState,
+    folder_id: &str,
+    peer_id: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    let response = client
+        .get(endpoint(control, "/rest/db/completion"))
+        .header("X-API-Key", &control.api_key)
+        .query(&[("folder", folder_id), ("device", peer_id)])
+        .send()
+        .map_err(|error| error.to_string())?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    response
+        .error_for_status()
+        .map_err(|error| error.to_string())?
+        .json()
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+/// Whether the peer's index holds anything this device would change, add, or delete.
+fn has_incoming(local_status: &serde_json::Value) -> bool {
+    needed_items(local_status).is_some_and(|needed| needed > 0)
+}
+
+/// One guarded batch against a running sidecar. The folder resumes send-only; the first time
+/// anything is incoming, `before_receiving` takes the safety backup and only then may Syncthing
+/// write to the vault. A batch with nothing incoming takes no backup (#14). Folder and device are
+/// paused again on every path.
+fn sync_batch(
+    client: &reqwest::blocking::Client,
+    control: &ControlState,
+    folder_id: &str,
+    peer_id: &str,
+    before_receiving: impl FnMut() -> Result<(), String>,
+) -> Result<(), String> {
+    ensure_durable_temp_ignored(client, control, folder_id)?;
+    resume_folder_send_only(client, control, folder_id)?;
+    if let Err(error) = set_device_paused(client, control, peer_id, false) {
+        let _ = pause_folder(client, control, folder_id);
+        return Err(error);
+    }
+    let pause = FolderPauseGuard {
+        client,
+        control,
+        folder_id,
+        device_id: peer_id,
+        armed: true,
+    };
+    let result = wait_for_sync(client, control, folder_id, peer_id, before_receiving);
+    let paused = pause.pause();
+    match (result, paused) {
+        (Ok(()), Ok(())) => Ok(()),
+        (result, paused) => Err(join_errors([result.err(), paused.err()])),
+    }
+}
+
 fn wait_for_sync(
     client: &reqwest::blocking::Client,
     control: &ControlState,
     folder_id: &str,
     peer_id: &str,
+    mut before_receiving: impl FnMut() -> Result<(), String>,
 ) -> Result<(), String> {
     for _ in 0..60 {
         if peer_connected(client, control, peer_id)? {
@@ -1216,40 +1352,36 @@ fn wait_for_sync(
         .map_err(|error| error.to_string())?
         .error_for_status()
         .map_err(|error| format!("Syncthing could not scan the vault: {error}"))?;
+    let mut receiving = false;
     let mut progress = SyncProgress::default();
     for _ in 0..600 {
-        let value: serde_json::Value = client
-            .get(endpoint(control, "/rest/db/status"))
-            .header("X-API-Key", &control.api_key)
-            .query(&[("folder", folder_id)])
-            .send()
-            .map_err(|error| error.to_string())?
-            .error_for_status()
-            .map_err(|error| error.to_string())?
-            .json()
-            .map_err(|error| error.to_string())?;
-        let completion_response = client
-            .get(endpoint(control, "/rest/db/completion"))
-            .header("X-API-Key", &control.api_key)
-            .query(&[("folder", folder_id), ("device", peer_id)])
-            .send()
-            .map_err(|error| error.to_string())?;
-        let remote_completion = if completion_response.status() == reqwest::StatusCode::NOT_FOUND {
-            None
-        } else {
-            Some(
-                completion_response
-                    .error_for_status()
-                    .map_err(|error| error.to_string())?
-                    .json::<serde_json::Value>()
-                    .map_err(|error| error.to_string())?,
-            )
-        };
-        if progress.observe(&value, remote_completion.as_ref(), peer_id) {
-            hold_for_peer_handoff(PEER_HANDOFF_GRACE, SYNC_POLL_INTERVAL, || {
-                peer_connected(client, control, peer_id)
-            });
-            return Ok(());
+        let local = folder_status(client, control, folder_id)?;
+        if !receiving && has_incoming(&local) {
+            before_receiving()?;
+            receive_into_folder(client, control, folder_id)?;
+            receiving = true;
+            progress = SyncProgress::default();
+        } else if progress.observe(
+            &local,
+            peer_completion(client, control, folder_id, peer_id)?.as_ref(),
+            peer_id,
+        ) {
+            // A send-only device keeps watching through the hold: an index that arrives late
+            // still reaches this batch, behind its backup, instead of waiting for the next one.
+            let arrived = hold_for_peer_handoff(
+                PEER_HANDOFF_GRACE,
+                SYNC_POLL_INTERVAL,
+                || peer_connected(client, control, peer_id),
+                || {
+                    !receiving
+                        && folder_status(client, control, folder_id)
+                            .is_ok_and(|local| has_incoming(&local))
+                },
+            );
+            if !arrived {
+                return Ok(());
+            }
+            progress = SyncProgress::default();
         }
         std::thread::sleep(SYNC_POLL_INTERVAL);
     }
@@ -1265,18 +1397,24 @@ const PEER_HANDOFF_GRACE: Duration = Duration::from_secs(60);
 
 /// Keep the connection open after local confirmation until the peer reports it disconnected or the
 /// grace ends. A failed status call is not a disconnect: ending early there would reopen #103.
+/// Returns true, and stops holding at once, when `has_incoming` reports a change to receive.
 fn hold_for_peer_handoff(
     grace: Duration,
     poll: Duration,
     mut peer_connected: impl FnMut() -> Result<bool, String>,
-) {
+    mut has_incoming: impl FnMut() -> bool,
+) -> bool {
     let deadline = std::time::Instant::now() + grace;
     while std::time::Instant::now() < deadline {
+        if has_incoming() {
+            return true;
+        }
         if peer_connected() == Ok(false) {
-            return;
+            return false;
         }
         std::thread::sleep(poll);
     }
+    false
 }
 
 fn publish_sync_terminal(app: &AppHandle, terminal: crate::bulk_mutation::BulkMutationTerminal) {
@@ -1327,71 +1465,47 @@ fn run_sync(app: AppHandle, vault: PathBuf, control: ControlState, peer: Peer) {
                 );
                 return;
             }
-            match crate::backup::create_pre_sync_backup(&vault.to_string_lossy(), &backup_dir) {
-                Err(error) => crate::bulk_mutation::BulkMutationTerminal::failure(format!(
-                    "Sync aborted because its safety backup failed: {error}"
-                )),
-                Ok(_) => {
-                    let _ = crate::backup::cleanup_old_backups(&backup_dir, max_count);
-                    let client = reqwest::blocking::Client::builder()
-                        .timeout(Duration::from_secs(10))
-                        .build()
-                        .unwrap();
-                    let folder_id = match machine_local::vault_id(&vault) {
-                        Ok(id) => id,
-                        Err(error) => {
-                            publish_sync_terminal(
-                                &app,
-                                crate::bulk_mutation::BulkMutationTerminal::failure(error),
-                            );
-                            return;
-                        }
-                    };
-                    match ensure_durable_temp_ignored(&client, &control, &folder_id)
-                        .and_then(|()| set_folder_paused(&client, &control, &folder_id, false))
-                    {
-                        Err(error) => crate::bulk_mutation::BulkMutationTerminal::failure(error),
-                        Ok(()) => {
-                            if let Err(error) =
-                                set_device_paused(&client, &control, &peer.device_id, false)
-                            {
-                                let _ = set_folder_paused(&client, &control, &folder_id, true);
-                                publish_sync_terminal(
-                                    &app,
-                                    crate::bulk_mutation::BulkMutationTerminal::failure(error),
-                                );
-                                return;
-                            }
-                            let pause = FolderPauseGuard {
-                                client: &client,
-                                control: &control,
-                                folder_id: &folder_id,
-                                device_id: &peer.device_id,
-                                armed: true,
-                            };
-                            let result =
-                                wait_for_sync(&client, &control, &folder_id, &peer.device_id);
-                            let paused = pause.pause();
-                            let reconciliation = crate::commands::reconcile_bulk_projections(
-                                &state,
-                                &vault.to_string_lossy(),
-                            );
-                            match (result, paused, reconciliation) {
-                                (Ok(()), Ok(()), Ok(())) => {
-                                    crate::bulk_mutation::BulkMutationTerminal::success()
-                                }
-                                (sync, pause, projection) => {
-                                    crate::bulk_mutation::BulkMutationTerminal::changed_incomplete(
-                                        [sync.err(), pause.err(), projection.err()]
-                                            .into_iter()
-                                            .flatten()
-                                            .collect::<Vec<_>>()
-                                            .join("; "),
-                                    )
-                                }
-                            }
-                        }
+            let client = reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(10))
+                .build()
+                .unwrap();
+            let folder_id = match machine_local::vault_id(&vault) {
+                Ok(id) => id,
+                Err(error) => {
+                    publish_sync_terminal(
+                        &app,
+                        crate::bulk_mutation::BulkMutationTerminal::failure(error),
+                    );
+                    return;
+                }
+            };
+            let mut backed_up = false;
+            let batch = sync_batch(&client, &control, &folder_id, &peer.device_id, || {
+                crate::backup::create_pre_sync_backup(&vault.to_string_lossy(), &backup_dir)
+                    .map_err(|error| {
+                        format!("Sync aborted because its safety backup failed: {error}")
+                    })?;
+                let _ = crate::backup::cleanup_old_backups(&backup_dir, max_count);
+                backed_up = true;
+                Ok(())
+            });
+            if backed_up {
+                let reconciliation =
+                    crate::commands::reconcile_bulk_projections(&state, &vault.to_string_lossy());
+                match (batch, reconciliation) {
+                    (Ok(()), Ok(())) => crate::bulk_mutation::BulkMutationTerminal::success(),
+                    (batch, projection) => {
+                        crate::bulk_mutation::BulkMutationTerminal::changed_incomplete(join_errors(
+                            [batch.err(), projection.err()],
+                        ))
                     }
+                }
+            } else {
+                // Without the backup the folder never left send-only, so the vault and its
+                // projections are as they were.
+                match batch {
+                    Ok(()) => crate::bulk_mutation::BulkMutationTerminal::success(),
+                    Err(error) => crate::bulk_mutation::BulkMutationTerminal::failure(error),
                 }
             }
         }
@@ -1420,6 +1534,9 @@ pub async fn sync_now(app: AppHandle) -> Result<(), String> {
 }
 
 #[cfg(test)]
+mod live_tests;
+
+#[cfg(test)]
 mod tests {
     use super::{
         append_durable_temp_ignore_if_missing, convergence_observation_is_complete,
@@ -1436,28 +1553,83 @@ mod tests {
 
         let mut calls = 0;
         let started = Instant::now();
-        hold_for_peer_handoff(grace, Duration::ZERO, || {
-            calls += 1;
-            Ok(calls < 3)
-        });
+        hold_for_peer_handoff(
+            grace,
+            Duration::ZERO,
+            || {
+                calls += 1;
+                Ok(calls < 3)
+            },
+            || false,
+        );
         assert_eq!(calls, 3, "a reported disconnect ends the hold at once");
         assert!(started.elapsed() < grace);
 
         let started = Instant::now();
-        hold_for_peer_handoff(grace, Duration::from_millis(5), || {
-            Err("status call failed".to_string())
-        });
+        hold_for_peer_handoff(
+            grace,
+            Duration::from_millis(5),
+            || Err("status call failed".to_string()),
+            || false,
+        );
         assert!(
             started.elapsed() >= grace,
             "a failed status call must not end the hold"
         );
 
         let started = Instant::now();
-        hold_for_peer_handoff(grace, Duration::from_millis(5), || Ok(true));
+        hold_for_peer_handoff(grace, Duration::from_millis(5), || Ok(true), || false);
         assert!(
             started.elapsed() >= grace,
             "a connected peer is held for the grace"
         );
+    }
+
+    #[test]
+    fn a_change_arriving_during_the_hold_ends_it_to_be_received() {
+        let mut polls = 0;
+        let started = Instant::now();
+        let arrived = hold_for_peer_handoff(
+            Duration::from_secs(5),
+            Duration::from_millis(5),
+            || Ok(true),
+            || {
+                polls += 1;
+                polls == 3
+            },
+        );
+        assert!(arrived);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(!hold_for_peer_handoff(
+            Duration::from_millis(50),
+            Duration::from_millis(5),
+            || Ok(true),
+            || false,
+        ));
+    }
+
+    #[test]
+    fn a_moving_peer_index_restarts_the_stability_window() {
+        let remote = peer_complete();
+        let at = |sequence: u64| {
+            serde_json::json!({
+                "state": "idle",
+                "needTotalItems": 0,
+                "pullErrors": 0,
+                "remoteSequence": { "PEER": sequence }
+            })
+        };
+        let mut progress = SyncProgress::default();
+        assert!(!progress.observe(&at(14), Some(&remote), "PEER"));
+        for _ in 0..SYNC_COMPLETION_STABLE_OBSERVATIONS - 1 {
+            assert!(!progress.observe(&at(14), Some(&remote), "PEER"));
+        }
+        // Stale need = 0 while more of the peer's index is still arriving.
+        assert!(!progress.observe(&at(15), Some(&remote), "PEER"));
+        for _ in 0..SYNC_COMPLETION_STABLE_OBSERVATIONS - 1 {
+            assert!(!progress.observe(&at(15), Some(&remote), "PEER"));
+        }
+        assert!(progress.observe(&at(15), Some(&remote), "PEER"));
     }
 
     #[test]

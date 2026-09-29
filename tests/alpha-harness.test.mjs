@@ -67,6 +67,7 @@ test('pairing config keeps one explicit peer and a paused disposable vault', () 
   }]);
   assert.equal(next.folders[0].id, 'vault-id');
   assert.equal(next.folders[0].paused, true);
+  assert.equal(next.folders[0].type, 'sendonly', 'only a guarded batch lets Syncthing write (#14)');
   assert.equal(next.folders[0].devices[0].deviceID, peerId);
   assert.deepEqual(next.options.listenAddresses, ['tcp://100.64.0.2:22000']);
   for (const key of ['globalAnnounceEnabled', 'localAnnounceEnabled', 'relaysEnabled', 'natEnabled', 'crashReportingEnabled']) {

@@ -990,27 +990,36 @@ pub fn delete_backup(backup_dir: &Path, backup_path: &str) -> Result<(), String>
     fs::remove_file(path).map_err(|error| error.to_string())
 }
 
-/// Remove old backups keeping only the newest `max_count`
+/// Remove old backups keeping only the newest `max_count`. Pre-sync backups can come every few
+/// minutes, so the newest scheduled or manual backup is always kept, in place of the oldest one
+/// that would otherwise stay: the pool never holds only minutes-old recovery points (#14).
 pub fn cleanup_old_backups(backup_dir: &Path, max_count: u32) -> Result<(), String> {
-    let mut backups = list_backups(backup_dir)?;
-
     // backups are already sorted newest-first
-    if backups.len() as u32 > max_count {
-        let to_remove = backups.split_off(max_count as usize);
-        for entry in to_remove {
-            delete_backup(backup_dir, &entry.path)?;
+    let mut kept = list_backups(backup_dir)?;
+    if kept.len() as u32 <= max_count {
+        return Ok(());
+    }
+    let mut to_remove = kept.split_off(max_count as usize);
+    if !kept.iter().any(|entry| entry.kind == BackupKind::Backup) {
+        let newest_backup = to_remove
+            .iter()
+            .position(|entry| entry.kind == BackupKind::Backup);
+        if let (Some(index), Some(oldest_kept)) = (newest_backup, kept.pop()) {
+            to_remove[index] = oldest_kept;
         }
     }
-
+    for entry in to_remove {
+        delete_backup(backup_dir, &entry.path)?;
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        create_backup, create_pre_sync_backup, delete_backup, extract_and_validate_with,
-        list_backups, recover_interrupted_restore, recover_with, restore_backup,
-        restore_backup_with, Interrupt, RecoveredRestore, RestoreStep,
+        cleanup_old_backups, create_backup, create_pre_sync_backup, delete_backup,
+        extract_and_validate_with, list_backups, recover_interrupted_restore, recover_with,
+        restore_backup, restore_backup_with, Interrupt, RecoveredRestore, RestoreStep,
     };
     use crate::types::BackupKind;
     use std::collections::BTreeMap;
@@ -1630,6 +1639,61 @@ mod tests {
         fs::remove_file(vault.join("Projects/.draft.md")).unwrap();
         restore_backup(vault.to_str().unwrap(), &backups, &entry.path).unwrap();
         assert_eq!(tree(&vault), before);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pruning_keeps_the_newest_scheduled_backup_among_frequent_pre_sync_ones() {
+        let root = std::env::temp_dir().join(format!("second-brain-retention-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let names = [
+            "helixnotes-backup-2026-09-27T10-00-00.zip",
+            "helixnotes-backup-2026-09-28T10-00-00.zip",
+            "helixnotes-pre-sync-2026-09-29T10-00-00.zip",
+            "helixnotes-pre-sync-2026-09-29T10-05-00.zip",
+            "helixnotes-pre-sync-2026-09-29T10-10-00.zip",
+            "helixnotes-pre-sync-2026-09-29T10-15-00.zip",
+            "helixnotes-pre-sync-2026-09-29T10-20-00.zip",
+            "helixnotes-pre-sync-2026-09-29T10-25-00.zip",
+        ];
+        for name in names {
+            fs::write(root.join(name), "").unwrap();
+        }
+        let remaining = |root: &Path| {
+            let mut names: Vec<String> = list_backups(root)
+                .unwrap()
+                .into_iter()
+                .map(|entry| entry.filename)
+                .collect();
+            names.sort();
+            names
+        };
+
+        cleanup_old_backups(&root, 5).unwrap();
+        assert_eq!(
+            remaining(&root),
+            vec![
+                "helixnotes-backup-2026-09-28T10-00-00.zip",
+                "helixnotes-pre-sync-2026-09-29T10-10-00.zip",
+                "helixnotes-pre-sync-2026-09-29T10-15-00.zip",
+                "helixnotes-pre-sync-2026-09-29T10-20-00.zip",
+                "helixnotes-pre-sync-2026-09-29T10-25-00.zip",
+            ]
+        );
+
+        // With a scheduled backup already among the newest, pruning is plain newest-first.
+        fs::write(root.join("helixnotes-backup-2026-09-29T10-30-00.zip"), "").unwrap();
+        cleanup_old_backups(&root, 5).unwrap();
+        assert_eq!(
+            remaining(&root),
+            vec![
+                "helixnotes-backup-2026-09-29T10-30-00.zip",
+                "helixnotes-pre-sync-2026-09-29T10-10-00.zip",
+                "helixnotes-pre-sync-2026-09-29T10-15-00.zip",
+                "helixnotes-pre-sync-2026-09-29T10-20-00.zip",
+                "helixnotes-pre-sync-2026-09-29T10-25-00.zip",
+            ]
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

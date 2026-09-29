@@ -354,11 +354,13 @@ Sync is provided by **Syncthing bundled as an app-managed sidecar** (Tauri `exte
 The app owns its lifecycle, configuration, and folder scoping. To the user, sync is a toggle
 in Settings: nothing to install, no second application.
 
-The sidecar remains paused between app-scheduled or user-requested batches. Before a batch
-can receive files, the app acquires its bulk-mutation lease and creates a full-vault safety
-backup outside the vault. It then resumes the paired folder, waits for convergence, pauses it
-again on every terminal path, and rebuilds machine-local projections. Operational lifecycle,
-pinning, pairing, and verification details are recorded in
+The sidecar remains paused between app-scheduled or user-requested batches. A batch acquires
+the bulk-mutation lease and resumes the paired folder send-only, which receives the peer's
+index but writes nothing. The first time anything is incoming, it creates a full-vault safety
+backup outside the vault and only then lets the folder receive; a batch with nothing incoming
+takes no backup (#14). It waits for convergence, pauses the folder again on every terminal path,
+and rebuilds machine-local projections when it took its backup (changes were incoming).
+Operational lifecycle, pinning, pairing, and verification details are recorded in
 [syncthing-sidecar.md](syncthing-sidecar.md).
 
 Tailscale is a separate, user-installed prerequisite. The app explains how to verify that
