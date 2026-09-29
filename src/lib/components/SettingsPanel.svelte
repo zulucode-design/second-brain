@@ -302,7 +302,12 @@
 		}
 	}
 
+	// The model last sent for each provider. A switch made before an earlier save returns reads
+	// this first, because the store only catches up when that save does.
+	let sentAiModels: Record<string, string> = {};
+
 	async function saveAiSettings() {
+		if (aiProvider) sentAiModels[aiProvider] = aiModel;
 		const baseUrl = aiProviderMetadata?.serverKind === 'ollama' ? (_ollamaBaseUrl || null) : null;
 		let saved: AppConfig;
 		try {
@@ -318,6 +323,7 @@
 			);
 		} catch (e) {
 			aiTestMessage = { type: 'error', text: String(e) };
+			sentAiModels = {};
 			try { $appConfig = await getAppConfig(); } catch {}
 			return;
 		}
@@ -2401,7 +2407,7 @@
 								<div class="setting-options" style="flex-wrap: wrap;">
 									<button class="option-btn" class:active={!aiProvider} onclick={() => { if (!aiProvider) return; aiProvider = null; aiTestMessage = null; saveAiSettings(); }}>Disabled</button>
 									{#each AI_PROVIDER_OPTIONS as [providerOption, metadata]}
-										<button class="option-btn" class:active={aiProvider === providerOption} onclick={() => { if (aiProvider === providerOption) return; aiProvider = providerOption; aiModel = $appConfig ? modelForProvider($appConfig, providerOption) : metadata.defaultModel; aiTestMessage = null; saveAiSettings(); }}>{metadata.label}</button>
+										<button class="option-btn" class:active={aiProvider === providerOption} onclick={() => { if (aiProvider === providerOption) return; aiProvider = providerOption; aiModel = $appConfig ? modelForProvider($appConfig, providerOption, sentAiModels) : metadata.defaultModel; aiTestMessage = null; saveAiSettings(); }}>{metadata.label}</button>
 									{/each}
 								</div>
 							</div>

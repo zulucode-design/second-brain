@@ -42,3 +42,10 @@ test('a cleared model falls back to the default instead of staying empty', () =>
   assert.equal(modelForProvider(config({ ai_models: { ollama: '' } }), 'ollama'), 'gemma3:4b');
   assert.equal(modelForProvider(config({ ai_provider: 'ollama', ai_model: '' }), 'ollama'), 'gemma3:4b');
 });
+
+test('a model sent in a save that has not returned wins over the stale saved config', () => {
+  // Typed llama3 over gemma3, switched away and back before the first save returned.
+  const stale = config({ ai_provider: 'ollama', ai_model: 'gemma3' });
+  assert.equal(modelForProvider(stale, 'ollama', { ollama: 'llama3' }), 'llama3');
+  assert.equal(modelForProvider(stale, 'ollama', { openai: 'gpt-5-mini' }), 'gemma3');
+});

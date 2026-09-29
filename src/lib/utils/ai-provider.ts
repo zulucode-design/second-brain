@@ -49,13 +49,15 @@ export const AI_PROVIDER_OPTIONS = Object.entries(AI_PROVIDER_METADATA) as Array
 
 /**
  * The model to show after switching to `provider`: its remembered model, else its default.
- * The active provider's model is `ai_model`, which also covers configs saved before
- * `ai_models` existed. An empty model (a cleared field) falls back to the default.
+ * `sent` holds models from saves still in flight and wins over the saved config. The active
+ * provider's model is `ai_model`, which also covers configs saved before `ai_models` existed.
+ * An empty model (a cleared field) falls back to the default.
  */
 export function modelForProvider(
 	config: Pick<AppConfig, 'ai_provider' | 'ai_model' | 'ai_models'>,
 	provider: AiProvider,
+	sent: Record<string, string> = {},
 ): string {
-	const remembered = provider === config.ai_provider ? config.ai_model : config.ai_models[provider];
-	return remembered || AI_PROVIDER_METADATA[provider].defaultModel;
+	const saved = provider === config.ai_provider ? config.ai_model : config.ai_models[provider];
+	return sent[provider] || saved || AI_PROVIDER_METADATA[provider].defaultModel;
 }
