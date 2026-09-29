@@ -149,7 +149,7 @@ export function pairedSyncthingConfig(config, { vaultId, vaultPath, peerId, peer
     id: vaultId,
     label: 'Second Brain Vault',
     path: vaultPath,
-    type: 'sendreceive',
+    type: 'sendonly',
     paused: true,
     devices: [{ deviceID: peerId }],
     fsWatcherEnabled: true,

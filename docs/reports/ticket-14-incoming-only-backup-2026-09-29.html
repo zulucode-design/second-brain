@@ -59,15 +59,20 @@
     takes no backup. Pairing also configures the folder send-only.</li>
     <li>If the backup fails, the run ends with "Sync aborted because its safety backup failed", the folder still
     send-only, and nothing received. It reports <code>failure</code>, because the vault is unchanged. Outgoing
-    changes may already have reached the peer, whose own batch backs up before applying them.</li>
+    changes may already have reached the peer, whose own batch backs up before applying them. The same holds for
+    any other error in a run that never took its backup, such as an unreachable peer or a convergence timeout:
+    those runs used to report <code>changed-incomplete</code>, and now report <code>failure</code>, because the
+    folder never left send-only.</li>
     <li>Delayed indexes: the stability window restarts whenever the peer's remote sequence changes. A send-only
     device keeps watching what it needs through the 60-second handoff hold, and backs up and receives if anything
     appears there. Anything later waits for the next batch, and it can never land without a backup.</li>
     <li>A batch that received nothing skips the projection rebuild, because the vault is as it was.</li>
+    <li>Pausing the folder, at the end of every batch and in the cleanup guard, also returns it to
+    <code>sendonly</code>. Pairing, in the app and in the installed-package harness, configures it send-only.</li>
     <li>Pruning keeps the newest <code>backup_max_count</code> archives, but always keeps the newest scheduled or
     manual backup among them, in place of the oldest one that would otherwise stay.</li>
     <li>The Sync settings hint now reads "A full recovery backup is taken before any incoming changes are applied.
-    If that backup fails, nothing is received and sync pauses."</li>
+    If that backup fails, nothing is received."</li>
     <li>The installed sync gate in <code>scripts/alpha-harness.mjs</code> now requires a pre-sync backup on the
     receiving Windows machine only, and records any on Fedora.</li>
   </ul>
@@ -79,22 +84,28 @@
       each batch driven through <code>sync_batch</code>, the function a sync run calls. The backup callback waits
       3 s and then records the vault, so any transfer that could land ahead of the backup shows up in the
       record.</td>
-      <td class="pass">Pass, in 248 s:
+      <td class="pass">Pass, in 360 s:
       <ul>
         <li>First batch: only the empty side backed up, and its backup saw an empty vault; the note then arrived.</li>
         <li>Second batch, nothing changed: neither side backed up.</li>
         <li>Third batch, a note deleted and another added: only the receiving side backed up, its backup still
-        held the deleted note, and afterwards the vault held exactly the new note.</li>
+        held the deleted note, and afterwards the vault held exactly the new note. The paused folder was
+        send-only again.</li>
+        <li>A late index: the peer's device was reachable but its folder paused, so its index was withheld. After
+        20 s the vault was unchanged. Once the peer's folder resumed, the batch backed up the vault as it was and
+        then received the new note.</li>
         <li>A failing backup: the run returned the safety-backup error, the vault was unchanged 5 s later, and
         the folder was paused and still send-only.</li>
-        <li>No Syncthing process remained afterwards.</li>
-      </ul></td></tr>
-    <tr><td>The same live test with the batch resuming the folder as <code>sendreceive</code>, to show the test
-      detects writing before the backup.</td>
+      </ul>
+      Checked by hand afterwards, not by the test: no Syncthing process and no test folder remained.</td></tr>
+    <tr><td>An earlier version of the same live test, without the late-index case, with the batch resuming the
+      folder as <code>sendreceive</code>, to show the test detects writing before the backup.</td>
       <td class="pass">Failed as it should: the receiving side's backup recorded <code>note.md</code> already
       present.</td></tr>
     <tr><td>Unit tests: a moving peer index restarts the stability window; a change during the handoff hold ends
-      the hold to be received; pruning keeps the newest scheduled backup among frequent pre-sync ones.</td>
+      the hold to be received; pruning keeps the newest scheduled backup among frequent pre-sync ones; the harness
+      pairs the folder send-only. The live test cannot time an index to arrive during the handoff hold itself, so
+      that path is proven by the unit test alone.</td>
       <td class="pass">Pass, with the existing sync and backup tests.</td></tr>
     <tr><td><code>pnpm verify</code>.</td><td class="pass">Pass.</td></tr>
   </table>

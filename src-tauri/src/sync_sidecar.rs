@@ -950,6 +950,8 @@ fn patch_folder(
     Ok(())
 }
 
+/// Pausing also returns the folder to `sendonly`, so a folder that fails to stay paused still
+/// cannot write to the vault outside a batch.
 fn pause_folder(
     client: &reqwest::blocking::Client,
     control: &ControlState,
@@ -959,7 +961,7 @@ fn pause_folder(
         client,
         control,
         folder_id,
-        serde_json::json!({ "paused": true }),
+        serde_json::json!({ "paused": true, "type": "sendonly" }),
         "pause",
     )
 }
@@ -1088,11 +1090,7 @@ impl FolderPauseGuard<'_> {
         let device = set_device_paused(self.client, self.control, self.device_id, true);
         let result = match (folder, device) {
             (Ok(()), Ok(())) => Ok(()),
-            (folder, device) => Err([folder.err(), device.err()]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join("; ")),
+            (folder, device) => Err(join_errors([folder.err(), device.err()])),
         };
         if result.is_ok() {
             self.armed = false;
@@ -1135,20 +1133,33 @@ fn peer_connected(
         .unwrap_or(false))
 }
 
+fn join_errors<const N: usize>(errors: [Option<String>; N]) -> String {
+    errors.into_iter().flatten().collect::<Vec<_>>().join("; ")
+}
+
+/// Items the local folder still needs from the peer (files, directories, and deletions).
+fn needed_items(local_status: &serde_json::Value) -> Option<u64> {
+    local_status
+        .get("needTotalItems")
+        .and_then(|value| value.as_u64())
+}
+
+/// How far into the peer's index the local database has received, if it has any of it.
+fn peer_sequence(local_status: &serde_json::Value, peer_id: &str) -> Option<u64> {
+    local_status
+        .get("remoteSequence")
+        .and_then(|sequences| sequences.get(peer_id))
+        .and_then(|sequence| sequence.as_u64())
+}
+
 fn convergence_observation_is_complete(
     local_status: &serde_json::Value,
     remote_completion: Option<&serde_json::Value>,
     peer_id: &str,
 ) -> bool {
     let idle = local_status.get("state").and_then(|value| value.as_str()) == Some("idle");
-    let needed = local_status
-        .get("needTotalItems")
-        .and_then(|value| value.as_u64())
-        .unwrap_or(1);
-    let received_peer_index = local_status
-        .get("remoteSequence")
-        .and_then(|value| value.as_object())
-        .is_some_and(|sequences| sequences.contains_key(peer_id));
+    let needed = needed_items(local_status).unwrap_or(1);
+    let received_peer_index = peer_sequence(local_status, peer_id).is_some();
     let peer_complete = remote_completion.is_some_and(|completion| {
         completion
             .get("remoteState")
@@ -1200,12 +1211,9 @@ impl SyncProgress {
         }
         // A peer's index can arrive late or in parts (#14). While it is still moving, what this
         // device needs is not settled, so the stability window starts again.
-        let peer_sequence = local_status
-            .get("remoteSequence")
-            .and_then(|sequences| sequences.get(peer_id))
-            .and_then(|sequence| sequence.as_u64());
-        let index_moved = peer_sequence != self.peer_sequence;
-        self.peer_sequence = peer_sequence;
+        let sequence = peer_sequence(local_status, peer_id);
+        let index_moved = sequence != self.peer_sequence;
+        self.peer_sequence = sequence;
         self.completion.observe(
             !index_moved
                 && convergence_observation_is_complete(local_status, remote_completion, peer_id),
@@ -1284,11 +1292,8 @@ fn peer_completion(
 }
 
 /// Whether the peer's index holds anything this device would change, add, or delete.
-fn incoming(local_status: &serde_json::Value) -> bool {
-    local_status
-        .get("needTotalItems")
-        .and_then(|value| value.as_u64())
-        .is_some_and(|needed| needed > 0)
+fn has_incoming(local_status: &serde_json::Value) -> bool {
+    needed_items(local_status).is_some_and(|needed| needed > 0)
 }
 
 /// One guarded batch against a running sidecar. The folder resumes send-only; the first time
@@ -1319,11 +1324,7 @@ fn sync_batch(
     let paused = pause.pause();
     match (result, paused) {
         (Ok(()), Ok(())) => Ok(()),
-        (result, paused) => Err([result.err(), paused.err()]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join("; ")),
+        (result, paused) => Err(join_errors([result.err(), paused.err()])),
     }
 }
 
@@ -1355,7 +1356,7 @@ fn wait_for_sync(
     let mut progress = SyncProgress::default();
     for _ in 0..600 {
         let local = folder_status(client, control, folder_id)?;
-        if !receiving && incoming(&local) {
+        if !receiving && has_incoming(&local) {
             before_receiving()?;
             receive_into_folder(client, control, folder_id)?;
             receiving = true;
@@ -1374,7 +1375,7 @@ fn wait_for_sync(
                 || {
                     !receiving
                         && folder_status(client, control, folder_id)
-                            .is_ok_and(|local| incoming(&local))
+                            .is_ok_and(|local| has_incoming(&local))
                 },
             );
             if !arrived {
@@ -1396,16 +1397,16 @@ const PEER_HANDOFF_GRACE: Duration = Duration::from_secs(60);
 
 /// Keep the connection open after local confirmation until the peer reports it disconnected or the
 /// grace ends. A failed status call is not a disconnect: ending early there would reopen #103.
-/// Returns true, and stops holding at once, when `incoming` reports a change to receive.
+/// Returns true, and stops holding at once, when `has_incoming` reports a change to receive.
 fn hold_for_peer_handoff(
     grace: Duration,
     poll: Duration,
     mut peer_connected: impl FnMut() -> Result<bool, String>,
-    mut incoming: impl FnMut() -> bool,
+    mut has_incoming: impl FnMut() -> bool,
 ) -> bool {
     let deadline = std::time::Instant::now() + grace;
     while std::time::Instant::now() < deadline {
-        if incoming() {
+        if has_incoming() {
             return true;
         }
         if peer_connected() == Ok(false) {
@@ -1478,33 +1479,30 @@ fn run_sync(app: AppHandle, vault: PathBuf, control: ControlState, peer: Peer) {
                     return;
                 }
             };
-            let mut received = false;
+            let mut backed_up = false;
             let batch = sync_batch(&client, &control, &folder_id, &peer.device_id, || {
                 crate::backup::create_pre_sync_backup(&vault.to_string_lossy(), &backup_dir)
                     .map_err(|error| {
                         format!("Sync aborted because its safety backup failed: {error}")
                     })?;
                 let _ = crate::backup::cleanup_old_backups(&backup_dir, max_count);
-                received = true;
+                backed_up = true;
                 Ok(())
             });
-            if received {
+            if backed_up {
                 let reconciliation =
                     crate::commands::reconcile_bulk_projections(&state, &vault.to_string_lossy());
                 match (batch, reconciliation) {
                     (Ok(()), Ok(())) => crate::bulk_mutation::BulkMutationTerminal::success(),
                     (batch, projection) => {
-                        crate::bulk_mutation::BulkMutationTerminal::changed_incomplete(
-                            [batch.err(), projection.err()]
-                                .into_iter()
-                                .flatten()
-                                .collect::<Vec<_>>()
-                                .join("; "),
-                        )
+                        crate::bulk_mutation::BulkMutationTerminal::changed_incomplete(join_errors(
+                            [batch.err(), projection.err()],
+                        ))
                     }
                 }
             } else {
-                // Nothing was received, so the vault and its projections are as they were.
+                // Without the backup the folder never left send-only, so the vault and its
+                // projections are as they were.
                 match batch {
                     Ok(()) => crate::bulk_mutation::BulkMutationTerminal::success(),
                     Err(error) => crate::bulk_mutation::BulkMutationTerminal::failure(error),

@@ -29,7 +29,8 @@
   <a href="evidence/prealpha-post162-96a3e5b.jsonl"><code>prealpha-post162-96a3e5b.jsonl</code></a>).
   Nicolas classified it P1, blocking the alpha. This report records the cause, the fix, and the check
   in the real app. It covers the first of two #14 pull requests; the second covers backups only
-  before incoming changes, retention, and the installed proofs.</p>
+  before incoming changes and retention. The installed proofs follow once both have merged
+  (corrected 2026-09-29; this said the second pull request covered them).</p>
 
   <h2>Cause</h2>
   <p>The evidence note suspected <code>plan_commit</code>. The fault was in the backup. The walk in
@@ -113,7 +114,8 @@
     <li class="open">An installed-package rerun of this restore on both Fedora and Windows, on the next
       candidate.</li>
     <li class="open">Back up only before batches that bring incoming changes, and keep the newest
-      scheduled or manual backup when pruning the shared pool.</li>
+      scheduled or manual backup when pruning the shared pool. Done in source by the second #14
+      pull request; see <a href="ticket-14-incoming-only-backup-2026-09-29.html">its report</a>.</li>
     <li class="open">Installed-package proof of the retention limit, of the abort when the backup fails,
       and of routine sync time.</li>
     <li>The bulk AI criterion moved to #168. The concern about the 5-minute sync interval is in #169.</li>

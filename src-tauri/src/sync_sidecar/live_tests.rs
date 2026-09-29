@@ -98,6 +98,19 @@ fn rest(
     }
 }
 
+fn patch(node: &Node, path: &str, body: serde_json::Value) {
+    rest(node, reqwest::Method::PATCH, path, Some(body));
+}
+
+fn folder(node: &Node) -> serde_json::Value {
+    rest(
+        node,
+        reqwest::Method::GET,
+        &format!("/rest/config/folders/{FOLDER}"),
+        None,
+    )
+}
+
 fn start(root: &Path, name: &'static str, gui_port: u16, listen_port: u16) -> Node {
     let home = root.join(name).join("home");
     let vault = root.join(name).join("vault");
@@ -280,37 +293,55 @@ fn only_a_batch_with_incoming_changes_takes_a_backup_and_it_comes_first() {
     assert!(run_a.backups.is_empty());
     assert_eq!(run_b.backups, vec![files(&[("note.md", "from a")])]);
     assert_eq!(tree(&b.vault), files(&[("next.md", "second")]));
+    assert_eq!(
+        folder(&b)["type"],
+        "sendonly",
+        "a paused folder is send-only again"
+    );
 
-    // 4. A's backup fails: A ends with that error, writes nothing, and pauses the folder. B only
+    // 4. B's index arrives late: B's device is reachable but its folder stays paused, so A sees
+    // no change at first. When the folder resumes, A still backs up before receiving.
+    fs::write(b.vault.join("late.md"), "late").unwrap();
+    let before = tree(&a.vault);
+    patch(
+        &b,
+        &format!("/rest/config/devices/{}", a.device_id),
+        serde_json::json!({"paused": false}),
+    );
+    let run_a = std::thread::scope(|scope| {
+        let run = scope.spawn(|| batch(&a, &b, false));
+        std::thread::sleep(Duration::from_secs(20));
+        assert_eq!(
+            tree(&a.vault),
+            before,
+            "nothing arrives while B's index is withheld"
+        );
+        patch(
+            &b,
+            &format!("/rest/config/folders/{FOLDER}"),
+            serde_json::json!({"paused": false}),
+        );
+        run.join().unwrap()
+    });
+    assert_eq!(run_a.result, Ok(()));
+    assert_eq!(run_a.backups, vec![before]);
+    assert_eq!(
+        tree(&a.vault),
+        files(&[("late.md", "late"), ("next.md", "second")])
+    );
+
+    // 5. A's backup fails: A ends with that error, writes nothing, and pauses the folder. B only
     // serves its index here, because a batch of its own would wait for A to converge.
     fs::write(b.vault.join("from-b.md"), "from b").unwrap();
     let before = tree(&a.vault);
-    rest(
-        &b,
-        reqwest::Method::PATCH,
-        "/rest/config/folders/live-test-vault",
-        Some(serde_json::json!({"paused": false})),
-    );
-    rest(
-        &b,
-        reqwest::Method::PATCH,
-        &format!("/rest/config/devices/{}", a.device_id),
-        Some(serde_json::json!({"paused": false})),
-    );
     let run_a = batch(&a, &b, true);
     let error = run_a.result.unwrap_err();
     assert!(error.contains("safety backup failed"), "{error}");
     assert_eq!(run_a.backups.len(), 1);
     std::thread::sleep(Duration::from_secs(5));
     assert_eq!(tree(&a.vault), before, "a failed backup lets nothing in");
-    let folder = rest(
-        &a,
-        reqwest::Method::GET,
-        "/rest/config/folders/live-test-vault",
-        None,
-    );
-    assert_eq!(folder["paused"], true);
-    assert_eq!(folder["type"], "sendonly");
+    assert_eq!(folder(&a)["paused"], true);
+    assert_eq!(folder(&a)["type"], "sendonly");
 
     drop(a);
     drop(b);

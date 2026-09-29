@@ -87,12 +87,13 @@ is fixed:
    any change of the peer's remote sequence, other late index activity, or a pull error resets the
    observation window;
 5. re-pause both folder and device on success or error (with a drop guard as a second cleanup
-   path);
+   path); pausing also returns the folder to `sendonly`;
 6. when changes were received, reconcile the shared settings projection, keyword index, and
    semantic index;
 7. release watcher suppression and emit exactly one `success`, `changed-incomplete`, or
-   `failure` terminal outcome. A run that received nothing reports `failure`, never
-   `changed-incomplete`, because the vault is as it was.
+   `failure` terminal outcome. A run that ends without having taken its backup reports `failure`,
+   never `changed-incomplete`, whatever the error, because its folder never left send-only and
+   the vault is as it was.
 
 A peer's index can arrive late: after a pause the connection can take many seconds to return, and
 until then the local database still holds the previous batch's index, so a send-only folder can
