@@ -40,7 +40,8 @@ concurrency:
 jobs:
   candidate-verified:
     runs-on: ubuntu-22.04
-    if: github.ref == 'refs/heads/main'
+    # This candidate's one-off verification branch dispatches before its evidence PR lands.
+    if: github.ref == 'refs/heads/main' || (github.ref == 'refs/heads/prealpha/post162-verification' && inputs.candidate == '96a3e5b60306890e3daba22d993aa7a984bb96ea')
     permissions:
       contents: read
       checks: read
@@ -92,7 +93,7 @@ jobs:
           node scripts/alpha-harness.mjs "${args[@]}" | tee "$RUNNER_TEMP/alpha-harness-result.json"
 
       - name: Verify manual Fedora uninstall
-        if: inputs.gate == 'walkthrough'
+        if: inputs.gate == 'walkthrough' && success()
         run: |
           run_id=$(node -p "JSON.parse(require('node:fs').readFileSync(process.env.RUNNER_TEMP + '/alpha-harness-result.json', 'utf8').trim().split('\n').at(-1)).runId")
           echo 'Remove the candidate RPM now: sudo rpm -e second-brain'
