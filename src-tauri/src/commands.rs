@@ -3523,8 +3523,7 @@ pub fn set_ai_settings(
         }
         Some(AiProvider::Anthropic | AiProvider::Unknown(_)) | None => candidate.ai_api_key = key,
     }
-    candidate.ai_provider = provider;
-    candidate.ai_model = model;
+    candidate.select_ai_model(provider, model);
     candidate.ai_writing_style = writing_style.filter(|s| !s.trim().is_empty());
     let next_target = crate::ai_health::health_target(&candidate, generation);
     let semantic_settings_changed = candidate.ollama_base_url != config.ollama_base_url

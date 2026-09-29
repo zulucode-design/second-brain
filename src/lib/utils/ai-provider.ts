@@ -46,3 +46,20 @@ export const AI_PROVIDER_METADATA: Record<AiProvider, AiProviderMetadata> = {
 export const AI_PROVIDER_OPTIONS = Object.entries(AI_PROVIDER_METADATA) as Array<
 	[AiProvider, AiProviderMetadata]
 >;
+
+/** The model to show after switching to `provider`: its remembered model, else its default. */
+export function modelForProvider(models: Record<string, string>, provider: AiProvider): string {
+	return models[provider] ?? AI_PROVIDER_METADATA[provider].defaultModel;
+}
+
+/** Mirrors `AppConfig::select_ai_model` in Rust, so the settings store matches what was saved. */
+export function rememberAiModels(
+	saved: { ai_provider: string | null; ai_model: string; ai_models: Record<string, string> },
+	provider: string | null,
+	model: string,
+): Record<string, string> {
+	const models = { ...saved.ai_models };
+	if (saved.ai_provider) models[saved.ai_provider] = saved.ai_model;
+	if (provider) models[provider] = model;
+	return models;
+}

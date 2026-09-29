@@ -103,7 +103,9 @@
         the bottom window edge. This is a separate, pre-existing positioning defect.</li>
       <li><strong><a href="https://github.com/zulucode-design/second-brain/issues/53">#53</a>:</strong> switching providers replaces the shared model with each
         provider's default. This pre-existing behavior avoids cross-provider model mismatch
-        but loses custom choices; the follow-up tracks provider-specific remembered models.</li>
+        but loses custom choices; the follow-up tracks provider-specific remembered models.
+        <em>Update 2026-09-28:</em> fixed by the #53 branch. The config keeps one remembered
+        model per provider ID, and an older config's shared model is kept on its first switch away.</li>
     </ul>
 
     <div class="callout">

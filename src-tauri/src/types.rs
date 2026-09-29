@@ -300,8 +300,13 @@ pub struct AppConfig {
     /// until a later launch finishes the move.
     #[serde(skip)]
     pub legacy_move_incomplete: bool,
+    /// The active provider's model. Requests read this field.
     #[serde(default = "default_ai_model")]
     pub ai_model: String,
+    /// The last model chosen for each provider, keyed by provider ID, so switching back to a
+    /// provider restores its model. See [`AppConfig::select_ai_model`].
+    #[serde(default)]
+    pub ai_models: std::collections::HashMap<String, String>,
     #[serde(default)]
     pub ai_writing_style: Option<String>,
     #[serde(default)]
@@ -366,6 +371,25 @@ fn default_system_dark_theme() -> String {
     "dark".to_string()
 }
 
+impl AppConfig {
+    /// Make `model` the active model and remember it for `provider`.
+    ///
+    /// The outgoing provider's model is recorded too. Configs saved before per-provider models
+    /// hold only `ai_model`, so the first switch away is what preserves that model.
+    /// `src/lib/utils/ai-provider.ts` mirrors this in `rememberAiModels`.
+    pub fn select_ai_model(&mut self, provider: Option<AiProvider>, model: String) {
+        if let Some(previous) = &self.ai_provider {
+            self.ai_models
+                .insert(previous.id().to_string(), self.ai_model.clone());
+        }
+        if let Some(next) = &provider {
+            self.ai_models.insert(next.id().to_string(), model.clone());
+        }
+        self.ai_provider = provider;
+        self.ai_model = model;
+    }
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -417,6 +441,7 @@ impl Default for AppConfig {
             config_save_blocked: false,
             legacy_move_incomplete: false,
             ai_model: "claude-sonnet-4-6".to_string(),
+            ai_models: std::collections::HashMap::new(),
             ai_writing_style: None,
             default_view_mode: false,
             new_notes_in_source_mode: false,
@@ -669,6 +694,75 @@ mod startup_view_tests {
 #[cfg(test)]
 mod ai_provider_tests {
     use super::{AiProvider, AppConfig};
+
+    fn restart(config: &AppConfig) -> AppConfig {
+        serde_json::from_value(serde_json::to_value(config).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn switching_providers_restores_each_providers_model_across_restarts() {
+        let mut config = AppConfig::default();
+        config.select_ai_model(Some(AiProvider::Ollama), "gemma3".to_string());
+        config.select_ai_model(Some(AiProvider::OpenAi), "gpt-5-mini".to_string());
+        config.select_ai_model(Some(AiProvider::Anthropic), "claude-opus-4-8".to_string());
+        config.select_ai_model(
+            Some(AiProvider::OpenAiCompatible),
+            "local-llama".to_string(),
+        );
+        let config = restart(&config);
+
+        for (provider, model) in [
+            ("ollama", "gemma3"),
+            ("openai", "gpt-5-mini"),
+            ("anthropic", "claude-opus-4-8"),
+            ("openai_compatible", "local-llama"),
+        ] {
+            assert_eq!(
+                config.ai_models.get(provider).map(String::as_str),
+                Some(model)
+            );
+        }
+        assert_eq!(config.ai_provider, Some(AiProvider::OpenAiCompatible));
+        assert_eq!(config.ai_model, "local-llama");
+    }
+
+    #[test]
+    fn a_shared_model_from_an_older_config_survives_the_first_switch_away() {
+        let mut saved = serde_json::to_value(AppConfig::default()).unwrap();
+        let object = saved.as_object_mut().unwrap();
+        object.remove("ai_models");
+        object.insert("ai_provider".to_string(), serde_json::json!("ollama"));
+        object.insert("ai_model".to_string(), serde_json::json!("gemma3"));
+        let mut config: AppConfig = serde_json::from_value(saved).unwrap();
+        assert_eq!(config.ai_model, "gemma3");
+        assert!(config.ai_models.is_empty());
+
+        config.select_ai_model(Some(AiProvider::Anthropic), "claude-sonnet-4-6".to_string());
+        let config = restart(&config);
+
+        assert_eq!(
+            config.ai_models.get("ollama").map(String::as_str),
+            Some("gemma3")
+        );
+    }
+
+    #[test]
+    fn disabling_ai_keeps_the_model_and_an_unknown_provider_keeps_its_own_entry() {
+        let mut config = AppConfig {
+            ai_provider: Some(AiProvider::Unknown("future_local".to_string())),
+            ai_model: "future-model".to_string(),
+            ..Default::default()
+        };
+        config.select_ai_model(None, "future-model".to_string());
+
+        assert_eq!(config.ai_provider, None);
+        assert_eq!(config.ai_model, "future-model");
+        assert_eq!(
+            config.ai_models.get("future_local").map(String::as_str),
+            Some("future-model")
+        );
+        assert_eq!(config.ai_models.len(), 1);
+    }
 
     #[test]
     fn existing_provider_ids_round_trip_unchanged() {

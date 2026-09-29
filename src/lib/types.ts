@@ -206,6 +206,8 @@ export interface AppConfig {
   /** Why config.json could not be used at startup; the damaged file is kept beside it. */
   config_error?: string | null;
   ai_model: string;
+  /** Last model per provider ID; switching providers restores it. */
+  ai_models: Record<string, string>;
   ai_writing_style: string | null;
   default_view_mode: boolean;
   new_notes_in_source_mode: boolean;

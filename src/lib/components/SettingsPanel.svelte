@@ -3,7 +3,7 @@
 	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, notionStatus, notionConnect, notionDisconnect, notionSetEnabled, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex, getSyncStatus, setSyncEnabled, pairSyncDevice, syncNow, listSyncConflicts, resolveSyncConflict, copyTextToClipboard, exportDiagnostics } from '$lib/api';
 	import type { AiProvider } from '$lib/types';
 	import { importOutcomeView, type ImportDonePayload } from '$lib/utils/import-outcome';
-	import { AI_PROVIDER_METADATA, AI_PROVIDER_OPTIONS } from '$lib/utils/ai-provider';
+	import { AI_PROVIDER_METADATA, AI_PROVIDER_OPTIONS, modelForProvider, rememberAiModels } from '$lib/utils/ai-provider';
 	import { isLinux, isWindows } from '$lib/platform';
 	import { applyTheme, isDarkTheme } from '$lib/theme';
 	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
@@ -324,6 +324,7 @@
 			$appConfig = {
 				...$appConfig,
 				ai_provider: aiProvider,
+				ai_models: rememberAiModels($appConfig, aiProvider, aiModel),
 				ai_api_key: _anthropicKey || null,
 				openai_api_key: _openaiKey || null,
 				ollama_base_url: _ollamaBaseUrl || null,
@@ -2397,7 +2398,7 @@
 								<div class="setting-options" style="flex-wrap: wrap;">
 									<button class="option-btn" class:active={!aiProvider} onclick={() => { if (!aiProvider) return; aiProvider = null; aiTestMessage = null; saveAiSettings(); }}>Disabled</button>
 									{#each AI_PROVIDER_OPTIONS as [providerOption, metadata]}
-										<button class="option-btn" class:active={aiProvider === providerOption} onclick={() => { if (aiProvider === providerOption) return; aiProvider = providerOption; aiModel = metadata.defaultModel; aiTestMessage = null; saveAiSettings(); }}>{metadata.label}</button>
+										<button class="option-btn" class:active={aiProvider === providerOption} onclick={() => { if (aiProvider === providerOption) return; aiProvider = providerOption; aiModel = modelForProvider($appConfig?.ai_models ?? {}, providerOption); aiTestMessage = null; saveAiSettings(); }}>{metadata.label}</button>
 									{/each}
 								</div>
 							</div>
