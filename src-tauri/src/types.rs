@@ -376,7 +376,6 @@ impl AppConfig {
     ///
     /// The outgoing provider's model is recorded too. Configs saved before per-provider models
     /// hold only `ai_model`, so the first switch away is what preserves that model.
-    /// `src/lib/utils/ai-provider.ts` mirrors this in `rememberAiModels`.
     pub fn select_ai_model(&mut self, provider: Option<AiProvider>, model: String) {
         if let Some(previous) = &self.ai_provider {
             self.ai_models
@@ -700,7 +699,7 @@ mod ai_provider_tests {
     }
 
     #[test]
-    fn switching_providers_restores_each_providers_model_across_restarts() {
+    fn each_provider_keeps_an_independent_model() {
         let mut config = AppConfig::default();
         config.select_ai_model(Some(AiProvider::Ollama), "gemma3".to_string());
         config.select_ai_model(Some(AiProvider::OpenAi), "gpt-5-mini".to_string());

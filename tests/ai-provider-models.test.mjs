@@ -12,51 +12,24 @@ const { code } = await transformWithEsbuild(source, 'ai-provider.ts', {
   format: 'esm',
   target: 'esnext'
 });
-const { modelForProvider, rememberAiModels } = await import(
+const { modelForProvider } = await import(
   `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
 );
 
-// Walk the settings switch the way SettingsPanel does: pick the restored model, then save.
-function switchTo(config, provider, model = modelForProvider(config.ai_models, provider)) {
-  return {
-    ai_provider: provider,
-    ai_model: model,
-    ai_models: rememberAiModels(config, provider, model)
-  };
-}
-
-test('switching away from Ollama and back restores the custom model', () => {
-  let config = { ai_provider: null, ai_model: 'claude-sonnet-4-6', ai_models: {} };
-  config = switchTo(config, 'ollama', 'gemma3');
-  config = switchTo(config, 'openai');
-  assert.equal(config.ai_model, 'gpt-5.5');
-  config = switchTo(config, 'ollama');
-  assert.equal(config.ai_model, 'gemma3');
-});
-
-test('each provider keeps an independent model', () => {
-  let config = { ai_provider: null, ai_model: 'claude-sonnet-4-6', ai_models: {} };
-  const chosen = {
-    ollama: 'gemma3',
-    anthropic: 'claude-opus-4-8',
-    openai: 'gpt-5-mini',
-    openai_compatible: 'local-llama'
-  };
-  for (const [provider, model] of Object.entries(chosen)) config = switchTo(config, provider, model);
-  for (const [provider, model] of Object.entries(chosen)) {
-    config = switchTo(config, provider);
-    assert.equal(config.ai_model, model, provider);
+// The backend records the map (AppConfig::select_ai_model); this only picks from it.
+test('switching to a provider restores its remembered model', () => {
+  const models = { ollama: 'gemma3', openai: 'gpt-5-mini', anthropic: 'claude-opus-4-8', openai_compatible: 'local-llama' };
+  for (const [provider, model] of Object.entries(models)) {
+    assert.equal(modelForProvider(models, provider), model, provider);
   }
 });
 
 test('a provider with no remembered model starts with its default', () => {
-  assert.equal(modelForProvider({}, 'ollama'), 'gemma3:4b');
+  assert.equal(modelForProvider({ openai: 'gpt-5-mini' }, 'ollama'), 'gemma3:4b');
+  assert.equal(modelForProvider({}, 'anthropic'), 'claude-sonnet-4-6');
   assert.equal(modelForProvider({}, 'openai_compatible'), '');
 });
 
-test('an older config keeps its shared model once the user switches away', () => {
-  let config = { ai_provider: 'ollama', ai_model: 'gemma3', ai_models: {} };
-  config = switchTo(config, 'anthropic');
-  config = switchTo(config, 'ollama');
-  assert.equal(config.ai_model, 'gemma3');
+test('a cleared model falls back to the default instead of staying empty', () => {
+  assert.equal(modelForProvider({ ollama: '' }, 'ollama'), 'gemma3:4b');
 });
