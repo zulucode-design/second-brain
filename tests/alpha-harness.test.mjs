@@ -158,15 +158,19 @@ test('window state is put back as it was, or removed when the run created it', (
   writeFileSync(live, '{"main":{"x":10}}');
   const existed = journalWindowState(live, copy);
   writeFileSync(live, '{"main":{"x":-1236}}');
-  assert.throws(() => checkWindowStateRestored(existed), /does not match its pre-run copy/);
+  assert.throws(() => checkWindowStateRestored(existed), /does not match its pre-run hash/);
   restoreWindowState(existed);
   assert.equal(readFileSync(live, 'utf8'), '{"main":{"x":10}}');
-  assert.match(checkWindowStateRestored(existed), /^[0-9a-f]{64}$/);
+  assert.equal(checkWindowStateRestored(existed), existed.originalWindowStateSha256);
+  writeFileSync(copy, '{"main":{"x":-1236}}');
+  restoreWindowState(existed);
+  assert.throws(() => checkWindowStateRestored(existed), /does not match its pre-run hash/, 'a damaged journal copy fails');
 
   rmSync(live);
   rmSync(copy);
   const absent = journalWindowState(live, copy);
   assert.equal(absent.originalWindowStatePath, null);
+  assert.equal(absent.originalWindowStateSha256, null);
   writeFileSync(live, '{"main":{"x":10}}');
   assert.throws(() => checkWindowStateRestored(absent), /did not exist before the run/);
   restoreWindowState(absent);

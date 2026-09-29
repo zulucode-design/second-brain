@@ -2158,9 +2158,14 @@ function damagedConfigs(configDirectory) {
 // tauri-plugin-window-state saves each launch's window geometry beside config.json, so a run
 // journals that file too. A null original records that the file did not exist before the run.
 export function journalWindowState(windowStatePath, originalPath) {
-  if (!existsSync(windowStatePath)) return { windowStatePath, originalWindowStatePath: null };
-  copyFileSync(windowStatePath, originalPath);
-  return { windowStatePath, originalWindowStatePath: originalPath };
+  if (!existsSync(windowStatePath)) return { windowStatePath, originalWindowStatePath: null, originalWindowStateSha256: null };
+  const bytes = readFileSync(windowStatePath);
+  writeFileSync(originalPath, bytes);
+  return {
+    windowStatePath,
+    originalWindowStatePath: originalPath,
+    originalWindowStateSha256: createHash('sha256').update(bytes).digest('hex'),
+  };
 }
 
 // Journals written before #167 hold no window state, so there is nothing to restore for them.
@@ -2170,7 +2175,8 @@ export function restoreWindowState(manifest) {
   else rmSync(manifest.windowStatePath, { force: true });
 }
 
-// The SHA-256 of the restored file, or null when it was absent before the run and is absent now.
+// Compares the live file with the hash taken before the run, not with the journal copy, so a
+// damaged copy fails too. Returns that hash, or null when the file was absent before and after.
 export function checkWindowStateRestored(manifest) {
   if (!manifest.windowStatePath) return null;
   const present = existsSync(manifest.windowStatePath);
@@ -2178,15 +2184,14 @@ export function checkWindowStateRestored(manifest) {
     if (present) fail(`${manifest.windowStatePath} did not exist before the run but exists now`);
     return null;
   }
-  const original = readFileSync(manifest.originalWindowStatePath);
-  if (!present || !readFileSync(manifest.windowStatePath).equals(original)) {
-    fail(`${manifest.windowStatePath} does not match its pre-run copy`);
-  }
-  return createHash('sha256').update(original).digest('hex');
+  const current = present && createHash('sha256').update(readFileSync(manifest.windowStatePath)).digest('hex');
+  if (current !== manifest.originalWindowStateSha256) fail(`${manifest.windowStatePath} does not match its pre-run hash`);
+  return current;
 }
 
-// Puts back every profile file the run journaled and returns the window state's SHA-256.
-function restoreProfile(manifest) {
+// Restores config.json and the window state from the journal, checks the window state, and
+// returns its SHA-256.
+function restoreJournaledFiles(manifest) {
   atomicWrite(manifest.configPath, readFileSync(manifest.originalPath));
   restoreWindowState(manifest);
   return checkWindowStateRestored(manifest);
@@ -2230,9 +2235,12 @@ async function windowsWorker(request) {
     if (manifest.runId !== lock.runId || win32.resolve(manifest.configPath) !== win32.resolve(configPath)) {
       fail('stale harness journal is inconsistent');
     }
-    const windowStateSha256 = restoreProfile(manifest);
+    const windowStateSha256 = restoreJournaledFiles(manifest);
     unlinkSync(lockPath);
-    return { recovered: true, runId: manifest.runId, runRoot: dirname(lock.manifestPath), windowStateSha256 };
+    return {
+      recovered: true, runId: manifest.runId, runRoot: dirname(lock.manifestPath),
+      windowStateJournaled: Boolean(manifest.windowStatePath), windowStateSha256,
+    };
   }
 
   if (request.action === 'prepare') {
@@ -2285,8 +2293,7 @@ async function windowsWorker(request) {
       vault: paths.vaultPath,
       freeBytes: requireFreeSpace(root),
       package: { ...system, app },
-      windowStateSha256: windowStateJournal.originalWindowStatePath
-        && createHash('sha256').update(readFileSync(windowStateJournal.originalWindowStatePath)).digest('hex'),
+      windowStateSha256: windowStateJournal.originalWindowStateSha256,
     };
   }
 
@@ -2579,7 +2586,7 @@ async function windowsWorker(request) {
     }
     const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
     if (lock.runId !== request.runId) fail('config lock belongs to another run');
-    const windowStateSha256 = restoreProfile(manifest);
+    const windowStateSha256 = restoreJournaledFiles(manifest);
     // A run that failed between break-config and repair-config leaves the app's damaged copy.
     // Moved while the lock still stands, so a failure here leaves the run for a retry to finish.
     const damagedMoved = moveRunDamagedConfigs(dirname(manifest.configPath), paths);

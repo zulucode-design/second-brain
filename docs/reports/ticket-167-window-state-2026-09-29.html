@@ -35,14 +35,17 @@
     <tr><th>Step</th><th>Change in <code>scripts/alpha-harness.mjs</code></th></tr>
     <tr><td><code>prepare</code></td>
       <td>Copies <code>.window-state.json</code> to <code>original-window-state.json</code> in the run
-      directory, or records that it did not exist. Both paths go into the run's journal, and the
-      <code>prepared</code> evidence event carries the pre-run SHA-256.</td></tr>
+      directory with its SHA-256, or records that it did not exist. The paths and the hash go into the
+      run's journal, and the <code>prepared</code> evidence event carries the hash.</td></tr>
     <tr><td><code>finalize</code> and <code>recover</code></td>
       <td>Wherever <code>config.json</code> is restored, the window state is restored too, or removed if
-      the run created it. The worker then compares the file with its pre-run copy, fails if they differ,
-      and returns its SHA-256 (<code>windowStateSha256</code>, null when the file is absent). The
+      the run created it. The worker then hashes the live file and fails unless it has the pre-run
+      hash. It compares with the recorded hash, not the journal copy, so a damaged copy also fails.
+      It returns that hash (<code>windowStateSha256</code>, null when the file is absent). The
       controller records it in the <code>config-restored</code> evidence event after
-      <code>finalize</code> and in <code>stale-run-recovered</code> after <code>recover</code>.</td></tr>
+      <code>finalize</code> and in <code>stale-run-recovered</code> after <code>recover</code>, where
+      <code>windowStateJournaled</code> tells a journal from before this change apart from an absent
+      file.</td></tr>
     <tr><td><code>finalize</code> after <code>recover</code></td>
       <td>When the lock is already gone, the same comparison runs, as it does for
       <code>config.json</code>.</td></tr>
@@ -51,7 +54,8 @@
       before, with nothing to restore.</td></tr>
   </table>
   <p>A new test in <code>tests/alpha-harness.test.mjs</code> covers both cases (file present and changed;
-  file absent and created by the run), the failing comparison before restore, and an older journal,
+  file absent and created by the run), the failing comparison before restore, a damaged journal copy,
+  and an older journal,
   which is neither restored nor checked.</p>
 
   <h2>Manual verification (Windows 11, real profile)</h2>
@@ -62,8 +66,9 @@
   <code>D:\SecondBrainTest\sb167\profile-backup</code> first. No app was launched: the script wrote the
   changed window state itself,
   using the off-screen geometry from the original report. No harness lock existed and no app process
-  ran before the check. The table is from the rerun after the review fixes (run directories
-  <code>a2</code>, <code>b2</code>, <code>c2</code>); the first pass, without the <code>prepare</code> hash, gave the same results.</p>
+  ran before the check. The table is from the last rerun, after both review rounds (run directories
+  <code>a3</code>, <code>b3</code>, <code>c3</code>, <code>d3</code>). Two earlier passes on the
+  code before those fixes gave the same results for A to C.</p>
   <table>
     <tr><th>Case</th><th>Result</th><th>Status</th></tr>
     <tr><td>Before</td>
@@ -75,9 +80,15 @@
       their pre-run hashes and the lock was gone.</td>
       <td class="pass">pass</td></tr>
     <tr><td>B: run changes the file, <code>recover</code>, then <code>finalize</code></td>
-      <td><code>recover</code> restored both files (window state <code>34278064…</code>) and removed the
-      lock. The later <code>finalize</code> took the lock-gone path, reported
+      <td><code>recover</code> restored both files (window state <code>34278064…</code>, with
+      <code>windowStateJournaled: true</code>) and removed the lock. The later <code>finalize</code> took the lock-gone path, reported
       <code>alreadyRestored</code> with the same hash, and removed the junction.</td>
+      <td class="pass">pass</td></tr>
+    <tr><td>D: journal copy damaged, <code>finalize</code>, repair, <code>finalize</code> again</td>
+      <td>With the run's <code>original-window-state.json</code> overwritten, <code>finalize</code> failed
+      and left the lock in place, and the live file stayed changed (<code>449f95ef…</code>). After the
+      copy was put back from the safety copy, a second <code>finalize</code> restored
+      <code>34278064…</code> and removed the lock.</td>
       <td class="pass">pass</td></tr>
     <tr><td>C: file absent before the run, created during it</td>
       <td>The file was set aside and <code>prepare</code> reported null. The run created it, and <code>finalize</code> removed it and returned
