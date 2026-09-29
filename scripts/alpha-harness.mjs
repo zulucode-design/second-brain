@@ -748,9 +748,10 @@ async function openApp(port, application, readySelector = 'button=New Note') {
     connectionRetryCount: 0,
     capabilities: { 'tauri:options': { application } },
   });
-  await browser.$(readySelector).waitForDisplayed({ timeout: 60_000 });
-  // WebDriver's default window is small enough to fold the editor toolbar away.
+  // Resize before waiting: WebDriver's default window, or a persisted compact one, hides the
+  // wide-layout ready selector and folds the editor toolbar away.
   await browser.setWindowSize(1280, 860);
+  await browser.$(readySelector).waitForDisplayed({ timeout: 60_000 });
   return browser;
 }
 
