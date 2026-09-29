@@ -49,3 +49,8 @@ test('a model sent in a save that has not returned wins over the stale saved con
   assert.equal(modelForProvider(stale, 'ollama', { ollama: 'llama3' }), 'llama3');
   assert.equal(modelForProvider(stale, 'ollama', { openai: 'gpt-5-mini' }), 'gemma3');
 });
+
+test('a cleared model sent in a save that has not returned restores the default', () => {
+  const stale = config({ ai_provider: 'ollama', ai_model: 'gemma3' });
+  assert.equal(modelForProvider(stale, 'ollama', { ollama: '' }), 'gemma3:4b');
+});

@@ -303,11 +303,12 @@
 	}
 
 	// The model last sent for each provider. A switch made before an earlier save returns reads
-	// this first, because the store only catches up when that save does.
-	let sentAiModels: Record<string, string> = {};
+	// this first, because the store only catches up when that save does. A failed save keeps its
+	// entry: switching back shows what the user entered, and the next save sends it again.
+	let sentAiModels: Partial<Record<AiProvider, string>> = {};
 
 	async function saveAiSettings() {
-		if (aiProvider) sentAiModels[aiProvider] = aiModel;
+		if (aiProviderMetadata) sentAiModels[aiProvider as AiProvider] = aiModel;
 		const baseUrl = aiProviderMetadata?.serverKind === 'ollama' ? (_ollamaBaseUrl || null) : null;
 		let saved: AppConfig;
 		try {
@@ -323,7 +324,6 @@
 			);
 		} catch (e) {
 			aiTestMessage = { type: 'error', text: String(e) };
-			sentAiModels = {};
 			try { $appConfig = await getAppConfig(); } catch {}
 			return;
 		}
