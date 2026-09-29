@@ -105,7 +105,10 @@
     Restoring one through the installed Fedora Backup UI failed and rolled back: <code>.stfolder already exists</code>.
     The mutated disposable note remained unchanged and no restore journal remained. The Backup UI also lists only date
     and size, not the operation. Bulk AI backup belongs to the later beta; retention, backup-failure abort, and sync-speed
-    acceptance remain in #76.</td><td><span class="s red">#14 restore failed (P1)</span></td></tr>
+    acceptance remain in #76. 2026-09-29: the cause was the backup walk, which let the contents of top-level dot folders
+    such as <code>.stfolder</code> into every ZIP. The #14 restore fix, with a release-build Fedora check that restored this
+    same archive, is in <a href="ticket-14-presync-restore-verification-2026-09-29.html">its verification report</a>. The
+    Backup list now names pre-sync archives. An installed rerun on both machines is still due.</td><td><span class="s amber">#14 fixed in source; installed rerun pending (P1)</span></td></tr>
     <tr><td>Gate-owned Ollama worker</td><td>The bounded Windows supervisor on port 11436 loaded
     <code>embeddinggemma</code> through a real <code>llama-server.exe</code> worker. After stopping exact recorded supervisor
     PID 29540, recorded server PID 36280, worker PID 5832, other descendants, and port listener were absent.
