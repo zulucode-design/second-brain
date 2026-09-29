@@ -109,17 +109,14 @@
   separate copy of the same profile. Screenshots stay outside the repository in
   <code>~/sb88/evidence/i14</code>.</p>
 
-  <h2>Still open under #14</h2>
-  <ul>
-    <li class="open">An installed-package rerun of this restore on both Fedora and Windows, on the next
-      candidate.</li>
-    <li><strong>Done in source.</strong> Back up only before batches that bring incoming changes,
-      and keep the newest scheduled or manual backup when pruning the shared pool. The second #14
-      pull request did this; see <a href="ticket-14-incoming-only-backup-2026-09-29.html">its
-      report</a>.</li>
-    <li class="open">Installed-package proof of the retention limit, of the abort when the backup fails,
-      and of routine sync time.</li>
-    <li>The bulk AI criterion moved to #168. The concern about the 5-minute sync interval is in #169.</li>
-  </ul>
+  <h2>Installed-package follow-up (2026-09-29)</h2>
+  <p class="pass">Passed on installed candidate <code>7e67b29</code>, after PRs #170 and #171 merged.
+  Both Fedora and Windows restored a fresh pre-sync ZIP through Settings &gt; Backup, matched all
+  5,005 archive files, preserved live <code>.stfolder</code> and <code>.stignore</code>, and left no
+  journal. The installed lists distinguish “Before sync” from “Backup”. Retention, incoming-only
+  behavior, backup-failure abort, and the delegated timing budget passed too. See the
+  <a href="ticket-14-installed-packages-2026-09-29.html">installed-package report and evidence</a>.</p>
+  <p>The bulk AI criterion remains in #168. Sync cadence remains in #169. The independent scheduled-run
+  refusal notice is tracked in #172. These proofs resolve the #14 P1 restore defect.</p>
 </body>
 </html>

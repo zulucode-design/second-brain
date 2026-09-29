@@ -1,0 +1,8 @@
+{"at":"2026-09-29T21:02:42.322Z","event":"window-state-saved","machine":"windows","sha256":"34278064917be655297900a5c0f7a8ab2626ddd9b6901e7c435213b5f8366a4c"}
+{"at":"2026-09-29T21:02:50.700Z","event":"backup-ui-labels","machine":"fedora","pass":true,"labels":["Before sync · 9.4 MB","Before sync · 9.4 MB","Before sync · 9.4 MB","Before sync · 9.4 MB","Backup · 9.4 MB"]}
+{"at":"2026-09-29T21:02:54.177Z","event":"backup-ui-labels","machine":"windows","pass":true,"labels":["Before sync · 9.4 MB","Before sync · 9.4 MB","Before sync · 9.4 MB","Before sync · 9.4 MB","Backup · 9.4 MB"]}
+{"at":"2026-09-29T21:02:55.328Z","event":"cleanup","machine":"fedora","processes":[]}
+{"at":"2026-09-29T21:02:58.881Z","event":"driver-stopped","machine":"windows","stopped":[24736,29644]}
+{"at":"2026-09-29T21:02:57.8634274Z","event":"process-final","machine":"windows","action":"report","installDir":["D:\\SecondBrainTest\\app"],"processes":[]}
+{"at":"2026-09-29T21:03:02.413Z","event":"config-restored","machine":"windows","restored":true,"damagedMoved":[],"machineState":"D:\\SecondBrainTest\\sb88\\runs\\i14-labels-1790715759811\\windows\\machine-state","junctionRemoved":true,"taskRemoved":"SecondBrainAlphaHarness"}
+{"at":"2026-09-29T21:03:02.869Z","event":"window-state-restored","machine":"windows","sha256":"34278064917be655297900a5c0f7a8ab2626ddd9b6901e7c435213b5f8366a4c"}
