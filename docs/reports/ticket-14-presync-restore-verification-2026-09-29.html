@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Issue #14 — pre-sync restore fix and manual verification</title>
+  <style>
+    body { max-width: 60rem; margin: 2rem auto; padding: 0 1.25rem; font: 16px/1.6 Inter, ui-sans-serif, system-ui, sans-serif; color: #20241f; background: #fffdf8; }
+    h1, h2 { line-height: 1.25; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    th, td { border: 1px solid #d7d1c5; padding: 0.5rem 0.65rem; text-align: left; vertical-align: top; }
+    th { background: #f7f4ec; }
+    .pass { color: #276c43; font-weight: 600; }
+    .open { color: #a34b16; font-weight: 600; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #171a17; color: #e6e8e3; }
+      th { background: #232723; }
+      th, td { border-color: #3a4039; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Issue #14 — pre-sync restore fix and manual verification</h1>
+  <p>2026-09-29. Candidate <code>96a3e5b</code> could not restore a pre-sync backup through the installed
+  Fedora Backup UI: <code>Restore commit failed and was rolled back: .stfolder already exists</code>
+  (evidence event <code>fedora-presync-restore-failed</code> in
+  <a href="evidence/prealpha-post162-96a3e5b.jsonl"><code>prealpha-post162-96a3e5b.jsonl</code></a>).
+  Nicolas classified it P1, blocking the alpha. This report records the cause, the fix, and the check
+  in the real app. It covers the first of two #14 pull requests; the second covers backups only
+  before incoming changes, retention, and the installed proofs.</p>
+
+  <h2>Cause</h2>
+  <p>The evidence note suspected <code>plan_commit</code>. The fault was in the backup. The walk in
+  <code>create_backup_with_prefix</code> (now <code>create_backup_of_kind</code>) skipped hidden entries with <code>continue</code>. For a
+  directory that skips only the directory entry and never its children. Syncthing keeps a marker file in
+  every synced folder's <code>.stfolder</code>, so every pre-sync ZIP carried
+  <code>.stfolder/syncthing-folder-687dd2.txt</code>. The same leak took in every entry not named with a leading dot
+  inside a <code>.git</code>, <code>.obsidian</code>, or <code>.stversions</code> folder. The restore
+  staged <code>.stfolder</code>, but a restore never moves live top-level dot entries aside. The publish
+  therefore met the live <code>.stfolder</code> and rolled back. Any vault with a top-level dot folder
+  containing an entry whose name does not start with a dot, synced or not, failed the same way.</p>
+
+  <h2>Fix</h2>
+  <table>
+    <tr><th>Part</th><th>Change</th></tr>
+    <tr><td>Backup contents</td>
+      <td>A backup now holds exactly what a restore replaces: every top-level visible entry with its whole
+      subtree, nested dot entries included, and <code>.helixnotes</code>. Other top-level dot entries stay
+      out. Before this, nested dot files were left out, so a restore silently deleted them along with the
+      folder they were in.</td></tr>
+    <tr><td>Restore of older archives</td>
+      <td><code>plan_commit</code> never publishes a top-level staged dot entry. Archives made before the
+      fix restore, and their dot folders are removed with the stage.</td></tr>
+    <tr><td>Backup list</td>
+      <td>Each listed archive carries a <code>kind</code> (<code>backup</code> or <code>preSync</code>),
+      set in Rust from its filename prefix, and Settings &gt; Backup labels it <strong>Backup</strong>
+      or <strong>Before sync</strong>. <code>list_backups</code> now dates pre-sync archives from their
+      names, as it already did for scheduled ones.</td></tr>
+  </table>
+  <p>Two new tests and one rewritten test fail against <code>main</code> (one of them does not compile
+  there, because <code>BackupKind</code> is new) and pass with the fix. The
+  rewritten test, formerly <code>a_dot_folder_in_both_vault_and_backup_survives_a_failed_restore</code>,
+  expected such a restore to fail cleanly; as
+  <code>dot_folders_in_an_old_archive_leave_the_live_ones_untouched</code> it restores an old-style
+  archive into a vault with a live <code>.stfolder</code>, and on <code>main</code> it fails with the
+  production error. One new test checks that a backup's names are exactly what a restore replaces,
+  and that a round trip restores the vault byte for byte. The other checks that both archive kinds are
+  dated from their names and carry their kind.</p>
+
+  <h2>Manual verification (Fedora 44, release build, isolated XDG directories)</h2>
+  <p>A copy of the failing run's isolated profile and vault (<code>~/sb88/runs/i14-restore-check</code>)
+  was opened with the release binary from commit <code>7d998b3</code>, which includes the first round of review fixes (later commits change only
+  comments, a constant list of the same two kinds, and report prose), driven by <code>tauri-driver</code>
+  with <code>XDG_CONFIG_HOME</code> and <code>XDG_DATA_HOME</code> inside that copy. Sync was disabled
+  with no peer, so nothing was sent to the other machine. The archive was the one that failed:
+  <code>helixnotes-pre-sync-2026-09-29T03-25-00.zip</code>.</p>
+  <table>
+    <tr><th>Check</th><th>Result</th></tr>
+    <tr><td>Settings &gt; Backup lists the pre-sync archives as such.</td>
+      <td class="pass">Pass. Both rows read "Before sync · 1.4 MB".</td></tr>
+    <tr><td>Restore the newest archive through the UI, as the failing run did.</td>
+      <td class="pass">Pass. The app reported "Backup restored."</td></tr>
+    <tr><td>The mutated note returns to its backed-up content.</td>
+      <td class="pass">Pass. <code>Projects/Sync Fixture 97/Fixture 0000.md</code> went from sha256
+      <code>fac45810…</code> (mutated) to <code>75160ea3…</code>, the archive's copy.</td></tr>
+    <tr><td>The whole visible vault equals the archive.</td>
+      <td class="pass">Pass. <code>diff -r</code> of the extracted archive against the vault, excluding
+      top-level dot entries, found no difference. <code>.helixnotes</code> matched too, apart from
+      <code>.helixnotes/.gitignore</code>, which exists only in the live vault and is kept, as a restore
+      keeps every live metadata entry the backup does not name.</td></tr>
+    <tr><td>Live Syncthing files are untouched.</td>
+      <td class="pass">Pass. <code>.stfolder/syncthing-folder-687dd2.txt</code> (<code>6685d1eb…</code>)
+      and <code>.stignore</code> (<code>6dd6bc56…</code>) have the same hashes as before the restore.</td></tr>
+    <tr><td>No restore leftovers.</td>
+      <td class="pass">Pass. No <code>.second-brain-restore-*</code> entry next to the vault.</td></tr>
+    <tr><td>"Backup now" makes an archive without top-level dot folders, labelled "Backup".</td>
+      <td class="pass">Pass. The new row reads "Backup · 1.4 MB". Against the pre-sync archive its name
+      list lost <code>.stfolder/syncthing-folder-687dd2.txt</code>, gained the nested
+      <code>.helixnotes/.gitignore</code>, and has no <code>.helixnotes/attachments/</code>, because
+      attachments are off for scheduled backups in this profile.</td></tr>
+    <tr><td>Processes are gone afterwards.</td>
+      <td class="pass">Pass. Both <code>tauri-driver</code> PIDs were stopped by their exact PID; no app
+      process remained.</td></tr>
+  </table>
+  <p>The same checks passed first on the build from <code>a1c7bb2</code>, before the review fixes, on a
+  separate copy of the same profile. Screenshots stay outside the repository in
+  <code>~/sb88/evidence/i14</code>.</p>
+
+  <h2>Still open under #14</h2>
+  <ul>
+    <li class="open">An installed-package rerun of this restore on both Fedora and Windows, on the next
+      candidate.</li>
+    <li class="open">Back up only before batches that bring incoming changes, and keep the newest
+      scheduled or manual backup when pruning the shared pool.</li>
+    <li class="open">Installed-package proof of the retention limit, of the abort when the backup fails,
+      and of routine sync time.</li>
+    <li>The bulk AI criterion moved to #168. The concern about the 5-minute sync interval is in #169.</li>
+  </ul>
+</body>
+</html>

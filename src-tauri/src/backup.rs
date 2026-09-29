@@ -9,10 +9,22 @@ use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::ZipArchive;
 
-use crate::types::BackupEntry;
+use crate::types::{BackupEntry, BackupKind};
 
 const MAX_ARCHIVE_ENTRIES: usize = 100_000;
 const MAX_ARCHIVE_BYTES: u64 = 100 * 1024 * 1024 * 1024;
+
+impl BackupKind {
+    const ALL: [Self; 2] = [Self::Backup, Self::PreSync];
+
+    /// Archives are named `<prefix>-YYYY-MM-DDTHH-MM-SS.zip`, in UTC.
+    fn prefix(self) -> &'static str {
+        match self {
+            Self::Backup => "helixnotes-backup",
+            Self::PreSync => "helixnotes-pre-sync",
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct RestoreError {
@@ -64,24 +76,24 @@ pub fn create_backup(
     backup_dir: &Path,
     include_attachments: bool,
 ) -> Result<BackupEntry, String> {
-    create_backup_with_prefix(
+    create_backup_of_kind(
         vault_path,
         backup_dir,
         include_attachments,
-        "helixnotes-backup",
+        BackupKind::Backup,
     )
 }
 
 /// Create the identifiable, full-vault recovery point required before incoming sync.
 pub fn create_pre_sync_backup(vault_path: &str, backup_dir: &Path) -> Result<BackupEntry, String> {
-    create_backup_with_prefix(vault_path, backup_dir, true, "helixnotes-pre-sync")
+    create_backup_of_kind(vault_path, backup_dir, true, BackupKind::PreSync)
 }
 
-fn create_backup_with_prefix(
+fn create_backup_of_kind(
     vault_path: &str,
     backup_dir: &Path,
     include_attachments: bool,
-    prefix: &str,
+    kind: BackupKind,
 ) -> Result<BackupEntry, String> {
     let vault = Path::new(vault_path);
     if !vault.is_dir() {
@@ -94,7 +106,7 @@ fn create_backup_with_prefix(
 
     let now = Utc::now();
     let timestamp = now.format("%Y-%m-%dT%H-%M-%S").to_string();
-    let filename = format!("{prefix}-{timestamp}.zip");
+    let filename = format!("{}-{timestamp}.zip", kind.prefix());
     let backup_path = backup_dir.join(&filename);
 
     let file = fs::File::create(&backup_path)
@@ -104,33 +116,20 @@ fn create_backup_with_prefix(
         .compression_method(zip::CompressionMethod::Deflated)
         .compression_level(Some(6));
 
-    let helixnotes_dir = vault.join(".helixnotes");
-    let attachments_dir = helixnotes_dir.join("attachments");
+    let attachments_dir = vault.join(METADATA_DIR).join("attachments");
+    // The archive holds exactly what a restore touches: the top-level entries it replaces and
+    // the metadata directory, each subtree whole, nested dot entries included.
+    // Attachments are the sole configurable exclusion because they can dominate backup size.
+    let walker = WalkDir::new(vault).into_iter().filter_entry(|entry| {
+        let name = entry.file_name().to_string_lossy();
+        let in_restore = entry.depth() != 1 || name == METADATA_DIR || restore_replaces(&name);
+        in_restore && (include_attachments || entry.path() != attachments_dir)
+    });
 
-    for entry in WalkDir::new(vault) {
+    for entry in walker {
         let entry =
             entry.map_err(|error| format!("Failed to traverse vault for backup: {error}"))?;
         let path = entry.path();
-
-        // `.helixnotes` contains vault-scoped recoverable data. Attachments are the
-        // sole configurable exclusion because they can dominate backup size.
-        if path.starts_with(&helixnotes_dir)
-            && !include_attachments
-            && path.starts_with(&attachments_dir)
-        {
-            continue;
-        }
-
-        // Skip hidden files/directories (except .helixnotes which we handle above)
-        if path != vault {
-            if let Some(name) = path.file_name() {
-                let name_str = name.to_string_lossy();
-                if name_str.starts_with('.') && name_str != ".helixnotes" {
-                    continue;
-                }
-            }
-        }
-
         let relative = path.strip_prefix(vault).map_err(|e| e.to_string())?;
 
         if path.is_dir() {
@@ -158,6 +157,7 @@ fn create_backup_with_prefix(
         path: backup_path.to_string_lossy().to_string(),
         size: meta.len(),
         created: now.to_rfc3339(),
+        kind,
     })
 }
 
@@ -181,32 +181,21 @@ pub fn list_backups(backup_dir: &Path) -> Result<Vec<BackupEntry>, String> {
                 .to_string();
             let meta = fs::metadata(&path).map_err(|e| e.to_string())?;
 
-            // Parse timestamp from filename: helixnotes-backup-YYYY-MM-DDTHH-MM-SS.zip
-            let created = if let Some(ts) = filename
-                .strip_prefix("helixnotes-backup-")
-                .and_then(|s| s.strip_suffix(".zip"))
-            {
-                // ts = "2026-02-08T18-09-15" → "2026-02-08T18:09:15Z"
-                if let Some(t_pos) = ts.find('T') {
-                    let date_part = &ts[..t_pos];
-                    let time_part = &ts[t_pos + 1..];
-                    let time_colons = time_part.replace('-', ":");
-                    format!("{}T{}Z", date_part, time_colons)
-                } else {
-                    meta.modified()
-                        .map(|t| {
-                            let dt: chrono::DateTime<Utc> = t.into();
-                            dt.to_rfc3339()
-                        })
-                        .unwrap_or_default()
-                }
-            } else {
-                meta.modified()
-                    .map(|t| {
-                        let dt: chrono::DateTime<Utc> = t.into();
-                        dt.to_rfc3339()
-                    })
-                    .unwrap_or_default()
+            let named = BackupKind::ALL
+                .into_iter()
+                .find_map(|kind| Some((kind, filename.strip_prefix(kind.prefix())?)));
+            let kind = named.map_or(BackupKind::Backup, |(kind, _)| kind);
+            let stamped = named
+                .and_then(|(_, rest)| rest.strip_prefix('-')?.strip_suffix(".zip"))
+                .and_then(|stamp| {
+                    chrono::NaiveDateTime::parse_from_str(stamp, "%Y-%m-%dT%H-%M-%S").ok()
+                });
+            let created = match stamped {
+                Some(time) => time.and_utc().to_rfc3339(),
+                None => meta
+                    .modified()
+                    .map(|t| chrono::DateTime::<Utc>::from(t).to_rfc3339())
+                    .unwrap_or_default(),
             };
 
             entries.push(BackupEntry {
@@ -214,6 +203,7 @@ pub fn list_backups(backup_dir: &Path) -> Result<Vec<BackupEntry>, String> {
                 path: path.to_string_lossy().to_string(),
                 size: meta.len(),
                 created,
+                kind,
             });
         }
     }
@@ -290,7 +280,7 @@ struct RestoreJournal {
     /// The subset of `present` moved aside: everything not starting with a dot.
     #[serde(default)]
     displaced: Vec<String>,
-    /// Top-level staged entries, except the metadata directory.
+    /// Top-level staged entries, except dot entries (the metadata directory among them).
     #[serde(default)]
     staged: Vec<String>,
     /// Entries of the staged metadata directory.
@@ -450,19 +440,28 @@ fn restore_backup_with(
     }
 }
 
+/// Whether a restore replaces the top-level vault entry `name` wholesale. Dot entries
+/// (`.stfolder`, `.git`, `.obsidian`) are never displaced or published; the metadata directory
+/// is merged entry by entry instead.
+fn restore_replaces(name: &str) -> bool {
+    !name.starts_with('.')
+}
+
 /// Record every name the commit will move, before it moves anything.
 fn plan_commit(journal: &mut RestoreJournal) -> Result<(), String> {
     for name in entry_names(&journal.vault)? {
         if name == METADATA_DIR {
             continue;
         }
-        if !name.starts_with('.') {
+        if restore_replaces(&name) {
             journal.displaced.push(name.clone());
         }
         journal.present.push(name);
     }
+    // Archives made before the #14 fix carry the contents of `.stfolder` and other dot folders;
+    // those stay in the stage and are removed with it.
     for name in entry_names(&journal.stage)? {
-        if name != METADATA_DIR {
+        if restore_replaces(&name) {
             journal.staged.push(name);
         }
     }
@@ -1010,9 +1009,10 @@ pub fn cleanup_old_backups(backup_dir: &Path, max_count: u32) -> Result<(), Stri
 mod tests {
     use super::{
         create_backup, create_pre_sync_backup, delete_backup, extract_and_validate_with,
-        recover_interrupted_restore, recover_with, restore_backup, restore_backup_with, Interrupt,
-        RecoveredRestore, RestoreStep,
+        list_backups, recover_interrupted_restore, recover_with, restore_backup,
+        restore_backup_with, Interrupt, RecoveredRestore, RestoreStep,
     };
+    use crate::types::BackupKind;
     use std::collections::BTreeMap;
     use std::fs;
     use std::io::{Seek, SeekFrom, Write};
@@ -1284,6 +1284,7 @@ mod tests {
         fs::write(vault.join(".helixnotes/attachments/file.bin"), "binary").unwrap();
         let entry = create_pre_sync_backup(vault.to_str().unwrap(), &backups).unwrap();
         assert!(entry.filename.starts_with("helixnotes-pre-sync-"));
+        assert_eq!(entry.kind, BackupKind::PreSync);
         let mut archive = ZipArchive::new(fs::File::open(entry.path).unwrap()).unwrap();
         assert!(archive.by_name("note.md").is_ok());
         assert!(archive.by_name(".helixnotes/attachments/file.bin").is_ok());
@@ -1532,16 +1533,24 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// The #14 failure: every synced vault has a `.stfolder` with a marker file in it, and
+    /// archives made before #14 carried that marker. The restore must go through and leave the
+    /// live dot folders exactly as they are.
     #[test]
-    fn a_dot_folder_in_both_vault_and_backup_survives_a_failed_restore() {
+    fn dot_folders_in_an_old_archive_leave_the_live_ones_untouched() {
         let (root, vault, backups, _) = restore_fixture("dot-folder");
-        fs::create_dir_all(vault.join(".obsidian")).unwrap();
-        fs::write(vault.join(".obsidian/app.json"), "live settings").unwrap();
-        let before = tree(&vault);
-        let backup = backups.join("with-dot-folder.zip");
+        fs::create_dir_all(vault.join(".stfolder")).unwrap();
+        fs::write(
+            vault.join(".stfolder/syncthing-folder-live.txt"),
+            "live marker",
+        )
+        .unwrap();
+        fs::write(vault.join(".stignore"), "live ignores").unwrap();
+        let backup = backups.join("helixnotes-pre-sync-2026-09-29T03-25-00.zip");
         let mut writer = zip::ZipWriter::new(fs::File::create(&backup).unwrap());
         for (path, body) in [
             ("note.md", "restored"),
+            (".stfolder/syncthing-folder-old.txt", "old marker"),
             (".obsidian/app.json", "backup settings"),
         ] {
             writer
@@ -1551,12 +1560,112 @@ mod tests {
         }
         writer.finish().unwrap();
 
-        let error = restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap())
-            .unwrap_err();
+        restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap()).unwrap();
 
-        assert!(!error.changed, "{}", error.message);
-        assert_eq!(tree(&vault), before);
+        assert_eq!(
+            fs::read_to_string(vault.join("note.md")).unwrap(),
+            "restored"
+        );
+        assert!(!vault.join("Projects").exists());
+        let dot_entries: Vec<_> = tree(&vault)
+            .into_iter()
+            .filter(|(path, _)| {
+                path.to_string_lossy().starts_with('.') && !path.starts_with(".helixnotes")
+            })
+            .collect();
+        assert_eq!(
+            dot_entries,
+            vec![
+                (
+                    PathBuf::from(".stfolder/syncthing-folder-live.txt"),
+                    b"live marker".to_vec()
+                ),
+                (PathBuf::from(".stignore"), b"live ignores".to_vec()),
+            ]
+        );
         assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_backup_holds_exactly_what_a_restore_replaces() {
+        let root =
+            std::env::temp_dir().join(format!("second-brain-backup-shape-{}", Uuid::new_v4()));
+        let vault = root.join("vault");
+        let backups = root.join("backups");
+        for (path, body) in [
+            ("Projects/note.md", "before"),
+            ("Projects/.obsidian/app.json", "nested settings"),
+            ("Projects/.draft.md", "nested hidden note"),
+            (".helixnotes/vault_id", "vault-id"),
+            (".stfolder/syncthing-folder-live.txt", "marker"),
+            (".stignore", "ignores"),
+            (".git/HEAD", "ref"),
+        ] {
+            let path = vault.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+
+        let entry = create_pre_sync_backup(vault.to_str().unwrap(), &backups).unwrap();
+        let archive = ZipArchive::new(fs::File::open(&entry.path).unwrap()).unwrap();
+        let mut names: Vec<&str> = archive.file_names().collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                ".helixnotes/",
+                ".helixnotes/vault_id",
+                "Projects/",
+                "Projects/.draft.md",
+                "Projects/.obsidian/",
+                "Projects/.obsidian/app.json",
+                "Projects/note.md",
+            ]
+        );
+        drop(archive);
+
+        let before = tree(&vault);
+        fs::write(vault.join("Projects/note.md"), "after").unwrap();
+        fs::remove_file(vault.join("Projects/.draft.md")).unwrap();
+        restore_backup(vault.to_str().unwrap(), &backups, &entry.path).unwrap();
+        assert_eq!(tree(&vault), before);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn both_backup_kinds_are_dated_from_their_names() {
+        let root =
+            std::env::temp_dir().join(format!("second-brain-backup-list-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        for name in [
+            "helixnotes-backup-2026-09-28T10-00-00.zip",
+            "helixnotes-pre-sync-2026-09-29T03-25-00.zip",
+        ] {
+            fs::write(root.join(name), "").unwrap();
+        }
+
+        let dated: Vec<(String, String, BackupKind)> = list_backups(&root)
+            .unwrap()
+            .into_iter()
+            .map(|entry| (entry.filename, entry.created, entry.kind))
+            .collect();
+
+        assert_eq!(
+            dated,
+            vec![
+                (
+                    "helixnotes-pre-sync-2026-09-29T03-25-00.zip".to_string(),
+                    "2026-09-29T03:25:00+00:00".to_string(),
+                    BackupKind::PreSync
+                ),
+                (
+                    "helixnotes-backup-2026-09-28T10-00-00.zip".to_string(),
+                    "2026-09-28T10:00:00+00:00".to_string(),
+                    BackupKind::Backup
+                ),
+            ]
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
