@@ -17,19 +17,28 @@ const { modelForProvider } = await import(
 );
 
 // The backend records the map (AppConfig::select_ai_model); this only picks from it.
+const config = (overrides) => ({ ai_provider: null, ai_model: 'claude-sonnet-4-6', ai_models: {}, ...overrides });
+
 test('switching to a provider restores its remembered model', () => {
-  const models = { ollama: 'gemma3', openai: 'gpt-5-mini', anthropic: 'claude-opus-4-8', openai_compatible: 'local-llama' };
-  for (const [provider, model] of Object.entries(models)) {
-    assert.equal(modelForProvider(models, provider), model, provider);
+  const ai_models = { ollama: 'gemma3', openai: 'gpt-5-mini', anthropic: 'claude-opus-4-8', openai_compatible: 'local-llama' };
+  for (const [provider, model] of Object.entries(ai_models)) {
+    assert.equal(modelForProvider(config({ ai_models }), provider), model, provider);
   }
 });
 
 test('a provider with no remembered model starts with its default', () => {
-  assert.equal(modelForProvider({ openai: 'gpt-5-mini' }, 'ollama'), 'gemma3:4b');
-  assert.equal(modelForProvider({}, 'anthropic'), 'claude-sonnet-4-6');
-  assert.equal(modelForProvider({}, 'openai_compatible'), '');
+  assert.equal(modelForProvider(config({ ai_models: { openai: 'gpt-5-mini' } }), 'ollama'), 'gemma3:4b');
+  assert.equal(modelForProvider(config(), 'anthropic'), 'claude-sonnet-4-6');
+  assert.equal(modelForProvider(config(), 'openai_compatible'), '');
+});
+
+test('the active provider takes ai_model, which is all an older config remembers', () => {
+  const older = config({ ai_provider: 'ollama', ai_model: 'gemma3' });
+  assert.equal(modelForProvider(older, 'ollama'), 'gemma3');
+  assert.equal(modelForProvider(older, 'openai'), 'gpt-5.5');
 });
 
 test('a cleared model falls back to the default instead of staying empty', () => {
-  assert.equal(modelForProvider({ ollama: '' }, 'ollama'), 'gemma3:4b');
+  assert.equal(modelForProvider(config({ ai_models: { ollama: '' } }), 'ollama'), 'gemma3:4b');
+  assert.equal(modelForProvider(config({ ai_provider: 'ollama', ai_model: '' }), 'ollama'), 'gemma3:4b');
 });

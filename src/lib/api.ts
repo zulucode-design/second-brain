@@ -623,7 +623,7 @@ export async function setAiSettings(
   ollamaApiKey: string | null = null,
   openaiCompatibleBaseUrl: string | null = null,
   openaiCompatibleApiKey: string | null = null,
-): Promise<Record<string, string>> {
+): Promise<AppConfig> {
   return invoke("set_ai_settings", {
     provider, apiKey, model, writingStyle, baseUrl,
     ollamaApiKey, openaiCompatibleBaseUrl, openaiCompatibleApiKey,

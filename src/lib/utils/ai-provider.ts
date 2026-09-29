@@ -1,4 +1,4 @@
-import type { AiProvider } from '$lib/types';
+import type { AiProvider, AppConfig } from '$lib/types';
 
 export type AiKeySlot = 'anthropic' | 'openai' | 'ollama' | 'openaiCompatible';
 export type AiServerKind = 'ollama' | 'openaiCompatible' | null;
@@ -49,8 +49,13 @@ export const AI_PROVIDER_OPTIONS = Object.entries(AI_PROVIDER_METADATA) as Array
 
 /**
  * The model to show after switching to `provider`: its remembered model, else its default.
- * An empty remembered model (a cleared field) also falls back to the default.
+ * The active provider's model is `ai_model`, which also covers configs saved before
+ * `ai_models` existed. An empty model (a cleared field) falls back to the default.
  */
-export function modelForProvider(models: Record<string, string>, provider: AiProvider): string {
-	return models[provider] || AI_PROVIDER_METADATA[provider].defaultModel;
+export function modelForProvider(
+	config: Pick<AppConfig, 'ai_provider' | 'ai_model' | 'ai_models'>,
+	provider: AiProvider,
+): string {
+	const remembered = provider === config.ai_provider ? config.ai_model : config.ai_models[provider];
+	return remembered || AI_PROVIDER_METADATA[provider].defaultModel;
 }

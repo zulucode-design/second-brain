@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { showSettings, theme, resolvedTheme, appConfig, compactLayout, notebookSortMode, customThemes, aiStatus, hotkeyStatus } from '$lib/stores/app';
 	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, notionStatus, notionConnect, notionDisconnect, notionSetEnabled, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex, getSyncStatus, setSyncEnabled, pairSyncDevice, syncNow, listSyncConflicts, resolveSyncConflict, copyTextToClipboard, exportDiagnostics } from '$lib/api';
-	import type { AiProvider } from '$lib/types';
+	import type { AiProvider, AppConfig } from '$lib/types';
 	import { importOutcomeView, type ImportDonePayload } from '$lib/utils/import-outcome';
 	import { AI_PROVIDER_METADATA, AI_PROVIDER_OPTIONS, modelForProvider } from '$lib/utils/ai-provider';
 	import { isLinux, isWindows } from '$lib/platform';
@@ -304,9 +304,9 @@
 
 	async function saveAiSettings() {
 		const baseUrl = aiProviderMetadata?.serverKind === 'ollama' ? (_ollamaBaseUrl || null) : null;
-		let savedModels: Record<string, string>;
+		let saved: AppConfig;
 		try {
-			savedModels = await setAiSettings(
+			saved = await setAiSettings(
 				aiProvider,
 				aiApiKey || null,
 				aiModel,
@@ -321,19 +321,21 @@
 			try { $appConfig = await getAppConfig(); } catch {}
 			return;
 		}
+		// Take the AI fields as the backend saved them. A later save may already have replaced
+		// this component's values, and other settings may have store changes still in flight.
 		if ($appConfig) {
 			$appConfig = {
 				...$appConfig,
-				ai_provider: aiProvider,
-				ai_models: savedModels,
-				ai_api_key: _anthropicKey || null,
-				openai_api_key: _openaiKey || null,
-				ollama_base_url: _ollamaBaseUrl || null,
-				ollama_api_key: _ollamaApiKey || null,
-				openai_compatible_base_url: _openaiCompatibleBaseUrl || null,
-				openai_compatible_api_key: _openaiCompatibleKey || null,
-				ai_model: aiModel,
-				ai_writing_style: aiWritingStyle || null,
+				ai_provider: saved.ai_provider,
+				ai_api_key: saved.ai_api_key,
+				openai_api_key: saved.openai_api_key,
+				ollama_base_url: saved.ollama_base_url,
+				ollama_api_key: saved.ollama_api_key,
+				openai_compatible_base_url: saved.openai_compatible_base_url,
+				openai_compatible_api_key: saved.openai_compatible_api_key,
+				ai_model: saved.ai_model,
+				ai_models: saved.ai_models,
+				ai_writing_style: saved.ai_writing_style,
 			};
 		}
 	}
@@ -2399,7 +2401,7 @@
 								<div class="setting-options" style="flex-wrap: wrap;">
 									<button class="option-btn" class:active={!aiProvider} onclick={() => { if (!aiProvider) return; aiProvider = null; aiTestMessage = null; saveAiSettings(); }}>Disabled</button>
 									{#each AI_PROVIDER_OPTIONS as [providerOption, metadata]}
-										<button class="option-btn" class:active={aiProvider === providerOption} onclick={() => { if (aiProvider === providerOption) return; aiProvider = providerOption; aiModel = modelForProvider($appConfig?.ai_models ?? {}, providerOption); aiTestMessage = null; saveAiSettings(); }}>{metadata.label}</button>
+										<button class="option-btn" class:active={aiProvider === providerOption} onclick={() => { if (aiProvider === providerOption) return; aiProvider = providerOption; aiModel = $appConfig ? modelForProvider($appConfig, providerOption) : metadata.defaultModel; aiTestMessage = null; saveAiSettings(); }}>{metadata.label}</button>
 									{/each}
 								</div>
 							</div>

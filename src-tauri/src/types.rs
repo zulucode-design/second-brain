@@ -144,7 +144,7 @@ pub enum StartupView {
 ///
 /// The explicit wire names are the values already present in user configuration files;
 /// changing the Rust representation must not ask anyone to configure their provider again.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AiProvider {
     Anthropic,
     OpenAi,
@@ -303,10 +303,11 @@ pub struct AppConfig {
     /// The active provider's model. Requests read this field.
     #[serde(default = "default_ai_model")]
     pub ai_model: String,
-    /// The last model chosen for each provider, keyed by provider ID, so switching back to a
-    /// provider restores its model. See [`AppConfig::select_ai_model`].
+    /// The last model chosen for each provider, so switching back to a provider restores its
+    /// model. Write this and `ai_model` only through [`AppConfig::select_ai_model`], which keeps
+    /// the active provider's entry equal to `ai_model`.
     #[serde(default)]
-    pub ai_models: std::collections::HashMap<String, String>,
+    pub ai_models: std::collections::HashMap<AiProvider, String>,
     #[serde(default)]
     pub ai_writing_style: Option<String>,
     #[serde(default)]
@@ -379,10 +380,10 @@ impl AppConfig {
     pub fn select_ai_model(&mut self, provider: Option<AiProvider>, model: String) {
         if let Some(previous) = &self.ai_provider {
             self.ai_models
-                .insert(previous.id().to_string(), self.ai_model.clone());
+                .insert(previous.clone(), self.ai_model.clone());
         }
         if let Some(next) = &provider {
-            self.ai_models.insert(next.id().to_string(), model.clone());
+            self.ai_models.insert(next.clone(), model.clone());
         }
         self.ai_provider = provider;
         self.ai_model = model;
@@ -711,13 +712,13 @@ mod ai_provider_tests {
         let config = restart(&config);
 
         for (provider, model) in [
-            ("ollama", "gemma3"),
-            ("openai", "gpt-5-mini"),
-            ("anthropic", "claude-opus-4-8"),
-            ("openai_compatible", "local-llama"),
+            (AiProvider::Ollama, "gemma3"),
+            (AiProvider::OpenAi, "gpt-5-mini"),
+            (AiProvider::Anthropic, "claude-opus-4-8"),
+            (AiProvider::OpenAiCompatible, "local-llama"),
         ] {
             assert_eq!(
-                config.ai_models.get(provider).map(String::as_str),
+                config.ai_models.get(&provider).map(String::as_str),
                 Some(model)
             );
         }
@@ -740,7 +741,10 @@ mod ai_provider_tests {
         let config = restart(&config);
 
         assert_eq!(
-            config.ai_models.get("ollama").map(String::as_str),
+            config
+                .ai_models
+                .get(&AiProvider::Ollama)
+                .map(String::as_str),
             Some("gemma3")
         );
     }
@@ -757,7 +761,10 @@ mod ai_provider_tests {
         assert_eq!(config.ai_provider, None);
         assert_eq!(config.ai_model, "future-model");
         assert_eq!(
-            config.ai_models.get("future_local").map(String::as_str),
+            config
+                .ai_models
+                .get(&AiProvider::Unknown("future_local".to_string()))
+                .map(String::as_str),
             Some("future-model")
         );
         assert_eq!(config.ai_models.len(), 1);

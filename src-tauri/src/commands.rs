@@ -3498,7 +3498,7 @@ pub fn set_ai_settings(
     ollama_api_key: Option<String>,
     openai_compatible_base_url: Option<String>,
     openai_compatible_api_key: Option<String>,
-) -> Result<std::collections::HashMap<String, String>, String> {
+) -> Result<AppConfig, String> {
     let state = app.state::<AppState>();
     let mut config = state.config.lock().map_err(|e| e.to_string())?;
     let generation = state
@@ -3533,7 +3533,7 @@ pub fn set_ai_settings(
     // Persist both halves first: a failed keyring or config-file write must not change the
     // live provider or health identity for the rest of this process.
     commit_secret_config(&mut config, candidate)?;
-    let ai_models = config.ai_models.clone();
+    let saved = config.clone();
     let invalidated_status = if health_settings_changed {
         let mut health = state.ai_health.lock().map_err(|e| e.to_string())?;
         health.generation += 1;
@@ -3559,7 +3559,7 @@ pub fn set_ai_settings(
     if semantic_settings_changed {
         restart_semantic_index(&app)?;
     }
-    Ok(ai_models)
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -3966,6 +3966,8 @@ mod config_startup_tests {
         let ConfigRead::Loaded(contents) = read_app_config(&path) else {
             panic!("config.json was not written");
         };
+        // Keys stay the provider IDs users already have in their config files.
+        assert!(contents.contains(r#""ollama": "gemma3""#), "{contents}");
         let loaded = parse_app_config(&contents)
             .map_err(|damage| damage.reason)
             .unwrap();
@@ -3973,7 +3975,10 @@ mod config_startup_tests {
 
         assert_eq!(loaded.ai_models, config.ai_models);
         assert_eq!(
-            loaded.ai_models.get("ollama").map(String::as_str),
+            loaded
+                .ai_models
+                .get(&AiProvider::Ollama)
+                .map(String::as_str),
             Some("gemma3")
         );
         assert_eq!(loaded.ai_model, "gpt-5-mini");
