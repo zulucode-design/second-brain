@@ -359,8 +359,8 @@ the bulk-mutation lease and resumes the paired folder send-only, which receives 
 index but writes nothing. The first time anything is incoming, it creates a full-vault safety
 backup outside the vault and only then lets the folder receive; a batch with nothing incoming
 takes no backup (#14). It waits for convergence, pauses the folder again on every terminal path,
-and rebuilds machine-local projections when it took its backup (changes were incoming). Operational lifecycle,
-pinning, pairing, and verification details are recorded in
+and rebuilds machine-local projections when it took its backup (changes were incoming).
+Operational lifecycle, pinning, pairing, and verification details are recorded in
 [syncthing-sidecar.md](syncthing-sidecar.md).
 
 Tailscale is a separate, user-installed prerequisite. The app explains how to verify that
