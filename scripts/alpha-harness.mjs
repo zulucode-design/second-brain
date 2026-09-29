@@ -2185,6 +2185,13 @@ export function checkWindowStateRestored(manifest) {
   return createHash('sha256').update(original).digest('hex');
 }
 
+// Puts back every profile file the run journaled and returns the window state's SHA-256.
+function restoreProfile(manifest) {
+  atomicWrite(manifest.configPath, readFileSync(manifest.originalPath));
+  restoreWindowState(manifest);
+  return checkWindowStateRestored(manifest);
+}
+
 function damagedBeforePath(paths) {
   return win32.join(paths.runRoot, 'damaged-before-break.json');
 }
@@ -2223,9 +2230,7 @@ async function windowsWorker(request) {
     if (manifest.runId !== lock.runId || win32.resolve(manifest.configPath) !== win32.resolve(configPath)) {
       fail('stale harness journal is inconsistent');
     }
-    atomicWrite(configPath, readFileSync(manifest.originalPath));
-    restoreWindowState(manifest);
-    const windowStateSha256 = checkWindowStateRestored(manifest);
+    const windowStateSha256 = restoreProfile(manifest);
     unlinkSync(lockPath);
     return { recovered: true, runId: manifest.runId, runRoot: dirname(lock.manifestPath), windowStateSha256 };
   }
@@ -2249,7 +2254,7 @@ async function windowsWorker(request) {
     if (!existsSync(configPath)) fail(`installed app config is missing: ${configPath}`);
     const originalPath = win32.join(paths.runRoot, 'original-config.json');
     copyFileSync(configPath, originalPath);
-    const windowState = journalWindowState(
+    const windowStateJournal = journalWindowState(
       win32.join(dirname(configPath), '.window-state.json'), win32.join(paths.runRoot, 'original-window-state.json'),
     );
     const original = JSON.parse(readFileSync(configPath, 'utf8'));
@@ -2267,7 +2272,7 @@ async function windowsWorker(request) {
     }
     const lockPath = win32.join(dirname(configPath), 'alpha-harness.lock.json');
     const manifest = {
-      version: 1, runId: request.runId, startedAt: new Date().toISOString(), configPath, originalPath, ...windowState, machineLink, appPath,
+      version: 1, runId: request.runId, startedAt: new Date().toISOString(), configPath, originalPath, ...windowStateJournal, machineLink, appPath,
     };
     atomicWrite(paths.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     writeFileSync(lockPath, `${JSON.stringify({ runId: request.runId, manifestPath: paths.manifestPath })}\n`, { flag: 'wx' });
@@ -2280,6 +2285,8 @@ async function windowsWorker(request) {
       vault: paths.vaultPath,
       freeBytes: requireFreeSpace(root),
       package: { ...system, app },
+      windowStateSha256: windowStateJournal.originalWindowStatePath
+        && createHash('sha256').update(readFileSync(windowStateJournal.originalWindowStatePath)).digest('hex'),
     };
   }
 
@@ -2572,9 +2579,7 @@ async function windowsWorker(request) {
     }
     const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
     if (lock.runId !== request.runId) fail('config lock belongs to another run');
-    atomicWrite(manifest.configPath, readFileSync(manifest.originalPath));
-    restoreWindowState(manifest);
-    const windowStateSha256 = checkWindowStateRestored(manifest);
+    const windowStateSha256 = restoreProfile(manifest);
     // A run that failed between break-config and repair-config leaves the app's damaged copy.
     // Moved while the lock still stands, so a failure here leaves the run for a retry to finish.
     const damagedMoved = moveRunDamagedConfigs(dirname(manifest.configPath), paths);

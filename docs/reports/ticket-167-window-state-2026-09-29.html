@@ -35,12 +35,14 @@
     <tr><th>Step</th><th>Change in <code>scripts/alpha-harness.mjs</code></th></tr>
     <tr><td><code>prepare</code></td>
       <td>Copies <code>.window-state.json</code> to <code>original-window-state.json</code> in the run
-      directory, or records that it did not exist. Both paths go into the run's journal.</td></tr>
+      directory, or records that it did not exist. Both paths go into the run's journal, and the
+      <code>prepared</code> evidence event carries the pre-run SHA-256.</td></tr>
     <tr><td><code>finalize</code> and <code>recover</code></td>
       <td>Wherever <code>config.json</code> is restored, the window state is restored too, or removed if
       the run created it. The worker then compares the file with its pre-run copy, fails if they differ,
-      and returns its SHA-256 (<code>windowStateSha256</code>, null when the file is absent), which the
-      controller records in the <code>config-restored</code> evidence event.</td></tr>
+      and returns its SHA-256 (<code>windowStateSha256</code>, null when the file is absent). The
+      controller records it in the <code>config-restored</code> evidence event after
+      <code>finalize</code> and in <code>stale-run-recovered</code> after <code>recover</code>.</td></tr>
     <tr><td><code>finalize</code> after <code>recover</code></td>
       <td>When the lock is already gone, the same comparison runs, as it does for
       <code>config.json</code>.</td></tr>
@@ -49,24 +51,26 @@
       before, with nothing to restore.</td></tr>
   </table>
   <p>A new test in <code>tests/alpha-harness.test.mjs</code> covers both cases (file present and changed;
-  file absent and created by the run), the failing comparison before restore, and an older journal.</p>
+  file absent and created by the run), the failing comparison before restore, and an older journal,
+  which is neither restored nor checked.</p>
 
   <h2>Manual verification (Windows 11, real profile)</h2>
   <p>The branch's harness was copied to an isolated root, <code>D:\SecondBrainTest\sb167\tools</code>,
   so the shared <code>sb88\tools</code> copy was left alone. A proof script called the worker's own
   <code>prepare</code>, <code>finalize</code>, and <code>recover</code> actions against the real profile
   and the installed candidate <code>7e67b29</code>. The real profile's two files were copied to
-  <code>D:\SecondBrainTest\sb167\profile-backup</code> first. The harness stops the app with a forced
-  kill, which skips the plugin's save on exit, so the script wrote the changed window state itself,
+  <code>D:\SecondBrainTest\sb167\profile-backup</code> first. No app was launched: the script wrote the
+  changed window state itself,
   using the off-screen geometry from the original report. No harness lock existed and no app process
-  ran before the check.</p>
+  ran before the check. The table is from the rerun after the review fixes (run directories
+  <code>a2</code>, <code>b2</code>, <code>c2</code>); the first pass, without the <code>prepare</code> hash, gave the same results.</p>
   <table>
     <tr><th>Case</th><th>Result</th><th>Status</th></tr>
     <tr><td>Before</td>
       <td><code>config.json</code> <code>0bfb1539…</code>, <code>.window-state.json</code> <code>34278064…</code>, no lock.</td>
       <td></td></tr>
     <tr><td>A: run changes the file, <code>finalize</code></td>
-      <td>During the run both files differed. <code>finalize</code> returned
+      <td><code>prepare</code> reported <code>34278064…</code>. During the run both files differed. <code>finalize</code> returned
       <code>windowStateSha256</code> <code>34278064…</code> and removed the junction; both files matched
       their pre-run hashes and the lock was gone.</td>
       <td class="pass">pass</td></tr>
@@ -76,7 +80,7 @@
       <code>alreadyRestored</code> with the same hash, and removed the junction.</td>
       <td class="pass">pass</td></tr>
     <tr><td>C: file absent before the run, created during it</td>
-      <td>The file was set aside, the run created it, and <code>finalize</code> removed it and returned
+      <td>The file was set aside and <code>prepare</code> reported null. The run created it, and <code>finalize</code> removed it and returned
       <code>windowStateSha256: null</code>. The script then put the original back.</td>
       <td class="pass">pass</td></tr>
     <tr><td>After</td>

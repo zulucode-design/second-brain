@@ -172,7 +172,8 @@ test('window state is put back as it was, or removed when the run created it', (
   restoreWindowState(absent);
   assert.equal(checkWindowStateRestored(absent), null);
 
-  assert.equal(checkWindowStateRestored({}), null, 'journals from before #167 have nothing to check');
+  restoreWindowState({});
+  assert.equal(checkWindowStateRestored({}), null, 'journals from before #167 have nothing to restore or check');
 });
 
 test('restore rejects an invalid timeout before touching either machine', () => {
