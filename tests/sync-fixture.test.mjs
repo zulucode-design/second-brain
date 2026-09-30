@@ -95,6 +95,19 @@ test('a truncated conflict copy of a fixture note still counts as a conflict', (
   assert.equal(observation.complete, false);
 });
 
+test('a conflict copy of an app file fails the fixture, except in trash', (t) => {
+  const root = vault(t);
+  generate(root);
+  mkdirSync(join(root, '.helixnotes', 'trash'), { recursive: true });
+  writeFileSync(join(root, '.helixnotes', 'trash', 'old.sync-conflict-20260914-153417-256O5AE.png'), 'png');
+  assert.equal(check(root).complete, true);
+
+  writeFileSync(join(root, '.helixnotes', 'config.sync-conflict-20260915-165505-2WM4L52.json'), '{}');
+  const observation = check(root);
+  assert.equal(observation.conflictCopyCount, 1);
+  assert.equal(observation.complete, false);
+});
+
 test('a note moved to the wrong category folder is a stray, not a match', (t) => {
   const root = vault(t);
   generate(root);

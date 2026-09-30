@@ -97,7 +97,13 @@ export function check(vault) {
   walk(vault, (path) => {
     const rel = portable(relative(vault, path));
     if (rel.startsWith('.stfolder') || rel.startsWith('.stversions')) return;
-    if (!rel.endsWith('.md')) return;
+    if (!rel.endsWith('.md')) {
+      // A conflict copy of one of the app's own files, such as the `.helixnotes/config.json`
+      // each joining machine used to write (#112), is a failed join, not an extra file. Trash
+      // is left out for the reason given for notes below.
+      if (rel.includes('.sync-conflict-') && !rel.startsWith('.helixnotes/trash/')) conflictCopies.push(rel);
+      return;
+    }
     const content = readFileSync(path, 'utf8');
     const id = /^id: "([^"]+)"$/m.exec(content)?.[1];
     if (id?.startsWith(ID_PREFIX)) idCounts.set(id, (idCounts.get(id) ?? 0) + 1);
