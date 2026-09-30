@@ -104,18 +104,20 @@
     stopped the Windows sidecar at 323/5,000 notes. The app relaunched it, and both replicas converged to 5,000 with no
     missing notes, wrong content, duplicate IDs, strays, or conflict copies. Since #112, the fixture check counts
     conflict copies of app files as well as notes, and it found none, so the joining machine no longer leaves a
-    <code>.helixnotes/config.json</code> conflict copy. Fedora took one pre-sync ZIP and Windows two. On the first attempt,
-    Fedora's Syncthing database showed where Fedora's backups come from: identical-content app files that both apps write
-    on first open (<code>.helixnotes/.gitignore</code>, <code>settings.json</code>, <code>vault_id</code>, and the trash,
-    attachments, and unfiled folders), whose Windows versions Fedora adopts. They cost one backup at first pairing and
-    make no conflict copy. No app, sidecar, or watchdog survived. The real Windows <code>config.json</code> and
+    <code>.helixnotes/config.json</code> conflict copy. Fedora took one pre-sync ZIP and Windows two. Fedora generates the fixture and receives no notes, so a
+    backup there means something else arrived. A hand check of Fedora's Syncthing index after the first attempt's Gate 1
+    (in the hand-kept gate log) found seven app items at Windows's version: <code>.helixnotes</code>, its
+    <code>.gitignore</code>, <code>settings.json</code> and <code>vault_id</code>, and the trash, attachments, and unfiled
+    folders. Both apps write these on first open, and both devices held the same version and size for each, with no
+    conflict copy. It also found one fixture note at a later Windows version, although its content matched the fixture;
+    the cause was not investigated. That run's Fedora took two pre-sync ZIPs. No app, sidecar, or watchdog survived. The real Windows <code>config.json</code> and
     <code>.window-state.json</code> (<code>34278064…</code>) were restored, and <code>logs</code> and
     <code>EBWebView</code> were moved back from the run's junctions (#174).</td>
     <td><span class="s green">passed on a16dac9</span></td></tr>
     <tr><td>Gate 2: interrupted restore</td><td>Run <a href="evidence/alpha-harness-restore-20260930T230118Z.jsonl"><code>20260930T230118Z</code></a>: both uninterrupted restores
     matched their backup state. All six interruptions (journal, stage-half, and stage-late, on each machine) recovered
     to that machine's exact pre-restore tree hash, each with the "Restore interrupted" banner and no leftovers, and final
-    process checks were empty. This is the first Gate 2 run since #170 changed the restore commit path.</td>
+    process checks were empty. Gate 2 also passed on the first attempt's candidate, run <a href="evidence/alpha-harness-restore-20260930T171653Z.jsonl"><code>20260930T171653Z</code></a>; both runs postdate #170's change to the restore commit path.</td>
     <td><span class="s green">passed on a16dac9</span></td></tr>
     <tr><td>Gate 3: installed walkthrough</td><td>Run <a href="evidence/alpha-harness-walkthrough-20260930T230817Z.jsonl"><code>20260930T230817Z</code></a> passed 23 Fedora and 24
     Windows steps with <code>gate: true</code>, on a single attempt, with no rerun. On each machine the Notion step
