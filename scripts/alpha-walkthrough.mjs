@@ -493,8 +493,12 @@ export async function notionPublish(browser, type, { token, page }, whileConnect
     if (/\d+ failed|failing to publish/.test(text)) fail(`Notion publish left notes unpublished: ${summary}`);
     return { summary, tokenStoredWhileConnected: stored };
   } catch (error) {
-    failure = error;
-    throw error;
+    // Read now: the finally block disconnects and closes Settings, and a setup error is shown
+    // nowhere else (#185).
+    const shown = await browser.execute(() => [...document.querySelectorAll('.import-result.error')]
+      .map((element) => element.innerText.trim()).filter(Boolean).join(' | ')).catch(() => '');
+    failure = shown ? new Error(`${error.message}; Settings showed: ${shown}`) : error;
+    throw failure;
   } finally {
     // Also after a failure, so the token does not stay in the keyring; the controller checks.
     // Disconnect appears once the connection settles; without one there is nothing to remove.

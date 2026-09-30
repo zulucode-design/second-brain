@@ -344,8 +344,10 @@ fn tally(summary: &mut Summary, action: &Action) {
 }
 
 fn record_failure(vault_path: &Path, note_id: &str, error: &NotionError) {
-    // Recorded against the note rather than only logged, so Settings can say which notes
-    // are failing and why. A silent skip is how one unpublishable note goes unnoticed.
+    // Recorded against the note, so Settings can say which notes are failing and why, and
+    // logged, so the reason survives in diagnostics too (#185). A silent skip is how one
+    // unpublishable note goes unnoticed.
+    log::warn!("Could not publish {note_id} to Notion: {}", error.message());
     let mut entry = map::load(vault_path, note_id).unwrap_or_else(MapEntry::creating);
     entry.last_error = Some(error.message());
     if let Err(problem) = map::save(vault_path, note_id, &entry) {

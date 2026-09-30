@@ -242,6 +242,8 @@ pub async fn notion_setup(app: AppHandle, parent_page_id: String) -> Result<(), 
     setup_databases(&client, &vault, &parent_page_id)
         .await
         .map(|_| ())
+        // Settings shows the error only until it is dismissed; the log keeps it (#185).
+        .inspect_err(|error| log::error!("Notion setup failed: {error}"))
 }
 
 /// Create whichever of the four databases do not exist yet, under `parent_page_id`.
