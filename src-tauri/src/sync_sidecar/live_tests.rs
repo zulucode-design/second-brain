@@ -342,3 +342,43 @@ fn only_a_batch_with_incoming_changes_takes_a_backup_and_it_comes_first() {
     drop(b);
     fs::remove_dir_all(root).unwrap();
 }
+
+/// A second machine joining a vault opens it before pairing, so whatever that open writes meets
+/// the first machine's copy on the first sync. A file the two opens wrote differently becomes a
+/// Syncthing conflict copy (#112).
+#[test]
+#[ignore = "needs the bundled Syncthing binary and takes minutes; see the module docs"]
+fn a_second_machine_joining_a_vault_leaves_no_conflict_copy() {
+    let root =
+        std::env::temp_dir().join(format!("second-brain-sync-join-{}", uuid::Uuid::new_v4()));
+    let a = start(&root, "a", 28521, 22521);
+    let b = start(&root, "b", 28522, 22522);
+    // A vault opened by an earlier release still carries the per-machine `config.json` it wrote.
+    fs::create_dir_all(a.vault.join(".helixnotes")).unwrap();
+    fs::write(
+        a.vault.join(".helixnotes/config.json"),
+        r#"{"version":"0.1.0","created":"2026-09-15T21:47:34.412177500+00:00"}"#,
+    )
+    .unwrap();
+    fs::write(a.vault.join("note.md"), "from a").unwrap();
+    for node in [&a, &b] {
+        crate::vault::operations::ensure_vault_structure(&node.vault.to_string_lossy()).unwrap();
+    }
+    pair(&a, &b);
+    pair(&b, &a);
+
+    let (run_a, run_b) = both(&a, &b);
+
+    assert_eq!((run_a.result, run_b.result), (Ok(()), Ok(())));
+    let conflicts: Vec<String> = [&a, &b]
+        .into_iter()
+        .flat_map(|node| tree(&node.vault).into_keys())
+        .filter(|path| path.contains(".sync-conflict-"))
+        .collect();
+    assert!(conflicts.is_empty(), "conflict copies: {conflicts:?}");
+    assert_eq!(tree(&a.vault), tree(&b.vault));
+
+    drop(a);
+    drop(b);
+    fs::remove_dir_all(root).unwrap();
+}

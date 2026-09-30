@@ -129,15 +129,10 @@ pub fn ensure_vault_structure(vault_path: &str) -> Result<(), String> {
     // four folders.
     para::ensure_scaffold(vault_path)?;
 
-    let config_path = hn_dir.join("config.json");
-    if !config_path.exists() {
-        let config = serde_json::json!({
-            "version": "0.1.0",
-            "created": Utc::now().to_rfc3339()
-        });
-        fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())
-            .map_err(|e| e.to_string())?;
-    }
+    // No `.helixnotes/config.json` is written. Nothing reads it, and a second machine joining
+    // a vault opened it, and so wrote its own copy with its own `created` time, before pairing.
+    // Syncthing then kept a conflict copy on both machines (#112). A copy left by an earlier
+    // release is not touched: it syncs from the first machine like any other file.
 
     let gitignore_path = hn_dir.join(".gitignore");
     if !gitignore_path.exists() {
@@ -2882,6 +2877,21 @@ mod tests {
         for category in ParaCategory::ALL {
             assert!(vault.join(category.folder_name()).is_dir());
         }
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    /// Whatever opening a vault writes, every machine writes identically, so a second
+    /// machine joining it adds nothing for Syncthing to keep as a conflict copy (#112).
+    #[test]
+    fn opening_a_vault_writes_no_machine_specific_config_and_keeps_an_old_one() {
+        let vault = scaffolded_vault("no-vault-config");
+        let config = helixnotes_dir(&vault.to_string_lossy()).join("config.json");
+        assert!(!config.exists());
+
+        let legacy = r#"{"version":"0.1.0","created":"2026-09-15T21:47:34.412177500+00:00"}"#;
+        fs::write(&config, legacy).unwrap();
+        ensure_vault_structure(&vault.to_string_lossy()).unwrap();
+        assert_eq!(fs::read_to_string(&config).unwrap(), legacy);
         fs::remove_dir_all(vault).unwrap();
     }
 
