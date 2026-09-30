@@ -114,19 +114,19 @@
     still not directly observed.
     Two earlier attempts on the same packages were stopped by the network path to Notion:
     <a href="evidence/alpha-harness-walkthrough-20260930T020140Z.jsonl"><code>20260930T020140Z</code></a> failed in the
-    harness's own Notion verification after every Fedora step had passed, and
+    harness's Notion cleanup after every Fedora step had passed, and
     <a href="evidence/alpha-harness-walkthrough-20260930T020348Z.jsonl"><code>20260930T020348Z</code></a> stopped on
     Windows when Publish Now never appeared; the run's registry, read afterwards, held three of the four databases. The
-    app does not retry a connection that fails before its request is sent (#176). The harness's own Notion check then
-    failed with <code>fetch failed</code> for Fedora in the first attempt and for Windows in the second, so those two
-    traces record no archiving; the second attempt's Fedora check archived its four databases. Checked by hand
+    app does not retry a connection that fails before its request is sent (#176). Those two failed cleanups, Fedora's in
+    the first attempt and Windows's in the second, record no archiving; the second attempt's Fedora cleanup archived its
+    four databases. Checked by hand
     afterwards (<a href="evidence/prealpha-7e67b29-gates.jsonl">hand-kept gate log</a>): every database both attempts created was archived, and no live database was left. At the time,
-    about 5–10% of new connections to <code>api.notion.com</code> timed out from both machines while GitHub and
-    Wikipedia did not; the passing run started after 40 consecutive clean connections.</td>
+    about 5–10% of new connections to <code>api.notion.com</code> timed out from both machines; on Fedora, GitHub
+    and Wikipedia did not; the passing run started after 40 consecutive clean connections.</td>
     <td><span class="s green">passed on 7e67b29</span></td></tr>
-    <tr><td>Gate-owned Ollama worker</td><td>The bounded supervisor on port 11436 served <code>embeddinggemma</code>
-    for Gate 3; the trace records that Ollama answered and listed it before and after the run. From the <a href="evidence/prealpha-7e67b29-gates.jsonl">hand-kept gate log</a>: after stopping recorded
-    supervisor PID 18336, neither it, server PID 29368, <code>llama-server.exe</code> worker PID 9132, nor its console
+    <tr><td>Gate-owned Ollama worker</td><td>The trace records that Ollama answered and listed
+    <code>embeddinggemma</code> before and after Gate 3. From the <a href="evidence/prealpha-7e67b29-gates.jsonl">hand-kept gate log</a>: the bounded supervisor on port
+    11436 served it, and after stopping the recorded supervisor, PID 18336, neither it, server PID 29368, <code>llama-server.exe</code> worker PID 9132, nor its console
     host was running, and the port no longer answered. No user-owned Ollama was running.</td>
     <td><span class="s green">passed</span></td></tr>
     <tr><td>Not rerun on this candidate</td><td>Gate 2 (interrupted restore) last ran on <code>7b1a4d1</code>; #170
