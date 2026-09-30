@@ -569,6 +569,16 @@
         wrong in the product. That is a defect in the test rather than the vault, and it is
         untouched here.
       </p>
+      <p class="note">
+        <span class="pill good">Resolved 2026-09-30</span> The risk above materialised as #178:
+        a full <code>pnpm verify</code> failed with "no run was killed while a note existed only
+        in staging". The test now pins one kill to that window. The child parks right after
+        claiming the middle note and signals the parent, which kills it there, and that run
+        must restore exactly one staged note. The timed kills remain for the invariants but no
+        longer carry sampling assertions. The test passed alone, under twice-<code>nproc</code>
+        busy-loop CPU load, and in a full <code>pnpm verify</code> (593 passed). Making
+        <code>sweep_staging</code> restore nothing made it fail.
+      </p>
     </section>
   </div>
 </body>

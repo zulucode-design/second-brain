@@ -541,6 +541,8 @@ where
             result_summary(cleanup)
         ));
     }
+    #[cfg(all(test, unix))]
+    tests::pause_if_crash_test_claimed(&vault);
 
     let claimed_identity = match Handle::from_path(&recovery_source) {
         Ok(identity) => identity,
@@ -1577,12 +1579,46 @@ mod tests {
 
     #[cfg(unix)]
     const CRASH_VAULT_VAR: &str = "HELIXNOTES_CRASH_TEST_VAULT";
+    /// Set in the crash test's child to park it right after it claims the Nth note.
+    #[cfg(unix)]
+    const PAUSE_AT_CLAIM_VAR: &str = "HELIXNOTES_CRASH_TEST_PAUSE_AT_CLAIM";
     #[cfg(unix)]
     const CRASH_NOTES: usize = 400;
 
     #[cfg(unix)]
     fn crash_note_body(index: usize, moved: bool) -> String {
         format!("{} note {index}", if moved { "archive" } else { "project" })
+    }
+
+    /// Called by `rewrite_file` between claiming a note's only copy and publishing its
+    /// replacement. In the crash test's child it signals the parent and parks, so the
+    /// kill lands in that window every time instead of whenever the scheduler allows.
+    #[cfg(unix)]
+    pub(super) fn pause_if_crash_test_claimed(vault: &Path) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static CLAIMS: AtomicUsize = AtomicUsize::new(0);
+        let Some(target) = std::env::var(PAUSE_AT_CLAIM_VAR)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+        else {
+            return;
+        };
+        if CLAIMS.fetch_add(1, Ordering::SeqCst) + 1 == target {
+            fs::write(vault.join("child-claimed"), b"claimed").unwrap();
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        }
+    }
+
+    /// When the parent kills the crash test's child.
+    #[cfg(unix)]
+    #[derive(Clone, Copy, Debug)]
+    enum CrashKill {
+        /// This long after the child reaches the move.
+        AfterDelay(u64),
+        /// While the child is parked right after claiming this note, counting from 1.
+        AtClaim(usize),
     }
 
     /// Interrupt a real notebook move with a real process kill, then recover.
@@ -1593,10 +1629,12 @@ mod tests {
     /// through, leaving whatever the kernel happened to have written. The parent then runs
     /// startup recovery — reading manifests from the machine-local directory they now live in.
     ///
-    /// Where the kill lands is deliberately not controlled, so the assertions are the
-    /// invariants that must hold at *every* interruption point rather than one expected
-    /// outcome: every note survives exactly once, all of them on the same side of the move,
-    /// and recovery leaves no manifest behind for a later open to replay.
+    /// One kill is pinned to the narrowest and most dangerous window: a note claimed into
+    /// staging whose replacement is not yet published. The rest are timed and deliberately
+    /// not controlled, so the assertions are the invariants that must hold at *every*
+    /// interruption point rather than one expected outcome: every note survives exactly
+    /// once, all of them on the same side of the move, and recovery leaves no manifest
+    /// behind for a later open to replay.
     #[cfg(unix)]
     #[test]
     fn killing_the_app_mid_notebook_move_still_recovers() {
@@ -1605,80 +1643,92 @@ mod tests {
             unreachable!("the child is killed or exits inside the move");
         }
 
+        // A timed kill cannot promise to land in this window under load (#178), so this
+        // one waits for the child to announce it is there.
+        let (interrupted, restored) = run_crash_test_move(CrashKill::AtClaim(CRASH_NOTES / 2));
+        assert!(interrupted, "the paused move left no manifest to recover");
+        assert_eq!(
+            restored, 1,
+            "the note claimed into staging was not restored by `sweep_staging`"
+        );
+
+        // Escalating delays walk the kill across the operation: the early ones land during
+        // the rename and manifest write, the later ones during the per-note rewrites.
+        for delay_ms in (0..40).map(|step| step * 2) {
+            run_crash_test_move(CrashKill::AfterDelay(delay_ms));
+        }
+    }
+
+    /// Run one killed move in a fresh vault, recover it, and check the invariants.
+    /// Returns whether a move was in flight at the kill and how many staged notes
+    /// `sweep_staging` restored.
+    #[cfg(unix)]
+    fn run_crash_test_move(kill: CrashKill) -> (bool, usize) {
         // The child must resolve machine-local state to the same place this process does,
         // or the parent recovers against an empty directory and the test proves nothing.
         let machine_root = crate::machine_local::test_root();
-        // Escalating delays walk the kill across the operation: the early ones land during
-        // the rename and manifest write, the later ones during the per-note rewrites.
-        let mut interrupted = 0;
-        let mut restored = 0;
-        for delay_ms in (0..40).map(|step| step * 2) {
-            let root = vault("directory-crash-kill");
-            let source = root.join("Projects/Launch");
-            fs::create_dir(&source).unwrap();
-            for index in 0..CRASH_NOTES {
-                fs::write(
-                    source.join(format!("Note{index}.md")),
-                    crash_note_body(index, false),
-                )
-                .unwrap();
-            }
-
-            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "vault::relocation::tests::killing_the_app_mid_notebook_move_still_recovers",
-                    "--exact",
-                ])
-                .env(CRASH_VAULT_VAR, &root)
-                .env(crate::machine_local::TEST_ROOT_VAR, &machine_root)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-                .unwrap();
-            // Wait for the child to reach the move before timing the kill. Sleeping from
-            // process spawn instead would measure test-binary startup, and every kill
-            // would land before the operation began.
-            let ready = root.join("child-ready");
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-            while !ready.exists() && std::time::Instant::now() < deadline {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
-            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = fs::remove_file(&ready);
-
-            let manifests = crate::machine_local::relocation_dir(&root).unwrap();
-            if fs::read_dir(&manifests).unwrap().next().is_some() {
-                interrupted += 1;
-            }
-            // Exactly the startup sequence in `commands::open_vault_path`.
-            restored += sweep_staging(&root);
-            let failures = recover_directory_relocations(&root);
-            assert!(failures.is_empty(), "delay {delay_ms}ms: {failures:?}");
-
-            assert_crash_test_vault_is_whole(&root, delay_ms);
-
-            assert!(
-                fs::read_dir(&manifests).unwrap().next().is_none(),
-                "delay {delay_ms}ms: a manifest survived recovery and would replay on the next open"
-            );
-            fs::remove_dir_all(root).unwrap();
+        let root = vault("directory-crash-kill");
+        let source = root.join("Projects/Launch");
+        fs::create_dir(&source).unwrap();
+        for index in 0..CRASH_NOTES {
+            fs::write(
+                source.join(format!("Note{index}.md")),
+                crash_note_body(index, false),
+            )
+            .unwrap();
         }
-        // Without this the test would quietly pass while killing children that had not
-        // begun the move, testing nothing.
+
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "vault::relocation::tests::killing_the_app_mid_notebook_move_still_recovers",
+                "--exact",
+            ])
+            .env(CRASH_VAULT_VAR, &root)
+            .env(crate::machine_local::TEST_ROOT_VAR, &machine_root)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        if let CrashKill::AtClaim(note) = kill {
+            command.env(PAUSE_AT_CLAIM_VAR, note.to_string());
+        }
+        let mut child = command.spawn().unwrap();
+        // Wait for the child to reach the move before timing the kill. Sleeping from
+        // process spawn instead would measure test-binary startup, and every kill
+        // would land before the operation began.
+        let signal = root.join(match kill {
+            CrashKill::AfterDelay(_) => "child-ready",
+            CrashKill::AtClaim(_) => "child-claimed",
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !signal.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let reached = signal.exists();
+        if let CrashKill::AfterDelay(delay_ms) = kill {
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        // Checked only after the kill, so a failure never leaves a parked child behind.
+        assert!(reached, "{kill:?}: the child never signalled {signal:?}");
+        let _ = fs::remove_file(root.join("child-ready"));
+        let _ = fs::remove_file(root.join("child-claimed"));
+
+        let manifests = crate::machine_local::relocation_dir(&root).unwrap();
+        let interrupted = fs::read_dir(&manifests).unwrap().next().is_some();
+        // Exactly the startup sequence in `commands::open_vault_path`.
+        let restored = sweep_staging(&root);
+        let failures = recover_directory_relocations(&root);
+        assert!(failures.is_empty(), "{kill:?}: {failures:?}");
+
+        assert_crash_test_vault_is_whole(&root, kill);
+
         assert!(
-            interrupted > 0,
-            "no run was killed with a move in flight; the timings need widening"
+            fs::read_dir(&manifests).unwrap().next().is_none(),
+            "{kill:?}: a manifest survived recovery and would replay on the next open"
         );
-        // The narrowest and most dangerous window: killed between claiming a note's only
-        // copy and publishing its replacement. If no run lands there, the restore path in
-        // `sweep_staging` is untested and this test is weaker than it looks.
-        assert!(
-            restored > 0,
-            "no run was killed while a note existed only in staging; the timings need widening"
-        );
-        eprintln!("interrupted {interrupted} moves; restored {restored} staged notes");
+        fs::remove_dir_all(root).unwrap();
+        (interrupted, restored)
     }
 
     #[cfg(unix)]
@@ -1708,23 +1758,23 @@ mod tests {
     /// Every note is present exactly once, and the notebook is wholly on one side of the
     /// move. A note that exists in neither place, in both, or with torn content is data loss.
     #[cfg(unix)]
-    fn assert_crash_test_vault_is_whole(root: &Path, delay_ms: u64) {
+    fn assert_crash_test_vault_is_whole(root: &Path, kill: CrashKill) {
         let source = root.join("Projects/Launch");
         let destination = root.join("Archives/Launch");
         let moved = destination.is_dir();
         assert!(
             moved != source.is_dir(),
-            "delay {delay_ms}ms: the notebook is in both places or neither"
+            "{kill:?}: the notebook is in both places or neither"
         );
         let home = if moved { &destination } else { &source };
         for index in 0..CRASH_NOTES {
             let note = home.join(format!("Note{index}.md"));
             let body = fs::read_to_string(&note)
-                .unwrap_or_else(|error| panic!("delay {delay_ms}ms: lost {note:?}: {error}"));
+                .unwrap_or_else(|error| panic!("{kill:?}: lost {note:?}: {error}"));
             assert_eq!(
                 body,
                 crash_note_body(index, moved),
-                "delay {delay_ms}ms: {note:?} was left half-written"
+                "{kill:?}: {note:?} was left half-written"
             );
         }
     }
