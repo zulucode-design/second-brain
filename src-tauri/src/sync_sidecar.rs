@@ -265,7 +265,9 @@ fn spawn_scheduler(app: AppHandle, vault: PathBuf) {
             }
             let run_app = app.clone();
             let run_vault = vault.clone();
-            std::thread::spawn(move || run_sync(run_app, run_vault, control, peer));
+            std::thread::spawn(move || {
+                run_sync(run_app, run_vault, control, peer, SyncTrigger::Scheduled)
+            });
         }
     });
 }
@@ -1401,13 +1403,45 @@ fn publish_sync_terminal(app: &AppHandle, terminal: crate::bulk_mutation::BulkMu
     let _ = app.emit(crate::events::SYNC_DONE, terminal);
 }
 
-fn run_sync(app: AppHandle, vault: PathBuf, control: ControlState, peer: Peer) {
+/// What started a sync batch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SyncTrigger {
+    Scheduled,
+    SyncNow,
+}
+
+/// The terminal to publish when a batch cannot take the bulk-mutation lease, if any. A scheduled
+/// batch that finds the lease held skips its window quietly: whatever holds it (a Sync now batch,
+/// an import, a restore) is not a sync failure, and a failure terminal would overwrite that
+/// batch's own result in Settings (#172). Sync now reports every refusal, and a scheduled batch
+/// still reports any refusal that is not the lease being busy.
+fn refused_sync_terminal(
+    trigger: SyncTrigger,
+    refused: crate::bulk_mutation::LeaseRefused,
+) -> Option<crate::bulk_mutation::BulkMutationTerminal> {
+    if trigger == SyncTrigger::Scheduled && refused.busy {
+        log::info!("Scheduled sync skipped this window: {}", refused.message);
+        return None;
+    }
+    Some(crate::bulk_mutation::BulkMutationTerminal::failure(refused))
+}
+
+fn run_sync(
+    app: AppHandle,
+    vault: PathBuf,
+    control: ControlState,
+    peer: Peer,
+    trigger: SyncTrigger,
+) {
     let state = app.state::<AppState>();
     let terminal = match state
         .bulk_mutation
         .acquire(&state.note_mutation, &state.vault_activity)
     {
-        Err(error) => crate::bulk_mutation::BulkMutationTerminal::failure(error),
+        Err(refused) => match refused_sync_terminal(trigger, refused) {
+            Some(terminal) => terminal,
+            None => return,
+        },
         Ok(_lease) => {
             let (backup_dir, max_count) = match state.config.lock() {
                 Ok(config) => match crate::backup::get_backup_dir(&config.backup_location) {
@@ -1505,7 +1539,7 @@ pub async fn sync_now(app: AppHandle) -> Result<(), String> {
     {
         start(app.clone(), vault.clone(), 0).await?;
     }
-    std::thread::spawn(move || run_sync(app, vault, control, peer));
+    std::thread::spawn(move || run_sync(app, vault, control, peer, SyncTrigger::SyncNow));
     Ok(())
 }
 
@@ -1516,12 +1550,53 @@ mod live_tests;
 mod tests {
     use super::{
         append_durable_temp_ignore_if_missing, convergence_observation_is_complete,
-        harden_generated_config_xml, hold_for_peer_handoff, read_control, tailscale_ipv4,
-        until_next_sync_window, valid_device_id, write_control, CompletionLatch, ControlState,
-        SyncProgress, DURABLE_TEMP_IGNORE, PEER_HANDOFF_GRACE, PULL_ERROR_EXPLAINS_FAILURE,
-        SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL, SYNC_POLL_INTERVAL,
+        harden_generated_config_xml, hold_for_peer_handoff, read_control, refused_sync_terminal,
+        tailscale_ipv4, until_next_sync_window, valid_device_id, write_control, CompletionLatch,
+        ControlState, SyncProgress, SyncTrigger, DURABLE_TEMP_IGNORE, PEER_HANDOFF_GRACE,
+        PULL_ERROR_EXPLAINS_FAILURE, SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL,
+        SYNC_POLL_INTERVAL,
     };
+    use crate::bulk_mutation::{BulkMutationCoordinator, BulkMutationOutcome, LeaseRefused};
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Mutex;
     use std::time::{Duration, Instant};
+
+    /// The refusal a batch gets while another bulk operation holds the lease.
+    fn busy_refusal() -> LeaseRefused {
+        let coordinator = BulkMutationCoordinator::new();
+        let notes = Mutex::new(());
+        let activity = AtomicBool::new(false);
+        let _held = coordinator.acquire(&notes, &activity).unwrap();
+        coordinator
+            .acquire(&notes, &activity)
+            .err()
+            .expect("a held lease refuses a second one")
+    }
+
+    #[test]
+    fn a_scheduled_batch_skips_a_window_whose_lease_is_held() {
+        assert!(refused_sync_terminal(SyncTrigger::Scheduled, busy_refusal()).is_none());
+    }
+
+    #[test]
+    fn sync_now_still_reports_a_held_lease() {
+        let terminal = refused_sync_terminal(SyncTrigger::SyncNow, busy_refusal()).unwrap();
+        assert_eq!(terminal.outcome, BulkMutationOutcome::Failure);
+        assert_eq!(
+            terminal.error.as_deref(),
+            Some("Another bulk vault operation is already running")
+        );
+    }
+
+    #[test]
+    fn a_scheduled_batch_reports_a_refusal_that_is_not_a_held_lease() {
+        let refused = LeaseRefused {
+            busy: false,
+            message: "poisoned lock: another task failed inside".to_string(),
+        };
+        let terminal = refused_sync_terminal(SyncTrigger::Scheduled, refused).unwrap();
+        assert_eq!(terminal.outcome, BulkMutationOutcome::Failure);
+    }
 
     #[test]
     fn handoff_hold_ends_only_when_the_peer_reports_a_disconnect() {

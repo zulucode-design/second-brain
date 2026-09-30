@@ -16,6 +16,36 @@ pub struct BulkMutationLease<'a> {
     vault_activity: &'a AtomicBool,
 }
 
+/// Why `acquire` refused a lease.
+#[derive(Debug)]
+pub struct LeaseRefused {
+    /// Another bulk operation or sync holds the lease, so the same call succeeds once it ends.
+    pub busy: bool,
+    pub message: String,
+}
+
+impl From<LeaseRefused> for String {
+    fn from(refused: LeaseRefused) -> Self {
+        refused.message
+    }
+}
+
+impl LeaseRefused {
+    fn busy(message: &str) -> Self {
+        Self {
+            busy: true,
+            message: message.to_string(),
+        }
+    }
+
+    fn failed(message: String) -> Self {
+        Self {
+            busy: false,
+            message,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum BulkMutationOutcome {
@@ -70,7 +100,7 @@ impl BulkMutationCoordinator {
         &'a self,
         note_mutation: &'a Mutex<()>,
         vault_activity: &'a AtomicBool,
-    ) -> Result<BulkMutationLease<'a>, String> {
+    ) -> Result<BulkMutationLease<'a>, LeaseRefused> {
         // Refuse a second bulk operation instead of queueing behind the first: a caller that
         // waited would run a full duplicate import or restore once the lease ahead of it drops.
         // Poisoning is reported separately, because "already running" would otherwise be
@@ -78,15 +108,23 @@ impl BulkMutationCoordinator {
         let gate = match self.gate.try_lock() {
             Ok(gate) => gate,
             Err(TryLockError::WouldBlock) => {
-                return Err("Another bulk vault operation is already running".to_string())
+                return Err(LeaseRefused::busy(
+                    "Another bulk vault operation is already running",
+                ))
             }
-            Err(TryLockError::Poisoned(error)) => return Err(error.to_string()),
+            Err(TryLockError::Poisoned(error)) => {
+                return Err(LeaseRefused::failed(error.to_string()))
+            }
         };
         // Blocking here is bounded by a single in-flight note save, so an ordinary save in
         // progress delays the bulk operation rather than failing it.
-        let note_mutation = note_mutation.lock().map_err(|error| error.to_string())?;
+        let note_mutation = note_mutation
+            .lock()
+            .map_err(|error| LeaseRefused::failed(error.to_string()))?;
         if vault_activity.swap(true, Ordering::SeqCst) {
-            return Err("Another sync or bulk vault operation is already running".to_string());
+            return Err(LeaseRefused::busy(
+                "Another sync or bulk vault operation is already running",
+            ));
         }
         self.watcher_suppressions.fetch_add(1, Ordering::SeqCst);
         Ok(BulkMutationLease {
@@ -137,7 +175,9 @@ mod tests {
         let notes = Mutex::new(());
         let syncing = AtomicBool::new(true);
 
-        assert!(coordinator.acquire(&notes, &syncing).is_err());
+        assert!(coordinator
+            .acquire(&notes, &syncing)
+            .is_err_and(|refused| refused.busy));
         assert!(!coordinator.watcher_suppressed());
         assert!(syncing.load(Ordering::SeqCst));
     }
@@ -153,7 +193,10 @@ mod tests {
 
         let lease = coordinator.acquire(&notes, &syncing).unwrap();
         let refused = coordinator.acquire(&notes, &syncing);
-        assert!(refused.is_err(), "a second bulk mutation must be refused");
+        assert!(
+            refused.is_err_and(|refused| refused.busy),
+            "a second bulk mutation must be refused as busy"
+        );
 
         // The refusal leaves the live lease intact: still suppressing, still marked active.
         assert!(coordinator.watcher_suppressed());
