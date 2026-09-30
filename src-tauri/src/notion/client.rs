@@ -275,10 +275,15 @@ impl NotionClient {
 
             // A connection lost while the body arrives is as unknown an outcome as one lost
             // before the headers, so it is a network error, never an empty answer (#186).
-            let text = response
-                .text()
-                .await
-                .map_err(|error| NotionError::Network(cause_chain(&error)))?;
+            // The status already says what happened to a refused request, so only a success
+            // whose body is lost is left unknown.
+            let text = match response.text().await {
+                Ok(text) => text,
+                Err(error) if status.is_success() => {
+                    return Err(NotionError::Network(cause_chain(&error)))
+                }
+                Err(_) => String::new(),
+            };
             let parsed: Value = match serde_json::from_str(&text) {
                 Ok(parsed) => parsed,
                 Err(_) if status.is_success() && !text.is_empty() => {
@@ -294,11 +299,13 @@ impl NotionClient {
                 return Ok(parsed);
             }
 
+            // Only Notion's own `message`, never a raw body: a proxy's error page is not
+            // Notion's, and a raw body must not reach the log (docs/log-privacy.md, rule 3).
             let message = parsed
                 .get("message")
                 .and_then(|m| m.as_str())
-                .unwrap_or(&text)
-                .to_string();
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("no readable message (HTTP {})", status.as_u16()));
 
             return Err(match status.as_u16() {
                 401 => NotionError::Unauthorized(message),
@@ -794,11 +801,11 @@ mod tests {
                 if status == "DROP" {
                     continue;
                 }
-                // Promise more body than is sent, then hang up.
-                if status == "TRUNCATE" {
+                // "TRUNCATE <status>": promise more body than is sent, then hang up.
+                if let Some(real) = status.strip_prefix("TRUNCATE ") {
                     let _ = stream.write_all(
                         format!(
-                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            "HTTP/1.1 {real}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                             body.len() + 100
                         )
                         .as_bytes(),
@@ -1177,11 +1184,50 @@ mod tests {
 
     #[tokio::test]
     async fn a_connection_lost_while_the_body_arrives_is_a_network_error() {
-        let (base, _r) = scripted_server(vec![("TRUNCATE", r#"{"results":[]"#)]);
+        let (base, _r) = scripted_server(vec![("TRUNCATE 200 OK", r#"{"results":[]"#)]);
 
         let error = client(&base).child_databases("parent").await.unwrap_err();
 
         assert!(matches!(error, NotionError::Network(_)), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn a_refusal_whose_body_is_cut_off_is_still_a_refusal() {
+        // The status already says the request was refused, so it must not be retried as if
+        // its outcome were unknown.
+        let (base, _r) = scripted_server(vec![
+            ("TRUNCATE 400 Bad Request", r#"{"message":"bad"#),
+            ("TRUNCATE 401 Unauthorized", r#"{"message":"bad"#),
+        ]);
+        let client = client(&base);
+
+        let refused = client.child_databases("parent").await.unwrap_err();
+        let rejected = client.child_databases("parent").await.unwrap_err();
+
+        assert!(matches!(refused, NotionError::Validation(_)), "{refused:?}");
+        assert!(
+            matches!(rejected, NotionError::Unauthorized(_)),
+            "{rejected:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_error_body_that_is_not_notions_is_never_repeated_verbatim() {
+        // A proxy's error page is not Notion's message, and a raw body must not reach the log.
+        let (base, _r) = scripted_server(vec![(
+            "502 Bad Gateway",
+            "<html>upstream secret-path</html>",
+        )]);
+
+        let error = client(&base).whoami().await.unwrap_err();
+
+        assert_eq!(
+            error,
+            NotionError::Api {
+                status: 502,
+                message: "no readable message (HTTP 502)".into()
+            }
+        );
     }
 
     #[tokio::test]

@@ -233,17 +233,20 @@ pub async fn notion_visible_pages(app: AppHandle) -> Result<Vec<VisiblePage>, St
 /// after two does not produce two more of them on the next attempt.
 #[tauri::command]
 pub async fn notion_setup(app: AppHandle, parent_page_id: String) -> Result<(), String> {
-    let (client, vault) = {
-        let state = app.state::<AppState>();
-        let config = state.config.lock().map_err(|error| error.to_string())?;
-        (client_for(&config)?, active_vault(&config)?)
-    };
-
-    setup_databases(&client, &vault, &parent_page_id)
-        .await
-        .map(|_| ())
-        // Settings shows the error only until it is dismissed; the log keeps it (#185).
-        .inspect_err(|error| log::error!("Notion setup failed: {error}"))
+    let result = async {
+        let (client, vault) = {
+            let state = app.state::<AppState>();
+            let config = state.config.lock().map_err(|error| error.to_string())?;
+            (client_for(&config)?, active_vault(&config)?)
+        };
+        setup_databases(&client, &vault, &parent_page_id)
+            .await
+            .map(|_| ())
+    }
+    .await;
+    // Every failure, including a missing token or vault. Settings shows the error only until
+    // it is dismissed; the log keeps it (#185).
+    result.inspect_err(|error| log::error!("Notion setup failed: {error}"))
 }
 
 /// Create whichever of the four databases do not exist yet, under `parent_page_id`.
