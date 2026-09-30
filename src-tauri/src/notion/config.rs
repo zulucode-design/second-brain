@@ -43,8 +43,9 @@ pub const API_VERSION: &str = "2026-03-11";
 
 /// Written into every database this app creates, and never read by this version.
 ///
-/// Reading it is #58's job: recognising databases created by a previous install so a
-/// reinstall reclaims them instead of creating a second set of four. Writing it costs one
+/// Reading it is mostly #58's job: recognising databases created by a previous install so a
+/// reinstall reclaims them instead of creating a second set of four. Setup also reads it to
+/// confirm that a database it created on a lost connection is its own (#186). Writing it costs one
 /// field in a request already being made, and skipping it would leave every database
 /// created by v1 permanently unrecognisable — the future ticket could then only ever help
 /// people who set up Notion after it shipped.
@@ -143,6 +144,21 @@ pub struct DatabaseRegistry {
     /// null needing interpretation.
     #[serde(default)]
     pub databases: BTreeMap<String, DatabaseLink>,
+
+    /// A database create that was sent and whose outcome is not known yet (#186). Saved
+    /// before the create, so a lost response or a restart resolves it instead of creating a
+    /// second database.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<PendingDatabase>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingDatabase {
+    /// The category's folder name, which is also the database title.
+    pub category: String,
+    /// The databases already under the parent when the create was sent. One that appears
+    /// later with this title and the marker is the one the create made.
+    pub existing: Vec<String>,
 }
 
 impl DatabaseRegistry {

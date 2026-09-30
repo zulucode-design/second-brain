@@ -1648,6 +1648,21 @@ async function notionRequest(token, method, path, body) {
   return response.json();
 }
 
+// Every result of a Notion list, following its cursor. A second copy past the first page
+// must not escape the check (#186).
+export async function notionAll(token, method, path, body = {}) {
+  const results = [];
+  let cursor = null;
+  do {
+    const page = method === 'GET'
+      ? await notionRequest(token, 'GET', cursor ? `${path}&start_cursor=${cursor}` : path)
+      : await notionRequest(token, method, path, cursor ? { ...body, start_cursor: cursor } : body);
+    results.push(...page.results);
+    cursor = page.has_more ? page.next_cursor : null;
+  } while (cursor);
+  return results;
+}
+
 function notionTitle(value) {
   return (value ?? []).map((part) => part.plain_text).join('');
 }
@@ -1657,15 +1672,39 @@ function notionTitle(value) {
  * in the vault's own registry, so a row left under the disposable page by an earlier run cannot
  * count as this run's.
  */
+// Each expected note must be in Notion exactly once. A second copy is the duplicate a lost
+// connection could leave if the app ever created twice (#186).
+export function publishedProblems(titles, published) {
+  const missing = titles.filter((title) => !published.includes(title));
+  const duplicated = titles.filter((title) => published.filter((found) => found === title).length > 1);
+  return [
+    ...(missing.length ? [`not published to Notion: ${missing.join(', ')}`] : []),
+    ...(duplicated.length ? [`published to Notion more than once: ${duplicated.join(', ')}`] : []),
+  ];
+}
+
 async function notionVerifyAndClean({ token }, registry, titles) {
   const databaseIds = Object.values(registry.databases).map((database) => database.database_id);
   if (!databaseIds.length) fail('the vault registered no Notion databases');
   const published = [];
   const problems = [];
+  // A live database under the page that the registry does not name is a second one the app
+  // made and lost track of (#186). It is archived with the rest and fails the run.
+  let strays = [];
+  if (registry.parent_page_id) {
+    try {
+      const children = await notionAll(token, 'GET', `/blocks/${registry.parent_page_id}/children?page_size=100`);
+      strays = children
+        .filter((block) => block.type === 'child_database' && !databaseIds.includes(block.id))
+        .map((block) => block.id);
+    } catch (error) {
+      problems.push(error.message);
+    }
+  }
   for (const id of databaseIds) {
     try {
-      const rows = await notionRequest(token, 'POST', `/databases/${id}/query`, { page_size: 100 });
-      for (const row of rows.results) {
+      const rows = await notionAll(token, 'POST', `/databases/${id}/query`, { page_size: 100 });
+      for (const row of rows) {
         published.push(...Object.values(row.properties)
           .filter((property) => property.type === 'title').map((property) => notionTitle(property.title)));
       }
@@ -1674,17 +1713,17 @@ async function notionVerifyAndClean({ token }, registry, titles) {
     }
   }
   // Archived even when a query failed, so the run leaves nothing live under the page.
-  for (const id of databaseIds) {
+  for (const id of [...databaseIds, ...strays]) {
     try {
       await notionRequest(token, 'PATCH', `/databases/${id}`, { archived: true });
     } catch (error) {
       problems.push(error.message);
     }
   }
+  if (strays.length) problems.push(`${strays.length} database(s) under the page are not in the registry`);
+  problems.push(...publishedProblems(titles, published));
   if (problems.length) fail(problems.join('; '));
-  const missing = titles.filter((title) => !published.includes(title));
-  if (missing.length) fail(`not published to Notion: ${missing.join(', ')}`);
-  return { databases: databaseIds.length, archived: databaseIds.length, published };
+  return { databases: databaseIds.length, archived: databaseIds.length + strays.length, published };
 }
 
 const NOTION_REGISTRY = '.helixnotes/notion/databases.json';
@@ -1712,8 +1751,7 @@ async function notionCleanup(machine, notion, passed) {
     // A walkthrough that failed before Connect never created one.
     if (passed) problems.push(`registry: ${error.message}`);
   }
-  // The clip and the attachment note carry anchor and relative links (#152).
-  const titles = passed ? ['Walkthrough capture', 'Zettelkasten', 'Walkthrough attachment'] : [];
+  const titles = passed ? NOTION_PUBLISHED_TITLES : [];
   let databases = { databases: 0, archived: 0 };
   try {
     if (registry) databases = await notionVerifyAndClean(notion, registry, titles);
@@ -1737,6 +1775,13 @@ const WALKTHROUGH_NOTES = {
 };
 
 const CLIP_URL = 'https://en.wikipedia.org/wiki/Zettelkasten';
+
+// Every note in the vault when the walkthrough publishes, each expected in Notion exactly once.
+// The clip and the attachment note carry anchor and relative links (#152).
+export const NOTION_PUBLISHED_TITLES = [
+  'Walkthrough capture', WALKTHROUGH_NOTES.semantic.title, WALKTHROUGH_NOTES.tasks.title,
+  'Zettelkasten', 'Walkthrough attachment',
+];
 
 async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, notion, requireUnlocked }) {
   const walkthrough = await import('./alpha-walkthrough.mjs');

@@ -36,7 +36,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use super::blocks;
-use super::client::{NotionClient, NotionError};
+use super::client::{NotionClient, NotionError, LOST_CONNECTION_LOOKUPS, LOST_CONNECTION_SETTLE};
 use super::config::DatabaseRegistry;
 use super::map::{self, EntryState, MapEntry};
 use super::plan::{self, Action, InspectedNote, NoteSnapshot, SkipReason};
@@ -158,7 +158,16 @@ where
     let mut done = 0;
     for action in tombstones {
         if let Action::Trash { note_id, page_id } = action {
-            match client.trash_page(&page_id).await {
+            let mut trashed = client.trash_page(&page_id).await;
+            if let Err(NotionError::Network(detail)) = &trashed {
+                // Trashing twice is harmless, and a page already gone reads as done below.
+                log::warn!(
+                    "Lost the Notion connection trashing {note_id} ({detail}); retrying once"
+                );
+                tokio::time::sleep(LOST_CONNECTION_SETTLE).await;
+                trashed = client.trash_page(&page_id).await;
+            }
+            match trashed {
                 Ok(()) => {
                     let _ = map::remove(vault_path, &note_id);
                     summary.trashed += 1;
@@ -169,7 +178,10 @@ where
                     let _ = map::remove(vault_path, &note_id);
                     summary.trashed += 1;
                 }
-                Err(error) if error.is_fatal() => return Err(error),
+                Err(error) if error.is_fatal() => {
+                    log::warn!("Could not trash the Notion page for {note_id}: {error}");
+                    return Err(error);
+                }
                 Err(error) => {
                     log::warn!("Could not trash the Notion page for {note_id}: {error}");
                     summary.failed += 1;
@@ -256,7 +268,45 @@ where
             report(Progress { done, total });
             continue;
         }
-        match execute(vault_path, client, registry, &action, &note).await {
+        let mut outcome = execute(vault_path, client, registry, &action, &note).await;
+        if let Err(NotionError::Network(detail)) = &outcome {
+            // The call may have landed. One resolve now, instead of leaving the note failed
+            // until the next poll (#186); a second lost connection fails it as before.
+            log::warn!(
+                "Lost the Notion connection publishing {note_id} ({detail}); resolving it once"
+            );
+            let retry = action.after_lost_connection();
+            outcome = match &retry {
+                // What the wait found is used as it is, so no later query can miss a page the
+                // wait saw and create a second one.
+                //
+                // A page that never shows up is not created again in this run: it may still land
+                // late, and Notion offers no way to make a second create safe. The note fails
+                // and keeps its create intent, and the next run resolves it once the page has
+                // had time to show (#186).
+                Action::ResolveInterrupted { data_source_id, .. } => {
+                    match wait_until_visible(client, registry, &note_id, data_source_id).await {
+                        Ok(Some(found)) => {
+                            resolve(vault_path, client, &retry, &note, data_source_id, Some(found))
+                                .await
+                        }
+                        Ok(None) => Err(NotionError::Network(format!(
+                            "{detail}; the page could not be confirmed, so the next publish resolves it"
+                        ))),
+                        Err(error) => Err(error),
+                    }
+                }
+                _ => {
+                    tokio::time::sleep(LOST_CONNECTION_SETTLE).await;
+                    execute(vault_path, client, registry, &retry, &note).await
+                }
+            };
+        }
+        if let Err(error) = &outcome {
+            // Every failure, the fatal ones too, so the note it happened on is in the log (#185).
+            log::warn!("Could not publish {note_id} to Notion: {}", error.message());
+        }
+        match outcome {
             Ok(()) => tally(&mut summary, &action),
             Err(error) if error.is_fatal() => return Err(error),
             Err(error) => {
@@ -391,24 +441,8 @@ async fn execute(
         } => {
             // Ask Notion before creating anything. The page may exist from the interrupted
             // run; creating blind is how a vault ends up with two pages per note.
-            match find_existing(client, registry, note_id, data_source_id).await? {
-                Some((page_id, found_in)) => {
-                    if found_in != *data_source_id {
-                        client.move_page(&page_id, data_source_id).await?;
-                    }
-                    replace_content(client, &page_id, note).await?;
-                    client
-                        .update_properties(&page_id, properties::for_note(&note.meta))
-                        .await?;
-                    publish_entry(vault_path, action, &page_id);
-                    Ok(())
-                }
-                None => {
-                    let page_id = create_page(client, data_source_id, note).await?;
-                    publish_entry(vault_path, action, &page_id);
-                    Ok(())
-                }
-            }
+            let found = find_existing(client, registry, note_id, data_source_id).await?;
+            resolve(vault_path, client, action, note, data_source_id, found).await
         }
 
         Action::UpdateContent { page_id, .. } => {
@@ -486,6 +520,55 @@ async fn replace_content(
     Ok(())
 }
 
+/// Finish an unresolved create with what Notion holds for it: adopt the page if one was
+/// found, and create one only if none was.
+async fn resolve(
+    vault_path: &Path,
+    client: &NotionClient,
+    action: &Action,
+    note: &NoteSource,
+    data_source_id: &str,
+    found: Option<(String, String)>,
+) -> Result<(), NotionError> {
+    match found {
+        Some((page_id, found_in)) => {
+            if found_in != data_source_id {
+                client.move_page(&page_id, data_source_id).await?;
+            }
+            replace_content(client, &page_id, note).await?;
+            client
+                .update_properties(&page_id, properties::for_note(&note.meta))
+                .await?;
+            publish_entry(vault_path, action, &page_id);
+            Ok(())
+        }
+        None => {
+            let page_id = create_page(client, data_source_id, note).await?;
+            publish_entry(vault_path, action, &page_id);
+            Ok(())
+        }
+    }
+}
+
+/// Look for a page whose create lost its connection, giving it time to show up in a query
+/// (#186). Looks up to `LOST_CONNECTION_LOOKUPS` times; `None` means it never appeared. A
+/// failed look is returned as the error, never read as "not there": the note then fails and
+/// its create intent is resolved by a later run instead of risking a second page.
+async fn wait_until_visible(
+    client: &NotionClient,
+    registry: &DatabaseRegistry,
+    note_id: &str,
+    data_source_id: &str,
+) -> Result<Option<(String, String)>, NotionError> {
+    for _ in 0..LOST_CONNECTION_LOOKUPS {
+        tokio::time::sleep(LOST_CONNECTION_SETTLE).await;
+        if let Some(found) = find_existing(client, registry, note_id, data_source_id).await? {
+            return Ok(Some(found));
+        }
+    }
+    Ok(None)
+}
+
 /// Look for a page carrying this note's id, starting where it should be.
 ///
 /// The other three data sources are searched too, because a note's category can change
@@ -544,7 +627,7 @@ fn publish_entry(vault_path: &Path, action: &Action, page_id: &str) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::notion::config::DatabaseLink;
     use chrono::{TimeZone, Utc};
@@ -553,7 +636,7 @@ mod tests {
     use std::sync::mpsc::{self, Receiver};
     use std::time::Duration;
 
-    fn scripted_server(responses: Vec<(&str, &str)>) -> (String, Receiver<String>) {
+    pub(crate) fn scripted_server(responses: Vec<(&str, &str)>) -> (String, Receiver<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
         let address = listener.local_addr().unwrap();
         let (tx, rx) = mpsc::channel();
@@ -592,6 +675,10 @@ mod tests {
                     }
                 }
                 let _ = tx.send(String::from_utf8_lossy(&request).into_owned());
+                // Hang up without answering: the request arrived, and its response is lost.
+                if status == "DROP" {
+                    continue;
+                }
                 let response = format!(
                     "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
@@ -879,6 +966,167 @@ mod tests {
             entry.page_id.as_deref(),
             Some("page-orphan"),
             "the orphaned page must be adopted, not left behind with a duplicate beside it"
+        );
+    }
+
+    const NO_PAGE: &str = r#"{"results":[],"has_more":false}"#;
+    const FOUND: &str = r#"{"results":[{"id":"page-landed"}]}"#;
+
+    fn page_posts(requests: &Receiver<String>) -> usize {
+        requests
+            .try_iter()
+            .filter(|request| request.starts_with("POST /pages "))
+            .count()
+    }
+
+    /// One look for the page across all four data sources, finding nothing.
+    fn missed_look() -> Vec<(&'static str, &'static str)> {
+        vec![("200 OK", NO_PAGE); 4]
+    }
+
+    async fn publish_one(base: &str, vault: &std::path::Path) -> Summary {
+        run_notes(
+            vault,
+            &client(base),
+            &registry(),
+            vec![note("note-1", ParaCategory::Projects, "body")],
+            |_| {},
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_page_created_on_a_lost_connection_is_adopted_in_the_same_run() {
+        let vault = vault();
+        let (base, requests) = creating_server(vec![
+            ("DROP", ""),
+            ("200 OK", FOUND),                     // the wait finds it
+            ("200 OK", r#"{"id":"page-landed"}"#), // erase
+            ("200 OK", r#"{"id":"page-landed"}"#), // append
+            ("200 OK", r#"{"id":"page-landed"}"#), // properties
+        ]);
+
+        let summary = publish_one(&base, &vault).await;
+
+        assert_eq!((summary.created, summary.failed), (1, 0));
+        assert_eq!(
+            page_posts(&requests),
+            1,
+            "the page that landed must not be created again"
+        );
+        let entry = map::load(&vault, "note-1").unwrap();
+        assert_eq!(entry.page_id.as_deref(), Some("page-landed"));
+        assert_eq!(entry.last_error, None);
+    }
+
+    #[tokio::test]
+    async fn a_page_that_shows_up_late_is_still_adopted_not_duplicated() {
+        let vault = vault();
+        let mut responses = vec![("DROP", "")];
+        responses.extend(missed_look()); // not visible yet
+        responses.extend(missed_look()); // still not
+        responses.extend([
+            ("200 OK", FOUND),                     // the wait's third look finds it
+            ("200 OK", r#"{"id":"page-landed"}"#), // erase
+            ("200 OK", r#"{"id":"page-landed"}"#), // append
+            ("200 OK", r#"{"id":"page-landed"}"#), // properties
+        ]);
+        let (base, requests) = creating_server(responses);
+
+        let summary = publish_one(&base, &vault).await;
+
+        assert_eq!((summary.created, summary.failed), (1, 0));
+        assert_eq!(page_posts(&requests), 1);
+    }
+
+    /// A first run whose create lost its connection and whose every look found nothing.
+    async fn unconfirmed_first_run(vault: &std::path::Path) {
+        let mut responses = vec![("DROP", "")];
+        for _ in 0..LOST_CONNECTION_LOOKUPS {
+            responses.extend(missed_look());
+        }
+        // Notion would accept a second create: sending it is exactly the duplicate.
+        responses.push(("200 OK", r#"{"id":"page-second"}"#));
+        let (base, requests) = creating_server(responses);
+
+        let summary = publish_one(&base, vault).await;
+
+        assert_eq!((summary.created, summary.failed), (0, 1));
+        assert_eq!(
+            page_posts(&requests),
+            1,
+            "an unconfirmed create is never sent twice in a run"
+        );
+        let entry = map::load(vault, "note-1").unwrap();
+        assert_eq!(
+            entry.state,
+            EntryState::Creating,
+            "the intent survives for the next run"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_page_that_shows_up_after_the_last_look_is_adopted_by_the_next_run() {
+        let vault = vault();
+        unconfirmed_first_run(&vault).await;
+
+        // By the next run the page that did land is visible.
+        let (base, requests) = scripted_server(vec![
+            ("200 OK", FOUND),
+            ("200 OK", r#"{"id":"page-landed"}"#), // erase
+            ("200 OK", r#"{"id":"page-landed"}"#), // append
+            ("200 OK", r#"{"id":"page-landed"}"#), // properties
+        ]);
+        let summary = publish_one(&base, &vault).await;
+
+        assert_eq!((summary.created, summary.failed), (1, 0));
+        assert_eq!(
+            page_posts(&requests),
+            0,
+            "exactly one page: the one that landed"
+        );
+        let entry = map::load(&vault, "note-1").unwrap();
+        assert_eq!(entry.page_id.as_deref(), Some("page-landed"));
+    }
+
+    #[tokio::test]
+    async fn a_page_that_never_landed_is_created_once_by_the_next_run() {
+        let vault = vault();
+        unconfirmed_first_run(&vault).await;
+
+        let mut responses = missed_look();
+        responses.push(("200 OK", r#"{"id":"page-2"}"#));
+        let (base, requests) = scripted_server(responses);
+        let summary = publish_one(&base, &vault).await;
+
+        assert_eq!((summary.created, summary.failed), (1, 0));
+        assert_eq!(page_posts(&requests), 1);
+        let entry = map::load(&vault, "note-1").unwrap();
+        assert_eq!(entry.page_id.as_deref(), Some("page-2"));
+    }
+
+    #[tokio::test]
+    async fn a_failed_look_fails_the_note_instead_of_creating_again() {
+        // Read as "not there", the failed look would let a second page be created beside one
+        // that landed. The note fails and keeps its intent for a later run to resolve.
+        let vault = vault();
+        // After the failed look, Notion would answer "not there" and accept a create: taking
+        // that path is exactly the duplicate.
+        let mut responses = vec![("DROP", ""), ("DROP", "")];
+        responses.extend(missed_look());
+        responses.push(("200 OK", r#"{"id":"page-second"}"#));
+        let (base, requests) = creating_server(responses);
+
+        let summary = publish_one(&base, &vault).await;
+
+        assert_eq!((summary.created, summary.failed), (0, 1));
+        assert_eq!(page_posts(&requests), 1);
+        let entry = map::load(&vault, "note-1").unwrap();
+        assert_eq!(
+            entry.state,
+            EntryState::Creating,
+            "the intent survives for the next run"
         );
     }
 

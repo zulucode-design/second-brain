@@ -41,7 +41,8 @@ forwarded to the log file.
 - Paths and note ids are logged in `commands.rs` (semantic indexing), `notion/publish.rs`,
   `notion/map.rs`, `notion/commands.rs`, and `vault/relocation.rs`. This is allowed by rule 4.
 - `notion/publish.rs` logs Notion errors that may include the API `message`. That is note
-  metadata under rule 3.
+  metadata under rule 3. Since #185 (2026-09-30) that includes each note's publish failure,
+  with its note id, and `notion/commands.rs` logs a failed setup's error.
 - `sync_sidecar.rs` forwards Syncthing standard error at `warn`. That is note metadata under
   rule 5.
 - Development-only `println!` and `eprintln!` calls exist in tests and in the portal probe.

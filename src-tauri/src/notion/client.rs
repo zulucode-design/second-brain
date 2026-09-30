@@ -53,6 +53,19 @@ const CONNECT_RETRIES: u32 = 2;
 /// error cannot tell "never reached Notion" from "sent, and no answer yet".
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long to wait before each look for a request whose connection was lost, to see
+/// whether it landed. See `LOST_CONNECTION_LOOKUPS`.
+pub(crate) const LOST_CONNECTION_SETTLE: Duration = if cfg!(test) {
+    Duration::from_millis(5)
+} else {
+    Duration::from_secs(2)
+};
+
+/// How many times to look for a request whose connection was lost before taking it as not
+/// landed. Three looks two seconds apart cover the few seconds a new page or database can take
+/// to become visible to a query.
+pub(crate) const LOST_CONNECTION_LOOKUPS: u32 = 3;
+
 /// Longest we will honour a `Retry-After` before treating it as a failure.
 ///
 /// Notion is entitled to ask for a long wait, but a background publisher blocking for
@@ -260,18 +273,39 @@ impl NotionClient {
                 continue;
             }
 
-            let text = response.text().await.unwrap_or_default();
-            let parsed: Value = serde_json::from_str(&text).unwrap_or_else(|_| json!({}));
+            // A connection lost while the body arrives is as unknown an outcome as one lost
+            // before the headers, so it is a network error, never an empty answer (#186).
+            // The status already says what happened to a refused request, so only a success
+            // whose body is lost is left unknown.
+            let text = match response.text().await {
+                Ok(text) => text,
+                Err(error) if status.is_success() => {
+                    return Err(NotionError::Network(cause_chain(&error)))
+                }
+                Err(_) => String::new(),
+            };
+            let parsed: Value = match serde_json::from_str(&text) {
+                Ok(parsed) => parsed,
+                Err(_) if status.is_success() && !text.is_empty() => {
+                    return Err(NotionError::Api {
+                        status: status.as_u16(),
+                        message: "Notion sent a response that could not be read".into(),
+                    });
+                }
+                Err(_) => json!({}),
+            };
 
             if status.is_success() {
                 return Ok(parsed);
             }
 
+            // Only Notion's own `message`, never a raw body: a proxy's error page is not
+            // Notion's, and a raw body must not reach the log (docs/log-privacy.md, rule 3).
             let message = parsed
                 .get("message")
                 .and_then(|m| m.as_str())
-                .unwrap_or(&text)
-                .to_string();
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("no readable message (HTTP {})", status.as_u16()));
 
             return Err(match status.as_u16() {
                 401 => NotionError::Unauthorized(message),
@@ -334,8 +368,7 @@ impl NotionClient {
     /// Create one PARA database under `parent_page_id`.
     ///
     /// The marker in the description is written for #58, which reclaims databases created by
-    /// a previous install. This version never reads it — but a database created without it
-    /// could never be recognised later, so it is written from the first release.
+    /// a previous install; a database created without it could never be recognised later.
     pub async fn create_database(
         &self,
         parent_page_id: &str,
@@ -375,6 +408,98 @@ impl NotionClient {
         })
     }
 
+    /// The databases directly under a page, as `(database id, title)`.
+    pub async fn child_databases(
+        &self,
+        parent_page_id: &str,
+    ) -> Result<Vec<(String, String)>, NotionError> {
+        let mut databases = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut path = format!("/blocks/{parent_page_id}/children?page_size=100");
+            if let Some(next) = &cursor {
+                path.push_str(&format!("&start_cursor={next}"));
+            }
+            let response = self.request(reqwest::Method::GET, &path, None).await?;
+            for block in results(&response)? {
+                if block["type"] != json!("child_database") {
+                    continue;
+                }
+                if let (Some(id), Some(title)) = (
+                    block["id"].as_str(),
+                    block["child_database"]["title"].as_str(),
+                ) {
+                    databases.push((id.to_string(), title.to_string()));
+                }
+            }
+            match (
+                response["has_more"].as_bool(),
+                response["next_cursor"].as_str(),
+            ) {
+                (Some(true), Some(next)) => cursor = Some(next.to_string()),
+                _ => break,
+            }
+        }
+        Ok(databases)
+    }
+
+    /// A database this app created, or `None` for one it did not or one in the trash.
+    async fn managed_database(
+        &self,
+        database_id: &str,
+    ) -> Result<Option<DatabaseLink>, NotionError> {
+        let response = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/databases/{database_id}"),
+                None,
+            )
+            .await?;
+        let description: String = response["description"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|run| run["plain_text"].as_str())
+            .collect();
+        let trashed = response["in_trash"].as_bool() == Some(true)
+            || response["archived"].as_bool() == Some(true);
+        if description != MARKER || trashed {
+            return Ok(None);
+        }
+        Ok(response["data_sources"][0]["id"]
+            .as_str()
+            .map(|data_source_id| DatabaseLink {
+                database_id: database_id.to_string(),
+                data_source_id: data_source_id.to_string(),
+            }))
+    }
+
+    /// A database created under `parent_page_id` since `existing` was listed, with this title
+    /// and the managed marker: the one a create whose response was lost made (#186).
+    ///
+    /// Looked for several times, because a database that did land can take a moment to be
+    /// listed. ponytail: `LOST_CONNECTION_LOOKUPS` × `LOST_CONNECTION_SETTLE` is a guess at
+    /// Notion's worst visibility delay; past it, absence is taken as "did not land".
+    pub async fn find_new_database(
+        &self,
+        parent_page_id: &str,
+        title: &str,
+        existing: &[String],
+    ) -> Result<Option<DatabaseLink>, NotionError> {
+        for _ in 0..LOST_CONNECTION_LOOKUPS {
+            tokio::time::sleep(LOST_CONNECTION_SETTLE).await;
+            for (database_id, found_title) in self.child_databases(parent_page_id).await? {
+                if found_title != title || existing.contains(&database_id) {
+                    continue;
+                }
+                if let Some(link) = self.managed_database(&database_id).await? {
+                    return Ok(Some(link));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     /// Find a page by the note id it carries, which is how a lost map is rebuilt.
     pub async fn find_page_by_note_id(
         &self,
@@ -396,7 +521,10 @@ impl NotionClient {
             )
             .await?;
 
-        Ok(response["results"][0]["id"].as_str().map(str::to_string))
+        Ok(results(&response)?
+            .first()
+            .and_then(|page| page["id"].as_str())
+            .map(str::to_string))
     }
 
     /// Every page in a data source, as `(page id, note id)`.
@@ -424,7 +552,7 @@ impl NotionClient {
                 )
                 .await?;
 
-            for page in response["results"].as_array().into_iter().flatten() {
+            for page in results(&response)? {
                 let Some(page_id) = page["id"].as_str() else {
                     continue;
                 };
@@ -564,6 +692,14 @@ pub fn database_schema() -> Value {
 }
 
 /// Pull a readable title out of a page object, whatever its title property is called.
+/// A list response's `results`. A reply without them is refused rather than read as empty:
+/// "nothing found" is what makes a lookup create again.
+fn results(response: &Value) -> Result<&Vec<Value>, NotionError> {
+    response["results"]
+        .as_array()
+        .ok_or_else(|| NotionError::Validation("Notion returned a list without results".into()))
+}
+
 fn page_title(page: &Value) -> Option<String> {
     let properties = page.get("properties")?.as_object()?;
     for value in properties.values() {
@@ -661,6 +797,21 @@ mod tests {
                     }
                 }
                 let _ = tx.send(String::from_utf8_lossy(&request).into_owned());
+                // Hang up without answering: the request arrived, and its response is lost.
+                if status == "DROP" {
+                    continue;
+                }
+                // "TRUNCATE <status>": promise more body than is sent, then hang up.
+                if let Some(real) = status.strip_prefix("TRUNCATE ") {
+                    let _ = stream.write_all(
+                        format!(
+                            "HTTP/1.1 {real}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len() + 100
+                        )
+                        .as_bytes(),
+                    );
+                    continue;
+                }
 
                 let response = format!(
                     "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -939,7 +1090,7 @@ mod tests {
         );
         assert!(
             request.contains("Managed by Second Brain"),
-            "the marker must be written even though this version never reads it (#58)"
+            "the marker must be written, or the database can never be recognised (#58, #186)"
         );
     }
 
@@ -954,6 +1105,129 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(error, NotionError::Validation(_)));
+    }
+
+    const NO_CHILDREN: &str = r#"{"results":[],"has_more":false}"#;
+
+    fn children(databases: &[(&str, &str)]) -> String {
+        let blocks: Vec<Value> = databases
+            .iter()
+            .map(|(id, title)| {
+                json!({ "id": id, "type": "child_database", "child_database": { "title": title } })
+            })
+            .collect();
+        json!({ "results": blocks, "has_more": false }).to_string()
+    }
+
+    fn managed(id: &str) -> String {
+        json!({
+            "id": id,
+            "description": [{ "plain_text": MARKER }],
+            "data_sources": [{ "id": format!("ds-{id}") }],
+        })
+        .to_string()
+    }
+
+    #[tokio::test]
+    async fn a_new_database_is_found_even_when_it_shows_up_late() {
+        let listed = children(&[("db-landed", "Projects")]);
+        let found = managed("db-landed");
+        let (base, _r) = scripted_server(vec![
+            ("200 OK", NO_CHILDREN),
+            ("200 OK", &listed),
+            ("200 OK", &found),
+        ]);
+
+        let link = client(&base)
+            .find_new_database("parent", "Projects", &[])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            link.map(|link| link.database_id).as_deref(),
+            Some("db-landed")
+        );
+    }
+
+    #[tokio::test]
+    async fn an_older_or_unmarked_database_is_never_taken_for_a_new_one() {
+        // An older database with the same title may belong to another vault publishing under
+        // this page, and one without the marker is not this app's.
+        let listed = children(&[("db-older", "Projects"), ("db-by-hand", "Projects")]);
+        let by_hand =
+            json!({ "id": "db-by-hand", "description": [], "data_sources": [{ "id": "ds-x" }] })
+                .to_string();
+        let mut responses = Vec::new();
+        for _ in 0..LOST_CONNECTION_LOOKUPS {
+            responses.push(("200 OK", listed.as_str()));
+            responses.push(("200 OK", by_hand.as_str()));
+        }
+        let (base, _r) = scripted_server(responses);
+
+        let found = client(&base)
+            .find_new_database("parent", "Projects", &["db-older".to_string()])
+            .await
+            .unwrap();
+
+        assert_eq!(found, None);
+    }
+
+    #[tokio::test]
+    async fn a_list_without_results_is_refused_rather_than_read_as_empty() {
+        // Read as empty, it would say the database did not land and a second would be made.
+        let (base, _r) = scripted_server(vec![("200 OK", r#"{"object":"list"}"#)]);
+
+        let error = client(&base).child_databases("parent").await.unwrap_err();
+
+        assert!(matches!(error, NotionError::Validation(_)), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn a_connection_lost_while_the_body_arrives_is_a_network_error() {
+        let (base, _r) = scripted_server(vec![("TRUNCATE 200 OK", r#"{"results":[]"#)]);
+
+        let error = client(&base).child_databases("parent").await.unwrap_err();
+
+        assert!(matches!(error, NotionError::Network(_)), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn a_refusal_whose_body_is_cut_off_is_still_a_refusal() {
+        // The status already says the request was refused, so it must not be retried as if
+        // its outcome were unknown.
+        let (base, _r) = scripted_server(vec![
+            ("TRUNCATE 400 Bad Request", r#"{"message":"bad"#),
+            ("TRUNCATE 401 Unauthorized", r#"{"message":"bad"#),
+        ]);
+        let client = client(&base);
+
+        let refused = client.child_databases("parent").await.unwrap_err();
+        let rejected = client.child_databases("parent").await.unwrap_err();
+
+        assert!(matches!(refused, NotionError::Validation(_)), "{refused:?}");
+        assert!(
+            matches!(rejected, NotionError::Unauthorized(_)),
+            "{rejected:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_error_body_that_is_not_notions_is_never_repeated_verbatim() {
+        // A proxy's error page is not Notion's message, and a raw body must not reach the log.
+        let (base, _r) = scripted_server(vec![(
+            "502 Bad Gateway",
+            "<html>upstream secret-path</html>",
+        )]);
+
+        let error = client(&base).whoami().await.unwrap_err();
+
+        assert_eq!(
+            error,
+            NotionError::Api {
+                status: 502,
+                message: "no readable message (HTTP 502)".into()
+            }
+        );
     }
 
     #[tokio::test]
