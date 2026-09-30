@@ -34,8 +34,9 @@ Thumbs.db
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
-# Claude Code
-.claude/
+# Claude Code: share project settings (enabled plugins), keep everything else local
+.claude/*
+!.claude/settings.json
 
 # Signing keys
 *.key
