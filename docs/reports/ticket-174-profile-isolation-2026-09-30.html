@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Issue #174 — harness runs leave the real Windows logs and WebView2 data alone</title>
+  <style>
+    body { max-width: 60rem; margin: 2rem auto; padding: 0 1.25rem; font: 16px/1.6 Inter, ui-sans-serif, system-ui, sans-serif; color: #20241f; background: #fffdf8; }
+    h1, h2 { line-height: 1.25; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    th, td { border: 1px solid #d7d1c5; padding: 0.5rem 0.65rem; text-align: left; vertical-align: top; }
+    th { background: #f7f4ec; }
+    .pass { color: #276c43; font-weight: 600; }
+    .open { color: #a34b16; font-weight: 600; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #171a17; color: #e6e8e3; }
+      th { background: #232723; }
+      th, td { border-color: #3a4039; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Issue #174 — harness runs leave the real Windows logs and WebView2 data alone</h1>
+  <p>2026-09-30. Every launch of the installed app writes two folders in the real
+  <code>%LOCALAPPDATA%\io.github.zulucodedesign.SecondBrain</code> profile that no harness step
+  redirected. <code>logs</code> gains lines, and WebView2 writes its cache and storage to
+  <code>EBWebView</code>. After #167 these were the only parts of the real profile that a run changed.</p>
+
+  <h2>Decision</h2>
+  <p>The issue asked whether to redirect the folders or only record what a run added. They are
+  redirected. A run's log lines are evidence, so they belong in the run directory, and an
+  append-only log cannot be cleanly put back afterwards. The user's WebView2 data stays exactly as it
+  was, so no question remains about a later launch noticing it.</p>
+
+  <h2>Fix</h2>
+  <table>
+    <tr><th>Step</th><th>Change in <code>scripts/alpha-harness.mjs</code></th></tr>
+    <tr><td><code>prepare</code></td>
+      <td>The run's journal names each folder, its target
+      <code>runs\&lt;run&gt;\windows\profile\&lt;name&gt;</code>, and an aside path in
+      <code>io.github.zulucodedesign.SecondBrain.alpha-harness-&lt;run&gt;</code>. The aside folder sits
+      beside the profile, not inside it, so an uninstall that clears app data cannot reach the user's
+      folders. Both folders are checked before <code>prepare</code> changes anything: one that is
+      already a link, or an aside path that already exists, fails the run with no run directory, vault
+      junction or lock left behind. After the lock is written,
+      each folder is renamed aside and a junction to the target
+      replaces it.</td></tr>
+    <tr><td><code>recover</code> and <code>finalize</code></td>
+      <td><code>restoreProfileFolders</code> is idempotent, so it can finish a run stopped at any
+      point. It removes a junction only if the junction points at this run's target, and it removes
+      it with <code>rmdir</code>, which never touches the target. It then renames the user's folder
+      back and removes the aside directory only once it is empty. A path it cannot inspect, for
+      example because access is denied, fails the restore and keeps the lock, rather than passing for
+      absent. Nothing is copied or deleted.</td></tr>
+    <tr><td><code>desktop</code></td>
+      <td>The toast count still reads <code>%LOCALAPPDATA%\…\logs</code>, which now leads into the run's
+      own logs.</td></tr>
+  </table>
+
+  <h2>Verification</h2>
+  <table>
+    <tr><th>Check</th><th>Result</th></tr>
+    <tr><td>Unit tests, Linux (symlinks)</td>
+      <td class="pass">Redirect and restore; restoring twice; a restore stopped halfway; refusing a link
+      the run did not make; refusing, before anything changes, a profile folder that is already a link;
+      and failing, not passing for absent, when the folder aside cannot be read.
+      <code>node --test tests/alpha-harness.test.mjs</code>: 24 passed.</td></tr>
+    <tr><td>Same tests on Windows 11 (real junctions)</td>
+      <td class="pass">The three junction tests passed on <code>sb-windows</code>, where Node creates real
+      junctions and the restore removes them with <code>rmdir</code>. The denied-access test needs POSIX
+      permissions and runs on Linux only.</td></tr>
+    <tr><td>Refusal on Windows, scratch profile</td>
+      <td class="pass">The Windows worker ran <code>prepare</code> with <code>LOCALAPPDATA</code> and
+      <code>APPDATA</code> pointed at a scratch profile under <code>D:\SecondBrainTest\t174</code>, whose
+      <code>logs</code> was already a junction. It failed with "already redirected" and left no run
+      directory, vault junction, lock or aside folder, and the scratch junction was untouched. The same
+      run on the previous head, before the check moved ahead of every change, left a run directory and
+      a vault junction behind.</td></tr>
+    <tr><td>Real profile, run <code>t174-20260930T153546Z</code></td>
+      <td class="pass">The branch's Windows worker ran <code>prepare</code> against installed candidate
+      <code>7e67b29</code>. Both folders became junctions into the run directory, and 489 files were
+      aside. The harness <code>launch</code> started the installed app: WebView2 wrote 179 files into the
+      run's <code>EBWebView</code>, the run's <code>logs</code> gained <code>Second Brain.log</code>, and
+      the app was responding. It was stopped by its exact PID. <code>recover</code> moved both folders
+      back, and <code>finalize</code> (the path where the lock is already gone) found nothing left to move
+      and removed the vault junction.</td></tr>
+    <tr><td>Real profile before and after</td>
+      <td class="pass">A listing of every file in <code>logs</code> and <code>EBWebView</code> (path,
+      size, last-write time), the <code>config.json</code> and <code>.window-state.json</code> SHA-256s
+      (<code>0bfb1539…</code>, <code>34278064…</code>), and the profile's entries was identical before and
+      after: listing SHA-256 <code>FE8BE52B…</code> both times. No aside directory and no lock
+      remained.</td></tr>
+  </table>
+  <p>The run directory stays under <code>D:\SecondBrainTest\sb88\runs</code> as evidence, as every
+  run's does. A full gate run on a new candidate confirms this again.</p>
+</body>
+</html>

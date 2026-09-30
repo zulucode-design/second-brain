@@ -2168,6 +2168,78 @@ export function journalWindowState(windowStatePath, originalPath) {
   };
 }
 
+// Every launch writes these profile folders, and nothing else redirects them (#174). A run
+// renames each folder aside and puts a junction to the run directory in its place, so the
+// profile ends the run as it began and the run's logs stay with its evidence.
+export const PROFILE_REDIRECTS = ['logs', 'EBWebView'];
+
+// Only a missing path is absent. Any other failure to look, such as a denied access, is thrown:
+// read as absent, it would let a restore report a folder back while it is still aside.
+function present(path) {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+function linksTo(path, target) {
+  return resolve(readlinkSync(path)).toLowerCase() === resolve(target).toLowerCase();
+}
+
+// Run before prepare changes anything, so a profile the run must not touch fails the run
+// without leaving a lock, a junction, or a run directory behind.
+export function checkProfileRedirects(redirects) {
+  for (const { path, aside } of redirects) {
+    if (present(path) && lstatSync(path).isSymbolicLink()) fail(`${path} is already redirected`);
+    if (present(aside)) fail(`${aside} already exists`);
+  }
+}
+
+// `link(target, path)` creates the link: a junction on Windows, a symlink in the tests.
+export function redirectProfileFolders(redirects, link) {
+  checkProfileRedirects(redirects);
+  for (const { path, target, aside } of redirects) {
+    mkdirSync(target, { recursive: true });
+    if (present(path)) {
+      mkdirSync(dirname(aside), { recursive: true });
+      renameSync(path, aside);
+    }
+    link(target, path);
+  }
+}
+
+// Idempotent, so recover and finalize can finish a run stopped at any point of either
+// direction. Only a link to this run's own target is removed. rmdir removes a Windows junction
+// and never its target; a POSIX symlink (the tests) needs unlink. The user's folder is renamed
+// back, never copied or deleted.
+export function restoreProfileFolders(redirects = []) {
+  const removeLink = process.platform === 'win32' ? rmdirSync : unlinkSync;
+  return redirects.map(({ path, target, aside }) => {
+    if (present(path) && lstatSync(path).isSymbolicLink()) {
+      if (!linksTo(path, target)) fail(`refusing to remove ${path}: not this run's junction`);
+      removeLink(path);
+    }
+    const hadFolder = present(aside);
+    if (hadFolder) {
+      if (present(path)) fail(`refusing to restore ${aside}: ${path} exists again`);
+      renameSync(aside, path);
+    }
+    // Also when nothing was aside, so a restore stopped right after the rename still clears it.
+    try {
+      rmdirSync(dirname(aside));
+    } catch {
+      // Another redirect's folder is still aside, or it is already gone; only an empty
+      // directory is ever removed.
+    }
+    // Without a folder aside, the path is either absent as before the run or the user's own
+    // folder, because the run stopped before redirecting it; both are left as they are.
+    return { path, movedBack: hadFolder };
+  });
+}
+
 // Journals written before #167 hold no window state, so there is nothing to restore for them.
 export function restoreWindowState(manifest) {
   if (!manifest.windowStatePath) return;
@@ -2243,8 +2315,9 @@ async function windowsWorker(request) {
       fail('stale harness journal is inconsistent');
     }
     const windowState = restoreJournaledFiles(manifest);
+    const profile = restoreProfileFolders(manifest.profileRedirects);
     unlinkSync(lockPath);
-    return { recovered: true, runId: manifest.runId, runRoot: dirname(lock.manifestPath), ...windowState };
+    return { recovered: true, runId: manifest.runId, runRoot: dirname(lock.manifestPath), ...windowState, profile };
   }
 
   if (request.action === 'prepare') {
@@ -2258,6 +2331,13 @@ async function windowsWorker(request) {
     const existing = windowsInterrupt(tools, appPath, 'Report');
     if (existing.processes.length) fail('installed Windows app is already running');
     if (existsSync(paths.runRoot)) fail(`run already exists: ${paths.runRoot}`);
+    // Checked before anything below touches the disk, so a refused profile leaves no trace.
+    const profileRedirects = PROFILE_REDIRECTS.map((name) => ({
+      path: win32.join(process.env.LOCALAPPDATA, APP_IDENTIFIER, name),
+      target: win32.join(paths.runRoot, 'profile', name),
+      aside: win32.join(process.env.LOCALAPPDATA, `${APP_IDENTIFIER}.alpha-harness-${request.runId}`, name),
+    }));
+    checkProfileRedirects(profileRedirects);
     mkdirSync(paths.backupPath, { recursive: true });
     mkdirSync(paths.machinePath, { recursive: true });
     makeVault(paths.vaultPath, request.vaultId);
@@ -2284,10 +2364,14 @@ async function windowsWorker(request) {
     }
     const lockPath = win32.join(dirname(configPath), 'alpha-harness.lock.json');
     const manifest = {
-      version: 1, runId: request.runId, startedAt: new Date().toISOString(), configPath, originalPath, ...windowStateJournal, machineLink, appPath,
+      version: 1, runId: request.runId, startedAt: new Date().toISOString(), configPath, originalPath, ...windowStateJournal, machineLink, appPath, profileRedirects,
     };
     atomicWrite(paths.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     writeFileSync(lockPath, `${JSON.stringify({ runId: request.runId, manifestPath: paths.manifestPath })}\n`, { flag: 'wx' });
+    // After the lock, so a run stopped partway through is finished by the next run's recover.
+    redirectProfileFolders(profileRedirects, (target, path) => {
+      if (!runCommandSync('cmd.exe', ['/d', '/s', '/c', 'mklink', '/J', path, target]).stdout) fail(`could not redirect ${path}`);
+    });
     atomicWrite(
       configPath,
       `${JSON.stringify(harnessConfig(original, paths.vaultPath, request.vaultId, paths.backupPath, { driven: request.driven, ollamaBaseUrl: request.ollamaBaseUrl }), null, 2)}\n`,
@@ -2559,8 +2643,8 @@ async function windowsWorker(request) {
   if (request.action === 'desktop') {
     const image = win32.join(paths.runRoot, request.image);
     assertWindowsRoot(paths.runRoot, image);
-    // The app logs each vault-unavailable toast it shows (src-tauri/src/hotkey/windows.rs). No
-    // other copy of the app runs during a run, so the new lines are this run's.
+    // The app logs each vault-unavailable toast it shows (src-tauri/src/hotkey/windows.rs). The
+    // profile's logs folder leads into this run's directory, so the lines are this run's.
     const logDir = win32.join(process.env.LOCALAPPDATA, APP_IDENTIFIER, 'logs');
     const countToastLogLines = () => readdirSync(logDir).filter((name) => name.endsWith('.log')).reduce((count, name) => (
       count + readFileSync(win32.join(logDir, name), 'utf8').split('Showed the vault-unavailable notification').length - 1
@@ -2586,7 +2670,8 @@ async function windowsWorker(request) {
       const original = readFileSync(manifest.originalPath);
       if (!current.equals(original)) fail('config lock is gone but original config is not restored');
       const windowState = checkedWindowStateEvidence(manifest);
-      return { restored: true, alreadyRestored: true, ...windowState, ...removeRunArtifacts(tools, appPath, manifest, paths) };
+      const profile = restoreProfileFolders(manifest.profileRedirects);
+      return { restored: true, alreadyRestored: true, ...windowState, profile, ...removeRunArtifacts(tools, appPath, manifest, paths) };
     }
     const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
     if (lock.runId !== request.runId) fail('config lock belongs to another run');
@@ -2594,8 +2679,9 @@ async function windowsWorker(request) {
     // A run that failed between break-config and repair-config leaves the app's damaged copy.
     // Moved while the lock still stands, so a failure here leaves the run for a retry to finish.
     const damagedMoved = moveRunDamagedConfigs(dirname(manifest.configPath), paths);
+    const profile = restoreProfileFolders(manifest.profileRedirects);
     unlinkSync(lockPath);
-    return { restored: true, damagedMoved, ...windowState, ...removeRunArtifacts(tools, appPath, manifest, paths) };
+    return { restored: true, damagedMoved, ...windowState, profile, ...removeRunArtifacts(tools, appPath, manifest, paths) };
   }
 
   fail(`unknown Windows action: ${request.action}`);
