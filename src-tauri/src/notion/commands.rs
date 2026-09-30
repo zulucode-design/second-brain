@@ -286,10 +286,11 @@ pub(crate) async fn setup_databases(
 /// Create one category's database, never two (#186).
 ///
 /// The databases already under the parent are saved as a pending create before it is sent.
-/// A create whose outcome was lost, in this attempt or an earlier one, is then resolved from
-/// that record: a database that appeared since, with this title and the marker, is adopted.
-/// Only if none appears is the create sent again. An older database with the same title is
-/// never adopted, because it may belong to another vault publishing under the same page.
+/// A create whose outcome was lost is resolved from that record: a database that appeared
+/// since, with this title and the marker, is adopted. One that does not appear fails this
+/// attempt, and only a later attempt sends the create again. An older database with the same
+/// title is never adopted, because it may belong to another vault publishing under the same
+/// page.
 async fn create_or_adopt(
     client: &NotionClient,
     vault: &Path,
@@ -333,13 +334,18 @@ async fn create_or_adopt(
                 "Lost the Notion connection creating the {title} database ({detail}); \
                  checking whether it was created"
             );
-            match client
+            // One that never shows up is not created again in this attempt: it may still land
+            // late. Setup fails and keeps the pending create, and the next attempt, after it has
+            // had time to show, adopts it or creates it.
+            client
                 .find_new_database(parent_page_id, title, &existing)
                 .await?
-            {
-                Some(link) => Ok(link),
-                None => client.create_database(parent_page_id, title).await,
-            }
+                .ok_or_else(|| {
+                    NotionError::Network(format!(
+                        "{detail}; the {title} database could not be confirmed, so choosing the \
+                         page again resolves it"
+                    ))
+                })
         }
         other => other,
     }
@@ -856,22 +862,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_database_that_did_not_land_is_created_once_more() {
+    async fn a_database_that_cannot_be_confirmed_is_created_only_by_the_next_setup() {
         let vault = vault_missing_projects();
         let mut responses = vec![("200 OK", NO_CHILDREN), ("DROP", "")];
         responses.extend(vec![
             ("200 OK", NO_CHILDREN);
             LOST_CONNECTION_LOOKUPS as usize
         ]);
-        responses.push(("200 OK", PROJECTS));
         let (base, requests) = scripted_server(responses);
 
+        let error = setup_databases(&client(&base), &vault, "parent")
+            .await
+            .unwrap_err();
+
+        assert!(error.contains("could not be confirmed"), "{error}");
+        assert_eq!(
+            database_posts(&requests),
+            1,
+            "never two creates in one setup"
+        );
+        assert!(config::load_registry(&vault).pending.is_some());
+
+        // The next setup looks again, finds nothing, and only then creates.
+        let mut responses = vec![("200 OK", NO_CHILDREN); LOST_CONNECTION_LOOKUPS as usize];
+        responses.push(("200 OK", PROJECTS));
+        let (base, requests) = scripted_server(responses);
         let registry = setup_databases(&client(&base), &vault, "parent")
             .await
             .unwrap();
 
-        assert_eq!(database_posts(&requests), 2);
+        assert_eq!(database_posts(&requests), 1);
         assert!(registry.is_complete());
+        assert_eq!(config::load_registry(&vault).pending, None);
     }
 
     #[tokio::test]

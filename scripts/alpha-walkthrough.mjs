@@ -457,6 +457,9 @@ export async function startupError(browser) {
   return { error: text };
 }
 
+// Long enough for a page or database that did land to become visible before a second try.
+const RETRY_PAUSE_MS = 20_000;
+
 // Connects this run's vault to a disposable Notion page, publishes once, then disconnects so
 // the token leaves the machine's keyring. The controller checks Notion itself afterwards. The
 // page title is a secret in the workflow, so neither the result nor an error names it.
@@ -474,24 +477,57 @@ export async function notionPublish(browser, type, { token, page }, whileConnect
     await browser.waitUntil(async () => (await byText(browser, 'button.option-btn', page)).length === 1, {
       timeout: 60_000, timeoutMsg: 'the disposable Notion page is not shared with the integration',
     });
-    // Pressed directly: pressText would name the page in its error.
-    const [option] = await byText(browser, 'button.option-btn', page);
-    await press(browser, option);
     const toggle = browser.$('button[aria-label="Publish to Notion from this machine"]');
+    const shownError = () => browser.execute(() => document.querySelector('.import-result.error')?.innerText.trim() ?? null);
+    // A create whose connection was lost and that cannot be confirmed fails its attempt and is
+    // resolved by the next one, never duplicated (#186). So the page is chosen, and the
+    // publish run, at most twice. The second try comes after a pause that lets anything that
+    // landed become visible. The controller's own Notion check still requires exactly one
+    // database per category and one page per note.
+    let setupRetriedAfter = null;
+    for (;;) {
+      // Pressed directly: pressText would name the page in its error.
+      const [option] = await byText(browser, 'button.option-btn', page);
+      if (!option) fail('the disposable Notion page is no longer offered');
+      await press(browser, option);
+      // Publish Now exists only once every database is recorded; the toggle is there as soon
+      // as Notion is connected, so it says nothing about setup.
+      let outcome;
+      await browser.waitUntil(async () => {
+        const ready = (await byText(browser, 'button.import-btn', 'Publish Now')).length === 1;
+        outcome = ready ? 'set up' : await shownError();
+        return Boolean(outcome);
+      }, { timeout: 120_000, timeoutMsg: 'Notion setup did not finish' });
+      if (outcome === 'set up') break;
+      if (setupRetriedAfter || !/could not be confirmed/.test(outcome)) fail(`Notion setup failed: ${outcome}`);
+      setupRetriedAfter = outcome;
+      await new Promise((resolveWait) => setTimeout(resolveWait, RETRY_PAUSE_MS));
+    }
     await toggle.waitForExist({ timeout: 60_000 });
     if ((await toggle.getAttribute('aria-checked')) !== 'true') await press(browser, toggle);
-    await pressTextWhenReady(browser, 'button.import-btn', 'Publish Now');
-    const text = await waitForText(
-      browser, 'body',
-      (value) => /Last published:/.test(value) && !/Publishing/.test(value),
-      'Notion publish did not finish', 10 * 60_000,
-    );
-    const summary = /Last published:[^\n]*(\n[^\n]*){0,2}/.exec(text)?.[0];
-    const error = await browser.execute(() => document.querySelector('.import-result.error')?.innerText.trim() ?? null);
-    if (error) fail(`Notion publish failed: ${error}`);
+    const publishOnce = async (previous) => {
+      await pressTextWhenReady(browser, 'button.import-btn', 'Publish Now');
+      const text = await waitForText(
+        browser, 'body',
+        (value) => /Last published:/.test(value) && !/Publishing/.test(value)
+          && /Last published:[^\n]*/.exec(value)?.[0] !== previous,
+        'Notion publish did not finish', 10 * 60_000,
+      );
+      return { text, summary: /Last published:[^\n]*(\n[^\n]*){0,2}/.exec(text)?.[0] };
+    };
     // A note Notion refuses is counted, not raised, so the summary is where it shows (#152).
-    if (/\d+ failed|failing to publish/.test(text)) fail(`Notion publish left notes unpublished: ${summary}`);
-    return { summary, tokenStoredWhileConnected: stored };
+    const leftUnpublished = (text) => /\d+ failed|failing to publish/.test(text);
+    let { text, summary } = await publishOnce(null);
+    let publishRetriedAfter = null;
+    if (!(await shownError()) && leftUnpublished(text)) {
+      publishRetriedAfter = summary;
+      await new Promise((resolveWait) => setTimeout(resolveWait, RETRY_PAUSE_MS));
+      ({ text, summary } = await publishOnce(/Last published:[^\n]*/.exec(text)?.[0]));
+    }
+    const error = await shownError();
+    if (error) fail(`Notion publish failed: ${error}`);
+    if (leftUnpublished(text)) fail(`Notion publish left notes unpublished: ${summary}`);
+    return { summary, tokenStoredWhileConnected: stored, setupRetriedAfter, publishRetriedAfter };
   } catch (error) {
     // Read now: the finally block disconnects and closes Settings, and a setup error is shown
     // nowhere else (#185).
