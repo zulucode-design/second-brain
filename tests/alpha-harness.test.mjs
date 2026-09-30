@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { deflateRawSync } from 'node:zlib';
 
 const {
-  acquireControllerLock, checkWindowStateRestored, diagnosticLeaks, harnessConfig, journalWindowState, killDue, mutateFixture,
+  acquireControllerLock, checkProfileRedirects, checkWindowStateRestored, diagnosticLeaks, harnessConfig, journalWindowState, killDue, mutateFixture,
   pairedSyncthingConfig, parseOptions, recoveryOutcome, redactTrace, redirectProfileFolders,
   restoreProfileFolders, restoreProgress, restoreWindowState, snapshotVault, treeHash, zipEntries,
 } = await import(
@@ -192,6 +192,36 @@ test('a profile restore stopped halfway finishes, and never removes a link it di
   symlinkSync(join(root, 'elsewhere'), redirect.path, 'junction');
   assert.throws(() => restoreProfileFolders([redirect]), /not this run's junction/);
   assert.equal(lstatSync(redirect.path).isSymbolicLink(), true);
+});
+
+test('a profile the run must not touch is refused before anything changes', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'alpha-harness-profile-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, 'users-own-logs'));
+  symlinkSync(join(root, 'users-own-logs'), join(root, 'logs'), 'junction');
+  const redirect = { path: join(root, 'logs'), target: join(root, 'run', 'logs'), aside: join(root, 'aside', 'logs') };
+  assert.throws(() => checkProfileRedirects([redirect]), /already redirected/);
+  assert.throws(() => redirectProfileFolders([redirect], () => assert.fail('nothing is linked')), /already redirected/);
+  assert.equal(existsSync(join(root, 'run')), false);
+  assert.equal(existsSync(join(root, 'aside')), false);
+});
+
+test('a folder aside that cannot be read fails the restore instead of passing for absent', (t) => {
+  // The denied look needs POSIX permissions: Windows chmod cannot deny it, and root ignores it.
+  if (process.platform === 'win32' || process.getuid?.() === 0) return t.skip('needs POSIX permissions as a non-root user');
+  const root = mkdtempSync(join(tmpdir(), 'alpha-harness-profile-'));
+  const asideRoot = join(root, 'aside');
+  t.after(() => {
+    if (existsSync(asideRoot)) chmodSync(asideRoot, 0o700);
+    rmSync(root, { recursive: true, force: true });
+  });
+  const redirect = { path: join(root, 'logs'), target: join(root, 'run', 'logs'), aside: join(asideRoot, 'logs') };
+  mkdirSync(redirect.aside, { recursive: true });
+  chmodSync(asideRoot, 0o000);
+  assert.throws(() => restoreProfileFolders([redirect]), /EACCES/);
+  chmodSync(asideRoot, 0o700);
+  assert.deepEqual(restoreProfileFolders([redirect]), [{ path: redirect.path, movedBack: true }]);
+  assert.equal(existsSync(asideRoot), false, 'the emptied aside directory is removed');
 });
 
 test('window state is put back as it was, or removed when the run created it', (t) => {

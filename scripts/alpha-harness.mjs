@@ -2173,12 +2173,15 @@ export function journalWindowState(windowStatePath, originalPath) {
 // profile ends the run as it began and the run's logs stay with its evidence.
 export const PROFILE_REDIRECTS = ['logs', 'EBWebView'];
 
+// Only a missing path is absent. Any other failure to look, such as a denied access, is thrown:
+// read as absent, it would let a restore report a folder back while it is still aside.
 function present(path) {
   try {
     lstatSync(path);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
   }
 }
 
@@ -2186,11 +2189,19 @@ function linksTo(path, target) {
   return resolve(readlinkSync(path)).toLowerCase() === resolve(target).toLowerCase();
 }
 
-// `link(target, path)` creates the link: a junction on Windows, a symlink in the tests.
-export function redirectProfileFolders(redirects, link) {
-  for (const { path, target, aside } of redirects) {
+// Run before the lock is written, so a profile the run must not touch fails the run without
+// leaving a lock behind for recover to trip over.
+export function checkProfileRedirects(redirects) {
+  for (const { path, aside } of redirects) {
     if (present(path) && lstatSync(path).isSymbolicLink()) fail(`${path} is already redirected`);
     if (present(aside)) fail(`${aside} already exists`);
+  }
+}
+
+// `link(target, path)` creates the link: a junction on Windows, a symlink in the tests.
+export function redirectProfileFolders(redirects, link) {
+  checkProfileRedirects(redirects);
+  for (const { path, target, aside } of redirects) {
     mkdirSync(target, { recursive: true });
     if (present(path)) {
       mkdirSync(dirname(aside), { recursive: true });
@@ -2352,6 +2363,7 @@ async function windowsWorker(request) {
     const manifest = {
       version: 1, runId: request.runId, startedAt: new Date().toISOString(), configPath, originalPath, ...windowStateJournal, machineLink, appPath, profileRedirects,
     };
+    checkProfileRedirects(profileRedirects);
     atomicWrite(paths.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     writeFileSync(lockPath, `${JSON.stringify({ runId: request.runId, manifestPath: paths.manifestPath })}\n`, { flag: 'wx' });
     // After the lock, so a run stopped partway through is finished by the next run's recover.

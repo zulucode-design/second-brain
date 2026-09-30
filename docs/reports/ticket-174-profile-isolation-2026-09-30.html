@@ -42,13 +42,17 @@
       <code>runs\&lt;run&gt;\windows\profile\&lt;name&gt;</code>, and an aside path in
       <code>io.github.zulucodedesign.SecondBrain.alpha-harness-&lt;run&gt;</code>. The aside folder sits
       beside the profile, not inside it, so an uninstall that clears app data cannot reach the user's
-      folders. After the lock is written, each folder is renamed aside and a junction to the target
+      folders. Both folders are checked before the lock is written: one that is already a link, or an
+      aside path that already exists, fails the run with no lock left behind. After the lock is written,
+      each folder is renamed aside and a junction to the target
       replaces it.</td></tr>
     <tr><td><code>recover</code> and <code>finalize</code></td>
       <td><code>restoreProfileFolders</code> is idempotent, so it can finish a run stopped at any
       point. It removes a junction only if the junction points at this run's target, and it removes
       it with <code>rmdir</code>, which never touches the target. It then renames the user's folder
-      back and removes the aside directory only once it is empty. Nothing is copied or deleted.</td></tr>
+      back and removes the aside directory only once it is empty. A path it cannot inspect, for
+      example because access is denied, fails the restore and keeps the lock, rather than passing for
+      absent. Nothing is copied or deleted.</td></tr>
     <tr><td><code>desktop</code></td>
       <td>The toast count still reads <code>%LOCALAPPDATA%\…\logs</code>, which now leads into the run's
       own logs.</td></tr>
@@ -59,10 +63,13 @@
     <tr><th>Check</th><th>Result</th></tr>
     <tr><td>Unit tests, Linux (symlinks)</td>
       <td class="pass">Redirect and restore; restoring twice; a restore stopped halfway; refusing a link
-      the run did not make. <code>node --test tests/alpha-harness.test.mjs</code>: 22 passed.</td></tr>
+      the run did not make; refusing, before anything changes, a profile folder that is already a link;
+      and failing, not passing for absent, when the folder aside cannot be read.
+      <code>node --test tests/alpha-harness.test.mjs</code>: 24 passed.</td></tr>
     <tr><td>Same tests on Windows 11 (real junctions)</td>
-      <td class="pass">Both profile tests passed on <code>sb-windows</code>, where Node creates real
-      junctions and the restore removes them with <code>rmdir</code>.</td></tr>
+      <td class="pass">The three junction tests passed on <code>sb-windows</code>, where Node creates real
+      junctions and the restore removes them with <code>rmdir</code>. The denied-access test needs POSIX
+      permissions and runs on Linux only.</td></tr>
     <tr><td>Real profile, run <code>t174-20260930T153546Z</code></td>
       <td class="pass">The branch's Windows worker ran <code>prepare</code> against installed candidate
       <code>7e67b29</code>. Both folders became junctions into the run directory, and 489 files were
