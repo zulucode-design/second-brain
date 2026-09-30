@@ -53,6 +53,17 @@ const CONNECT_RETRIES: u32 = 2;
 /// error cannot tell "never reached Notion" from "sent, and no answer yet".
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long to wait after a connection is lost mid-request before asking Notion whether the
+/// request landed.
+///
+/// ponytail: a guess at how long Notion takes to make a new page or database visible to a
+/// query. If a lookup keeps missing things that did land, lengthen it or poll twice.
+pub(crate) const LOST_CONNECTION_SETTLE: Duration = if cfg!(test) {
+    Duration::from_millis(5)
+} else {
+    Duration::from_secs(2)
+};
+
 /// Longest we will honour a `Retry-After` before treating it as a failure.
 ///
 /// Notion is entitled to ask for a long wait, but a background publisher blocking for
@@ -334,9 +345,107 @@ impl NotionClient {
     /// Create one PARA database under `parent_page_id`.
     ///
     /// The marker in the description is written for #58, which reclaims databases created by
-    /// a previous install. This version never reads it — but a database created without it
-    /// could never be recognised later, so it is written from the first release.
+    /// a previous install; a database created without it could never be recognised later.
+    ///
+    /// Survives one lost connection without creating two databases (#186). The databases
+    /// already under the parent are listed first. After a failure that may have landed, a
+    /// database that appeared since, with this title and the marker, is adopted instead of
+    /// creating again. Only one that appeared since: an older one may belong to another vault
+    /// publishing under the same page, and reclaiming those is #58's decision.
     pub async fn create_database(
+        &self,
+        parent_page_id: &str,
+        title: &str,
+    ) -> Result<DatabaseLink, NotionError> {
+        let before = self.child_databases(parent_page_id).await?;
+        match self.post_database(parent_page_id, title).await {
+            Err(NotionError::Network(detail)) => {
+                log::warn!(
+                    "Lost the Notion connection creating the {title} database ({detail}); \
+                     checking whether it was created"
+                );
+                tokio::time::sleep(LOST_CONNECTION_SETTLE).await;
+                for (database_id, found_title) in self.child_databases(parent_page_id).await? {
+                    if found_title != title || before.iter().any(|(id, _)| *id == database_id) {
+                        continue;
+                    }
+                    if let Some(link) = self.managed_database(&database_id).await? {
+                        return Ok(link);
+                    }
+                }
+                self.post_database(parent_page_id, title).await
+            }
+            other => other,
+        }
+    }
+
+    /// The databases directly under a page, as `(database id, title)`.
+    async fn child_databases(
+        &self,
+        parent_page_id: &str,
+    ) -> Result<Vec<(String, String)>, NotionError> {
+        let mut databases = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut path = format!("/blocks/{parent_page_id}/children?page_size=100");
+            if let Some(next) = &cursor {
+                path.push_str(&format!("&start_cursor={next}"));
+            }
+            let response = self.request(reqwest::Method::GET, &path, None).await?;
+            for block in response["results"].as_array().into_iter().flatten() {
+                if block["type"] != json!("child_database") {
+                    continue;
+                }
+                if let (Some(id), Some(title)) = (
+                    block["id"].as_str(),
+                    block["child_database"]["title"].as_str(),
+                ) {
+                    databases.push((id.to_string(), title.to_string()));
+                }
+            }
+            match (
+                response["has_more"].as_bool(),
+                response["next_cursor"].as_str(),
+            ) {
+                (Some(true), Some(next)) => cursor = Some(next.to_string()),
+                _ => break,
+            }
+        }
+        Ok(databases)
+    }
+
+    /// A database this app created, or `None` for one it did not or one in the trash.
+    async fn managed_database(
+        &self,
+        database_id: &str,
+    ) -> Result<Option<DatabaseLink>, NotionError> {
+        let response = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/databases/{database_id}"),
+                None,
+            )
+            .await?;
+        let description: String = response["description"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|run| run["plain_text"].as_str())
+            .collect();
+        let trashed = response["in_trash"].as_bool() == Some(true)
+            || response["archived"].as_bool() == Some(true);
+        if description != MARKER || trashed {
+            return Ok(None);
+        }
+        Ok(response["data_sources"][0]["id"]
+            .as_str()
+            .map(|data_source_id| DatabaseLink {
+                database_id: database_id.to_string(),
+                data_source_id: data_source_id.to_string(),
+            }))
+    }
+
+    async fn post_database(
         &self,
         parent_page_id: &str,
         title: &str,
@@ -661,6 +770,10 @@ mod tests {
                     }
                 }
                 let _ = tx.send(String::from_utf8_lossy(&request).into_owned());
+                // Hang up without answering: the request arrived, and its response is lost.
+                if status == "DROP" {
+                    continue;
+                }
 
                 let response = format!(
                     "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -918,10 +1031,13 @@ mod tests {
     #[tokio::test]
     async fn creating_a_database_records_both_ids() {
         // Pages are parented to the data source; the database id is what the user sees.
-        let (base, requests) = scripted_server(vec![(
-            "200 OK",
-            r#"{"id":"db-1","data_sources":[{"id":"ds-1","name":"Projects"}]}"#,
-        )]);
+        let (base, requests) = scripted_server(vec![
+            ("200 OK", NO_CHILDREN),
+            (
+                "200 OK",
+                r#"{"id":"db-1","data_sources":[{"id":"ds-1","name":"Projects"}]}"#,
+            ),
+        ]);
 
         let link = client(&base)
             .create_database("parent-page", "Projects")
@@ -931,6 +1047,8 @@ mod tests {
         assert_eq!(link.database_id, "db-1");
         assert_eq!(link.data_source_id, "ds-1");
 
+        let listing = requests.recv().unwrap();
+        assert!(listing.starts_with("GET /blocks/parent-page/children"));
         let request = requests.recv().unwrap();
         assert!(request.contains("parent-page"));
         assert!(
@@ -939,14 +1057,17 @@ mod tests {
         );
         assert!(
             request.contains("Managed by Second Brain"),
-            "the marker must be written even though this version never reads it (#58)"
+            "the marker must be written, or the database can never be recognised (#58, #186)"
         );
     }
 
     #[tokio::test]
     async fn a_database_without_a_data_source_is_refused_rather_than_recorded() {
         // Recording it would mark setup complete for a database no page can be added to.
-        let (base, _r) = scripted_server(vec![("200 OK", r#"{"id":"db-1"}"#)]);
+        let (base, _r) = scripted_server(vec![
+            ("200 OK", NO_CHILDREN),
+            ("200 OK", r#"{"id":"db-1"}"#),
+        ]);
 
         let error = client(&base)
             .create_database("parent", "Projects")
@@ -954,6 +1075,123 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(error, NotionError::Validation(_)));
+    }
+
+    const NO_CHILDREN: &str = r#"{"results":[],"has_more":false}"#;
+    const PROJECTS_DATABASE: &str =
+        r#"{"id":"db-new","data_sources":[{"id":"ds-new","name":"Projects"}]}"#;
+
+    fn children(databases: &[(&str, &str)]) -> String {
+        let blocks: Vec<Value> = databases
+            .iter()
+            .map(|(id, title)| {
+                json!({ "id": id, "type": "child_database", "child_database": { "title": title } })
+            })
+            .collect();
+        json!({ "results": blocks, "has_more": false }).to_string()
+    }
+
+    fn managed(id: &str) -> String {
+        json!({
+            "id": id,
+            "description": [{ "plain_text": MARKER }],
+            "data_sources": [{ "id": format!("ds-{id}") }],
+        })
+        .to_string()
+    }
+
+    fn posts(requests: &Receiver<String>) -> usize {
+        requests
+            .try_iter()
+            .filter(|request| request.starts_with("POST /databases "))
+            .count()
+    }
+
+    #[tokio::test]
+    async fn a_database_created_on_a_lost_connection_is_adopted_not_created_twice() {
+        let listed = children(&[("db-landed", "Projects")]);
+        let found = managed("db-landed");
+        let (base, requests) = scripted_server(vec![
+            ("200 OK", NO_CHILDREN),
+            ("DROP", ""),
+            ("200 OK", &listed),
+            ("200 OK", &found),
+        ]);
+
+        let link = client(&base)
+            .create_database("parent", "Projects")
+            .await
+            .unwrap();
+
+        assert_eq!(link.database_id, "db-landed");
+        assert_eq!(link.data_source_id, "ds-db-landed");
+        assert_eq!(
+            posts(&requests),
+            1,
+            "the database that landed must not be created again"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_database_that_did_not_land_is_created_once_more() {
+        let (base, requests) = scripted_server(vec![
+            ("200 OK", NO_CHILDREN),
+            ("DROP", ""),
+            ("200 OK", NO_CHILDREN),
+            ("200 OK", PROJECTS_DATABASE),
+        ]);
+
+        let link = client(&base)
+            .create_database("parent", "Projects")
+            .await
+            .unwrap();
+
+        assert_eq!(link.database_id, "db-new");
+        assert_eq!(posts(&requests), 2);
+    }
+
+    #[tokio::test]
+    async fn only_a_database_that_appeared_since_the_attempt_is_adopted() {
+        // An older database with the same title may belong to another vault publishing under
+        // this page, and one without the marker is not this app's.
+        let before = children(&[("db-older", "Projects")]);
+        let after = children(&[("db-older", "Projects"), ("db-by-hand", "Projects")]);
+        let by_hand =
+            json!({ "id": "db-by-hand", "description": [], "data_sources": [{ "id": "ds-x" }] })
+                .to_string();
+        let (base, requests) = scripted_server(vec![
+            ("200 OK", &before),
+            ("DROP", ""),
+            ("200 OK", &after),
+            ("200 OK", &by_hand),
+            ("200 OK", PROJECTS_DATABASE),
+        ]);
+
+        let link = client(&base)
+            .create_database("parent", "Projects")
+            .await
+            .unwrap();
+
+        assert_eq!(link.database_id, "db-new");
+        assert_eq!(posts(&requests), 2);
+    }
+
+    #[tokio::test]
+    async fn a_second_lost_connection_fails_the_database_create() {
+        let (base, requests) = scripted_server(vec![
+            ("200 OK", NO_CHILDREN),
+            ("DROP", ""),
+            ("200 OK", NO_CHILDREN),
+            ("DROP", ""),
+        ]);
+
+        let error = client(&base)
+            .create_database("parent", "Projects")
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, NotionError::Network(_)), "{error:?}");
+        assert_eq!(posts(&requests), 2);
     }
 
     #[tokio::test]

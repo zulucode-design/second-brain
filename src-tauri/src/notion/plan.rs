@@ -121,6 +121,30 @@ pub struct PublishRecord<'a> {
 }
 
 impl Action {
+    /// What to retry after a connection was lost mid-call, when the call may have landed.
+    ///
+    /// A create becomes a resolve, which asks Notion whether the page exists before making
+    /// one, so a create whose response was lost is never repeated blind (#186). Every other
+    /// action overwrites or trashes a known page and repeats as it is.
+    pub fn after_lost_connection(&self) -> Action {
+        match self.clone() {
+            Action::Create {
+                note_id,
+                relative_path,
+                data_source_id,
+                content_hash,
+                mtime,
+            } => Action::ResolveInterrupted {
+                note_id,
+                relative_path,
+                data_source_id,
+                content_hash,
+                mtime,
+            },
+            other => other,
+        }
+    }
+
     /// Whether this action calls Notion at all, for reporting how much a run actually did.
     pub fn is_work(&self) -> bool {
         !matches!(self, Action::Skip { .. } | Action::UpToDate { .. })

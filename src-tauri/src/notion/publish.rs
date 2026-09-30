@@ -36,7 +36,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use super::blocks;
-use super::client::{NotionClient, NotionError};
+use super::client::{NotionClient, NotionError, LOST_CONNECTION_SETTLE};
 use super::config::DatabaseRegistry;
 use super::map::{self, EntryState, MapEntry};
 use super::plan::{self, Action, InspectedNote, NoteSnapshot, SkipReason};
@@ -158,7 +158,16 @@ where
     let mut done = 0;
     for action in tombstones {
         if let Action::Trash { note_id, page_id } = action {
-            match client.trash_page(&page_id).await {
+            let mut trashed = client.trash_page(&page_id).await;
+            if let Err(NotionError::Network(detail)) = &trashed {
+                // Trashing twice is harmless, and a page already gone reads as done below.
+                log::warn!(
+                    "Lost the Notion connection trashing {note_id} ({detail}); retrying once"
+                );
+                tokio::time::sleep(LOST_CONNECTION_SETTLE).await;
+                trashed = client.trash_page(&page_id).await;
+            }
+            match trashed {
                 Ok(()) => {
                     let _ = map::remove(vault_path, &note_id);
                     summary.trashed += 1;
@@ -256,7 +265,24 @@ where
             report(Progress { done, total });
             continue;
         }
-        match execute(vault_path, client, registry, &action, &note).await {
+        let mut outcome = execute(vault_path, client, registry, &action, &note).await;
+        if let Err(NotionError::Network(detail)) = &outcome {
+            // The call may have landed. One resolve now, instead of leaving the note failed
+            // until the next poll (#186); a second lost connection fails it as before.
+            log::warn!(
+                "Lost the Notion connection publishing {note_id} ({detail}); resolving it once"
+            );
+            tokio::time::sleep(LOST_CONNECTION_SETTLE).await;
+            outcome = execute(
+                vault_path,
+                client,
+                registry,
+                &action.after_lost_connection(),
+                &note,
+            )
+            .await;
+        }
+        match outcome {
             Ok(()) => tally(&mut summary, &action),
             Err(error) if error.is_fatal() => return Err(error),
             Err(error) => {
@@ -594,6 +620,10 @@ mod tests {
                     }
                 }
                 let _ = tx.send(String::from_utf8_lossy(&request).into_owned());
+                // Hang up without answering: the request arrived, and its response is lost.
+                if status == "DROP" {
+                    continue;
+                }
                 let response = format!(
                     "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
@@ -882,6 +912,104 @@ mod tests {
             Some("page-orphan"),
             "the orphaned page must be adopted, not left behind with a duplicate beside it"
         );
+    }
+
+    const NO_PAGE: &str = r#"{"results":[],"has_more":false}"#;
+
+    fn page_posts(requests: &Receiver<String>) -> usize {
+        requests
+            .try_iter()
+            .filter(|request| request.starts_with("POST /pages "))
+            .count()
+    }
+
+    #[tokio::test]
+    async fn a_page_created_on_a_lost_connection_is_adopted_in_the_same_run() {
+        let vault = vault();
+        let (base, requests) = creating_server(vec![
+            ("DROP", ""),
+            ("200 OK", r#"{"results":[{"id":"page-landed"}]}"#),
+            ("200 OK", r#"{"id":"page-landed"}"#), // erase
+            ("200 OK", r#"{"id":"page-landed"}"#), // append
+            ("200 OK", r#"{"id":"page-landed"}"#), // properties
+        ]);
+
+        let summary = run_notes(
+            &vault,
+            &client(&base),
+            &registry(),
+            vec![note("note-1", ParaCategory::Projects, "body")],
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        assert_eq!((summary.created, summary.failed), (1, 0));
+        assert_eq!(
+            page_posts(&requests),
+            1,
+            "the page that landed must not be created again"
+        );
+        let entry = map::load(&vault, "note-1").unwrap();
+        assert_eq!(entry.page_id.as_deref(), Some("page-landed"));
+        assert_eq!(entry.last_error, None);
+    }
+
+    #[tokio::test]
+    async fn a_page_that_did_not_land_is_created_once_more_in_the_same_run() {
+        let vault = vault();
+        let (base, requests) = creating_server(vec![
+            ("DROP", ""),
+            ("200 OK", NO_PAGE),
+            ("200 OK", NO_PAGE),
+            ("200 OK", NO_PAGE),
+            ("200 OK", NO_PAGE),
+            ("200 OK", r#"{"id":"page-2"}"#),
+        ]);
+
+        let summary = run_notes(
+            &vault,
+            &client(&base),
+            &registry(),
+            vec![note("note-1", ParaCategory::Projects, "body")],
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        assert_eq!((summary.created, summary.failed), (1, 0));
+        assert_eq!(page_posts(&requests), 2);
+        let entry = map::load(&vault, "note-1").unwrap();
+        assert_eq!(entry.page_id.as_deref(), Some("page-2"));
+    }
+
+    #[tokio::test]
+    async fn a_second_lost_connection_fails_the_note_as_before() {
+        let vault = vault();
+        let (base, _requests) = creating_server(vec![
+            ("DROP", ""),
+            ("200 OK", NO_PAGE),
+            ("200 OK", NO_PAGE),
+            ("200 OK", NO_PAGE),
+            ("200 OK", NO_PAGE),
+            ("DROP", ""),
+        ]);
+
+        let summary = run_notes(
+            &vault,
+            &client(&base),
+            &registry(),
+            vec![note("note-1", ParaCategory::Projects, "body")],
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        assert_eq!((summary.created, summary.failed), (0, 1));
+        let entry = map::load(&vault, "note-1").unwrap();
+        assert!(entry
+            .last_error
+            .is_some_and(|error| error.starts_with("Could not reach Notion")));
     }
 
     #[tokio::test]

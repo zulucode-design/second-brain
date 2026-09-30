@@ -43,8 +43,9 @@ pub const API_VERSION: &str = "2026-03-11";
 
 /// Written into every database this app creates, and never read by this version.
 ///
-/// Reading it is #58's job: recognising databases created by a previous install so a
-/// reinstall reclaims them instead of creating a second set of four. Writing it costs one
+/// Reading it is mostly #58's job: recognising databases created by a previous install so a
+/// reinstall reclaims them instead of creating a second set of four. Setup also reads it to
+/// confirm that a database it created on a lost connection is its own (#186). Writing it costs one
 /// field in a request already being made, and skipping it would leave every database
 /// created by v1 permanently unrecognisable — the future ticket could then only ever help
 /// people who set up Notion after it shipped.
