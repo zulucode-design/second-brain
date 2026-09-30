@@ -274,12 +274,18 @@ Fedora gets isolated `XDG_CONFIG_HOME` and `XDG_DATA_HOME` directories. Windows 
 those variables for known folders, so the worker journals the original
 `%APPDATA%\io.github.zulucodedesign.SecondBrain\config.json`, swaps only the active vault and backup location, and restores
 the original bytes after all exact-path process checks are empty. A global lock prevents a
-second run from replacing that journal. Fresh vault IDs prevent any existing machine-local
+second run from replacing that journal. Every launch also saves window geometry to
+`.window-state.json` in the same folder, so the worker journals that file with its SHA-256,
+restores it (or removes it if the run created it) wherever it restores `config.json`, and fails
+unless the restored file has the pre-run hash, or is absent when it was absent before. Fresh vault IDs prevent any existing machine-local
 vault state from being reused. A junction directs the new Windows machine state into the run
 directory; retained state is evidence, not production state. Finalizing a run removes that
 junction (after checking it targets the run) and the scheduled task; the run directory stays.
 Forced cleanup stops only packaged processes that started after the run's journal was written,
-and refuses if an older one is running.
+and refuses if an older one is running. Manual checks that launch the installed app outside the
+harness get neither the journal nor the junction: they change the real `.window-state.json` and
+write per-vault state into the real `%LOCALAPPDATA%\io.github.zulucodedesign.SecondBrain\vaults`,
+and whoever runs them must record and restore or remove both.
 
 Traces are public. The controller redacts the home directory, Windows profile paths, and host
 names at the single point where it writes them.
