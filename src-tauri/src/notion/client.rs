@@ -178,6 +178,10 @@ impl NotionClient {
     ) -> Self {
         Self {
             http: reqwest::Client::builder()
+                // Notion's API does not redirect. Following one would let a failure to
+                // connect to the redirect target pass for the original request never
+                // having been sent, and a landed `POST` would be retried.
+                .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(CONNECT_TIMEOUT)
                 .timeout(Duration::from_secs(30))
                 .build()
@@ -819,6 +823,44 @@ mod tests {
             client.requests_sent(),
             u64::from(MAX_RETRIES) + 1 + u64::from(CONNECT_RETRIES)
         );
+    }
+
+    #[tokio::test]
+    async fn a_redirect_is_not_followed_so_a_landed_post_is_never_repeated() {
+        // The POST lands and is answered with a redirect to a port nothing listens on.
+        // Following it would fail to connect, and that must not read as the POST unsent.
+        let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+        let unreachable = closed.local_addr().unwrap();
+        drop(closed);
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (tx, received) = mpsc::channel();
+        std::thread::spawn(move || {
+            while let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let mut buffer = [0_u8; 2048];
+                let _ = stream.read(&mut buffer);
+                let _ = tx.send(());
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.1 303 See Other\r\nLocation: http://{unreachable}/pages\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                    .as_bytes(),
+                );
+            }
+        });
+        let client = client(&format!("http://{address}"));
+
+        let error = client
+            .request(reqwest::Method::POST, "/pages", None)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(error, NotionError::Api { status: 303, .. }),
+            "{error:?}"
+        );
+        assert_eq!(received.try_iter().count(), 1, "the POST was sent again");
     }
 
     #[tokio::test]
