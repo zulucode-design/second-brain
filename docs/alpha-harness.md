@@ -277,7 +277,7 @@ the original bytes after all exact-path process checks are empty. A global lock 
 second run from replacing that journal. Every launch also saves window geometry to
 `.window-state.json` in the same folder, so the worker journals that file with its SHA-256,
 restores it (or removes it if the run created it) wherever it restores `config.json`, and fails
-unless the restored file has the pre-run hash. Fresh vault IDs prevent any existing machine-local
+unless the restored file has the pre-run hash, or is absent when it was absent before. Fresh vault IDs prevent any existing machine-local
 vault state from being reused. A junction directs the new Windows machine state into the run
 directory; retained state is evidence, not production state. Finalizing a run removes that
 junction (after checking it targets the run) and the scheduled task; the run directory stays.
