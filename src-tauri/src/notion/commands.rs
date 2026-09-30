@@ -23,7 +23,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::client::{NotionClient, NotionError, VisiblePage};
-use super::config::{self, DatabaseRegistry, NotionSettings};
+use super::config::{self, DatabaseLink, DatabaseRegistry, NotionSettings, PendingDatabase};
 use super::map;
 use super::plan::NoteSnapshot;
 use super::publish::{self, NoteSource, Progress, RunSources, Summary};
@@ -266,11 +266,11 @@ pub(crate) async fn setup_databases(
     }
 
     for category in registry.missing() {
-        let link = client
-            .create_database(parent_page_id, category.folder_name())
+        let link = create_or_adopt(client, vault, &mut registry, parent_page_id, category)
             .await
             .map_err(|error| error.message())?;
         registry.set_link(category, link);
+        registry.pending = None;
         // Saved per database rather than at the end, so an interruption keeps what
         // succeeded and the next attempt creates only the rest.
         config::save_registry(vault, &registry)?;
@@ -278,6 +278,68 @@ pub(crate) async fn setup_databases(
 
     config::save_registry(vault, &registry)?;
     Ok(registry)
+}
+
+/// Create one category's database, never two (#186).
+///
+/// The databases already under the parent are saved as a pending create before it is sent.
+/// A create whose outcome was lost, in this attempt or an earlier one, is then resolved from
+/// that record: a database that appeared since, with this title and the marker, is adopted.
+/// Only if none appears is the create sent again. An older database with the same title is
+/// never adopted, because it may belong to another vault publishing under the same page.
+async fn create_or_adopt(
+    client: &NotionClient,
+    vault: &Path,
+    registry: &mut DatabaseRegistry,
+    parent_page_id: &str,
+    category: ParaCategory,
+) -> Result<DatabaseLink, NotionError> {
+    let title = category.folder_name();
+    let resumed = registry
+        .pending
+        .clone()
+        .filter(|pending| pending.category == title);
+    let existing = match resumed {
+        Some(pending) => {
+            if let Some(link) = client
+                .find_new_database(parent_page_id, title, &pending.existing)
+                .await?
+            {
+                return Ok(link);
+            }
+            pending.existing
+        }
+        None => {
+            let existing: Vec<String> = client
+                .child_databases(parent_page_id)
+                .await?
+                .into_iter()
+                .map(|(database_id, _)| database_id)
+                .collect();
+            registry.pending = Some(PendingDatabase {
+                category: title.to_string(),
+                existing: existing.clone(),
+            });
+            config::save_registry(vault, registry).map_err(NotionError::Local)?;
+            existing
+        }
+    };
+    match client.create_database(parent_page_id, title).await {
+        Err(NotionError::Network(detail)) => {
+            log::warn!(
+                "Lost the Notion connection creating the {title} database ({detail}); \
+                 checking whether it was created"
+            );
+            match client
+                .find_new_database(parent_page_id, title, &existing)
+                .await?
+            {
+                Some(link) => Ok(link),
+                None => client.create_database(parent_page_id, title).await,
+            }
+        }
+        other => other,
+    }
 }
 
 /// Push now, in the background.
@@ -709,7 +771,139 @@ fn read_last_error(vault: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::notion::client::LOST_CONNECTION_LOOKUPS;
     use crate::notion::map::{EntryState, MapEntry};
+    use crate::notion::publish::tests::scripted_server;
+
+    const NO_CHILDREN: &str = r#"{"results":[],"has_more":false}"#;
+    const PROJECTS: &str = r#"{"id":"db-new","data_sources":[{"id":"ds-new","name":"Projects"}]}"#;
+
+    /// A vault set up for every category but Projects, so a setup run creates exactly one.
+    fn vault_missing_projects() -> PathBuf {
+        let vault = std::env::temp_dir().join(format!("notion-setup-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&vault).unwrap();
+        let mut registry = DatabaseRegistry {
+            parent_page_id: Some("parent".into()),
+            ..Default::default()
+        };
+        for category in [
+            ParaCategory::Areas,
+            ParaCategory::Resources,
+            ParaCategory::Archives,
+        ] {
+            registry.set_link(
+                category,
+                DatabaseLink {
+                    database_id: format!("db-{}", category.folder_name()),
+                    data_source_id: format!("ds-{}", category.folder_name()),
+                },
+            );
+        }
+        config::save_registry(&vault, &registry).unwrap();
+        vault
+    }
+
+    fn client(base: &str) -> NotionClient {
+        NotionClient::with_base("t", base, std::time::Duration::from_millis(1))
+    }
+
+    fn projects_listed() -> String {
+        serde_json::json!({ "results": [{ "id": "db-landed", "type": "child_database",
+            "child_database": { "title": "Projects" } }], "has_more": false })
+        .to_string()
+    }
+
+    fn landed() -> String {
+        serde_json::json!({ "id": "db-landed", "description": [{ "plain_text": config::MARKER }],
+            "data_sources": [{ "id": "ds-landed" }] })
+        .to_string()
+    }
+
+    fn database_posts(requests: &std::sync::mpsc::Receiver<String>) -> usize {
+        requests
+            .try_iter()
+            .filter(|request| request.starts_with("POST /databases "))
+            .count()
+    }
+
+    #[tokio::test]
+    async fn a_database_created_on_a_lost_connection_is_adopted_not_created_twice() {
+        let vault = vault_missing_projects();
+        let (listed, found) = (projects_listed(), landed());
+        let (base, requests) = scripted_server(vec![
+            ("200 OK", NO_CHILDREN),
+            ("DROP", ""),
+            ("200 OK", NO_CHILDREN), // not listed yet
+            ("200 OK", &listed),
+            ("200 OK", &found),
+        ]);
+
+        let registry = setup_databases(&client(&base), &vault, "parent")
+            .await
+            .unwrap();
+
+        assert_eq!(database_posts(&requests), 1);
+        assert_eq!(
+            registry
+                .link(ParaCategory::Projects)
+                .map(|link| link.database_id.as_str()),
+            Some("db-landed")
+        );
+        assert_eq!(config::load_registry(&vault).pending, None);
+    }
+
+    #[tokio::test]
+    async fn a_database_that_did_not_land_is_created_once_more() {
+        let vault = vault_missing_projects();
+        let mut responses = vec![("200 OK", NO_CHILDREN), ("DROP", "")];
+        responses.extend(vec![
+            ("200 OK", NO_CHILDREN);
+            LOST_CONNECTION_LOOKUPS as usize
+        ]);
+        responses.push(("200 OK", PROJECTS));
+        let (base, requests) = scripted_server(responses);
+
+        let registry = setup_databases(&client(&base), &vault, "parent")
+            .await
+            .unwrap();
+
+        assert_eq!(database_posts(&requests), 2);
+        assert!(registry.is_complete());
+    }
+
+    #[tokio::test]
+    async fn a_setup_after_a_failed_one_adopts_the_database_that_landed() {
+        // The first setup's create landed, but its response and every look after it were
+        // lost. What it had seen is saved, so the next setup, even after a restart, finds
+        // the database instead of creating another.
+        let vault = vault_missing_projects();
+        let (base, _r) = scripted_server(vec![("200 OK", NO_CHILDREN), ("DROP", ""), ("DROP", "")]);
+        let error = setup_databases(&client(&base), &vault, "parent")
+            .await
+            .unwrap_err();
+        assert!(error.starts_with("Could not reach Notion"), "{error}");
+        let pending = config::load_registry(&vault)
+            .pending
+            .expect("the attempt is saved");
+        assert_eq!(
+            (pending.category.as_str(), pending.existing.len()),
+            ("Projects", 0)
+        );
+
+        let (listed, found) = (projects_listed(), landed());
+        let (base, requests) = scripted_server(vec![("200 OK", &listed), ("200 OK", &found)]);
+        let registry = setup_databases(&client(&base), &vault, "parent")
+            .await
+            .unwrap();
+
+        assert_eq!(database_posts(&requests), 0);
+        assert_eq!(
+            registry
+                .link(ParaCategory::Projects)
+                .map(|link| link.database_id.as_str()),
+            Some("db-landed")
+        );
+    }
 
     #[tokio::test]
     async fn synchronous_runtime_drivers_run_outside_the_command_runtime() {

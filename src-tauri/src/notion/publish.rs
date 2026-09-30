@@ -36,7 +36,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use super::blocks;
-use super::client::{NotionClient, NotionError, LOST_CONNECTION_SETTLE};
+use super::client::{NotionClient, NotionError, LOST_CONNECTION_LOOKUPS, LOST_CONNECTION_SETTLE};
 use super::config::DatabaseRegistry;
 use super::map::{self, EntryState, MapEntry};
 use super::plan::{self, Action, InspectedNote, NoteSnapshot, SkipReason};
@@ -272,15 +272,17 @@ where
             log::warn!(
                 "Lost the Notion connection publishing {note_id} ({detail}); resolving it once"
             );
-            tokio::time::sleep(LOST_CONNECTION_SETTLE).await;
-            outcome = execute(
-                vault_path,
-                client,
-                registry,
-                &action.after_lost_connection(),
-                &note,
-            )
-            .await;
+            let retry = action.after_lost_connection();
+            if let Action::ResolveInterrupted { data_source_id, .. } = &retry {
+                wait_until_visible(client, registry, &note_id, data_source_id).await;
+            } else {
+                tokio::time::sleep(LOST_CONNECTION_SETTLE).await;
+            }
+            outcome = execute(vault_path, client, registry, &retry, &note).await;
+        }
+        if let Err(error) = &outcome {
+            // Every failure, the fatal ones too, so the note it happened on is in the log (#185).
+            log::warn!("Could not publish {note_id} to Notion: {}", error.message());
         }
         match outcome {
             Ok(()) => tally(&mut summary, &action),
@@ -370,10 +372,8 @@ fn tally(summary: &mut Summary, action: &Action) {
 }
 
 fn record_failure(vault_path: &Path, note_id: &str, error: &NotionError) {
-    // Recorded against the note, so Settings can say which notes are failing and why, and
-    // logged, so the reason survives in diagnostics too (#185). A silent skip is how one
-    // unpublishable note goes unnoticed.
-    log::warn!("Could not publish {note_id} to Notion: {}", error.message());
+    // Recorded against the note rather than only logged, so Settings can say which notes
+    // are failing and why. A silent skip is how one unpublishable note goes unnoticed.
     let mut entry = map::load(vault_path, note_id).unwrap_or_else(MapEntry::creating);
     entry.last_error = Some(error.message());
     if let Err(problem) = map::save(vault_path, note_id, &entry) {
@@ -514,6 +514,28 @@ async fn replace_content(
     Ok(())
 }
 
+/// Give a page whose create lost its connection time to show up in a query, so the resolve
+/// that follows finds it rather than creating a second one (#186).
+///
+/// Returns once the page is found or after `LOST_CONNECTION_LOOKUPS` looks. A lookup that
+/// fails ends the wait early, and the resolve then reports the error itself.
+async fn wait_until_visible(
+    client: &NotionClient,
+    registry: &DatabaseRegistry,
+    note_id: &str,
+    data_source_id: &str,
+) {
+    for _ in 0..LOST_CONNECTION_LOOKUPS {
+        tokio::time::sleep(LOST_CONNECTION_SETTLE).await;
+        if !matches!(
+            find_existing(client, registry, note_id, data_source_id).await,
+            Ok(None)
+        ) {
+            return;
+        }
+    }
+}
+
 /// Look for a page carrying this note's id, starting where it should be.
 ///
 /// The other three data sources are searched too, because a note's category can change
@@ -572,7 +594,7 @@ fn publish_entry(vault_path: &Path, action: &Action, page_id: &str) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::notion::config::DatabaseLink;
     use chrono::{TimeZone, Utc};
@@ -581,7 +603,7 @@ mod tests {
     use std::sync::mpsc::{self, Receiver};
     use std::time::Duration;
 
-    fn scripted_server(responses: Vec<(&str, &str)>) -> (String, Receiver<String>) {
+    pub(crate) fn scripted_server(responses: Vec<(&str, &str)>) -> (String, Receiver<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
         let address = listener.local_addr().unwrap();
         let (tx, rx) = mpsc::channel();
@@ -915,6 +937,7 @@ mod tests {
     }
 
     const NO_PAGE: &str = r#"{"results":[],"has_more":false}"#;
+    const FOUND: &str = r#"{"results":[{"id":"page-landed"}]}"#;
 
     fn page_posts(requests: &Receiver<String>) -> usize {
         requests
@@ -923,26 +946,36 @@ mod tests {
             .count()
     }
 
-    #[tokio::test]
-    async fn a_page_created_on_a_lost_connection_is_adopted_in_the_same_run() {
-        let vault = vault();
-        let (base, requests) = creating_server(vec![
-            ("DROP", ""),
-            ("200 OK", r#"{"results":[{"id":"page-landed"}]}"#),
-            ("200 OK", r#"{"id":"page-landed"}"#), // erase
-            ("200 OK", r#"{"id":"page-landed"}"#), // append
-            ("200 OK", r#"{"id":"page-landed"}"#), // properties
-        ]);
+    /// One look for the page across all four data sources, finding nothing.
+    fn missed_look() -> Vec<(&'static str, &'static str)> {
+        vec![("200 OK", NO_PAGE); 4]
+    }
 
-        let summary = run_notes(
-            &vault,
-            &client(&base),
+    async fn publish_one(base: &str, vault: &std::path::Path) -> Summary {
+        run_notes(
+            vault,
+            &client(base),
             &registry(),
             vec![note("note-1", ParaCategory::Projects, "body")],
             |_| {},
         )
         .await
-        .unwrap();
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_page_created_on_a_lost_connection_is_adopted_in_the_same_run() {
+        let vault = vault();
+        let (base, requests) = creating_server(vec![
+            ("DROP", ""),
+            ("200 OK", FOUND),                     // the wait finds it
+            ("200 OK", FOUND),                     // the resolve finds it
+            ("200 OK", r#"{"id":"page-landed"}"#), // erase
+            ("200 OK", r#"{"id":"page-landed"}"#), // append
+            ("200 OK", r#"{"id":"page-landed"}"#), // properties
+        ]);
+
+        let summary = publish_one(&base, &vault).await;
 
         assert_eq!((summary.created, summary.failed), (1, 0));
         assert_eq!(
@@ -956,26 +989,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_page_that_shows_up_late_is_still_adopted_not_duplicated() {
+        let vault = vault();
+        let mut responses = vec![("DROP", "")];
+        responses.extend(missed_look()); // not visible yet
+        responses.extend(missed_look()); // still not
+        responses.extend([
+            ("200 OK", FOUND),                     // the wait's third look finds it
+            ("200 OK", FOUND),                     // the resolve finds it
+            ("200 OK", r#"{"id":"page-landed"}"#), // erase
+            ("200 OK", r#"{"id":"page-landed"}"#), // append
+            ("200 OK", r#"{"id":"page-landed"}"#), // properties
+        ]);
+        let (base, requests) = creating_server(responses);
+
+        let summary = publish_one(&base, &vault).await;
+
+        assert_eq!((summary.created, summary.failed), (1, 0));
+        assert_eq!(page_posts(&requests), 1);
+    }
+
+    #[tokio::test]
     async fn a_page_that_did_not_land_is_created_once_more_in_the_same_run() {
         let vault = vault();
-        let (base, requests) = creating_server(vec![
-            ("DROP", ""),
-            ("200 OK", NO_PAGE),
-            ("200 OK", NO_PAGE),
-            ("200 OK", NO_PAGE),
-            ("200 OK", NO_PAGE),
-            ("200 OK", r#"{"id":"page-2"}"#),
-        ]);
+        let mut responses = vec![("DROP", "")];
+        for _ in 0..=LOST_CONNECTION_LOOKUPS {
+            responses.extend(missed_look()); // every look of the wait, then the resolve's
+        }
+        responses.push(("200 OK", r#"{"id":"page-2"}"#));
+        let (base, requests) = creating_server(responses);
 
-        let summary = run_notes(
-            &vault,
-            &client(&base),
-            &registry(),
-            vec![note("note-1", ParaCategory::Projects, "body")],
-            |_| {},
-        )
-        .await
-        .unwrap();
+        let summary = publish_one(&base, &vault).await;
 
         assert_eq!((summary.created, summary.failed), (1, 0));
         assert_eq!(page_posts(&requests), 2);
@@ -986,24 +1030,14 @@ mod tests {
     #[tokio::test]
     async fn a_second_lost_connection_fails_the_note_as_before() {
         let vault = vault();
-        let (base, _requests) = creating_server(vec![
-            ("DROP", ""),
-            ("200 OK", NO_PAGE),
-            ("200 OK", NO_PAGE),
-            ("200 OK", NO_PAGE),
-            ("200 OK", NO_PAGE),
-            ("DROP", ""),
-        ]);
+        let mut responses = vec![("DROP", "")];
+        for _ in 0..=LOST_CONNECTION_LOOKUPS {
+            responses.extend(missed_look());
+        }
+        responses.push(("DROP", ""));
+        let (base, _requests) = creating_server(responses);
 
-        let summary = run_notes(
-            &vault,
-            &client(&base),
-            &registry(),
-            vec![note("note-1", ParaCategory::Projects, "body")],
-            |_| {},
-        )
-        .await
-        .unwrap();
+        let summary = publish_one(&base, &vault).await;
 
         assert_eq!((summary.created, summary.failed), (0, 1));
         let entry = map::load(&vault, "note-1").unwrap();

@@ -144,6 +144,21 @@ pub struct DatabaseRegistry {
     /// null needing interpretation.
     #[serde(default)]
     pub databases: BTreeMap<String, DatabaseLink>,
+
+    /// A database create that was sent and whose outcome is not known yet (#186). Saved
+    /// before the create, so a lost response or a restart resolves it instead of creating a
+    /// second database.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<PendingDatabase>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingDatabase {
+    /// The category's folder name, which is also the database title.
+    pub category: String,
+    /// The databases already under the parent when the create was sent. One that appears
+    /// later with this title and the marker is the one the create made.
+    pub existing: Vec<String>,
 }
 
 impl DatabaseRegistry {
