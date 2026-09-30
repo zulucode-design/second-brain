@@ -76,6 +76,9 @@ function walk(root, visit) {
   }
 }
 
+// The name Syncthing gives a conflict copy: `<name>.sync-conflict-<date>-<time>-<device>[.<ext>]`.
+const SYNCTHING_CONFLICT = /\.sync-conflict-\d{8}-\d{6}-[A-Z0-9]{7}(\.|$)/;
+
 export function check(vault) {
   const portable = (path) => path.split(sep).join('/');
   const expected = new Map();
@@ -101,7 +104,8 @@ export function check(vault) {
       // A conflict copy of one of the app's own files, such as the `.helixnotes/config.json`
       // each joining machine used to write (#112), is a failed join, not an extra file. Trash
       // is left out for the reason given for notes below.
-      if (rel.includes('.sync-conflict-') && !rel.startsWith('.helixnotes/trash/')) conflictCopies.push(rel);
+      const name = rel.slice(rel.lastIndexOf('/') + 1);
+      if (SYNCTHING_CONFLICT.test(name) && !rel.startsWith('.helixnotes/trash/')) conflictCopies.push(rel);
       return;
     }
     const content = readFileSync(path, 'utf8');

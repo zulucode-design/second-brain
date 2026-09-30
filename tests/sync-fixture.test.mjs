@@ -100,7 +100,9 @@ test('a conflict copy of an app file fails the fixture, except in trash', (t) =>
   generate(root);
   mkdirSync(join(root, '.helixnotes', 'trash'), { recursive: true });
   writeFileSync(join(root, '.helixnotes', 'trash', 'old.sync-conflict-20260914-153417-256O5AE.png'), 'png');
-  assert.equal(check(root).complete, true);
+  mkdirSync(join(root, '.helixnotes', 'attachments'), { recursive: true });
+  writeFileSync(join(root, '.helixnotes', 'attachments', 'Plan.sync-conflict-draft.png'), 'png');
+  assert.equal(check(root).complete, true, 'an ordinary name that contains the marker is not a conflict copy');
 
   writeFileSync(join(root, '.helixnotes', 'config.sync-conflict-20260915-165505-2WM4L52.json'), '{}');
   const observation = check(root);
