@@ -2189,8 +2189,8 @@ function linksTo(path, target) {
   return resolve(readlinkSync(path)).toLowerCase() === resolve(target).toLowerCase();
 }
 
-// Run before the lock is written, so a profile the run must not touch fails the run without
-// leaving a lock behind for recover to trip over.
+// Run before prepare changes anything, so a profile the run must not touch fails the run
+// without leaving a lock, a junction, or a run directory behind.
 export function checkProfileRedirects(redirects) {
   for (const { path, aside } of redirects) {
     if (present(path) && lstatSync(path).isSymbolicLink()) fail(`${path} is already redirected`);
@@ -2330,6 +2330,13 @@ async function windowsWorker(request) {
     const existing = windowsInterrupt(tools, appPath, 'Report');
     if (existing.processes.length) fail('installed Windows app is already running');
     if (existsSync(paths.runRoot)) fail(`run already exists: ${paths.runRoot}`);
+    // Checked before anything below touches the disk, so a refused profile leaves no trace.
+    const profileRedirects = PROFILE_REDIRECTS.map((name) => ({
+      path: win32.join(process.env.LOCALAPPDATA, APP_IDENTIFIER, name),
+      target: win32.join(paths.runRoot, 'profile', name),
+      aside: win32.join(process.env.LOCALAPPDATA, `${APP_IDENTIFIER}.alpha-harness-${request.runId}`, name),
+    }));
+    checkProfileRedirects(profileRedirects);
     mkdirSync(paths.backupPath, { recursive: true });
     mkdirSync(paths.machinePath, { recursive: true });
     makeVault(paths.vaultPath, request.vaultId);
@@ -2355,15 +2362,9 @@ async function windowsWorker(request) {
       atomicWrite(win32.join(paths.machinePath, 'sync-control.json'), `${JSON.stringify(control, null, 2)}\n`);
     }
     const lockPath = win32.join(dirname(configPath), 'alpha-harness.lock.json');
-    const profileRedirects = PROFILE_REDIRECTS.map((name) => ({
-      path: win32.join(process.env.LOCALAPPDATA, APP_IDENTIFIER, name),
-      target: win32.join(paths.runRoot, 'profile', name),
-      aside: win32.join(process.env.LOCALAPPDATA, `${APP_IDENTIFIER}.alpha-harness-${request.runId}`, name),
-    }));
     const manifest = {
       version: 1, runId: request.runId, startedAt: new Date().toISOString(), configPath, originalPath, ...windowStateJournal, machineLink, appPath, profileRedirects,
     };
-    checkProfileRedirects(profileRedirects);
     atomicWrite(paths.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     writeFileSync(lockPath, `${JSON.stringify({ runId: request.runId, manifestPath: paths.manifestPath })}\n`, { flag: 'wx' });
     // After the lock, so a run stopped partway through is finished by the next run's recover.
