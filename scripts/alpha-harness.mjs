@@ -2190,8 +2190,9 @@ export function checkWindowStateRestored(manifest) {
   return current;
 }
 
-// Evidence for a restored window state; the flag tells an absent file from a journal before #167.
-function windowStateEvidence(manifest) {
+// Checks the restored window state and returns its evidence; the flag tells an absent file from a
+// journal before #167.
+function checkedWindowStateEvidence(manifest) {
   return { windowStateJournaled: Boolean(manifest.windowStatePath), windowStateSha256: checkWindowStateRestored(manifest) };
 }
 
@@ -2200,7 +2201,7 @@ function windowStateEvidence(manifest) {
 function restoreJournaledFiles(manifest) {
   atomicWrite(manifest.configPath, readFileSync(manifest.originalPath));
   restoreWindowState(manifest);
-  return windowStateEvidence(manifest);
+  return checkedWindowStateEvidence(manifest);
 }
 
 function damagedBeforePath(paths) {
@@ -2584,7 +2585,7 @@ async function windowsWorker(request) {
       const current = readFileSync(manifest.configPath);
       const original = readFileSync(manifest.originalPath);
       if (!current.equals(original)) fail('config lock is gone but original config is not restored');
-      const windowState = windowStateEvidence(manifest);
+      const windowState = checkedWindowStateEvidence(manifest);
       return { restored: true, alreadyRestored: true, ...windowState, ...removeRunArtifacts(tools, appPath, manifest, paths) };
     }
     const lock = JSON.parse(readFileSync(lockPath, 'utf8'));

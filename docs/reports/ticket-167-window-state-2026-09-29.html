@@ -95,7 +95,7 @@
       <code>34278064…</code> and removed the lock.</td>
       <td class="pass">pass</td></tr>
     <tr><td>After</td>
-      <td><code>config.json</code> <code>0bfb1539…</code>, <code>.window-state.json</code> <code>34278064…</code>, no lock: the real profile matches its pre-check state byte for byte.</td>
+      <td><code>config.json</code> <code>0bfb1539…</code>, <code>.window-state.json</code> <code>34278064…</code>, no lock: both files match their pre-check bytes.</td>
       <td class="pass">pass</td></tr>
   </table>
 
@@ -103,8 +103,9 @@
   <p class="open">Not checked here: a window state saved by the app itself. The next Gate 3 walkthrough
   on a new candidate closes the app through its close button, so the plugin saves on exit and the
   <code>config-restored</code> event must carry the pre-run hash.</p>
-  <p>Out of scope, as the issue notes: manual checks that launch the installed app outside the harness
+  <p>Left as guidance, as the issue's Related section asks: manual checks that launch the installed app outside the harness
   still change the real <code>.window-state.json</code> and write per-vault state into the real
-  <code>%LOCALAPPDATA%</code> folder, and whoever runs them must restore or remove both.</p>
+  <code>%LOCALAPPDATA%</code> folder, and whoever runs them must restore or remove both. Harness runs also change the real <code>logs</code> and
+  <code>EBWebView</code> folders under <code>%LOCALAPPDATA%</code>; that is tracked in #174.</p>
 </body>
 </html>
