@@ -279,13 +279,18 @@ second run from replacing that journal. Every launch also saves window geometry 
 restores it (or removes it if the run created it) wherever it restores `config.json`, and fails
 unless the restored file has the pre-run hash, or is absent when it was absent before. Fresh vault IDs prevent any existing machine-local
 vault state from being reused. A junction directs the new Windows machine state into the run
-directory; retained state is evidence, not production state. Finalizing a run removes that
-junction (after checking it targets the run) and the scheduled task; the run directory stays.
+directory; retained state is evidence, not production state. Each launch also writes the
+profile's `logs` and `EBWebView` (WebView2) folders, so the worker renames both aside, to
+`%LOCALAPPDATA%\io.github.zulucodedesign.SecondBrain.alpha-harness-<run>`, and junctions each to
+the run directory (#174). Recover and finalize remove only junctions that target the run and
+rename the folders back. Finalizing a run also removes the vault junction (after checking it
+targets the run) and the scheduled task; the run directory stays.
 Forced cleanup stops only packaged processes that started after the run's journal was written,
 and refuses if an older one is running. Manual checks that launch the installed app outside the
-harness get neither the journal nor the junction: they change the real `.window-state.json` and
-write per-vault state into the real `%LOCALAPPDATA%\io.github.zulucodedesign.SecondBrain\vaults`,
-and whoever runs them must record and restore or remove both.
+harness get neither the journal nor the junctions: they change the real `.window-state.json`,
+`logs` and `EBWebView`, and write per-vault state into the real
+`%LOCALAPPDATA%\io.github.zulucodedesign.SecondBrain\vaults`, and whoever runs them must record and
+restore or remove all of it.
 
 Traces are public. The controller redacts the home directory, Windows profile paths, and host
 names at the single point where it writes them.
