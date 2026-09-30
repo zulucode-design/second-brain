@@ -202,9 +202,12 @@ impl NotionClient {
         body: Option<Value>,
     ) -> Result<Value, NotionError> {
         let url = format!("{}{}", self.base, path);
+        // Separate budgets: a failure to connect must not use up a rate-limit retry, nor
+        // turn into `RateLimited` once the rate-limit retries are spent.
+        let mut rate_limits = 0;
         let mut connect_failures = 0;
 
-        for attempt in 0..=MAX_RETRIES {
+        loop {
             self.pacer.wait().await;
             self.requests.fetch_add(1, Ordering::Relaxed);
 
@@ -240,13 +243,14 @@ impl NotionClient {
             // 529 is Notion being overloaded rather than us being greedy, and the docs say
             // to treat it exactly as a 429.
             if status.as_u16() == 429 || status.as_u16() == 529 {
-                if attempt == MAX_RETRIES {
+                if rate_limits == MAX_RETRIES {
                     return Err(NotionError::RateLimited);
                 }
-                let wait = retry_after(response.headers(), attempt);
+                let wait = retry_after(response.headers(), rate_limits);
                 if wait > MAX_BACKOFF {
                     return Err(NotionError::RateLimited);
                 }
+                rate_limits += 1;
                 log::warn!("Notion asked to wait {:?}; retrying", wait);
                 tokio::time::sleep(wait).await;
                 continue;
@@ -276,8 +280,6 @@ impl NotionClient {
                 },
             });
         }
-
-        Err(NotionError::RateLimited)
     }
 
     /// Confirm the token works, returning the connection's name for the Settings panel.
@@ -799,6 +801,24 @@ mod tests {
 
         assert!(matches!(error, NotionError::Network(_)));
         assert_eq!(client.requests_sent(), 1 + u64::from(CONNECT_RETRIES));
+    }
+
+    #[tokio::test]
+    async fn a_failure_to_connect_after_the_rate_limit_retries_is_still_a_network_error() {
+        // The server answers four 429s and then stops listening, so the fifth attempt fails
+        // to connect. Its own retries follow, and the error is the network's, not the rate
+        // limit's.
+        let responses = vec![("429 Too Many Requests", r#"{"message":"rate_limited"}"#); 4];
+        let (base, _r) = scripted_server(responses);
+        let client = client(&base);
+
+        let error = client.whoami().await.unwrap_err();
+
+        assert!(matches!(error, NotionError::Network(_)), "{error:?}");
+        assert_eq!(
+            client.requests_sent(),
+            u64::from(MAX_RETRIES) + 1 + u64::from(CONNECT_RETRIES)
+        );
     }
 
     #[tokio::test]
