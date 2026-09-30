@@ -9,7 +9,7 @@ import { deflateRawSync } from 'node:zlib';
 
 const {
   acquireControllerLock, checkProfileRedirects, checkWindowStateRestored, diagnosticLeaks, harnessConfig, journalWindowState, killDue, mutateFixture,
-  pairedSyncthingConfig, parseOptions, recoveryOutcome, redactTrace, redirectProfileFolders,
+  pairedSyncthingConfig, parseOptions, publishedProblems, recoveryOutcome, redactTrace, redirectProfileFolders,
   restoreProfileFolders, restoreProgress, restoreWindowState, snapshotVault, treeHash, zipEntries,
 } = await import(
   new URL('../scripts/alpha-harness.mjs', import.meta.url)
@@ -227,6 +227,16 @@ test('a folder aside that cannot be read fails the restore instead of passing fo
   chmodSync(asideRoot, 0o700);
   assert.deepEqual(restoreProfileFolders([redirect]), [{ path: redirect.path, movedBack: true }]);
   assert.equal(existsSync(asideRoot), false, 'the emptied aside directory is removed');
+});
+
+test('each expected note must be in Notion exactly once', () => {
+  const titles = ['Walkthrough capture', 'Zettelkasten'];
+  assert.deepEqual(publishedProblems(titles, ['Zettelkasten', 'Walkthrough capture', 'Other']), []);
+  assert.deepEqual(publishedProblems(titles, ['Zettelkasten']), ['not published to Notion: Walkthrough capture']);
+  assert.deepEqual(
+    publishedProblems(titles, ['Zettelkasten', 'Walkthrough capture', 'Zettelkasten']),
+    ['published to Notion more than once: Zettelkasten'],
+  );
 });
 
 test('window state is put back as it was, or removed when the run created it', (t) => {

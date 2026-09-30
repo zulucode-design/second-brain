@@ -1657,11 +1657,35 @@ function notionTitle(value) {
  * in the vault's own registry, so a row left under the disposable page by an earlier run cannot
  * count as this run's.
  */
+// Each expected note must be in Notion exactly once. A second copy is the duplicate a lost
+// connection could leave if the app ever created twice (#186).
+export function publishedProblems(titles, published) {
+  const missing = titles.filter((title) => !published.includes(title));
+  const duplicated = titles.filter((title) => published.filter((found) => found === title).length > 1);
+  return [
+    ...(missing.length ? [`not published to Notion: ${missing.join(', ')}`] : []),
+    ...(duplicated.length ? [`published to Notion more than once: ${duplicated.join(', ')}`] : []),
+  ];
+}
+
 async function notionVerifyAndClean({ token }, registry, titles) {
   const databaseIds = Object.values(registry.databases).map((database) => database.database_id);
   if (!databaseIds.length) fail('the vault registered no Notion databases');
   const published = [];
   const problems = [];
+  // A live database under the page that the registry does not name is a second one the app
+  // made and lost track of (#186). It is archived with the rest and fails the run.
+  let strays = [];
+  if (registry.parent_page_id) {
+    try {
+      const children = await notionRequest(token, 'GET', `/blocks/${registry.parent_page_id}/children?page_size=100`);
+      strays = children.results
+        .filter((block) => block.type === 'child_database' && !databaseIds.includes(block.id))
+        .map((block) => block.id);
+    } catch (error) {
+      problems.push(error.message);
+    }
+  }
   for (const id of databaseIds) {
     try {
       const rows = await notionRequest(token, 'POST', `/databases/${id}/query`, { page_size: 100 });
@@ -1674,17 +1698,17 @@ async function notionVerifyAndClean({ token }, registry, titles) {
     }
   }
   // Archived even when a query failed, so the run leaves nothing live under the page.
-  for (const id of databaseIds) {
+  for (const id of [...databaseIds, ...strays]) {
     try {
       await notionRequest(token, 'PATCH', `/databases/${id}`, { archived: true });
     } catch (error) {
       problems.push(error.message);
     }
   }
+  if (strays.length) problems.push(`${strays.length} database(s) under the page are not in the registry`);
+  problems.push(...publishedProblems(titles, published));
   if (problems.length) fail(problems.join('; '));
-  const missing = titles.filter((title) => !published.includes(title));
-  if (missing.length) fail(`not published to Notion: ${missing.join(', ')}`);
-  return { databases: databaseIds.length, archived: databaseIds.length, published };
+  return { databases: databaseIds.length, archived: databaseIds.length + strays.length, published };
 }
 
 const NOTION_REGISTRY = '.helixnotes/notion/databases.json';
