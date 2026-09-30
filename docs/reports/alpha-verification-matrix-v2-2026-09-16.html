@@ -92,9 +92,10 @@
     <tr><th>Check</th><th>Candidate result</th><th>Status</th></tr>
     <tr><td>Gate 1: interrupted paired sync</td><td>Run <a href="evidence/alpha-harness-sync-20260930T015339Z.jsonl"><code>20260930T015339Z</code></a> paired the installed apps, stopped the Windows sidecar
     at 70/5,000 notes (the app relaunched it), and both replicas converged to 5,000 with no missing notes, wrong content,
-    duplicate IDs, conflict copies, or strays. Each machine took two pre-sync ZIPs. Fedora took its own because it
-    received the Windows <code>.helixnotes</code> configuration and a <code>config.json</code> conflict copy (#112, P3,
-    deferred), which is incoming change under #171's rule. No app, sidecar, or watchdog survived on either machine, and
+    duplicate IDs, note conflict copies, or strays. Each machine took two pre-sync ZIPs. Fedora's are expected under
+    #171's incoming-only rule: it received the Windows <code>.helixnotes/config.json</code> and kept its own as a
+    conflict copy (#112, P3, deferred). The fixture check covers notes only, so the trace does not list that file; it is
+    recorded in the <a href="evidence/prealpha-7e67b29-gates.jsonl">hand-kept gate log</a>. No app, sidecar, or watchdog survived on either machine, and
     the Windows profile's <code>config.json</code> and <code>.window-state.json</code> were restored to their pre-run
     bytes.</td>
     <td><span class="s green">passed on 7e67b29</span></td></tr>
@@ -116,16 +117,17 @@
     harness's own Notion verification after every Fedora step had passed, and
     <a href="evidence/alpha-harness-walkthrough-20260930T020348Z.jsonl"><code>20260930T020348Z</code></a> stopped on
     Windows when Publish Now never appeared; the run's registry, read afterwards, held three of the four databases. The
-    app does not retry a connection that fails before its request is sent (#176). In both attempts the harness's own
-    Notion check then failed with <code>fetch failed</code>, so their traces record no archiving. Checked by hand
+    app does not retry a connection that fails before its request is sent (#176). The harness's own Notion check then
+    failed with <code>fetch failed</code> for Fedora in the first attempt and for Windows in the second, so those two
+    traces record no archiving; the second attempt's Fedora check archived its four databases. Checked by hand
     afterwards (<a href="evidence/prealpha-7e67b29-gates.jsonl">hand-kept gate log</a>): every database both attempts created was archived, and no live database was left. At the time,
     about 5–10% of new connections to <code>api.notion.com</code> timed out from both machines while GitHub and
     Wikipedia did not; the passing run started after 40 consecutive clean connections.</td>
     <td><span class="s green">passed on 7e67b29</span></td></tr>
     <tr><td>Gate-owned Ollama worker</td><td>The bounded supervisor on port 11436 served <code>embeddinggemma</code>
-    for Gate 3; the trace records the model answering before and after the run. From the <a href="evidence/prealpha-7e67b29-gates.jsonl">hand-kept gate log</a>: stopping recorded
-    supervisor PID 18336 ended server PID 29368, its <code>llama-server.exe</code> worker PID 9132, and its console
-    host; none was left, and the port no longer answered. No user-owned Ollama was running.</td>
+    for Gate 3; the trace records that Ollama answered and listed it before and after the run. From the <a href="evidence/prealpha-7e67b29-gates.jsonl">hand-kept gate log</a>: after stopping recorded
+    supervisor PID 18336, neither it, server PID 29368, <code>llama-server.exe</code> worker PID 9132, nor its console
+    host was running, and the port no longer answered. No user-owned Ollama was running.</td>
     <td><span class="s green">passed</span></td></tr>
     <tr><td>Not rerun on this candidate</td><td>Gate 2 (interrupted restore) last ran on <code>7b1a4d1</code>; #170
     changed the restore commit path in <code>backup.rs</code>, so it needs a rerun. #28 still needs a received
@@ -181,7 +183,7 @@
   <h2>Implementation and historical package evidence</h2>
   <table>
     <tr><th>Area</th><th>Evidence</th><th>Status</th></tr>
-    <tr><td>Hosted verification</td><td>Candidate <code>7e67b29</code> passed hosted <code>verify</code> and <code>windows-rust</code> in <a href="https://github.com/zulucode-design/second-brain/actions/runs/36623014269">run 36623014269</a>. The first attempt's <code>verify</code> failed before any check ran, when the rustup download returned <code>curl: (35) Recv failure: Connection reset by peer</code>; the rerun of that job passed. Harness commit <code>2f71d18</code> passed in run 36654788338. Earlier, candidate <code>96a3e5b</code> passed hosted <code>verify</code> and <code>windows-rust</code> in <a href="https://github.com/zulucode-design/second-brain/actions/runs/36507175692">run 36507175692</a>. Earlier, GitHub Actions run <a href="https://github.com/zulucode-design/second-brain/actions/runs/35114045441">35114045441</a> passed on 2026-09-16 with Ubuntu <code>pnpm verify</code>, Linux package assertions, and Windows <code>pnpm test:rust</code>.</td><td><span class="s green">Candidate 7e67b29 CI passed</span></td></tr>
+    <tr><td>Hosted verification</td><td>Candidate <code>7e67b29</code> passed hosted <code>verify</code> and <code>windows-rust</code> in <a href="https://github.com/zulucode-design/second-brain/actions/runs/36623014269">run 36623014269</a>. The first attempt's <code>verify</code> failed before any check ran, when the rustup download returned <code>curl: (35) Recv failure: Connection reset by peer</code>; the rerun of that job passed. Harness commit <code>2f71d18</code> passed in <a href="https://github.com/zulucode-design/second-brain/actions/runs/36654788338">run 36654788338</a>. Earlier, candidate <code>96a3e5b</code> passed hosted <code>verify</code> and <code>windows-rust</code> in <a href="https://github.com/zulucode-design/second-brain/actions/runs/36507175692">run 36507175692</a>. Earlier, GitHub Actions run <a href="https://github.com/zulucode-design/second-brain/actions/runs/35114045441">35114045441</a> passed on 2026-09-16 with Ubuntu <code>pnpm verify</code>, Linux package assertions, and Windows <code>pnpm test:rust</code>.</td><td><span class="s green">Candidate 7e67b29 CI passed</span></td></tr>
     <tr><td>A: save lifecycle</td><td>PR #90 regression suites cover edit→navigate and edit→close. Candidate <code>7e67b29</code>: Gate 3 run <a href="evidence/alpha-harness-walkthrough-20260930T021115Z.jsonl"><code>20260930T021115Z</code></a> repeated the check on both installed packages, and no edit was missing after the close-button exit. Earlier, candidate <code>96a3e5b</code>: Gate 3 run <a href="evidence/alpha-harness-walkthrough-20260929T030922Z.jsonl"><code>20260929T030922Z</code></a> repeated the check on both installed packages, and no edit was missing after the close-button exit. Earlier, issue #137 Gate 3 run <a href="evidence/alpha-harness-walkthrough-20260926T145821Z.jsonl"><code>20260926T145821Z</code></a> on installed packages from commit <code>8e62c08</code>: on Fedora 44 and Windows 11, a note edited, left at once, reopened, edited again, and closed through the window's close button had both edits on disk after the app exited.</td><td><span class="s green">Candidate Gate 3 passed</span></td></tr>
     <tr><td>B: WebDAV removal</td><td>PR #94 removed the production path.</td><td><span class="s green">green</span></td></tr>
     <tr><td>C: restore and coordination</td><td>PR #93 proves in-process rollback and bulk-mutation exclusion. Issue #142 adds durable killed-process recovery, fail-closed startup, exact-state per-step regressions, and persistent user notices; <code>pnpm verify</code> passes. Issue #137 Gate 2 run <a href="evidence/alpha-harness-restore-20260922T024327Z.jsonl"><code>20260922T024327Z</code></a> exercised apps built from commit <code>7b1a4d1</code> on Fedora 44 and Windows 11. On both machines, the uninterrupted restore matched the backup-state SHA-256. All six journal, stage-half, and stage-late interruptions occurred during unpacking and recovered to each machine's exact pre-restore SHA-256; every recovery recorded the “Restore interrupted” banner and no leftovers, and final process checks were empty. Candidate <code>7e67b29</code>: Gate 3 run <a href="evidence/alpha-harness-walkthrough-20260930T021115Z.jsonl"><code>20260930T021115Z</code></a> passed the uninterrupted backup and restore steps on both machines; interrupted-restore recovery (Gate 2) has not been rerun since #170 changed the restore path. Candidate <code>96a3e5b</code>: an installed Fedora restore of a pre-sync ZIP failed and rolled back (<code>.stfolder already exists</code>, #14, P1). On installed <code>7e67b29</code>, the pre-sync restore passed on both machines with exact archive contents, unchanged Syncthing markers, and no journal; see Pre-sync backup and restore. The interrupted-restore results above remain historical.</td><td><span class="s green">Pre-sync restore passed on 7e67b29</span></td></tr>
