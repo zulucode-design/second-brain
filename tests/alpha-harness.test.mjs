@@ -187,6 +187,11 @@ test('a profile restore stopped halfway finishes, and never removes a link it di
   assert.deepEqual(restoreProfileFolders([redirect]), [{ path: redirect.path, movedBack: true }]);
   assert.equal(readFileSync(join(redirect.path, 'app.log'), 'utf8'), 'mine');
 
+  // Stopped after the folder came back and before its emptied aside directory went.
+  mkdirSync(join(root, 'aside'));
+  assert.deepEqual(restoreProfileFolders([redirect]), [{ path: redirect.path, movedBack: false }]);
+  assert.equal(existsSync(join(root, 'aside')), false);
+
   rmSync(redirect.path, { recursive: true });
   mkdirSync(join(root, 'elsewhere'));
   symlinkSync(join(root, 'elsewhere'), redirect.path, 'junction');

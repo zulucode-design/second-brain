@@ -2226,12 +2226,13 @@ export function restoreProfileFolders(redirects = []) {
     if (hadFolder) {
       if (present(path)) fail(`refusing to restore ${aside}: ${path} exists again`);
       renameSync(aside, path);
-      try {
-        rmdirSync(dirname(aside));
-      } catch {
-        // Another redirect's folder is still aside, or already gone; only an empty directory
-        // is ever removed.
-      }
+    }
+    // Also when nothing was aside, so a restore stopped right after the rename still clears it.
+    try {
+      rmdirSync(dirname(aside));
+    } catch {
+      // Another redirect's folder is still aside, or it is already gone; only an empty
+      // directory is ever removed.
     }
     // Without a folder aside, the path is either absent as before the run or the user's own
     // folder, because the run stopped before redirecting it; both are left as they are.
