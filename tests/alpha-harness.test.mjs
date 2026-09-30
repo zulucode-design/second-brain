@@ -9,7 +9,7 @@ import { deflateRawSync } from 'node:zlib';
 
 const {
   acquireControllerLock, checkProfileRedirects, checkWindowStateRestored, diagnosticLeaks, harnessConfig, journalWindowState, killDue, mutateFixture,
-  pairedSyncthingConfig, parseOptions, publishedProblems, recoveryOutcome, redactTrace, redirectProfileFolders,
+  NOTION_PUBLISHED_TITLES, notionAll, pairedSyncthingConfig, parseOptions, publishedProblems, recoveryOutcome, redactTrace, redirectProfileFolders,
   restoreProfileFolders, restoreProgress, restoreWindowState, snapshotVault, treeHash, zipEntries,
 } = await import(
   new URL('../scripts/alpha-harness.mjs', import.meta.url)
@@ -227,6 +227,41 @@ test('a folder aside that cannot be read fails the restore instead of passing fo
   chmodSync(asideRoot, 0o700);
   assert.deepEqual(restoreProfileFolders([redirect]), [{ path: redirect.path, movedBack: true }]);
   assert.equal(existsSync(asideRoot), false, 'the emptied aside directory is removed');
+});
+
+test('every published walkthrough note is checked for omission and duplication', () => {
+  assert.equal(NOTION_PUBLISHED_TITLES.length, 5);
+  for (const title of NOTION_PUBLISHED_TITLES) {
+    const others = NOTION_PUBLISHED_TITLES.filter((other) => other !== title);
+    assert.deepEqual(publishedProblems(NOTION_PUBLISHED_TITLES, others), [`not published to Notion: ${title}`]);
+    assert.deepEqual(
+      publishedProblems(NOTION_PUBLISHED_TITLES, [...NOTION_PUBLISHED_TITLES, title]),
+      [`published to Notion more than once: ${title}`],
+    );
+  }
+});
+
+test('a Notion list is read to its last page', async (t) => {
+  const seen = [];
+  const pages = {
+    first: { results: [{ id: 'a' }], has_more: true, next_cursor: 'c2' },
+    second: { results: [{ id: 'b' }], has_more: false, next_cursor: null },
+  };
+  const realFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = realFetch; });
+  globalThis.fetch = async (url, options) => {
+    seen.push({ url: String(url), body: options.body });
+    const later = String(url).includes('start_cursor=c2') || (options.body ?? '').includes('"start_cursor":"c2"');
+    return { ok: true, json: async () => (later ? pages.second : pages.first) };
+  };
+
+  const children = await notionAll('t', 'GET', '/blocks/p/children?page_size=100');
+  const rows = await notionAll('t', 'POST', '/databases/d/query', { page_size: 100 });
+
+  assert.deepEqual(children.map((row) => row.id), ['a', 'b']);
+  assert.deepEqual(rows.map((row) => row.id), ['a', 'b']);
+  assert.match(seen[1].url, /page_size=100&start_cursor=c2$/);
+  assert.equal(JSON.parse(seen[3].body).start_cursor, 'c2');
 });
 
 test('each expected note must be in Notion exactly once', () => {

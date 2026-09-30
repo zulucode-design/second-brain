@@ -1648,6 +1648,21 @@ async function notionRequest(token, method, path, body) {
   return response.json();
 }
 
+// Every result of a Notion list, following its cursor. A second copy past the first page
+// must not escape the check (#186).
+export async function notionAll(token, method, path, body = {}) {
+  const results = [];
+  let cursor = null;
+  do {
+    const page = method === 'GET'
+      ? await notionRequest(token, 'GET', cursor ? `${path}&start_cursor=${cursor}` : path)
+      : await notionRequest(token, method, path, cursor ? { ...body, start_cursor: cursor } : body);
+    results.push(...page.results);
+    cursor = page.has_more ? page.next_cursor : null;
+  } while (cursor);
+  return results;
+}
+
 function notionTitle(value) {
   return (value ?? []).map((part) => part.plain_text).join('');
 }
@@ -1678,8 +1693,8 @@ async function notionVerifyAndClean({ token }, registry, titles) {
   let strays = [];
   if (registry.parent_page_id) {
     try {
-      const children = await notionRequest(token, 'GET', `/blocks/${registry.parent_page_id}/children?page_size=100`);
-      strays = children.results
+      const children = await notionAll(token, 'GET', `/blocks/${registry.parent_page_id}/children?page_size=100`);
+      strays = children
         .filter((block) => block.type === 'child_database' && !databaseIds.includes(block.id))
         .map((block) => block.id);
     } catch (error) {
@@ -1688,8 +1703,8 @@ async function notionVerifyAndClean({ token }, registry, titles) {
   }
   for (const id of databaseIds) {
     try {
-      const rows = await notionRequest(token, 'POST', `/databases/${id}/query`, { page_size: 100 });
-      for (const row of rows.results) {
+      const rows = await notionAll(token, 'POST', `/databases/${id}/query`, { page_size: 100 });
+      for (const row of rows) {
         published.push(...Object.values(row.properties)
           .filter((property) => property.type === 'title').map((property) => notionTitle(property.title)));
       }
@@ -1736,8 +1751,7 @@ async function notionCleanup(machine, notion, passed) {
     // A walkthrough that failed before Connect never created one.
     if (passed) problems.push(`registry: ${error.message}`);
   }
-  // The clip and the attachment note carry anchor and relative links (#152).
-  const titles = passed ? ['Walkthrough capture', 'Zettelkasten', 'Walkthrough attachment'] : [];
+  const titles = passed ? NOTION_PUBLISHED_TITLES : [];
   let databases = { databases: 0, archived: 0 };
   try {
     if (registry) databases = await notionVerifyAndClean(notion, registry, titles);
@@ -1761,6 +1775,13 @@ const WALKTHROUGH_NOTES = {
 };
 
 const CLIP_URL = 'https://en.wikipedia.org/wiki/Zettelkasten';
+
+// Every note in the vault when the walkthrough publishes, each expected in Notion exactly once.
+// The clip and the attachment note carry anchor and relative links (#152).
+export const NOTION_PUBLISHED_TITLES = [
+  'Walkthrough capture', WALKTHROUGH_NOTES.semantic.title, WALKTHROUGH_NOTES.tasks.title,
+  'Zettelkasten', 'Walkthrough attachment',
+];
 
 async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, notion, requireUnlocked }) {
   const walkthrough = await import('./alpha-walkthrough.mjs');
