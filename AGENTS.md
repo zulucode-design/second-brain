@@ -75,7 +75,8 @@ use the bounded job supervisor; cleanup must cover model workers as well as the 
 ### Claude Code plugins
 
 `.claude/settings.json` is committed so every checkout enables the Codex plugin
-(`codex@openai-codex`). Put personal settings in `.claude/settings.local.json`, which stays ignored.
+(`codex@openai-codex`) once Claude Code trusts the folder and the marketplace install is
+accepted. Put personal settings in `.claude/settings.local.json`, which stays ignored.
 
 ### Issue tracker
 
