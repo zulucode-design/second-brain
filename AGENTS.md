@@ -72,6 +72,11 @@ Before starting or stopping Ollama for verification, follow
 `docs/alpha-harness.md` (Temporary Ollama servers on Windows). Gate-owned servers must
 use the bounded job supervisor; cleanup must cover model workers as well as the server.
 
+### Claude Code plugins
+
+`.claude/settings.json` is committed so every checkout enables the Codex plugin
+(`codex@openai-codex`). Put personal settings in `.claude/settings.local.json`, which stays ignored.
+
 ### Issue tracker
 
 Issues live in this repo's GitHub Issues (`zulucode-design/second-brain`),
