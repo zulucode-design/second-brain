@@ -106,6 +106,7 @@
   <p>Left as guidance, as the issue's Related section asks: manual checks that launch the installed app outside the harness
   still change the real <code>.window-state.json</code> and write per-vault state into the real
   <code>%LOCALAPPDATA%</code> folder, and whoever runs them must restore or remove both. Harness runs also change the real <code>logs</code> and
-  <code>EBWebView</code> folders under <code>%LOCALAPPDATA%</code>; that is tracked in #174.</p>
+  <code>EBWebView</code> folders under <code>%LOCALAPPDATA%</code>; that is tracked in #174.
+  <span class="pass">Resolved 2026-09-30:</span> runs now redirect both folders into the run directory; see the <a href="ticket-174-profile-isolation-2026-09-30.html">#174 report</a>.</p>
 </body>
 </html>
