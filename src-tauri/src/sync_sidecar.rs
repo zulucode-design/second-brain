@@ -929,98 +929,183 @@ pub async fn sync_pair(
     sync_status(app).await
 }
 
-fn patch_folder(
-    client: &reqwest::blocking::Client,
-    control: &ControlState,
-    folder_id: &str,
-    fields: serde_json::Value,
-    action: &str,
-) -> Result<(), String> {
-    client
-        .patch(endpoint(
-            control,
-            &format!("/rest/config/folders/{folder_id}"),
-        ))
-        .header("X-API-Key", &control.api_key)
-        .json(&fields)
+/// This vault's sidecar REST API, authenticated with its key.
+#[derive(Clone, Copy)]
+struct SyncthingApi<'a> {
+    client: &'a reqwest::blocking::Client,
+    control: &'a ControlState,
+}
+
+/// Send `request` and require a success status. `failure` prefixes an HTTP error status, as in
+/// "Could not pause the sync folder: …"; without it the error is reported as is. A transport
+/// failure is always reported as is.
+fn checked(
+    request: reqwest::blocking::RequestBuilder,
+    failure: Option<&str>,
+) -> Result<reqwest::blocking::Response, String> {
+    request
         .send()
         .map_err(|error| error.to_string())?
         .error_for_status()
-        .map_err(|error| format!("Could not {action} the sync folder: {error}"))?;
-    Ok(())
+        .map_err(|error| match failure {
+            Some(failure) => format!("{failure}: {error}"),
+            None => error.to_string(),
+        })
 }
 
-/// Pausing also returns the folder to `sendonly`, so a folder that fails to stay paused still
-/// cannot write to the vault outside a batch.
-fn pause_folder(
-    client: &reqwest::blocking::Client,
-    control: &ControlState,
-    folder_id: &str,
-) -> Result<(), String> {
-    patch_folder(
-        client,
-        control,
-        folder_id,
-        serde_json::json!({ "paused": true, "type": "sendonly" }),
-        "pause",
-    )
-}
+impl SyncthingApi<'_> {
+    fn request(&self, method: reqwest::Method, path: &str) -> reqwest::blocking::RequestBuilder {
+        self.client
+            .request(method, endpoint(self.control, path))
+            .header("X-API-Key", &self.control.api_key)
+    }
 
-/// Syncthing writes to the vault only in `sendreceive`. A batch resumes the folder `sendonly`,
-/// which still receives the peer's index and reports what it would need but applies nothing, and
-/// switches with `receive_into_folder` only once its safety backup exists (#14). Type and resume
-/// go in one change, so the folder is never running as `sendreceive` from an earlier batch.
-fn resume_folder_send_only(
-    client: &reqwest::blocking::Client,
-    control: &ControlState,
-    folder_id: &str,
-) -> Result<(), String> {
-    patch_folder(
-        client,
-        control,
-        folder_id,
-        serde_json::json!({ "type": "sendonly", "paused": false }),
-        "resume",
-    )
-}
-
-fn receive_into_folder(
-    client: &reqwest::blocking::Client,
-    control: &ControlState,
-    folder_id: &str,
-) -> Result<(), String> {
-    patch_folder(
-        client,
-        control,
-        folder_id,
-        serde_json::json!({ "type": "sendreceive" }),
-        "receive changes into",
-    )
-}
-
-fn set_device_paused(
-    client: &reqwest::blocking::Client,
-    control: &ControlState,
-    device_id: &str,
-    paused: bool,
-) -> Result<(), String> {
-    client
-        .patch(endpoint(
-            control,
-            &format!("/rest/config/devices/{device_id}"),
-        ))
-        .header("X-API-Key", &control.api_key)
-        .json(&serde_json::json!({ "paused": paused }))
-        .send()
-        .map_err(|error| error.to_string())?
-        .error_for_status()
-        .map_err(|error| {
-            format!(
-                "Could not {} the paired device: {error}",
-                if paused { "pause" } else { "resume" }
+    fn patch_folder(
+        &self,
+        folder_id: &str,
+        fields: serde_json::Value,
+        action: &str,
+    ) -> Result<(), String> {
+        checked(
+            self.request(
+                reqwest::Method::PATCH,
+                &format!("/rest/config/folders/{folder_id}"),
             )
-        })?;
-    Ok(())
+            .json(&fields),
+            Some(&format!("Could not {action} the sync folder")),
+        )?;
+        Ok(())
+    }
+
+    /// Pausing also returns the folder to `sendonly`, so a folder that fails to stay paused
+    /// still cannot write to the vault outside a batch.
+    fn pause_folder(&self, folder_id: &str) -> Result<(), String> {
+        self.patch_folder(
+            folder_id,
+            serde_json::json!({ "paused": true, "type": "sendonly" }),
+            "pause",
+        )
+    }
+
+    /// Syncthing writes to the vault only in `sendreceive`. A batch resumes the folder
+    /// `sendonly`, which still receives the peer's index and reports what it would need but
+    /// applies nothing, and switches with `receive_into_folder` only once its safety backup
+    /// exists (#14). Type and resume go in one change, so the folder is never running as
+    /// `sendreceive` from an earlier batch.
+    fn resume_folder_send_only(&self, folder_id: &str) -> Result<(), String> {
+        self.patch_folder(
+            folder_id,
+            serde_json::json!({ "type": "sendonly", "paused": false }),
+            "resume",
+        )
+    }
+
+    fn receive_into_folder(&self, folder_id: &str) -> Result<(), String> {
+        self.patch_folder(
+            folder_id,
+            serde_json::json!({ "type": "sendreceive" }),
+            "receive changes into",
+        )
+    }
+
+    fn set_device_paused(&self, device_id: &str, paused: bool) -> Result<(), String> {
+        checked(
+            self.request(
+                reqwest::Method::PATCH,
+                &format!("/rest/config/devices/{device_id}"),
+            )
+            .json(&serde_json::json!({ "paused": paused })),
+            Some(&format!(
+                "Could not {} the paired device",
+                if paused { "pause" } else { "resume" }
+            )),
+        )?;
+        Ok(())
+    }
+
+    fn ensure_durable_temp_ignored(&self, folder_id: &str) -> Result<(), String> {
+        let current: serde_json::Value = checked(
+            self.request(reqwest::Method::GET, "/rest/db/ignores")
+                .query(&[("folder", folder_id)]),
+            Some("Could not read the sync ignore patterns"),
+        )?
+        .json()
+        .map_err(|error| error.to_string())?;
+        // A `null` list means no .stignore yet. Any other shape fails closed: writing back a
+        // guess would replace the user's patterns.
+        let lines = match current.get("ignore") {
+            Some(serde_json::Value::Null) => Vec::new(),
+            Some(serde_json::Value::Array(lines)) => lines
+                .iter()
+                .map(|line| line.as_str().map(str::to_string))
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| "Syncthing returned invalid ignore patterns".to_string())?,
+            _ => return Err("Syncthing returned invalid ignore patterns".to_string()),
+        };
+        let Some(lines) = append_durable_temp_ignore_if_missing(lines) else {
+            return Ok(());
+        };
+        checked(
+            self.request(reqwest::Method::POST, "/rest/db/ignores")
+                .query(&[("folder", folder_id)])
+                .json(&serde_json::json!({ "ignore": lines })),
+            Some("Could not update the sync ignore patterns"),
+        )?;
+        Ok(())
+    }
+
+    fn peer_connected(&self, peer_id: &str) -> Result<bool, String> {
+        let value: serde_json::Value = checked(
+            self.request(reqwest::Method::GET, "/rest/system/connections"),
+            None,
+        )?
+        .json()
+        .map_err(|error| error.to_string())?;
+        Ok(value
+            .pointer(&format!("/connections/{peer_id}/connected"))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false))
+    }
+
+    fn scan(&self, folder_id: &str) -> Result<(), String> {
+        checked(
+            self.request(reqwest::Method::POST, "/rest/db/scan")
+                .query(&[("folder", folder_id)]),
+            Some("Syncthing could not scan the vault"),
+        )?;
+        Ok(())
+    }
+
+    fn folder_status(&self, folder_id: &str) -> Result<serde_json::Value, String> {
+        checked(
+            self.request(reqwest::Method::GET, "/rest/db/status")
+                .query(&[("folder", folder_id)]),
+            None,
+        )?
+        .json()
+        .map_err(|error| error.to_string())
+    }
+
+    fn peer_completion(
+        &self,
+        folder_id: &str,
+        peer_id: &str,
+    ) -> Result<Option<serde_json::Value>, String> {
+        let response = self
+            .request(reqwest::Method::GET, "/rest/db/completion")
+            .query(&[("folder", folder_id), ("device", peer_id)])
+            .send()
+            .map_err(|error| error.to_string())?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        response
+            .error_for_status()
+            .map_err(|error| error.to_string())?
+            .json()
+            .map(Some)
+            .map_err(|error| error.to_string())
+    }
 }
 
 /// Crash-orphaned `durable::replace` temporaries must never replicate (#99).
@@ -1035,50 +1120,8 @@ fn append_durable_temp_ignore_if_missing(mut lines: Vec<String>) -> Option<Vec<S
     Some(lines)
 }
 
-fn ensure_durable_temp_ignored(
-    client: &reqwest::blocking::Client,
-    control: &ControlState,
-    folder_id: &str,
-) -> Result<(), String> {
-    let current: serde_json::Value = client
-        .get(endpoint(control, "/rest/db/ignores"))
-        .header("X-API-Key", &control.api_key)
-        .query(&[("folder", folder_id)])
-        .send()
-        .map_err(|error| error.to_string())?
-        .error_for_status()
-        .map_err(|error| format!("Could not read the sync ignore patterns: {error}"))?
-        .json()
-        .map_err(|error| error.to_string())?;
-    // A `null` list means no .stignore yet. Any other shape fails closed: writing back a guess
-    // would replace the user's patterns.
-    let lines = match current.get("ignore") {
-        Some(serde_json::Value::Null) => Vec::new(),
-        Some(serde_json::Value::Array(lines)) => lines
-            .iter()
-            .map(|line| line.as_str().map(str::to_string))
-            .collect::<Option<Vec<_>>>()
-            .ok_or_else(|| "Syncthing returned invalid ignore patterns".to_string())?,
-        _ => return Err("Syncthing returned invalid ignore patterns".to_string()),
-    };
-    let Some(lines) = append_durable_temp_ignore_if_missing(lines) else {
-        return Ok(());
-    };
-    client
-        .post(endpoint(control, "/rest/db/ignores"))
-        .header("X-API-Key", &control.api_key)
-        .query(&[("folder", folder_id)])
-        .json(&serde_json::json!({ "ignore": lines }))
-        .send()
-        .map_err(|error| error.to_string())?
-        .error_for_status()
-        .map_err(|error| format!("Could not update the sync ignore patterns: {error}"))?;
-    Ok(())
-}
-
 struct FolderPauseGuard<'a> {
-    client: &'a reqwest::blocking::Client,
-    control: &'a ControlState,
+    api: SyncthingApi<'a>,
     folder_id: &'a str,
     device_id: &'a str,
     armed: bool,
@@ -1086,8 +1129,8 @@ struct FolderPauseGuard<'a> {
 
 impl FolderPauseGuard<'_> {
     fn pause(mut self) -> Result<(), String> {
-        let folder = pause_folder(self.client, self.control, self.folder_id);
-        let device = set_device_paused(self.client, self.control, self.device_id, true);
+        let folder = self.api.pause_folder(self.folder_id);
+        let device = self.api.set_device_paused(self.device_id, true);
         let result = match (folder, device) {
             (Ok(()), Ok(())) => Ok(()),
             (folder, device) => Err(join_errors([folder.err(), device.err()])),
@@ -1104,33 +1147,13 @@ impl Drop for FolderPauseGuard<'_> {
         if !self.armed {
             return;
         }
-        if let Err(error) = pause_folder(self.client, self.control, self.folder_id) {
+        if let Err(error) = self.api.pause_folder(self.folder_id) {
             log::error!("Sync safety cleanup failed: {error}");
         }
-        if let Err(error) = set_device_paused(self.client, self.control, self.device_id, true) {
+        if let Err(error) = self.api.set_device_paused(self.device_id, true) {
             log::error!("Sync device safety cleanup failed: {error}");
         }
     }
-}
-
-fn peer_connected(
-    client: &reqwest::blocking::Client,
-    control: &ControlState,
-    peer_id: &str,
-) -> Result<bool, String> {
-    let value: serde_json::Value = client
-        .get(endpoint(control, "/rest/system/connections"))
-        .header("X-API-Key", &control.api_key)
-        .send()
-        .map_err(|error| error.to_string())?
-        .error_for_status()
-        .map_err(|error| error.to_string())?
-        .json()
-        .map_err(|error| error.to_string())?;
-    Ok(value
-        .pointer(&format!("/connections/{peer_id}/connected"))
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false))
 }
 
 fn join_errors<const N: usize>(errors: [Option<String>; N]) -> String {
@@ -1251,46 +1274,6 @@ impl CompletionLatch {
     }
 }
 
-fn folder_status(
-    client: &reqwest::blocking::Client,
-    control: &ControlState,
-    folder_id: &str,
-) -> Result<serde_json::Value, String> {
-    client
-        .get(endpoint(control, "/rest/db/status"))
-        .header("X-API-Key", &control.api_key)
-        .query(&[("folder", folder_id)])
-        .send()
-        .map_err(|error| error.to_string())?
-        .error_for_status()
-        .map_err(|error| error.to_string())?
-        .json()
-        .map_err(|error| error.to_string())
-}
-
-fn peer_completion(
-    client: &reqwest::blocking::Client,
-    control: &ControlState,
-    folder_id: &str,
-    peer_id: &str,
-) -> Result<Option<serde_json::Value>, String> {
-    let response = client
-        .get(endpoint(control, "/rest/db/completion"))
-        .header("X-API-Key", &control.api_key)
-        .query(&[("folder", folder_id), ("device", peer_id)])
-        .send()
-        .map_err(|error| error.to_string())?;
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(None);
-    }
-    response
-        .error_for_status()
-        .map_err(|error| error.to_string())?
-        .json()
-        .map(Some)
-        .map_err(|error| error.to_string())
-}
-
 /// Whether the peer's index holds anything this device would change, add, or delete.
 fn has_incoming(local_status: &serde_json::Value) -> bool {
     needed_items(local_status).is_some_and(|needed| needed > 0)
@@ -1307,20 +1290,20 @@ fn sync_batch(
     peer_id: &str,
     before_receiving: impl FnMut() -> Result<(), String>,
 ) -> Result<(), String> {
-    ensure_durable_temp_ignored(client, control, folder_id)?;
-    resume_folder_send_only(client, control, folder_id)?;
-    if let Err(error) = set_device_paused(client, control, peer_id, false) {
-        let _ = pause_folder(client, control, folder_id);
+    let api = SyncthingApi { client, control };
+    api.ensure_durable_temp_ignored(folder_id)?;
+    api.resume_folder_send_only(folder_id)?;
+    if let Err(error) = api.set_device_paused(peer_id, false) {
+        let _ = api.pause_folder(folder_id);
         return Err(error);
     }
     let pause = FolderPauseGuard {
-        client,
-        control,
+        api,
         folder_id,
         device_id: peer_id,
         armed: true,
     };
-    let result = wait_for_sync(client, control, folder_id, peer_id, before_receiving);
+    let result = wait_for_sync(api, folder_id, peer_id, before_receiving);
     let paused = pause.pause();
     match (result, paused) {
         (Ok(()), Ok(())) => Ok(()),
@@ -1329,41 +1312,33 @@ fn sync_batch(
 }
 
 fn wait_for_sync(
-    client: &reqwest::blocking::Client,
-    control: &ControlState,
+    api: SyncthingApi,
     folder_id: &str,
     peer_id: &str,
     mut before_receiving: impl FnMut() -> Result<(), String>,
 ) -> Result<(), String> {
     for _ in 0..60 {
-        if peer_connected(client, control, peer_id)? {
+        if api.peer_connected(peer_id)? {
             break;
         }
         std::thread::sleep(SYNC_POLL_INTERVAL);
     }
-    if !peer_connected(client, control, peer_id)? {
+    if !api.peer_connected(peer_id)? {
         return Err("The paired device is not reachable over Tailscale".to_string());
     }
-    client
-        .post(endpoint(control, "/rest/db/scan"))
-        .header("X-API-Key", &control.api_key)
-        .query(&[("folder", folder_id)])
-        .send()
-        .map_err(|error| error.to_string())?
-        .error_for_status()
-        .map_err(|error| format!("Syncthing could not scan the vault: {error}"))?;
+    api.scan(folder_id)?;
     let mut receiving = false;
     let mut progress = SyncProgress::default();
     for _ in 0..600 {
-        let local = folder_status(client, control, folder_id)?;
+        let local = api.folder_status(folder_id)?;
         if !receiving && has_incoming(&local) {
             before_receiving()?;
-            receive_into_folder(client, control, folder_id)?;
+            api.receive_into_folder(folder_id)?;
             receiving = true;
             progress = SyncProgress::default();
         } else if progress.observe(
             &local,
-            peer_completion(client, control, folder_id, peer_id)?.as_ref(),
+            api.peer_completion(folder_id, peer_id)?.as_ref(),
             peer_id,
         ) {
             // A send-only device keeps watching through the hold: an index that arrives late
@@ -1371,10 +1346,11 @@ fn wait_for_sync(
             let arrived = hold_for_peer_handoff(
                 PEER_HANDOFF_GRACE,
                 SYNC_POLL_INTERVAL,
-                || peer_connected(client, control, peer_id),
+                || api.peer_connected(peer_id),
                 || {
                     !receiving
-                        && folder_status(client, control, folder_id)
+                        && api
+                            .folder_status(folder_id)
                             .is_ok_and(|local| has_incoming(&local))
                 },
             );
