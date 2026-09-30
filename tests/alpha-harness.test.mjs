@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -9,8 +9,8 @@ import { deflateRawSync } from 'node:zlib';
 
 const {
   acquireControllerLock, checkWindowStateRestored, diagnosticLeaks, harnessConfig, journalWindowState, killDue, mutateFixture,
-  pairedSyncthingConfig, parseOptions, recoveryOutcome, redactTrace,
-  restoreProgress, restoreWindowState, snapshotVault, treeHash, zipEntries,
+  pairedSyncthingConfig, parseOptions, recoveryOutcome, redactTrace, redirectProfileFolders,
+  restoreProfileFolders, restoreProgress, restoreWindowState, snapshotVault, treeHash, zipEntries,
 } = await import(
   new URL('../scripts/alpha-harness.mjs', import.meta.url)
 );
@@ -147,6 +147,51 @@ test('snapshot refuses to overwrite existing evidence', (t) => {
 
   assert.throws(() => snapshotVault(vault, snapshot), /snapshot already exists/);
   assert.equal(readFileSync(join(snapshot, 'note.md'), 'utf8'), 'old');
+});
+
+test('profile folders are redirected for the run and put back after it', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'alpha-harness-profile-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const profile = join(root, 'profile');
+  mkdirSync(join(profile, 'logs'), { recursive: true });
+  writeFileSync(join(profile, 'logs', 'app.log'), 'the user\'s own log\n');
+  const redirects = ['logs', 'EBWebView'].map((name) => ({
+    path: join(profile, name), target: join(root, 'run', 'profile', name), aside: join(root, 'aside', name),
+  }));
+  const link = (target, path) => symlinkSync(target, path, 'junction');
+
+  redirectProfileFolders(redirects, link);
+  for (const { path } of redirects) assert.equal(lstatSync(path).isSymbolicLink(), true);
+  writeFileSync(join(profile, 'logs', 'app.log'), 'the run\'s log\n');
+  mkdirSync(join(profile, 'EBWebView', 'Default'));
+  assert.throws(() => redirectProfileFolders(redirects, link), /already redirected/);
+
+  assert.deepEqual(restoreProfileFolders(redirects).map(({ movedBack }) => movedBack), [true, false]);
+  assert.equal(readFileSync(join(profile, 'logs', 'app.log'), 'utf8'), 'the user\'s own log\n');
+  assert.equal(existsSync(join(profile, 'EBWebView')), false, 'a folder the run created is not left in the profile');
+  assert.equal(readFileSync(join(root, 'run', 'profile', 'logs', 'app.log'), 'utf8'), 'the run\'s log\n');
+  assert.equal(existsSync(join(root, 'aside')), false);
+
+  restoreProfileFolders(redirects);
+  assert.equal(readFileSync(join(profile, 'logs', 'app.log'), 'utf8'), 'the user\'s own log\n', 'restoring twice changes nothing');
+  restoreProfileFolders(undefined);
+});
+
+test('a profile restore stopped halfway finishes, and never removes a link it did not make', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'alpha-harness-profile-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const redirect = { path: join(root, 'logs'), target: join(root, 'run', 'logs'), aside: join(root, 'aside', 'logs') };
+  mkdirSync(redirect.aside, { recursive: true });
+  writeFileSync(join(redirect.aside, 'app.log'), 'mine');
+  // Stopped after the junction went and before the folder came back.
+  assert.deepEqual(restoreProfileFolders([redirect]), [{ path: redirect.path, movedBack: true }]);
+  assert.equal(readFileSync(join(redirect.path, 'app.log'), 'utf8'), 'mine');
+
+  rmSync(redirect.path, { recursive: true });
+  mkdirSync(join(root, 'elsewhere'));
+  symlinkSync(join(root, 'elsewhere'), redirect.path, 'junction');
+  assert.throws(() => restoreProfileFolders([redirect]), /not this run's junction/);
+  assert.equal(lstatSync(redirect.path).isSymbolicLink(), true);
 });
 
 test('window state is put back as it was, or removed when the run created it', (t) => {
