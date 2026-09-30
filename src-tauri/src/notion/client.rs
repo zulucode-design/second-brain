@@ -39,6 +39,20 @@ const MIN_INTERVAL: Duration = Duration::from_millis(334);
 /// How many times a 429 or 529 is waited out before giving up on a note.
 const MAX_RETRIES: u32 = 4;
 
+/// How many times a failure to connect is retried before Notion counts as unreachable.
+///
+/// On 2026-09-30 about one fresh connection to `api.notion.com` in ten timed out while
+/// connecting, for a few minutes, and each one failed the setup or publish it was part of
+/// (#176). Two retries absorb that, while a machine that is really offline still learns so
+/// within about two seconds of backoff.
+const CONNECT_RETRIES: u32 = 2;
+
+/// Longest a connection may take to open before it counts as a failure to connect.
+///
+/// Without it a stalled connect runs into the 30 s request timeout instead, and that
+/// error cannot tell "never reached Notion" from "sent, and no answer yet".
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Longest we will honour a `Retry-After` before treating it as a failure.
 ///
 /// Notion is entitled to ask for a long wait, but a background publisher blocking for
@@ -141,7 +155,7 @@ pub struct NotionClient {
     token: String,
     base: String,
     pacer: Arc<Pacer>,
-    /// Every request actually sent, retries included.
+    /// Every request attempted, retries included, even one that failed to connect.
     ///
     /// Counted rather than inferred, because "an unchanged vault costs no API calls" is a
     /// claim the design rests on and the only honest evidence for it is a count of zero.
@@ -164,6 +178,7 @@ impl NotionClient {
     ) -> Self {
         Self {
             http: reqwest::Client::builder()
+                .connect_timeout(CONNECT_TIMEOUT)
                 .timeout(Duration::from_secs(30))
                 .build()
                 .unwrap_or_default(),
@@ -174,7 +189,7 @@ impl NotionClient {
         }
     }
 
-    /// How many requests this client has sent, retries included.
+    /// How many requests this client has attempted, retries included.
     pub fn requests_sent(&self) -> u64 {
         self.requests.load(Ordering::Relaxed)
     }
@@ -187,6 +202,7 @@ impl NotionClient {
         body: Option<Value>,
     ) -> Result<Value, NotionError> {
         let url = format!("{}{}", self.base, path);
+        let mut connect_failures = 0;
 
         for attempt in 0..=MAX_RETRIES {
             self.pacer.wait().await;
@@ -203,6 +219,20 @@ impl NotionClient {
 
             let response = match builder.send().await {
                 Ok(response) => response,
+                // Only a failure to connect (DNS, TCP, TLS, or the connect timeout) is
+                // retried: Notion never saw that request, so trying again cannot create a
+                // second database or page. Anything later may have landed, and a `POST`
+                // must not be repeated on a guess.
+                Err(error) if error.is_connect() && connect_failures < CONNECT_RETRIES => {
+                    let wait = Duration::from_millis(500 * 2_u64.pow(connect_failures));
+                    connect_failures += 1;
+                    log::warn!(
+                        "Could not connect to Notion ({}); retrying in {wait:?}",
+                        cause_chain(&error)
+                    );
+                    tokio::time::sleep(wait).await;
+                    continue;
+                }
                 Err(error) => return Err(NotionError::Network(cause_chain(&error))),
             };
 
@@ -755,6 +785,51 @@ mod tests {
 
         assert!(matches!(error, NotionError::Network(_)));
         assert!(!error.is_fatal());
+    }
+
+    #[tokio::test]
+    async fn a_failure_to_connect_is_retried_before_notion_counts_as_unreachable() {
+        // Nothing listens on the port, so every attempt fails before a request is sent.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let client = client(&format!("http://{address}"));
+
+        let error = client.whoami().await.unwrap_err();
+
+        assert!(matches!(error, NotionError::Network(_)));
+        assert_eq!(client.requests_sent(), 1 + u64::from(CONNECT_RETRIES));
+    }
+
+    #[tokio::test]
+    async fn a_connection_lost_after_the_request_was_sent_is_never_retried() {
+        // The server reads the whole request and hangs up without answering. For a
+        // `POST` the first attempt may have landed, so a retry could duplicate it.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            while let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 2048];
+                while !String::from_utf8_lossy(&request).contains("\r\n\r\n") {
+                    let read = stream.read(&mut buffer).unwrap_or(0);
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..read]);
+                }
+            }
+        });
+        let client = client(&format!("http://{address}"));
+
+        let error = client
+            .request(reqwest::Method::POST, "/pages", None)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, NotionError::Network(_)));
+        assert_eq!(client.requests_sent(), 1);
     }
 
     #[tokio::test]
