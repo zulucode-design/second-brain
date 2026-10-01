@@ -44,11 +44,12 @@ pub fn run_sync_watchdog_if_requested() -> bool {
     sync_watchdog::run_if_requested()
 }
 
-fn release_shutdown(app: &tauri::AppHandle, request_id: &str) {
+fn release_shutdown(app: &tauri::AppHandle, request_id: &str, timed_out: bool) {
     let _ = app.emit(
         crate::events::SAVE_CLOSE_RELEASED,
-        shutdown::SaveBeforeCloseRequest {
+        shutdown::SaveCloseReleased {
             request_id: request_id.to_string(),
+            timed_out,
         },
     );
 }
@@ -61,7 +62,7 @@ fn cancel_shutdown(app: &tauri::AppHandle, request_id: &str) {
         .map(|mut state| state.cancel(request_id))
         .unwrap_or(false);
     if cancelled {
-        release_shutdown(app, request_id);
+        release_shutdown(app, request_id, false);
     }
 }
 
@@ -73,7 +74,7 @@ fn cancel_shutdown_timeout(app: &tauri::AppHandle, request_id: &str, timeout_gen
         .map(|mut state| state.cancel_if_generation(request_id, timeout_generation))
         .unwrap_or(false);
     if cancelled {
-        release_shutdown(app, request_id);
+        release_shutdown(app, request_id, true);
     }
 }
 
@@ -266,12 +267,12 @@ fn acknowledge_save_before_close(
     match outcome {
         shutdown::AcknowledgeOutcome::Complete(intent) => {
             if intent == shutdown::ShutdownIntent::HideMain {
-                release_shutdown(&app, &request_id);
+                release_shutdown(&app, &request_id, false);
             }
             perform_shutdown(&app, intent);
         }
         shutdown::AcknowledgeOutcome::Cancelled => {
-            release_shutdown(&app, &request_id);
+            release_shutdown(&app, &request_id, false);
             if let Some(window) = app.get_webview_window(&window_label) {
                 let _ = window.show();
                 let _ = window.unminimize();

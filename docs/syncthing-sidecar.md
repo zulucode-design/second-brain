@@ -127,6 +127,17 @@ first to confirm holds for the full 60 seconds and keeps note edits blocked that
 confirms more than 60 seconds after its peer still reports failure. The 60 seconds is a
 manual-testing value, to be tuned from real runs.
 
+A run holds the note lease, so closing the app has to stop it: a close gives the page 10 seconds
+to save, and the save waits for the lease (#189). Once a close or exit begins, no run starts, and
+a running batch stops at its next check: while it waits for the peer, while it converges, and
+during the handoff hold. Each of those checks is at most two seconds apart, because every
+Syncthing call between them is bounded at two seconds. The stopped run pauses folder and device
+and ends like any interrupted run: `failure`, or `changed-incomplete` if its backup was taken.
+The scan, the ignore update, the safety backup, and the projection reconcile are not cut short;
+a close during one of them can still run out of time. The window then stays open and says so:
+"Closing timed out. Second Brain is still open. Try closing again."
+
+
 ## Conflicts
 
 Syncthing conflict copies use

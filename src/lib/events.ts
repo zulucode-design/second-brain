@@ -43,7 +43,7 @@ export interface EventPayloads {
   repairStatusChanged: RepairStatus;
   restoreDone: BulkMutationTerminal;
   saveBeforeClose: { requestId: string };
-  saveCloseReleased: { requestId: string };
+  saveCloseReleased: { requestId: string; timedOut: boolean };
   syncDone: BulkMutationTerminal;
   uiScaleChanged: number;
 }

@@ -55,6 +55,9 @@ pub struct ShutdownState {
     authorized_closes: HashSet<String>,
     authorized_exit: bool,
     vault_switch_pending: bool,
+    // Moves each time a close or exit begins, so a sync run that started before it stops at its
+    // next check even if the close was released before that check ran (#189).
+    generation: u64,
 }
 
 impl ShutdownState {
@@ -170,6 +173,7 @@ impl ShutdownState {
     ) -> BeginOutcome {
         if let Some(pending) = self.pending.as_mut() {
             if intent == ShutdownIntent::ExitApp && pending.intent != ShutdownIntent::ExitApp {
+                self.generation += 1;
                 pending.intent = ShutdownIntent::ExitApp;
                 pending.timeout_generation += 1;
                 let notify: HashSet<_> =
@@ -185,6 +189,7 @@ impl ShutdownState {
                 request_id: pending.request_id.clone(),
             };
         }
+        self.generation += 1;
         self.pending = Some(PendingShutdown {
             request_id: request_id.clone(),
             intent,
@@ -257,12 +262,30 @@ impl ShutdownState {
     pub fn consume_authorized_exit(&mut self) -> bool {
         std::mem::take(&mut self.authorized_exit)
     }
+
+    /// What a sync run checks (#189): whether a close or exit is under way, in which case no run
+    /// may start, and the generation a running batch compares with the one it started under.
+    pub fn sync_stop(&self) -> (bool, u64) {
+        (
+            self.pending.is_some() || self.authorized_exit,
+            self.generation,
+        )
+    }
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveBeforeCloseRequest {
     pub request_id: String,
+}
+
+/// A close that ends without the window going away. `timed_out` says the page ran out of time
+/// to save, which it must tell the user about; a refused save reports itself (#189).
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveCloseReleased {
+    pub request_id: String,
+    pub timed_out: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -388,6 +411,70 @@ mod tests {
             state.acknowledge("second", "main", true),
             AcknowledgeOutcome::Complete(ShutdownIntent::ExitApp)
         );
+    }
+
+    #[test]
+    fn a_close_stops_sync_until_it_is_released_and_never_revives_a_run() {
+        let mut state = ShutdownState::default();
+        let (closing, started_under) = state.sync_stop();
+        assert!(!closing);
+        state.begin(
+            "close".into(),
+            ShutdownIntent::HideMain,
+            participants(&["main"]),
+        );
+        assert_eq!(state.sync_stop(), (true, started_under + 1));
+        // Released by the timeout: new runs may start, but a run that began before the close
+        // still sees the generation move.
+        assert!(state.cancel("close"));
+        let (closing, now) = state.sync_stop();
+        assert!(!closing);
+        assert_ne!(now, started_under);
+        // An upgrade to exit moves it again; an exit stays stopped once authorised.
+        state.begin(
+            "hide".into(),
+            ShutdownIntent::HideMain,
+            participants(&["main"]),
+        );
+        let (_, hidden) = state.sync_stop();
+        state.begin(
+            "exit".into(),
+            ShutdownIntent::ExitApp,
+            participants(&["main"]),
+        );
+        assert_eq!(state.sync_stop(), (true, hidden + 1));
+        assert_eq!(
+            state.acknowledge("hide", "main", true),
+            AcknowledgeOutcome::Complete(ShutdownIntent::ExitApp)
+        );
+        state.authorize_exit();
+        assert!(state.sync_stop().0);
+    }
+
+    #[test]
+    fn a_finished_hide_or_window_close_leaves_sync_free_to_run() {
+        let mut state = ShutdownState::default();
+        state.begin(
+            "hide".into(),
+            ShutdownIntent::HideMain,
+            participants(&["main"]),
+        );
+        assert_eq!(
+            state.acknowledge("hide", "main", true),
+            AcknowledgeOutcome::Complete(ShutdownIntent::HideMain)
+        );
+        assert!(!state.sync_stop().0);
+        state.begin(
+            "note".into(),
+            ShutdownIntent::CloseWindow("note-1".into()),
+            participants(&["note-1"]),
+        );
+        assert!(state.sync_stop().0);
+        assert_eq!(
+            state.acknowledge("note", "note-1", true),
+            AcknowledgeOutcome::Complete(ShutdownIntent::CloseWindow("note-1".into()))
+        );
+        assert!(!state.sync_stop().0);
     }
 }
 

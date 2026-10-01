@@ -231,17 +231,24 @@ struct Run {
 fn batch(node: &Node, peer: &Node, fail_backup: bool) -> Run {
     let client = client();
     let mut backups = Vec::new();
-    let result = sync_batch(&client, &node.control, FOLDER, &peer.device_id, || {
-        // A real backup takes time. Any transfer that could land before it finishes has time to
-        // land here, so the recorded vault proves nothing arrived ahead of the backup.
-        std::thread::sleep(Duration::from_secs(3));
-        backups.push(tree(&node.vault));
-        if fail_backup {
-            Err("Sync aborted because its safety backup failed: disk full".to_string())
-        } else {
-            Ok(())
-        }
-    });
+    let result = sync_batch(
+        &client,
+        &node.control,
+        FOLDER,
+        &peer.device_id,
+        &|| false,
+        || {
+            // A real backup takes time. Any transfer that could land before it finishes has time to
+            // land here, so the recorded vault proves nothing arrived ahead of the backup.
+            std::thread::sleep(Duration::from_secs(3));
+            backups.push(tree(&node.vault));
+            if fail_backup {
+                Err("Sync aborted because its safety backup failed: disk full".to_string())
+            } else {
+                Ok(())
+            }
+        },
+    );
     Run { result, backups }
 }
 

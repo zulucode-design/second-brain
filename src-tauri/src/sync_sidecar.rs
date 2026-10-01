@@ -973,6 +973,7 @@ impl SyncthingApi<'_> {
                 reqwest::Method::PATCH,
                 &format!("/rest/config/folders/{folder_id}"),
             )
+            .timeout(STOPPABLE_REQUEST_TIMEOUT)
             .json(&fields),
             Some(&format!("Could not {action} the sync folder")),
         )?;
@@ -1016,6 +1017,7 @@ impl SyncthingApi<'_> {
                 reqwest::Method::PATCH,
                 &format!("/rest/config/devices/{device_id}"),
             )
+            .timeout(STOPPABLE_REQUEST_TIMEOUT)
             .json(&serde_json::json!({ "paused": paused })),
             Some(&format!(
                 "Could not {} the paired device",
@@ -1058,7 +1060,8 @@ impl SyncthingApi<'_> {
 
     fn peer_connected(&self, peer_id: &str) -> Result<bool, String> {
         let value: serde_json::Value = checked(
-            self.request(reqwest::Method::GET, "/rest/system/connections"),
+            self.request(reqwest::Method::GET, "/rest/system/connections")
+                .timeout(STOPPABLE_REQUEST_TIMEOUT),
             None,
         )?
         .json()
@@ -1081,6 +1084,7 @@ impl SyncthingApi<'_> {
     fn folder_status(&self, folder_id: &str) -> Result<serde_json::Value, String> {
         checked(
             self.request(reqwest::Method::GET, "/rest/db/status")
+                .timeout(STOPPABLE_REQUEST_TIMEOUT)
                 .query(&[("folder", folder_id)]),
             None,
         )?
@@ -1095,6 +1099,7 @@ impl SyncthingApi<'_> {
     ) -> Result<Option<serde_json::Value>, String> {
         let response = self
             .request(reqwest::Method::GET, "/rest/db/completion")
+            .timeout(STOPPABLE_REQUEST_TIMEOUT)
             .query(&[("folder", folder_id), ("device", peer_id)])
             .send()
             .map_err(|error| error.to_string())?;
@@ -1290,9 +1295,11 @@ fn sync_batch(
     control: &ControlState,
     folder_id: &str,
     peer_id: &str,
+    stopped: &dyn Fn() -> bool,
     before_receiving: impl FnMut() -> Result<(), String>,
 ) -> Result<(), String> {
     let api = SyncthingApi { client, control };
+    stop_check(stopped)?;
     api.ensure_durable_temp_ignored(folder_id)?;
     api.resume_folder_send_only(folder_id)?;
     if let Err(error) = api.set_device_paused(peer_id, false) {
@@ -1305,7 +1312,7 @@ fn sync_batch(
         device_id: peer_id,
         armed: true,
     };
-    let result = wait_for_sync(api, folder_id, peer_id, before_receiving);
+    let result = wait_for_sync(api, folder_id, peer_id, before_receiving, stopped);
     let paused = pause.pause();
     match (result, paused) {
         (Ok(()), Ok(())) => Ok(()),
@@ -1318,13 +1325,16 @@ fn wait_for_sync(
     folder_id: &str,
     peer_id: &str,
     mut before_receiving: impl FnMut() -> Result<(), String>,
+    stopped: &dyn Fn() -> bool,
 ) -> Result<(), String> {
     for _ in 0..60 {
+        stop_check(stopped)?;
         if api.peer_connected(peer_id)? {
             break;
         }
         std::thread::sleep(SYNC_POLL_INTERVAL);
     }
+    stop_check(stopped)?;
     if !api.peer_connected(peer_id)? {
         return Err("The paired device is not reachable over Tailscale".to_string());
     }
@@ -1332,17 +1342,21 @@ fn wait_for_sync(
     let mut receiving = false;
     let mut progress = SyncProgress::default();
     for _ in 0..600 {
+        stop_check(stopped)?;
         let local = api.folder_status(folder_id)?;
         if !receiving && has_incoming(&local) {
             before_receiving()?;
+            // The backup is never cut short, so a close that began during it stops the run here.
+            stop_check(stopped)?;
             api.receive_into_folder(folder_id)?;
             receiving = true;
             progress = SyncProgress::default();
-        } else if progress.observe(
-            &local,
-            api.peer_completion(folder_id, peer_id)?.as_ref(),
-            peer_id,
-        ) {
+            std::thread::sleep(SYNC_POLL_INTERVAL);
+            continue;
+        }
+        stop_check(stopped)?;
+        let completion = api.peer_completion(folder_id, peer_id)?;
+        if progress.observe(&local, completion.as_ref(), peer_id) {
             // A send-only device keeps watching through the hold: an index that arrives late
             // still reaches this batch, behind its backup, instead of waiting for the next one.
             let arrived = hold_for_peer_handoff(
@@ -1355,7 +1369,8 @@ fn wait_for_sync(
                             .folder_status(folder_id)
                             .is_ok_and(|local| has_incoming(&local))
                 },
-            );
+                stopped,
+            )?;
             if !arrived {
                 return Ok(());
             }
@@ -1368,6 +1383,22 @@ fn wait_for_sync(
 
 const SYNC_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
+// #189: closing the app gives the page 10 s to save, and a run holds the note lease, so a run
+// must notice a close and let go well inside that. Every call made between two stop checks, and
+// each pause call that follows one, is bounded by this. The scan, the ignore list, the safety
+// backup, and the projection reconcile are not cut short; a close during them can still time out,
+// which the page then reports.
+const STOPPABLE_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+
+pub(crate) const SHUTDOWN_STOPPED: &str = "Sync stopped because Second Brain is closing";
+
+fn stop_check(stopped: &dyn Fn() -> bool) -> Result<(), String> {
+    if stopped() {
+        return Err(SHUTDOWN_STOPPED.to_string());
+    }
+    Ok(())
+}
+
 // Each peer's latch starts when its own run starts, so the first to confirm must stay connected
 // long enough for the other to confirm too (#103). ponytail: 60 s is a manual-testing value; a
 // peer confirming later than this still reports failure. Tune it from real runs.
@@ -1375,24 +1406,27 @@ const PEER_HANDOFF_GRACE: Duration = Duration::from_secs(60);
 
 /// Keep the connection open after local confirmation until the peer reports it disconnected or the
 /// grace ends. A failed status call is not a disconnect: ending early there would reopen #103.
-/// Returns true, and stops holding at once, when `has_incoming` reports a change to receive.
+/// Returns true, and stops holding at once, when `has_incoming` reports a change to receive. A
+/// close of the app ends the hold as an error, never as a completed batch (#189).
 fn hold_for_peer_handoff(
     grace: Duration,
     poll: Duration,
     mut peer_connected: impl FnMut() -> Result<bool, String>,
     mut has_incoming: impl FnMut() -> bool,
-) -> bool {
+    stopped: &dyn Fn() -> bool,
+) -> Result<bool, String> {
     let deadline = std::time::Instant::now() + grace;
     while std::time::Instant::now() < deadline {
+        stop_check(stopped)?;
         if has_incoming() {
-            return true;
+            return Ok(true);
         }
         if peer_connected() == Ok(false) {
-            return false;
+            return Ok(false);
         }
         std::thread::sleep(poll);
     }
-    false
+    Ok(false)
 }
 
 fn publish_sync_terminal(app: &AppHandle, terminal: crate::bulk_mutation::BulkMutationTerminal) {
@@ -1434,6 +1468,29 @@ fn run_sync(
     trigger: SyncTrigger,
 ) {
     let state = app.state::<AppState>();
+    // #189: a run never starts while the app is closing, and one already running stops at its
+    // next check once a close begins, so the save that close is waiting on can take the lease.
+    let shutdown_stop = || {
+        state
+            .shutdown
+            .lock()
+            .map(|shutdown| shutdown.sync_stop())
+            .unwrap_or((true, u64::MAX))
+    };
+    let (closing, started_under) = shutdown_stop();
+    if closing {
+        if trigger == SyncTrigger::SyncNow {
+            publish_sync_terminal(
+                &app,
+                crate::bulk_mutation::BulkMutationTerminal::failure(SHUTDOWN_STOPPED),
+            );
+        }
+        return;
+    }
+    let stopped = || {
+        let (closing, generation) = shutdown_stop();
+        closing || generation != started_under
+    };
     let terminal = match state
         .bulk_mutation
         .acquire(&state.note_mutation, &state.vault_activity)
@@ -1490,15 +1547,22 @@ fn run_sync(
                 }
             };
             let mut backed_up = false;
-            let batch = sync_batch(&client, &control, &folder_id, &peer.device_id, || {
-                crate::backup::create_pre_sync_backup(&vault.to_string_lossy(), &backup_dir)
-                    .map_err(|error| {
-                        format!("Sync aborted because its safety backup failed: {error}")
-                    })?;
-                let _ = crate::backup::cleanup_old_backups(&backup_dir, max_count);
-                backed_up = true;
-                Ok(())
-            });
+            let batch = sync_batch(
+                &client,
+                &control,
+                &folder_id,
+                &peer.device_id,
+                &stopped,
+                || {
+                    crate::backup::create_pre_sync_backup(&vault.to_string_lossy(), &backup_dir)
+                        .map_err(|error| {
+                            format!("Sync aborted because its safety backup failed: {error}")
+                        })?;
+                    let _ = crate::backup::cleanup_old_backups(&backup_dir, max_count);
+                    backed_up = true;
+                    Ok(())
+                },
+            );
             if backed_up {
                 let reconciliation =
                     crate::commands::reconcile_bulk_projections(&state, &vault.to_string_lossy());
@@ -1551,10 +1615,10 @@ mod tests {
     use super::{
         append_durable_temp_ignore_if_missing, convergence_observation_is_complete,
         harden_generated_config_xml, hold_for_peer_handoff, read_control, refused_sync_terminal,
-        tailscale_ipv4, until_next_sync_window, valid_device_id, write_control, CompletionLatch,
-        ControlState, SyncProgress, SyncTrigger, DURABLE_TEMP_IGNORE, PEER_HANDOFF_GRACE,
-        PULL_ERROR_EXPLAINS_FAILURE, SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL,
-        SYNC_POLL_INTERVAL,
+        stop_check, tailscale_ipv4, until_next_sync_window, valid_device_id, write_control,
+        CompletionLatch, ControlState, SyncProgress, SyncTrigger, DURABLE_TEMP_IGNORE,
+        PEER_HANDOFF_GRACE, PULL_ERROR_EXPLAINS_FAILURE, SHUTDOWN_STOPPED,
+        SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL, SYNC_POLL_INTERVAL,
     };
     use crate::bulk_mutation::{BulkMutationCoordinator, BulkMutationOutcome, LeaseRefused};
     use std::sync::atomic::AtomicBool;
@@ -1612,7 +1676,9 @@ mod tests {
                 Ok(calls < 3)
             },
             || false,
-        );
+            &|| false,
+        )
+        .unwrap();
         assert_eq!(calls, 3, "a reported disconnect ends the hold at once");
         assert!(started.elapsed() < grace);
 
@@ -1622,14 +1688,23 @@ mod tests {
             Duration::from_millis(5),
             || Err("status call failed".to_string()),
             || false,
-        );
+            &|| false,
+        )
+        .unwrap();
         assert!(
             started.elapsed() >= grace,
             "a failed status call must not end the hold"
         );
 
         let started = Instant::now();
-        hold_for_peer_handoff(grace, Duration::from_millis(5), || Ok(true), || false);
+        hold_for_peer_handoff(
+            grace,
+            Duration::from_millis(5),
+            || Ok(true),
+            || false,
+            &|| false,
+        )
+        .unwrap();
         assert!(
             started.elapsed() >= grace,
             "a connected peer is held for the grace"
@@ -1648,7 +1723,9 @@ mod tests {
                 polls += 1;
                 polls == 3
             },
-        );
+            &|| false,
+        )
+        .unwrap();
         assert!(arrived);
         assert!(started.elapsed() < Duration::from_secs(5));
         assert!(!hold_for_peer_handoff(
@@ -1656,7 +1733,33 @@ mod tests {
             Duration::from_millis(5),
             || Ok(true),
             || false,
-        ));
+            &|| false,
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn a_close_ends_the_handoff_hold_as_a_failure() {
+        let polls = std::cell::Cell::new(0);
+        let started = Instant::now();
+        let held = hold_for_peer_handoff(
+            Duration::from_secs(5),
+            Duration::from_millis(5),
+            || Ok(true),
+            || false,
+            &|| {
+                polls.set(polls.get() + 1);
+                polls.get() > 3
+            },
+        );
+        assert_eq!(held, Err(SHUTDOWN_STOPPED.to_string()));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_stop_check_reports_the_close() {
+        assert_eq!(stop_check(&|| false), Ok(()));
+        assert_eq!(stop_check(&|| true), Err(SHUTDOWN_STOPPED.to_string()));
     }
 
     #[test]
