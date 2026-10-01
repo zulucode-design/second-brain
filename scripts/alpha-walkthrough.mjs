@@ -124,11 +124,20 @@ export async function createNote(browser, type, { category, title, body }) {
   const titleInput = await browser.$('.editor-title input');
   await titleInput.waitForDisplayed({ timeout: 15_000 });
   await browser.waitUntil(async () => (await titleInput.getValue()) === 'Untitled', { timeout: 15_000 });
-  // Focus first, then select: typing replaces the selection instead of appending to it.
-  await browser.execute((input) => {
-    input.focus();
-    input.setSelectionRange(0, input.value.length);
-  }, titleInput);
+  // Focus first, then select: typing replaces the selection instead of appending to it. The app
+  // focuses and selects the title itself a tick after creating the note (Editor focusTitle), and
+  // a note created right after another can still re-render it, collapsing the caret to the end.
+  // So the selection has to hold for a moment before typing starts.
+  const selected = () => browser.execute((input) => document.activeElement === input
+    && input.selectionStart === 0 && input.selectionEnd === input.value.length, titleInput);
+  await browser.waitUntil(async () => {
+    await browser.execute((input) => {
+      input.focus();
+      input.setSelectionRange(0, input.value.length);
+    }, titleInput);
+    await browser.pause(300);
+    return selected();
+  }, { timeout: 15_000, timeoutMsg: 'the new note\'s title did not stay selected' });
   await type(browser, titleInput, title);
   await blurTitle(browser);
   await waitForTitle(browser, title, `title "${title}" was not kept`);
