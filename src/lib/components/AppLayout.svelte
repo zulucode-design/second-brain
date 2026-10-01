@@ -276,7 +276,7 @@
 			const current = editor;
 			if (!current || !lifetimeGate.isCurrent(lifetime)) return;
 			const reloadable = () => lifetimeGate.isCurrent(lifetime) && editor === current
-				&& !$shutdownPending && !$viewerNote && !$holdingPreview && !$editorDirty && !current.hasPendingTitleDraft();
+				&& !$shutdownPending && !$viewerNote && !$holdingPreview && !$editorDirty && !current.hasPendingDraft();
 			const reload = reloadCleanDocument({
 				capture: () => reloadable() && $activeNotePath ? { path: $activeNotePath, revision: current.getLoadedRevision() } : null,
 				read: readNote,

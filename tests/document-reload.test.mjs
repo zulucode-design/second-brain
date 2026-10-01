@@ -232,11 +232,15 @@ test('a failed conflict choice still reloads, then reports the failure without l
   assert.equal(listed, 0);
 });
 
-test('both windows treat an uncommitted title like unsaved text', async () => {
+test('both windows treat an uncommitted note or callout title like unsaved text', async () => {
   const source = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
   const editor = await source('src/lib/components/Editor.svelte');
-  assert.match(editor, /export function hasPendingTitleDraft\(\)[\s\S]{0,120}titleInput\.value !== \$activeNote\.meta\.title/);
+  assert.match(editor, /export function hasPendingDraft\(\)[\s\S]{0,160}pendingCalloutTitles\.size > 0 \|\| \(!!titleInput && !!\$activeNote && titleInput\.value !== \$activeNote\.meta\.title\)/);
+  // A callout title is pending from its first keystroke until it commits or its node goes.
+  assert.match(editor, /addEventListener\('input', \(\) => \{ titleDirty = true; pendingCalloutTitles\.add\(titleInput\); \}\)/);
+  assert.match(editor, /const commitTitle = \(\) => \{[\s\S]{0,160}pendingCalloutTitles\.delete\(titleInput\);/);
+  assert.match(editor, /destroy\(\) \{\s*pendingCalloutTitles\.delete\(titleInput\);/);
   for (const path of ['src/lib/components/AppLayout.svelte', 'src/lib/components/NoteWindow.svelte']) {
-    assert.match(await source(path), /const reloadable = [^;]*!\$editorDirty && !current\.hasPendingTitleDraft\(\)/, path);
+    assert.match(await source(path), /const reloadable = [^;]*!\$editorDirty && !current\.hasPendingDraft\(\)/, path);
   }
 });

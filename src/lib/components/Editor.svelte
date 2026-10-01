@@ -1130,6 +1130,10 @@
 		},
 	});
 
+	// Callout titles typed but not committed yet: they commit on change or blur, so the editor
+	// is not dirty meanwhile, and a reload from disk would drop them (#191).
+	const pendingCalloutTitles = new Set<HTMLInputElement>();
+
 	const Callout = TiptapNode.create({
 		name: 'callout',
 		group: 'block',
@@ -1216,8 +1220,11 @@
 				};
 
 				let titleDirty = false;
-				const commitTitle = () => { if (titleDirty) { updateAttr({ title: titleInput.value }); titleDirty = false; } };
-				titleInput.addEventListener('input', () => { titleDirty = true; });
+				const commitTitle = () => {
+					if (titleDirty) { updateAttr({ title: titleInput.value }); titleDirty = false; }
+					pendingCalloutTitles.delete(titleInput);
+				};
+				titleInput.addEventListener('input', () => { titleDirty = true; pendingCalloutTitles.add(titleInput); });
 				titleInput.addEventListener('change', commitTitle);
 				titleInput.addEventListener('blur', commitTitle);
 				titleInput.addEventListener('keydown', (e) => {
@@ -1261,6 +1268,9 @@
 					},
 					stopEvent(event: any) {
 						return header.contains(event.target as Node);
+					},
+					destroy() {
+						pendingCalloutTitles.delete(titleInput);
 					},
 				};
 			};
@@ -3199,9 +3209,10 @@
 		return loadedRevision;
 	}
 
-	// A title typed but not committed yet: the input commits on change, so the editor is not dirty.
-	export function hasPendingTitleDraft(): boolean {
-		return !!titleInput && !!$activeNote && titleInput.value !== $activeNote.meta.title;
+	// Text typed but not committed yet, so the editor is not dirty: the note title commits on
+	// change, and callout titles on change or blur.
+	export function hasPendingDraft(): boolean {
+		return pendingCalloutTitles.size > 0 || (!!titleInput && !!$activeNote && titleInput.value !== $activeNote.meta.title);
 	}
 
 
