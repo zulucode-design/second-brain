@@ -524,7 +524,8 @@ async function waitForState(read, predicate, timeoutMs, what) {
   const deadline = Date.now() + timeoutMs;
   let state;
   while (Date.now() < deadline) {
-    state = read();
+    // Fedora's Syncthing reads are async; a pending promise never satisfies the predicate.
+    state = await read();
     if (predicate(state)) return state;
     await sleep(500);
   }
