@@ -23,7 +23,7 @@ import {
 import { homedir } from 'node:os';
 import { isIP } from 'node:net';
 import { dirname, join, resolve, sep, win32 } from 'node:path';
-import { inflateRawSync } from 'node:zlib';
+import { crc32, deflateSync, inflateRawSync } from 'node:zlib';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -426,6 +426,7 @@ function deployWindowsTools(sshHost) {
     join(REPO, 'scripts', 'windows', 'alpha-harness.ps1'),
     join(REPO, 'scripts', 'windows', 'sync-interrupt.ps1'),
     join(REPO, 'scripts', 'windows', 'alpha-desktop.ps1'),
+    join(REPO, 'scripts', 'windows', 'app-isolation.ps1'),
     `${sshHost}:D:/SecondBrainTest/sb88/tools/`,
   ], { timeout: 60_000 });
 }
@@ -1196,6 +1197,14 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl, sync = false 
     }),
     // Fedora's webview takes the file object itself, so nothing has to be staged on disk.
     stageFile: () => null,
+    stageBinary: () => null,
+    // #28 acceptance reads: what Syncthing, the vault, and the backups hold. Nothing here acts.
+    syncthing: (method, path, body) => syncthingRequest(
+      JSON.parse(readFileSync(join(machine.machinePath, 'sync-control.json'), 'utf8')), method, path, body,
+    ),
+    syncRoles: () => linuxReport(machine.machinePath).map(({ role, pid, executable }) => ({ role, pid, executable })),
+    vaultSummary: (markers) => vaultSummary(machine.vaultPath, markers),
+    backupSummary: (name, wanted, markers) => backupSummary(join(machine.backupPath, name), wanted, markers),
     // The app's keyring entry: service is the app identifier, username the vault's account.
     notionTokenStored: () => runCommandSync('secret-tool', ['lookup', ...notionAttributes], { accept: [0, 1] }).status === 0,
     clearNotionToken() {
@@ -1304,6 +1313,13 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
       return { roles: roles(report.processes) };
     },
     stageFile: (name, content) => runWindowsAction('stage-file', { name, content }).path,
+    stageBinary: (name, base64) => runWindowsAction('stage-file', { name, base64 }).path,
+    syncthing: (method, path, body) => runWindowsAction('syncthing', { method, path, body }).value,
+    syncRoles: () => windowsReport(sshHost, runId).processes.map(({ Role, Id, Path }) => ({ role: Role, pid: Id, executable: Path })),
+    vaultSummary: (markers) => runWindowsAction('vault-summary', { markers }, longTimeoutMs),
+    backupSummary: (name, wanted, markers) => runWindowsAction('backup-summary', { name, wanted, markers }, longTimeoutMs),
+    isolation: (mode, programs) => runWindowsAction('isolation', { mode, programs }, 2 * 60_000),
+    connections: () => runWindowsAction('connections'),
     notionTokenStored: () => runWindowsAction('notion-token', { vaultId, remove: false }, desktopTimeoutMs).found,
     clearNotionToken: () => runWindowsAction('notion-token', { vaultId, remove: true }, desktopTimeoutMs),
     // #49: with the vault folder renamed away, the capture hotkey must raise the installed app's
@@ -2674,8 +2690,47 @@ async function windowsWorker(request) {
   if (request.action === 'stage-file') {
     const staged = win32.join(paths.runRoot, request.name);
     assertWindowsRoot(paths.runRoot, staged);
-    writeFileSync(staged, request.content);
+    writeFileSync(staged, request.base64 ? Buffer.from(request.base64, 'base64') : request.content);
     return { path: staged };
+  }
+
+  // #28 acceptance gate reads. Only reads, except the ignore list the delayed-attachment check
+  // sets on this machine's own folder.
+  if (request.action === 'syncthing') {
+    const writable = request.method === 'POST' && request.path.startsWith('/rest/db/ignores?');
+    if (request.method !== 'GET' && !writable) fail(`refusing Syncthing ${request.method} ${request.path}`);
+    return { value: await syncthingRequest(windowsControl(paths), request.method, request.path, request.body) };
+  }
+  if (request.action === 'vault-summary') return vaultSummary(paths.vaultPath, request.markers);
+  if (request.action === 'backup-summary') {
+    const archive = win32.join(paths.backupPath, request.name);
+    assertWindowsRoot(paths.backupPath, archive);
+    return backupSummary(archive, request.wanted, request.markers);
+  }
+  if (request.action === 'isolation') {
+    const script = win32.join(tools, 'app-isolation.ps1');
+    const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-RunId', request.runId];
+    if (request.mode === 'isolate') {
+      // The app's own programs, and the WebView2 runtime its window runs in.
+      const webview = JSON.parse(runCommandSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+        "@(Get-CimInstance Win32_Process -Filter \"Name = 'msedgewebview2.exe'\" | ForEach-Object ExecutablePath | Where-Object { $_ } | Sort-Object -Unique) | ConvertTo-Json -Compress"]).stdout || '[]');
+      const programs = [appPath, win32.join(dirname(appPath), 'syncthing.exe'), ...[webview].flat()];
+      return { programs, ...parseLastJson(runCommandSync('powershell.exe', [...args, '-Action', 'Isolate', '-ProgramPath', programs.join('|'), '-DeadlineMinutes', '20']).stdout) };
+    }
+    return parseLastJson(runCommandSync('powershell.exe', [...args, '-Action', request.mode === 'restore' ? 'Restore' : 'State']).stdout);
+  }
+  if (request.action === 'connections') {
+    // Every TCP connection the app, its sidecar, and its WebView2 processes hold right now.
+    const report = windowsInterrupt(tools, appPath, 'Report');
+    const pids = report.processes.map((process) => process.Id);
+    if (!pids.length) return { pids, connections: [] };
+    const script = `$ids = @(${pids.join(',')}); $all = @(Get-CimInstance Win32_Process); `
+      + '$kids = @($all | Where-Object { $ids -contains $_.ParentProcessId -and $_.Name -eq \'msedgewebview2.exe\' } | ForEach-Object ProcessId); '
+      + '$ids += $kids; $ids += @($all | Where-Object { $kids -contains $_.ParentProcessId } | ForEach-Object ProcessId); '
+      + '@(Get-NetTCPConnection -ErrorAction SilentlyContinue | Where-Object { $ids -contains $_.OwningProcess -and $_.State -ne \'Listen\' } | '
+      + 'ForEach-Object { [pscustomobject]@{ pid = $_.OwningProcess; remote = $_.RemoteAddress; port = $_.RemotePort; state = [string]$_.State } }) | ConvertTo-Json -Compress';
+    const connections = [JSON.parse(runCommandSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script]).stdout || '[]')].flat();
+    return { pids, connections };
   }
 
   if (request.action === 'rename-vault') {
@@ -2732,11 +2787,737 @@ async function windowsWorker(request) {
   fail(`unknown Windows action: ${request.action}`);
 }
 
+// ── #28 acceptance gate ──
+//
+// Both installed apps run at once under WebDriver and every product action goes through their
+// UI. Syncthing's REST API, the vault trees, and the backup archives are only read, to check what
+// the UI did. The one write outside the UI is the receiver's ignore list for the delayed
+// attachment, which stands in for bytes that are slow to arrive. Each #28 criterion ends in one
+// `criterion` line naming the evidence it rests on.
+
+// Every file in the vault with its SHA-256, the files whose text holds each marker, and the
+// Syncthing conflict copies among them.
+export function vaultSummary(vault, markers = []) {
+  const files = {};
+  const found = Object.fromEntries(markers.map((marker) => [marker, []]));
+  const visit = (directory, prefix) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort(byName)) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) visit(path, relative);
+      else if (entry.isFile()) {
+        const data = readFileSync(path);
+        files[relative] = createHash('sha256').update(data).digest('hex');
+        const text = data.toString('utf8');
+        for (const marker of markers) if (text.includes(marker)) found[marker].push(relative);
+      }
+    }
+  };
+  visit(vault, '');
+  return { files, markers: found, conflicts: Object.keys(files).filter((path) => path.includes('.sync-conflict-')) };
+}
+
+// What one backup archive holds for the paths asked about (SHA-256, or null when absent), and
+// which members hold each marker.
+export function backupSummary(archive, wanted = [], markers = []) {
+  const entries = zipEntries(readFileSync(archive));
+  const hashOf = (path) => (entries.has(path) ? createHash('sha256').update(entries.get(path)).digest('hex') : null);
+  const found = Object.fromEntries(markers.map((marker) => [marker, [...entries]
+    .filter(([name, data]) => !name.endsWith('/') && data.toString('utf8').includes(marker)).map(([name]) => name)]));
+  return { members: entries.size, wanted: Object.fromEntries(wanted.map((path) => [path, hashOf(path)])), markers: found };
+}
+
+// A solid-colour PNG, so every image in the run has its own bytes.
+export function solidPng(width, height, [red, green, blue]) {
+  const chunk = (kind, data) => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(kind, 'ascii'), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([length, body, crc]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(width * 3).fill(Buffer.from([red, green, blue]))]);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header),
+    chunk('IDAT', deflateSync(Buffer.concat(Array.from({ length: height }, () => row)))),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+// Fedora's whole connection loses its default routes, so nothing on the laptop reaches the
+// internet; the on-link LAN route stays, and with it Tailscale's direct path to the desktop. A
+// user timer armed first puts the routes back at the deadline even if this process dies.
+const ISOLATION_MINUTES = 20;
+function fedoraNetwork(runId) {
+  const [route] = JSON.parse(runCommandSync('ip', ['-j', 'route', 'show', 'default']).stdout || '[]');
+  if (!route?.dev) fail('Fedora has no default route to withdraw');
+  const device = route.dev;
+  const connection = runCommandSync('nmcli', ['-g', 'GENERAL.CONNECTION', 'device', 'show', device]).stdout;
+  if (!connection) fail(`no NetworkManager connection on ${device}`);
+  const unit = `second-brain-acceptance-net-${runId.toLowerCase()}`;
+  const setDefault = (withdrawn) => {
+    const value = withdrawn ? 'yes' : 'no';
+    runCommandSync('nmcli', ['connection', 'modify', connection, 'ipv4.never-default', value, 'ipv6.never-default', value]);
+    runCommandSync('nmcli', ['device', 'reapply', device]);
+  };
+  const exitStatus = (executable, args) => runCommandSync(executable, args, { accept: [0, 1, 2, 6, 7, 28, 35], timeout: 20_000 });
+  let isolated = false;
+  return {
+    probe(peerIp) {
+      const route4 = exitStatus('ip', ['route', 'get', '1.1.1.1']);
+      const route6 = exitStatus('ip', ['-6', 'route', 'get', '2606:4700:4700::1111']);
+      const https = (url) => exitStatus('curl', ['-s', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '8', url]);
+      const byAddress = https('https://1.1.1.1');
+      const byName = https('https://www.wikipedia.org');
+      const ping = exitStatus('tailscale', ['ping', '-c', '1', peerIp]);
+      return {
+        publicRoute4: route4.status === 0,
+        publicRoute6: route6.status === 0,
+        httpsByAddress: byAddress.status === 0 ? Number(byAddress.stdout) : `curl exit ${byAddress.status}`,
+        httpsByName: byName.status === 0 ? Number(byName.stdout) : `curl exit ${byName.status}`,
+        // "via <LAN address>" is a direct path; "via DERP" would need the internet.
+        tailscalePath: /via (DERP\([^)]*\)|[\d.]+:\d+)/.exec(ping.stdout)?.[1] ?? `ping exit ${ping.status}`,
+      };
+    },
+    isolate() {
+      const original = runCommandSync('nmcli', ['-g', 'ipv4.never-default,ipv6.never-default', 'connection', 'show', connection]).stdout.split('\n');
+      if (original.some((value) => value !== 'no')) fail(`${connection} already withholds its default route: ${original}`);
+      runCommandSync('systemd-run', [
+        '--user', `--unit=${unit}`, `--on-active=${ISOLATION_MINUTES * 60}`, '/usr/bin/sh', '-c',
+        'nmcli connection modify "$1" ipv4.never-default no ipv6.never-default no && nmcli device reapply "$2"',
+        'sh', connection, device,
+      ]);
+      isolated = true;
+      setDefault(true);
+      return { device, rollback: `${unit}.timer in ${ISOLATION_MINUTES} min` };
+    },
+    async restore() {
+      if (!isolated) return { restored: false };
+      setDefault(false);
+      runCommandSync('systemctl', ['--user', 'stop', `${unit}.timer`], { accept: [0, 5] });
+      isolated = false;
+      await waitForState(() => exitStatus('ip', ['route', 'get', '1.1.1.1']).status, (status) => status === 0, 60_000, 'Fedora default route');
+      return { restored: true };
+    },
+  };
+}
+
+const ACCEPTANCE_CLIP_BEFORE = 'https://en.wikipedia.org/wiki/Zettelkasten';
+// A host no earlier step reached, so no pooled connection can carry the isolated request.
+const ACCEPTANCE_CLIP_DURING = 'https://www.gutenberg.org/';
+const ACCEPTANCE_CLIP_AFTER = 'https://en.wikipedia.org/wiki/Commonplace_book';
+
+async function runAcceptance(args) {
+  const options = parseOptions(args);
+  if (!options.fedoraRpm) fail('--fedora-rpm names the installed candidate RPM, which verify-linux-package.sh checks');
+  return runOnFedora(args, runAcceptanceLocked);
+}
+
+async function runAcceptanceLocked(options) {
+  const { candidateCommit, runId, evidencePath, screenshotDir } = openGateTrace(options, 'acceptance', {
+    runStart: { issue: 28 },
+    packageChecks: () => fedoraPackageChecks(options.fedoraRpm),
+  });
+  const record = (event, machine, value) => observation(evidencePath, event, machine, value);
+  const vaultId = randomUUID();
+  // No Ollama: the gate needs keyword search only, and nothing may reach out on its behalf.
+  const fedora = linuxDriverMachine(options.linuxRoot, runId, vaultId, { ollamaBaseUrl: OFFLINE_OLLAMA_URL });
+  const windows = windowsDriverMachine(options.sshHost, runId, vaultId, candidateCommit, { ollamaBaseUrl: OFFLINE_OLLAMA_URL });
+  const network = fedoraNetwork(runId);
+  const sides = [];
+  let windowsPrepared = false;
+  let runError;
+  let cleanupError;
+  try {
+    record('prepared', 'fedora', fedora.prepare());
+    windowsPrepared = true;
+    record('prepared', 'windows', windows.prepare());
+    for (const [machine, realKeys] of [[fedora, false], [windows, true]]) {
+      record('driver-started', machine.name, await machine.startDriver());
+      sides.push({ name: machine.name, machine, type: (await import('./alpha-walkthrough.mjs')).typist(realKeys), browser: await openApp(machine.port, machine.application) });
+    }
+    await acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir, network, sshHost: options.sshHost });
+  } catch (error) {
+    runError = error;
+    record('run-failed', 'controller', { error: error.message });
+  } finally {
+    // Connectivity comes back first, whatever else failed.
+    try {
+      record('network-final', 'fedora', await network.restore());
+    } catch (error) {
+      record('cleanup-error', 'fedora-network', { error: error.message });
+      cleanupError ??= error;
+    }
+    if (windowsPrepared) {
+      try {
+        record('isolation-final', 'windows', windows.isolation('restore'));
+      } catch (error) {
+        record('cleanup-error', 'windows-isolation', { error: error.message });
+        cleanupError ??= error;
+      }
+    }
+    for (const side of sides) await closeApp(side.browser);
+    cleanupError ??= await finishMachine(fedora, evidencePath);
+    if (windowsPrepared) cleanupError ??= await finishMachine(windows, evidencePath);
+  }
+  if (runError) throw runError;
+  if (cleanupError) throw cleanupError;
+  record('run-complete', 'controller', { criteria: 11 });
+  console.log(JSON.stringify({ runId, evidencePath, screenshotDir }));
+}
+
+async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir, network, sshHost }) {
+  const walkthrough = await import('./alpha-walkthrough.mjs');
+  const [F, W] = sides;
+  const peerOf = (side) => (side === F ? W : F);
+  const tag = runId.toLowerCase();
+  // Keyword search splits on non-word characters, so markers are single words.
+  const marker = (name) => `zq${name}${tag}`.replace(/[^a-z0-9]/g, '');
+  const shot = (side, label) => side.browser.saveScreenshot(join(screenshotDir, `${side.name}-${label}.png`)).catch(() => {});
+  const step = async (label, action) => {
+    const started = Date.now();
+    try {
+      const value = await action();
+      record('step', 'controller', { step: label, ms: Date.now() - started, ...(value && typeof value === 'object' ? { value } : {}) });
+      return value;
+    } catch (error) {
+      await Promise.all(sides.map((side) => shot(side, `${label}-failed`)));
+      throw new Error(`${label}: ${error.message}`);
+    }
+  };
+  const criterion = (number, text, evidence) => record('criterion', 'controller', { number, text, passed: true, ...evidence });
+  const closeSettings = (side) => walkthrough.closeSettingsPanel(side.browser);
+  const relaunch = async (side) => {
+    await walkthrough.closeWindow(side.browser);
+    await side.machine.appsGone();
+    await closeApp(side.browser);
+    side.browser = await openApp(side.machine.port, side.machine.application);
+  };
+
+  // A note file is saved by autosave; the check waits for its bytes on the machine itself.
+  const waitForFile = (side, predicate, what, timeoutMs = 60_000) => waitForState(
+    () => side.machine.vaultSummary(predicate.markers ?? []), (summary) => predicate(summary), timeoutMs, `${side.name}: ${what}`,
+  );
+  const preSync = (side) => side.machine.backups().filter((name) => name.startsWith('helixnotes-pre-sync-')).sort();
+
+  // One guarded batch on both machines: Sync now on each, as the Settings hint says, and both
+  // terminal outcomes. A scheduled run may own the lease when Sync now is pressed; `until` is the
+  // state the batch has to reach, so a batch is repeated (at most three times) until it holds.
+  // The receiver's first new pre-sync backup must hold `prior`, the receiver's own state of the
+  // watched paths from before the change was made (criterion 9).
+  const syncBatch = async (label, { mark, receiver, prior, until }) => {
+    const attempts = [];
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await Promise.all(sides.map((side) => walkthrough.pressSyncNow(side.browser)));
+      const outcomes = await Promise.all(sides.map((side) => walkthrough.syncDone(side.browser)));
+      const reached = await until();
+      attempts.push(Object.fromEntries(sides.map((side, index) => [side.name, outcomes[index]])));
+      if (reached) break;
+      if (attempt === 3) fail(`${label}: not reached after three batches: ${JSON.stringify(attempts)}`);
+    }
+    for (const side of sides) await closeSettings(side);
+    const fresh = Object.fromEntries(sides.map((side) => [side.name, preSync(side).filter((name) => !mark[side.name].includes(name))]));
+    let backup = null;
+    if (receiver) {
+      const [first] = fresh[receiver.name];
+      if (!first) fail(`${label}: ${receiver.name} received changes without a new pre-sync backup`);
+      backup = { name: first, ...receiver.machine.backupSummary(first, Object.keys(prior), []) };
+      const mismatched = Object.entries(prior).filter(([path, hash]) => backup.wanted[path] !== hash);
+      if (mismatched.length) fail(`${label}: backup ${first} does not hold ${receiver.name}'s previous state: ${JSON.stringify({ mismatched, backup: backup.wanted })}`);
+    }
+    const value = { label, attempts, newBackups: fresh, backup };
+    record('sync-batch', 'controller', value);
+    return value;
+  };
+  const markBackups = () => Object.fromEntries(sides.map((side) => [side.name, preSync(side)]));
+  const priorOf = (side, paths) => {
+    const { files } = side.machine.vaultSummary();
+    return Object.fromEntries(paths.map((path) => [path, files[path] ?? null]));
+  };
+
+  // Notion stays unconfigured on both machines for the whole gate (criterion 10).
+  for (const side of sides) {
+    if (side.machine.notionTokenStored()) fail(`${side.name} keyring already holds this vault's Notion token`);
+  }
+
+  // ── 1. Sync is a toggle in Settings; nothing to install ──
+  const bundled = {};
+  for (const side of sides) {
+    bundled[side.name] = await step(`${side.name}-toggle`, async () => {
+      await walkthrough.vaultOpened(side.browser);
+      const before = side.machine.syncRoles().map((row) => row.role);
+      if (before.includes('Sidecar')) fail(`sidecar runs before sync was enabled: ${before}`);
+      const roleOf = () => side.machine.syncRoles();
+      await walkthrough.setSync(side.browser, true);
+      const on = await waitForState(roleOf, (rows) => syncProcessesUp(rows.map((row) => row.role)), 60_000, 'sidecar start');
+      const sidecar = on.find((row) => row.role === 'Sidecar');
+      const expected = side === F ? '/usr/bin/syncthing' : win32.join(dirname(WINDOWS_APP), 'syncthing.exe');
+      if (sidecar.executable.toLowerCase() !== expected.toLowerCase()) fail(`sidecar is not the bundled executable: ${sidecar.executable}`);
+      const owner = side === F ? runCommandSync('rpm', ['-qf', '--qf', '%{NAME}', expected]).stdout : 'installer';
+      if (side === F && owner !== 'second-brain') fail(`${expected} belongs to ${owner}`);
+      await walkthrough.setSync(side.browser, false);
+      await waitForState(roleOf, (rows) => !rows.some((row) => row.role === 'Sidecar'), 60_000, 'sidecar stop');
+      await walkthrough.setSync(side.browser, true);
+      await waitForState(roleOf, (rows) => syncProcessesUp(rows.map((row) => row.role)), 60_000, 'sidecar restart');
+      await shot(side, 'c1-sync-enabled');
+      return { sidecar: expected, package: owner, before, toggled: ['on', 'off', 'on'] };
+    });
+  }
+  criterion(1, 'Sync is a toggle in Settings; the user installs nothing and configures no second application', { bundled });
+
+  // ── 2. Explicit one-time pairing, not Tailnet membership ──
+  const identities = {};
+  for (const side of sides) {
+    const shown = await walkthrough.syncIdentity(side.browser);
+    if (!DEVICE_ID.test(shown.deviceId ?? '')) fail(`${side.name} Settings shows no device ID`);
+    if (shown.vaultId !== vaultId) fail(`${side.name} Settings shows vault ${shown.vaultId}`);
+    const status = await side.machine.syncthing('GET', '/rest/system/status');
+    if (status.myID !== shown.deviceId) fail(`${side.name} Settings device ID differs from its sidecar`);
+    identities[side.name] = { ...shown, tailscaleIp: side === F ? localTailscaleIp() : null };
+  }
+  const windowsIdentity = remoteWorker(sshHost, { action: 'identity', root: WINDOWS_ROOT, runId });
+  if (windowsIdentity.deviceId !== identities.windows.deviceId) fail('Windows sidecar reports another device ID');
+  identities.windows.tailscaleIp = windowsIdentity.tailscaleIp;
+  const peerShape = async (side) => {
+    const config = await side.machine.syncthing('GET', '/rest/config');
+    const peerId = identities[peerOf(side).name].deviceId;
+    return {
+      devices: config.devices.map((device) => (device.deviceID === peerId ? 'peer' : device.deviceID === identities[side.name].deviceId ? 'self' : 'other')),
+      folders: config.folders.map((folder) => ({ id: folder.id === vaultId ? 'vault' : 'other', type: folder.type, paused: folder.paused, sharedWithPeer: folder.devices.some((device) => device.deviceID === peerId) })),
+      autoAccept: config.devices.filter((device) => device.autoAcceptFolders).length,
+    };
+  };
+  const pairing = await step('pairing', async () => {
+    const unpaired = Object.fromEntries(await Promise.all(sides.map(async (side) => [side.name, await peerShape(side)])));
+    for (const [name, shape] of Object.entries(unpaired)) {
+      if (shape.devices.includes('peer') || shape.folders.some((folder) => folder.sharedWithPeer)) {
+        fail(`${name} knows its peer before pairing, though both sidecars are on the Tailnet: ${JSON.stringify(shape)}`);
+      }
+    }
+    const details = (side) => ({ name: side === F ? 'Windows desktop' : 'Fedora laptop', deviceId: identities[side.name].deviceId, tailscaleIp: identities[side.name].tailscaleIp, vaultId });
+    const wrong = await walkthrough.pairDevice(F.browser, F.type, { ...details(W), vaultId: randomUUID() });
+    if (wrong.status.paired || /^Paired with/.test(wrong.message)) fail(`a mismatched vault ID paired: ${wrong.message}`);
+    const afterWrong = await peerShape(F);
+    if (JSON.stringify(afterWrong) !== JSON.stringify(unpaired.fedora)) fail(`a refused pairing changed Fedora's config: ${JSON.stringify(afterWrong)}`);
+    const paired = {};
+    for (const side of sides) {
+      const result = await walkthrough.pairDevice(side.browser, side.type, details(peerOf(side)));
+      if (!result.status.paired || !/^Paired with/.test(result.message)) fail(`${side.name} did not pair: ${result.message}`);
+      paired[side.name] = { message: result.message, shape: await peerShape(side) };
+      if (!paired[side.name].shape.folders.some((folder) => folder.id === 'vault' && folder.sharedWithPeer && folder.type === 'sendonly')) {
+        fail(`${side.name} vault folder is not shared send-only with its peer: ${JSON.stringify(paired[side.name].shape)}`);
+      }
+      await shot(side, 'c2-paired');
+    }
+    return { unpaired, refused: { message: wrong.message, configUnchanged: true }, paired };
+  });
+
+  // ── 3. A note created on one machine is found by search on the other ──
+  const roundTrip = async (from, to, letter) => {
+    const word = marker(`note${letter}`);
+    const note = { category: 'Projects', title: `Acceptance ${letter} ${runId}`, body: `Received on the other machine: ${word}.` };
+    const relativePath = `${note.category}/${note.title}.md`;
+    const mark = markBackups();
+    const prior = priorOf(to, [relativePath]);
+    await walkthrough.createNote(from.browser, from.type, note);
+    const sent = await waitForFile(from, Object.assign((summary) => summary.markers[word].includes(relativePath), { markers: [word] }), `note ${letter} saved`);
+    const batch = await syncBatch(`note-${letter}`, {
+      mark, receiver: to, prior,
+      until: () => to.machine.vaultSummary([word]).markers[word].includes(relativePath),
+    });
+    const titles = await walkthrough.keywordTitles(to.browser, to.type, word);
+    if (!titles.includes(note.title)) fail(`${to.name} keyword search for ${word} did not find "${note.title}": ${JSON.stringify(titles)}`);
+    const opened = await walkthrough.openNoteIn(to.browser, note.category, note.title);
+    if (!opened.text.includes(word)) fail(`${to.name} opened "${note.title}" without its text`);
+    await shot(to, `c3-found-${letter}`);
+    return { relativePath, from: from.name, to: to.name, searchTitles: titles, backup: batch.backup.name };
+  };
+  const noteA = await step('note-fedora-to-windows', () => roundTrip(F, W, 'a'));
+  const noteB = await step('note-windows-to-fedora', () => roundTrip(W, F, 'b'));
+  criterion(2, 'Two machines pair through an explicit one-time exchange, not by being on the same Tailnet', { pairing: { refused: pairing.refused.message, paired: Object.keys(pairing.paired) }, oneTime: 'checked again after relaunch in criterion 5' });
+  criterion(3, 'A note created on one machine appears on the other, and is findable by search there', { notes: [noteA, noteB] });
+
+  // ── 4. A received attachment opens normally ──
+  const attachmentPath = (summary, name) => Object.keys(summary.files).find((path) => path.startsWith('.helixnotes/attachments/') && path.endsWith(`_${name}`));
+  const sendAttachments = async (from, to, letter, { image, text }) => {
+    const word = marker(`att${letter}`);
+    const note = { category: 'Resources', title: `Attachment ${letter} ${runId}`, body: `Attachments for ${word}. ` };
+    const notePath = `${note.category}/${note.title}.md`;
+    const mark = markBackups();
+    const attachmentNames = [image?.name, text?.name].filter(Boolean);
+    const prior = priorOf(to, [notePath]);
+    await walkthrough.createNote(from.browser, from.type, note);
+    if (image) {
+      const bytes = image.bytes.toString('base64');
+      await walkthrough.attachImage(from.browser, { name: image.name, base64: bytes, path: from.machine.stageBinary(image.name, bytes) });
+    }
+    if (text) await walkthrough.attachFile(from.browser, { name: text.name, content: text.content, path: from.machine.stageFile(text.name, text.content) });
+    const sent = await waitForFile(from, (summary) => attachmentNames.every((name) => {
+      const path = attachmentPath(summary, name);
+      return path && summary.files[notePath] && readFileText(from, notePath).includes(path.split('/').pop());
+    }), `note ${letter} saved with its attachments`);
+    const paths = Object.fromEntries(attachmentNames.map((name) => [name, attachmentPath(sent, name)]));
+    return { note, notePath, word, mark, prior, sent, paths };
+  };
+  const readFileText = (side, relativePath) => side.machine.readNote(relativePath);
+  const expectRendered = async (side, sentPath, label) => {
+    let images = [];
+    await side.browser.waitUntil(async () => (images = await walkthrough.editorImages(side.browser))
+      .some((image) => image.naturalWidth > 0 && !image.pending && decodeURIComponent(image.src ?? '').includes(sentPath.split('/').pop())), {
+      timeout: 60_000, timeoutMsg: `${side.name}: ${label} did not render: ${JSON.stringify(images)}`,
+    }).catch((error) => fail(error.message));
+    return images.find((image) => image.naturalWidth > 0);
+  };
+  const attachment = await step('attachment-fedora-to-windows', async () => {
+    const image = { name: `photo-${tag}.png`, bytes: solidPng(64, 48, [200, 40, 90]) };
+    const text = { name: `notes-${tag}.txt`, content: `Attachment text ${marker('txt')}\n` };
+    const sent = await sendAttachments(F, W, 'c', { image, text });
+    const batch = await syncBatch('attachment', {
+      mark: sent.mark, receiver: W, prior: sent.prior,
+      until: () => {
+        const { files } = W.machine.vaultSummary();
+        return Object.values(sent.paths).every((path) => files[path] === sent.sent.files[path]) && Boolean(files[sent.notePath]);
+      },
+    });
+    const received = W.machine.vaultSummary().files;
+    await walkthrough.openNoteIn(W.browser, sent.note.category, sent.note.title);
+    const rendered = await expectRendered(W, sent.paths[image.name], 'received image');
+    if (rendered.naturalWidth !== 64) fail(`received image is ${rendered.naturalWidth}px wide, not 64`);
+    await shot(W, 'c4-attachment-opened');
+    return {
+      image: { path: sent.paths[image.name], sha256: received[sent.paths[image.name]], sameBytes: received[sent.paths[image.name]] === sent.sent.files[sent.paths[image.name]], naturalWidth: rendered.naturalWidth },
+      // Bytes only: opening a non-image hands it to the operating system, which this gate does not drive.
+      textFile: { path: sent.paths[text.name], sameBytes: received[sent.paths[text.name]] === sent.sent.files[sent.paths[text.name]], proves: 'transfer only' },
+      backup: batch.backup.name,
+    };
+  });
+  criterion(4, 'An attachment created on one machine arrives on the other and opens normally', { attachment });
+
+  // ── 7. A delayed attachment shows as not synced yet, then opens ──
+  const delayed = await step('delayed-attachment', async () => {
+    const image = { name: `delayed-${tag}.png`, bytes: solidPng(40, 30, [20, 160, 70]) };
+    const pattern = `/.helixnotes/attachments/*_${image.name}`;
+    const ignoresPath = `/rest/db/ignores?folder=${encodeURIComponent(vaultId)}`;
+    const original = (await W.machine.syncthing('GET', ignoresPath)).ignore ?? [];
+    await W.machine.syncthing('POST', ignoresPath, { ignore: [...original, pattern] });
+    const withPattern = (await W.machine.syncthing('GET', ignoresPath)).ignore ?? [];
+    if (!withPattern.includes(pattern)) fail(`receiver ignore list did not take ${pattern}`);
+    let restored = false;
+    const restoreIgnores = async () => {
+      if (restored) return;
+      await W.machine.syncthing('POST', ignoresPath, { ignore: original });
+      restored = true;
+    };
+    try {
+      const sent = await sendAttachments(F, W, 'd', { image });
+      const imagePath = sent.paths[image.name];
+      await syncBatch('delayed-note', {
+        mark: sent.mark, receiver: W, prior: sent.prior,
+        until: () => Boolean(W.machine.vaultSummary().files[sent.notePath]),
+      });
+      if (W.machine.vaultSummary().files[imagePath]) fail('the withheld attachment arrived anyway');
+      await walkthrough.openNoteIn(W.browser, sent.note.category, sent.note.title);
+      let pending = [];
+      await W.browser.waitUntil(async () => (pending = await walkthrough.editorImages(W.browser)).some((img) => img.pending), {
+        timeout: 30_000, timeoutMsg: 'the missing attachment was not marked as not synced yet',
+      }).catch(() => fail(`no pending image: ${JSON.stringify(pending)}`));
+      const placeholder = pending.find((img) => img.pending);
+      if (placeholder.alt !== 'Attachment not synced yet') fail(`placeholder reads "${placeholder.alt}"`);
+      // The same element must load later, with the note still open: no reopen, no reload.
+      await W.browser.execute(() => { document.querySelector('.ProseMirror img[data-sync-pending="true"]').dataset.harness = 'delayed'; });
+      await shot(W, 'c7-not-synced-yet');
+      await restoreIgnores();
+      const mark = markBackups();
+      await syncBatch('delayed-bytes', {
+        mark, receiver: W, prior: { [imagePath]: null },
+        until: () => W.machine.vaultSummary().files[imagePath] === sent.sent.files[imagePath],
+      });
+      let loaded = null;
+      await W.browser.waitUntil(async () => (loaded = await W.browser.execute(() => {
+        const img = document.querySelector('.ProseMirror img[data-harness="delayed"]');
+        return img ? { naturalWidth: img.naturalWidth, pending: img.dataset.syncPending === 'true', alt: img.alt } : null;
+      }))?.naturalWidth > 0 && !loaded.pending, { timeout: 60_000, timeoutMsg: 'the delayed image did not load in place' }).catch(() => fail(`delayed image did not load in place: ${JSON.stringify(loaded)}`));
+      await shot(W, 'c7-arrived');
+      return { pattern, placeholder: placeholder.alt, loadedInPlace: loaded, sameBytes: true };
+    } finally {
+      await restoreIgnores();
+    }
+  });
+  criterion(7, 'An attachment that has not yet arrived displays as not-synced-yet, never as broken or missing', { delayed });
+
+  // Edits made while the machines cannot sync: sync is turned off on both through Settings and
+  // their sidecars must be gone, so no scheduled batch can run in between.
+  const disconnected = async (label, edits) => {
+    for (const side of sides) {
+      await walkthrough.setSync(side.browser, false);
+      await waitForState(() => side.machine.syncRoles(), (rows) => !rows.some((row) => row.role === 'Sidecar'), 60_000, `${side.name} sidecar stop`);
+      await closeSettings(side);
+    }
+    const value = await edits();
+    for (const side of sides) {
+      await walkthrough.setSync(side.browser, true);
+      await waitForState(() => side.machine.syncRoles(), (rows) => syncProcessesUp(rows.map((row) => row.role)), 60_000, `${side.name} sidecar restart`);
+      await closeSettings(side);
+    }
+    record('disconnected-edits', 'controller', { label });
+    return value;
+  };
+
+  // ── 5 and 6. Delete and PARA move while the peer is away ──
+  const deleteMove = await step('delete-and-move', async () => {
+    const doomed = { category: 'Areas', title: `Delete me ${runId}`, body: `Deleted on Fedora: ${marker('del')}.` };
+    const moved = { category: 'Projects', title: `Move me ${runId}`, body: `Moved on Fedora: ${marker('mov')}.` };
+    const doomedPath = `${doomed.category}/${doomed.title}.md`;
+    const fromPath = `${moved.category}/${moved.title}.md`;
+    const toPath = `Archives/${moved.title}.md`;
+    const mark0 = markBackups();
+    const prior0 = priorOf(W, [doomedPath, fromPath]);
+    for (const note of [doomed, moved]) await walkthrough.createNote(F.browser, F.type, note);
+    const words = [marker('del'), marker('mov')];
+    const sent = await waitForFile(F, Object.assign((summary) => summary.markers[words[0]].includes(doomedPath) && summary.markers[words[1]].includes(fromPath), { markers: words }), 'delete and move notes saved');
+    await syncBatch('delete-move-setup', {
+      mark: mark0, receiver: W, prior: prior0,
+      until: () => {
+        const { files } = W.machine.vaultSummary();
+        return Boolean(files[doomedPath]) && Boolean(files[fromPath]);
+      },
+    });
+    const mark = markBackups();
+    const prior = priorOf(W, [doomedPath, fromPath, toPath]);
+    if (!prior[doomedPath] || !prior[fromPath]) fail('Windows does not hold both notes before the delete and move');
+    await disconnected('delete-move', async () => {
+      await walkthrough.moveNote(F.browser, { from: moved.category, to: 'Archives', title: moved.title });
+      await deleteThroughMenu(F, doomed);
+    });
+    const fedoraAfter = F.machine.vaultSummary(words);
+    if (fedoraAfter.files[doomedPath] || !fedoraAfter.files[toPath] || fedoraAfter.files[fromPath]) fail(`Fedora did not delete and move: ${JSON.stringify(Object.keys(fedoraAfter.files).filter((path) => path.endsWith('.md')))}`);
+    await syncBatch('delete-move', {
+      mark, receiver: W, prior,
+      until: () => {
+        const { files } = W.machine.vaultSummary();
+        return !files[doomedPath] && !files[fromPath] && Boolean(files[toPath]);
+      },
+    });
+    const check = async (label) => {
+      const result = {};
+      for (const side of sides) {
+        const summary = side.machine.vaultSummary(words);
+        const outsideTrash = (word) => summary.markers[word].filter((path) => !path.startsWith('.helixnotes/'));
+        if (outsideTrash(words[0]).length) fail(`${label}: deleted note is back on ${side.name}: ${outsideTrash(words[0])}`);
+        if (JSON.stringify(outsideTrash(words[1])) !== JSON.stringify([toPath])) fail(`${label}: moved note on ${side.name} is at ${JSON.stringify(outsideTrash(words[1]))}`);
+        if (!summary.markers[words[0]].some((path) => path.startsWith('.helixnotes/trash/'))) fail(`${label}: deleted note is not in ${side.name}'s trash`);
+        const deletedHits = await walkthrough.keywordTitles(side.browser, side.type, words[0]);
+        const movedHits = await walkthrough.keywordTitles(side.browser, side.type, words[1]);
+        if (deletedHits.includes(doomed.title)) fail(`${label}: ${side.name} search still finds the deleted note`);
+        if (movedHits.filter((title) => title === moved.title).length !== 1) fail(`${label}: ${side.name} search finds the moved note ${movedHits.length} times`);
+        const archived = await walkthrough.categoryTitles(side.browser, 'Archives');
+        const projects = await walkthrough.categoryTitles(side.browser, 'Projects');
+        if (archived.filter((title) => title === moved.title).length !== 1 || projects.includes(moved.title)) fail(`${label}: ${side.name} lists the moved note wrongly`);
+        result[side.name] = { deletedSearchHits: deletedHits.length, movedSearchHits: movedHits.length, movedAt: toPath, trashed: true };
+      }
+      return result;
+    };
+    const afterSync = await check('after sync');
+    // No resurrection, and no second pairing: both apps start again and sync from what they have.
+    for (const side of sides) await relaunch(side);
+    const mark2 = markBackups();
+    await syncBatch('after-relaunch', { mark: mark2, until: async () => true });
+    const afterRelaunch = await check('after relaunch');
+    for (const side of sides) {
+      const status = await walkthrough.syncStatus(side.browser);
+      if (!status.paired) fail(`${side.name} is no longer paired after relaunch`);
+    }
+    await Promise.all(sides.map((side) => shot(side, 'c5-c6-after-relaunch')));
+    return { doomedPath, moved: { from: fromPath, to: toPath }, afterSync, afterRelaunch, pairedAfterRelaunch: true };
+  });
+  criterion(5, 'A deletion propagates; a note deleted on one machine does not resurrect from the other', { deleted: deleteMove.doomedPath, afterSync: deleteMove.afterSync, afterRelaunch: deleteMove.afterRelaunch });
+  criterion(6, 'Moving a note between PARA categories on one machine does not duplicate or lose it on the other', { moved: deleteMove.moved });
+  criterion(2, 'Pairing stays after relaunch; no second exchange', { pairedAfterRelaunch: deleteMove.pairedAfterRelaunch, part: 'one-time' });
+
+  // ── 8. Conflicts surface both versions; the copy is never an ordinary note ──
+  const conflict = await step('conflict', async () => {
+    const notes = ['keep', 'use'].map((name) => ({ name, category: 'Areas', title: `Conflict ${name} ${runId}`, body: `Base text ${marker(`base${name}`)}.` }));
+    const pathOf = (note) => `${note.category}/${note.title}.md`;
+    const mark0 = markBackups();
+    const prior0 = priorOf(W, notes.map(pathOf));
+    for (const note of notes) await walkthrough.createNote(F.browser, F.type, note);
+    const baseWords = notes.map((note) => marker(`base${note.name}`));
+    const sent = await waitForFile(F, Object.assign((summary) => notes.every((note, index) => summary.markers[baseWords[index]].includes(pathOf(note))), { markers: baseWords }), 'conflict notes saved');
+    await syncBatch('conflict-setup', {
+      mark: mark0, receiver: W, prior: prior0,
+      until: () => { const { files } = W.machine.vaultSummary(); return notes.every((note) => Boolean(files[pathOf(note)])); },
+    });
+    const editWord = (side, note) => marker(`${side.name.slice(0, 3)}${note.name}`);
+    const mark = markBackups();
+    await disconnected('conflict', async () => {
+      for (const side of sides) {
+        for (const note of notes) {
+          await walkthrough.editNote(side.browser, side.type, { category: note.category, title: note.title, text: ` Edited on ${side.name}: ${editWord(side, note)}.` });
+        }
+      }
+      for (const side of sides) {
+        const words = notes.map((note) => editWord(side, note));
+        await waitForFile(side, Object.assign((summary) => notes.every((note, index) => summary.markers[words[index]].includes(pathOf(note))), { markers: words }), 'conflicting edits saved');
+      }
+    });
+    const allWords = sides.flatMap((side) => notes.map((note) => editWord(side, note)));
+    await syncBatch('conflict', {
+      mark,
+      until: () => sides.every((side) => side.machine.vaultSummary().conflicts.length === notes.length),
+    });
+    // Which edit lost is Syncthing's choice; the conflict-only words are read from the copies.
+    const listed = {};
+    for (const side of sides) {
+      const { conflicts, shown } = await walkthrough.listConflicts(side.browser);
+      if (conflicts.length !== notes.length || shown.length !== notes.length) fail(`${side.name} Settings lists ${shown.length} conflicts`);
+      listed[side.name] = conflicts;
+    }
+    const resolver = W;
+    const plan = notes.map((note) => {
+      const entry = listed[resolver.name].find((item) => item.relativePath.replaceAll('\\', '/') === pathOf(note));
+      if (!entry) fail(`no conflict for ${pathOf(note)}`);
+      const copyWord = allWords.find((word) => entry.conflictContent.includes(word) && !(entry.originalContent ?? '').includes(word));
+      const currentWord = allWords.find((word) => (entry.originalContent ?? '').includes(word) && !entry.conflictContent.includes(word));
+      if (!copyWord || !currentWord) fail(`conflict on ${pathOf(note)} does not hold the two edits`);
+      return { note, entry, copyWord, currentWord, choice: note.name === 'keep' ? 'Keep current' : 'Use conflict' };
+    });
+    const exclusion = {};
+    for (const side of sides) {
+      const counts = await walkthrough.paraCounts(side.browser);
+      const summary = side.machine.vaultSummary();
+      const ordinary = (category) => Object.keys(summary.files).filter((path) => path.startsWith(`${category}/`) && path.endsWith('.md') && !path.includes('.sync-conflict-')).length;
+      for (const category of ['Projects', 'Areas', 'Resources', 'Archives']) {
+        if (counts[category] !== ordinary(category)) fail(`${side.name} ${category} counts ${counts[category]}, but holds ${ordinary(category)} ordinary notes`);
+      }
+      const graphView = await walkthrough.graphNodes(side.browser);
+      if (!graphView.graph.nodes) fail(`${side.name} graph data failed: ${JSON.stringify(graphView.graph)}`);
+      const graphPaths = graphView.graph.nodes.map((node) => node.path);
+      if (graphPaths.some((path) => path.includes('sync-conflict'))) fail(`${side.name} graph holds a conflict copy`);
+      const ordinaryTotal = ['Projects', 'Areas', 'Resources', 'Archives'].reduce((sum, category) => sum + ordinary(category), 0);
+      if (graphView.notes !== ordinaryTotal) fail(`${side.name} graph shows ${graphView.notes} notes, ${ordinaryTotal} ordinary`);
+      const areaTitles = await walkthrough.categoryTitles(side.browser, 'Areas');
+      if (areaTitles.some((title) => title.includes('sync-conflict'))) fail(`${side.name} lists a conflict copy as a note`);
+      const hits = {};
+      for (const { copyWord } of plan) {
+        hits[copyWord] = await walkthrough.keywordTitles(side.browser, side.type, copyWord);
+        if (hits[copyWord].length) fail(`${side.name} search finds the conflict-only word ${copyWord}: ${JSON.stringify(hits[copyWord])}`);
+      }
+      exclusion[side.name] = { counts, graphNotes: graphView.notes, conflictOnlySearchHits: 0 };
+      await shot(side, 'c8-conflicts');
+    }
+    const resolved = [];
+    for (const item of plan) resolved.push(await walkthrough.resolveConflict(resolver.browser, item.entry.relativePath, item.choice));
+    await closeSettings(resolver);
+    await syncBatch('conflict-resolved', {
+      mark: markBackups(),
+      until: () => sides.every((side) => {
+        const summary = side.machine.vaultSummary(plan.flatMap((item) => [item.copyWord, item.currentWord]));
+        return !summary.conflicts.length && plan.every((item) => {
+          const kept = item.choice === 'Keep current' ? item.currentWord : item.copyWord;
+          const dropped = item.choice === 'Keep current' ? item.copyWord : item.currentWord;
+          return summary.markers[kept].includes(pathOf(item.note)) && !summary.markers[dropped].includes(pathOf(item.note))
+            && summary.markers[dropped].some((path) => path.startsWith('.helixnotes/trash/'));
+        });
+      }),
+    });
+    return { exclusion, resolved: plan.map((item) => ({ path: pathOf(item.note), choice: item.choice, chosenOnBoth: true, discardedInTrash: true })), resolvedOn: resolver.name, messages: resolved.map((item) => item.message) };
+  });
+  criterion(8, 'A conflicting edit surfaces both versions for the user to choose; the conflict copy never appears as an ordinary note in search, the graph, or PARA counts', { conflict });
+
+  // ── 10. No internet (Fedora offline; Windows app isolated) and no Notion ──
+  const offline = await step('offline', async () => {
+    const peerIp = identities.windows.tailscaleIp;
+    const clipBefore = await walkthrough.clipPage(W.browser, W.type, { url: ACCEPTANCE_CLIP_BEFORE, category: 'Resources', expectedText: 'Zettelkasten' });
+    const before = { fedora: network.probe(peerIp), windowsAppClip: clipBefore.title };
+    if (typeof before.fedora.httpsByAddress !== 'number') fail(`Fedora had no internet before isolation: ${JSON.stringify(before.fedora)}`);
+    const isolation = { fedora: network.isolate(), windows: W.machine.isolation('isolate') };
+    const programs = isolation.windows.programs.map((path) => path.split('\\').pop().toLowerCase());
+    if (!['second-brain.exe', 'syncthing.exe', 'msedgewebview2.exe'].every((name) => programs.includes(name))) fail(`Windows isolation misses a program: ${programs}`);
+    const during = { fedora: network.probe(peerIp) };
+    if (during.fedora.publicRoute4 || during.fedora.publicRoute6 || typeof during.fedora.httpsByAddress === 'number' || typeof during.fedora.httpsByName === 'number') fail(`Fedora still reaches the internet: ${JSON.stringify(during.fedora)}`);
+    if (!/^[\d.]+:\d+$/.test(during.fedora.tailscalePath)) fail(`Tailscale is not on a direct path: ${during.fedora.tailscalePath}`);
+    const clipDuring = await walkthrough.clipFails(W.browser, W.type, { url: ACCEPTANCE_CLIP_DURING, category: 'Resources' });
+    if (!/could not be reached|took too long/.test(clipDuring.message)) fail(`the isolated Windows app clip failed for another reason: ${clipDuring.message}`);
+    during.windowsAppClip = clipDuring.message;
+    const notion = {};
+    for (const side of sides) notion[side.name] = { tokenStored: side.machine.notionTokenStored() };
+    if (Object.values(notion).some((value) => value.tokenStored)) fail(`a Notion token is stored: ${JSON.stringify(notion)}`);
+    const trips = [];
+    const offlineTrip = async (from, to, letter) => {
+      const image = { name: `offline-${letter}-${tag}.png`, bytes: solidPng(32, 32, letter === 'w' ? [30, 60, 220] : [230, 180, 20]) };
+      const sent = await sendAttachments(from, to, `offline-${letter}`, { image });
+      await syncBatch(`offline-${letter}`, {
+        mark: sent.mark, receiver: to, prior: sent.prior,
+        until: () => {
+          const { files } = to.machine.vaultSummary();
+          return Boolean(files[sent.notePath]) && files[sent.paths[image.name]] === sent.sent.files[sent.paths[image.name]];
+        },
+      });
+      const titles = await walkthrough.keywordTitles(to.browser, to.type, sent.word);
+      if (!titles.includes(sent.note.title)) fail(`${to.name} search did not find "${sent.note.title}" offline: ${JSON.stringify(titles)}`);
+      await walkthrough.openNoteIn(to.browser, sent.note.category, sent.note.title);
+      const rendered = await expectRendered(to, sent.paths[image.name], 'offline image');
+      const sockets = W.machine.connections();
+      const outside = sockets.connections.filter((socket) => !/^(100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|127\.|0\.0\.0\.0$|::$|::1$|fd7a:115c:a1e0:)/i.test(socket.remote));
+      if (outside.length) fail(`Windows app stack holds non-Tailnet connections: ${JSON.stringify(outside)}`);
+      await shot(to, `c10-offline-${letter}`);
+      trips.push({ from: from.name, to: to.name, note: sent.notePath, searchFound: true, imageWidth: rendered.naturalWidth, windowsSockets: sockets.connections.length, marker: sent.word });
+    };
+    await offlineTrip(W, F, 'w');
+    await offlineTrip(F, W, 'f');
+    // Still isolated at the end, or the trips above prove nothing.
+    const end = { fedora: network.probe(peerIp), windows: W.machine.isolation('state') };
+    if (end.fedora.publicRoute4 || typeof end.fedora.httpsByAddress === 'number' || end.windows.rules.length !== isolation.windows.rules.length) fail(`isolation ended before the trips finished: ${JSON.stringify(end)}`);
+    const restored = { fedora: await network.restore(), windows: W.machine.isolation('restore') };
+    const after = { fedora: network.probe(peerIp) };
+    if (typeof after.fedora.httpsByAddress !== 'number') fail(`Fedora internet did not come back: ${JSON.stringify(after.fedora)}`);
+    after.windowsAppClip = (await walkthrough.clipPage(W.browser, W.type, { url: ACCEPTANCE_CLIP_AFTER, category: 'Resources', expectedText: 'ommonplace' })).title;
+    return { before, isolation: { fedora: isolation.fedora, windows: { programs, rules: isolation.windows.rules.length } }, during, notion, trips, end: { windowsRules: end.windows.rules.length }, restored, after };
+  });
+  criterion(10, 'Sync works with no internet (Tailnet only) and with no Notion account configured', {
+    fedora: 'host offline: no public IPv4/IPv6 route, HTTPS by address and by name failed',
+    windows: 'application-isolated: app, sidecar, and WebView2 blocked from every non-Tailnet address',
+    trips: offline.trips, notion: offline.notion,
+  });
+
+  // ── 9. Backups ──
+  criterion(9, 'A vault backup is forced before a batch of incoming changes is applied', {
+    rule: 'every batch that brought changes left a new pre-sync backup on its receiver holding the receiver\'s previous state of the changed paths; see the sync-batch lines',
+  });
+  // ── 11. Both real machines ──
+  criterion(11, 'Verified by running it on both real machines, not simulated with two local folders', {
+    machines: ['Fedora 44 laptop (installed RPM)', 'Windows 11 desktop (installed NSIS package)'], transport: 'Tailscale direct path between the two machines',
+  });
+
+  async function deleteThroughMenu(side, note) {
+    await walkthrough.openCategory(side.browser, note.category);
+    await walkthrough.openNoteIn(side.browser, note.category, note.title);
+    await side.browser.execute((title) => {
+      const row = [...document.querySelectorAll('.note-title')].find((element) => element.innerText.trim() === title);
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200 }));
+    }, note.title);
+    const pressed = await side.browser.execute(() => {
+      const button = [...document.querySelectorAll('button')].find((element) => element.innerText.trim() === 'Move to Trash');
+      button?.click();
+      return Boolean(button);
+    });
+    if (!pressed) fail('no Move to Trash in the note menu');
+    await waitForFile(side, (summary) => !summary.files[`${note.category}/${note.title}.md`], `${note.title} trashed`);
+  }
+}
+
 async function main() {
   const [commandName, ...args] = process.argv.slice(2);
   if (commandName === 'sync') return runSync(args);
   if (commandName === 'restore') return runRestore(args);
   if (commandName === 'walkthrough') return runWalkthrough(args);
+  if (commandName === 'acceptance') return runAcceptance(args);
   if (commandName === 'walkthrough-uninstalled') return runWalkthroughUninstalled(args);
   if (commandName === '__kill-watch') {
     console.log(JSON.stringify(await killWatch(JSON.parse(Buffer.from(args[0], 'base64url').toString('utf8')))));
@@ -2752,6 +3533,7 @@ async function main() {
     'usage: node scripts/alpha-harness.mjs sync|restore [--candidate <sha>] [--ssh sb-windows] [--linux-root ~/sb88] [--timeout-minutes 20]',
     '       node scripts/alpha-harness.mjs walkthrough --windows-installer <D:\\...setup.exe> --fedora-rpm <rpm> [--candidate <sha>] [--machine fedora|windows] [--ollama-port 11434]',
     '       node scripts/alpha-harness.mjs walkthrough-uninstalled --run <runId>',
+    '       node scripts/alpha-harness.mjs acceptance --fedora-rpm <rpm> [--candidate <sha>]',
   ].join('\n'));
   process.exitCode = 2;
 }

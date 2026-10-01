@@ -556,3 +556,218 @@ export async function notionPublish(browser, type, { token, page }, whileConnect
     }
   }
 }
+
+// ── Device sync (#28 acceptance gate) ──
+
+const backend = (browser, command, args = {}) => browser.executeAsync((name, values, done) => {
+  window.__TAURI_INTERNALS__.invoke(name, values)
+    .then((value) => done({ ok: true, value }), (error) => done({ ok: false, error: String(error) }));
+}, command, args);
+
+// Read-only: the controller checks what the Settings screen reports against the backend's view.
+export async function syncStatus(browser) {
+  const result = await backend(browser, 'sync_status');
+  if (!result.ok) fail(`sync status failed: ${result.error}`);
+  return result.value;
+}
+
+// Settings may already be open from the previous step; pressing its button again would close it.
+export async function openSync(browser) {
+  if (await browser.execute(() => Boolean(document.querySelector('.settings-overlay')))) await pressText(browser, 'button.tab-btn', 'Sync');
+  else await openSettingsTab(browser, 'Sync');
+  await browser.$('button[aria-label="Enable sync on this machine"]').waitForDisplayed({ timeout: 15_000 });
+}
+
+// Flips the Settings toggle and waits for the backend to agree. Sync stays on the Sync tab.
+export async function setSync(browser, enabled) {
+  await openSync(browser);
+  const toggle = browser.$('button[aria-label="Enable sync on this machine"]');
+  if ((await toggle.getAttribute('aria-checked')) !== String(enabled)) await press(browser, toggle);
+  await browser.waitUntil(async () => (await toggle.getAttribute('aria-checked')) === String(enabled), {
+    timeout: 60_000, timeoutMsg: `sync toggle did not turn ${enabled ? 'on' : 'off'}`,
+  });
+  const status = await syncStatus(browser);
+  if (status.enabled !== enabled) fail(`backend sync enabled=${status.enabled}, toggle says ${enabled}`);
+  if (enabled) {
+    await browser.waitUntil(async () => Boolean((await syncStatus(browser)).deviceId), {
+      timeout: 60_000, timeoutMsg: 'no device ID appeared after enabling sync',
+    });
+  }
+  return syncStatus(browser);
+}
+
+// What Settings shows for this machine: the values a person would copy to the other one.
+export async function syncIdentity(browser) {
+  await openSync(browser);
+  return browser.execute(() => {
+    const deviceId = document.querySelector('input[aria-label="This device ID"]')?.value ?? null;
+    const inputs = [...document.querySelectorAll('.tab-content input.ai-key-input[readonly]')].map((element) => element.value);
+    return { deviceId, vaultId: inputs.find((value) => value !== deviceId) ?? null };
+  });
+}
+
+async function fillInput(browser, type, placeholder, value) {
+  const input = browser.$(`input[placeholder="${placeholder}"]`);
+  await input.waitForDisplayed({ timeout: 15_000 });
+  await browser.execute((target) => { target.focus(); target.select(); }, input);
+  await type(browser, input, value);
+  await browser.waitUntil(async () => (await input.getValue()) === value, {
+    timeout: 10_000, timeoutMsg: `${placeholder} did not take "${value}"`,
+  });
+}
+
+// Fills the Pair Another Device form and presses Pair explicitly. Returns Settings' message.
+export async function pairDevice(browser, type, { name, deviceId, tailscaleIp, vaultId }) {
+  await openSync(browser);
+  await fillInput(browser, type, 'Device name', name);
+  await fillInput(browser, type, 'Syncthing device ID', deviceId);
+  await fillInput(browser, type, 'Tailscale IPv4 (100.x.x.x)', tailscaleIp);
+  await fillInput(browser, type, 'Vault ID from the other machine', vaultId);
+  await pressText(browser, 'button.import-btn', 'Pair explicitly');
+  const text = await waitForText(browser, '.tab-content .import-result', (value) => value.length > 0, 'pairing reported nothing', 60_000);
+  return { message: text, status: await syncStatus(browser) };
+}
+
+// Presses Sync now. The run ends with a sync-done event, which Settings shows as its message.
+export async function pressSyncNow(browser) {
+  await openSync(browser);
+  await browser.waitUntil(async () => (await byText(browser, 'button.import-btn', 'Sync now')).length === 1, {
+    timeout: 60_000, timeoutMsg: 'Sync now is not available',
+  });
+  await browser.execute(() => {
+    window.__syncDone = null;
+    window.__TAURI_INTERNALS__.invoke('plugin:event|listen', {
+      event: 'sync-done', target: { kind: 'Any' },
+      handler: window.__TAURI_INTERNALS__.transformCallback((event) => { window.__syncDone = event.payload; }),
+    });
+  });
+  await pressText(browser, 'button.import-btn', 'Sync now');
+}
+
+// Waits for the run started by pressSyncNow and returns its terminal outcome.
+export async function syncDone(browser, timeout = 8 * 60_000) {
+  let payload = null;
+  await browser.waitUntil(async () => (payload = await browser.execute(() => window.__syncDone)) !== null, {
+    timeout, timeoutMsg: 'sync run did not finish',
+  });
+  const message = await waitForText(browser, '.tab-content .import-result', (value) => !/Creating a safety backup/.test(value), 'Settings kept the in-progress message', 30_000);
+  return { ...payload, message };
+}
+
+export async function listConflicts(browser) {
+  const result = await backend(browser, 'list_sync_conflicts');
+  if (!result.ok) fail(`listing conflicts failed: ${result.error}`);
+  await openSync(browser);
+  const shown = await browser.execute(() => [...document.querySelectorAll('details.backup-item')].map((item) => ({
+    relativePath: item.querySelector('summary')?.innerText.trim(),
+    versions: [...item.querySelectorAll('pre.sync-preview')].map((element) => element.innerText),
+  })));
+  return { conflicts: result.value, shown };
+}
+
+// Chooses `choice` ('Keep current' or 'Use conflict') for the conflict on `relativePath`.
+export async function resolveConflict(browser, relativePath, choice) {
+  await openSync(browser);
+  const resolved = await browser.execute((path, label) => {
+    const item = [...document.querySelectorAll('details.backup-item')].find((element) => element.querySelector('summary')?.innerText.trim() === path);
+    if (!item) return 'missing';
+    item.open = true;
+    const button = [...item.querySelectorAll('button.option-btn')].find((element) => element.innerText.trim() === label);
+    if (!button || button.disabled) return 'no-button';
+    button.click();
+    return 'pressed';
+  }, relativePath, choice);
+  if (resolved !== 'pressed') fail(`conflict ${relativePath}: ${resolved} (${choice})`);
+  const text = await waitForText(browser, '.tab-content .import-result', (value) => /Conflict resolved|rror|fail/i.test(value), 'conflict choice reported nothing');
+  if (!text.startsWith('Conflict resolved')) fail(`conflict choice failed: ${text}`);
+  return { relativePath, choice, message: text };
+}
+
+// The sidebar's PARA counts, as shown.
+export async function paraCounts(browser) {
+  return browser.execute(() => Object.fromEntries([...document.querySelectorAll('button')]
+    .map((button) => /^(Projects|Areas|Resources|Archives)\s+(\d+)$/.exec(button.innerText.trim()))
+    .filter(Boolean)
+    .map((match) => [match[1], Number(match[2])])));
+}
+
+// Titles listed in a category, as shown.
+export async function categoryTitles(browser, category) {
+  await openCategory(browser, category);
+  await browser.pause(1_000);
+  return browser.execute(() => [...document.querySelectorAll('.note-title')].map((element) => element.innerText.trim()));
+}
+
+export async function graphNodes(browser) {
+  const { stats } = await graph(browser);
+  const result = await backend(browser, 'get_graph_data');
+  await closeGraph(browser);
+  return { stats, notes: Number(/(\d+) notes/.exec(stats)?.[1]), graph: result.ok ? result.value : { error: result.error } };
+}
+
+export async function keywordTitles(browser, type, query) {
+  return searchFor(browser, type, 'Keyword', query);
+}
+
+export async function openNoteIn(browser, category, title) {
+  await openCategory(browser, category);
+  await openNote(browser, title);
+  return { title, text: await editorText(browser) };
+}
+
+// The open note's vault images: whether each loaded, and whether the editor marked it pending.
+export async function editorImages(browser) {
+  return browser.execute(() => [...document.querySelectorAll('.ProseMirror img')].map((image) => ({
+    src: image.getAttribute('src'),
+    complete: image.complete,
+    naturalWidth: image.naturalWidth,
+    pending: image.dataset.syncPending === 'true',
+    alt: image.alt,
+  })));
+}
+
+// Like attachFile, through the image input, so the editor inserts an <img>.
+export async function attachImage(browser, { name, base64, path }) {
+  const input = await browser.$('#insert-image-input');
+  let delivered;
+  if (path) {
+    await browser.execute((target) => { target.style.display = ''; }, input);
+    await input.addValue(path);
+    await browser.execute((target) => { target.style.display = 'none'; }, input);
+    delivered = 'path';
+  } else {
+    delivered = await browser.execute((target, fileName, data) => {
+      const bytes = Uint8Array.from(atob(data), (character) => character.charCodeAt(0));
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([bytes], fileName, { type: 'image/png' }));
+      target.files = transfer.files;
+      if (target.files.length !== 1) return 'refused';
+      target.dispatchEvent(new Event('change', { bubbles: true }));
+      return 'data-transfer';
+    }, input, name, base64);
+    if (delivered === 'refused') fail('the webview refused the image');
+  }
+  await browser.waitUntil(async () => (await editorImages(browser)).some((image) => image.naturalWidth > 0), {
+    timeout: 30_000, timeoutMsg: `image ${name} did not render in the note (${delivered})`,
+  });
+  return { name, delivered, images: await editorImages(browser) };
+}
+
+// A clip that must fail: the app has no route to the page. Returns the dialog's message and
+// closes the dialog the way Escape does.
+export async function clipFails(browser, type, { url, category }) {
+  await press(browser, browser.$('button[title="Clip web page"]'));
+  const dialog = browser.$('[role="dialog"]');
+  await dialog.waitForDisplayed({ timeout: 10_000 });
+  await type(browser, dialog.$('input'), url);
+  await press(browser, dialog.$(`button*=${category}`));
+  let message = null;
+  await browser.waitUntil(async () => (message = await browser.execute(() => document.querySelector('[role="dialog"] [role="alert"]')?.innerText || null)) !== null, {
+    timeout: 60_000, timeoutMsg: `the clip of ${url} neither failed nor finished`,
+  });
+  await browser.execute(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true })));
+  await dialog.waitForDisplayed({ reverse: true, timeout: 10_000 });
+  return { url, message };
+}
+
+export { appendToNote, closeSettings as closeSettingsPanel, openCategory };
