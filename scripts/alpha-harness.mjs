@@ -3059,7 +3059,7 @@ async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir
       await walkthrough.setSync(side.browser, true);
       const on = await waitForState(roleOf, (rows) => syncProcessesUp(rows.map((row) => row.role)), 60_000, 'sidecar start');
       const sidecar = on.find((row) => row.role === 'Sidecar');
-      const expected = side === F ? '/usr/bin/syncthing' : win32.join(dirname(WINDOWS_APP), 'syncthing.exe');
+      const expected = side === F ? '/usr/bin/syncthing' : win32.join(win32.dirname(WINDOWS_APP), 'syncthing.exe');
       if (sidecar.executable.toLowerCase() !== expected.toLowerCase()) fail(`sidecar is not the bundled executable: ${sidecar.executable}`);
       const owner = side === F ? runCommandSync('rpm', ['-qf', '--qf', '%{NAME}', expected]).stdout : 'installer';
       if (side === F && owner !== 'second-brain') fail(`${expected} belongs to ${owner}`);
