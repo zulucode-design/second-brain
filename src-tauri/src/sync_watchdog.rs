@@ -79,7 +79,7 @@ pub(crate) fn spawn(sidecar_pid: u32, gui_port: u16, api_key: &str) -> Result<()
 }
 
 #[cfg(unix)]
-fn process_is_alive(pid: u32) -> bool {
+pub(crate) fn process_is_alive(pid: u32) -> bool {
     unsafe extern "C" {
         fn kill(pid: i32, signal: i32) -> i32;
     }
@@ -97,7 +97,7 @@ fn terminate_process(pid: u32) {
 }
 
 #[cfg(windows)]
-fn process_is_alive(pid: u32) -> bool {
+pub(crate) fn process_is_alive(pid: u32) -> bool {
     type Handle = *mut std::ffi::c_void;
     const SYNCHRONIZE: u32 = 0x0010_0000;
     const WAIT_TIMEOUT: u32 = 0x0000_0102;

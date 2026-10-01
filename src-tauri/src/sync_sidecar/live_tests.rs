@@ -231,7 +231,7 @@ struct Run {
 fn batch(node: &Node, peer: &Node, fail_backup: bool) -> Run {
     let client = client();
     let mut backups = Vec::new();
-    let result = sync_batch(
+    let (result, _) = sync_batch(
         &client,
         &node.control,
         FOLDER,
@@ -418,7 +418,7 @@ fn a_close_once_the_peer_connects_starts_neither_scan_nor_backup() {
     };
     let client = client();
     let mut backups = 0;
-    let result = sync_batch(
+    let (result, pause_acknowledged) = sync_batch(
         &client,
         &b.control,
         FOLDER,
@@ -435,6 +435,7 @@ fn a_close_once_the_peer_connects_starts_neither_scan_nor_backup() {
         Err(crate::sync_sidecar::SHUTDOWN_STOPPED.to_string())
     );
     assert_eq!(backups, 0, "no backup starts once the close began");
+    assert!(pause_acknowledged);
     assert_eq!(tree(&b.vault), BTreeMap::new(), "nothing was received");
     assert_eq!(folder(&b)["paused"], true);
     assert_eq!(folder(&b)["type"], "sendonly");

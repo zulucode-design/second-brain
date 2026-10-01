@@ -992,21 +992,6 @@ impl SyncthingApi<'_> {
         )
     }
 
-    /// Whether the folder's configuration says paused; read for a close, so it is short.
-    fn folder_paused(&self, folder_id: &str) -> Result<bool, String> {
-        let value: serde_json::Value = checked(
-            self.request(
-                reqwest::Method::GET,
-                &format!("/rest/config/folders/{folder_id}"),
-            )
-            .timeout(Duration::from_secs(1)),
-            None,
-        )?
-        .json()
-        .map_err(|error| error.to_string())?;
-        Ok(value.get("paused").and_then(|paused| paused.as_bool()) == Some(true))
-    }
-
     /// Syncthing writes to the vault only in `sendreceive`. A batch resumes the folder
     /// `sendonly`, which still receives the peer's index and reports what it would need but
     /// applies nothing, and switches with `receive_into_folder` only once its safety backup
@@ -1343,7 +1328,8 @@ fn has_incoming(local_status: &serde_json::Value) -> bool {
 /// One guarded batch against a running sidecar. The folder resumes send-only; the first time
 /// anything is incoming, `before_receiving` takes the safety backup and only then may Syncthing
 /// write to the vault. A batch with nothing incoming takes no backup (#14). Folder and device are
-/// paused again on every path.
+/// paused again on every path; the flag says Syncthing acknowledged that pause, so it can no
+/// longer write (#189).
 fn sync_batch(
     client: &reqwest::blocking::Client,
     control: &ControlState,
@@ -1351,14 +1337,11 @@ fn sync_batch(
     peer_id: &str,
     stopped: &dyn Fn() -> bool,
     before_receiving: impl FnMut() -> Result<(), String>,
-) -> Result<(), String> {
+) -> (Result<(), String>, bool) {
     let api = SyncthingApi { client, control };
-    stop_check(stopped)?;
-    api.ensure_durable_temp_ignored(folder_id)?;
-    api.resume_folder_send_only(folder_id)?;
-    if let Err(error) = api.set_device_paused(peer_id, false, STOPPABLE_REQUEST_TIMEOUT) {
-        let _ = api.pause_folder(folder_id, STOPPABLE_REQUEST_TIMEOUT);
-        return Err(error);
+    // Until the guard below exists the folder never leaves send-only, so Syncthing cannot write.
+    if let Err(error) = start_batch(api, folder_id, peer_id, stopped) {
+        return (Err(error), true);
     }
     let pause = FolderPauseGuard {
         api,
@@ -1372,10 +1355,28 @@ fn sync_batch(
     } else {
         pause.pause()
     };
-    match (result, paused) {
+    let acknowledged = paused.is_ok();
+    let outcome = match (result, paused) {
         (Ok(()), Ok(())) => Ok(()),
         (result, paused) => Err(join_errors([result.err(), paused.err()])),
+    };
+    (outcome, acknowledged)
+}
+
+fn start_batch(
+    api: SyncthingApi,
+    folder_id: &str,
+    peer_id: &str,
+    stopped: &dyn Fn() -> bool,
+) -> Result<(), String> {
+    stop_check(stopped)?;
+    api.ensure_durable_temp_ignored(folder_id)?;
+    api.resume_folder_send_only(folder_id)?;
+    if let Err(error) = api.set_device_paused(peer_id, false, STOPPABLE_REQUEST_TIMEOUT) {
+        let _ = api.pause_folder(folder_id, STOPPABLE_REQUEST_TIMEOUT);
+        return Err(error);
     }
+    Ok(())
 }
 
 fn wait_for_sync(
@@ -1500,22 +1501,12 @@ fn hold_for_peer_handoff(
     Ok(false)
 }
 
-/// Before a stopped run lets go of the lease for a close, nothing may still write to the vault:
-/// the folder must read as paused, or Syncthing is stopped. Its supervisor starts it again
-/// paused, as every start is (#189).
-fn ensure_writer_stopped(
-    app: &AppHandle,
-    client: &reqwest::blocking::Client,
-    control: &ControlState,
-    folder_id: &str,
-) {
-    if (SyncthingApi { client, control })
-        .folder_paused(folder_id)
-        .unwrap_or(false)
-    {
-        return;
-    }
-    log::warn!("Sync folder did not confirm its pause for the close; stopping Syncthing");
+/// A stopped run whose pause Syncthing did not acknowledge cannot tell whether a received file is
+/// still being written, so Syncthing is stopped before the lease goes, and the run waits for the
+/// process to be gone; its supervisor starts it again paused, as every start is. If it will not go,
+/// the lease stays, the close times out, and the page says so (#189).
+fn stop_writer(app: &AppHandle) {
+    log::warn!("Sync folder did not acknowledge its pause for the close; stopping Syncthing");
     let child = app
         .state::<AppState>()
         .sync_sidecar
@@ -1523,8 +1514,32 @@ fn ensure_writer_stopped(
         .lock()
         .ok()
         .and_then(|mut runtime| runtime.child.take());
-    if let Some(child) = child {
-        let _ = child.kill();
+    let Some(child) = child else {
+        return;
+    };
+    let pid = child.pid();
+    if let Err(error) = child.kill() {
+        log::warn!("Could not stop Syncthing for the close: {error}");
+    }
+    wait_for_exit(
+        || crate::sync_watchdog::process_is_alive(pid),
+        Duration::from_millis(100),
+    );
+}
+
+/// Returns once `alive` reports false, logging while it waits.
+fn wait_for_exit(mut alive: impl FnMut() -> bool, poll: Duration) {
+    let started = std::time::Instant::now();
+    let mut warned = Duration::ZERO;
+    while alive() {
+        if started.elapsed() >= warned + Duration::from_secs(10) {
+            warned = started.elapsed();
+            log::error!(
+                "Syncthing has not exited after {}s; sync stays blocked",
+                warned.as_secs()
+            );
+        }
+        std::thread::sleep(poll);
     }
 }
 
@@ -1646,7 +1661,7 @@ fn run_sync(
                 }
             };
             let mut backed_up = false;
-            let batch = sync_batch(
+            let (batch, pause_acknowledged) = sync_batch(
                 &client,
                 &control,
                 &folder_id,
@@ -1662,8 +1677,8 @@ fn run_sync(
                     Ok(())
                 },
             );
-            if stopped() {
-                ensure_writer_stopped(&app, &client, &control, &folder_id);
+            if stopped() && !pause_acknowledged {
+                stop_writer(&app);
             }
             if backed_up {
                 let reconciliation =
@@ -1717,10 +1732,11 @@ mod tests {
     use super::{
         append_durable_temp_ignore_if_missing, convergence_observation_is_complete,
         harden_generated_config_xml, hold_for_peer_handoff, read_control, refused_sync_terminal,
-        stop_check, tailscale_ipv4, until_next_sync_window, valid_device_id, write_control,
-        CompletionLatch, ControlState, SyncProgress, SyncTrigger, DURABLE_TEMP_IGNORE,
-        PEER_HANDOFF_GRACE, PULL_ERROR_EXPLAINS_FAILURE, SHUTDOWN_STOPPED,
-        SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL, SYNC_POLL_INTERVAL,
+        stop_check, tailscale_ipv4, until_next_sync_window, valid_device_id, wait_for_exit,
+        write_control, CompletionLatch, ControlState, FolderPauseGuard, SyncProgress, SyncTrigger,
+        SyncthingApi, DURABLE_TEMP_IGNORE, PEER_HANDOFF_GRACE, PULL_ERROR_EXPLAINS_FAILURE,
+        SHUTDOWN_STOPPED, STOP_PAUSE_BUDGET, SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL,
+        SYNC_POLL_INTERVAL,
     };
     use crate::bulk_mutation::{BulkMutationCoordinator, BulkMutationOutcome, LeaseRefused};
     use std::sync::atomic::AtomicBool;
@@ -1899,6 +1915,47 @@ mod tests {
             },
         );
         assert_eq!(held, Err(SHUTDOWN_STOPPED.to_string()));
+    }
+
+    #[test]
+    fn a_stopped_writer_is_waited_for_until_it_is_gone() {
+        let polls = std::cell::Cell::new(0);
+        let started = Instant::now();
+        wait_for_exit(
+            || {
+                polls.set(polls.get() + 1);
+                polls.get() <= 5
+            },
+            Duration::from_millis(10),
+        );
+        assert_eq!(
+            polls.get(),
+            6,
+            "the wait lasts until the process reports gone"
+        );
+        assert!(started.elapsed() >= Duration::from_millis(50));
+    }
+
+    #[test]
+    fn a_pause_that_gets_no_answer_is_not_acknowledged() {
+        // Nothing listens on this loopback port, so both pause calls fail at once.
+        let control: ControlState = serde_json::from_value(serde_json::json!({
+            "version": 1, "enabled": true, "apiKey": "key", "guiPort": 9
+        }))
+        .unwrap();
+        let client = reqwest::blocking::Client::new();
+        let guard = FolderPauseGuard {
+            api: SyncthingApi {
+                client: &client,
+                control: &control,
+            },
+            folder_id: "folder",
+            device_id: "device",
+            armed: true,
+        };
+        let started = Instant::now();
+        assert!(guard.pause_within(STOP_PAUSE_BUDGET).is_err());
+        assert!(started.elapsed() <= STOP_PAUSE_BUDGET);
     }
 
     #[test]
