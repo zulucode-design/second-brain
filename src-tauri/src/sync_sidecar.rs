@@ -967,13 +967,14 @@ impl SyncthingApi<'_> {
         folder_id: &str,
         fields: serde_json::Value,
         action: &str,
+        timeout: Duration,
     ) -> Result<(), String> {
         checked(
             self.request(
                 reqwest::Method::PATCH,
                 &format!("/rest/config/folders/{folder_id}"),
             )
-            .timeout(STOPPABLE_REQUEST_TIMEOUT)
+            .timeout(timeout)
             .json(&fields),
             Some(&format!("Could not {action} the sync folder")),
         )?;
@@ -982,12 +983,28 @@ impl SyncthingApi<'_> {
 
     /// Pausing also returns the folder to `sendonly`, so a folder that fails to stay paused
     /// still cannot write to the vault outside a batch.
-    fn pause_folder(&self, folder_id: &str) -> Result<(), String> {
+    fn pause_folder(&self, folder_id: &str, timeout: Duration) -> Result<(), String> {
         self.patch_folder(
             folder_id,
             serde_json::json!({ "paused": true, "type": "sendonly" }),
             "pause",
+            timeout,
         )
+    }
+
+    /// Whether the folder's configuration says paused; read for a close, so it is short.
+    fn folder_paused(&self, folder_id: &str) -> Result<bool, String> {
+        let value: serde_json::Value = checked(
+            self.request(
+                reqwest::Method::GET,
+                &format!("/rest/config/folders/{folder_id}"),
+            )
+            .timeout(Duration::from_secs(1)),
+            None,
+        )?
+        .json()
+        .map_err(|error| error.to_string())?;
+        Ok(value.get("paused").and_then(|paused| paused.as_bool()) == Some(true))
     }
 
     /// Syncthing writes to the vault only in `sendreceive`. A batch resumes the folder
@@ -1000,6 +1017,7 @@ impl SyncthingApi<'_> {
             folder_id,
             serde_json::json!({ "type": "sendonly", "paused": false }),
             "resume",
+            STOPPABLE_REQUEST_TIMEOUT,
         )
     }
 
@@ -1008,16 +1026,22 @@ impl SyncthingApi<'_> {
             folder_id,
             serde_json::json!({ "type": "sendreceive" }),
             "receive changes into",
+            STOPPABLE_REQUEST_TIMEOUT,
         )
     }
 
-    fn set_device_paused(&self, device_id: &str, paused: bool) -> Result<(), String> {
+    fn set_device_paused(
+        &self,
+        device_id: &str,
+        paused: bool,
+        timeout: Duration,
+    ) -> Result<(), String> {
         checked(
             self.request(
                 reqwest::Method::PATCH,
                 &format!("/rest/config/devices/{device_id}"),
             )
-            .timeout(STOPPABLE_REQUEST_TIMEOUT)
+            .timeout(timeout)
             .json(&serde_json::json!({ "paused": paused })),
             Some(&format!(
                 "Could not {} the paired device",
@@ -1136,8 +1160,12 @@ struct FolderPauseGuard<'a> {
 
 impl FolderPauseGuard<'_> {
     fn pause(mut self) -> Result<(), String> {
-        let folder = self.api.pause_folder(self.folder_id);
-        let device = self.api.set_device_paused(self.device_id, true);
+        let folder = self
+            .api
+            .pause_folder(self.folder_id, STOPPABLE_REQUEST_TIMEOUT);
+        let device = self
+            .api
+            .set_device_paused(self.device_id, true, STOPPABLE_REQUEST_TIMEOUT);
         let result = match (folder, device) {
             (Ok(()), Ok(())) => Ok(()),
             (folder, device) => Err(join_errors([folder.err(), device.err()])),
@@ -1147,6 +1175,26 @@ impl FolderPauseGuard<'_> {
         }
         result
     }
+
+    /// The pause a close waits on (#189): both calls share `budget`, and nothing is retried on
+    /// drop. The caller confirms the folder is paused, or stops Syncthing, before the lease goes.
+    fn pause_within(mut self, budget: Duration) -> Result<(), String> {
+        self.armed = false;
+        let deadline = std::time::Instant::now() + budget;
+        let remaining = || {
+            deadline
+                .saturating_duration_since(std::time::Instant::now())
+                .min(STOPPABLE_REQUEST_TIMEOUT)
+        };
+        let folder = self.api.pause_folder(self.folder_id, remaining());
+        let device = self
+            .api
+            .set_device_paused(self.device_id, true, remaining());
+        match (folder, device) {
+            (Ok(()), Ok(())) => Ok(()),
+            (folder, device) => Err(join_errors([folder.err(), device.err()])),
+        }
+    }
 }
 
 impl Drop for FolderPauseGuard<'_> {
@@ -1154,10 +1202,16 @@ impl Drop for FolderPauseGuard<'_> {
         if !self.armed {
             return;
         }
-        if let Err(error) = self.api.pause_folder(self.folder_id) {
+        if let Err(error) = self
+            .api
+            .pause_folder(self.folder_id, STOPPABLE_REQUEST_TIMEOUT)
+        {
             log::error!("Sync safety cleanup failed: {error}");
         }
-        if let Err(error) = self.api.set_device_paused(self.device_id, true) {
+        if let Err(error) =
+            self.api
+                .set_device_paused(self.device_id, true, STOPPABLE_REQUEST_TIMEOUT)
+        {
             log::error!("Sync device safety cleanup failed: {error}");
         }
     }
@@ -1302,8 +1356,8 @@ fn sync_batch(
     stop_check(stopped)?;
     api.ensure_durable_temp_ignored(folder_id)?;
     api.resume_folder_send_only(folder_id)?;
-    if let Err(error) = api.set_device_paused(peer_id, false) {
-        let _ = api.pause_folder(folder_id);
+    if let Err(error) = api.set_device_paused(peer_id, false, STOPPABLE_REQUEST_TIMEOUT) {
+        let _ = api.pause_folder(folder_id, STOPPABLE_REQUEST_TIMEOUT);
         return Err(error);
     }
     let pause = FolderPauseGuard {
@@ -1313,7 +1367,11 @@ fn sync_batch(
         armed: true,
     };
     let result = wait_for_sync(api, folder_id, peer_id, before_receiving, stopped);
-    let paused = pause.pause();
+    let paused = if stopped() {
+        pause.pause_within(STOP_PAUSE_BUDGET)
+    } else {
+        pause.pause()
+    };
     match (result, paused) {
         (Ok(()), Ok(())) => Ok(()),
         (result, paused) => Err(join_errors([result.err(), paused.err()])),
@@ -1334,10 +1392,11 @@ fn wait_for_sync(
         }
         std::thread::sleep(SYNC_POLL_INTERVAL);
     }
-    stop_check(stopped)?;
     if !api.peer_connected(peer_id)? {
         return Err("The paired device is not reachable over Tailscale".to_string());
     }
+    // The scan and the backup are not cut short, so neither starts once a close has begun.
+    stop_check(stopped)?;
     api.scan(folder_id)?;
     let mut receiving = false;
     let mut progress = SyncProgress::default();
@@ -1345,6 +1404,7 @@ fn wait_for_sync(
         stop_check(stopped)?;
         let local = api.folder_status(folder_id)?;
         if !receiving && has_incoming(&local) {
+            stop_check(stopped)?;
             before_receiving()?;
             // The backup is never cut short, so a close that began during it stops the run here.
             stop_check(stopped)?;
@@ -1392,6 +1452,10 @@ const STOPPABLE_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(crate) const SHUTDOWN_STOPPED: &str = "Sync stopped because Second Brain is closing";
 
+// Both pauses after a stop share this, so a stalled Syncthing cannot hold the lease past the
+// close: at most one bounded call in flight, these, and the one-second check that follows.
+const STOP_PAUSE_BUDGET: Duration = Duration::from_secs(4);
+
 fn stop_check(stopped: &dyn Fn() -> bool) -> Result<(), String> {
     if stopped() {
         return Err(SHUTDOWN_STOPPED.to_string());
@@ -1416,17 +1480,52 @@ fn hold_for_peer_handoff(
     stopped: &dyn Fn() -> bool,
 ) -> Result<bool, String> {
     let deadline = std::time::Instant::now() + grace;
+    // Checked after each call too: a close that begins while one blocks must still end the hold
+    // as a failure, not as a peer that went away.
     while std::time::Instant::now() < deadline {
         stop_check(stopped)?;
-        if has_incoming() {
+        let incoming = has_incoming();
+        stop_check(stopped)?;
+        if incoming {
             return Ok(true);
         }
-        if peer_connected() == Ok(false) {
+        let connected = peer_connected();
+        stop_check(stopped)?;
+        if connected == Ok(false) {
             return Ok(false);
         }
         std::thread::sleep(poll);
     }
+    stop_check(stopped)?;
     Ok(false)
+}
+
+/// Before a stopped run lets go of the lease for a close, nothing may still write to the vault:
+/// the folder must read as paused, or Syncthing is stopped. Its supervisor starts it again
+/// paused, as every start is (#189).
+fn ensure_writer_stopped(
+    app: &AppHandle,
+    client: &reqwest::blocking::Client,
+    control: &ControlState,
+    folder_id: &str,
+) {
+    if (SyncthingApi { client, control })
+        .folder_paused(folder_id)
+        .unwrap_or(false)
+    {
+        return;
+    }
+    log::warn!("Sync folder did not confirm its pause for the close; stopping Syncthing");
+    let child = app
+        .state::<AppState>()
+        .sync_sidecar
+        .runtime
+        .lock()
+        .ok()
+        .and_then(|mut runtime| runtime.child.take());
+    if let Some(child) = child {
+        let _ = child.kill();
+    }
 }
 
 fn publish_sync_terminal(app: &AppHandle, terminal: crate::bulk_mutation::BulkMutationTerminal) {
@@ -1563,6 +1662,9 @@ fn run_sync(
                     Ok(())
                 },
             );
+            if stopped() {
+                ensure_writer_stopped(&app, &client, &control, &folder_id);
+            }
             if backed_up {
                 let reconciliation =
                     crate::commands::reconcile_bulk_projections(&state, &vault.to_string_lossy());
@@ -1754,6 +1856,49 @@ mod tests {
         );
         assert_eq!(held, Err(SHUTDOWN_STOPPED.to_string()));
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_close_during_a_status_call_is_not_mistaken_for_a_disconnect() {
+        let closing = std::cell::Cell::new(false);
+        let held = hold_for_peer_handoff(
+            Duration::from_secs(5),
+            Duration::from_millis(5),
+            || {
+                closing.set(true);
+                Ok(false)
+            },
+            || false,
+            &|| closing.get(),
+        );
+        assert_eq!(held, Err(SHUTDOWN_STOPPED.to_string()));
+
+        let closing = std::cell::Cell::new(false);
+        let held = hold_for_peer_handoff(
+            Duration::from_secs(5),
+            Duration::from_millis(5),
+            || Ok(true),
+            || {
+                closing.set(true);
+                true
+            },
+            &|| closing.get(),
+        );
+        assert_eq!(held, Err(SHUTDOWN_STOPPED.to_string()));
+
+        // A close during the last sleep of the grace is still a failure.
+        let polls = std::cell::Cell::new(0);
+        let held = hold_for_peer_handoff(
+            Duration::from_millis(30),
+            Duration::from_millis(40),
+            || Ok(true),
+            || false,
+            &|| {
+                polls.set(polls.get() + 1);
+                polls.get() > 3
+            },
+        );
+        assert_eq!(held, Err(SHUTDOWN_STOPPED.to_string()));
     }
 
     #[test]

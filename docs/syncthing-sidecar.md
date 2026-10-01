@@ -132,7 +132,10 @@ to save, and the save waits for the lease (#189). Once a close or exit begins, n
 a running batch stops at its next check: while it waits for the peer, while it converges, and
 during the handoff hold. Each of those checks is at most two seconds apart, because every
 Syncthing call between them is bounded at two seconds. The stopped run pauses folder and device
-and ends like any interrupted run: `failure`, or `changed-incomplete` if its backup was taken.
+within a shared four-second budget, with no retry, and ends like any interrupted run: `failure`,
+or `changed-incomplete` if its backup was taken. Before it lets go of the lease it reads the
+folder back as paused; if Syncthing cannot confirm that, the app stops the Syncthing process, which
+its supervisor starts again paused, so nothing writes to the vault once the save goes ahead.
 The scan, the ignore update, the safety backup, and the projection reconcile are not cut short;
 a close during one of them can still run out of time. The window then stays open and says so:
 "Closing timed out. Second Brain is still open. Try closing again."
