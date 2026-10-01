@@ -110,6 +110,9 @@ struct Runtime {
     restart_count: u8,
     scheduler_generation: u64,
     last_terminal: Option<crate::bulk_mutation::BulkMutationTerminal>,
+    // Syncthing processes told to stop whose exit nobody has seen yet. A close waits for them
+    // before a stopped run lets go of the lease, since one may still be writing (#189).
+    exiting: Vec<u32>,
 }
 
 pub struct SyncSidecar {
@@ -145,6 +148,7 @@ impl SyncSidecar {
                 restart_count: 0,
                 scheduler_generation: 0,
                 last_terminal: None,
+                exiting: Vec::new(),
             }),
             lifecycle: tokio::sync::Mutex::new(()),
         }
@@ -816,18 +820,45 @@ async fn stop(app: &AppHandle, vault: &Path) -> Result<(), String> {
         .send()
         .await;
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let child = app
-        .state::<AppState>()
-        .sync_sidecar
-        .runtime
-        .lock()
-        .map_err(|error| error.to_string())?
-        .child
-        .take();
+    let child = {
+        let state = app.state::<AppState>();
+        let mut runtime = state
+            .sync_sidecar
+            .runtime
+            .lock()
+            .map_err(|error| error.to_string())?;
+        take_writers(&mut runtime).0
+    };
     if let Some(child) = child {
-        let _ = child.kill();
+        let pid = child.pid();
+        if let Err(error) = child.kill() {
+            log::warn!("Could not stop Syncthing: {error}");
+        }
+        for _ in 0..100 {
+            if !crate::sync_watchdog::process_is_alive(pid) {
+                forget_exited(app, pid);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
     Ok(())
+}
+
+fn forget_exited(app: &AppHandle, pid: u32) {
+    if let Ok(mut runtime) = app.state::<AppState>().sync_sidecar.runtime.lock() {
+        runtime.exiting.retain(|exiting| *exiting != pid);
+    }
+}
+
+/// The running Syncthing, now owned by the caller to stop, and every process already told to stop
+/// that may still be running. Both stay recorded as exiting until someone sees them gone.
+fn take_writers(runtime: &mut Runtime) -> (Option<CommandChild>, Vec<u32>) {
+    let child = runtime.child.take();
+    if let Some(child) = &child {
+        runtime.exiting.push(child.pid());
+    }
+    (child, runtime.exiting.clone())
 }
 
 /// Build the status payload at the command boundary, where machine-local and peer state belong.
@@ -1507,24 +1538,26 @@ fn hold_for_peer_handoff(
 /// the lease stays, the close times out, and the page says so (#189).
 fn stop_writer(app: &AppHandle) {
     log::warn!("Sync folder did not acknowledge its pause for the close; stopping Syncthing");
-    let child = app
+    let (child, pids) = app
         .state::<AppState>()
         .sync_sidecar
         .runtime
         .lock()
-        .ok()
-        .and_then(|mut runtime| runtime.child.take());
-    let Some(child) = child else {
-        return;
-    };
-    let pid = child.pid();
-    if let Err(error) = child.kill() {
-        log::warn!("Could not stop Syncthing for the close: {error}");
+        .map(|mut runtime| take_writers(&mut runtime))
+        .unwrap_or_default();
+    if let Some(child) = child {
+        if let Err(error) = child.kill() {
+            log::warn!("Could not stop Syncthing for the close: {error}");
+        }
     }
-    wait_for_exit(
-        || crate::sync_watchdog::process_is_alive(pid),
-        Duration::from_millis(100),
-    );
+    // A process a disable already stopped counts too: it may not have exited yet.
+    for pid in pids {
+        wait_for_exit(
+            || crate::sync_watchdog::process_is_alive(pid),
+            Duration::from_millis(100),
+        );
+        forget_exited(app, pid);
+    }
 }
 
 /// Returns once `alive` reports false, logging while it waits.
@@ -1732,11 +1765,11 @@ mod tests {
     use super::{
         append_durable_temp_ignore_if_missing, convergence_observation_is_complete,
         harden_generated_config_xml, hold_for_peer_handoff, read_control, refused_sync_terminal,
-        stop_check, tailscale_ipv4, until_next_sync_window, valid_device_id, wait_for_exit,
-        write_control, CompletionLatch, ControlState, FolderPauseGuard, SyncProgress, SyncTrigger,
-        SyncthingApi, DURABLE_TEMP_IGNORE, PEER_HANDOFF_GRACE, PULL_ERROR_EXPLAINS_FAILURE,
-        SHUTDOWN_STOPPED, STOP_PAUSE_BUDGET, SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL,
-        SYNC_POLL_INTERVAL,
+        stop_check, tailscale_ipv4, take_writers, until_next_sync_window, valid_device_id,
+        wait_for_exit, write_control, CompletionLatch, ControlState, FolderPauseGuard, Runtime,
+        SyncProgress, SyncTrigger, SyncthingApi, DURABLE_TEMP_IGNORE, PEER_HANDOFF_GRACE,
+        PULL_ERROR_EXPLAINS_FAILURE, SHUTDOWN_STOPPED, STOP_PAUSE_BUDGET,
+        SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL, SYNC_POLL_INTERVAL,
     };
     use crate::bulk_mutation::{BulkMutationCoordinator, BulkMutationOutcome, LeaseRefused};
     use std::sync::atomic::AtomicBool;
@@ -1915,6 +1948,30 @@ mod tests {
             },
         );
         assert_eq!(held, Err(SHUTDOWN_STOPPED.to_string()));
+    }
+
+    #[test]
+    fn a_close_also_waits_for_a_syncthing_a_disable_already_stopped() {
+        let mut runtime = Runtime {
+            desired_running: false,
+            generation: 0,
+            child: None,
+            vault_path: None,
+            device_id: None,
+            last_error: None,
+            restart_count: 0,
+            scheduler_generation: 0,
+            last_terminal: None,
+            exiting: vec![4242],
+        };
+        let (child, pids) = take_writers(&mut runtime);
+        assert!(child.is_none());
+        assert_eq!(pids, vec![4242]);
+        assert_eq!(
+            runtime.exiting,
+            vec![4242],
+            "it stays recorded until seen gone"
+        );
     }
 
     #[test]
