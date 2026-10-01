@@ -1130,6 +1130,10 @@
 		},
 	});
 
+	// Callout titles typed but not committed yet: they commit on change or blur, so the editor
+	// is not dirty meanwhile, and a reload from disk would drop them (#191).
+	const pendingCalloutTitles = new Set<HTMLInputElement>();
+
 	const Callout = TiptapNode.create({
 		name: 'callout',
 		group: 'block',
@@ -1216,8 +1220,11 @@
 				};
 
 				let titleDirty = false;
-				const commitTitle = () => { if (titleDirty) { updateAttr({ title: titleInput.value }); titleDirty = false; } };
-				titleInput.addEventListener('input', () => { titleDirty = true; });
+				const commitTitle = () => {
+					if (titleDirty) { updateAttr({ title: titleInput.value }); titleDirty = false; }
+					pendingCalloutTitles.delete(titleInput);
+				};
+				titleInput.addEventListener('input', () => { titleDirty = true; pendingCalloutTitles.add(titleInput); });
 				titleInput.addEventListener('change', commitTitle);
 				titleInput.addEventListener('blur', commitTitle);
 				titleInput.addEventListener('keydown', (e) => {
@@ -1261,6 +1268,9 @@
 					},
 					stopEvent(event: any) {
 						return header.contains(event.target as Node);
+					},
+					destroy() {
+						pendingCalloutTitles.delete(titleInput);
 					},
 				};
 			};
@@ -3134,7 +3144,7 @@
 
 	// The main window passes its navigation-queued relocation; secondary note windows have no
 	// queue and relocate directly.
-	function relocateUnqueued(path: string, reason: string, mutation: () => Promise<RelocationOutcome>): Promise<string | null> {
+	export function relocateUnqueued(path: string, reason: string, mutation: () => Promise<RelocationOutcome>): Promise<string | null> {
 		return relocateReported({
 			expectedPath: path,
 			reason,
@@ -3194,10 +3204,23 @@
 		}
 	}
 
-	// The markdown body the editor would currently save; used to ignore the file-watcher echo of our own save.
-	export function getCurrentBody(): string {
-		return $sourceMode ? restoreTitleH1(sourceContent) : editorToMarkdown();
+	// The revision the next save expects on disk; a different one there means the note changed under us.
+	export function getLoadedRevision(): string {
+		return loadedRevision;
 	}
+
+	// Text typed but not committed yet, so the editor is not dirty (the note title commits on
+	// change, callout titles on change or blur), or a dialog, menu, or AI result tied to the
+	// current document and its positions. A reload under any of them would lose the draft or
+	// apply it to the wrong place, so it waits for them (#191).
+	export function hasPendingDraft(): boolean {
+		return pendingCalloutTitles.size > 0
+			|| (!!titleInput && !!$activeNote && titleInput.value !== $activeNote.meta.title)
+			|| !!(mathModal || linkModal || secretModal || imageToolbar || codeLangDropdown || slashMenu
+				|| taskMetaMenu || taskDuePicker || wikiLinkMenu || aiMenu || aiLoading || aiResult !== null
+				|| textContextMenu || tableContextMenu || linkContextMenu || tablePickerOpen);
+	}
+
 
 	// ── Tag editing (active note) ──
 	function toggleTagMenu(e: MouseEvent) {
@@ -3437,7 +3460,9 @@
 		requestAnimationFrame(apply);
 	}
 
-	export function loadNote(path: string, content: string, taskTarget?: TaskRecord, holding = false, revision?: string) {
+	// `preserveModes` keeps the current view and source modes: a reload of the same note from
+	// disk (#191) must not switch the user out of the mode they chose.
+	export function loadNote(path: string, content: string, taskTarget?: TaskRecord, holding = false, revision?: string, preserveModes = false) {
 		saveCoordinator.setDocument(path, true);
 		mutationBarrier.setDocument(path);
 		rememberLoadedNoteScroll();
@@ -3454,11 +3479,11 @@
 		const isViewer = !!get(viewerNote);
 		$holdingPreview = holding;
 		const isNewNote = $activeNote?.meta.title === 'Untitled' && !content.replace(/^---[\s\S]*?---\s*/, '').trim();
-		if (isNewNote && ($appConfig?.new_notes_in_source_mode ?? false)) {
+		if (!preserveModes && isNewNote && ($appConfig?.new_notes_in_source_mode ?? false)) {
 			$sourceMode = true;
 		}
 		lastSourceMode = $sourceMode;
-		const shouldBeReadOnly = isViewer || holding ? true : (isNewNote ? false : ($appConfig?.default_view_mode ?? false));
+		const shouldBeReadOnly = isViewer || holding ? true : preserveModes ? $readOnly : (isNewNote ? false : ($appConfig?.default_view_mode ?? false));
 		$readOnly = shouldBeReadOnly;
 		if (editor) editor.setEditable(!shouldBeReadOnly);
 		const editorBody = editorElement?.closest('.editor-body') as HTMLElement | null;

@@ -14,13 +14,15 @@
 	import type { OrphanAttachment } from '$lib/api';
 	import type { ImportResult, BackupEntry, CustomTheme, CustomThemeColors, StartupView, VaultStats, SemanticStatus, SyncStatus, BulkMutationTerminal, SyncConflict } from '$lib/types';
 	import { normalizeStartupView } from '$lib/utils/startup-view';
+	import { applyConflictChoice } from '$lib/utils/conflict-choice';
 	const isCompact = $derived($compactLayout);
 
 
-	let { onRequestVaultSwitch = async () => false, onBeforeRestore, onAfterRestore }: {
+	let { onRequestVaultSwitch = async () => false, onBeforeRestore, onAfterRestore, onAfterConflictChoice }: {
 		onRequestVaultSwitch?: () => Promise<boolean>;
 		onBeforeRestore?: () => Promise<boolean>;
 		onAfterRestore?: () => Promise<void>;
+		onAfterConflictChoice?: () => Promise<void>;
 	} = $props();
 
 	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'sync' | 'maintenance' | 'ai' | 'notion';
@@ -441,8 +443,11 @@
 	async function handleConflict(conflict: SyncConflict, choice: 'original' | 'conflict') {
 		syncBusy = true; syncMessage = null;
 		try {
-			await resolveSyncConflict(conflict.conflictPath, choice);
-			syncConflicts = await listSyncConflicts();
+			syncConflicts = await applyConflictChoice(
+				() => resolveSyncConflict(conflict.conflictPath, choice),
+				() => void onAfterConflictChoice?.(),
+				listSyncConflicts,
+			);
 			syncMessage = { type: 'success', text: 'Conflict resolved; the discarded version is recoverable from Trash.' };
 		} catch (e) { syncMessage = { type: 'error', text: String(e) }; }
 		finally { syncBusy = false; }

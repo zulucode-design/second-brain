@@ -81,6 +81,7 @@
 	import { runActiveDocumentMutation } from '$lib/utils/document-mutation';
 	import { describeLoadFailure } from '$lib/utils/async-view-state';
 	import { isExternalNotePath } from '$lib/utils/paths';
+	import { lockAfterReload, reloadCleanDocument, RELOAD_RETRY_MS } from '$lib/utils/document-reload';
 	import { showToast } from '$lib/utils/toast';
 	import { get } from 'svelte/store';
 	import { repairBanner } from '$lib/utils/repair-banner';
@@ -263,6 +264,43 @@
 	});
 
 	let navigationQueue: Promise<void> = Promise.resolve();
+	// The open-note reload running now; a close waits it out before taking the editor lock.
+	let openNoteReload: Promise<unknown> = Promise.resolve();
+	let openNoteReloadRetry: ReturnType<typeof setTimeout> | null = null;
+
+	// A conflict choice or a sync run can rewrite the open note. A clean editor then shows the
+	// disk's version, so its next save, and the save before close, expect the right revision
+	// (#191). Unsaved edits are never replaced; a draft or an open editor dialog delays it.
+	function reloadOpenNoteFromDisk(): Promise<void> {
+		const lifetime = lifetimeGate.capture();
+		const run = navigationQueue.then(() => {
+			const current = editor;
+			if (!current || !lifetimeGate.isCurrent(lifetime)) return 'skipped' as const;
+			const reloadable = () => lifetimeGate.isCurrent(lifetime) && editor === current
+				&& !$shutdownPending && !$viewerNote && !$holdingPreview && !$editorDirty;
+			const reload = reloadCleanDocument({
+				capture: () => reloadable() && $activeNotePath ? { path: $activeNotePath, revision: current.getLoadedRevision() } : null,
+				drafting: () => current.hasPendingDraft(),
+				read: readNote,
+				lock: () => current.lockMutations(),
+				stillValid: (captured) => reloadable() && $activeNotePath === captured.path && current.getLoadedRevision() === captured.revision,
+				commit: (path, content) => {
+					$activeNote = content;
+					current.loadNote(path, content.content, undefined, false, content.revision, true);
+				},
+			});
+			openNoteReload = reload;
+			return reload;
+		});
+		navigationQueue = run.then(() => {}, () => {});
+		return run.then((outcome) => {
+			if (outcome !== 'deferred' || openNoteReloadRetry || !lifetimeGate.isCurrent(lifetime)) return;
+			openNoteReloadRetry = setTimeout(() => {
+				openNoteReloadRetry = null;
+				if (lifetimeGate.isCurrent(lifetime)) void reloadOpenNoteFromDisk();
+			}, RELOAD_RETRY_MS);
+		}, (error) => console.error('Failed to reload the open note:', error));
+	}
 
 	async function ensureCurrentNoteSaved(reason: string): Promise<boolean> {
 		let release: (() => void) | null = null;
@@ -285,7 +323,14 @@
 			$readOnly = true;
 			await tick();
 			try {
-				releaseCloseMutationLock = editor ? await editor.lockMutations() : null;
+				// A reload sees the close and ends without loading; its lock goes first.
+				const held = await lockAfterReload(
+					openNoteReload,
+					async () => editor ? editor.lockMutations() : null,
+					() => closingRequestId === requestId && $shutdownPending,
+				);
+				if (!held) return false;
+				releaseCloseMutationLock = held.release;
 			} catch (error) {
 				return reportSaveResult('Closing the application', { ok: false, status: 'failed', revision: 0, error });
 			}
@@ -615,6 +660,8 @@
 	}
 
 	async function refreshAfterSync(): Promise<void> {
+		// The run suppressed the watcher, so nothing else reloads a note it rewrote.
+		void reloadOpenNoteFromDisk();
 		await Promise.all([sidebar?.refresh(), noteList?.refresh(true), refreshUnfiled()]);
 	}
 
@@ -1105,6 +1152,8 @@
 		void installEditorKeyProbe();
 
 		const debouncedVaultRefresh = debounce(async () => {
+			if (!alive()) return;
+			void reloadOpenNoteFromDisk();
 			await Promise.all([sidebar?.refresh(), noteList?.refresh(true)]);
 		}, 300);
 		unlistenFileChange = await listenAppEvent('fileChanged', () => {
@@ -1176,6 +1225,7 @@
 
 	onDestroy(() => {
 		lifetimeGate.cancel();
+		if (openNoteReloadRetry) clearTimeout(openNoteReloadRetry);
 		startupGate.cancel();
 		void releaseOwnedVaultSwitchGate();
 		unlistenFileChange?.();
@@ -1503,7 +1553,7 @@
 
 <SearchPanel onOpenResult={navigateToPath} />
 <CommandPalette onNavigate={handleViewChanged} onToggleSource={toggleSourceMode} />
-<SettingsPanel onRequestVaultSwitch={requestVaultSwitch} onBeforeRestore={prepareForRestore} onAfterRestore={refreshAfterRestore} />
+<SettingsPanel onRequestVaultSwitch={requestVaultSwitch} onBeforeRestore={prepareForRestore} onAfterRestore={refreshAfterRestore} onAfterConflictChoice={reloadOpenNoteFromDisk} />
 <InfoPanel />
 
 <style>
