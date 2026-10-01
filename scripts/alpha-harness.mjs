@@ -3436,7 +3436,9 @@ async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir
       const graphPaths = graphView.graph.nodes.map((node) => node.path);
       if (graphPaths.some((path) => path.includes('sync-conflict'))) fail(`${side.name} graph holds a conflict copy`);
       const ordinaryTotal = ['Projects', 'Areas', 'Resources', 'Archives'].reduce((sum, category) => sum + ordinary(category), 0);
-      if (graphView.notes !== ordinaryTotal) fail(`${side.name} graph shows ${graphView.notes} notes, ${ordinaryTotal} ordinary`);
+      // The panel's own count is the open note's neighbourhood while a note is open, so the
+      // whole graph is counted from the data the panel draws.
+      if (graphPaths.length !== ordinaryTotal) fail(`${side.name} graph holds ${graphPaths.length} notes, ${ordinaryTotal} ordinary`);
       const areaTitles = await walkthrough.categoryTitles(side.browser, 'Areas');
       if (areaTitles.some((title) => title.includes('sync-conflict'))) fail(`${side.name} lists a conflict copy as a note`);
       const hits = {};
@@ -3444,7 +3446,7 @@ async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir
         hits[copyWord] = await walkthrough.keywordTitles(side.browser, side.type, copyWord);
         if (hits[copyWord].length) fail(`${side.name} search finds the conflict-only word ${copyWord}: ${JSON.stringify(hits[copyWord])}`);
       }
-      exclusion[side.name] = { counts, graphNotes: graphView.notes, conflictOnlySearchHits: 0 };
+      exclusion[side.name] = { counts, graphNotes: graphPaths.length, graphPanel: graphView.stats, conflictOnlySearchHits: 0 };
       await shot(side, 'c8-conflicts');
     }
     const resolved = [];
