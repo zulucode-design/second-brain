@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { isEditUpdate, loadContent } from '$lib/utils/editor-updates';
 	import { onDestroy, tick, untrack } from 'svelte';
 	import { get } from 'svelte/store';
 	import { Editor } from '@tiptap/core';
@@ -130,7 +131,6 @@
 	const MAX_NOTE_SCROLL_POSITIONS = 200;
 	const noteScrollPositions = new Map<string, NoteScrollPosition>();
 	let pendingContent = $state<string | null>(null);
-	let ignoreNextUpdate = false;
 	let isLoadingNote = false;
 	let componentDestroyed = false;
 	let trashingNote = $state(false);
@@ -2588,8 +2588,8 @@
 							item.pos + item.size,
 							wikiMarkType.create({ title: item.newTitle, path: outcome.path, aliased: false }),
 						);
-						ignoreNextUpdate = true;
-						editor.view.dispatch(tr);
+						// Resolving a link is not an edit.
+						editor.view.dispatch(tr.setMeta('preventUpdate', true));
 						void refreshWikiLinkTitles();
 					} catch (e) {
 						console.error('Failed to rename note from wiki-link edit:', e);
@@ -3265,7 +3265,9 @@
 		untrack(() => {
 			if (editor) {
 				if (ro && !shuttingDown && $editorDirty) forceSave();
-				editor.setEditable(!ro && !shuttingDown && !preview);
+				// No update event: changing editability is not an edit, and onUpdate would mark the
+				// note dirty, so closing or toggling View Mode rewrote it (#196).
+				editor.setEditable(!ro && !shuttingDown && !preview, false);
 			}
 		});
 	});
@@ -3277,7 +3279,7 @@
 		untrack(() => {
 			if (editor && (v || holding)) {
 				$readOnly = true;
-				editor.setEditable(false);
+				editor.setEditable(false, false);
 			}
 		});
 	});
@@ -3485,7 +3487,7 @@
 		lastSourceMode = $sourceMode;
 		const shouldBeReadOnly = isViewer || holding ? true : preserveModes ? $readOnly : (isNewNote ? false : ($appConfig?.default_view_mode ?? false));
 		$readOnly = shouldBeReadOnly;
-		if (editor) editor.setEditable(!shouldBeReadOnly);
+		if (editor) editor.setEditable(!shouldBeReadOnly, false);
 		const editorBody = editorElement?.closest('.editor-body') as HTMLElement | null;
 		if ($sourceMode) {
 			sourceContent = stripTitleH1(content);
@@ -3499,8 +3501,7 @@
 		} else if (editorElement && editor) {
 			// Editor already exists, just swap content
 			const html = markdownToHtml(content);
-			ignoreNextUpdate = true;
-			editor.commands.setContent(html);
+			loadContent(editor, html);
 			// Clear undo/redo history so it doesn't bleed across notes
 			clearEditorHistory();
 			const text = editor.state.doc.textContent;
@@ -4788,11 +4789,8 @@
 					prevCursorWikiMark = curWikiMark;
 				}
 			},
-			onUpdate: () => {
-				if (ignoreNextUpdate || isLoadingNote) {
-					ignoreNextUpdate = false;
-					return;
-				}
+			onUpdate: (event) => {
+				if (!isEditUpdate(event, isLoadingNote)) return;
 				$editorDirty = true;
 				markDirty();
 				if (!isCompact && showOutline) scheduleOutline();
@@ -6023,8 +6021,7 @@
 				// Compact: editor stays in DOM, just update its content
 				const content = srcText || ($activeNote?.content ?? '');
 				if (editor) {
-					ignoreNextUpdate = true;
-					editor.commands.setContent(markdownToHtml(content));
+					loadContent(editor, markdownToHtml(content));
 					tick().then(restoreRichCaret);
 				}
 			} else {
