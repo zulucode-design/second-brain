@@ -3535,12 +3535,19 @@ async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir
         await waitForState(async () => (await side.machine.syncthing('GET', folderPath)).paused, (paused) => paused === false, 30_000, `${side.name} batch running`);
         let batch = { folderPaused: false };
         if (phase === 'handoff') {
-          // Both runs confirm after 15 s of clean observations, then hold for up to 60 s.
-          await sleep(Math.max(0, pressedAt + 25_000 - Date.now()));
-          const completion = await side.machine.syncthing('GET', `/rest/db/completion?folder=${encodeURIComponent(vaultId)}&device=${identities[peer.name].deviceId}`);
-          const done = await side.browser.execute(() => window.__syncDone);
-          if (completion.completion !== 100 || done !== null) fail(`${side.name} is not in the handoff hold: ${JSON.stringify({ completion: completion.completion, done })}`);
-          batch = { ...batch, peerCompletion: completion.completion };
+          // A run confirms after 15 s of clean observations, then holds for up to 60 s. The peer
+          // may first have changes to receive (it just relaunched), so the wait starts once the
+          // peer reports complete, not at the press.
+          const completionPath = `/rest/db/completion?folder=${encodeURIComponent(vaultId)}&device=${identities[peer.name].deviceId}`;
+          const readHold = async () => ({
+            completion: (await side.machine.syncthing('GET', completionPath)).completion,
+            done: await side.browser.execute(() => window.__syncDone),
+          });
+          await waitForState(readHold, (state) => state.completion === 100 || state.done !== null, 4 * 60_000, `${side.name} peer complete`);
+          await sleep(17_000);
+          const { completion, done } = await readHold();
+          if (completion !== 100 || done !== null) fail(`${side.name} is not in the handoff hold: ${JSON.stringify({ completion, done, sincePress: Date.now() - pressedAt })}`);
+          batch = { ...batch, peerCompletion: completion };
         }
         await closeSettings(side);
         await walkthrough.editNote(side.browser, side.type, { category: note.category, title: note.title, text: ` Edited during the run ${edited}.` });
