@@ -82,10 +82,11 @@ async function blurTitle(browser) {
 
 async function waitForText(browser, selector, predicate, message, timeout = 30_000) {
   let last = '';
+  // timeoutMsg is fixed when the wait starts, so the text last seen is added when it ends.
   await browser.waitUntil(async () => {
     last = await browser.execute((css) => document.querySelector(css)?.innerText.trim() ?? '', selector);
     return predicate(last);
-  }, { timeout, timeoutMsg: `${message}: ${last.slice(0, 300)}` });
+  }, { timeout, timeoutMsg: message }).catch((error) => fail(`${error.message}: ${last.slice(0, 300)}`));
   return last;
 }
 
@@ -687,9 +688,21 @@ export async function resolveConflict(browser, relativePath, choice) {
     return 'pressed';
   }, relativePath, choice);
   if (resolved !== 'pressed') fail(`conflict ${relativePath}: ${resolved} (${choice})`);
-  const text = await waitForText(browser, '.tab-content .import-result', (value) => /Conflict resolved|rror|fail/i.test(value), 'conflict choice reported nothing');
-  if (!text.startsWith('Conflict resolved')) fail(`conflict choice failed: ${text}`);
-  return { relativePath, choice, message: text };
+  const pressedAt = Date.now();
+  // A choice waits for the note lease, which a scheduled run holds through its peer wait,
+  // convergence, and handoff hold (docs/syncthing-sidecar.md), so it can take minutes. That
+  // run's own result can replace the message in Settings, so the entry leaving the list is what
+  // shows the choice was applied; Settings lists conflicts again only after a choice succeeds.
+  let shown = null;
+  await browser.waitUntil(async () => {
+    shown = await browser.execute((path) => ({
+      listed: [...document.querySelectorAll('details.backup-item summary')].some((element) => element.innerText.trim() === path),
+      message: document.querySelector('.tab-content .import-result')?.innerText.trim() ?? '',
+    }), relativePath);
+    return !shown.listed;
+  }, { timeout: 8 * 60_000, timeoutMsg: 'conflict choice was not applied' })
+    .catch((error) => fail(`${error.message}: ${shown?.message.slice(0, 300)}`));
+  return { relativePath, choice, message: shown.message, ms: Date.now() - pressedAt };
 }
 
 // The sidebar's PARA counts, as shown.
