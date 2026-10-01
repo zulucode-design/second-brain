@@ -2995,11 +2995,44 @@ async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir
   };
   const criterion = (number, text, evidence) => record('criterion', 'controller', { number, text, passed: true, ...evidence });
   const closeSettings = (side) => walkthrough.closeSettingsPanel(side.browser);
+  // Diagnostics only: the page's errors and when its editor first showed Unsaved, so a stuck
+  // close names its cause.
+  const instrument = (side) => side.browser.execute(() => {
+    if (window.__acceptance) return;
+    window.__acceptance = { errors: [], dirtySince: null };
+    const original = console.error;
+    console.error = (...parts) => {
+      window.__acceptance.errors.push(parts.map((part) => part?.message ?? String(part)).join(' ').slice(0, 500));
+      original(...parts);
+    };
+    window.addEventListener('unhandledrejection', (event) => window.__acceptance.errors.push(`unhandled: ${String(event.reason?.message ?? event.reason).slice(0, 500)}`));
+    setInterval(() => {
+      const dirty = Boolean(document.querySelector('.save-indicator'));
+      if (dirty && !window.__acceptance.dirtySince) window.__acceptance.dirtySince = { at: new Date().toISOString(), title: document.querySelector('.editor-title input')?.value ?? null };
+      if (!dirty) window.__acceptance.dirtySince = null;
+    }, 250);
+  });
+  const editorState = (side) => side.browser.execute(() => ({
+    title: document.querySelector('.editor-title input')?.value ?? null,
+    dirty: Boolean(document.querySelector('.save-indicator')),
+    viewMode: Boolean(document.querySelector('.readonly-indicator')),
+    ...(window.__acceptance ?? {}),
+  })).catch((error) => ({ error: error.message }));
+  for (const side of sides) await instrument(side);
   const relaunch = async (side) => {
+    const before = await editorState(side);
+    record('before-close', side.name, before);
     await walkthrough.closeWindow(side.browser);
-    await side.machine.appsGone();
+    try {
+      await side.machine.appsGone();
+    } catch (error) {
+      record('close-stuck', side.name, await editorState(side));
+      await shot(side, 'close-stuck');
+      throw error;
+    }
     await closeApp(side.browser);
     side.browser = await openApp(side.machine.port, side.machine.application);
+    await instrument(side);
   };
 
   // A note file is saved by autosave; the check waits for its bytes on the machine itself.
@@ -3033,7 +3066,7 @@ async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir
       const mismatched = Object.entries(prior).filter(([path, hash]) => backup.wanted[path] !== hash);
       if (mismatched.length) fail(`${label}: backup ${first} does not hold ${receiver.name}'s previous state: ${JSON.stringify({ mismatched, backup: backup.wanted })}`);
     }
-    const value = { label, attempts, newBackups: fresh, backup };
+    const value = { label, attempts, newBackups: fresh, backup, editors: Object.fromEntries(await Promise.all(sides.map(async (side) => [side.name, await editorState(side)]))) };
     record('sync-batch', 'controller', value);
     return value;
   };
