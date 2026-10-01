@@ -231,17 +231,24 @@ struct Run {
 fn batch(node: &Node, peer: &Node, fail_backup: bool) -> Run {
     let client = client();
     let mut backups = Vec::new();
-    let result = sync_batch(&client, &node.control, FOLDER, &peer.device_id, || {
-        // A real backup takes time. Any transfer that could land before it finishes has time to
-        // land here, so the recorded vault proves nothing arrived ahead of the backup.
-        std::thread::sleep(Duration::from_secs(3));
-        backups.push(tree(&node.vault));
-        if fail_backup {
-            Err("Sync aborted because its safety backup failed: disk full".to_string())
-        } else {
-            Ok(())
-        }
-    });
+    let (result, _) = sync_batch(
+        &client,
+        &node.control,
+        FOLDER,
+        &peer.device_id,
+        &|| false,
+        || {
+            // A real backup takes time. Any transfer that could land before it finishes has time to
+            // land here, so the recorded vault proves nothing arrived ahead of the backup.
+            std::thread::sleep(Duration::from_secs(3));
+            backups.push(tree(&node.vault));
+            if fail_backup {
+                Err("Sync aborted because its safety backup failed: disk full".to_string())
+            } else {
+                Ok(())
+            }
+        },
+    );
     Run { result, backups }
 }
 
@@ -377,6 +384,61 @@ fn a_second_machine_joining_a_vault_leaves_no_conflict_copy() {
         .collect();
     assert!(conflicts.is_empty(), "conflict copies: {conflicts:?}");
     assert_eq!(tree(&a.vault), tree(&b.vault));
+
+    drop(a);
+    drop(b);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[ignore = "needs the bundled Syncthing binary and takes minutes; see the module docs"]
+fn a_close_once_the_peer_connects_starts_neither_scan_nor_backup() {
+    let root =
+        std::env::temp_dir().join(format!("second-brain-sync-live-{}", uuid::Uuid::new_v4()));
+    let a = start(&root, "a", 28531, 22531);
+    let b = start(&root, "b", 28532, 22532);
+    pair(&a, &b);
+    pair(&b, &a);
+    fs::write(a.vault.join("note.md"), "from a").unwrap();
+    // A shares without running a batch, so B's run sees its peer connect and has a change incoming.
+    patch(
+        &a,
+        &format!("/rest/config/devices/{}", b.device_id),
+        serde_json::json!({"paused": false}),
+    );
+    patch(&a, &folder_path(), serde_json::json!({"paused": false}));
+
+    // The app begins closing the moment B's peer is connected: the run must stop there, before
+    // the scan and before its backup, and leave B's folder paused.
+    let connected = || {
+        rest(&b, reqwest::Method::GET, "/rest/system/connections", None)
+            .pointer(&format!("/connections/{}/connected", a.device_id))
+            .and_then(|value| value.as_bool())
+            == Some(true)
+    };
+    let client = client();
+    let mut backups = 0;
+    let (result, pause_acknowledged) = sync_batch(
+        &client,
+        &b.control,
+        FOLDER,
+        &a.device_id,
+        &connected,
+        || {
+            backups += 1;
+            Ok(())
+        },
+    );
+
+    assert_eq!(
+        result,
+        Err(crate::sync_sidecar::SHUTDOWN_STOPPED.to_string())
+    );
+    assert_eq!(backups, 0, "no backup starts once the close began");
+    assert!(pause_acknowledged);
+    assert_eq!(tree(&b.vault), BTreeMap::new(), "nothing was received");
+    assert_eq!(folder(&b)["paused"], true);
+    assert_eq!(folder(&b)["type"], "sendonly");
 
     drop(a);
     drop(b);

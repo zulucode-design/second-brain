@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { showToast } from '$lib/utils/toast';
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { appConfig, vaultReady, theme } from '$lib/stores/app';
 	import { getAppConfig, openVault, setFontSize, registerSaveParticipant, acknowledgeSaveBeforeClose } from '$lib/api';
@@ -163,6 +164,8 @@
 			appLayout?.releaseClose(event.payload.requestId);
 			noteWindow?.releaseClose(event.payload.requestId);
 			closingRequestId = null;
+			// The save may still be running, so nothing else will say why the window stayed (#189).
+			if (event.payload.timedOut) showToast('Closing timed out. Second Brain is still open. Try closing again.', 6000);
 		});
 		if (!alive()) { closeReleaseUnlisten(); return; }
 		unlistenCloseRelease = closeReleaseUnlisten;
