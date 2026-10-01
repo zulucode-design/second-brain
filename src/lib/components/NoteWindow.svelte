@@ -103,7 +103,7 @@
 		const run = navigationController.enqueue(async () => {
 			const current = editor;
 			if (!current || !alive()) return false;
-			const reloadable = () => alive() && editor === current && !$shutdownPending && !$editorDirty;
+			const reloadable = () => alive() && editor === current && !$shutdownPending && !$editorDirty && !current.hasPendingTitleDraft();
 			const reload = reloadCleanDocument({
 				capture: () => reloadable() && $activeNotePath ? { path: $activeNotePath, revision: current.getLoadedRevision() } : null,
 				read: readNote,

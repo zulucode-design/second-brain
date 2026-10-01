@@ -14,6 +14,7 @@
 	import type { OrphanAttachment } from '$lib/api';
 	import type { ImportResult, BackupEntry, CustomTheme, CustomThemeColors, StartupView, VaultStats, SemanticStatus, SyncStatus, BulkMutationTerminal, SyncConflict } from '$lib/types';
 	import { normalizeStartupView } from '$lib/utils/startup-view';
+	import { applyConflictChoice } from '$lib/utils/conflict-choice';
 	const isCompact = $derived($compactLayout);
 
 
@@ -442,15 +443,14 @@
 	async function handleConflict(conflict: SyncConflict, choice: 'original' | 'conflict') {
 		syncBusy = true; syncMessage = null;
 		try {
-			await resolveSyncConflict(conflict.conflictPath, choice);
-			syncConflicts = await listSyncConflicts();
+			syncConflicts = await applyConflictChoice(
+				() => resolveSyncConflict(conflict.conflictPath, choice),
+				() => void onAfterConflictChoice?.(),
+				listSyncConflicts,
+			);
 			syncMessage = { type: 'success', text: 'Conflict resolved; the discarded version is recoverable from Trash.' };
 		} catch (e) { syncMessage = { type: 'error', text: String(e) }; }
-		finally {
-			syncBusy = false;
-			// The choice may have replaced the open note, even when a later step failed (#191).
-			void onAfterConflictChoice?.();
-		}
+		finally { syncBusy = false; }
 	}
 
 	$effect(() => { if (activeTab === 'sync') refreshSync(); });

@@ -16,6 +16,7 @@ async function importTypeScript(relativePath) {
 const { lockAfterReload, reloadCleanDocument } = await importTypeScript('../src/lib/utils/document-reload.ts');
 const { EditorMutationBarrier } = await importTypeScript('../src/lib/utils/editor-mutation-barrier.ts');
 const { SerializedNavigationController } = await importTypeScript('../src/lib/utils/navigation-controller.ts');
+const { applyConflictChoice } = await importTypeScript('../src/lib/utils/conflict-choice.ts');
 
 function deferred() {
   let resolve;
@@ -208,4 +209,34 @@ test('a close released while it waited takes no lock, and one released while loc
   slowLock.resolve();
   assert.equal(await locking, null);
   assert.equal(releases, 1);
+});
+
+test('a conflict choice reloads the open note at once, without waiting for the conflict list', async () => {
+  const list = deferred();
+  let reloads = 0;
+  const choosing = applyConflictChoice(async () => {}, () => { reloads += 1; }, () => list.promise);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(reloads, 1);
+  list.resolve(['remaining']);
+  assert.deepEqual(await choosing, ['remaining']);
+});
+
+test('a failed conflict choice still reloads, then reports the failure without listing', async () => {
+  let reloads = 0;
+  let listed = 0;
+  await assert.rejects(
+    applyConflictChoice(async () => { throw new Error('Could not reconcile'); }, () => { reloads += 1; }, async () => { listed += 1; }),
+    /Could not reconcile/,
+  );
+  assert.equal(reloads, 1);
+  assert.equal(listed, 0);
+});
+
+test('both windows treat an uncommitted title like unsaved text', async () => {
+  const source = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
+  const editor = await source('src/lib/components/Editor.svelte');
+  assert.match(editor, /export function hasPendingTitleDraft\(\)[\s\S]{0,120}titleInput\.value !== \$activeNote\.meta\.title/);
+  for (const path of ['src/lib/components/AppLayout.svelte', 'src/lib/components/NoteWindow.svelte']) {
+    assert.match(await source(path), /const reloadable = [^;]*!\$editorDirty && !current\.hasPendingTitleDraft\(\)/, path);
+  }
 });

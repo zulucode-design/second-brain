@@ -3199,6 +3199,11 @@
 		return loadedRevision;
 	}
 
+	// A title typed but not committed yet: the input commits on change, so the editor is not dirty.
+	export function hasPendingTitleDraft(): boolean {
+		return !!titleInput && !!$activeNote && titleInput.value !== $activeNote.meta.title;
+	}
+
 
 	// ── Tag editing (active note) ──
 	function toggleTagMenu(e: MouseEvent) {
