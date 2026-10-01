@@ -2927,14 +2927,16 @@ async function runAcceptanceLocked(options) {
   const record = (event, machine, value) => observation(evidencePath, event, machine, value);
   const vaultId = randomUUID();
   // No Ollama: the gate needs keyword search only, and nothing may reach out on its behalf.
-  const fedora = linuxDriverMachine(options.linuxRoot, runId, vaultId, { ollamaBaseUrl: OFFLINE_OLLAMA_URL });
-  const windows = windowsDriverMachine(options.sshHost, runId, vaultId, candidateCommit, { ollamaBaseUrl: OFFLINE_OLLAMA_URL });
   const network = fedoraNetwork(runId);
   const sides = [];
+  let fedora;
+  let windows;
   let windowsPrepared = false;
   let runError;
   let cleanupError;
   try {
+    fedora = linuxDriverMachine(options.linuxRoot, runId, vaultId, { ollamaBaseUrl: OFFLINE_OLLAMA_URL });
+    windows = windowsDriverMachine(options.sshHost, runId, vaultId, candidateCommit, { ollamaBaseUrl: OFFLINE_OLLAMA_URL });
     record('prepared', 'fedora', fedora.prepare());
     windowsPrepared = true;
     record('prepared', 'windows', windows.prepare());
@@ -2963,7 +2965,7 @@ async function runAcceptanceLocked(options) {
       }
     }
     for (const side of sides) await closeApp(side.browser);
-    cleanupError ??= await finishMachine(fedora, evidencePath);
+    if (fedora) cleanupError ??= await finishMachine(fedora, evidencePath);
     if (windowsPrepared) cleanupError ??= await finishMachine(windows, evidencePath);
   }
   if (runError) throw runError;
