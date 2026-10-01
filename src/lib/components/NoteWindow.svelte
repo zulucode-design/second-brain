@@ -17,7 +17,7 @@
 	import { NAVIGATE_NOTE_EVENT, type NavigateNoteRequest, type NoteNavigationResult } from '$lib/utils/navigation';
 	import { SerializedNavigationController } from '$lib/utils/navigation-controller';
 	import { GenerationGate } from '$lib/utils/generation-gate';
-	import { lockAfterReload, reloadCleanDocument } from '$lib/utils/document-reload';
+	import { lockAfterReload, reloadCleanDocument, RELOAD_RETRY_MS } from '$lib/utils/document-reload';
 	import { debounce } from '$lib/utils/debounce';
 	import { keybindings, matchAction } from '$lib/keybindings';
 	import type { RelocationOutcome } from '$lib/types';
@@ -31,6 +31,7 @@
 	let unlistenSyncDone: (() => void) | null = null;
 	// The note reload running now; a close waits it out before taking the editor lock.
 	let openNoteReload: Promise<unknown> = Promise.resolve();
+	let openNoteReloadRetry: ReturnType<typeof setTimeout> | null = null;
 	let unlistenUiScale: (() => void) | null = null;
 	let removeNavigationRequest: (() => void) | null = null;
 	let closingRequestId: string | null = null;
@@ -98,14 +99,16 @@
 	});
 
 	// Same contract as the main window (#191): a clean editor shows the disk's version of its
-	// note after a conflict choice or a sync run rewrites it. Unsaved edits are never replaced.
+	// note after a conflict choice or a sync run rewrites it. Unsaved edits are never replaced; a
+	// draft or an open editor dialog delays it.
 	function reloadOpenNoteFromDisk(alive: () => boolean): Promise<void> {
 		const run = navigationController.enqueue(async () => {
 			const current = editor;
-			if (!current || !alive()) return false;
-			const reloadable = () => alive() && editor === current && !$shutdownPending && !$editorDirty && !current.hasPendingDraft();
+			if (!current || !alive()) return 'skipped' as const;
+			const reloadable = () => alive() && editor === current && !$shutdownPending && !$editorDirty;
 			const reload = reloadCleanDocument({
 				capture: () => reloadable() && $activeNotePath ? { path: $activeNotePath, revision: current.getLoadedRevision() } : null,
+				drafting: () => current.hasPendingDraft(),
 				read: readNote,
 				lock: () => current.lockMutations(),
 				stillValid: (captured) => reloadable() && $activeNotePath === captured.path && current.getLoadedRevision() === captured.revision,
@@ -118,7 +121,13 @@
 			openNoteReload = reload;
 			return reload;
 		});
-		return run.then(() => {}, (error) => console.error('Failed to reload the note window:', error));
+		return run.then((outcome) => {
+			if (outcome !== 'deferred' || openNoteReloadRetry || !alive()) return;
+			openNoteReloadRetry = setTimeout(() => {
+				openNoteReloadRetry = null;
+				if (alive()) void reloadOpenNoteFromDisk(alive);
+			}, RELOAD_RETRY_MS);
+		}, (error) => console.error('Failed to reload the note window:', error));
 	}
 
 	// A rename takes the editor lock too, so it waits its turn with navigation and reloads.
@@ -253,6 +262,7 @@
 
 	onDestroy(() => {
 		lifetimeGate.cancel();
+		if (openNoteReloadRetry) clearTimeout(openNoteReloadRetry);
 		initialLoadGate.cancel();
 		unlistenFileChange?.();
 		unlistenSyncDone?.();

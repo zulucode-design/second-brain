@@ -4,8 +4,10 @@ export interface ReloadCapture {
 }
 
 export interface CleanDocumentReloadOptions<T extends { revision: string }> {
-	/** The open document, or null when there is nothing a reload may replace. */
+	/** The open document, or null when there is nothing a reload may replace (unsaved edits among them). */
 	capture: () => ReloadCapture | null;
+	/** Text typed but not committed, or an editor dialog or menu tied to the current document. */
+	drafting: () => boolean;
 	read: (path: string) => Promise<T>;
 	lock: () => Promise<() => void>;
 	/** Still the same clean document at the same revision, with no close or preview since. */
@@ -14,14 +16,24 @@ export interface CleanDocumentReloadOptions<T extends { revision: string }> {
 }
 
 /**
+ * `deferred`: a draft or an editor dialog was open, so the caller tries again shortly; unsaved
+ * edits are `skipped` for good (#192 owns them).
+ */
+export type ReloadOutcome = 'reloaded' | 'unchanged' | 'deferred' | 'skipped';
+
+/** How long a deferred reload waits before it tries again. */
+export const RELOAD_RETRY_MS = 1_000;
+
+/**
  * Shows the disk's version of the open note when it changed under a clean editor (#191).
  * A conflict choice or a sync run can rewrite the open note; an editor left on the old
  * revision can never save again, and closing the window is a save. Unsaved edits always
- * win: a dirty editor is never replaced.
+ * win: a dirty editor is never replaced, and a draft only delays the reload.
  */
-export async function reloadCleanDocument<T extends { revision: string }>(options: CleanDocumentReloadOptions<T>): Promise<boolean> {
+export async function reloadCleanDocument<T extends { revision: string }>(options: CleanDocumentReloadOptions<T>): Promise<ReloadOutcome> {
 	const captured = options.capture();
-	if (!captured) return false;
+	if (!captured) return 'skipped';
+	if (options.drafting()) return 'deferred';
 	let content: T;
 	try {
 		content = await options.read(captured.path);
@@ -29,15 +41,22 @@ export async function reloadCleanDocument<T extends { revision: string }>(option
 		// A note that is gone or unreadable keeps what the editor shows; moves and the trash
 		// handle their own notes.
 		console.warn('Could not check the open note for changes on disk:', error);
-		return false;
+		return 'skipped';
 	}
-	if (content.revision === captured.revision || !options.stillValid(captured)) return false;
+	if (content.revision === captured.revision) return 'unchanged';
+	const blocked = (): ReloadOutcome | null => {
+		if (!options.stillValid(captured)) return 'skipped';
+		return options.drafting() ? 'deferred' : null;
+	};
+	const before = blocked();
+	if (before) return before;
 	let release: (() => void) | null = null;
 	try {
 		release = await options.lock();
-		if (!options.stillValid(captured)) return false;
+		const under = blocked();
+		if (under) return under;
 		options.commit(captured.path, content);
-		return true;
+		return 'reloaded';
 	} finally {
 		release?.();
 	}

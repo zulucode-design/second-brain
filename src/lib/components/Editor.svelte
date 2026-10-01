@@ -3209,10 +3209,16 @@
 		return loadedRevision;
 	}
 
-	// Text typed but not committed yet, so the editor is not dirty: the note title commits on
-	// change, and callout titles on change or blur.
+	// Text typed but not committed yet, so the editor is not dirty (the note title commits on
+	// change, callout titles on change or blur), or a dialog, menu, or AI result tied to the
+	// current document and its positions. A reload under any of them would lose the draft or
+	// apply it to the wrong place, so it waits for them (#191).
 	export function hasPendingDraft(): boolean {
-		return pendingCalloutTitles.size > 0 || (!!titleInput && !!$activeNote && titleInput.value !== $activeNote.meta.title);
+		return pendingCalloutTitles.size > 0
+			|| (!!titleInput && !!$activeNote && titleInput.value !== $activeNote.meta.title)
+			|| !!(mathModal || linkModal || secretModal || imageToolbar || codeLangDropdown || slashMenu
+				|| taskMetaMenu || taskDuePicker || wikiLinkMenu || aiMenu || aiLoading || aiResult !== null
+				|| textContextMenu || tableContextMenu || linkContextMenu || tablePickerOpen);
 	}
 
 

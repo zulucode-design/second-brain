@@ -81,7 +81,7 @@
 	import { runActiveDocumentMutation } from '$lib/utils/document-mutation';
 	import { describeLoadFailure } from '$lib/utils/async-view-state';
 	import { isExternalNotePath } from '$lib/utils/paths';
-	import { lockAfterReload, reloadCleanDocument } from '$lib/utils/document-reload';
+	import { lockAfterReload, reloadCleanDocument, RELOAD_RETRY_MS } from '$lib/utils/document-reload';
 	import { showToast } from '$lib/utils/toast';
 	import { get } from 'svelte/store';
 	import { repairBanner } from '$lib/utils/repair-banner';
@@ -266,19 +266,21 @@
 	let navigationQueue: Promise<void> = Promise.resolve();
 	// The open-note reload running now; a close waits it out before taking the editor lock.
 	let openNoteReload: Promise<unknown> = Promise.resolve();
+	let openNoteReloadRetry: ReturnType<typeof setTimeout> | null = null;
 
 	// A conflict choice or a sync run can rewrite the open note. A clean editor then shows the
 	// disk's version, so its next save, and the save before close, expect the right revision
-	// (#191). Unsaved edits are never replaced.
+	// (#191). Unsaved edits are never replaced; a draft or an open editor dialog delays it.
 	function reloadOpenNoteFromDisk(): Promise<void> {
 		const lifetime = lifetimeGate.capture();
 		const run = navigationQueue.then(() => {
 			const current = editor;
-			if (!current || !lifetimeGate.isCurrent(lifetime)) return;
+			if (!current || !lifetimeGate.isCurrent(lifetime)) return 'skipped' as const;
 			const reloadable = () => lifetimeGate.isCurrent(lifetime) && editor === current
-				&& !$shutdownPending && !$viewerNote && !$holdingPreview && !$editorDirty && !current.hasPendingDraft();
+				&& !$shutdownPending && !$viewerNote && !$holdingPreview && !$editorDirty;
 			const reload = reloadCleanDocument({
 				capture: () => reloadable() && $activeNotePath ? { path: $activeNotePath, revision: current.getLoadedRevision() } : null,
+				drafting: () => current.hasPendingDraft(),
 				read: readNote,
 				lock: () => current.lockMutations(),
 				stillValid: (captured) => reloadable() && $activeNotePath === captured.path && current.getLoadedRevision() === captured.revision,
@@ -291,7 +293,13 @@
 			return reload;
 		});
 		navigationQueue = run.then(() => {}, () => {});
-		return run.then(() => {}, (error) => console.error('Failed to reload the open note:', error));
+		return run.then((outcome) => {
+			if (outcome !== 'deferred' || openNoteReloadRetry || !lifetimeGate.isCurrent(lifetime)) return;
+			openNoteReloadRetry = setTimeout(() => {
+				openNoteReloadRetry = null;
+				if (lifetimeGate.isCurrent(lifetime)) void reloadOpenNoteFromDisk();
+			}, RELOAD_RETRY_MS);
+		}, (error) => console.error('Failed to reload the open note:', error));
 	}
 
 	async function ensureCurrentNoteSaved(reason: string): Promise<boolean> {
@@ -1217,6 +1225,7 @@
 
 	onDestroy(() => {
 		lifetimeGate.cancel();
+		if (openNoteReloadRetry) clearTimeout(openNoteReloadRetry);
 		startupGate.cancel();
 		void releaseOwnedVaultSwitchGate();
 		unlistenFileChange?.();
