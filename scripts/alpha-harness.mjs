@@ -3469,6 +3469,80 @@ async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir
   });
   criterion(8, 'A conflicting edit surfaces both versions for the user to choose; the conflict copy never appears as an ordinary note in search, the graph, or PARA counts', { conflict });
 
+  // ── #189: closing during a sync run exits inside the close handshake's 10 s ──
+  // Each machine closes once while its run waits for a peer that has quit, and once during the
+  // handoff hold after both runs confirmed. The note has an edit the run's lease is holding back,
+  // so the close has to stop the run for that save to land.
+  const closeDuringSync = await step('close-during-sync', async () => {
+    const results = [];
+    const folderPath = `/rest/config/folders/${encodeURIComponent(vaultId)}`;
+    const reopen = async (side) => {
+      side.browser = await openApp(side.machine.port, side.machine.application);
+      await instrument(side);
+    };
+    for (const side of sides) {
+      const peer = peerOf(side);
+      for (const phase of ['peer-wait', 'handoff']) {
+        const label = `${phase}-${side.name}`;
+        const word = marker(`close${label}`);
+        const edited = marker(`edit${label}`);
+        const note = { category: 'Projects', title: `Close ${label} ${runId}`, body: `Close test ${word}.` };
+        const notePath = `${note.category}/${note.title}.md`;
+        await walkthrough.createNote(side.browser, side.type, note);
+        await waitForFile(side, Object.assign((summary) => summary.markers[word].includes(notePath), { markers: [word] }), `${label} note saved`);
+        if (phase === 'peer-wait') {
+          await walkthrough.closeWindow(peer.browser);
+          await peer.machine.appsGone();
+          await closeApp(peer.browser);
+        }
+        const pressedAt = Date.now();
+        await walkthrough.pressSyncNow(side.browser);
+        if (phase === 'handoff') await walkthrough.pressSyncNow(peer.browser);
+        await waitForState(async () => (await side.machine.syncthing('GET', folderPath)).paused, (paused) => paused === false, 30_000, `${side.name} batch running`);
+        let batch = { folderPaused: false };
+        if (phase === 'handoff') {
+          // Both runs confirm after 15 s of clean observations, then hold for up to 60 s.
+          await sleep(Math.max(0, pressedAt + 25_000 - Date.now()));
+          const completion = await side.machine.syncthing('GET', `/rest/db/completion?folder=${encodeURIComponent(vaultId)}&device=${identities[peer.name].deviceId}`);
+          const done = await side.browser.execute(() => window.__syncDone);
+          if (completion.completion !== 100 || done !== null) fail(`${side.name} is not in the handoff hold: ${JSON.stringify({ completion: completion.completion, done })}`);
+          batch = { ...batch, peerCompletion: completion.completion };
+        }
+        await closeSettings(side);
+        await walkthrough.editNote(side.browser, side.type, { category: note.category, title: note.title, text: ` Edited during the run ${edited}.` });
+        const before = await editorState(side);
+        if (!before.dirty) fail(`${label}: the edit saved during the run, so the run held no lease`);
+        const closedAt = Date.now();
+        await walkthrough.closeWindow(side.browser);
+        await waitForState(() => side.machine.syncRoles(), (rows) => !rows.some((row) => row.role === 'App'), 10_000, `${label}: app exit within 10 s of close`)
+          .catch(async (error) => {
+            record('close-stuck', side.name, await editorState(side));
+            await shot(side, `${label}-close-stuck`);
+            throw error;
+          });
+        const exitSeconds = (Date.now() - closedAt) / 1000;
+        await side.machine.appsGone();
+        await closeApp(side.browser);
+        const saved = side.machine.vaultSummary([edited]).markers[edited].includes(notePath);
+        if (!saved) fail(`${label}: the edit made during the run was not saved before exit`);
+        await reopen(side);
+        if (phase === 'peer-wait') await reopen(peer);
+        results.push({ label, exitSeconds, dirtyAtClose: before.dirty, saved, ...batch });
+      }
+    }
+    for (const side of sides) await walkthrough.vaultOpened(side.browser);
+    const words = sides.flatMap((side) => ['peer-wait', 'handoff'].map((phase) => marker(`edit${phase}-${side.name}`)));
+    await syncBatch('after-close-tests', {
+      mark: markBackups(),
+      until: () => sides.every((side) => {
+        const summary = side.machine.vaultSummary(words);
+        return words.every((word) => summary.markers[word].some((path) => path.startsWith('Projects/')));
+      }),
+    });
+    return { results, convergedAfter: true };
+  });
+  record('close-during-sync', 'controller', { issue: 189, ...closeDuringSync });
+
   // ── 10. No internet (Fedora offline; Windows app isolated) and no Notion ──
   const offline = await step('offline', async () => {
     const peerIp = identities.windows.tailscaleIp;
