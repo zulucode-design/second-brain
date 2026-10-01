@@ -2029,7 +2029,9 @@ mod tests {
         };
         let started = Instant::now();
         assert!(guard.pause_within(STOP_PAUSE_BUDGET).is_err());
-        assert!(started.elapsed() <= STOP_PAUSE_BUDGET);
+        // Windows retries a refused loopback connect until the call's timeout, so each call can
+        // run its full share; the slack is the cost of making them, not a third call.
+        assert!(started.elapsed() < STOP_PAUSE_BUDGET + Duration::from_millis(500));
     }
 
     #[test]
