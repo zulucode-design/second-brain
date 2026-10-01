@@ -3382,7 +3382,8 @@ async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir
     }
     const resolver = W;
     const plan = notes.map((note) => {
-      const entry = listed[resolver.name].find((item) => item.relativePath.replaceAll('\\', '/') === pathOf(note));
+      // relativePath names the conflict copy: `<category>/<title>.sync-conflict-<stamp>-<device>.md`.
+      const entry = listed[resolver.name].find((item) => item.relativePath.startsWith(`${note.category}/${note.title}.sync-conflict-`));
       if (!entry) fail(`no conflict for ${pathOf(note)}`);
       const copyWord = allWords.find((word) => entry.conflictContent.includes(word) && !(entry.originalContent ?? '').includes(word));
       const currentWord = allWords.find((word) => (entry.originalContent ?? '').includes(word) && !entry.conflictContent.includes(word));
