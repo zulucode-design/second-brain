@@ -2967,8 +2967,10 @@ async function runAcceptanceLocked(options) {
       }
     }
     for (const side of sides) await closeApp(side.browser);
-    if (fedora) cleanupError ??= await finishMachine(fedora, evidencePath);
-    if (windowsPrepared) cleanupError ??= await finishMachine(windows, evidencePath);
+    // Each machine is always cleaned up; `??=` would skip the call once an earlier error was kept.
+    const fedoraCleanup = fedora ? await finishMachine(fedora, evidencePath) : null;
+    const windowsCleanup = windowsPrepared ? await finishMachine(windows, evidencePath) : null;
+    cleanupError ??= fedoraCleanup ?? windowsCleanup;
   }
   if (runError) throw runError;
   if (cleanupError) throw cleanupError;
@@ -3048,7 +3050,11 @@ async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir
   // state the batch has to reach, so a batch is repeated (at most three times) until it holds.
   // The receiver's first new pre-sync backup must hold `prior`, the receiver's own state of the
   // watched paths from before the change was made (criterion 9).
+  // Notes and attachments are what a batch brings; app-local files (history, indexes) are not.
+  const syncedPath = (path) => (path.endsWith('.md') && !path.startsWith('.helixnotes/')) || path.startsWith('.helixnotes/attachments/');
   const syncBatch = async (label, { mark, receiver, prior, until }) => {
+    const startMark = markBackups();
+    const before = Object.fromEntries(sides.map((side) => [side.name, side.machine.vaultSummary().files]));
     const attempts = [];
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       await Promise.all(sides.map((side) => walkthrough.pressSyncNow(side.browser)));
@@ -3068,7 +3074,23 @@ async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir
       const mismatched = Object.entries(prior).filter(([path, hash]) => backup.wanted[path] !== hash);
       if (mismatched.length) fail(`${label}: backup ${first} does not hold ${receiver.name}'s previous state: ${JSON.stringify({ mismatched, backup: backup.wanted })}`);
     }
-    const value = { label, attempts, newBackups: fresh, backup, editors: Object.fromEntries(await Promise.all(sides.map(async (side) => [side.name, await editorState(side)]))) };
+    // Criterion 9 for every batch: nothing edits during one, so every note or attachment it changed
+    // on a machine came in, and that machine's first backup since the batch began must hold each
+    // path as it was before.
+    const received = {};
+    for (const side of sides) {
+      const after = side.machine.vaultSummary().files;
+      const prev = before[side.name];
+      const changed = [...new Set([...Object.keys(prev), ...Object.keys(after)])].filter((path) => syncedPath(path) && prev[path] !== after[path]).sort();
+      if (!changed.length) continue;
+      const [first] = preSync(side).filter((name) => !startMark[side.name].includes(name));
+      if (!first) fail(`${label}: ${side.name} received ${changed.length} change(s) without a new pre-sync backup: ${JSON.stringify(changed.slice(0, 5))}`);
+      const { wanted } = side.machine.backupSummary(first, changed, []);
+      const mismatched = changed.filter((path) => wanted[path] !== (prev[path] ?? null));
+      if (mismatched.length) fail(`${label}: backup ${first} does not hold ${side.name}'s previous state of ${JSON.stringify(mismatched.slice(0, 5))}`);
+      received[side.name] = { backup: first, changed };
+    }
+    const value = { label, attempts, newBackups: fresh, backup, received, editors: Object.fromEntries(await Promise.all(sides.map(async (side) => [side.name, await editorState(side)]))) };
     record('sync-batch', 'controller', value);
     return value;
   };
@@ -3410,10 +3432,12 @@ async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir
     });
     // Which edit lost is Syncthing's choice; the conflict-only words are read from the copies.
     const listed = {};
+    const shownOn = {};
     for (const side of sides) {
       const { conflicts, shown } = await walkthrough.listConflicts(side.browser);
       if (conflicts.length !== notes.length || shown.length !== notes.length) fail(`${side.name} Settings lists ${shown.length} conflicts`);
       listed[side.name] = conflicts;
+      shownOn[side.name] = shown;
     }
     const resolver = W;
     const plan = notes.map((note) => {
@@ -3425,6 +3449,19 @@ async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir
       if (!copyWord || !currentWord) fail(`conflict on ${pathOf(note)} does not hold the two edits`);
       return { note, entry, copyWord, currentWord, choice: note.name === 'keep' ? 'Keep current' : 'Use conflict' };
     });
+    // Settings shows both versions as text: current first, then the conflict copy, each holding
+    // only its own edit.
+    for (const side of sides) {
+      for (const item of plan) {
+        const entry = listed[side.name].find((candidate) => candidate.relativePath.startsWith(`${item.note.category}/${item.note.title}.sync-conflict-`));
+        const shown = shownOn[side.name].find((candidate) => candidate.relativePath === entry?.relativePath);
+        const [current, copy] = shown?.versions ?? [];
+        const own = (text, word, other) => typeof text === 'string' && text.includes(word) && !text.includes(other);
+        if (!own(current, item.currentWord, item.copyWord) || !own(copy, item.copyWord, item.currentWord)) {
+          fail(`${side.name} Settings does not show both versions of ${pathOf(item.note)}: ${JSON.stringify({ versions: shown?.versions?.map((text) => text.slice(0, 200)) })}`);
+        }
+      }
+    }
     const exclusion = {};
     for (const side of sides) {
       const counts = await walkthrough.paraCounts(side.browser);

@@ -222,12 +222,23 @@ async function searchFor(browser, type, mode, query) {
   await input.waitForDisplayed({ timeout: 10_000 });
   await pressText(browser, '.search-modes button', mode);
   await type(browser, input, query);
-  // Results arrive after the input debounce; an empty list is reported, not waited out forever.
-  await browser.waitUntil(
-    async () => (await browser.execute(() => document.querySelectorAll('.result-title').length)) > 0,
-    { timeout: 60_000 },
-  ).catch(() => {});
-  const titles = await browser.execute(() => [...document.querySelectorAll('.result-title')].map((element) => element.innerText.trim()));
+  // Every keystroke starts a new search and shows "Searching…", so once the input holds the whole
+  // query and that is gone, the panel shows this query's results, its "No results", or its error.
+  // An empty list counts only as a finished search; a failed or unfinished one fails here.
+  let shown = null;
+  await browser.waitUntil(async () => {
+    shown = await browser.execute((wanted) => ({
+      value: document.querySelector('input[placeholder="Search notes..."]')?.value ?? null,
+      searching: Boolean(document.querySelector('.search-empty')),
+      error: document.querySelector('.search-error')?.innerText.trim() ?? null,
+      empty: (document.querySelector('.no-results')?.innerText ?? '').includes(`No results for "${wanted}"`),
+      titles: [...document.querySelectorAll('.result-title')].map((element) => element.innerText.trim()),
+    }), query);
+    return shown.value === query && !shown.searching && Boolean(shown.error || shown.empty || shown.titles.length);
+  }, { timeout: 60_000, timeoutMsg: 'search did not finish' })
+    .catch(() => fail(`${mode} search for "${query}" did not finish: ${JSON.stringify(shown)}`));
+  if (shown.error) fail(`${mode} search for "${query}" failed: ${shown.error}`);
+  const { titles } = shown;
   await browser.execute(() => document.querySelector('input[placeholder="Search notes..."]')
     .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
   return titles;
@@ -668,6 +679,8 @@ export async function listConflicts(browser) {
   const result = await backend(browser, 'list_sync_conflicts');
   if (!result.ok) fail(`listing conflicts failed: ${result.error}`);
   await openSync(browser);
+  // A closed <details> renders nothing, so each entry is expanded before its versions are read.
+  await browser.execute(() => document.querySelectorAll('details.backup-item').forEach((item) => { item.open = true; }));
   const shown = await browser.execute(() => [...document.querySelectorAll('details.backup-item')].map((item) => ({
     relativePath: item.querySelector('summary')?.innerText.trim(),
     versions: [...item.querySelectorAll('pre.sync-preview')].map((element) => element.innerText),
