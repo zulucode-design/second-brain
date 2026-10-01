@@ -20,6 +20,13 @@ export class SerializedNavigationController<T> {
 		this.options = options;
 	}
 
+	/** Runs other work that takes the editor lock in turn with navigation. */
+	enqueue<R>(work: () => Promise<R>): Promise<R> {
+		const run = this.queue.then(work);
+		this.queue = run.then(() => {}, () => {});
+		return run;
+	}
+
 	navigate(path: string): Promise<NoteNavigationResult> {
 		if (!path || this.options.isBlocked()) return Promise.resolve('blocked');
 		const run = this.queue.then(() => this.navigateNow(path));

@@ -17,8 +17,10 @@
 	import { NAVIGATE_NOTE_EVENT, type NavigateNoteRequest, type NoteNavigationResult } from '$lib/utils/navigation';
 	import { SerializedNavigationController } from '$lib/utils/navigation-controller';
 	import { GenerationGate } from '$lib/utils/generation-gate';
+	import { lockAfterReload, reloadCleanDocument } from '$lib/utils/document-reload';
+	import { debounce } from '$lib/utils/debounce';
 	import { keybindings, matchAction } from '$lib/keybindings';
-	import type { FileEvent } from '$lib/types';
+	import type { RelocationOutcome } from '$lib/types';
 
 	let { notePath }: { notePath: string } = $props();
 
@@ -26,6 +28,9 @@
 	const appWebview = getCurrentWebview();
 	let editor = $state<Editor>(null!);
 	let unlistenFileChange: (() => void) | null = null;
+	let unlistenSyncDone: (() => void) | null = null;
+	// The note reload running now; a close waits it out before taking the editor lock.
+	let openNoteReload: Promise<unknown> = Promise.resolve();
 	let unlistenUiScale: (() => void) | null = null;
 	let removeNavigationRequest: (() => void) | null = null;
 	let closingRequestId: string | null = null;
@@ -92,6 +97,35 @@
 		onReadFailure: (error) => console.error('Failed to navigate note window:', error),
 	});
 
+	// Same contract as the main window (#191): a clean editor shows the disk's version of its
+	// note after a conflict choice or a sync run rewrites it. Unsaved edits are never replaced.
+	function reloadOpenNoteFromDisk(alive: () => boolean): Promise<void> {
+		const run = navigationController.enqueue(async () => {
+			const current = editor;
+			if (!current || !alive()) return false;
+			const reloadable = () => alive() && editor === current && !$shutdownPending && !$editorDirty;
+			const reload = reloadCleanDocument({
+				capture: () => reloadable() && $activeNotePath ? { path: $activeNotePath, revision: current.getLoadedRevision() } : null,
+				read: readNote,
+				lock: () => current.lockMutations(),
+				stillValid: (captured) => reloadable() && $activeNotePath === captured.path && current.getLoadedRevision() === captured.revision,
+				commit: (path, content) => {
+					$activeNote = content;
+					current.loadNote(path, content.content, undefined, false, content.revision, true);
+					void appWindow.setTitle(`${content.meta.title} - Second Brain`);
+				},
+			});
+			openNoteReload = reload;
+			return reload;
+		});
+		return run.then(() => {}, (error) => console.error('Failed to reload the note window:', error));
+	}
+
+	// A rename takes the editor lock too, so it waits its turn with navigation and reloads.
+	function relocateInTurn(path: string, reason: string, mutation: () => Promise<RelocationOutcome>): Promise<string | null> {
+		return navigationController.enqueue(async () => editor ? editor.relocateUnqueued(path, reason, mutation) : null);
+	}
+
 	async function navigateToPathResult(path: string): Promise<NoteNavigationResult> {
 		initialLoadGate.invalidate();
 		if (path === currentPath) return 'navigated';
@@ -134,7 +168,14 @@
 			$readOnly = true;
 			await tick();
 			try {
-				releaseCloseMutationLock = editor ? await editor.lockMutations() : null;
+				// A reload sees the close and ends without loading; its lock goes first.
+				const held = await lockAfterReload(
+					openNoteReload,
+					async () => editor ? editor.lockMutations() : null,
+					() => closingRequestId === requestId && $shutdownPending,
+				);
+				if (!held) return false;
+				releaseCloseMutationLock = held.release;
 			} catch (error) {
 				console.error('Could not prepare note window for close:', error);
 				return false;
@@ -194,33 +235,27 @@
 		}
 		if (!alive()) return;
 
-		const fileChangeUnlisten = await listenAppEvent('fileChanged', async (event) => {
-			if (!alive() || event.payload.path !== currentPath || event.payload.event_type !== 'modify' || $editorDirty) return;
-			const watchedPath = currentPath;
-			try {
-				const content = await readNote(watchedPath);
-				if (!alive() || currentPath !== watchedPath || $editorDirty) return;
-				// Ignore the file-watcher echo of our own save; only reload genuine external edits.
-				if (content.content.trim() === (editor?.getCurrentBody() ?? '').trim()) return;
-				let release: (() => void) | null = null;
-				try {
-					release = editor ? await editor.lockMutations() : null;
-					if (!alive() || currentPath !== watchedPath || $editorDirty || $shutdownPending) return;
-					$activeNote = content;
-					editor?.loadNote(watchedPath, content.content, undefined, false, content.revision);
-				} finally {
-					release?.();
-				}
-			} catch (_) {}
+		// Any event type and path: a conflict choice replaces the note by renaming onto it, and
+		// watcher paths need not match byte for byte. The revision check ignores our own saves.
+		const debouncedReload = debounce(() => { if (alive()) void reloadOpenNoteFromDisk(alive); }, 300);
+		const fileChangeUnlisten = await listenAppEvent('fileChanged', () => {
+			if (alive()) debouncedReload();
 		});
 		if (!alive()) { fileChangeUnlisten(); return; }
 		unlistenFileChange = fileChangeUnlisten;
+		// A sync run suppresses the watcher, so its end is the only signal for what it rewrote.
+		const syncDoneUnlisten = await listenAppEvent('syncDone', (event) => {
+			if (alive() && event.payload.outcome !== 'failure') void reloadOpenNoteFromDisk(alive);
+		});
+		if (!alive()) { syncDoneUnlisten(); return; }
+		unlistenSyncDone = syncDoneUnlisten;
 	});
 
 	onDestroy(() => {
 		lifetimeGate.cancel();
 		initialLoadGate.cancel();
 		unlistenFileChange?.();
+		unlistenSyncDone?.();
 		unlistenUiScale?.();
 		removeNavigationRequest?.();
 	});
@@ -302,7 +337,7 @@
 		</div>
 	{:else}
 		<div class="nw-editor">
-			<Editor bind:this={editor} onNavigateNote={navigateToPath} onNavigateWikiNote={navigateToPathResult} />
+			<Editor bind:this={editor} onNavigateNote={navigateToPath} onNavigateWikiNote={navigateToPathResult} onRelocateActiveDocument={relocateInTurn} />
 		</div>
 	{/if}
 </div>

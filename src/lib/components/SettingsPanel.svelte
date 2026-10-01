@@ -17,10 +17,11 @@
 	const isCompact = $derived($compactLayout);
 
 
-	let { onRequestVaultSwitch = async () => false, onBeforeRestore, onAfterRestore }: {
+	let { onRequestVaultSwitch = async () => false, onBeforeRestore, onAfterRestore, onAfterConflictChoice }: {
 		onRequestVaultSwitch?: () => Promise<boolean>;
 		onBeforeRestore?: () => Promise<boolean>;
 		onAfterRestore?: () => Promise<void>;
+		onAfterConflictChoice?: () => Promise<void>;
 	} = $props();
 
 	type Tab = 'general' | 'editor' | 'styling' | 'import' | 'backup' | 'sync' | 'maintenance' | 'ai' | 'notion';
@@ -445,7 +446,11 @@
 			syncConflicts = await listSyncConflicts();
 			syncMessage = { type: 'success', text: 'Conflict resolved; the discarded version is recoverable from Trash.' };
 		} catch (e) { syncMessage = { type: 'error', text: String(e) }; }
-		finally { syncBusy = false; }
+		finally {
+			syncBusy = false;
+			// The choice may have replaced the open note, even when a later step failed (#191).
+			void onAfterConflictChoice?.();
+		}
 	}
 
 	$effect(() => { if (activeTab === 'sync') refreshSync(); });
