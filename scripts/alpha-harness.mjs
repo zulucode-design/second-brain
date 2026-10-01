@@ -2814,7 +2814,8 @@ export function vaultSummary(vault, markers = []) {
     }
   };
   visit(vault, '');
-  return { files, markers: found, conflicts: Object.keys(files).filter((path) => path.includes('.sync-conflict-')) };
+  // A copy archived under .helixnotes/trash after a choice is no longer a conflict.
+  return { files, markers: found, conflicts: Object.keys(files).filter((path) => path.includes('.sync-conflict-') && !path.startsWith('.helixnotes/')) };
 }
 
 // What one backup archive holds for the paths asked about (SHA-256, or null when absent), and

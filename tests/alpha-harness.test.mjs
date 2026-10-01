@@ -471,8 +471,9 @@ test('acceptance vault summary hashes files, finds markers, and names conflict c
   writeFileSync(join(vault, 'Areas', 'Kept.md'), 'kept zqone');
   writeFileSync(join(vault, 'Areas', 'Kept.sync-conflict-20260101-000000-ABCDEFG.md'), 'copy zqtwo');
   writeFileSync(join(vault, '.helixnotes', 'trash', 'Gone.md'), 'gone zqone');
+  writeFileSync(join(vault, '.helixnotes', 'trash', '1_Old.sync-conflict-20260101-000000-ABCDEFG.md'), 'archived');
   const summary = vaultSummary(vault, ['zqone', 'zqtwo', 'zqnone']);
-  assert.deepEqual(Object.keys(summary.files).sort(), ['.helixnotes/trash/Gone.md', 'Areas/Kept.md', 'Areas/Kept.sync-conflict-20260101-000000-ABCDEFG.md']);
+  assert.deepEqual(Object.keys(summary.files).sort(), ['.helixnotes/trash/1_Old.sync-conflict-20260101-000000-ABCDEFG.md', '.helixnotes/trash/Gone.md', 'Areas/Kept.md', 'Areas/Kept.sync-conflict-20260101-000000-ABCDEFG.md']);
   assert.match(summary.files['Areas/Kept.md'], /^[0-9a-f]{64}$/);
   assert.deepEqual(summary.markers, { zqone: ['.helixnotes/trash/Gone.md', 'Areas/Kept.md'], zqtwo: ['Areas/Kept.sync-conflict-20260101-000000-ABCDEFG.md'], zqnone: [] });
   assert.deepEqual(summary.conflicts, ['Areas/Kept.sync-conflict-20260101-000000-ABCDEFG.md']);
