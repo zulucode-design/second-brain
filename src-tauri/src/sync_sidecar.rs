@@ -1560,6 +1560,15 @@ fn stop_writer(app: &AppHandle) {
     }
 }
 
+/// Called before reconciliation and before the lease goes, closing or not: a pause Syncthing did not
+/// acknowledge, even after the guard's retry, may leave it writing received files, so it is
+/// stopped first (#189).
+fn settle_writer(pause_acknowledged: bool, stop_writer: impl FnOnce()) {
+    if !pause_acknowledged {
+        stop_writer();
+    }
+}
+
 /// Returns once `alive` reports false, logging while it waits.
 fn wait_for_exit(mut alive: impl FnMut() -> bool, poll: Duration) {
     let started = std::time::Instant::now();
@@ -1710,9 +1719,7 @@ fn run_sync(
                     Ok(())
                 },
             );
-            if stopped() && !pause_acknowledged {
-                stop_writer(&app);
-            }
+            settle_writer(pause_acknowledged, || stop_writer(&app));
             if backed_up {
                 let reconciliation =
                     crate::commands::reconcile_bulk_projections(&state, &vault.to_string_lossy());
@@ -1765,10 +1772,10 @@ mod tests {
     use super::{
         append_durable_temp_ignore_if_missing, convergence_observation_is_complete,
         harden_generated_config_xml, hold_for_peer_handoff, read_control, refused_sync_terminal,
-        stop_check, tailscale_ipv4, take_writers, until_next_sync_window, valid_device_id,
-        wait_for_exit, write_control, CompletionLatch, ControlState, FolderPauseGuard, Runtime,
-        SyncProgress, SyncTrigger, SyncthingApi, DURABLE_TEMP_IGNORE, PEER_HANDOFF_GRACE,
-        PULL_ERROR_EXPLAINS_FAILURE, SHUTDOWN_STOPPED, STOP_PAUSE_BUDGET,
+        settle_writer, stop_check, tailscale_ipv4, take_writers, until_next_sync_window,
+        valid_device_id, wait_for_exit, write_control, CompletionLatch, ControlState,
+        FolderPauseGuard, Runtime, SyncProgress, SyncTrigger, SyncthingApi, DURABLE_TEMP_IGNORE,
+        PEER_HANDOFF_GRACE, PULL_ERROR_EXPLAINS_FAILURE, SHUTDOWN_STOPPED, STOP_PAUSE_BUDGET,
         SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL, SYNC_POLL_INTERVAL,
     };
     use crate::bulk_mutation::{BulkMutationCoordinator, BulkMutationOutcome, LeaseRefused};
@@ -1972,6 +1979,16 @@ mod tests {
             vec![4242],
             "it stays recorded until seen gone"
         );
+    }
+
+    #[test]
+    fn an_unacknowledged_pause_stops_syncthing_whether_or_not_the_app_is_closing() {
+        let stopped = std::cell::Cell::new(false);
+        settle_writer(false, || stopped.set(true));
+        assert!(stopped.get());
+        let stopped = std::cell::Cell::new(false);
+        settle_writer(true, || stopped.set(true));
+        assert!(!stopped.get());
     }
 
     #[test]
