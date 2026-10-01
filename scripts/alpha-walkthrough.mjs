@@ -792,4 +792,4 @@ export async function clipFails(browser, type, { url, category }) {
   return { url, message };
 }
 
-export { appendToNote, closeSettings as closeSettingsPanel, openCategory };
+export { appendToNote, closeSettings as closeSettingsPanel, editorText, openCategory };

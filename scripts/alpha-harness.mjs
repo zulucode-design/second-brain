@@ -3450,6 +3450,9 @@ async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir
       exclusion[side.name] = { counts, graphNotes: graphPaths.length, graphPanel: graphView.stats, conflictOnlySearchHits: 0 };
       await shot(side, 'c8-conflicts');
     }
+    // #191: both machines keep the "use" note open through the choice and the sync that follows.
+    const useItem = plan.find((item) => item.note.name === 'use');
+    for (const side of sides) await walkthrough.openNoteIn(side.browser, useItem.note.category, useItem.note.title);
     const resolved = [];
     for (const item of plan) resolved.push(await walkthrough.resolveConflict(resolver.browser, item.entry.relativePath, item.choice));
     await closeSettings(resolver);
@@ -3465,7 +3468,37 @@ async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir
         });
       }),
     });
-    return { exclusion, resolved: plan.map((item) => ({ path: pathOf(item.note), choice: item.choice, chosenOnBoth: true, discardedInTrash: true })), resolvedOn: resolver.name, messages: resolved.map((item) => item.message) };
+    // Each open editor shows the chosen version without a reopen: the resolver's after its own
+    // choice, the receiver's after the sync. An edit then saves, so the editor took the new
+    // revision. The receiver's edit waits for one more batch to bring it the resolver's edit,
+    // so the two edits never conflict.
+    const showsChosen = async (side, words) => {
+      let shown = null;
+      await side.browser.waitUntil(async () => {
+        shown = { ...(await editorState(side)), text: await walkthrough.editorText(side.browser) };
+        return shown.title === useItem.note.title && !shown.dirty && words.every((word) => shown.text.includes(word)) && !shown.text.includes(useItem.currentWord);
+      }, { timeout: 30_000, interval: 1_000 }).catch(() => fail(`${side.name} editor does not show the chosen version: ${JSON.stringify({ ...shown, text: shown?.text.slice(0, 300) })}`));
+      return shown;
+    };
+    const editAfterChoice = async (side) => {
+      const word = marker(`after${side.name.slice(0, 3)}`);
+      await walkthrough.appendToNote(side.browser, side.type, ` After the choice ${word}.`);
+      await waitForFile(side, Object.assign((summary) => summary.markers[word].includes(pathOf(useItem.note)), { markers: [word] }), `${side.name} edit after the choice saved`);
+      return word;
+    };
+    const receiver = peerOf(resolver);
+    const openEditors = {};
+    for (const side of sides) await showsChosen(side, [useItem.copyWord]);
+    const resolverWord = await editAfterChoice(resolver);
+    await syncBatch('after-choice-edit', {
+      mark: markBackups(),
+      until: () => receiver.machine.vaultSummary([resolverWord]).markers[resolverWord].includes(pathOf(useItem.note)),
+    });
+    await showsChosen(receiver, [useItem.copyWord, resolverWord]);
+    const receiverWord = await editAfterChoice(receiver);
+    openEditors[resolver.name] = { showedChoiceWithoutReopen: true, editSaved: resolverWord };
+    openEditors[receiver.name] = { showedChoiceWithoutReopen: true, showedSyncedEditWithoutReopen: true, editSaved: receiverWord };
+    return { exclusion, resolved: plan.map((item) => ({ path: pathOf(item.note), choice: item.choice, chosenOnBoth: true, discardedInTrash: true })), resolvedOn: resolver.name, messages: resolved.map((item) => item.message), openEditors };
   });
   criterion(8, 'A conflicting edit surfaces both versions for the user to choose; the conflict copy never appears as an ordinary note in search, the graph, or PARA counts', { conflict });
 
