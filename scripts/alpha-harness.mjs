@@ -3473,8 +3473,18 @@ async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir
   const offline = await step('offline', async () => {
     const peerIp = identities.windows.tailscaleIp;
     const clipBefore = await walkthrough.clipPage(W.browser, W.type, { url: ACCEPTANCE_CLIP_BEFORE, category: 'Resources', expectedText: 'Zettelkasten' });
-    const before = { fedora: network.probe(peerIp), windowsAppClip: clipBefore.title };
-    if (typeof before.fedora.httpsByAddress !== 'number') fail(`Fedora had no internet before isolation: ${JSON.stringify(before.fedora)}`);
+    // Both HTTPS probes have to work, or "fails during" proves nothing; one retry covers a slow
+    // public host.
+    const online = async () => {
+      let probe = network.probe(peerIp);
+      if (typeof probe.httpsByAddress !== 'number' || typeof probe.httpsByName !== 'number') {
+        await sleep(5_000);
+        probe = { ...network.probe(peerIp), retried: true };
+      }
+      if (typeof probe.httpsByAddress !== 'number' || typeof probe.httpsByName !== 'number') fail(`Fedora is not online: ${JSON.stringify(probe)}`);
+      return probe;
+    };
+    const before = { fedora: await online(), windowsAppClip: clipBefore.title };
     const isolation = { fedora: network.isolate(), windows: W.machine.isolation('isolate') };
     const programs = isolation.windows.programs.map((path) => path.split('\\').pop().toLowerCase());
     if (!['second-brain.exe', 'syncthing.exe', 'msedgewebview2.exe'].every((name) => programs.includes(name))) fail(`Windows isolation misses a program: ${programs}`);
@@ -3514,8 +3524,7 @@ async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir
     const end = { fedora: network.probe(peerIp), windows: W.machine.isolation('state') };
     if (end.fedora.publicRoute4 || typeof end.fedora.httpsByAddress === 'number' || end.windows.rules.length !== isolation.windows.rules.length) fail(`isolation ended before the trips finished: ${JSON.stringify(end)}`);
     const restored = { fedora: await network.restore(), windows: W.machine.isolation('restore') };
-    const after = { fedora: network.probe(peerIp) };
-    if (typeof after.fedora.httpsByAddress !== 'number') fail(`Fedora internet did not come back: ${JSON.stringify(after.fedora)}`);
+    const after = { fedora: await online() };
     after.windowsAppClip = (await walkthrough.clipPage(W.browser, W.type, { url: ACCEPTANCE_CLIP_AFTER, category: 'Resources', expectedText: 'ommonplace' })).title;
     return { before, isolation: { fedora: isolation.fedora, windows: { programs, rules: isolation.windows.rules.length } }, during, notion, trips, end: { windowsRules: end.windows.rules.length }, restored, after };
   });
