@@ -607,7 +607,7 @@ export async function syncIdentity(browser) {
 }
 
 async function fillInput(browser, type, placeholder, value) {
-  const input = browser.$(`input[placeholder="${placeholder}"]`);
+  const input = await browser.$(`input[placeholder="${placeholder}"]`);
   await input.waitForDisplayed({ timeout: 15_000 });
   await browser.execute((target) => { target.focus(); target.select(); }, input);
   await type(browser, input, value);
