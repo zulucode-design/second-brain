@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { isEditUpdate, loadContent } from '$lib/utils/editor-updates';
 	import { onDestroy, tick, untrack } from 'svelte';
 	import { get } from 'svelte/store';
 	import { Editor } from '@tiptap/core';
@@ -130,7 +131,6 @@
 	const MAX_NOTE_SCROLL_POSITIONS = 200;
 	const noteScrollPositions = new Map<string, NoteScrollPosition>();
 	let pendingContent = $state<string | null>(null);
-	let ignoreNextUpdate = false;
 	let isLoadingNote = false;
 	let componentDestroyed = false;
 	let trashingNote = $state(false);
@@ -2588,8 +2588,8 @@
 							item.pos + item.size,
 							wikiMarkType.create({ title: item.newTitle, path: outcome.path, aliased: false }),
 						);
-						ignoreNextUpdate = true;
-						editor.view.dispatch(tr);
+						// Resolving a link is not an edit.
+						editor.view.dispatch(tr.setMeta('preventUpdate', true));
 						void refreshWikiLinkTitles();
 					} catch (e) {
 						console.error('Failed to rename note from wiki-link edit:', e);
@@ -3501,8 +3501,7 @@
 		} else if (editorElement && editor) {
 			// Editor already exists, just swap content
 			const html = markdownToHtml(content);
-			ignoreNextUpdate = true;
-			editor.commands.setContent(html);
+			loadContent(editor, html);
 			// Clear undo/redo history so it doesn't bleed across notes
 			clearEditorHistory();
 			const text = editor.state.doc.textContent;
@@ -4790,14 +4789,8 @@
 					prevCursorWikiMark = curWikiMark;
 				}
 			},
-			onUpdate: ({ transaction }) => {
-				// Only a document change is an edit. setEditable() emits update with an empty
-				// transaction, and calls that omit `false` would otherwise mark the note dirty (#196).
-				if (!transaction.docChanged) return;
-				if (ignoreNextUpdate || isLoadingNote) {
-					ignoreNextUpdate = false;
-					return;
-				}
+			onUpdate: (event) => {
+				if (!isEditUpdate(event, isLoadingNote)) return;
 				$editorDirty = true;
 				markDirty();
 				if (!isCompact && showOutline) scheduleOutline();
@@ -6028,8 +6021,7 @@
 				// Compact: editor stays in DOM, just update its content
 				const content = srcText || ($activeNote?.content ?? '');
 				if (editor) {
-					ignoreNextUpdate = true;
-					editor.commands.setContent(markdownToHtml(content));
+					loadContent(editor, markdownToHtml(content));
 					tick().then(restoreRichCaret);
 				}
 			} else {
