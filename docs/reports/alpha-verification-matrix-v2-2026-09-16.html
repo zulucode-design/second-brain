@@ -53,7 +53,7 @@
   <p>Version 2, recorded 2026-09-16 against <code>main</code> at <code>2a7d0c9</code>. This version supersedes
   <a href="alpha-verification-matrix-v1-2026-09-14.html">version 1</a> as the active gate. Version 1 remains the
   historical record of package H's first measurements and the completed package D protocol.</p>
-  <div class="gate"><strong>Candidate a16dac9: Gates 1, 2, and 3 passed on both machines, and the Fedora uninstall check passed; the remaining #28 acceptance checks and performance remain open.</strong> Candidate <code>7e67b29</code> earlier passed the #14 installed backup and restore proofs, Gate 1, and Gate 3. Earlier gate evidence was green: packages A–G are implemented and D passed the real
+  <div class="gate"><strong>Candidate 1f01bf1: all eleven #28 acceptance criteria passed on both machines in one installed-package run. Candidate a16dac9 passed Gates 1, 2, and 3 and the Fedora uninstall check. Performance remains open.</strong> Candidate <code>7e67b29</code> earlier passed the #14 installed backup and restore proofs, Gate 1, and Gate 3. Earlier gate evidence was green: packages A–G are implemented and D passed the real
   two-machine interruption protocol. The G3 product-identity/updater prerequisite and diagnostic export are complete.
   Gate 3 installed-package walkthroughs passed on both supported machines at <code>b6490f2</code>; narrow startup and
   graph repairs in installed <code>095e765</code> passed every performance budget on Fedora and Windows. The earlier
@@ -72,6 +72,35 @@
   <div class="note"><strong>Candidate invalidation rule:</strong> final performance and package evidence names one
   commit. A later change to runtime code, dependencies, packaging, capabilities, or configuration invalidates the
   affected evidence and requires that row to be rerun.</div>
+</section>
+
+<section>
+  <h2>Candidate 1f01bf1: #28 acceptance</h2>
+  <p>The <code>acceptance</code> gate in <code>scripts/alpha-harness.mjs</code> drives both installed apps through their UI
+  together, and uses REST and filesystem calls only to read results. Candidate <code>1f01bf1</code> is <code>main</code>
+  after PR #190 (#189: closing during a sync run silently cancelled the close) and PR #194 (#191: the open note went
+  stale after a conflict choice or a sync, and the window could no longer close). Both bugs were found by earlier runs of
+  this gate. The RPM (SHA-256 <code>330237b3…</code>) and the NSIS setup (<code>48D3288B…</code>) were installed, and
+  both installed binaries embed the candidate commit. Run <a href="evidence/alpha-harness-acceptance-20261001T200046Z.jsonl"><code>20261001T200046Z</code></a>, from
+  harness commit <code>b2c4b57</code>, was launched and checked by Sol (<code>gpt-6.1-sol</code>, high effort), and
+  Claude checked the trace. Earlier attempts on <code>a16dac9</code>, <code>1dc94ff</code>, and <code>1f01bf1</code>
+  failed on harness defects fixed on the gate branch, on a mis-click on Windows, or on #189 and #191; follow-ups
+  #192 and #193 are open.</p>
+  <table>
+    <tr><th>#28 criterion</th><th>Evidence in run 20261001T200046Z</th><th>Status</th></tr>
+    <tr><td>1. Sync is a toggle; nothing else to install</td><td>Each machine turned sync on, off, and on from Settings, and the bundled sidecar ran from the package (<code>/usr/bin/syncthing</code> from the RPM; <code>syncthing.exe</code> in the install folder).</td><td><span class="s green">passed</span></td></tr>
+    <tr><td>2. Explicit one-time pairing</td><td>Before pairing, neither sidecar knew the other device. A pairing with the wrong vault ID was refused and left the config unchanged; the exchange then paired both. After both apps were relaunched, they were still paired and synced with no second exchange.</td><td><span class="s green">passed</span></td></tr>
+    <tr><td>3. Notes arrive and are searchable</td><td>A note created on each machine arrived on the other and was found by keyword search there.</td><td><span class="s green">passed</span></td></tr>
+    <tr><td>4. Attachments arrive and open</td><td>An image and a text file attached on Fedora arrived on Windows with identical bytes, and the image rendered in the receiver's editor (<code>naturalWidth</code> &gt; 0).</td><td><span class="s green">passed</span></td></tr>
+    <tr><td>5. Deletes propagate and do not resurrect</td><td>A note deleted on one machine was gone from disk and search on both, and was in trash, both after the sync and after both apps relaunched.</td><td><span class="s green">passed</span></td></tr>
+    <tr><td>6. PARA moves neither duplicate nor lose</td><td>A note moved from Projects to Archives existed once, at the new path, on both machines, after the sync and after relaunch.</td><td><span class="s green">passed</span></td></tr>
+    <tr><td>7. A delayed attachment shows as not synced yet</td><td>With the image held back by an exact ignore pattern on the receiver, the open note showed “Attachment not synced yet”. When the bytes arrived, the same mounted editor rendered the image.</td><td><span class="s green">passed</span></td></tr>
+    <tr><td>8. Conflicts surface both versions and stay out of notes</td><td>Disconnected edits on both machines produced conflict copies. Settings showed both versions as text, each holding only its own edit, and the copies were absent from search, the graph data, PARA counts, and the category list. Windows chose “Keep current” for one note and “Use conflict” for the other; both machines ended with the chosen text and the discarded version in trash. Both editors kept the note open and showed the choice without a reopen, and edits after the choice saved (#191).</td><td><span class="s green">passed</span></td></tr>
+    <tr><td>9. A backup precedes incoming changes</td><td>The gate snapshots both vaults before every batch. Each of the 15 batches that changed notes or attachments on a machine left a new pre-sync backup there, holding each changed path as it was before; the conflict batch did so on both machines.</td><td><span class="s green">passed</span></td></tr>
+    <tr><td>10. Works with no internet and no Notion</td><td>Fedora was taken offline (no public IPv4 or IPv6 route; HTTPS by address and by name failed). On Windows the app, the sidecar, and WebView2 were blocked from every non-Tailnet address, so Windows is “application-isolated”, not offline. Neither machine had a Notion token. Notes with attachments synced both ways and were searchable on arrival, and both machines were online again afterwards.</td><td><span class="s green">passed</span></td></tr>
+    <tr><td>11. Run on both real machines</td><td>Fedora 44 laptop (installed RPM) and Windows 11 desktop (installed NSIS package), over the direct Tailscale path.</td><td><span class="s green">passed</span></td></tr>
+    <tr><td>Closing during a sync run (#189)</td><td>Each machine was closed while its run waited for a peer that had quit, and again during the handoff hold. Each exited within 0.6–0.9 s, and the edit made during the run was saved. Both machines converged afterwards.</td><td><span class="s green">passed</span></td></tr>
+  </table>
 </section>
 
 <section>
@@ -135,9 +164,8 @@
     through a real worker. After the recorded supervisor PID 29592 was stopped, it, server PID 19580, worker PID 23536,
     and console hosts 36780 and 29300 were gone, and nothing listened on 11436 (<a href="evidence/prealpha-186c091-a16dac9-gates.jsonl">hand-kept gate log</a>).</td>
     <td><span class="s green">passed</span></td></tr>
-    <tr><td>Not covered by these gates</td><td>#28 still needs a received attachment opened on the receiving machine, a
-    paired run with no public internet and Notion disconnected, and candidate reruns of delete, PARA move, delayed
-    attachment, and conflict choice. The 10,000-note performance row still names <code>095e765</code>.</td>
+    <tr><td>Not covered by these gates</td><td>The #28 acceptance criteria are covered by the <code>1f01bf1</code> section
+    above. The 10,000-note performance row still names <code>095e765</code>.</td>
     <td><span class="s amber">pending</span></td></tr>
   </table>
 </section>
@@ -231,9 +259,9 @@
     <tr><td>Paired sync and received search</td><td><a href="evidence/alpha-harness-sync-20260929T031635Z.jsonl">Candidate Gate 1 trace</a>
     records explicit pairing, Windows sidecar interruption at 656/5,000 notes, convergence to 5,000 on both machines,
     two pre-sync ZIPs on each, and no process survivors. An installed Windows search found the received sentinel note.
-    #28 still lacks candidate evidence that a synced attachment opens and that paired sync works without public internet
-    and without a Notion account; other historical criteria remain itemized in #76.</td>
-    <td><span class="s amber">#28 remains open</span></td></tr>
+    Candidate <code>1f01bf1</code> later passed all eleven #28 criteria in acceptance run
+    <a href="evidence/alpha-harness-acceptance-20261001T200046Z.jsonl"><code>20261001T200046Z</code></a>; see that section.</td>
+    <td><span class="s green">#28 passed on 1f01bf1</span></td></tr>
     <tr><td>Pre-sync backup and restore</td><td>Historical candidate <code>96a3e5b</code> failed an installed Fedora restore with <code>.stfolder already exists</code> and rolled back without losing the mutated note or leaving a journal. PR #170 fixed the archive boundary and Backup-list labels; PR #171 made backups incoming-only and preserved the newest scheduled/manual archive during pruning. Their source reports remain <a href="ticket-14-presync-restore-verification-2026-09-29.html">here</a> and <a href="ticket-14-incoming-only-backup-2026-09-29.html">here</a>.
     Installed candidate <code>7e67b29</code> now passes all remaining #14 sync criteria on Fedora and Windows: pre-sync UI restore matches all 5,005 archive files, live Syncthing markers are unchanged, no journal remains; unchanged batches take no backup; six incoming batches per machine each take exactly one pre-change ZIP; retention selected at 5 keeps the manual backup and four newest pre-sync ZIPs; unwritable backup folders abort with nothing received. Both UIs distinguish “Before sync” from “Backup”. Every completed batch ends paused and send-only. All samples meet the 2-second ZIP / 120-second total budget accepted by the implementing Claude session under Nicolas's delegation. See the <a href="ticket-14-installed-packages-2026-09-29.html">installed proof report and raw evidence</a>. Bulk AI remains in #168; cadence in #169; the independent scheduler-notice defect in #172.</td><td><span class="s green">#14 installed proofs passed on 7e67b29; P1 resolved</span></td></tr>
     <tr><td>Gate-owned Ollama worker</td><td>The bounded Windows supervisor on port 11436 loaded

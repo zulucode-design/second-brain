@@ -11,6 +11,7 @@ const {
   acquireControllerLock, checkProfileRedirects, checkWindowStateRestored, diagnosticLeaks, harnessConfig, journalWindowState, killDue, mutateFixture,
   NOTION_PUBLISHED_TITLES, notionAll, pairedSyncthingConfig, parseOptions, publishedProblems, recoveryOutcome, redactTrace, redirectProfileFolders,
   restoreProfileFolders, restoreProgress, restoreWindowState, snapshotVault, treeHash, zipEntries,
+  backupSummary, solidPng, vaultSummary,
 } = await import(
   new URL('../scripts/alpha-harness.mjs', import.meta.url)
 );
@@ -460,4 +461,46 @@ test('walkthrough refuses to start without its installer, RPM, or Notion workspa
   ], { encoding: 'utf8', env });
   assert.equal(noNotion.status, 1);
   assert.match(noNotion.stderr, /SECOND_BRAIN_NOTION_TOKEN/);
+});
+
+test('acceptance vault summary hashes files, finds markers, and names conflict copies', (t) => {
+  const vault = mkdtempSync(join(tmpdir(), 'acceptance-vault-'));
+  t.after(() => rmSync(vault, { recursive: true, force: true }));
+  mkdirSync(join(vault, 'Areas'));
+  mkdirSync(join(vault, '.helixnotes', 'trash'), { recursive: true });
+  writeFileSync(join(vault, 'Areas', 'Kept.md'), 'kept zqone');
+  writeFileSync(join(vault, 'Areas', 'Kept.sync-conflict-20260101-000000-ABCDEFG.md'), 'copy zqtwo');
+  writeFileSync(join(vault, '.helixnotes', 'trash', 'Gone.md'), 'gone zqone');
+  writeFileSync(join(vault, '.helixnotes', 'trash', '1_Old.sync-conflict-20260101-000000-ABCDEFG.md'), 'archived');
+  const summary = vaultSummary(vault, ['zqone', 'zqtwo', 'zqnone']);
+  assert.deepEqual(Object.keys(summary.files).sort(), ['.helixnotes/trash/1_Old.sync-conflict-20260101-000000-ABCDEFG.md', '.helixnotes/trash/Gone.md', 'Areas/Kept.md', 'Areas/Kept.sync-conflict-20260101-000000-ABCDEFG.md']);
+  assert.match(summary.files['Areas/Kept.md'], /^[0-9a-f]{64}$/);
+  assert.deepEqual(summary.markers, { zqone: ['.helixnotes/trash/Gone.md', 'Areas/Kept.md'], zqtwo: ['Areas/Kept.sync-conflict-20260101-000000-ABCDEFG.md'], zqnone: [] });
+  assert.deepEqual(summary.conflicts, ['Areas/Kept.sync-conflict-20260101-000000-ABCDEFG.md']);
+});
+
+test('acceptance backup summary reports wanted members by hash and absence', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'acceptance-backup-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const vault = join(directory, 'vault');
+  mkdirSync(join(vault, 'Projects'), { recursive: true });
+  writeFileSync(join(vault, 'Projects', 'Old.md'), 'old zqold');
+  const archive = join(directory, 'backup.zip');
+  const zipped = spawnSync('zip', ['-qr', archive, 'Projects'], { cwd: vault });
+  if (zipped.error) return t.skip('zip is not installed');
+  const { files } = vaultSummary(vault);
+  const summary = backupSummary(archive, ['Projects/Old.md', 'Projects/New.md'], ['zqold']);
+  assert.deepEqual(summary.wanted, { 'Projects/Old.md': files['Projects/Old.md'], 'Projects/New.md': null });
+  assert.deepEqual(summary.markers, { zqold: ['Projects/Old.md'] });
+});
+
+test('acceptance images are valid PNGs with their own bytes', () => {
+  const red = solidPng(64, 48, [200, 40, 90]);
+  const green = solidPng(64, 48, [20, 160, 70]);
+  assert.deepEqual([...red.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  assert.equal(red.readUInt32BE(16), 64);
+  assert.equal(red.readUInt32BE(20), 48);
+  assert.notDeepEqual(red, green);
+  const file = spawnSync('file', ['-'], { input: red });
+  if (!file.error) assert.match(file.stdout.toString(), /PNG image data, 64 x 48, 8-bit\/color RGB/);
 });
