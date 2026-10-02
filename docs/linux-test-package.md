@@ -23,7 +23,7 @@ The harness calls these commands itself:
 - **walkthrough** (Gate 3) and **acceptance** (#28) install `--fedora-rpm` before the run
   starts. When they remove it, they check that the package, `/usr/bin/second-brain` and the
   desktop entry are gone and that the run's vault is unchanged.
-- **acceptance** removes the candidate after every run, passed or failed, once its apps have
+- **acceptance** removes the candidate after every run, passed or failed, once its Fedora app has
   stopped. A failed removal is recorded without hiding the run's own error.
 - **walkthrough** removes it after a passing run. A failed run, or a `--machine windows` run,
   leaves it installed. Remove it with `remove-test-install` once it is no longer needed.

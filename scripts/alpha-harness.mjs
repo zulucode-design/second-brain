@@ -2923,6 +2923,7 @@ async function runAcceptanceLocked(options) {
   const network = fedoraNetwork(runId);
   const sides = [];
   let fedora;
+  let fedoraCleanup;
   let windows;
   let windowsPrepared = false;
   let runError;
@@ -2959,19 +2960,24 @@ async function runAcceptanceLocked(options) {
     }
     for (const side of sides) await closeApp(side.browser);
     // Each machine is always cleaned up; `??=` would skip the call once an earlier error was kept.
-    const fedoraCleanup = fedora ? await finishMachine(fedora, evidencePath) : null;
+    fedoraCleanup = fedora ? await finishMachine(fedora, evidencePath) : null;
     const windowsCleanup = windowsPrepared ? await finishMachine(windows, evidencePath) : null;
     cleanupError ??= fedoraCleanup ?? windowsCleanup;
   }
-  // Every run whose apps were stopped removes the candidate, passed or failed, and checks the vault
-  // survived it. A failed removal never hides the run's own error.
-  if (fedora && !cleanupError) {
+  // Every run removes the candidate, passed or failed, once the Fedora app is stopped, and checks
+  // the vault survived it. A failed removal never hides the run's own error.
+  if (!fedoraCleanup) {
     try {
-      const vaultBefore = fedora.hash();
-      record('vault-final', 'fedora', vaultBefore);
-      const removed = { ...fedora.uninstall(), vaultUnchanged: fedora.hash().sha256 === vaultBefore.sha256 };
-      record('uninstalled', 'fedora', removed);
-      assertUninstalled('fedora', removed);
+      if (fedora) {
+        const vaultBefore = fedora.hash();
+        record('vault-final', 'fedora', vaultBefore);
+        const removed = { ...fedora.uninstall(), vaultUnchanged: fedora.hash().sha256 === vaultBefore.sha256 };
+        record('uninstalled', 'fedora', removed);
+        assertUninstalled('fedora', removed);
+      } else {
+        // With no Fedora machine, nothing was launched and there is no vault to check.
+        fedoraPackageHelper('remove-test-install');
+      }
     } catch (error) {
       record('run-failed', 'fedora', { error: error.message });
       runError ??= error;

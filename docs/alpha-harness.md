@@ -11,7 +11,7 @@ setup, and reach.
 
 The walkthrough and acceptance gates install the `--fedora-rpm` candidate themselves. The
 walkthrough removes it after a passing run; the acceptance gate removes it after every run whose
-apps it could stop. Gates 1 and 2 use whatever is installed, so install the candidate with
+Fedora app it could stop. Gates 1 and 2 use whatever is installed, so install the candidate with
 the helper before running them.
 
 ## Gate 1: interrupted sync recovery
