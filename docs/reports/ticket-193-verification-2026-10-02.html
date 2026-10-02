@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Ticket #193 — callout-type menu reload verification</title>
+  <style>
+    body { margin: 2rem auto; max-width: 60rem; padding: 0 1rem; font: 16px/1.6 system-ui, sans-serif; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #999; padding: .4rem .6rem; text-align: left; vertical-align: top; }
+    code { font-family: ui-monospace, monospace; }
+  </style>
+</head>
+<body>
+  <h1>Ticket #193: callout-type menu reload verification</h1>
+  <p>2026-10-02, Fedora laptop. Issue: the callout-type menu is built in the DOM, so
+  <code>Editor.hasPendingDraft()</code> did not count it. A reload from disk (#191) while its Custom input
+  was open replaced the callout, and Enter then dropped the typed type without a word.</p>
+
+  <h2>Change</h2>
+  <p>The editor keeps a reference to the menu it creates, and <code>hasPendingDraft()</code> counts the menu
+  while it is attached to the document. The reload is then deferred, and retried every second as #191
+  already does for other menus, until the menu closes.</p>
+
+  <h2>Automated checks</h2>
+  <p><code>pnpm verify</code> passes on the fix commit: 185 node tests and 633 Rust tests, plus check, clippy
+  and build. <code>tests/document-reload.test.mjs</code> failed before the change and passes after it.</p>
+
+  <h2>Live check</h2>
+  <p>Release binaries built locally (<code>pnpm tauri build --no-bundle</code>) from main <code>f8ecf73</code> and
+  from the fix, driven under <code>tauri-driver</code> with a fresh vault and config. The note holds one
+  <code>[!note]</code> callout. The script opens the type menu, chooses Custom, rewrites the note on disk,
+  and waits 4 s, which is more than the 300 ms watcher debounce plus one retry.</p>
+  <table>
+    <tr><th>Check</th><th>main f8ecf73</th><th>Fix</th></tr>
+    <tr><td>Escape path: reload deferred while the menu is open</td><td>FAIL (reloaded under the menu)</td><td>PASS</td></tr>
+    <tr><td>Escape path: reload lands once the menu closes</td><td>PASS</td><td>PASS</td></tr>
+    <tr><td>Enter path: reload deferred while the menu is open</td><td>FAIL</td><td>PASS</td></tr>
+    <tr><td>Enter path: typed custom type applied to the callout</td><td>FAIL (stayed <code>note</code>)</td><td>PASS (<code>mytype</code>)</td></tr>
+  </table>
+  <p>After the Enter path, the editor holds an edit made on top of a revision that changed on disk, so its
+  next save is refused. That is #192, which stays open and is fixed separately.</p>
+</body>
+</html>
