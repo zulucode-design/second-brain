@@ -1,0 +1,3 @@
+{"kind":"stopped-app-boundary","epochMs":1790899746410,"session":"A1","phase":"before","indexedNotes":10000,"queuedNotes":0,"model":"embeddinggemma","longNoteSha256":"5fffebe498592a2132e9df55bf0b2bace413f8a0ab0550cc78352b4796e46d9d"}
+{"kind":"in-app-boundary","epochMs":1790899751124,"session":"A1","phase":"before","indexedNotes":10000,"model":"embeddinggemma","queuedNotes":0}
+{"kind":"in-app-boundary","epochMs":1790899753222,"session":"A1","phase":"after","indexedNotes":10000,"model":"embeddinggemma","queuedNotes":0}

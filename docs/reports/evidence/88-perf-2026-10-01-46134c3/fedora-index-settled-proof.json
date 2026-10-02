@@ -1,0 +1,503 @@
+{
+  "candidate": "46134c36a99b53d17a56c3a96960b76ca7aae040",
+  "stoppedAppPairs": [
+    {
+      "session": "startup-series",
+      "before": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898622048,
+        "session": "startup-series",
+        "phase": "before",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "b7ba194a854003dd80b85c951685e53cd320bf7eed1b5a795d31dfe2980e36b3"
+      },
+      "after": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898654684,
+        "session": "startup-series",
+        "phase": "after",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "b7ba194a854003dd80b85c951685e53cd320bf7eed1b5a795d31dfe2980e36b3"
+      },
+      "noteChanged": false
+    },
+    {
+      "session": "startup-1",
+      "before": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898622133,
+        "session": "startup-1",
+        "phase": "before",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "b7ba194a854003dd80b85c951685e53cd320bf7eed1b5a795d31dfe2980e36b3"
+      },
+      "after": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898623722,
+        "session": "startup-1",
+        "phase": "after",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "b7ba194a854003dd80b85c951685e53cd320bf7eed1b5a795d31dfe2980e36b3"
+      },
+      "noteChanged": false
+    },
+    {
+      "session": "startup-2",
+      "before": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898628772,
+        "session": "startup-2",
+        "phase": "before",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "b7ba194a854003dd80b85c951685e53cd320bf7eed1b5a795d31dfe2980e36b3"
+      },
+      "after": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898630215,
+        "session": "startup-2",
+        "phase": "after",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "b7ba194a854003dd80b85c951685e53cd320bf7eed1b5a795d31dfe2980e36b3"
+      },
+      "noteChanged": false
+    },
+    {
+      "session": "startup-3",
+      "before": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898635266,
+        "session": "startup-3",
+        "phase": "before",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "b7ba194a854003dd80b85c951685e53cd320bf7eed1b5a795d31dfe2980e36b3"
+      },
+      "after": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898636651,
+        "session": "startup-3",
+        "phase": "after",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "b7ba194a854003dd80b85c951685e53cd320bf7eed1b5a795d31dfe2980e36b3"
+      },
+      "noteChanged": false
+    },
+    {
+      "session": "startup-4",
+      "before": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898641734,
+        "session": "startup-4",
+        "phase": "before",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "b7ba194a854003dd80b85c951685e53cd320bf7eed1b5a795d31dfe2980e36b3"
+      },
+      "after": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898643109,
+        "session": "startup-4",
+        "phase": "after",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "b7ba194a854003dd80b85c951685e53cd320bf7eed1b5a795d31dfe2980e36b3"
+      },
+      "noteChanged": false
+    },
+    {
+      "session": "startup-5",
+      "before": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898648211,
+        "session": "startup-5",
+        "phase": "before",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "b7ba194a854003dd80b85c951685e53cd320bf7eed1b5a795d31dfe2980e36b3"
+      },
+      "after": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898649628,
+        "session": "startup-5",
+        "phase": "after",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "b7ba194a854003dd80b85c951685e53cd320bf7eed1b5a795d31dfe2980e36b3"
+      },
+      "noteChanged": false
+    },
+    {
+      "session": "editor-1",
+      "before": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898654724,
+        "session": "editor-1",
+        "phase": "before",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "b7ba194a854003dd80b85c951685e53cd320bf7eed1b5a795d31dfe2980e36b3"
+      },
+      "after": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898674516,
+        "session": "editor-1",
+        "phase": "after",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "58d7be761a62d7337d8a2540eefc6e519348fd5ca1dcdb16c6a439b0ea6ba2db"
+      },
+      "noteChanged": true
+    },
+    {
+      "session": "editor-2",
+      "before": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898674563,
+        "session": "editor-2",
+        "phase": "before",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "58d7be761a62d7337d8a2540eefc6e519348fd5ca1dcdb16c6a439b0ea6ba2db"
+      },
+      "after": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898695288,
+        "session": "editor-2",
+        "phase": "after",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "a604e9ee1f9b9a3ed61744fc8ef74fec14d0d230bf58bb47ac30c07647b52fa8"
+      },
+      "noteChanged": true
+    },
+    {
+      "session": "editor-3",
+      "before": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898695334,
+        "session": "editor-3",
+        "phase": "before",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "a604e9ee1f9b9a3ed61744fc8ef74fec14d0d230bf58bb47ac30c07647b52fa8"
+      },
+      "after": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898717988,
+        "session": "editor-3",
+        "phase": "after",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "54b8a75df8c7d2cbe37a5eafa9df17c6004acb69b2b8daa929977e61a7fa1163"
+      },
+      "noteChanged": true
+    },
+    {
+      "session": "editor-4",
+      "before": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898718036,
+        "session": "editor-4",
+        "phase": "before",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "54b8a75df8c7d2cbe37a5eafa9df17c6004acb69b2b8daa929977e61a7fa1163"
+      },
+      "after": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898738860,
+        "session": "editor-4",
+        "phase": "after",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "f4d059344f1e161f0307d05301b3adb97657ca3d327d6b9c435200786b9cc888"
+      },
+      "noteChanged": true
+    },
+    {
+      "session": "editor-5",
+      "before": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898738906,
+        "session": "editor-5",
+        "phase": "before",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "f4d059344f1e161f0307d05301b3adb97657ca3d327d6b9c435200786b9cc888"
+      },
+      "after": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898759726,
+        "session": "editor-5",
+        "phase": "after",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "dfb5e9126a95a5ab5902f657fd4f218401cc149093c71b09c50dce0a955b7115"
+      },
+      "noteChanged": true
+    },
+    {
+      "session": "interactive",
+      "before": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898759776,
+        "session": "interactive",
+        "phase": "before",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "dfb5e9126a95a5ab5902f657fd4f218401cc149093c71b09c50dce0a955b7115"
+      },
+      "after": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898767180,
+        "session": "interactive",
+        "phase": "after",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "dfb5e9126a95a5ab5902f657fd4f218401cc149093c71b09c50dce0a955b7115"
+      },
+      "noteChanged": false
+    },
+    {
+      "session": "search",
+      "before": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898768785,
+        "session": "search",
+        "phase": "before",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "dfb5e9126a95a5ab5902f657fd4f218401cc149093c71b09c50dce0a955b7115"
+      },
+      "after": {
+        "kind": "stopped-app-boundary",
+        "epochMs": 1790898776897,
+        "session": "search",
+        "phase": "after",
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "dfb5e9126a95a5ab5902f657fd4f218401cc149093c71b09c50dce0a955b7115"
+      },
+      "noteChanged": false
+    }
+  ],
+  "stoppedAppSettled": true,
+  "inAppBoundaries": [
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898658029,
+      "session": "editor-1",
+      "phase": "before",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 0
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898672404,
+      "session": "editor-1",
+      "phase": "after",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 0
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898677791,
+      "session": "editor-2",
+      "phase": "before",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 0
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898692165,
+      "session": "editor-2",
+      "phase": "after",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 1
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898693169,
+      "session": "editor-2",
+      "phase": "after",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 0
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898698523,
+      "session": "editor-3",
+      "phase": "before",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 0
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898712849,
+      "session": "editor-3",
+      "phase": "after",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 1
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898713853,
+      "session": "editor-3",
+      "phase": "after",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 1
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898714865,
+      "session": "editor-3",
+      "phase": "after",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 1
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898715873,
+      "session": "editor-3",
+      "phase": "after",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 0
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898721325,
+      "session": "editor-4",
+      "phase": "before",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 0
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898735736,
+      "session": "editor-4",
+      "phase": "after",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 1
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898736739,
+      "session": "editor-4",
+      "phase": "after",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 0
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898742203,
+      "session": "editor-5",
+      "phase": "before",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 0
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898756597,
+      "session": "editor-5",
+      "phase": "after",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 1
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898757601,
+      "session": "editor-5",
+      "phase": "after",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 0
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898762968,
+      "session": "interactive",
+      "phase": "before",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 0
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898765062,
+      "session": "interactive",
+      "phase": "after",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 0
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898772037,
+      "session": "search",
+      "phase": "before",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 0
+    },
+    {
+      "kind": "in-app-boundary",
+      "epochMs": 1790898774786,
+      "session": "search",
+      "phase": "after",
+      "indexedNotes": 10000,
+      "model": "embeddinggemma",
+      "queuedNotes": 0
+    }
+  ],
+  "inAppBeforeSettled": true,
+  "inAppAfterSettled": true,
+  "noTypingHashFindings": []
+}

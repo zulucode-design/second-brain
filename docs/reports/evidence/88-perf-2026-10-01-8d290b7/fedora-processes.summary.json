@@ -1,0 +1,27 @@
+[
+  {
+    "kind": "startup",
+    "pass": false,
+    "missing": true
+  },
+  {
+    "kind": "editor-key",
+    "pass": false,
+    "missing": true
+  },
+  {
+    "kind": "graph-render",
+    "pass": false,
+    "missing": true
+  },
+  {
+    "kind": "semantic-search",
+    "pass": false,
+    "missing": true
+  },
+  {
+    "kind": "exact-scan",
+    "pass": false,
+    "missing": true
+  }
+]

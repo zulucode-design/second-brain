@@ -1,0 +1,14 @@
+[
+    {
+        "existed":  true,
+        "path":  "%USERPROFILE%\\AppData\\Local\\io.github.zulucodedesign.SecondBrain\\logs",
+        "aside":  "%USERPROFILE%\\AppData\\Local\\io.github.zulucodedesign.SecondBrain.perf-8d290b7\\logs",
+        "target":  "D:\\SecondBrainTest\\sb88\\perf-8d290b7\\profile\\logs"
+    },
+    {
+        "existed":  true,
+        "path":  "%USERPROFILE%\\AppData\\Local\\io.github.zulucodedesign.SecondBrain\\EBWebView",
+        "aside":  "%USERPROFILE%\\AppData\\Local\\io.github.zulucodedesign.SecondBrain.perf-8d290b7\\EBWebView",
+        "target":  "D:\\SecondBrainTest\\sb88\\perf-8d290b7\\profile\\EBWebView"
+    }
+]

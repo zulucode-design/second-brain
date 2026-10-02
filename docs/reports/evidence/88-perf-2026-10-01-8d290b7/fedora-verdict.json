@@ -1,0 +1,42 @@
+{
+  "startup": {
+    "kind": "startup",
+    "count": 5,
+    "median": 1333,
+    "p95": 1369,
+    "max": 1369,
+    "pass": true
+  },
+  "editor-key": {
+    "kind": "editor-key",
+    "count": 1000,
+    "median": 9,
+    "p95": 13,
+    "max": 79,
+    "pass": true
+  },
+  "graph-render": {
+    "kind": "graph-render",
+    "count": 5,
+    "median": 276,
+    "p95": 332,
+    "max": 332,
+    "pass": true
+  },
+  "semantic-search": {
+    "kind": "semantic-search",
+    "count": 5,
+    "median": 120,
+    "p95": 148,
+    "max": 148,
+    "pass": true
+  },
+  "exact-scan": {
+    "kind": "exact-scan",
+    "count": 5,
+    "median": 25.879079,
+    "p95": 26.586354999999998,
+    "max": 26.586354999999998,
+    "pass": true
+  }
+}

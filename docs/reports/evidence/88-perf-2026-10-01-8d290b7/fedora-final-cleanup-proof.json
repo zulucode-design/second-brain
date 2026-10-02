@@ -1,0 +1,13 @@
+{
+  "epochMs": 1790906921310,
+  "remainingApps": [],
+  "remainingDrivers": [],
+  "tunnelPid": 2591239,
+  "tunnelStartTicks": "29134280",
+  "tunnelStopped": true,
+  "allOwnedDriverCleanupRecorded": true,
+  "binarySha256": "7dd8eaf88172fcf0976f18e007f8e758560b89eb73af1dd8306f023756d8f1a4",
+  "runnerResult": "FEDORA_PROTOCOL_PASS_8d290b7",
+  "endMarker": "FEDORA_CLEANUP_END_8d290b7",
+  "coordinatorEndMarker": "BOTH_RUNNERS_END_8d290b7"
+}

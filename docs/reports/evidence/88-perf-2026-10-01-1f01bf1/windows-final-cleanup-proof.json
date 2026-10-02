@@ -1,0 +1,67 @@
+{
+    "configHash":  "0BFB153904693EA54A471D3773889876B6CC0305FD7663489CAFC92AA20004B8",
+    "binarySha256":  "1FE73CAF8DCD2AA2C208B80769869693F594BA7AF4DAEE4535EA310C73DD437C",
+    "windowBackupHash":  "34278064917BE655297900A5C0F7A8AB2626DDD9B6901E7C435213B5F8366A4C",
+    "windowHash":  "34278064917BE655297900A5C0F7A8AB2626DDD9B6901E7C435213B5F8366A4C",
+    "epoch":  "2026-10-01T22:09:29.8306991Z",
+    "drivers":  [
+                    {
+                        "running":  false,
+                        "pid":  5964
+                    },
+                    {
+                        "running":  false,
+                        "pid":  36288
+                    },
+                    {
+                        "running":  false,
+                        "pid":  21828
+                    },
+                    {
+                        "running":  false,
+                        "pid":  39056
+                    },
+                    {
+                        "running":  false,
+                        "pid":  38920
+                    },
+                    {
+                        "running":  false,
+                        "pid":  18628
+                    },
+                    {
+                        "running":  false,
+                        "pid":  13544
+                    },
+                    {
+                        "running":  false,
+                        "pid":  27468
+                    },
+                    {
+                        "running":  false,
+                        "pid":  30248
+                    }
+                ],
+    "keepAwakePid":  33064,
+    "backupHash":  "0BFB153904693EA54A471D3773889876B6CC0305FD7663489CAFC92AA20004B8",
+    "profiles":  [
+                     {
+                         "redirected":  false,
+                         "folder":  "logs",
+                         "asideExists":  false
+                     },
+                     {
+                         "redirected":  false,
+                         "folder":  "EBWebView",
+                         "asideExists":  false
+                     }
+                 ],
+    "remainingTasks":  [
+
+                       ],
+    "remainingApps":  [
+
+                      ],
+    "keepAwakeRunning":  false,
+    "configRestored":  true
+}

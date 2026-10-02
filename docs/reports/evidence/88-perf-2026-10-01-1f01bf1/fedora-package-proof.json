@@ -1,0 +1,10 @@
+{
+  "candidate": "1f01bf1c4a5ca6714ec4333b8e99dd533ac1a4dd",
+  "binarySha256": "0fb249d326addb2b574db1da016890eb4a5576bf51eb6099ee88b688f529e3f0",
+  "packageSha256": "330237b31e5d218efbae6f16726b66b85edd2c4bd2222a4324f5216b21544fec",
+  "binaryEmbedsCommit": true,
+  "rpmVerify": 0,
+  "os": "Fedora release 44 (Forty Four)",
+  "worktreeHead": "0ead57159607b39b1065a0bff068785722f0c328",
+  "appSourcesDiff": ""
+}

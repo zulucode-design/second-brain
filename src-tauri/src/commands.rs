@@ -455,7 +455,6 @@ fn open_vault_path(
         &ollama_url,
         ollama_token,
     )?);
-    semantic.start_background();
     // Reconcile rather than rebuild: on an ordinary open almost nothing changed, and
     // reconcile touches only what did. It falls back to a full rebuild internally if
     // reconciliation itself fails, so this is never worse than what ran here before.
@@ -508,7 +507,7 @@ fn open_vault_path(
     next.max_versions_per_note = shared_settings.max_versions_per_note;
     save_app_config(&next)?;
     *search_slot = Some(search);
-    *semantic_slot = Some(semantic.clone());
+    crate::semantic_search::SemanticIndex::replace_in(&mut semantic_slot, semantic.clone());
     *watcher_slot = Some(new_watcher);
     *config = next;
     // The lock has to be gone before the hotkey is claimed: registration reads this same
@@ -3473,11 +3472,14 @@ fn restart_semantic_index(app: &AppHandle) -> Result<(), String> {
         &base_url,
         token,
     )?);
-    semantic.start_background();
-    *app.state::<AppState>()
-        .semantic_index
-        .lock()
-        .map_err(|error| error.to_string())? = Some(semantic.clone());
+    crate::semantic_search::SemanticIndex::replace_in(
+        &mut *app
+            .state::<AppState>()
+            .semantic_index
+            .lock()
+            .map_err(|error| error.to_string())?,
+        semantic.clone(),
+    );
     std::thread::spawn(move || {
         if let Err(error) = semantic.reconcile_from_notes(Path::new(&vault)) {
             log::error!("Could not reconcile semantic search after its settings changed: {error}");

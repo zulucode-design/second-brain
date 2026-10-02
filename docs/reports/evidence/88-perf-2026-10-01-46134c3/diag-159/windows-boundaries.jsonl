@@ -1,0 +1,16 @@
+{"kind":"stopped-app-boundary","epochMs":1790899839658,"session":"A1","phase":"before","indexedNotes":10000,"queuedNotes":0,"model":"embeddinggemma","longNoteSha256":"5fffebe498592a2132e9df55bf0b2bace413f8a0ab0550cc78352b4796e46d9d"}
+{"kind":"in-app-boundary","epochMs":1790899844706,"session":"A1","phase":"before","indexedNotes":10000,"model":"embeddinggemma","queuedNotes":0}
+{"kind":"in-app-boundary","epochMs":1790899847478,"session":"A1","phase":"after","indexedNotes":10000,"model":"embeddinggemma","queuedNotes":0}
+{"kind":"stopped-app-boundary","epochMs":1790899868977,"session":"A1","phase":"after","indexedNotes":10000,"queuedNotes":0,"model":"embeddinggemma","longNoteSha256":"5fffebe498592a2132e9df55bf0b2bace413f8a0ab0550cc78352b4796e46d9d"}
+{"kind":"stopped-app-boundary","epochMs":1790899869095,"session":"A2","phase":"before","indexedNotes":10000,"queuedNotes":0,"model":"embeddinggemma","longNoteSha256":"5fffebe498592a2132e9df55bf0b2bace413f8a0ab0550cc78352b4796e46d9d"}
+{"kind":"in-app-boundary","epochMs":1790899873309,"session":"A2","phase":"before","indexedNotes":10000,"model":"embeddinggemma","queuedNotes":0}
+{"kind":"in-app-boundary","epochMs":1790899875937,"session":"A2","phase":"after","indexedNotes":10000,"model":"embeddinggemma","queuedNotes":0}
+{"kind":"stopped-app-boundary","epochMs":1790899898007,"session":"A2","phase":"after","indexedNotes":10000,"queuedNotes":0,"model":"embeddinggemma","longNoteSha256":"5fffebe498592a2132e9df55bf0b2bace413f8a0ab0550cc78352b4796e46d9d"}
+{"kind":"stopped-app-boundary","epochMs":1790899898107,"session":"B1","phase":"before","indexedNotes":10000,"queuedNotes":0,"model":"embeddinggemma","longNoteSha256":"5fffebe498592a2132e9df55bf0b2bace413f8a0ab0550cc78352b4796e46d9d"}
+{"kind":"in-app-boundary","epochMs":1790899902492,"session":"B1","phase":"before","indexedNotes":10000,"model":"embeddinggemma","queuedNotes":0}
+{"kind":"in-app-boundary","epochMs":1790899925235,"session":"B1","phase":"after","indexedNotes":10000,"model":"embeddinggemma","queuedNotes":0}
+{"kind":"stopped-app-boundary","epochMs":1790899927019,"session":"B1","phase":"after","indexedNotes":10000,"queuedNotes":0,"model":"embeddinggemma","longNoteSha256":"5fffebe498592a2132e9df55bf0b2bace413f8a0ab0550cc78352b4796e46d9d"}
+{"kind":"stopped-app-boundary","epochMs":1790899927118,"session":"B2","phase":"before","indexedNotes":10000,"queuedNotes":0,"model":"embeddinggemma","longNoteSha256":"5fffebe498592a2132e9df55bf0b2bace413f8a0ab0550cc78352b4796e46d9d"}
+{"kind":"in-app-boundary","epochMs":1790899931415,"session":"B2","phase":"before","indexedNotes":10000,"model":"embeddinggemma","queuedNotes":0}
+{"kind":"in-app-boundary","epochMs":1790899954077,"session":"B2","phase":"after","indexedNotes":10000,"model":"embeddinggemma","queuedNotes":0}
+{"kind":"stopped-app-boundary","epochMs":1790899956040,"session":"B2","phase":"after","indexedNotes":10000,"queuedNotes":0,"model":"embeddinggemma","longNoteSha256":"5fffebe498592a2132e9df55bf0b2bace413f8a0ab0550cc78352b4796e46d9d"}

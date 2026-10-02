@@ -1,0 +1,71 @@
+{
+    "configHash":  "0BFB153904693EA54A471D3773889876B6CC0305FD7663489CAFC92AA20004B8",
+    "configurationLockExists":  false,
+    "binarySha256":  "BE5BF111FA8923F2A54141D4B46E562474BDD437864406E784F164BA8F4F165C",
+    "windowBackupHash":  "34278064917BE655297900A5C0F7A8AB2626DDD9B6901E7C435213B5F8366A4C",
+    "windowHash":  "34278064917BE655297900A5C0F7A8AB2626DDD9B6901E7C435213B5F8366A4C",
+    "epoch":  "2026-10-01T23:57:43.0819217Z",
+    "drivers":  [
+                    {
+                        "running":  false,
+                        "pid":  21964
+                    },
+                    {
+                        "running":  false,
+                        "pid":  36776
+                    },
+                    {
+                        "running":  false,
+                        "pid":  38548
+                    },
+                    {
+                        "running":  false,
+                        "pid":  40500
+                    },
+                    {
+                        "running":  false,
+                        "pid":  38492
+                    },
+                    {
+                        "running":  false,
+                        "pid":  39308
+                    },
+                    {
+                        "running":  false,
+                        "pid":  41472
+                    },
+                    {
+                        "running":  false,
+                        "pid":  30400
+                    }
+                ],
+    "keepAwakePid":  43512,
+    "backupHash":  "0BFB153904693EA54A471D3773889876B6CC0305FD7663489CAFC92AA20004B8",
+    "profiles":  [
+                     {
+                         "redirected":  false,
+                         "folder":  "logs",
+                         "asideExists":  false
+                     },
+                     {
+                         "redirected":  false,
+                         "folder":  "EBWebView",
+                         "asideExists":  false
+                     }
+                 ],
+    "remainingApps":  [
+
+                      ],
+    "keepAwakeRunning":  false,
+    "configRestored":  true,
+    "tasks":  [
+                  {
+                      "exists":  false,
+                      "name":  "SecondBrainPerfRunner-46134c3"
+                  },
+                  {
+                      "exists":  false,
+                      "name":  "SecondBrainPerf88-46134c3"
+                  }
+              ]
+}

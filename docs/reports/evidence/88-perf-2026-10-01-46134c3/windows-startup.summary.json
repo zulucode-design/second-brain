@@ -1,0 +1,37 @@
+[
+  {
+    "kind": "startup",
+    "samples": [
+      3414,
+      1847,
+      1859,
+      1817,
+      1880
+    ],
+    "count": 5,
+    "median": 1859,
+    "p95": 3414,
+    "max": 3414,
+    "pass": true
+  },
+  {
+    "kind": "editor-key",
+    "pass": false,
+    "missing": true
+  },
+  {
+    "kind": "graph-render",
+    "pass": false,
+    "missing": true
+  },
+  {
+    "kind": "semantic-search",
+    "pass": false,
+    "missing": true
+  },
+  {
+    "kind": "exact-scan",
+    "pass": false,
+    "missing": true
+  }
+]
