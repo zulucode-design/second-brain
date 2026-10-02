@@ -451,6 +451,12 @@ copy with its original**, presenting the choice above. A conflict copy is never 
 an ordinary note — left alone it would be indexed under a machine-generated title and pollute
 search, the graph, and PARA counts.
 
+The app writes the same kind of copy itself when the open note changes or vanishes on disk
+while the editor holds unsaved edits (a sync run, a conflict choice, or another app). The
+draft goes durably to a copy beside the note, and the editor offers the same choice at once:
+keep my edits, take the disk version, or compare. Until the user chooses, saves refresh that
+copy and a close is refused rather than discarding the draft (#192).
+
 ### Externally-arrived notes
 
 A note arriving from the other machine is, to this app, an external filesystem change. The
