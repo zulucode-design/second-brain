@@ -72,7 +72,8 @@ locked. Claude sessions on this machine also run a blocking hook
   `CARGO_HOME=D:\Rust\cargo`, with `D:\Rust\cargo\bin` on the user PATH. Add toolchains and
   targets with `rustup`, which follows those variables.
 - Check out and build under `D:\SecondBrainTest`: `src` for the app, plus the harness paths in
-  `docs/alpha-harness.md`. It was emptied on 2026-10-01, so the next build starts from a fresh clone.
+  `docs/alpha-harness.md`. Earlier checkouts and harness artifacts were removed on 2026-10-01, so
+  the next build starts from a fresh clone.
 - `D:\SecondBrainTest\ollama-models` is Nicolas's live Ollama model store (`OLLAMA_MODELS` points
   there). Leave it in place.
 
