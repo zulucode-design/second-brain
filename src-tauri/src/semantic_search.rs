@@ -185,6 +185,9 @@ pub struct SemanticIndex {
     /// How many searches ranked with the SQL scan, so tests can tell the two paths apart.
     #[cfg(test)]
     sql_scans: AtomicUsize,
+    /// Reports where a search is, so tests can order a race without sleeping.
+    #[cfg(test)]
+    search_events: Mutex<Option<Sender<&'static str>>>,
     backend: Arc<dyn EmbeddingBackend>,
     wake_worker: OnceLock<Sender<()>>,
     embedding_outage_reported: AtomicBool,
@@ -271,6 +274,8 @@ impl SemanticIndex {
             retired: AtomicBool::new(false),
             #[cfg(test)]
             sql_scans: AtomicUsize::new(0),
+            #[cfg(test)]
+            search_events: Mutex::new(None),
             backend,
             wake_worker: OnceLock::new(),
             embedding_outage_reported: AtomicBool::new(false),
@@ -622,9 +627,17 @@ impl SemanticIndex {
         let deadline = Instant::now() + CACHE_READY_DEADLINE;
         let (results, lock_wait_ms) = loop {
             self.wait_for_cache(deadline)?;
+            self.search_event("waited");
             let lock_started = Instant::now();
             let database = self.database.lock().map_err(|error| error.to_string())?;
             let lock_wait_ms = lock_started.elapsed().as_secs_f64() * 1000.0;
+            // A newer index replaced this one while the query was embedding. Its cache is frozen
+            // while the shared database moves on, so it must not rank or hydrate (#159).
+            if self.retired.load(Ordering::SeqCst) {
+                return Err(
+                    "Semantic search restarted with new settings. Search again.".to_string()
+                );
+            }
             let mut state = self.cache.state.lock().map_err(|error| error.to_string())?;
             if matches!(*state, CacheState::NotLoaded) {
                 *state = loaded_state(load_vectors(&database));
@@ -635,7 +648,10 @@ impl SemanticIndex {
                 }
                 // A background load began after the wait above: wait for it, never scan SQLite
                 // meanwhile.
-                CacheState::Loading => continue,
+                CacheState::Loading => {
+                    self.search_event("saw-loading");
+                    continue;
+                }
                 CacheState::NotLoaded | CacheState::Failed => {
                     drop(state);
                     self.rank_sql(&database, &query_embedding, category, limit)?
@@ -781,6 +797,16 @@ impl SemanticIndex {
         results.truncate(limit);
         Ok(results)
     }
+
+    #[cfg(test)]
+    fn search_event(&self, event: &'static str) {
+        if let Some(events) = self.search_events.lock().unwrap().as_ref() {
+            let _ = events.send(event);
+        }
+    }
+
+    #[cfg(not(test))]
+    fn search_event(&self, _event: &'static str) {}
 
     /// Applies a committed change to the cache. Callers still hold the database mutex.
     fn publish(&self, change: impl FnOnce(&mut HashMap<String, CachedNote>)) {
@@ -1271,6 +1297,7 @@ mod tests {
     use std::net::TcpListener;
     use std::path::Path;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::mpsc::{self, Sender};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
@@ -2848,6 +2875,8 @@ mod tests {
         drop(seed);
 
         let index = Arc::new(SemanticIndex::open_at(&database, Arc::new(WordAxesBackend)).unwrap());
+        let (events, observed) = std::sync::mpsc::channel();
+        *index.search_events.lock().unwrap() = Some(events);
         // The search passes its wait while nothing is loading, then blocks on the database. A
         // load begins before it gets the lock, so it finds `Loading` there, and has to wait.
         let held = index.database.lock().unwrap();
@@ -2855,10 +2884,12 @@ mod tests {
             let index = index.clone();
             std::thread::spawn(move || index.search("coffee budget", None, 10))
         };
-        std::thread::sleep(Duration::from_millis(50));
+        let within = Duration::from_secs(5);
+        assert_eq!(observed.recv_timeout(within).unwrap(), "waited");
         *index.cache.state.lock().unwrap() = CacheState::Loading;
         drop(held);
-        std::thread::sleep(Duration::from_millis(50));
+        // Fails, rather than passing by luck, when a search scans around the load.
+        assert_eq!(observed.recv_timeout(within).unwrap(), "saw-loading");
         let loaded = super::load_vectors(&index.database.lock().unwrap()).unwrap();
         index.finish_loading(CacheState::Ready(loaded));
         let found = searcher.join().unwrap().unwrap();
@@ -2900,5 +2931,75 @@ mod tests {
         drop((first, elsewhere, back, slot));
         cleanup(root);
         cleanup(other);
+    }
+
+    /// Embeds like WordAxesBackend, but holds a query until the test lets it go.
+    struct PausedQueryBackend {
+        started: Mutex<Sender<()>>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+
+    impl EmbeddingBackend for PausedQueryBackend {
+        fn embed(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>, String> {
+            if inputs
+                .iter()
+                .any(|input| input.starts_with(super::QUERY_PROMPT))
+            {
+                let _ = self.started.lock().unwrap().send(());
+                self.release.lock().unwrap().recv().unwrap();
+            }
+            WordAxesBackend.embed(inputs)
+        }
+    }
+
+    #[test]
+    fn a_search_that_outlives_its_index_reports_a_restart_instead_of_stale_results() {
+        let root = scratch("cache-retired-search");
+        let paths = ranking_vault(&root);
+        let database = root.join("semantic.sqlite3");
+        let seed = SemanticIndex::open_at(&database, Arc::new(WordAxesBackend)).unwrap();
+        for path in &paths {
+            seed.note_changed(path).unwrap();
+        }
+        seed.retry_pending().unwrap();
+        drop(seed);
+
+        let (started, query_started) = mpsc::channel();
+        let (release, held_query) = mpsc::channel();
+        let old = Arc::new(
+            SemanticIndex::open_at(
+                &database,
+                Arc::new(PausedQueryBackend {
+                    started: Mutex::new(started),
+                    release: Mutex::new(held_query),
+                }),
+            )
+            .unwrap(),
+        );
+        let mut slot = None;
+        SemanticIndex::replace_in(&mut slot, old.clone());
+        let searcher = {
+            let old = old.clone();
+            std::thread::spawn(move || old.search("coffee budget", None, 10))
+        };
+        query_started.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        // Settings change while the query embeds; the new index then changes the database.
+        let current =
+            Arc::new(SemanticIndex::open_at(&database, Arc::new(WordAxesBackend)).unwrap());
+        SemanticIndex::replace_in(&mut slot, current.clone());
+        current.note_removed(&paths[0]).unwrap();
+        release.send(()).unwrap();
+
+        let error = searcher.join().unwrap().unwrap_err();
+        assert!(error.contains("restarted"), "{error}");
+        assert!(current
+            .search("coffee budget", None, 10)
+            .unwrap()
+            .iter()
+            .all(|result| result.title != "Alpha tie"));
+
+        drop((old, current, slot));
+        cleanup(root);
     }
 }
