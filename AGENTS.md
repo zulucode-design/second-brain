@@ -64,6 +64,22 @@ started Syncthing in `C:\Users\Nicolas`, killed a process matched by that path, 
 locked. Claude sessions on this machine also run a blocking hook
 (`~/.claude/hooks/powershell-guard.py`), but these rules bind every agent, hook or not.
 
+## Windows build layout
+
+`sb-windows` builds on D:, because C: is nearly full.
+
+- The Rust toolchain lives on D: (since 2026-10-01): `RUSTUP_HOME=D:\Rust\rustup` and
+  `CARGO_HOME=D:\Rust\cargo`, with `D:\Rust\cargo\bin` on the user PATH. Add toolchains and
+  targets with `rustup`, which follows those variables.
+- Check out and build under `D:\SecondBrainTest`: `src` for the app, plus the harness paths in
+  `docs/alpha-harness.md`. Earlier checkouts and harness artifacts were removed on 2026-10-01, so
+  the next build starts from a fresh clone.
+- `D:\SecondBrainTest\ollama-models` is Nicolas's live Ollama model store (`OLLAMA_MODELS` points
+  there). Leave it in place.
+
+Deleting anything on either machine needs Nicolas's approval for that item first: list the paths
+and sizes, then wait for his answer.
+
 ## Agent skills
 
 ### Ollama in Windows gates
