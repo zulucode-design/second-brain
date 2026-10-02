@@ -126,6 +126,10 @@ What it cannot do through the helper:
   files, keyring, and network. A bad build cannot become root through the helper, but it can do
   anything his account can. Installing an agent-built package means trusting the agent that
   built it.
+- **Root-run parsers.** Fedora's own file triggers (icon cache, desktop database, AppStream)
+  read the candidate's PNG and `.desktop` files as root. A malformed file reaches those parsers.
+- **A `second-brain` installed some other way.** Replacing or removing it runs that package's
+  own removal scripts as root; the checks apply only to packages installed through the helper.
 - **`/usr/bin/syncthing`.** The package ships this path, so a candidate can replace it.
   Anything on the laptop that runs `syncthing` from `PATH` runs the candidate's copy.
 - **Who calls it.** Every process running as `nicolaszuloaga` can use the rule, not just agents:

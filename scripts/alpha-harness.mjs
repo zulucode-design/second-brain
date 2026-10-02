@@ -2920,7 +2920,7 @@ async function runAcceptanceLocked(options) {
   const record = (event, machine, value) => observation(evidencePath, event, machine, value);
   const vaultId = randomUUID();
   // No Ollama: the gate needs keyword search only, and nothing may reach out on its behalf.
-  const network = fedoraNetwork(runId);
+  let network;
   const sides = [];
   let fedora;
   let fedoraCleanup;
@@ -2929,6 +2929,8 @@ async function runAcceptanceLocked(options) {
   let runError;
   let cleanupError;
   try {
+    // Inside the try, so a missing default route still reaches the candidate's removal below.
+    network = fedoraNetwork(runId);
     fedora = linuxDriverMachine(options.linuxRoot, runId, vaultId, { ollamaBaseUrl: OFFLINE_OLLAMA_URL });
     windows = windowsDriverMachine(options.sshHost, runId, vaultId, candidateCommit, { ollamaBaseUrl: OFFLINE_OLLAMA_URL });
     record('prepared', 'fedora', fedora.prepare());
@@ -2944,11 +2946,13 @@ async function runAcceptanceLocked(options) {
     record('run-failed', 'controller', { error: error.message });
   } finally {
     // Connectivity comes back first, whatever else failed.
-    try {
-      record('network-final', 'fedora', await network.restore());
-    } catch (error) {
-      record('cleanup-error', 'fedora-network', { error: error.message });
-      cleanupError ??= error;
+    if (network) {
+      try {
+        record('network-final', 'fedora', await network.restore());
+      } catch (error) {
+        record('cleanup-error', 'fedora-network', { error: error.message });
+        cleanupError ??= error;
+      }
     }
     if (windowsPrepared) {
       try {
