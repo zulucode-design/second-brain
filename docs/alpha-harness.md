@@ -6,36 +6,12 @@ and run in matrix order. Gates 1, 2, and 3 are implemented.
 ## Installing the Fedora candidate
 
 Agents install and remove the candidate RPM without Nicolas, through a root-owned helper that
-sudo runs without a password:
+sudo runs without a password. [linux-test-package.md](linux-test-package.md) covers its use,
+setup, and reach.
 
-```sh
-sudo -n /usr/local/libexec/second-brain-test-package install-candidate /absolute/path/to/candidate.rpm
-sudo -n /usr/local/libexec/second-brain-test-package remove-test-install
-```
-
-The helper takes nothing else. It copies the RPM into a root-owned staging directory, reading it
-as the calling user, then installs that copy only if it is a `second-brain` x86-64 package with
-no scriptlets, triggers, sysusers, or obsoletes, whose files are all plain root-owned files at
-the paths a Second Brain build ships (`/usr/bin/second-brain`, `/usr/bin/syncthing`, its two
-desktop entries, and its hicolor icons). CI runs the same check on every built RPM, so a
-packaging change that would break it fails there first. The check keeps a bad build from writing
-outside those paths or running code as root; installing an agent-built package still means
-trusting the app it installs. Only installation and removal run as root: the app and the
-controller run as the ordinary user.
-
-The setup is one-time and needs Nicolas's password once, from a checkout:
-
-```sh
-sudo scripts/install-linux-test-package.sh
-```
-
-It installs `scripts/linux-test-package.sh` as the helper and adds
-`/etc/sudoers.d/second-brain-test-package` for the account that ran it. The installed helper is
-a copy: after `scripts/linux-test-package.sh` changes, the setup has to run again before the
-change takes effect. The script's header gives the command that undoes it.
-
-The walkthrough and acceptance gates install the `--fedora-rpm` candidate themselves. Gates 1
-and 2 use whatever is installed, so install the candidate with the helper before running them.
+The walkthrough and acceptance gates install the `--fedora-rpm` candidate themselves and remove
+it after a passing run. Gates 1 and 2 use whatever is installed, so install the candidate with
+the helper before running them.
 
 ## Gate 1: interrupted sync recovery
 
@@ -180,8 +156,8 @@ package, checks that the executable and Start-menu entry are gone and the vault 
 and reinstalls the candidate, also when the uninstall fails. It removes the Fedora RPM through the
 test package helper and runs the same checks: package, executable, and desktop entry gone, and
 the vault unchanged, so a passing run of the Fedora walkthrough leaves no test build installed.
-The candidate stays installed after a failed run, a `--machine windows` run, and an acceptance
-run; an agent removes it with the helper when it is no longer needed.
+The candidate stays installed after a failed run and a `--machine windows` run; an agent removes
+it with the helper when it is no longer needed.
 
 WebDriver cannot answer native dialogs. The diagnostics export calls the button's own
 `export_diagnostics` command with the path the save dialog would return, and the trace says so.
