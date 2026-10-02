@@ -5,7 +5,7 @@ use crate::vault::para::ParaCategory;
 use rusqlite::{params, Connection, ErrorCode};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -177,12 +177,14 @@ struct VectorCache {
 
 pub struct SemanticIndex {
     database: Mutex<Connection>,
-    database_path: PathBuf,
     cache: VectorCache,
     /// Set when a newer index on the same database replaces this one. A retired index writes
     /// nothing, so a commit cannot land behind the new index's cache snapshot; the new index
     /// reconciles from the vault and picks up anything this one dropped.
     retired: AtomicBool,
+    /// How many searches ranked with the SQL scan, so tests can tell the two paths apart.
+    #[cfg(test)]
+    sql_scans: AtomicUsize,
     backend: Arc<dyn EmbeddingBackend>,
     wake_worker: OnceLock<Sender<()>>,
     embedding_outage_reported: AtomicBool,
@@ -262,12 +264,13 @@ impl SemanticIndex {
         let connection = open_derived_database(database)?;
         Ok(Self {
             database: Mutex::new(connection),
-            database_path: database.to_path_buf(),
             cache: VectorCache {
                 state: Mutex::new(CacheState::NotLoaded),
                 ready: Condvar::new(),
             },
             retired: AtomicBool::new(false),
+            #[cfg(test)]
+            sql_scans: AtomicUsize::new(0),
             backend,
             wake_worker: OnceLock::new(),
             embedding_outage_reported: AtomicBool::new(false),
@@ -616,22 +619,29 @@ impl SemanticIndex {
             .pop()
             .filter(|embedding| !embedding.is_empty())
             .ok_or("The embedding backend returned no query vector")?;
-        self.wait_for_cache()?;
-        let lock_started = Instant::now();
-        let database = self.database.lock().map_err(|error| error.to_string())?;
-        let lock_wait_ms = lock_started.elapsed().as_secs_f64() * 1000.0;
-        let mut state = self.cache.state.lock().map_err(|error| error.to_string())?;
-        if matches!(*state, CacheState::NotLoaded) {
-            *state = loaded_state(load_vectors(&database));
-        }
-        let results = match &*state {
-            CacheState::Ready(notes) => {
-                self.rank_cached(&database, notes, &query_embedding, category, limit)?
+        let deadline = Instant::now() + CACHE_READY_DEADLINE;
+        let (results, lock_wait_ms) = loop {
+            self.wait_for_cache(deadline)?;
+            let lock_started = Instant::now();
+            let database = self.database.lock().map_err(|error| error.to_string())?;
+            let lock_wait_ms = lock_started.elapsed().as_secs_f64() * 1000.0;
+            let mut state = self.cache.state.lock().map_err(|error| error.to_string())?;
+            if matches!(*state, CacheState::NotLoaded) {
+                *state = loaded_state(load_vectors(&database));
             }
-            _ => {
-                drop(state);
-                self.rank_sql(&database, &query_embedding, category, limit)?
-            }
+            let results = match &*state {
+                CacheState::Ready(notes) => {
+                    self.rank_cached(&database, notes, &query_embedding, category, limit)?
+                }
+                // A background load began after the wait above: wait for it, never scan SQLite
+                // meanwhile.
+                CacheState::Loading => continue,
+                CacheState::NotLoaded | CacheState::Failed => {
+                    drop(state);
+                    self.rank_sql(&database, &query_embedding, category, limit)?
+                }
+            };
+            break (results, lock_wait_ms);
         };
         crate::perf_probe::record(serde_json::json!({
             "kind": "semantic-backend",
@@ -714,6 +724,8 @@ impl SemanticIndex {
         category: Option<ParaCategory>,
         limit: usize,
     ) -> Result<Vec<SearchResult>, String> {
+        #[cfg(test)]
+        self.sql_scans.fetch_add(1, Ordering::SeqCst);
         let mut statement = database
             .prepare(
                 "SELECT n.note_key, n.path, n.title, c.text, c.embedding
@@ -780,8 +792,7 @@ impl SemanticIndex {
     }
 
     /// Waits, outside the database mutex, while a background load runs.
-    fn wait_for_cache(&self) -> Result<(), String> {
-        let deadline = Instant::now() + CACHE_READY_DEADLINE;
+    fn wait_for_cache(&self, deadline: Instant) -> Result<(), String> {
         let mut state = self.cache.state.lock().map_err(|error| error.to_string())?;
         while matches!(*state, CacheState::Loading) {
             let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
@@ -863,8 +874,15 @@ impl SemanticIndex {
         self.retired.store(true, Ordering::SeqCst);
     }
 
-    pub fn database_path(&self) -> &Path {
-        &self.database_path
+    /// Puts `next` in the app's slot and starts it. Whatever it displaces is retired first,
+    /// whichever database it uses: after a switch away and back, the old instance of the same
+    /// vault could otherwise still commit behind the new one's cache snapshot (#159).
+    pub fn replace_in(slot: &mut Option<Arc<SemanticIndex>>, next: Arc<SemanticIndex>) {
+        if let Some(old) = slot.take() {
+            old.retire();
+        }
+        *slot = Some(next.clone());
+        next.start_background();
     }
 
     pub fn rebuild_from_notes(&self, vault: &Path) -> Result<(), String> {
@@ -2653,18 +2671,7 @@ mod tests {
         assert!(snapshot.iter().all(|row| row.0 != "id:b"));
         assert_eq!(snapshot, sqlite_snapshot(&index));
 
-        // A removal, and an obsolete queued revision that never commits.
         index.note_removed(&paths[2]).unwrap();
-        write_note(&paths[3], "d", "Long note", "Resources", "river");
-        index.note_changed(&paths[3]).unwrap();
-        write_note(&paths[3], "d", "Long note", "Resources", "river river");
-        let stale = PreparedNote::from_text(
-            &paths[3],
-            "---\nid: d\ntitle: Long note\ncategory: Resources\n---\nriver",
-        );
-        assert!(index.embed_pending_text(&stale).unwrap()); // no longer pending: skipped
-        assert_eq!(cached_snapshot(&index), sqlite_snapshot(&index));
-        index.retry_pending().unwrap();
         assert_eq!(cached_snapshot(&index), sqlite_snapshot(&index));
 
         // A rebuild empties it, and the embeddings that follow refill it.
@@ -2778,5 +2785,120 @@ mod tests {
         drop(old);
         drop(replacement);
         cleanup(root);
+    }
+
+    #[test]
+    fn an_obsolete_revision_commits_nothing_and_the_newer_one_stays_queued() {
+        let root = scratch("cache-stale-revision");
+        let paths = ranking_vault(&root);
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(WordAxesBackend))
+                .unwrap();
+        for path in &paths {
+            index.note_changed(path).unwrap();
+        }
+        index.retry_pending().unwrap();
+        index.search("coffee", None, 5).unwrap();
+
+        // The revision a slow worker read, then a newer one queued while it was embedding.
+        write_note(&paths[3], "d", "Long note", "Resources", "river");
+        let old_revision =
+            PreparedNote::from_text(&paths[3], &std::fs::read_to_string(&paths[3]).unwrap());
+        index.note_changed(&paths[3]).unwrap();
+        write_note(&paths[3], "d", "Long note", "Resources", "river river jazz");
+        let newer =
+            PreparedNote::from_text(&paths[3], &std::fs::read_to_string(&paths[3]).unwrap());
+        index.note_changed(&paths[3]).unwrap();
+        let committed = sqlite_snapshot(&index);
+        let cached = cached_snapshot(&index);
+
+        assert!(index.embed_pending_text(&old_revision).unwrap());
+        assert_eq!(sqlite_snapshot(&index), committed);
+        assert_eq!(cached_snapshot(&index), cached);
+        let pending_hash: String = index
+            .database
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT content_hash FROM pending_notes WHERE note_key = 'id:d'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pending_hash, newer.hash);
+
+        index.retry_pending().unwrap();
+        assert_eq!(cached_snapshot(&index), sqlite_snapshot(&index));
+        assert_eq!(index.status().unwrap().queued_notes, 0);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_load_that_starts_after_the_wait_is_waited_for_not_scanned_around() {
+        let root = scratch("cache-load-race");
+        let paths = ranking_vault(&root);
+        let database = root.join("semantic.sqlite3");
+        let seed = SemanticIndex::open_at(&database, Arc::new(WordAxesBackend)).unwrap();
+        for path in &paths {
+            seed.note_changed(path).unwrap();
+        }
+        seed.retry_pending().unwrap();
+        let expected = seed.search("coffee budget", None, 10).unwrap();
+        drop(seed);
+
+        let index = Arc::new(SemanticIndex::open_at(&database, Arc::new(WordAxesBackend)).unwrap());
+        // The search passes its wait while nothing is loading, then blocks on the database. A
+        // load begins before it gets the lock, so it finds `Loading` there, and has to wait.
+        let held = index.database.lock().unwrap();
+        let searcher = {
+            let index = index.clone();
+            std::thread::spawn(move || index.search("coffee budget", None, 10))
+        };
+        std::thread::sleep(Duration::from_millis(50));
+        *index.cache.state.lock().unwrap() = CacheState::Loading;
+        drop(held);
+        std::thread::sleep(Duration::from_millis(50));
+        let loaded = super::load_vectors(&index.database.lock().unwrap()).unwrap();
+        index.finish_loading(CacheState::Ready(loaded));
+        let found = searcher.join().unwrap().unwrap();
+        assert_same_results(&found, &expected);
+        assert_eq!(index.sql_scans.load(Ordering::SeqCst), 0);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn switching_away_and_back_retires_the_first_instance() {
+        let root = scratch("cache-switch-back");
+        let paths = ranking_vault(&root);
+        let other = scratch("cache-switch-other");
+        let database = root.join("semantic.sqlite3");
+        let mut slot = None;
+
+        let first = Arc::new(SemanticIndex::open_at(&database, Arc::new(WordAxesBackend)).unwrap());
+        first.note_changed(&paths[0]).unwrap();
+        SemanticIndex::replace_in(&mut slot, first.clone());
+        let elsewhere = Arc::new(
+            SemanticIndex::open_at(&other.join("semantic.sqlite3"), Arc::new(WordAxesBackend))
+                .unwrap(),
+        );
+        SemanticIndex::replace_in(&mut slot, elsewhere.clone());
+        let back = Arc::new(SemanticIndex::open_at(&database, Arc::new(WordAxesBackend)).unwrap());
+        SemanticIndex::replace_in(&mut slot, back.clone());
+        back.search("coffee", None, 5).unwrap();
+        let snapshot = cached_snapshot(&back);
+
+        // The first instance's worker finishes its embedding late: it must commit nothing.
+        let late = PreparedNote::from_text(&paths[0], &std::fs::read_to_string(&paths[0]).unwrap());
+        assert!(first.embed_pending_text(&late).unwrap());
+        assert_eq!(cached_snapshot(&back), snapshot);
+        assert_eq!(cached_snapshot(&back), sqlite_snapshot(&back));
+        assert!(first.retired.load(Ordering::SeqCst) && elsewhere.retired.load(Ordering::SeqCst));
+        assert!(!back.retired.load(Ordering::SeqCst));
+
+        drop((first, elsewhere, back, slot));
+        cleanup(root);
+        cleanup(other);
     }
 }

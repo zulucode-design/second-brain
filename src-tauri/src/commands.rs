@@ -507,16 +507,7 @@ fn open_vault_path(
     next.max_versions_per_note = shared_settings.max_versions_per_note;
     save_app_config(&next)?;
     *search_slot = Some(search);
-    // Reopening the same vault replaces an index on the same database: the old one stops
-    // writing before the new one loads its cache (#159). It starts only once it is live.
-    if let Some(old) = semantic_slot
-        .as_ref()
-        .filter(|old| old.database_path() == semantic.database_path())
-    {
-        old.retire();
-    }
-    *semantic_slot = Some(semantic.clone());
-    semantic.start_background();
+    crate::semantic_search::SemanticIndex::replace_in(&mut semantic_slot, semantic.clone());
     *watcher_slot = Some(new_watcher);
     *config = next;
     // The lock has to be gone before the hotkey is claimed: registration reads this same
@@ -3481,20 +3472,14 @@ fn restart_semantic_index(app: &AppHandle) -> Result<(), String> {
         &base_url,
         token,
     )?);
-    {
-        let state = app.state::<AppState>();
-        let mut slot = state
+    crate::semantic_search::SemanticIndex::replace_in(
+        &mut *app
+            .state::<AppState>()
             .semantic_index
             .lock()
-            .map_err(|error| error.to_string())?;
-        // The old index shares this database. It stops writing before the new one loads its
-        // cache, so no late commit can land behind that snapshot (#159).
-        if let Some(old) = slot.as_ref() {
-            old.retire();
-        }
-        *slot = Some(semantic.clone());
-    }
-    semantic.start_background();
+            .map_err(|error| error.to_string())?,
+        semantic.clone(),
+    );
     std::thread::spawn(move || {
         if let Err(error) = semantic.reconcile_from_notes(Path::new(&vault)) {
             log::error!("Could not reconcile semantic search after its settings changed: {error}");
