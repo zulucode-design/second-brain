@@ -100,6 +100,11 @@ change that adds a path, a scriptlet, or a dependency on account creation fails 
 any gate reaches the helper. When that happens on purpose, update the allowlist in
 `scripts/linux-test-package.sh`, then run the setup again.
 
+The package copies the desktop entry's mode from the checkout it was built in. A checkout made
+under a group-writable umask, as in CI's Fedora container, gives a `-rw-rw-r--` entry, which
+rule 6 refuses. CI clears the group write bit before its build; any other build machine needs a
+`022` umask or the same `chmod go-w src-tauri/linux/*.desktop`.
+
 ## What it reaches
 
 What a caller can do as root through the helper:

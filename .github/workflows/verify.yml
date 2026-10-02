@@ -55,10 +55,13 @@ jobs:
       - name: Prepare pinned Syncthing sidecar
         run: pnpm sidecar:prepare
 
+      # The RPM copies the desktop entry's mode from the checkout, which this container leaves
+      # group-writable; a release and the Fedora test package helper both need 0644.
       - name: Build unsigned Fedora package
-        run: >-
-          pnpm exec tauri build --bundles rpm --ci --no-sign
-          --config '{"bundle":{"externalBin":["binaries/syncthing"],"createUpdaterArtifacts":false}}'
+        run: |
+          chmod go-w src-tauri/linux/*.desktop
+          pnpm exec tauri build --bundles rpm --ci --no-sign \
+            --config '{"bundle":{"externalBin":["binaries/syncthing"],"createUpdaterArtifacts":false}}'
 
       - name: Verify portal desktop entry in RPM package
         run: scripts/verify-linux-package.sh "$(find src-tauri/target/release/bundle/rpm -maxdepth 1 -name '*.rpm' -print -quit)"
