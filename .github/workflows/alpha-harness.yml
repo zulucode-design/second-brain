@@ -23,7 +23,7 @@ on:
         description: Candidate NSIS setup on the Windows machine (walkthrough only)
         default: D:\SecondBrainTest\src\src-tauri\target\release\bundle\nsis\Second Brain_0.1.0-alpha.1_x64-setup.exe
       fedora_rpm:
-        description: Installed candidate RPM on the Fedora machine (required for walkthrough)
+        description: Absolute path of the candidate RPM the walkthrough installs on the Fedora machine (required for walkthrough)
         default: ''
       ollama_port:
         description: Windows Ollama port for walkthrough (11436 for a gate-owned server)
@@ -87,7 +87,7 @@ jobs:
           SECOND_BRAIN_NOTION_TOKEN: ${{ secrets.SECOND_BRAIN_NOTION_TOKEN }}
           SECOND_BRAIN_NOTION_PAGE: ${{ secrets.SECOND_BRAIN_NOTION_PAGE }}
         run: |
-          # Without pipefail, tee hides a failed harness run and the uninstall step still runs.
+          # Without pipefail, tee hides a failed harness run.
           set -o pipefail
           if [[ -n "$FEDORA_CONFIG_HOME" ]]; then export XDG_CONFIG_HOME="$FEDORA_CONFIG_HOME"; fi
           args=("$GATE" --candidate "$CANDIDATE")
@@ -97,14 +97,6 @@ jobs:
             if [[ -n "$FEDORA_RPM" ]]; then args+=(--fedora-rpm "$FEDORA_RPM"); fi
           fi
           node scripts/alpha-harness.mjs "${args[@]}" | tee "$RUNNER_TEMP/alpha-harness-result.json"
-
-      - name: Verify manual Fedora uninstall
-        if: inputs.gate == 'walkthrough'
-        run: |
-          run_id=$(node -p "JSON.parse(require('node:fs').readFileSync(process.env.RUNNER_TEMP + '/alpha-harness-result.json', 'utf8').trim().split('\n').at(-1)).runId")
-          echo 'Remove the candidate RPM now: sudo rpm -e second-brain'
-          timeout 30m bash -c 'while rpm -q second-brain >/dev/null 2>&1; do sleep 5; done'
-          node scripts/alpha-harness.mjs walkthrough-uninstalled --run "$run_id"
 
       - name: Keep the public evidence trace
         if: always()

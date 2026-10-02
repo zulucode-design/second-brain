@@ -35,6 +35,9 @@ const WINDOWS_TOOLS = win32.join('D:\\SecondBrainTest\\sb88', 'tools');
 const WINDOWS_ROOT = 'D:\\SecondBrainTest\\sb88';
 const WINDOWS_APP = 'D:\\SecondBrainTest\\app\\second-brain.exe';
 const LINUX_APP = '/usr/bin/second-brain';
+// Installs and removes the candidate RPM as root without a password; set up once by
+// scripts/install-linux-test-package.sh. `sudo -n` fails instead of prompting.
+const LINUX_PACKAGE_HELPER = '/usr/local/libexec/second-brain-test-package';
 const MIN_FREE_BYTES = 5 * 1024 ** 3;
 const DEFAULT_TIMEOUT_MS = 20 * 60_000;
 const WINDOWS_TASK = 'SecondBrainAlphaHarness';
@@ -840,7 +843,6 @@ export function parseOptions(args) {
     else if (name === '--ollama-port') options.ollamaPort = Number(value);
     else if (name === '--windows-installer') options.windowsInstaller = value;
     else if (name === '--fedora-rpm') options.fedoraRpm = resolve(value);
-    else if (name === '--run') options.runId = value;
     else if (name === '--machine') options.machine = value;
     else fail(`unknown option: ${name}`);
   }
@@ -1150,6 +1152,14 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl, sync = false 
     prepare: () => ({ runRoot: machine.runRoot, vault: machine.vaultPath }),
     generate: () => generate(machine.vaultPath),
     hash: () => treeHash(machine.vaultPath),
+    uninstall() {
+      fedoraPackageHelper('remove-test-install');
+      return {
+        packageRemoved: runCommandSync('rpm', ['-q', 'second-brain'], { accept: [0, 1] }).status === 1,
+        appRemoved: !existsSync(LINUX_APP),
+        desktopEntryRemoved: !existsSync(LINUX_DESKTOP_ENTRY),
+      };
+    },
     progress: () => restoreProgress(machine.vaultPath),
     mutate: () => mutateFixture(machine.vaultPath),
     backups: () => readdirSync(machine.backupPath),
@@ -1507,15 +1517,20 @@ async function runRestore(args) {
 }
 
 // The opening the restore and walkthrough traces share: the candidate and its Fedora package,
-// the keep-awake holds, and any stale Windows run the preflight recovered.
-function openGateTrace(options, gate, { runStart = {}, packageChecks } = {}) {
+// the keep-awake holds, and any stale Windows run the preflight recovered. A gate given the
+// candidate RPM installs it first, so the run checks the binary it just installed.
+function openGateTrace(options, gate, { runStart = {}, fedoraRpm } = {}) {
+  if (fedoraRpm) {
+    assertNoLinuxApp();
+    fedoraPackageHelper('install-candidate', fedoraRpm);
+  }
   const run = prepareHarnessRun(options);
   const evidencePath = evidencePathFor(gate, run.runId);
   const screenshotDir = join(options.linuxRoot, 'evidence', `${gate}-${run.runId}`);
   mkdirSync(dirname(evidencePath), { recursive: true });
   mkdirSync(screenshotDir, { recursive: true });
   observation(evidencePath, 'run-start', 'controller', { runId: run.runId, commit: run.candidateCommit, harnessCommit: run.harnessCommit, ...runStart });
-  observation(evidencePath, 'package-evidence', 'fedora', packageChecks ? { ...run.fedoraPackage, checks: packageChecks() } : run.fedoraPackage);
+  observation(evidencePath, 'package-evidence', 'fedora', fedoraRpm ? { ...run.fedoraPackage, checks: fedoraPackageChecks(fedoraRpm) } : run.fedoraPackage);
   observation(evidencePath, 'keep-awake', 'controller', {
     fedora: 'systemd-inhibit sleep:idle; gnome-session-inhibit idle',
     windows: `PowerSetRequest SystemRequired, ${options.holdMinutes} min`,
@@ -1645,6 +1660,10 @@ function fedoraPackageChecks(rpmPath) {
     rpmVerify: 'clean',
     rpm: { path: rpmPath, sha256: createHash('sha256').update(readFileSync(rpmPath)).digest('hex'), portalEntry: 'verified' },
   };
+}
+
+function fedoraPackageHelper(...args) {
+  return runCommandSync('sudo', ['-n', LINUX_PACKAGE_HELPER, ...args], { timeout: 5 * 60_000 }).stdout;
 }
 
 function fedoraOllamaTunnel(sshHost, windowsOllamaBaseUrl) {
@@ -1941,7 +1960,7 @@ async function runWalkthrough(args) {
   // Checked before runOnFedora takes the machines, so a missing input costs nothing.
   const options = parseOptions(args);
   if (!options.windowsInstaller) fail('--windows-installer names the candidate NSIS setup on the Windows machine');
-  if (!options.fedoraRpm) fail('--fedora-rpm names the installed candidate RPM, which verify-linux-package.sh checks');
+  if (!options.fedoraRpm) fail('--fedora-rpm names the candidate RPM the run installs');
   notionCredentials();
   return runOnFedora(args, runWalkthroughLocked);
 }
@@ -1961,7 +1980,7 @@ async function runWalkthroughLocked(options) {
   if (!machineNames.every((name) => ['fedora', 'windows'].includes(name))) fail(`--machine must be fedora or windows: ${options.machine}`);
   const { candidateCommit, runId, evidencePath, screenshotDir } = openGateTrace(options, 'walkthrough', {
     runStart: { clipUrl: CLIP_URL, machines: machineNames, gate: machineNames.length === 2 },
-    packageChecks: () => fedoraPackageChecks(options.fedoraRpm),
+    fedoraRpm: options.fedoraRpm,
   });
   const controller = (event, value) => observation(evidencePath, event, 'controller', value);
 
@@ -2007,7 +2026,7 @@ async function runWalkthroughLocked(options) {
       }
       cleanupError ??= await finishMachine(machine, evidencePath);
       if (!runError && !cleanupError) {
-        // The uninstall check compares against this; for the RPM that happens after the run.
+        // The uninstall check compares against this.
         const vaultBefore = machine.hash();
         observation(evidencePath, 'vault-final', machine.name, vaultBefore);
         if (machine.uninstall) {
@@ -2019,13 +2038,16 @@ async function runWalkthroughLocked(options) {
             runError = error;
             observation(evidencePath, 'run-failed', machine.name, { error: error.message });
           } finally {
-            // Leave the machine with the candidate installed, as the run found it. A failure here
-            // is recorded without hiding one from the uninstall.
-            try {
-              observation(evidencePath, 'reinstalled', machine.name, machine.install(options.windowsInstaller));
-            } catch (error) {
-              observation(evidencePath, 'run-failed', machine.name, { error: `reinstall: ${error.message}` });
-              runError ??= error;
+            // Leave Windows with the candidate installed, as the run found it. Fedora, Nicolas's
+            // own laptop, keeps no test build. A failure here is recorded without hiding one from
+            // the uninstall.
+            if (machine.install) {
+              try {
+                observation(evidencePath, 'reinstalled', machine.name, machine.install(options.windowsInstaller));
+              } catch (error) {
+                observation(evidencePath, 'run-failed', machine.name, { error: `reinstall: ${error.message}` });
+                runError ??= error;
+              }
             }
           }
         }
@@ -2052,39 +2074,8 @@ async function runWalkthroughLocked(options) {
   controller('run-complete', {
     machines: machineNames,
     gate: machineNames.length === 2,
-    fedoraUninstall: machineNames.includes('fedora')
-      ? `pending: run "alpha-harness.mjs walkthrough-uninstalled --run ${runId}" after rpm -e`
-      : 'not run',
   });
   console.log(JSON.stringify({ runId, evidencePath, screenshotDir }));
-}
-
-// The RPM needs root to remove, so Nicolas runs `sudo rpm -e second-brain` after the walkthrough
-// and this checks the result: the package is gone and the walkthrough's vault still has the hash
-// the run recorded after the app exited.
-function runWalkthroughUninstalled(args) {
-  const options = parseOptions(args);
-  if (!options.runId) fail('--run names the walkthrough run to check');
-  const evidencePath = evidencePathFor('walkthrough', options.runId);
-  if (!existsSync(evidencePath)) fail(`no walkthrough evidence for run ${options.runId}`);
-  const trace = readFileSync(evidencePath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
-  const complete = trace.find((line) => line.event === 'run-complete');
-  if (!complete?.gate) fail(`run ${options.runId} is not a completed walkthrough of both machines`);
-  if (trace.some((line) => line.event === 'uninstalled' && line.machine === 'fedora')) {
-    fail(`run ${options.runId} already has its Fedora uninstall result`);
-  }
-  const before = trace.find((line) => line.event === 'vault-final' && line.machine === 'fedora');
-  const vault = join(options.linuxRoot, 'runs', options.runId, 'fedora', 'vault');
-  const query = runCommandSync('rpm', ['-q', 'second-brain'], { accept: [0, 1] });
-  const result = {
-    packageRemoved: query.status === 1,
-    appRemoved: !existsSync(LINUX_APP),
-    desktopEntryRemoved: !existsSync(LINUX_DESKTOP_ENTRY),
-    vaultUnchanged: treeHash(vault).sha256 === before.sha256,
-  };
-  observation(evidencePath, 'uninstalled', 'fedora', result);
-  assertUninstalled('fedora', result);
-  console.log(JSON.stringify(result));
 }
 
 // Every field of an uninstall result is a check that has to hold.
@@ -2917,14 +2908,14 @@ const ACCEPTANCE_CLIP_AFTER = 'https://en.wikipedia.org/wiki/Commonplace_book';
 
 async function runAcceptance(args) {
   const options = parseOptions(args);
-  if (!options.fedoraRpm) fail('--fedora-rpm names the installed candidate RPM, which verify-linux-package.sh checks');
+  if (!options.fedoraRpm) fail('--fedora-rpm names the candidate RPM the run installs');
   return runOnFedora(args, runAcceptanceLocked);
 }
 
 async function runAcceptanceLocked(options) {
   const { candidateCommit, runId, evidencePath, screenshotDir } = openGateTrace(options, 'acceptance', {
     runStart: { issue: 28 },
-    packageChecks: () => fedoraPackageChecks(options.fedoraRpm),
+    fedoraRpm: options.fedoraRpm,
   });
   const record = (event, machine, value) => observation(evidencePath, event, machine, value);
   const vaultId = randomUUID();
@@ -3718,7 +3709,6 @@ async function main() {
   if (commandName === 'restore') return runRestore(args);
   if (commandName === 'walkthrough') return runWalkthrough(args);
   if (commandName === 'acceptance') return runAcceptance(args);
-  if (commandName === 'walkthrough-uninstalled') return runWalkthroughUninstalled(args);
   if (commandName === '__kill-watch') {
     console.log(JSON.stringify(await killWatch(JSON.parse(Buffer.from(args[0], 'base64url').toString('utf8')))));
     return;
@@ -3732,7 +3722,6 @@ async function main() {
   console.error([
     'usage: node scripts/alpha-harness.mjs sync|restore [--candidate <sha>] [--ssh sb-windows] [--linux-root ~/sb88] [--timeout-minutes 20]',
     '       node scripts/alpha-harness.mjs walkthrough --windows-installer <D:\\...setup.exe> --fedora-rpm <rpm> [--candidate <sha>] [--machine fedora|windows] [--ollama-port 11434]',
-    '       node scripts/alpha-harness.mjs walkthrough-uninstalled --run <runId>',
     '       node scripts/alpha-harness.mjs acceptance --fedora-rpm <rpm> [--candidate <sha>]',
   ].join('\n'));
   process.exitCode = 2;

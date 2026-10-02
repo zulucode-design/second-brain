@@ -63,6 +63,12 @@ jobs:
       - name: Verify portal desktop entry in RPM package
         run: scripts/verify-linux-package.sh "$(find src-tauri/target/release/bundle/rpm -maxdepth 1 -name '*.rpm' -print -quit)"
 
+      # The Fedora test package helper refuses an RPM that fails this, so a gate would too.
+      - name: Check RPM against the test package helper
+        run: >-
+          bash -c 'source scripts/linux-test-package.sh && check_candidate "$1"' check
+          "$(find src-tauri/target/release/bundle/rpm -maxdepth 1 -name '*.rpm' -print -quit)"
+
   windows-rust:
     runs-on: windows-2022
     timeout-minutes: 30
