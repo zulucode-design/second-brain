@@ -9,8 +9,9 @@ Agents install and remove the candidate RPM without Nicolas, through a root-owne
 sudo runs without a password. [linux-test-package.md](linux-test-package.md) covers its use,
 setup, and reach.
 
-The walkthrough and acceptance gates install the `--fedora-rpm` candidate themselves and remove
-it after a passing run. Gates 1 and 2 use whatever is installed, so install the candidate with
+The walkthrough and acceptance gates install the `--fedora-rpm` candidate themselves. The
+walkthrough removes it after a passing run; the acceptance gate removes it after every run whose
+apps it could stop. Gates 1 and 2 use whatever is installed, so install the candidate with
 the helper before running them.
 
 ## Gate 1: interrupted sync recovery

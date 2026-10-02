@@ -2963,19 +2963,22 @@ async function runAcceptanceLocked(options) {
     const windowsCleanup = windowsPrepared ? await finishMachine(windows, evidencePath) : null;
     cleanupError ??= fedoraCleanup ?? windowsCleanup;
   }
+  // Every run whose apps were stopped removes the candidate, passed or failed, and checks the vault
+  // survived it. A failed removal never hides the run's own error.
+  if (fedora && !cleanupError) {
+    try {
+      const vaultBefore = fedora.hash();
+      record('vault-final', 'fedora', vaultBefore);
+      const removed = { ...fedora.uninstall(), vaultUnchanged: fedora.hash().sha256 === vaultBefore.sha256 };
+      record('uninstalled', 'fedora', removed);
+      assertUninstalled('fedora', removed);
+    } catch (error) {
+      record('run-failed', 'fedora', { error: error.message });
+      runError ??= error;
+    }
+  }
   if (runError) throw runError;
   if (cleanupError) throw cleanupError;
-  // As in the walkthrough, a passing run removes the candidate and checks the vault survived it.
-  try {
-    const vaultBefore = fedora.hash();
-    record('vault-final', 'fedora', vaultBefore);
-    const removed = { ...fedora.uninstall(), vaultUnchanged: fedora.hash().sha256 === vaultBefore.sha256 };
-    record('uninstalled', 'fedora', removed);
-    assertUninstalled('fedora', removed);
-  } catch (error) {
-    record('run-failed', 'fedora', { error: error.message });
-    throw error;
-  }
   record('run-complete', 'controller', { criteria: 11 });
   console.log(JSON.stringify({ runId, evidencePath, screenshotDir }));
 }

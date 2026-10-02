@@ -21,12 +21,14 @@ password that no one will type.
 The harness calls these commands itself:
 
 - **walkthrough** (Gate 3) and **acceptance** (#28) install `--fedora-rpm` before the run
-  starts. After a passing run they remove it, then check that the package, `/usr/bin/second-brain`
-  and the desktop entry are gone and that the run's vault is unchanged.
+  starts. When they remove it, they check that the package, `/usr/bin/second-brain` and the
+  desktop entry are gone and that the run's vault is unchanged.
+- **acceptance** removes the candidate after every run, passed or failed, once its apps have
+  stopped. A failed removal is recorded without hiding the run's own error.
+- **walkthrough** removes it after a passing run. A failed run, or a `--machine windows` run,
+  leaves it installed. Remove it with `remove-test-install` once it is no longer needed.
 - **sync** (Gate 1) and **restore** (Gate 2) take no RPM. Install the candidate with the helper
   before running them, and remove it afterwards.
-- A failed run, or a `walkthrough --machine windows` run, leaves the candidate installed for
-  inspection. Remove it with `remove-test-install` once it is no longer needed.
 
 The app, `tauri-driver`, and the harness all run as the ordinary user. Only installing and
 removing the package runs as root.
