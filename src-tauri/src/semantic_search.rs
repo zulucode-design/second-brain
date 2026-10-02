@@ -5,11 +5,11 @@ use crate::vault::para::ParaCategory;
 use rusqlite::{params, Connection, ErrorCode};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use walkdir::WalkDir;
 
 const EMBEDDING_PROFILE: &str = "ollama:embeddinggemma:chunks-v2";
@@ -34,6 +34,13 @@ const MIN_SEMANTIC_SCORE: f32 = 0.22;
 /// scored within 0.02 of each other, so no cutoff could keep one and hide the other (#130).
 /// Changing either prompt changes what stored vectors mean, so it requires a new profile.
 const QUERY_PROMPT: &str = "task: search result | query: ";
+/// How long a search waits for the vector cache to finish loading before it reports the index
+/// as still loading. Waiting forever would leave the search spinner up if loading stalls.
+const CACHE_READY_DEADLINE: Duration = if cfg!(test) {
+    Duration::from_millis(300)
+} else {
+    Duration::from_secs(5)
+};
 
 fn document_input(title: &str, text: &str) -> String {
     let title = if title.trim().is_empty() {
@@ -134,8 +141,48 @@ impl EmbeddingBackend for OllamaEmbeddingBackend {
     }
 }
 
+/// One indexed note's vectors, decoded, so a search ranks without reading any blob (#159).
+/// Reading every chunk row per search cost about 46 MB of I/O on the 10,000-note fixture, and
+/// on Windows a scan that met startup I/O took over a second.
+struct CachedNote {
+    path: String,
+    /// Breaks score ties, so ranking needs no lookup however many notes tie.
+    title: String,
+    profile: String,
+    category: Option<String>,
+    /// `(ordinal, vector)`, in ordinal order.
+    chunks: Vec<(i64, Vec<f32>)>,
+}
+
+/// ponytail: every vector stays in memory, so memory grows linearly with chunk count: about
+/// 3 KB per 768-dimension chunk plus metadata, or roughly 31 MB for the 10,000-note fixture.
+/// Storing f16 or quantized vectors is the upgrade, and it needs its own ranking validation.
+enum CacheState {
+    /// Not loaded yet; the first search loads it inline.
+    NotLoaded,
+    /// A background load is running; searches wait for it, up to `CACHE_READY_DEADLINE`.
+    Loading,
+    Ready(HashMap<String, CachedNote>),
+    /// Loading failed; searches use the SQL scan for the rest of this session.
+    Failed,
+}
+
+/// Kept equal to the committed `notes` and `chunks` tables. Every change is published while
+/// the database mutex is still held, after its commit, and always taken in that order:
+/// database, then cache.
+struct VectorCache {
+    state: Mutex<CacheState>,
+    ready: Condvar,
+}
+
 pub struct SemanticIndex {
     database: Mutex<Connection>,
+    database_path: PathBuf,
+    cache: VectorCache,
+    /// Set when a newer index on the same database replaces this one. A retired index writes
+    /// nothing, so a commit cannot land behind the new index's cache snapshot; the new index
+    /// reconciles from the vault and picks up anything this one dropped.
+    retired: AtomicBool,
     backend: Arc<dyn EmbeddingBackend>,
     wake_worker: OnceLock<Sender<()>>,
     embedding_outage_reported: AtomicBool,
@@ -215,6 +262,12 @@ impl SemanticIndex {
         let connection = open_derived_database(database)?;
         Ok(Self {
             database: Mutex::new(connection),
+            database_path: database.to_path_buf(),
+            cache: VectorCache {
+                state: Mutex::new(CacheState::NotLoaded),
+                ready: Condvar::new(),
+            },
+            retired: AtomicBool::new(false),
             backend,
             wake_worker: OnceLock::new(),
             embedding_outage_reported: AtomicBool::new(false),
@@ -384,6 +437,9 @@ impl SemanticIndex {
     /// Refresh one durable pending row, without waking the background worker.
     fn refresh_pending_text(&self, note: &PreparedNote) -> Result<(), String> {
         let database = self.database.lock().map_err(|error| error.to_string())?;
+        if self.retired.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         database
             .execute(
                 "DELETE FROM pending_notes WHERE note_key = ?1 OR path = ?2",
@@ -451,6 +507,9 @@ impl SemanticIndex {
             .store(false, Ordering::SeqCst);
 
         let mut database = self.database.lock().map_err(|error| error.to_string())?;
+        if self.retired.load(Ordering::SeqCst) {
+            return Ok(true);
+        }
         let transaction = database.transaction().map_err(|error| error.to_string())?;
         let still_current = transaction
             .query_row(
@@ -485,12 +544,12 @@ impl SemanticIndex {
                 ],
             )
             .map_err(|error| error.to_string())?;
-        for (ordinal, (chunk, embedding)) in chunks.iter().zip(embeddings).enumerate() {
+        for (ordinal, (chunk, embedding)) in chunks.iter().zip(&embeddings).enumerate() {
             transaction
                 .execute(
                     "INSERT INTO chunks (note_key, ordinal, text, embedding)
                      VALUES (?1, ?2, ?3, ?4)",
-                    params![note.key, ordinal as i64, chunk.snippet, encode(&embedding)],
+                    params![note.key, ordinal as i64, chunk.snippet, encode(embedding)],
                 )
                 .map_err(|error| error.to_string())?;
         }
@@ -500,14 +559,33 @@ impl SemanticIndex {
                 params![note.key],
             )
             .map_err(|error| error.to_string())?;
-        transaction
-            .commit()
-            .map(|()| true)
-            .map_err(|error| error.to_string())
+        transaction.commit().map_err(|error| error.to_string())?;
+        // The DELETE above displaced the note under this key and any note at this path.
+        self.publish(|notes| {
+            notes.retain(|key, cached| key != &note.key && cached.path != note.path);
+            notes.insert(
+                note.key.clone(),
+                CachedNote {
+                    path: note.path.clone(),
+                    title: note.meta.title.clone(),
+                    profile: self.profile.clone(),
+                    category: note
+                        .meta
+                        .category
+                        .map(|category| category.folder_name().to_string()),
+                    chunks: (0_i64..).zip(embeddings).collect(),
+                },
+            );
+        });
+        drop(database);
+        Ok(true)
     }
 
     pub fn note_removed(&self, path: &Path) -> Result<(), String> {
         let mut database = self.database.lock().map_err(|error| error.to_string())?;
+        if self.retired.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         let transaction = database.transaction().map_err(|error| error.to_string())?;
         let path = path.to_string_lossy();
         transaction
@@ -516,7 +594,10 @@ impl SemanticIndex {
         transaction
             .execute("DELETE FROM pending_notes WHERE path = ?1", [path.as_ref()])
             .map_err(|error| error.to_string())?;
-        transaction.commit().map_err(|error| error.to_string())
+        transaction.commit().map_err(|error| error.to_string())?;
+        self.publish(|notes| notes.retain(|_, cached| cached.path != path.as_ref()));
+        drop(database);
+        Ok(())
     }
 
     pub fn search(
@@ -525,20 +606,120 @@ impl SemanticIndex {
         category: Option<ParaCategory>,
         limit: usize,
     ) -> Result<Vec<SearchResult>, String> {
-        let embed_started = std::time::Instant::now();
+        let embed_started = Instant::now();
         let mut query_embeddings = self.backend.embed(&[format!("{QUERY_PROMPT}{query}")])?;
         let embed_ms = embed_started.elapsed().as_secs_f64() * 1000.0;
-        let scan_started = std::time::Instant::now();
+        // Everything after the embedding counts as the scan, waits included, so a slow load or
+        // a held lock shows up in exactScanMs instead of being hidden (#159).
+        let scan_started = Instant::now();
         let query_embedding = query_embeddings
             .pop()
             .filter(|embedding| !embedding.is_empty())
             .ok_or("The embedding backend returned no query vector")?;
+        self.wait_for_cache()?;
+        let lock_started = Instant::now();
         let database = self.database.lock().map_err(|error| error.to_string())?;
+        let lock_wait_ms = lock_started.elapsed().as_secs_f64() * 1000.0;
+        let mut state = self.cache.state.lock().map_err(|error| error.to_string())?;
+        if matches!(*state, CacheState::NotLoaded) {
+            *state = loaded_state(load_vectors(&database));
+        }
+        let results = match &*state {
+            CacheState::Ready(notes) => {
+                self.rank_cached(&database, notes, &query_embedding, category, limit)?
+            }
+            _ => {
+                drop(state);
+                self.rank_sql(&database, &query_embedding, category, limit)?
+            }
+        };
+        crate::perf_probe::record(serde_json::json!({
+            "kind": "semantic-backend",
+            "embedMs": embed_ms,
+            "exactScanMs": scan_started.elapsed().as_secs_f64() * 1000.0,
+            "lockWaitMs": lock_wait_ms,
+            "results": results.len(),
+        }));
+        Ok(results)
+    }
+
+    /// Ranks from the vector cache, reading only the winners' paths and snippets.
+    fn rank_cached(
+        &self,
+        database: &Connection,
+        notes: &HashMap<String, CachedNote>,
+        query_embedding: &[f32],
+        category: Option<ParaCategory>,
+        limit: usize,
+    ) -> Result<Vec<SearchResult>, String> {
+        let category_name = category.map(|value| value.folder_name());
+        // The best chunk per note; the first chunk wins a tie, as the SQL scan does.
+        let mut ranked: Vec<(&str, &CachedNote, i64, f32)> = Vec::new();
+        for (key, note) in notes {
+            if note.profile != self.profile
+                || category_name.is_some_and(|wanted| note.category.as_deref() != Some(wanted))
+            {
+                continue;
+            }
+            let mut winner: Option<(i64, f32)> = None;
+            for (ordinal, embedding) in &note.chunks {
+                let Some(score) = cosine_similarity(query_embedding, embedding) else {
+                    continue;
+                };
+                if score < MIN_SEMANTIC_SCORE {
+                    continue;
+                }
+                if winner.is_none_or(|(_, current)| current < score) {
+                    winner = Some((*ordinal, score));
+                }
+            }
+            if let Some((ordinal, score)) = winner {
+                ranked.push((key.as_str(), note, ordinal, score));
+            }
+        }
+        ranked.sort_by(|left, right| {
+            right
+                .3
+                .total_cmp(&left.3)
+                .then_with(|| left.1.title.cmp(&right.1.title))
+        });
+        ranked.truncate(limit);
+        let mut hydrate = database
+            .prepare_cached(
+                "SELECT n.path, c.text FROM notes n JOIN chunks c ON c.note_key = n.note_key
+                 WHERE n.note_key = ?1 AND c.ordinal = ?2",
+            )
+            .map_err(|error| error.to_string())?;
+        ranked
+            .into_iter()
+            .map(|(key, note, ordinal, score)| {
+                let (path, snippet) = hydrate
+                    .query_row(params![key, ordinal], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .map_err(|error| error.to_string())?;
+                Ok(SearchResult {
+                    path,
+                    title: note.title.clone(),
+                    snippet,
+                    score,
+                })
+            })
+            .collect()
+    }
+
+    /// The scan used when the cache could not load: every chunk row, read from SQLite.
+    fn rank_sql(
+        &self,
+        database: &Connection,
+        query_embedding: &[f32],
+        category: Option<ParaCategory>,
+        limit: usize,
+    ) -> Result<Vec<SearchResult>, String> {
         let mut statement = database
             .prepare(
                 "SELECT n.note_key, n.path, n.title, c.text, c.embedding
                  FROM notes n JOIN chunks c ON c.note_key = n.note_key
-                 WHERE n.profile = ?1 AND (?2 IS NULL OR n.category = ?2)",
+                 WHERE n.profile = ?1 AND (?2 IS NULL OR n.category = ?2)
+                 ORDER BY n.note_key, c.ordinal",
             )
             .map_err(|error| error.to_string())?;
         let category_name = category.map(|value| value.folder_name());
@@ -558,7 +739,7 @@ impl SemanticIndex {
         for row in rows {
             let (note_key, path, title, snippet, bytes) = row.map_err(|error| error.to_string())?;
             let embedding = decode(&bytes)?;
-            let Some(score) = cosine_similarity(&query_embedding, &embedding) else {
+            let Some(score) = cosine_similarity(query_embedding, &embedding) else {
                 continue;
             };
             if score < MIN_SEMANTIC_SCORE {
@@ -586,19 +767,113 @@ impl SemanticIndex {
                 .then_with(|| left.title.cmp(&right.title))
         });
         results.truncate(limit);
-        crate::perf_probe::record(serde_json::json!({
-            "kind": "semantic-backend",
-            "embedMs": embed_ms,
-            "exactScanMs": scan_started.elapsed().as_secs_f64() * 1000.0,
-            "results": results.len(),
-        }));
         Ok(results)
+    }
+
+    /// Applies a committed change to the cache. Callers still hold the database mutex.
+    fn publish(&self, change: impl FnOnce(&mut HashMap<String, CachedNote>)) {
+        if let Ok(mut state) = self.cache.state.lock() {
+            if let CacheState::Ready(notes) = &mut *state {
+                change(notes);
+            }
+        }
+    }
+
+    /// Waits, outside the database mutex, while a background load runs.
+    fn wait_for_cache(&self) -> Result<(), String> {
+        let deadline = Instant::now() + CACHE_READY_DEADLINE;
+        let mut state = self.cache.state.lock().map_err(|error| error.to_string())?;
+        while matches!(*state, CacheState::Loading) {
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                return Err(
+                    "Semantic search is still loading its index. Try again in a moment."
+                        .to_string(),
+                );
+            };
+            state = self
+                .cache
+                .ready
+                .wait_timeout(state, remaining)
+                .map_err(|error| error.to_string())?
+                .0;
+        }
+        Ok(())
+    }
+
+    /// Starts loading the cache off the calling thread. A search that arrives meanwhile waits.
+    fn start_cache_load(self: &Arc<Self>) {
+        {
+            let Ok(mut state) = self.cache.state.lock() else {
+                return;
+            };
+            if !matches!(*state, CacheState::NotLoaded) {
+                return;
+            }
+            *state = CacheState::Loading;
+        }
+        let index = Arc::downgrade(self);
+        let spawned = std::thread::Builder::new()
+            .name("semantic-cache".to_string())
+            .spawn(move || {
+                if let Some(index) = index.upgrade() {
+                    index.load_cache_now();
+                }
+            });
+        if let Err(error) = spawned {
+            log::warn!(
+                "Semantic search uses the slower scan: its cache could not start loading: {error}"
+            );
+            self.finish_loading(CacheState::Failed);
+        }
+    }
+
+    fn load_cache_now(&self) {
+        // Whatever happens below, waiters must not sleep out their deadline on a dead load.
+        struct WakeOnExit<'a>(&'a SemanticIndex);
+        impl Drop for WakeOnExit<'_> {
+            fn drop(&mut self) {
+                self.0.finish_loading(CacheState::Failed);
+            }
+        }
+        let _wake = WakeOnExit(self);
+        let Ok(database) = self.database.lock() else {
+            return;
+        };
+        // Published while the database mutex is still held, so no write lands between the
+        // snapshot and the cache it becomes.
+        let next = loaded_state(load_vectors(&database));
+        self.finish_loading(next);
+        drop(database);
+    }
+
+    /// Ends a load: sets `next` unless another outcome already landed, and wakes every waiter.
+    fn finish_loading(&self, next: CacheState) {
+        if let Ok(mut state) = self.cache.state.lock() {
+            if matches!(*state, CacheState::Loading) {
+                *state = next;
+            }
+        }
+        self.cache.ready.notify_all();
+    }
+
+    /// Stops this index writing, because a newer index on the same database replaces it.
+    /// Taking the database mutex first lets a write already in progress finish.
+    pub fn retire(&self) {
+        let _database = self.database.lock();
+        self.retired.store(true, Ordering::SeqCst);
+    }
+
+    pub fn database_path(&self) -> &Path {
+        &self.database_path
     }
 
     pub fn rebuild_from_notes(&self, vault: &Path) -> Result<(), String> {
         let paths = note_paths(vault);
         {
             let mut database = self.database.lock().map_err(|error| error.to_string())?;
+            if self.retired.load(Ordering::SeqCst) {
+                return Ok(());
+            }
             let transaction = database.transaction().map_err(|error| error.to_string())?;
             transaction
                 .execute("DELETE FROM notes", [])
@@ -607,6 +882,8 @@ impl SemanticIndex {
                 .execute("DELETE FROM pending_notes", [])
                 .map_err(|error| error.to_string())?;
             transaction.commit().map_err(|error| error.to_string())?;
+            // Ready and empty: the embeddings that follow refill it, so nothing reloads.
+            self.publish(HashMap::clear);
         }
         let mut unreadable = 0;
         for path in paths {
@@ -758,6 +1035,7 @@ impl SemanticIndex {
     }
 
     pub fn start_background(self: &Arc<Self>) {
+        self.start_cache_load();
         self.start_background_with_interval(Duration::from_secs(20));
     }
 
@@ -802,6 +1080,9 @@ impl SemanticIndex {
                 let Some(index) = index.upgrade() else {
                     break;
                 };
+                if index.retired.load(Ordering::SeqCst) {
+                    break;
+                }
                 match index.retry_pending() {
                     Ok(RetryOutcome::QueueProcessed) => offline_until = None,
                     Ok(RetryOutcome::BackendUnavailable) => {
@@ -814,6 +1095,48 @@ impl SemanticIndex {
                 }
             }
         });
+    }
+}
+
+/// Every indexed chunk's vector, decoded, grouped by note in ordinal order.
+fn load_vectors(database: &Connection) -> Result<HashMap<String, CachedNote>, String> {
+    let mut statement = database
+        .prepare(
+            "SELECT n.note_key, n.path, n.profile, n.category, c.ordinal, c.embedding, n.title
+             FROM notes n JOIN chunks c ON c.note_key = n.note_key
+             ORDER BY n.note_key, c.ordinal",
+        )
+        .map_err(|error| error.to_string())?;
+    let mut rows = statement.query([]).map_err(|error| error.to_string())?;
+    let mut notes: HashMap<String, CachedNote> = HashMap::new();
+    while let Some(row) = rows.next().map_err(|error| error.to_string())? {
+        let key: String = row.get(0).map_err(|error| error.to_string())?;
+        let ordinal: i64 = row.get(4).map_err(|error| error.to_string())?;
+        let bytes: Vec<u8> = row.get(5).map_err(|error| error.to_string())?;
+        let embedding = decode(&bytes)?;
+        if let Some(note) = notes.get_mut(&key) {
+            note.chunks.push((ordinal, embedding));
+            continue;
+        }
+        let note = CachedNote {
+            path: row.get(1).map_err(|error| error.to_string())?,
+            title: row.get(6).map_err(|error| error.to_string())?,
+            profile: row.get(2).map_err(|error| error.to_string())?,
+            category: row.get(3).map_err(|error| error.to_string())?,
+            chunks: vec![(ordinal, embedding)],
+        };
+        notes.insert(key, note);
+    }
+    Ok(notes)
+}
+
+fn loaded_state(loaded: Result<HashMap<String, CachedNote>, String>) -> CacheState {
+    match loaded {
+        Ok(notes) => CacheState::Ready(notes),
+        Err(error) => {
+            log::warn!("Semantic search uses the slower scan: its cache could not load: {error}");
+            CacheState::Failed
+        }
     }
 }
 
@@ -921,12 +1244,17 @@ mod tests {
         });
     }
 
-    use super::{EmbeddingBackend, OllamaEmbeddingBackend, SemanticIndex};
+    use super::{
+        CacheState, EmbeddingBackend, OllamaEmbeddingBackend, PreparedNote, SemanticIndex,
+    };
+    use crate::types::SearchResult;
+    use crate::vault::para::ParaCategory;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::path::Path;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
 
     struct MeaningBackend;
 
@@ -2093,16 +2421,362 @@ mod tests {
             transaction.commit().unwrap();
         }
 
-        let started = std::time::Instant::now();
-        let results = index.search("representative query", None, 20).unwrap();
-        let elapsed = started.elapsed();
-
-        assert_eq!(results.len(), 20);
+        drop(index);
+        // Seeded first, then reopened, so the timed searches use the cache an opened vault has.
+        let index = Arc::new(
+            SemanticIndex::open_at(
+                &root.join("semantic.sqlite3"),
+                Arc::new(FixedSizeBackend {
+                    dimensions: DIMENSIONS,
+                }),
+            )
+            .unwrap(),
+        );
+        index.start_background();
+        let mut timings = Vec::new();
+        for _ in 0..5 {
+            let started = std::time::Instant::now();
+            let results = index.search("representative query", None, 20).unwrap();
+            timings.push(started.elapsed().as_secs_f64() * 1000.0);
+            assert_eq!(results.len(), 20);
+        }
         println!(
-            "semantic brute-force benchmark: {NOTES} notes, {DIMENSIONS} dimensions, {} ms",
-            elapsed.as_millis()
+            "semantic brute-force benchmark: {NOTES} notes, {DIMENSIONS} dimensions, ms per search {timings:.1?}"
         );
         drop(index);
+        cleanup(root);
+    }
+    // ── #159: the vector cache ranks exactly as the SQL scan, and stays equal to SQLite ──
+
+    /// `(key, path, title, category, chunks)` for one cached note.
+    type CacheRow = (String, String, String, Option<String>, Vec<(i64, Vec<f32>)>);
+
+    /// Words map to fixed axes and the title is ignored, so notes with the same body tie
+    /// exactly and only their titles order them.
+    struct WordAxesBackend;
+
+    impl EmbeddingBackend for WordAxesBackend {
+        fn embed(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>, String> {
+            const AXES: [&str; 6] = ["coffee", "garden", "budget", "jazz", "river", "chess"];
+            Ok(inputs
+                .iter()
+                .map(|input| {
+                    let text = input
+                        .split(" | text: ")
+                        .last()
+                        .unwrap_or(input)
+                        .to_lowercase();
+                    let mut vector: Vec<f32> = AXES
+                        .iter()
+                        .map(|axis| text.matches(axis).count() as f32)
+                        .collect();
+                    vector.push(0.05);
+                    vector
+                })
+                .collect())
+        }
+    }
+
+    fn cached_snapshot(index: &SemanticIndex) -> Vec<CacheRow> {
+        let state = index.cache.state.lock().unwrap();
+        let CacheState::Ready(notes) = &*state else {
+            panic!("the cache is not ready");
+        };
+        let mut rows: Vec<_> = notes
+            .iter()
+            .map(|(key, note)| {
+                (
+                    key.clone(),
+                    note.path.clone(),
+                    note.title.clone(),
+                    note.category.clone(),
+                    note.chunks.clone(),
+                )
+            })
+            .collect();
+        rows.sort_by(|left, right| left.0.cmp(&right.0));
+        rows
+    }
+
+    fn sqlite_snapshot(index: &SemanticIndex) -> Vec<CacheRow> {
+        let database = index.database.lock().unwrap();
+        let mut rows: Vec<_> = super::load_vectors(&database)
+            .unwrap()
+            .into_iter()
+            .map(|(key, note)| (key, note.path, note.title, note.category, note.chunks))
+            .collect();
+        rows.sort_by(|left, right| left.0.cmp(&right.0));
+        rows
+    }
+
+    fn sql_results(
+        index: &SemanticIndex,
+        query: &str,
+        category: Option<ParaCategory>,
+        limit: usize,
+    ) -> Vec<SearchResult> {
+        let query_embedding = index
+            .backend
+            .embed(&[format!("{}{query}", super::QUERY_PROMPT)])
+            .unwrap()
+            .pop()
+            .unwrap();
+        let database = index.database.lock().unwrap();
+        index
+            .rank_sql(&database, &query_embedding, category, limit)
+            .unwrap()
+    }
+
+    fn assert_same_results(left: &[SearchResult], right: &[SearchResult]) {
+        let shape = |results: &[SearchResult]| {
+            results
+                .iter()
+                .map(|result| {
+                    (
+                        result.path.clone(),
+                        result.title.clone(),
+                        result.snippet.clone(),
+                        result.score.to_bits(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(shape(left), shape(right));
+    }
+
+    /// A vault whose ranking exercises every rule: several chunks per note with the best one
+    /// winning, score ties broken by title across the limit, a note below the cutoff, and two
+    /// categories.
+    fn ranking_vault(root: &Path) -> Vec<std::path::PathBuf> {
+        let long_body = format!("{} river chess chess chess", "filler ".repeat(400));
+        let notes = [
+            (
+                "a",
+                "Alpha tie",
+                "Areas",
+                "coffee coffee budget".to_string(),
+            ),
+            ("b", "Beta tie", "Areas", "coffee coffee budget".to_string()),
+            (
+                "c",
+                "Gamma tie",
+                "Projects",
+                "coffee coffee budget".to_string(),
+            ),
+            ("d", "Long note", "Resources", long_body),
+            ("e", "Jazz only", "Areas", "jazz jazz jazz".to_string()),
+            (
+                "f",
+                "Coffee garden",
+                "Projects",
+                "coffee garden".to_string(),
+            ),
+        ];
+        notes
+            .iter()
+            .map(|(id, title, category, body)| {
+                let path = root.join(format!("{title}.md"));
+                write_note(&path, id, title, category, body);
+                path
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_cache_ranks_exactly_as_the_sql_scan() {
+        let root = scratch("cache-ranking");
+        let paths = ranking_vault(&root);
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(WordAxesBackend))
+                .unwrap();
+        for path in &paths {
+            index.note_changed(path).unwrap();
+        }
+        index.retry_pending().unwrap();
+
+        for (query, category, limit) in [
+            ("coffee budget", None, 10),
+            ("coffee budget", None, 2),
+            ("coffee budget", Some(ParaCategory::Areas), 1),
+            ("chess and the river", None, 10),
+            ("jazz", Some(ParaCategory::Projects), 10),
+            ("coffee", None, 0),
+        ] {
+            let cached = index.search(query, category, limit).unwrap();
+            assert!(matches!(
+                *index.cache.state.lock().unwrap(),
+                CacheState::Ready(_)
+            ));
+            assert_same_results(&cached, &sql_results(&index, query, category, limit));
+        }
+        // The winning chunk's text is the snippet: the long note matched on its last chunk.
+        let long = index.search("chess and the river", None, 1).unwrap();
+        assert_eq!(long[0].title, "Long note");
+        assert!(long[0].snippet.contains("chess"));
+        // Ties at the limit are broken by title, not by load order.
+        let tied = index.search("coffee budget", None, 2).unwrap();
+        assert_eq!(
+            tied.iter()
+                .map(|result| result.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Alpha tie", "Beta tie"]
+        );
+
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn the_cache_stays_equal_to_sqlite_through_every_write() {
+        let root = scratch("cache-writes");
+        let paths = ranking_vault(&root);
+        let database = root.join("semantic.sqlite3");
+        let index = SemanticIndex::open_at(&database, Arc::new(WordAxesBackend)).unwrap();
+        index.search("coffee", None, 5).unwrap(); // loads the (empty) cache inline
+        for path in &paths {
+            index.note_changed(path).unwrap();
+        }
+        index.retry_pending().unwrap();
+        assert_eq!(cached_snapshot(&index), sqlite_snapshot(&index));
+
+        // An edited note replaces its chunks.
+        write_note(&paths[0], "a", "Alpha tie", "Areas", "garden garden");
+        index.note_changed(&paths[0]).unwrap();
+        index.retry_pending().unwrap();
+        assert_eq!(cached_snapshot(&index), sqlite_snapshot(&index));
+
+        // Another note now at the same path displaces the old identity.
+        write_note(&paths[1], "b-replaced", "Beta tie", "Areas", "chess");
+        index.note_changed(&paths[1]).unwrap();
+        index.retry_pending().unwrap();
+        let snapshot = cached_snapshot(&index);
+        assert!(snapshot.iter().all(|row| row.0 != "id:b"));
+        assert_eq!(snapshot, sqlite_snapshot(&index));
+
+        // A removal, and an obsolete queued revision that never commits.
+        index.note_removed(&paths[2]).unwrap();
+        write_note(&paths[3], "d", "Long note", "Resources", "river");
+        index.note_changed(&paths[3]).unwrap();
+        write_note(&paths[3], "d", "Long note", "Resources", "river river");
+        let stale = PreparedNote::from_text(
+            &paths[3],
+            "---\nid: d\ntitle: Long note\ncategory: Resources\n---\nriver",
+        );
+        assert!(index.embed_pending_text(&stale).unwrap()); // no longer pending: skipped
+        assert_eq!(cached_snapshot(&index), sqlite_snapshot(&index));
+        index.retry_pending().unwrap();
+        assert_eq!(cached_snapshot(&index), sqlite_snapshot(&index));
+
+        // A rebuild empties it, and the embeddings that follow refill it.
+        index.rebuild_from_notes(&root).unwrap();
+        assert!(cached_snapshot(&index).is_empty());
+        index.retry_pending().unwrap();
+        assert_eq!(cached_snapshot(&index), sqlite_snapshot(&index));
+        let before_restart = cached_snapshot(&index);
+        drop(index);
+
+        // A restart loads the same cache from disk.
+        let reopened = SemanticIndex::open_at(&database, Arc::new(WordAxesBackend)).unwrap();
+        reopened.search("coffee", None, 5).unwrap();
+        assert_eq!(cached_snapshot(&reopened), before_restart);
+        drop(reopened);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_search_during_the_cache_load_waits_and_returns_everything() {
+        let root = scratch("cache-loading");
+        let paths = ranking_vault(&root);
+        let database = root.join("semantic.sqlite3");
+        let seed = SemanticIndex::open_at(&database, Arc::new(WordAxesBackend)).unwrap();
+        for path in &paths {
+            seed.note_changed(path).unwrap();
+        }
+        seed.retry_pending().unwrap();
+        let expected = seed.search("coffee budget", None, 10).unwrap();
+        drop(seed);
+
+        let index = Arc::new(SemanticIndex::open_at(&database, Arc::new(WordAxesBackend)).unwrap());
+        // Holding the database keeps the load waiting, so the search starts mid-load.
+        let held = index.database.lock().unwrap();
+        index.start_cache_load();
+        assert!(matches!(
+            *index.cache.state.lock().unwrap(),
+            CacheState::Loading
+        ));
+        let searcher = {
+            let index = index.clone();
+            std::thread::spawn(move || index.search("coffee budget", None, 10))
+        };
+        std::thread::sleep(Duration::from_millis(50));
+        drop(held);
+        let found = searcher.join().unwrap().unwrap();
+        assert_same_results(&found, &expected);
+
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_stalled_load_times_out_and_a_failed_one_falls_back_to_sql() {
+        let root = scratch("cache-failure");
+        let paths = ranking_vault(&root);
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(WordAxesBackend))
+                .unwrap();
+        for path in &paths {
+            index.note_changed(path).unwrap();
+        }
+        index.retry_pending().unwrap();
+
+        *index.cache.state.lock().unwrap() = CacheState::Loading;
+        let started = Instant::now();
+        let error = index.search("coffee", None, 10).unwrap_err();
+        assert!(error.contains("still loading"), "{error}");
+        assert!(started.elapsed() >= super::CACHE_READY_DEADLINE);
+
+        index.finish_loading(CacheState::Failed);
+        let fallback = index.search("coffee budget", None, 10).unwrap();
+        assert!(matches!(
+            *index.cache.state.lock().unwrap(),
+            CacheState::Failed
+        ));
+        assert_same_results(&fallback, &sql_results(&index, "coffee budget", None, 10));
+        assert!(!fallback.is_empty());
+
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_retired_index_writes_nothing_behind_its_replacement() {
+        let root = scratch("cache-retired");
+        let paths = ranking_vault(&root);
+        let database = root.join("semantic.sqlite3");
+        let old = Arc::new(SemanticIndex::open_at(&database, Arc::new(WordAxesBackend)).unwrap());
+        old.note_changed(&paths[0]).unwrap();
+        old.retry_pending().unwrap();
+
+        old.retire();
+        let replacement =
+            Arc::new(SemanticIndex::open_at(&database, Arc::new(WordAxesBackend)).unwrap());
+        replacement.search("coffee", None, 5).unwrap(); // its cache snapshot
+                                                        // The old index's late writes are dropped: nothing lands behind that snapshot.
+        old.note_changed(&paths[1]).unwrap();
+        old.note_removed(&paths[0]).unwrap();
+        old.rebuild_from_notes(&root).unwrap();
+        assert!(old
+            .embed_pending_text(&PreparedNote::from_text(
+                &paths[1],
+                &std::fs::read_to_string(&paths[1]).unwrap()
+            ))
+            .unwrap());
+        assert_eq!(cached_snapshot(&replacement), sqlite_snapshot(&replacement));
+        assert_eq!(replacement.status().unwrap().indexed_notes, 1);
+        assert_eq!(replacement.status().unwrap().queued_notes, 0);
+
+        drop(old);
+        drop(replacement);
         cleanup(root);
     }
 }
