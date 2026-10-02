@@ -9,7 +9,7 @@ commands stubbed. This record covers what only the live, root-owned helper can s
 
 ## Setup
 
-Nicolas ran `sudo scripts/install-linux-test-package.sh` once from the branch at 447eadd.
+Nicolas first ran `sudo scripts/install-linux-test-package.sh` from the branch at 447eadd.
 
 - `/usr/local/libexec/second-brain-test-package` is `root:root`, mode 755, and matched
   `scripts/linux-test-package.sh` at that commit.
@@ -76,8 +76,17 @@ build (`second-brain-0.1.0-alpha.1-1`, from an earlier candidate) with
 removed afterwards as described above. The laptop was left with no `second-brain` package
 installed.
 
-## After the setup is rerun with 74c8718
+## After the setup was rerun with 74c8718
 
-Pending: install and remove the real candidate again with the fixed helper. Confirm that
-`install-candidate` exits 0, that no new staging directory is left behind, and that
-`remove-test-install` exits 0.
+Nicolas reran `sudo scripts/install-linux-test-package.sh` from the branch. The installed
+helper then matched `scripts/linux-test-package.sh` byte for byte and was still `root:root`,
+mode 755. With the same candidate RPM:
+
+- `install-candidate` exited 0. The installed header matched the file, and `rpm -V second-brain`
+  was clean.
+- No new staging directory was left: `/var/tmp` still held only the five from the earlier runs.
+- `remove-test-install` exited 0. `rpm -q second-brain` reported it not installed, and
+  `/usr/bin/second-brain` and the desktop entry were gone.
+- `install-candidate relative.rpm` was still refused with exit 2.
+
+The laptop was left with no `second-brain` package installed.
