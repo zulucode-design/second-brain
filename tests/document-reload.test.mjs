@@ -298,7 +298,10 @@ test('both windows retry a deferred reload, and the editor counts its dialogs an
   }
   const editor = await source('src/lib/components/Editor.svelte');
   const guard = /export function hasPendingDraft\(\): boolean \{([\s\S]*?)\n\t\}/.exec(editor)[1];
-  for (const state of ['pendingCalloutTitles.size', 'mathModal', 'linkModal', 'secretModal', 'imageToolbar', 'codeLangDropdown', 'slashMenu', 'taskMetaMenu', 'taskDuePicker', 'wikiLinkMenu', 'aiMenu', 'aiLoading', 'aiResult', 'textContextMenu', 'tableContextMenu', 'linkContextMenu', 'tablePickerOpen']) {
+  for (const state of ['pendingCalloutTitles.size', 'mathModal', 'linkModal', 'secretModal', 'imageToolbar', 'codeLangDropdown', 'slashMenu', 'taskMetaMenu', 'taskDuePicker', 'wikiLinkMenu', 'aiMenu', 'aiLoading', 'aiResult', 'textContextMenu', 'tableContextMenu', 'linkContextMenu', 'tablePickerOpen', 'calloutTypeMenu?.isConnected']) {
     assert.ok(guard.includes(state), state);
   }
+  // The callout-type menu is built in the DOM, not in component state, so it counts as open for as
+  // long as it is attached (#193).
+  assert.match(editor, /document\.body\.appendChild\(menu\);\s*calloutTypeMenu = menu;/);
 });
