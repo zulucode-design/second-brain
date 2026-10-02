@@ -90,6 +90,10 @@ export class SaveCoordinator<T extends SaveSnapshotBase> {
 		return this.revision;
 	}
 
+	getDocumentVersion(): number {
+		return this.documentVersion;
+	}
+
 	cancelDebounce(): void {
 		if (this.timer === null) return;
 		this.clearTimer(this.timer);

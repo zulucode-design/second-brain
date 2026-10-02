@@ -106,6 +106,11 @@ export interface SaveCommitOutcome {
   entry?: NoteEntry | null;
 }
 
+/** The editor's save: saved, or the draft kept in a conflict copy because the note changed or vanished on disk (#192). */
+export type DraftSaveOutcome =
+  | ({ kind: 'saved' } & SaveCommitOutcome)
+  | { kind: 'preserved'; copyPath: string; disk: NoteContent | null };
+
 export interface RelocationOutcome {
   path: string;
   note: NoteContent | null;

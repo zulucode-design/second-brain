@@ -1008,20 +1008,87 @@ pub fn save_note(
         &expected_revision,
         |written, revision| state.own_writes.record(written, revision),
     )?;
-    let entry = operations::saved_note_entry(&vault_path, &outcome.note);
+    Ok(after_note_saved(
+        &state,
+        &vault_path,
+        max_versions,
+        &path,
+        &meta,
+        outcome,
+    ))
+}
+
+fn after_note_saved(
+    state: &State<'_, AppState>,
+    vault_path: &str,
+    max_versions: u32,
+    path: &str,
+    meta: &NoteMeta,
+    outcome: operations::SaveNoteOutcome,
+) -> SaveCommitOutcome {
+    let entry = operations::saved_note_entry(vault_path, &outcome.note);
     let note_id = meta.id.clone();
-    let snapshot_vault = vault_path.clone();
+    let snapshot_vault = vault_path.to_string();
     let old_raw = outcome.old_raw;
     std::thread::spawn(move || {
         crate::history::maybe_snapshot(&snapshot_vault, &note_id, &old_raw, max_versions);
     });
 
-    let index_result = index_note_now(&state, &vault_path, &path);
-    queue_semantic_note_now(&state, &path);
+    let index_result = index_note_now(state, vault_path, path);
+    queue_semantic_note_now(state, path);
 
-    Ok(SaveCommitOutcome {
+    SaveCommitOutcome {
         entry: Some(entry),
         ..committed_save_outcome(outcome.revision, [("Search projection", index_result)])
+    }
+}
+
+/// The editor's save: `save_note`, or the draft kept in a conflict copy when the note changed
+/// or vanished on disk since the editor read it (#192).
+#[tauri::command]
+pub fn save_note_or_preserve(
+    state: State<'_, AppState>,
+    path: String,
+    meta: NoteMeta,
+    body: String,
+    expected_revision: String,
+    copy_path: Option<String>,
+) -> Result<DraftSaveOutcome, String> {
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let config = state.config.lock().map_err(|error| error.to_string())?;
+    let vault_path = config
+        .active_vault
+        .as_ref()
+        .ok_or("No active vault")?
+        .clone();
+    let max_versions = config.max_versions_per_note;
+    drop(config);
+
+    let saved = operations::save_note_or_preserve(
+        &vault_path,
+        &path,
+        &meta,
+        &body,
+        &expected_revision,
+        copy_path.as_deref(),
+        |written, revision| state.own_writes.record(written, revision),
+    )?;
+    Ok(match saved {
+        operations::DraftSave::Saved(outcome) => DraftSaveOutcome::Saved(after_note_saved(
+            &state,
+            &vault_path,
+            max_versions,
+            &path,
+            &meta,
+            outcome,
+        )),
+        operations::DraftSave::Preserved { copy_path, disk } => DraftSaveOutcome::Preserved {
+            copy_path: copy_path.to_string_lossy().into_owned(),
+            disk,
+        },
     })
 }
 

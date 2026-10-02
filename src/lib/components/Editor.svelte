@@ -43,13 +43,13 @@
 	import { openFile, openUrl, copyFileTo, copyImageToClipboard as copyImageToClipboardCmd, writeBytesTo, copyPngToClipboard, copyTextToClipboard } from '$lib/api';
 	import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { activeNote, activeNotePath, appConfig, editorDirty, sourceMode, focusMode, readOnly, shutdownPending, holdingPreview, quickAccessPaths, notes, canGoBack, canGoForward, viewerNote, viewMode, notebooks, outlineWidth, aiStatus, aiUsable } from '$lib/stores/app';
-	import { saveNote, saveImage, saveAttachment, readClipboardImage, addQuickAccess, removeQuickAccess, getQuickAccess, getNoteVersions, getNoteVersionContent, createVersion, aiAsk, getAllNoteTitles, readNote, renameNote } from '$lib/api';
+	import { saveNoteOrPreserve, resolveSyncConflict, saveImage, saveAttachment, readClipboardImage, addQuickAccess, removeQuickAccess, getQuickAccess, getNoteVersions, getNoteVersionContent, createVersion, aiAsk, getAllNoteTitles, readNote, renameNote } from '$lib/api';
 	import type { VersionEntry, AiStreamEvent, NoteTitleEntry, TaskItem as TaskRecord, NoteMeta, NoteContent, RelocationOutcome } from '$lib/types';
 	import { listenAppEvent } from '$lib/events';
 	import { debounce } from '$lib/utils/debounce';
 	import { SaveCoordinator, type SaveResult } from '$lib/utils/save-coordinator';
 	import { EditorMutationBarrier, saveForCurrentDocument, type EditorDocumentIdentity } from '$lib/utils/editor-mutation-barrier';
-	import { relocateReported, reportSaveFailure } from '$lib/utils/document-lifecycle';
+	import { DiskConflictError, relocateReported, reportSaveFailure, resolveDiskConflict, type DiskConflictChoice, type PreservationReceipt } from '$lib/utils/document-lifecycle';
 	import { showToast } from '$lib/utils/toast';
 	import { NOTE_SAVED_EVENT, type NoteNavigationResult } from '$lib/utils/navigation';
 	import { encryptSecretText, decryptSecretText, readSecretTitle } from '$lib/utils/secrets';
@@ -126,6 +126,15 @@
 	let sourceHistoryTimer: ReturnType<typeof setTimeout> | null = null;
 	let loadedPath = '';
 	let loadedRevision = '';
+	// The open note changed or vanished on disk under unsaved edits (#192): the latest receipt for
+	// the draft kept in a conflict copy, the choice dialog, and a choice being applied, which
+	// freezes the editor until it ends.
+	let diskConflict = $state<PreservationReceipt<NoteContent> | null>(null);
+	let diskConflictDialog = $state(false);
+	let diskConflictBusy = $state(false);
+	let diskConflictMessage = $state('');
+	let diskConflictMine = $state<string | null>(null);
+	let diskConflictModal = $state<HTMLDivElement | null>(null);
 	const mutationBarrier = new EditorMutationBarrier();
 	type NoteScrollPosition = { rich: number; source: number };
 	const MAX_NOTE_SCROLL_POSITIONS = 200;
@@ -3110,8 +3119,18 @@
 		delayMs: 500,
 		prepare: prepareSaveSnapshot,
 		capture: captureSaveSnapshot,
-		persist: async ({ path, meta, body, expectedRevision }) => {
-			const outcome = await saveNote(path, meta, body, expectedRevision);
+		persist: async ({ path, meta, body, expectedRevision, revision, documentVersion }) => {
+			const outcome = await saveNoteOrPreserve(path, meta, body, expectedRevision, diskConflict?.path === path ? diskConflict.copyPath : null);
+			if (outcome.kind === 'preserved') {
+				const receipt = { path, documentVersion, revision, copyPath: outcome.copyPath, disk: outcome.disk };
+				// A receipt for a document replaced meanwhile must not mark the new one.
+				if (path === loadedPath && documentVersion === saveCoordinator.getDocumentVersion()) {
+					const first = !diskConflict;
+					diskConflict = receipt;
+					if (first) openDiskConflictDialog();
+				}
+				throw new DiskConflictError(receipt);
+			}
 			// A save addressed to the path a rename just left must not replace the renamed
 			// file's revision.
 			if (path === loadedPath) loadedRevision = outcome.revision;
@@ -3129,7 +3148,95 @@
 	}
 
 	export async function flushSave(): Promise<SaveResult> {
-		return saveCoordinator.flush();
+		const result = await saveCoordinator.flush();
+		// An explicit save, navigation or close brings the choice back after Cancel; autosave
+		// refreshes the copy without it.
+		if (!result.ok && result.error instanceof DiskConflictError) openDiskConflictDialog();
+		return result;
+	}
+
+	// Not while a draft is open: focusing the dialog would blur an uncommitted title and commit
+	// it as a rename. The bar above the note stays until the conflict is resolved.
+	function openDiskConflictDialog() {
+		if (!diskConflict || diskConflictBusy || hasPendingDraft()) return;
+		diskConflictDialog = true;
+	}
+
+	function resolveDiskConflictFromBar() {
+		if (hasPendingDraft()) {
+			showToast('Finish or cancel the open edit first.');
+			return;
+		}
+		openDiskConflictDialog();
+	}
+
+	function cancelDiskConflictDialog() {
+		if (diskConflictBusy) return;
+		diskConflictDialog = false;
+		diskConflictMine = null;
+	}
+
+	function toggleDiskConflictCompare() {
+		diskConflictMine = diskConflictMine === null ? ($sourceMode ? restoreTitleH1(sourceContent) : editorToMarkdown()) : null;
+	}
+
+	async function chooseDiskConflict(choice: DiskConflictChoice) {
+		if (!diskConflict || diskConflictBusy) return;
+		diskConflictBusy = true;
+		diskConflictMessage = '';
+		try {
+			const result = await resolveDiskConflict<NoteContent>({
+				choice,
+				drafting: hasPendingDraft,
+				lock: lockMutations,
+				current: () => ({
+					path: loadedPath && $activeNotePath === loadedPath ? loadedPath : null,
+					documentVersion: saveCoordinator.getDocumentVersion(),
+					revision: saveCoordinator.getRevision(),
+				}),
+				flush: () => saveCoordinator.flush(),
+				resolve: resolveSyncConflict,
+				read: readNote,
+				load: (path, content) => {
+					$activeNote = content;
+					loadNote(path, content.content, undefined, false, content.revision, true);
+				},
+				// The note is gone and the user keeps it gone: the editor holds nothing to save, and
+				// the copy stays in Settings > Sync > Conflicts.
+				close: () => {
+					saveCoordinator.setDocument(null, true);
+					clearDiskConflict();
+					$activeNote = null;
+					$activeNotePath = null;
+				},
+			});
+			if (!result.ok) diskConflictMessage = result.message;
+		} finally {
+			diskConflictBusy = false;
+		}
+	}
+
+	function clearDiskConflict() {
+		diskConflict = null;
+		diskConflictDialog = false;
+		diskConflictMessage = '';
+		diskConflictMine = null;
+	}
+
+	// The dialog keeps keyboard focus: Tab cycles its buttons, Escape cancels.
+	function trapDiskConflictFocus(event: KeyboardEvent) {
+		if (event.key === 'Escape') {
+			event.preventDefault();
+			cancelDiskConflictDialog();
+			return;
+		}
+		if (event.key !== 'Tab' || !diskConflictModal) return;
+		event.preventDefault();
+		const buttons = [...diskConflictModal.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
+		if (!buttons.length) return;
+		const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+		const next = event.shiftKey ? (index <= 0 ? buttons.length - 1 : index - 1) : (index + 1) % buttons.length;
+		buttons[next].focus();
 	}
 
 	export async function forceSave(): Promise<boolean> {
@@ -3174,7 +3281,7 @@
 	}
 
 	export async function updateMetadata(expectedPath: string, patch: Partial<NoteMeta>): Promise<SaveResult> {
-		if (loadedPath !== expectedPath || $activeNotePath !== expectedPath || !$activeNote) {
+		if (loadedPath !== expectedPath || $activeNotePath !== expectedPath || !$activeNote || diskConflictBusy) {
 			return {
 				ok: false,
 				status: 'failed',
@@ -3233,7 +3340,7 @@
 	}
 
 	function addActiveNoteTag(tag: string) {
-		if (!$activeNote) return;
+		if (!$activeNote || diskConflictBusy) return;
 		const cleaned = tag.trim().toLowerCase();
 		if (!cleaned || $activeNote.meta.tags.includes(cleaned)) return;
 		$activeNote = { ...$activeNote, meta: { ...$activeNote.meta, tags: [...$activeNote.meta.tags, cleaned] } };
@@ -3242,14 +3349,14 @@
 	}
 
 	function removeActiveNoteTag(tag: string) {
-		if (!$activeNote) return;
+		if (!$activeNote || diskConflictBusy) return;
 		$activeNote = { ...$activeNote, meta: { ...$activeNote.meta, tags: $activeNote.meta.tags.filter((t) => t !== tag) } };
 		$editorDirty = true;
 		markDirty();
 	}
 
 	export function togglePinned() {
-		if (!$activeNote || $shutdownPending) return;
+		if (!$activeNote || $shutdownPending || diskConflictBusy) return;
 		$activeNote = {
 			...$activeNote,
 			meta: { ...$activeNote.meta, pinned: !$activeNote.meta.pinned }
@@ -3263,12 +3370,13 @@
 		const ro = $readOnly;
 		const shuttingDown = $shutdownPending;
 		const preview = !!$viewerNote || $holdingPreview;
+		const resolving = diskConflictBusy;
 		untrack(() => {
 			if (editor) {
-				if (ro && !shuttingDown && $editorDirty) forceSave();
+				if (ro && !shuttingDown && !resolving && $editorDirty) forceSave();
 				// No update event: changing editability is not an edit, and onUpdate would mark the
 				// note dirty, so closing or toggling View Mode rewrote it (#196).
-				editor.setEditable(!ro && !shuttingDown && !preview, false);
+				editor.setEditable(!ro && !shuttingDown && !preview && !resolving, false);
 			}
 		});
 	});
@@ -3467,6 +3575,7 @@
 	// disk (#191) must not switch the user out of the mode they chose.
 	export function loadNote(path: string, content: string, taskTarget?: TaskRecord, holding = false, revision?: string, preserveModes = false) {
 		saveCoordinator.setDocument(path, true);
+		clearDiskConflict();
 		mutationBarrier.setDocument(path);
 		rememberLoadedNoteScroll();
 		const scrollPosition = taskTarget ? undefined : noteScrollPositions.get(path);
@@ -3488,7 +3597,7 @@
 		lastSourceMode = $sourceMode;
 		const shouldBeReadOnly = isViewer || holding ? true : preserveModes ? $readOnly : (isNewNote ? false : ($appConfig?.default_view_mode ?? false));
 		$readOnly = shouldBeReadOnly;
-		if (editor) editor.setEditable(!shouldBeReadOnly, false);
+		if (editor) editor.setEditable(!shouldBeReadOnly && !diskConflictBusy, false);
 		const editorBody = editorElement?.closest('.editor-body') as HTMLElement | null;
 		if ($sourceMode) {
 			sourceContent = stripTitleH1(content);
@@ -4469,6 +4578,7 @@
 			// Note was deselected (e.g. deleted) - destroy editor so it reinits on next note
 			destroyEditor();
 			saveCoordinator.setDocument(null, true);
+			clearDiskConflict();
 			loadedPath = '';
 			return;
 		}
@@ -6166,13 +6276,22 @@
 				<span class="viewer-banner-path">Choose “File under…” in the note list to keep this note.</span>
 			</div>
 		{/if}
+		{#if diskConflict}
+			<div class="viewer-banner disk-conflict-banner" role="status">
+				<span class="viewer-banner-label">{diskConflict.disk ? 'This note changed on disk.' : 'This note was moved or deleted on disk.'}</span>
+				<span class="viewer-banner-path">Your edits are kept in a conflict copy until you choose a version.</span>
+				<div class="viewer-banner-actions">
+					<button type="button" class="viewer-banner-btn primary" onclick={resolveDiskConflictFromBar} disabled={diskConflictBusy}>Resolve…</button>
+				</div>
+			</div>
+		{/if}
 		{#if !$viewerNote}
 		<div class="editor-toolbar" class:compact={isCompact}>
 			<div class="editor-title">
 				<input
 					bind:this={titleInput}
 					type="text"
-					readonly={$readOnly}
+					readonly={$readOnly || diskConflictBusy}
 					value={$activeNote.meta.title}
 					onkeydown={(e) => {
 						if (e.key === 'Tab') {
@@ -6447,7 +6566,7 @@
 						class="source-editor"
 						bind:this={sourceElement}
 						bind:value={sourceContent}
-						readonly={$readOnly || $shutdownPending || !!$viewerNote || $holdingPreview}
+						readonly={$readOnly || $shutdownPending || !!$viewerNote || $holdingPreview || diskConflictBusy}
 						oninput={() => {
 							$editorDirty = true;
 							markDirty();
@@ -6509,7 +6628,7 @@
 							class:with-line-numbers={$appConfig?.show_line_numbers}
 							bind:this={sourceElement}
 							bind:value={sourceContent}
-							readonly={$readOnly || $shutdownPending || !!$viewerNote || $holdingPreview}
+							readonly={$readOnly || $shutdownPending || !!$viewerNote || $holdingPreview || diskConflictBusy}
 							oninput={() => {
 								$editorDirty = true;
 								markDirty();
@@ -7571,6 +7690,43 @@
 			</svg>
 			Copied
 		{/if}
+	</div>
+{/if}
+
+{#if diskConflict && diskConflictDialog}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="math-modal-overlay" onclick={(e) => closeFromOverlay(e, cancelDiskConflictDialog)} onkeydown={trapDiskConflictFocus}>
+		<div class="math-modal disk-conflict-modal" role="alertdialog" aria-modal="true" aria-labelledby="disk-conflict-title" aria-describedby="disk-conflict-text" tabindex="-1" bind:this={diskConflictModal}>
+			<div class="math-modal-header">
+				<span id="disk-conflict-title">{diskConflict.disk ? 'This note changed on disk' : 'This note was moved or deleted on disk'}</span>
+			</div>
+			<p id="disk-conflict-text" class="disk-conflict-text">
+				{#if diskConflict.disk}
+					It changed while you had unsaved edits, through a sync run, a conflict choice or another app. Your edits are safe in a conflict copy. Keep them and the disk version goes to Trash; take the disk version and your edits go to Trash.
+				{:else}
+					It was moved or deleted while you had unsaved edits. Your edits are safe in a conflict copy. Keep them to put the note back, or close it and find your edits later in Settings › Sync › Conflicts.
+				{/if}
+			</p>
+			{#if diskConflictMine !== null}
+				<div class="disk-conflict-compare">
+					<div><p class="disk-conflict-label">Your edits</p><pre>{diskConflictMine}</pre></div>
+					<div><p class="disk-conflict-label">On disk</p><pre>{diskConflict.disk?.content ?? '(moved or deleted)'}</pre></div>
+				</div>
+			{/if}
+			{#if diskConflictMessage}
+				<p class="disk-conflict-error" role="alert">{diskConflictMessage}</p>
+			{/if}
+			<div class="math-modal-actions">
+				<button type="button" class="primary" onclick={() => chooseDiskConflict('mine')} disabled={diskConflictBusy} use:autofocus>Keep my edits</button>
+				{#if diskConflict.disk}
+					<button type="button" onclick={() => chooseDiskConflict('disk')} disabled={diskConflictBusy}>Take disk version</button>
+				{:else}
+					<button type="button" onclick={() => chooseDiskConflict('close')} disabled={diskConflictBusy}>Close note</button>
+				{/if}
+				<button type="button" onclick={toggleDiskConflictCompare} disabled={diskConflictBusy}>{diskConflictMine === null ? 'Compare' : 'Hide comparison'}</button>
+				<button type="button" onclick={cancelDiskConflictDialog} disabled={diskConflictBusy}>Cancel</button>
+			</div>
+		</div>
 	</div>
 {/if}
 
@@ -9258,6 +9414,39 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+	}
+	.disk-conflict-modal {
+		width: min(760px, 92vw);
+	}
+	.disk-conflict-text {
+		margin: 0;
+		color: var(--text-secondary);
+	}
+	.disk-conflict-compare {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 12px;
+		min-width: 0;
+	}
+	.disk-conflict-compare pre {
+		margin: 0;
+		max-height: 40vh;
+		overflow: auto;
+		white-space: pre-wrap;
+		word-break: break-word;
+		padding: 8px;
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		font-size: 12px;
+	}
+	.disk-conflict-label {
+		margin: 0 0 4px;
+		font-size: 12px;
+		color: var(--text-secondary);
+	}
+	.disk-conflict-error {
+		margin: 0;
+		color: var(--danger);
 	}
 	.math-modal {
 		background: var(--bg-primary);

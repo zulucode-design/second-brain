@@ -17,6 +17,7 @@
 	import { NAVIGATE_NOTE_EVENT, type NavigateNoteRequest, type NoteNavigationResult } from '$lib/utils/navigation';
 	import { SerializedNavigationController } from '$lib/utils/navigation-controller';
 	import { GenerationGate } from '$lib/utils/generation-gate';
+	import { DiskConflictError } from '$lib/utils/document-lifecycle';
 	import { lockAfterReload, reloadCleanDocument, RELOAD_RETRY_MS } from '$lib/utils/document-reload';
 	import { debounce } from '$lib/utils/debounce';
 	import { keybindings, matchAction } from '$lib/keybindings';
@@ -194,7 +195,8 @@
 		const saved = !result || result.ok;
 		if (!saved) {
 			console.error('Save failed before closing note window:', result.error);
-			window.alert(`Could not save this note. The window will remain open so your edits are not lost.\n\n${String(result.error)}`);
+			// The editor's conflict dialog explains a note that changed on disk (#192).
+			if (!(result.error instanceof DiskConflictError)) window.alert(`Could not save this note. The window will remain open so your edits are not lost.\n\n${String(result.error)}`);
 		}
 		return saved;
 	}

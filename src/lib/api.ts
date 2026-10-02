@@ -5,6 +5,7 @@ import type {
   HotkeyStatus,
   AppConfig,
   CustomTheme,
+  DraftSaveOutcome,
   NoteContent,
   NoteEntry,
   NoteMeta,
@@ -177,6 +178,16 @@ export async function saveNote(
   expectedRevision: string,
 ): Promise<SaveCommitOutcome> {
   return invoke("save_note", { path, meta, body, expectedRevision });
+}
+
+export async function saveNoteOrPreserve(
+  path: string,
+  meta: NoteMeta,
+  body: string,
+  expectedRevision: string,
+  copyPath: string | null,
+): Promise<DraftSaveOutcome> {
+  return invoke("save_note_or_preserve", { path, meta, body, expectedRevision, copyPath });
 }
 
 /// File a quick capture. The first line of `text` becomes the title, the rest the body.

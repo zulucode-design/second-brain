@@ -571,15 +571,8 @@ pub fn save_note_if_revision(
     expected_revision: &str,
     before_replace: impl FnOnce(&Path, &str),
 ) -> Result<SaveNoteOutcome, String> {
-    let reported_path = path.to_string();
+    let reported_path = path;
     let path = ensure_note_path(vault_path, Path::new(path))?;
-    let mut updated_meta = meta.clone();
-    updated_meta.modified = Utc::now();
-
-    // Generate UUID on first save if note didn't have one
-    if updated_meta.id.is_empty() {
-        updated_meta.id = Uuid::new_v4().to_string();
-    }
 
     // Compare the exact bytes read by this editor before deriving or publishing a replacement.
     let existing = fs::read_to_string(&path).map_err(|e| e.to_string())?;
@@ -590,20 +583,205 @@ pub fn save_note_if_revision(
                 .to_string(),
         );
     }
-    let raw = frontmatter::merge_frontmatter(&existing, &updated_meta, body);
+    commit_note_save(&path, reported_path, existing, meta, body, before_replace)
+}
+
+fn saved_meta(meta: &NoteMeta) -> NoteMeta {
+    let mut updated_meta = meta.clone();
+    updated_meta.modified = Utc::now();
+
+    // Generate UUID on first save if note didn't have one
+    if updated_meta.id.is_empty() {
+        updated_meta.id = Uuid::new_v4().to_string();
+    }
+    updated_meta
+}
+
+fn commit_note_save(
+    path: &Path,
+    reported_path: &str,
+    existing: String,
+    meta: &NoteMeta,
+    body: &str,
+    before_replace: impl FnOnce(&Path, &str),
+) -> Result<SaveNoteOutcome, String> {
+    let raw = frontmatter::merge_frontmatter(&existing, &saved_meta(meta), body);
     let revision = content_sha256(raw.as_bytes());
     let filename = path.file_name().unwrap_or_default().to_string_lossy();
-    let note = note_content_from_raw(&reported_path, raw.clone(), &filename);
+    let note = note_content_from_raw(reported_path, raw.clone(), &filename);
 
     // Before the write, not after: the watcher can observe the replacement before this
     // function returns.
-    before_replace(&path, &revision);
-    crate::durable::replace(&path, raw.as_bytes(), crate::durable::Mode::Shared)?;
+    before_replace(path, &revision);
+    crate::durable::replace(path, raw.as_bytes(), crate::durable::Mode::Shared)?;
     Ok(SaveNoteOutcome {
         revision,
         old_raw: existing,
         note,
     })
+}
+
+#[derive(Debug)]
+pub enum DraftSave {
+    Saved(SaveNoteOutcome),
+    /// The draft is in the conflict copy at `copy_path`; `disk` is the note as it is now, or
+    /// `None` when it was moved or deleted.
+    Preserved {
+        copy_path: PathBuf,
+        disk: Option<NoteContent>,
+    },
+}
+
+/// The editor's save (#192). It saves like `save_note_if_revision` while the note on disk is
+/// still the revision the editor read. When the note changed or is gone, the draft goes to a
+/// Syncthing-style conflict copy beside it instead, so the user can choose a version without
+/// losing either. `copy_path` is the copy an earlier call made: while the conflict is
+/// unresolved, every save refreshes that copy (or makes a new one if it is gone) and never
+/// writes the note, even if the disk happens to return to the expected revision.
+pub fn save_note_or_preserve(
+    vault_path: &str,
+    path: &str,
+    meta: &NoteMeta,
+    body: &str,
+    expected_revision: &str,
+    copy_path: Option<&str>,
+    before_replace: impl FnOnce(&Path, &str),
+) -> Result<DraftSave, String> {
+    let (note, existing) = match fs::symlink_metadata(path) {
+        Ok(_) => {
+            let note = ensure_note_path(vault_path, Path::new(path))?;
+            let existing = fs::read_to_string(&note).map_err(|error| error.to_string())?;
+            (note, Some(existing))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            (missing_note_destination(vault_path, Path::new(path))?, None)
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    if let (None, Some(existing)) = (copy_path, &existing) {
+        if content_sha256(existing.as_bytes()) == expected_revision {
+            let existing = existing.clone();
+            return commit_note_save(&note, path, existing, meta, body, before_replace)
+                .map(DraftSave::Saved);
+        }
+    }
+    let raw = frontmatter::merge_frontmatter(
+        existing.as_deref().unwrap_or_default(),
+        &saved_meta(meta),
+        body,
+    );
+    let copy_path = preserve_draft(&note, copy_path, raw.as_bytes())?;
+    let filename = note.file_name().unwrap_or_default().to_string_lossy();
+    let disk = existing.map(|raw| note_content_from_raw(path, raw, &filename));
+    Ok(DraftSave::Preserved { copy_path, disk })
+}
+
+/// Where a note that is gone from disk would live. Only `NotFound` counts as gone. The nearest
+/// existing ancestor must resolve inside the vault and outside its metadata, and every missing
+/// component below it must be a plain name, so the result cannot escape through `..`, a
+/// symlink or a junction.
+fn missing_note_destination(vault_path: &str, requested: &Path) -> Result<PathBuf, String> {
+    let outside = || "Path must stay inside the active vault".to_string();
+    if requested
+        .extension()
+        .and_then(|extension| extension.to_str())
+        != Some("md")
+    {
+        return Err("Note path must point to a Markdown file".to_string());
+    }
+    let mut missing = Vec::new();
+    let mut ancestor = requested;
+    loop {
+        match fs::symlink_metadata(ancestor) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let Some(Component::Normal(name)) = ancestor.components().next_back() else {
+                    return Err(outside());
+                };
+                missing.push(name.to_owned());
+                ancestor = ancestor.parent().ok_or_else(outside)?;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    let vault = canonicalize_path(Path::new(vault_path), "vault path")?;
+    let base = canonicalize_path(ancestor, "vault item path")?;
+    let destination = missing
+        .iter()
+        .rev()
+        .fold(base.clone(), |path, name| path.join(name));
+    if !base.is_dir()
+        || !base.starts_with(&vault)
+        || destination.starts_with(vault.join(".helixnotes"))
+    {
+        return Err(outside());
+    }
+    Ok(destination)
+}
+
+/// Writes the draft durably into `requested` when that is still a regular conflict copy of
+/// `note`, or else into a new conflict copy beside `note`, recreating the note's folder if it
+/// is gone so the conflict list can later restore the copy to the note's path.
+fn preserve_draft(note: &Path, requested: Option<&str>, raw: &[u8]) -> Result<PathBuf, String> {
+    if let Some(copy) = requested.and_then(|copy| conflict_copy_of(note, Path::new(copy))) {
+        crate::durable::replace(&copy, raw, crate::durable::Mode::Shared)?;
+        return Ok(copy);
+    }
+    let folder = note.parent().ok_or("Note has no folder")?;
+    create_folders_durable(folder)?;
+    let stem = note
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or("Note has no valid filename")?;
+    for _ in 0..8 {
+        let device = Uuid::new_v4().simple().to_string()[..7].to_ascii_uppercase();
+        let name = format!(
+            "{stem}{}{}-{device}.md",
+            crate::vault::conflicts::MARKER,
+            Utc::now().format("%Y%m%d-%H%M%S")
+        );
+        let copy = folder.join(name);
+        match write_new_file_durable(&copy, raw) {
+            Ok(()) => return Ok(copy),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "Could not keep your edits in a conflict copy: {error}"
+                ))
+            }
+        }
+    }
+    Err("Could not find a free name for the conflict copy".to_string())
+}
+
+fn conflict_copy_of(note: &Path, copy: &Path) -> Option<PathBuf> {
+    if !fs::symlink_metadata(copy).ok()?.file_type().is_file() {
+        return None;
+    }
+    let copy = canonicalize_path(copy.parent()?, "conflict copy folder")
+        .ok()?
+        .join(copy.file_name()?);
+    (crate::vault::conflicts::original_for_conflict(&copy)? == note).then_some(copy)
+}
+
+/// `create_dir_all`, with each new folder's entry synced into its parent on Unix.
+fn create_folders_durable(folder: &Path) -> Result<(), String> {
+    let mut missing = Vec::new();
+    let mut current = folder;
+    while matches!(fs::symlink_metadata(current), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+    {
+        missing.push(current);
+        current = current.parent().ok_or("Note has no folder")?;
+    }
+    for folder in missing.into_iter().rev() {
+        match fs::create_dir(folder) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        sync_parent_directory(folder).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 /// The note-list row for a note this process just saved, so the list can be updated without
@@ -870,19 +1048,15 @@ pub(crate) fn content_sha256(content: &[u8]) -> String {
     format!("{:x}", Sha256::digest(content))
 }
 
-fn write_new_file_durable(path: &Path, content: &[u8]) -> Result<(), String> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|error| error.to_string())?;
+fn write_new_file_durable(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
     if let Err(error) = file.write_all(content).and_then(|_| file.sync_all()) {
         drop(file);
         let _ = fs::remove_file(path);
-        return Err(error.to_string());
+        return Err(error);
     }
     drop(file);
-    sync_parent_directory(path).map_err(|error| error.to_string())
+    sync_parent_directory(path)
 }
 
 #[cfg(unix)]
@@ -1036,7 +1210,10 @@ fn delete_note_inner(
             expected_hash,
             "the note in Trash",
         )
-        .and_then(|_| write_new_file_durable(&manifest_path, &manifest_data))
+        .and_then(|_| {
+            write_new_file_durable(&manifest_path, &manifest_data)
+                .map_err(|error| error.to_string())
+        })
         .and_then(|_| {
             ensure_file_snapshot(
                 &dest,
@@ -2847,8 +3024,9 @@ mod tests {
         compare_natural_names, create_note, create_notebook, create_web_clipping, duplicate_note,
         ensure_vault_structure, get_note_switcher_titles, helixnotes_dir, load_notebook_icons,
         load_quick_access, load_vault_state, move_note, move_note_with_outcome, permanent_delete,
-        read_note, restore_notebook, save_note, save_note_if_revision, save_quick_access,
-        save_vault_state, scan_notebooks, set_notebook_icon, ParaCategory,
+        read_note, restore_notebook, save_note, save_note_if_revision, save_note_or_preserve,
+        save_quick_access, save_vault_state, scan_notebooks, set_notebook_icon, DraftSave,
+        ParaCategory,
     };
     use crate::search::SearchIndex;
     use crate::types::VaultState;
@@ -3048,6 +3226,228 @@ mod tests {
             );
         }
 
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    fn conflict_copies_in(folder: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut copies: Vec<_> = fs::read_dir(folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| crate::vault::conflicts::is_conflict_copy(path))
+            .collect();
+        copies.sort();
+        copies
+    }
+
+    fn body_of(path: &std::path::Path) -> String {
+        let raw = fs::read_to_string(path).unwrap();
+        frontmatter::parse_note(&raw, "copy.md").1
+    }
+
+    fn preserved(outcome: DraftSave) -> (std::path::PathBuf, Option<crate::types::NoteContent>) {
+        match outcome {
+            DraftSave::Preserved { copy_path, disk } => (copy_path, disk),
+            DraftSave::Saved(_) => panic!("expected the draft in a conflict copy"),
+        }
+    }
+
+    #[test]
+    fn editor_save_keeps_a_draft_whose_note_changed_on_disk_in_one_conflict_copy() {
+        let vault = scaffolded_vault("draft-preserve");
+        let vault_str = vault.to_string_lossy().to_string();
+        let note = create_note(&vault_str, Some("Areas"), "Plan").unwrap();
+        let opened = read_note(&vault_str, &note.path).unwrap();
+        let note_path = std::path::PathBuf::from(&note.path);
+        let folder = note_path.parent().unwrap();
+
+        // Unchanged on disk: an ordinary save, through the own-write hook.
+        let mut recorded = None;
+        let saved = save_note_or_preserve(
+            &vault_str,
+            &note.path,
+            &opened.meta,
+            "First edit",
+            &opened.revision,
+            None,
+            |path, revision| recorded = Some((path.to_path_buf(), revision.to_string())),
+        )
+        .unwrap();
+        let DraftSave::Saved(saved) = saved else {
+            panic!("expected an ordinary save");
+        };
+        assert_eq!(recorded, Some((note_path.clone(), saved.revision.clone())));
+        assert_eq!(
+            read_note(&vault_str, &note.path).unwrap().content,
+            "First edit"
+        );
+
+        // A sync run rewrites the note; the editor still holds the revision it saved.
+        let synced = "---\ntitle: Plan\ncategory: Areas\n---\nFrom the other machine\n";
+        fs::write(&note_path, synced).unwrap();
+        let (copy, disk) = preserved(
+            save_note_or_preserve(
+                &vault_str,
+                &note.path,
+                &opened.meta,
+                "Draft A",
+                &saved.revision,
+                None,
+                |_, _| panic!("a preserved draft must not touch the note"),
+            )
+            .unwrap(),
+        );
+        assert_eq!(fs::read_to_string(&note_path).unwrap(), synced);
+        assert_eq!(
+            crate::vault::conflicts::original_for_conflict(&copy).as_deref(),
+            Some(note_path.as_path())
+        );
+        assert_eq!(body_of(&copy), "Draft A");
+        let disk = disk.unwrap();
+        assert_eq!(disk.content.trim(), "From the other machine");
+        assert_eq!(disk.revision, super::content_sha256(synced.as_bytes()));
+
+        // Later saves refresh the same copy, even once the disk is back at the revision the
+        // editor expects: the conflict stays unresolved until the user chooses.
+        let (again, _) = preserved(
+            save_note_or_preserve(
+                &vault_str,
+                &note.path,
+                &opened.meta,
+                "Draft B",
+                &super::content_sha256(synced.as_bytes()),
+                Some(&copy.to_string_lossy()),
+                |_, _| panic!("an unresolved conflict must not touch the note"),
+            )
+            .unwrap(),
+        );
+        assert_eq!(again, copy);
+        assert_eq!(body_of(&copy), "Draft B");
+        assert_eq!(fs::read_to_string(&note_path).unwrap(), synced);
+        assert_eq!(conflict_copies_in(folder), vec![copy.clone()]);
+
+        // The copy was resolved elsewhere (Settings): the next save makes a new one.
+        fs::remove_file(&copy).unwrap();
+        let (fresh, _) = preserved(
+            save_note_or_preserve(
+                &vault_str,
+                &note.path,
+                &opened.meta,
+                "Draft C",
+                &saved.revision,
+                Some(&copy.to_string_lossy()),
+                |_, _| {},
+            )
+            .unwrap(),
+        );
+        assert_ne!(fresh, copy);
+        assert_eq!(body_of(&fresh), "Draft C");
+        assert_eq!(conflict_copies_in(folder), vec![fresh]);
+
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn editor_save_keeps_a_draft_whose_note_and_folder_are_gone() {
+        let vault = scaffolded_vault("draft-missing");
+        let vault_str = vault.to_string_lossy().to_string();
+        let projects = vault.join("Projects");
+        create_notebook(&vault_str, Some("Projects"), "Trip").unwrap();
+        let note = create_note(&vault_str, Some("Projects/Trip"), "Packing").unwrap();
+        let opened = read_note(&vault_str, &note.path).unwrap();
+        fs::remove_dir_all(projects.join("Trip")).unwrap();
+
+        let (copy, disk) = preserved(
+            save_note_or_preserve(
+                &vault_str,
+                &note.path,
+                &opened.meta,
+                "Passport",
+                &opened.revision,
+                None,
+                |_, _| panic!("a missing note must not be recreated"),
+            )
+            .unwrap(),
+        );
+        assert!(disk.is_none());
+        assert!(!std::path::Path::new(&note.path).exists());
+        assert_eq!(copy.parent(), Some(projects.join("Trip").as_path()));
+        assert_eq!(body_of(&copy), "Passport");
+
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn editor_save_never_writes_a_draft_outside_its_own_conflict_copies() {
+        let vault = scaffolded_vault("draft-bounds");
+        let vault_str = vault.to_string_lossy().to_string();
+        let note = create_note(&vault_str, Some("Areas"), "Mine").unwrap();
+        let other = create_note(&vault_str, Some("Areas"), "Other").unwrap();
+        let opened = read_note(&vault_str, &note.path).unwrap();
+        let other_before = fs::read(&other.path).unwrap();
+        let areas = vault.join("Areas");
+        let others_copy = areas.join("Other.sync-conflict-20261002-101010-ABCDEFG.md");
+        fs::write(&others_copy, "other draft").unwrap();
+        let outside = std::env::temp_dir().join(format!("draft-outside-{}", Uuid::new_v4()));
+        fs::create_dir_all(&outside).unwrap();
+        let outside_copy = outside.join("Mine.sync-conflict-20261002-101010-ABCDEFG.md");
+        fs::write(&outside_copy, "outside").unwrap();
+
+        fs::write(&note.path, "changed on disk").unwrap();
+        for foreign in [&others_copy, &outside_copy] {
+            let (copy, _) = preserved(
+                save_note_or_preserve(
+                    &vault_str,
+                    &note.path,
+                    &opened.meta,
+                    "Draft",
+                    &opened.revision,
+                    Some(&foreign.to_string_lossy()),
+                    |_, _| {},
+                )
+                .unwrap(),
+            );
+            assert_eq!(copy.parent(), Some(areas.as_path()));
+            assert!(copy
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("Mine.sync-conflict-"));
+            fs::remove_file(copy).unwrap();
+        }
+        assert_eq!(fs::read_to_string(&others_copy).unwrap(), "other draft");
+        assert_eq!(fs::read_to_string(&outside_copy).unwrap(), "outside");
+        assert_eq!(fs::read(&other.path).unwrap(), other_before);
+
+        // A missing note may only be kept inside the vault and outside its metadata.
+        let escapes = [
+            areas.join("..").join("..").join("escape.md"),
+            vault.join(".helixnotes").join("gone").join("note.md"),
+            areas.join("gone.txt"),
+        ];
+        #[cfg(unix)]
+        let escapes = {
+            let link = areas.join("link");
+            std::os::unix::fs::symlink(&outside, &link).unwrap();
+            let mut all = escapes.to_vec();
+            all.push(link.join("gone.md"));
+            all
+        };
+        for escape in escapes.iter() {
+            let result = save_note_or_preserve(
+                &vault_str,
+                &escape.to_string_lossy(),
+                &opened.meta,
+                "Draft",
+                &opened.revision,
+                None,
+                |_, _| {},
+            );
+            assert!(result.is_err(), "{} was accepted", escape.display());
+        }
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 1);
+        assert!(!vault.join(".helixnotes").join("gone").exists());
+
+        fs::remove_dir_all(outside).unwrap();
         fs::remove_dir_all(vault).unwrap();
     }
 
