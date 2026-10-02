@@ -55,11 +55,12 @@ jobs:
       - name: Prepare pinned Syncthing sidecar
         run: pnpm sidecar:prepare
 
-      # The RPM copies the desktop entry's mode from the checkout, which this container leaves
-      # group-writable; a release and the Fedora test package helper both need 0644.
+      # With no git in the container, checkout unpacks GitHub's archive, which records files as 0664,
+      # and the RPM keeps the modes of the files it copies. A release and the Fedora test package
+      # helper both need them not group-writable.
       - name: Build unsigned Fedora package
         run: |
-          chmod go-w src-tauri/linux/*.desktop
+          chmod -R go-w src-tauri
           pnpm exec tauri build --bundles rpm --ci --no-sign \
             --config '{"bundle":{"externalBin":["binaries/syncthing"],"createUpdaterArtifacts":false}}'
 
