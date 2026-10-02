@@ -1663,7 +1663,7 @@ function fedoraPackageChecks(rpmPath) {
 }
 
 function fedoraPackageHelper(...args) {
-  return runCommandSync('sudo', ['-n', LINUX_PACKAGE_HELPER, ...args], { timeout: 5 * 60_000 }).stdout;
+  runCommandSync('sudo', ['-n', LINUX_PACKAGE_HELPER, ...args], { timeout: 5 * 60_000 });
 }
 
 function fedoraOllamaTunnel(sshHost, windowsOllamaBaseUrl) {

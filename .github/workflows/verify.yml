@@ -66,7 +66,7 @@ jobs:
       # The Fedora test package helper refuses an RPM that fails this, so a gate would too.
       - name: Check RPM against the test package helper
         run: >-
-          bash -c 'source scripts/linux-test-package.sh && check_candidate "$1"' check
+          bash -c 'source scripts/linux-test-package.sh && { check_candidate "$1" || exit 1; }' check
           "$(find src-tauri/target/release/bundle/rpm -maxdepth 1 -name '*.rpm' -print -quit)"
 
   windows-rust:

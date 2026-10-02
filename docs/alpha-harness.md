@@ -15,7 +15,7 @@ sudo -n /usr/local/libexec/second-brain-test-package remove-test-install
 
 The helper takes nothing else. It copies the RPM into a root-owned staging directory, reading
 it as the calling user, then installs that copy only if it is a `second-brain` x86-64 package
-with no scriptlets, triggers, or obsoletes, whose files are all plain root-owned files at the
+with no scriptlets, triggers, sysusers, or obsoletes, whose files are all plain root-owned files at the
 paths a Second Brain build ships (`/usr/bin/second-brain`, `/usr/bin/syncthing`, its two desktop
 entries, and its hicolor icons). CI runs the same check on every built RPM, so a packaging
 change that would break it fails there first. The check keeps a bad build from writing outside
@@ -179,9 +179,9 @@ After the last step, the controller records each vault's tree hash. It uninstall
 package, checks that the executable and Start-menu entry are gone and the vault hash is unchanged,
 and reinstalls the candidate, also when the uninstall fails. It removes the Fedora RPM through the
 test package helper and runs the same checks: package, executable, and desktop entry gone, and
-the vault unchanged. Fedora is left with no test build installed. When a machine's walkthrough
-fails, the run stops before its uninstall, and the Fedora candidate stays installed until an
-agent removes it with the helper.
+the vault unchanged, so a passing run of the Fedora walkthrough leaves no test build installed.
+The candidate stays installed after a failed run, a `--machine windows` run, and an acceptance
+run; an agent removes it with the helper when it is no longer needed.
 
 WebDriver cannot answer native dialogs. The diagnostics export calls the button's own
 `export_diagnostics` command with the path the save dialog would return, and the trace says so.

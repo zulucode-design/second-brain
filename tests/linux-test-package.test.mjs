@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const helper = fileURLToPath(new URL('../scripts/linux-test-package.sh', import.meta.url));
 const rpmbuild = spawnSync('rpmbuild', ['--version']).status === 0;
 
-// Builds a one-file package shaped like a Second Brain build, changed by `extra`.
+// Builds a one-file package shaped like a Second Brain build, changed by the options.
 function buildRpm(topdir, label, { name = 'second-brain', arch = 'x86_64', preamble = '', files = '/usr/bin/second-brain', install = '', sections = '' } = {}) {
   const spec = join(topdir, `${label}.spec`);
   writeFileSync(spec, `Name: ${name}
@@ -41,7 +41,7 @@ ${sections}
 }
 
 function check(rpm) {
-  return spawnSync('bash', ['-c', 'source "$1" && check_candidate "$2"', 'check', helper, rpm], { encoding: 'utf8' });
+  return spawnSync('bash', ['-c', 'source "$1" && { check_candidate "$2" || exit 1; }', 'check', helper, rpm], { encoding: 'utf8' });
 }
 
 test('the test package helper installs only a plain Second Brain package', { skip: !rpmbuild && 'rpmbuild not installed' }, () => {
@@ -61,6 +61,7 @@ test('the test package helper installs only a plain Second Brain package', { ski
       luaPretrans: [{ sections: '%pretrans -p <lua>\nprint("x")' }, /scriptlets or triggers/],
       fileTrigger: [{ sections: '%filetriggerin -- /usr/lib\ntrue' }, /scriptlets or triggers/],
       obsoletes: [{ preamble: 'Obsoletes: sudo' }, /obsoletes other packages/],
+      sysusers: [{ preamble: '%add_sysuser m nobody wheel' }, /creates users or groups/],
       etc: [{ install: 'mkdir -p %{buildroot}/etc/sudoers.d\necho x > %{buildroot}/etc/sudoers.d/x', files: '/usr/bin/second-brain\n/etc/sudoers.d/x' }, /outside the Second Brain paths/],
       setuid: [{ files: '%attr(4755,root,root) /usr/bin/second-brain' }, /not a plain root-owned file/],
       owner: [{ files: '%attr(0755,nobody,nobody) /usr/bin/second-brain' }, /not a plain root-owned file/],
