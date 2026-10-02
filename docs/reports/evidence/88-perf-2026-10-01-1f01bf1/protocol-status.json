@@ -1,0 +1,78 @@
+{
+  "candidate": "1f01bf1c4a5ca6714ec4333b8e99dd533ac1a4dd",
+  "timingVerdicts": {
+    "fedora": "PASS",
+    "windows": "FAIL: exact-scan p95 1130.9986 ms exceeds 250 ms"
+  },
+  "settledStatus": {
+    "fedora": {
+      "initial": {
+        "kind": "index-status",
+        "epochMs": 1790891972923,
+        "indexedNotes": 10000,
+        "model": "embeddinggemma",
+        "queuedNotes": 0
+      },
+      "after-editor": {
+        "kind": "index-status",
+        "epochMs": 1790892417577,
+        "indexedNotes": 10000,
+        "model": "embeddinggemma",
+        "queuedNotes": 0
+      },
+      "finalStoppedApp": {
+        "indexedNotes": 10000,
+        "queuedNotes": 1,
+        "model": "embeddinggemma"
+      }
+    },
+    "windows": {
+      "initial": {
+        "kind": "index-status",
+        "epochMs": 1790891817934,
+        "indexedNotes": 10000,
+        "model": "embeddinggemma",
+        "queuedNotes": 0
+      },
+      "after-editor": {
+        "kind": "index-status",
+        "epochMs": 1790892199606,
+        "indexedNotes": 10000,
+        "model": "embeddinggemma",
+        "queuedNotes": 0
+      },
+      "finalStoppedApp": {
+        "indexedNotes": 10000,
+        "queuedNotes": 1,
+        "model": "embeddinggemma"
+      }
+    }
+  },
+  "qualification": "Both machines reached 10000 indexed and zero waiting in the initial warmup and again after editing. The harness then opened separate graph and search sessions before the indexed startup series. It did not recheck waiting count inside the search sessions or immediately before each startup launch. Final read-only databases on both machines hold 10000 indexed and one pending long-note revision after the save-aware startup exits. Therefore these timing results do not prove the exact settled prerequisite at every search/startup boundary; do not sign off the complete settled performance protocol from this evidence.",
+  "retries": "One warmup retry on each machine corrected an early editor-readiness check. No measured row was retried.",
+  "scope": "Application sources, installed applications, and matrix unchanged. No commit or push.",
+  "rawLogs": {
+    "fedora": [
+      "fedora-startup.jsonl",
+      "fedora-editor-1.jsonl",
+      "fedora-editor-2.jsonl",
+      "fedora-editor-3.jsonl",
+      "fedora-editor-4.jsonl",
+      "fedora-editor-5.jsonl",
+      "fedora-native-editor.jsonl",
+      "fedora-interactive.jsonl",
+      "fedora-search.jsonl"
+    ],
+    "windows": [
+      "windows-startup.jsonl",
+      "windows-editor-1.jsonl",
+      "windows-editor-2.jsonl",
+      "windows-editor-3.jsonl",
+      "windows-editor-4.jsonl",
+      "windows-editor-5.jsonl",
+      "windows-native-editor.jsonl",
+      "windows-interactive.jsonl",
+      "windows-search.jsonl"
+    ]
+  }
+}

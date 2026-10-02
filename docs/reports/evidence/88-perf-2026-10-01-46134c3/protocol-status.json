@@ -1,0 +1,290 @@
+{
+  "candidate": "46134c36a99b53d17a56c3a96960b76ca7aae040",
+  "scope": "Installed-package verification only. No application source or matrix edits, commits, or pushes. Prior 1f01bf1 evidence is unchanged.",
+  "retries": "No warmup or measured-row retries.",
+  "timingVerdicts": {
+    "fedora": {
+      "startup": {
+        "kind": "startup",
+        "count": 5,
+        "median": 1285,
+        "p95": 1477,
+        "max": 1477,
+        "pass": true
+      },
+      "editor-key": {
+        "kind": "editor-key",
+        "count": 1000,
+        "median": 10,
+        "p95": 13,
+        "max": 79,
+        "pass": true
+      },
+      "graph-render": {
+        "kind": "graph-render",
+        "count": 5,
+        "median": 264.9999999999998,
+        "p95": 313.9999999999999,
+        "max": 313.9999999999999,
+        "pass": true
+      },
+      "semantic-search": {
+        "kind": "semantic-search",
+        "count": 5,
+        "median": 120,
+        "p95": 239.99999999999977,
+        "max": 239.99999999999977,
+        "pass": true
+      },
+      "exact-scan": {
+        "kind": "exact-scan",
+        "count": 5,
+        "median": 59.183763,
+        "p95": 117.91647800000001,
+        "max": 117.91647800000001,
+        "pass": true
+      }
+    },
+    "windows": {
+      "startup": {
+        "kind": "startup",
+        "count": 5,
+        "median": 1859,
+        "p95": 3414,
+        "max": 3414,
+        "pass": true
+      },
+      "editor-key": {
+        "kind": "editor-key",
+        "count": 1000,
+        "median": 2.5,
+        "p95": 2.9000000059604645,
+        "max": 8.700000017881393,
+        "pass": true
+      },
+      "graph-render": {
+        "kind": "graph-render",
+        "count": 5,
+        "median": 1647.7999999821186,
+        "p95": 2026.300000011921,
+        "max": 2026.300000011921,
+        "pass": true
+      },
+      "semantic-search": {
+        "kind": "semantic-search",
+        "count": 5,
+        "median": 101.5,
+        "p95": 1180.4000000059605,
+        "max": 1180.4000000059605,
+        "pass": true
+      },
+      "exact-scan": {
+        "kind": "exact-scan",
+        "count": 5,
+        "median": 67.0848,
+        "p95": 1154.7054,
+        "max": 1154.7054,
+        "pass": false
+      }
+    }
+  },
+  "settledStatus": {
+    "fedora": {
+      "stoppedAppPairs": 13,
+      "allStoppedBoundariesSettled": true,
+      "allInteractiveSessionBeforeAndFinalAfterSettled": true,
+      "noTypingHashFindings": [],
+      "finalStoppedApp": {
+        "epochMs": 1790899131872,
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "dfb5e9126a95a5ab5902f657fd4f218401cc149093c71b09c50dce0a955b7115"
+      },
+      "boundaryLog": "fedora-boundaries.jsonl",
+      "pairedProof": "fedora-index-settled-proof.json",
+      "startupInAppStatus": "The startup probe automatically exits at readiness, so in-app semantic status is unavailable during that series. Read-only stopped-app status and long-note hashes bracket the series and each individual launch."
+    },
+    "windows": {
+      "stoppedAppPairs": 13,
+      "allStoppedBoundariesSettled": true,
+      "allInteractiveSessionBeforeAndFinalAfterSettled": true,
+      "noTypingHashFindings": [],
+      "finalStoppedApp": {
+        "epochMs": 1790899131675,
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "5fffebe498592a2132e9df55bf0b2bace413f8a0ab0550cc78352b4796e46d9d"
+      },
+      "boundaryLog": "windows-boundaries.jsonl",
+      "pairedProof": "windows-index-settled-proof.json",
+      "startupInAppStatus": "The startup probe automatically exits at readiness, so in-app semantic status is unavailable during that series. Read-only stopped-app status and long-note hashes bracket the series and each individual launch."
+    }
+  },
+  "fixture": {
+    "fedora": {
+      "notes": 10000,
+      "explicitLinks": 19998,
+      "longNoteWords": 5000
+    },
+    "windows": {
+      "notes": 10000,
+      "explicitLinks": 19998,
+      "longNoteWords": 5000
+    }
+  },
+  "cleanup": {
+    "fedora": {
+      "epochMs": 1790898856740,
+      "tunnelPid": 2484505,
+      "tunnelStopped": true,
+      "remainingApps": [],
+      "binarySha256": "ee2d6090628e3adf6b099d5326399adca30950b7ee4a9a140948dcdf05a1cf21",
+      "unitGone": "inactive",
+      "disposableVaultRetained": true
+    },
+    "windows": {
+      "configHash": "0BFB153904693EA54A471D3773889876B6CC0305FD7663489CAFC92AA20004B8",
+      "configurationLockExists": false,
+      "binarySha256": "BE5BF111FA8923F2A54141D4B46E562474BDD437864406E784F164BA8F4F165C",
+      "windowBackupHash": "34278064917BE655297900A5C0F7A8AB2626DDD9B6901E7C435213B5F8366A4C",
+      "windowHash": "34278064917BE655297900A5C0F7A8AB2626DDD9B6901E7C435213B5F8366A4C",
+      "epoch": "2026-10-01T23:57:43.0819217Z",
+      "drivers": [
+        {
+          "running": false,
+          "pid": 21964
+        },
+        {
+          "running": false,
+          "pid": 36776
+        },
+        {
+          "running": false,
+          "pid": 38548
+        },
+        {
+          "running": false,
+          "pid": 40500
+        },
+        {
+          "running": false,
+          "pid": 38492
+        },
+        {
+          "running": false,
+          "pid": 39308
+        },
+        {
+          "running": false,
+          "pid": 41472
+        },
+        {
+          "running": false,
+          "pid": 30400
+        }
+      ],
+      "keepAwakePid": 43512,
+      "backupHash": "0BFB153904693EA54A471D3773889876B6CC0305FD7663489CAFC92AA20004B8",
+      "profiles": [
+        {
+          "redirected": false,
+          "folder": "logs",
+          "asideExists": false
+        },
+        {
+          "redirected": false,
+          "folder": "EBWebView",
+          "asideExists": false
+        }
+      ],
+      "remainingApps": [],
+      "keepAwakeRunning": false,
+      "configRestored": true,
+      "tasks": [
+        {
+          "exists": false,
+          "name": "SecondBrainPerfRunner-46134c3"
+        },
+        {
+          "exists": false,
+          "name": "SecondBrainPerf88-46134c3"
+        }
+      ]
+    }
+  },
+  "packageProofs": {
+    "fedora": {
+      "candidate": "46134c36a99b53d17a56c3a96960b76ca7aae040",
+      "binarySha256": "ee2d6090628e3adf6b099d5326399adca30950b7ee4a9a140948dcdf05a1cf21",
+      "packageSha256": "ef827b1547bcbdaf56aa676489cf7949463836d6764326cb8646b0e29b7f297c",
+      "binaryEmbedsCommit": true,
+      "rpmVerify": 0,
+      "rpmVerifyOutput": "",
+      "os": "Fedora release 44 (Forty Four)",
+      "worktreeHead": "46134c36a99b53d17a56c3a96960b76ca7aae040",
+      "appSourcesDiff": ""
+    },
+    "windows": {
+      "binarySha256": "BE5BF111FA8923F2A54141D4B46E562474BDD437864406E784F164BA8F4F165C",
+      "appConfigRoot": "%USERPROFILE%\\AppData\\Roaming\\io.github.zulucodedesign.SecondBrain",
+      "binaryEmbedsCommit": true,
+      "appMachineRoot": "%USERPROFILE%\\AppData\\Local\\io.github.zulucodedesign.SecondBrain",
+      "packageSha256": "496C62671943692DAE213A4B31A36B48AE43DEE029C0DBC6FBDFDEE91FF8359D",
+      "candidate": "46134c36a99b53d17a56c3a96960b76ca7aae040",
+      "os": {
+        "Caption": "Microsoft Windows 11 Pro",
+        "Version": "10.0.26200",
+        "OSArchitecture": "64-bit"
+      }
+    }
+  },
+  "rawLogs": {
+    "fedora": [
+      "fedora-startup.jsonl",
+      "fedora-editor-1.jsonl",
+      "fedora-editor-2.jsonl",
+      "fedora-editor-3.jsonl",
+      "fedora-editor-4.jsonl",
+      "fedora-editor-5.jsonl",
+      "fedora-native-editor.jsonl",
+      "fedora-interactive.jsonl",
+      "fedora-search.jsonl",
+      "fedora-all.jsonl"
+    ],
+    "windows": [
+      "windows-startup.jsonl",
+      "windows-editor-1.jsonl",
+      "windows-editor-2.jsonl",
+      "windows-editor-3.jsonl",
+      "windows-editor-4.jsonl",
+      "windows-editor-5.jsonl",
+      "windows-native-editor.jsonl",
+      "windows-interactive.jsonl",
+      "windows-search.jsonl",
+      "windows-all.jsonl"
+    ]
+  },
+  "findings": [
+    {
+      "machine": "windows",
+      "row": "exact-scan",
+      "medianMs": 67.0848,
+      "p95Ms": 1154.7054,
+      "maxMs": 1154.7054,
+      "budgetP95Ms": 250,
+      "samplesMs": [
+        1154.7054,
+        65.7934,
+        1039.0854,
+        67.0848,
+        66.914
+      ],
+      "note": "Settled index confirmed before and after the search session; this is a qualifying failure. Earlier issue #159 remains the relevant slow-scan investigation."
+    }
+  ],
+  "overallVerdict": "FAIL: Windows local exact-scan p95 exceeds 250 ms. All other budgets pass.",
+  "worktreeHead": "46134c36a99b53d17a56c3a96960b76ca7aae040",
+  "applicationSourcesDiff": ""
+}

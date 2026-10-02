@@ -1,0 +1,64 @@
+{
+    "backupHash":  "0BFB153904693EA54A471D3773889876B6CC0305FD7663489CAFC92AA20004B8",
+    "configRestored":  true,
+    "configHash":  "0BFB153904693EA54A471D3773889876B6CC0305FD7663489CAFC92AA20004B8",
+    "databaseBytes":  45838336,
+    "machineJunctionRemoved":  true,
+    "windowHash":  "34278064917BE655297900A5C0F7A8AB2626DDD9B6901E7C435213B5F8366A4C",
+    "profiles":  [
+                     {
+                         "asideExists":  false,
+                         "folder":  "logs",
+                         "isJunction":  false
+                     },
+                     {
+                         "asideExists":  false,
+                         "folder":  "EBWebView",
+                         "isJunction":  false
+                     }
+                 ],
+    "configurationLockExists":  false,
+    "defender":  {
+                     "ProcessId":  5024,
+                     "CreationDate":  "\/Date(1790692906010)\/"
+                 },
+    "sessions":  [
+                     {
+                         "appRunning":  false,
+                         "appPid":  43696,
+                         "driverPid":  31016,
+                         "driverRunning":  false,
+                         "session":  "A1"
+                     },
+                     {
+                         "appRunning":  false,
+                         "appPid":  25264,
+                         "driverPid":  22492,
+                         "driverRunning":  false,
+                         "session":  "A2"
+                     },
+                     {
+                         "appRunning":  false,
+                         "appPid":  15480,
+                         "driverPid":  33132,
+                         "driverRunning":  false,
+                         "session":  "B1"
+                     },
+                     {
+                         "appRunning":  false,
+                         "appPid":  23124,
+                         "driverPid":  34868,
+                         "driverRunning":  false,
+                         "session":  "B2"
+                     }
+                 ],
+    "driverTaskExists":  false,
+    "appExeBytes":  35171328,
+    "runnerTaskExists":  false,
+    "appHash":  "BE5BF111FA8923F2A54141D4B46E562474BDD437864406E784F164BA8F4F165C",
+    "epochMs":  1790900107335,
+    "remainingApps":  [
+
+                      ],
+    "windowBackupHash":  "34278064917BE655297900A5C0F7A8AB2626DDD9B6901E7C435213B5F8366A4C"
+}

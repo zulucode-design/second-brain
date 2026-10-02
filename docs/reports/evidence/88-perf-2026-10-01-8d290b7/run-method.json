@@ -1,0 +1,19 @@
+{
+  "candidate": "8d290b71e35319767e26036ae57dfa5319344db0",
+  "measurementOrder": [
+    "windows startup 5",
+    "windows editor 5x200",
+    "windows graph 5",
+    "windows semantic search 5",
+    "fedora startup 5",
+    "fedora editor 5x200",
+    "fedora graph 5",
+    "fedora semantic search 5"
+  ],
+  "searchPolicy": "No pause or discarded warmup query before the first search. One embedding API call warms the configured backend before launching the measured app, as required by the published warm-backend protocol. Every app semantic-backend and semantic-search sample is retained.",
+  "boundaryPolicy": "Read-only SQLite counts and long-note hashes before/after the startup series, each startup launch, each editor run, graph session and search session. In-app semantic status and note hashes before/after each interactive session. Auto-exiting startup has no in-app status channel.",
+  "longNotePolicy": "Typing is permitted to change the note. A stopped after-boundary rejects any non-editor session that changed the long note.",
+  "profileIsolation": "Fedora isolated XDG roots. Windows config and window-state copied and hashed; logs, EBWebView and the new vault state junctioned into the disposable directory, then restored.",
+  "controllerNote": "Monitoring coordinator restarted once to cast PowerShell Get-Content values to plain strings before JSON serialization. Apps, index warmup and measured rows were not restarted.",
+  "baselineRam": "No matching post-search RAM snapshot exists in the main 46134c3 performance row; new snapshots are retained for a later comparison."
+}

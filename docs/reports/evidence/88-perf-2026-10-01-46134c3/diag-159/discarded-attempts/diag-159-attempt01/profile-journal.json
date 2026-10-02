@@ -1,0 +1,14 @@
+[
+    {
+        "existed":  true,
+        "path":  "<windows-profile>\\AppData\\Local\\io.github.zulucodedesign.SecondBrain\\logs",
+        "aside":  "<windows-profile>\\AppData\\Local\\io.github.zulucodedesign.SecondBrain.diag-159\\logs",
+        "target":  "D:\\SecondBrainTest\\sb88\\perf-46134c3\\profile\\logs"
+    },
+    {
+        "existed":  true,
+        "path":  "<windows-profile>\\AppData\\Local\\io.github.zulucodedesign.SecondBrain\\EBWebView",
+        "aside":  "<windows-profile>\\AppData\\Local\\io.github.zulucodedesign.SecondBrain.diag-159\\EBWebView",
+        "target":  "D:\\SecondBrainTest\\sb88\\perf-46134c3\\profile\\EBWebView"
+    }
+]

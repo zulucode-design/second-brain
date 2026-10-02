@@ -1,0 +1,70 @@
+{
+    "configHash":  "0BFB153904693EA54A471D3773889876B6CC0305FD7663489CAFC92AA20004B8",
+    "keepAwakeOwnership":  "The interactive runner held the power request for its own lifetime.",
+    "windowBackupHash":  "34278064917BE655297900A5C0F7A8AB2626DDD9B6901E7C435213B5F8366A4C",
+    "windowHash":  "34278064917BE655297900A5C0F7A8AB2626DDD9B6901E7C435213B5F8366A4C",
+    "epoch":  "2026-10-02T02:06:07.6435339Z",
+    "binarySha256":  "6588DDF54E5B61E506EB8BB6325AA6198B9216B4575B11A5F6A00023DBF74C23",
+    "profiles":  [
+                     {
+                         "redirected":  false,
+                         "folder":  "logs",
+                         "asideExists":  false
+                     },
+                     {
+                         "redirected":  false,
+                         "folder":  "EBWebView",
+                         "asideExists":  false
+                     }
+                 ],
+    "backupHash":  "0BFB153904693EA54A471D3773889876B6CC0305FD7663489CAFC92AA20004B8",
+    "drivers":  [
+                    {
+                        "running":  false,
+                        "pid":  32100
+                    },
+                    {
+                        "running":  false,
+                        "pid":  22216
+                    },
+                    {
+                        "running":  false,
+                        "pid":  41608
+                    },
+                    {
+                        "running":  false,
+                        "pid":  41548
+                    },
+                    {
+                        "running":  false,
+                        "pid":  17784
+                    },
+                    {
+                        "running":  false,
+                        "pid":  7620
+                    },
+                    {
+                        "running":  false,
+                        "pid":  21528
+                    },
+                    {
+                        "running":  false,
+                        "pid":  40768
+                    }
+                ],
+    "remainingApps":  [
+
+                      ],
+    "configurationLockExists":  false,
+    "configRestored":  true,
+    "tasks":  [
+                  {
+                      "exists":  false,
+                      "name":  "SecondBrainPerfRunner-8d290b7"
+                  },
+                  {
+                      "exists":  false,
+                      "name":  "SecondBrainPerf88-8d290b7"
+                  }
+              ]
+}

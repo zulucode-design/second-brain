@@ -1,0 +1,98 @@
+{
+  "ownedPidStatus": [
+    {
+      "pid": 2396811,
+      "exists": false
+    },
+    {
+      "pid": 2396834,
+      "exists": false
+    },
+    {
+      "pid": 2396835,
+      "exists": false
+    },
+    {
+      "pid": 2398172,
+      "exists": false
+    },
+    {
+      "pid": 2398186,
+      "exists": false
+    },
+    {
+      "pid": 2398187,
+      "exists": false
+    },
+    {
+      "pid": 2403609,
+      "exists": false
+    },
+    {
+      "pid": 2403610,
+      "exists": false
+    },
+    {
+      "pid": 2404103,
+      "exists": false
+    },
+    {
+      "pid": 2404104,
+      "exists": false
+    },
+    {
+      "pid": 2404547,
+      "exists": false
+    },
+    {
+      "pid": 2404548,
+      "exists": false
+    },
+    {
+      "pid": 2404977,
+      "exists": false
+    },
+    {
+      "pid": 2404978,
+      "exists": false
+    },
+    {
+      "pid": 2405352,
+      "exists": false
+    },
+    {
+      "pid": 2405353,
+      "exists": false
+    },
+    {
+      "pid": 2405764,
+      "exists": false
+    },
+    {
+      "pid": 2405765,
+      "exists": false
+    },
+    {
+      "pid": 2406265,
+      "exists": false
+    },
+    {
+      "pid": 2406266,
+      "exists": false
+    },
+    {
+      "pid": 2406616,
+      "exists": false
+    },
+    {
+      "pid": 2406617,
+      "exists": false
+    }
+  ],
+  "tunnelPids": [
+    2396811,
+    2398172
+  ],
+  "appProcessList": "",
+  "binarySha256": "0fb249d326addb2b574db1da016890eb4a5576bf51eb6099ee88b688f529e3f0"
+}

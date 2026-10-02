@@ -1,0 +1,47 @@
+[
+  {
+    "kind": "startup",
+    "pass": false,
+    "missing": true
+  },
+  {
+    "kind": "editor-key",
+    "pass": false,
+    "missing": true
+  },
+  {
+    "kind": "graph-render",
+    "pass": false,
+    "missing": true
+  },
+  {
+    "kind": "semantic-search",
+    "samples": [
+      100,
+      120,
+      107,
+      148,
+      124
+    ],
+    "count": 5,
+    "median": 120,
+    "p95": 148,
+    "max": 148,
+    "pass": true
+  },
+  {
+    "kind": "exact-scan",
+    "samples": [
+      26.334854,
+      25.351655,
+      25.299158,
+      25.879079,
+      26.586354999999998
+    ],
+    "count": 5,
+    "median": 25.879079,
+    "p95": 26.586354999999998,
+    "max": 26.586354999999998,
+    "pass": true
+  }
+]

@@ -1,0 +1,127 @@
+{
+  "candidate": "46134c36a99b53d17a56c3a96960b76ca7aae040",
+  "sessions": {
+    "A1": {
+      "delayMs": 0,
+      "appPid": 43696,
+      "exactScanMs": [
+        69.40350000000001,
+        140.2461,
+        71.0943,
+        67.17819999999999,
+        67.2962
+      ],
+      "nearestRankP95Ms": 140.2461,
+      "queryStartAfterReadyMs": [
+        236.79443359375,
+        704.404052734375,
+        1268.420166015625,
+        1733.96435546875,
+        2200.031982421875
+      ],
+      "startupReadyAfterLaunchMs": 2995,
+      "sampleCount": 25,
+      "maxSamplingJitterMs": 21,
+      "maxCounterQueryDurationMs": 102,
+      "appCpuMsAt25s": 9250,
+      "appIoReadBytesAt25s": 247486162,
+      "defenderCpuMsFromBeforeTo25s": 2921.875,
+      "defenderReadBytesFromBeforeTo25s": 73550832,
+      "appCpuMsFrom10sTo20s": 46.875,
+      "appReadBytesFrom10sTo20s": 39160
+    },
+    "A2": {
+      "delayMs": 0,
+      "appPid": 25264,
+      "exactScanMs": [
+        68.3527,
+        134.45180000000002,
+        66.42729999999999,
+        71.8249,
+        71.2662
+      ],
+      "nearestRankP95Ms": 134.45180000000002,
+      "queryStartAfterReadyMs": [
+        213.294921875,
+        682.28076171875,
+        1242.85302734375,
+        1593.995849609375,
+        2055.060302734375
+      ],
+      "startupReadyAfterLaunchMs": 2435,
+      "sampleCount": 25,
+      "maxSamplingJitterMs": 20,
+      "maxCounterQueryDurationMs": 102,
+      "appCpuMsAt25s": 9421.875,
+      "appIoReadBytesAt25s": 247492171,
+      "defenderCpuMsFromBeforeTo25s": 3093.75,
+      "defenderReadBytesFromBeforeTo25s": 73493504,
+      "appCpuMsFrom10sTo20s": 78.125,
+      "appReadBytesFrom10sTo20s": 39160
+    },
+    "B1": {
+      "delayMs": 20000,
+      "appPid": 15480,
+      "exactScanMs": [
+        64.211,
+        64.6623,
+        65.0511,
+        64.08460000000001,
+        63.68509999999999
+      ],
+      "nearestRankP95Ms": 65.0511,
+      "queryStartAfterReadyMs": [
+        20338.203125,
+        20803.13671875,
+        21272.2568359375,
+        21737.186279296875,
+        22201.796630859375
+      ],
+      "startupReadyAfterLaunchMs": 2557,
+      "sampleCount": 25,
+      "maxSamplingJitterMs": 22,
+      "maxCounterQueryDurationMs": 86,
+      "appCpuMsAt25s": 9203.125,
+      "appIoReadBytesAt25s": 247485275,
+      "defenderCpuMsFromBeforeTo25s": 3171.875,
+      "defenderReadBytesFromBeforeTo25s": 73550832,
+      "appCpuMsFrom10sTo20s": 125.0,
+      "appReadBytesFrom10sTo20s": 39160
+    },
+    "B2": {
+      "delayMs": 20000,
+      "appPid": 23124,
+      "exactScanMs": [
+        64.6645,
+        64.4691,
+        65.78349999999999,
+        73.8965,
+        67.0493
+      ],
+      "nearestRankP95Ms": 73.8965,
+      "queryStartAfterReadyMs": [
+        20331.466064453125,
+        20800.61376953125,
+        21266.70947265625,
+        21731.27490234375,
+        22088.565673828125
+      ],
+      "startupReadyAfterLaunchMs": 2534,
+      "sampleCount": 25,
+      "maxSamplingJitterMs": 24,
+      "maxCounterQueryDurationMs": 95,
+      "appCpuMsAt25s": 8734.375,
+      "appIoReadBytesAt25s": 247484435,
+      "defenderCpuMsFromBeforeTo25s": 3343.75,
+      "defenderReadBytesFromBeforeTo25s": 73493504,
+      "appCpuMsFrom10sTo20s": 31.25,
+      "appReadBytesFrom10sTo20s": 39160
+    }
+  },
+  "cleanup": {
+    "configHash": "0BFB153904693EA54A471D3773889876B6CC0305FD7663489CAFC92AA20004B8",
+    "windowHash": "34278064917BE655297900A5C0F7A8AB2626DDD9B6901E7C435213B5F8366A4C",
+    "appHash": "BE5BF111FA8923F2A54141D4B46E562474BDD437864406E784F164BA8F4F165C",
+    "complete": true
+  }
+}

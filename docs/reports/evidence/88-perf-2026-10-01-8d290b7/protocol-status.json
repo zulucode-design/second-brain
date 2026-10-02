@@ -1,0 +1,328 @@
+{
+  "candidate": "8d290b71e35319767e26036ae57dfa5319344db0",
+  "scope": "Installed-package verification only. No application source or matrix edits, commits, or pushes. Prior evidence is unchanged.",
+  "retries": "No warmup or measured-row retries. Monitoring coordinator restarted once for PowerShell string serialization.",
+  "timingVerdicts": {
+    "fedora": {
+      "startup": {
+        "kind": "startup",
+        "count": 5,
+        "median": 1333,
+        "p95": 1369,
+        "max": 1369,
+        "pass": true
+      },
+      "editor-key": {
+        "kind": "editor-key",
+        "count": 1000,
+        "median": 9,
+        "p95": 13,
+        "max": 79,
+        "pass": true
+      },
+      "graph-render": {
+        "kind": "graph-render",
+        "count": 5,
+        "median": 276,
+        "p95": 332,
+        "max": 332,
+        "pass": true
+      },
+      "semantic-search": {
+        "kind": "semantic-search",
+        "count": 5,
+        "median": 120,
+        "p95": 148,
+        "max": 148,
+        "pass": true
+      },
+      "exact-scan": {
+        "kind": "exact-scan",
+        "count": 5,
+        "median": 25.879079,
+        "p95": 26.586354999999998,
+        "max": 26.586354999999998,
+        "pass": true
+      }
+    },
+    "windows": {
+      "startup": {
+        "kind": "startup",
+        "count": 5,
+        "median": 1924,
+        "p95": 2300,
+        "max": 2300,
+        "pass": true
+      },
+      "editor-key": {
+        "kind": "editor-key",
+        "count": 1000,
+        "median": 2.5999999940395355,
+        "p95": 3.0999999940395355,
+        "max": 9.299999982118608,
+        "pass": true
+      },
+      "graph-render": {
+        "kind": "graph-render",
+        "count": 5,
+        "median": 1646,
+        "p95": 2087.699999988079,
+        "max": 2087.699999988079,
+        "pass": true
+      },
+      "semantic-search": {
+        "kind": "semantic-search",
+        "count": 5,
+        "median": 45.19999998807907,
+        "p95": 127.80000001192091,
+        "max": 127.80000001192091,
+        "pass": true
+      },
+      "exact-scan": {
+        "kind": "exact-scan",
+        "count": 5,
+        "median": 20.0314,
+        "p95": 21.451,
+        "max": 21.451,
+        "pass": true
+      }
+    }
+  },
+  "settledStatus": {
+    "fedora": {
+      "stoppedAppPairs": 13,
+      "allStoppedBoundariesSettled": true,
+      "allInteractiveSessionBeforeAndFinalAfterSettled": true,
+      "noTypingHashFindings": [],
+      "finalStoppedApp": {
+        "epochMs": 1790906921302,
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "82d7f5f61bf963fb8d6d5a01cf8cd9f8eba89fb1631c52f53deba207ce5952b6"
+      },
+      "boundaryLog": "fedora-boundaries.jsonl",
+      "pairedProof": "fedora-index-settled-proof.json",
+      "startupInAppStatus": "The startup probe automatically exits at readiness, so in-app semantic status is unavailable during that series. Read-only stopped-app status and long-note hashes bracket the series and each individual launch."
+    },
+    "windows": {
+      "stoppedAppPairs": 13,
+      "allStoppedBoundariesSettled": true,
+      "allInteractiveSessionBeforeAndFinalAfterSettled": true,
+      "noTypingHashFindings": [],
+      "finalStoppedApp": {
+        "epochMs": 1790906768626,
+        "indexedNotes": 10000,
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "longNoteSha256": "607e763d5ae21a01e8fbf791aa075ab6f93fbd7d920fd9ac18374c0669ef845a"
+      },
+      "boundaryLog": "windows-boundaries.jsonl",
+      "pairedProof": "windows-index-settled-proof.json",
+      "startupInAppStatus": "The startup probe automatically exits at readiness, so in-app semantic status is unavailable during that series. Read-only stopped-app status and long-note hashes bracket the series and each individual launch."
+    }
+  },
+  "fixture": {
+    "fedora": {
+      "notes": 10000,
+      "explicitLinks": 19998,
+      "longNoteWords": 5000
+    },
+    "windows": {
+      "notes": 10000,
+      "explicitLinks": 19998,
+      "longNoteWords": 5000
+    }
+  },
+  "cleanup": {
+    "fedora": {
+      "epochMs": 1790906921310,
+      "remainingApps": [],
+      "remainingDrivers": [],
+      "tunnelPid": 2591239,
+      "tunnelStartTicks": "29134280",
+      "tunnelStopped": true,
+      "allOwnedDriverCleanupRecorded": true,
+      "binarySha256": "7dd8eaf88172fcf0976f18e007f8e758560b89eb73af1dd8306f023756d8f1a4",
+      "runnerResult": "FEDORA_PROTOCOL_PASS_8d290b7",
+      "endMarker": "FEDORA_CLEANUP_END_8d290b7",
+      "coordinatorEndMarker": "BOTH_RUNNERS_END_8d290b7"
+    },
+    "windows": {
+      "configHash": "0BFB153904693EA54A471D3773889876B6CC0305FD7663489CAFC92AA20004B8",
+      "keepAwakeOwnership": "The interactive runner held the power request for its own lifetime.",
+      "windowBackupHash": "34278064917BE655297900A5C0F7A8AB2626DDD9B6901E7C435213B5F8366A4C",
+      "windowHash": "34278064917BE655297900A5C0F7A8AB2626DDD9B6901E7C435213B5F8366A4C",
+      "epoch": "2026-10-02T02:06:07.6435339Z",
+      "binarySha256": "6588DDF54E5B61E506EB8BB6325AA6198B9216B4575B11A5F6A00023DBF74C23",
+      "profiles": [
+        {
+          "redirected": false,
+          "folder": "logs",
+          "asideExists": false
+        },
+        {
+          "redirected": false,
+          "folder": "EBWebView",
+          "asideExists": false
+        }
+      ],
+      "backupHash": "0BFB153904693EA54A471D3773889876B6CC0305FD7663489CAFC92AA20004B8",
+      "drivers": [
+        {
+          "running": false,
+          "pid": 32100
+        },
+        {
+          "running": false,
+          "pid": 22216
+        },
+        {
+          "running": false,
+          "pid": 41608
+        },
+        {
+          "running": false,
+          "pid": 41548
+        },
+        {
+          "running": false,
+          "pid": 17784
+        },
+        {
+          "running": false,
+          "pid": 7620
+        },
+        {
+          "running": false,
+          "pid": 21528
+        },
+        {
+          "running": false,
+          "pid": 40768
+        }
+      ],
+      "remainingApps": [],
+      "configurationLockExists": false,
+      "configRestored": true,
+      "tasks": [
+        {
+          "exists": false,
+          "name": "SecondBrainPerfRunner-8d290b7"
+        },
+        {
+          "exists": false,
+          "name": "SecondBrainPerf88-8d290b7"
+        }
+      ]
+    }
+  },
+  "packageProofs": {
+    "fedora": {
+      "candidate": "8d290b71e35319767e26036ae57dfa5319344db0",
+      "binarySha256": "7dd8eaf88172fcf0976f18e007f8e758560b89eb73af1dd8306f023756d8f1a4",
+      "packageSha256": "08b268b491c0ce01da25294eb1d2cd5a88ab66dcbc82f107aec72c8346df1e95",
+      "binaryEmbedsCommit": true,
+      "rpmVerify": 0,
+      "rpmVerifyOutput": "",
+      "os": "Fedora release 44 (Forty Four)",
+      "worktreeHead": "46134c36a99b53d17a56c3a96960b76ca7aae040",
+      "candidateFiles": [
+        "docs/reports/alpha-verification-matrix-v2-2026-09-16.html",
+        "src-tauri/src/commands.rs",
+        "src-tauri/src/semantic_search.rs"
+      ]
+    },
+    "windows": {
+      "binarySha256": "6588DDF54E5B61E506EB8BB6325AA6198B9216B4575B11A5F6A00023DBF74C23",
+      "appConfigRoot": "%USERPROFILE%\\AppData\\Roaming\\io.github.zulucodedesign.SecondBrain",
+      "binaryEmbedsCommit": true,
+      "appMachineRoot": "%USERPROFILE%\\AppData\\Local\\io.github.zulucodedesign.SecondBrain",
+      "packageSha256": "1D44396A3F70FD0F8E18F51BF9D6239FF8CA1A5100BB881922E2DCD4A8FAFD68",
+      "candidate": "8d290b71e35319767e26036ae57dfa5319344db0",
+      "os": {
+        "Caption": "Microsoft Windows 11 Pro",
+        "Version": "10.0.26200",
+        "OSArchitecture": "64-bit"
+      }
+    }
+  },
+  "rawLogs": {
+    "fedora": [
+      "fedora-startup.jsonl",
+      "fedora-editor-1.jsonl",
+      "fedora-editor-2.jsonl",
+      "fedora-editor-3.jsonl",
+      "fedora-editor-4.jsonl",
+      "fedora-editor-5.jsonl",
+      "fedora-native-editor.jsonl",
+      "fedora-interactive.jsonl",
+      "fedora-search.jsonl",
+      "fedora-all.jsonl"
+    ],
+    "windows": [
+      "windows-startup.jsonl",
+      "windows-editor-1.jsonl",
+      "windows-editor-2.jsonl",
+      "windows-editor-3.jsonl",
+      "windows-editor-4.jsonl",
+      "windows-editor-5.jsonl",
+      "windows-native-editor.jsonl",
+      "windows-interactive.jsonl",
+      "windows-search.jsonl",
+      "windows-all.jsonl"
+    ]
+  },
+  "findings": [],
+  "memory": {
+    "fedora": [
+      {
+        "kind": "post-search-memory",
+        "epochMs": 1790906870827,
+        "pid": 2600770,
+        "executable": "/usr/bin/second-brain",
+        "rssBytes": 230125568
+      }
+    ],
+    "windows": [
+      {
+        "privateBytes": 57733120,
+        "started": "2026-10-02T02:05:08.6782778Z",
+        "pid": 23252,
+        "kind": "post-search-memory",
+        "workingSetBytes": 86712320,
+        "executable": "D:\\SecondBrainTest\\app\\second-brain.exe",
+        "epochMs": 1790906712789
+      }
+    ]
+  },
+  "lockWaitMs": {
+    "fedora": {
+      "samples": [
+        8.2e-05,
+        8.2e-05,
+        7.6e-05,
+        8.6e-05,
+        8e-05
+      ],
+      "median": 8.2e-05,
+      "p95": 8.6e-05,
+      "max": 8.6e-05
+    },
+    "windows": {
+      "samples": [
+        9.999999999999999e-05,
+        9.999999999999999e-05,
+        9.999999999999999e-05,
+        0.00019999999999999998,
+        0.00019999999999999998
+      ],
+      "median": 9.999999999999999e-05,
+      "p95": 0.00019999999999999998,
+      "max": 0.00019999999999999998
+    }
+  },
+  "overallVerdict": "PASS",
+  "worktreeHead": "46134c36a99b53d17a56c3a96960b76ca7aae040",
+  "applicationSourcesDiff": ""
+}

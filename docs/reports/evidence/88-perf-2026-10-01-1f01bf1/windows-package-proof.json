@@ -1,0 +1,13 @@
+{
+    "binarySha256":  "1FE73CAF8DCD2AA2C208B80769869693F594BA7AF4DAEE4535EA310C73DD437C",
+    "appConfigRoot":  "%USERPROFILE%\\AppData\\Roaming\\io.github.zulucodedesign.SecondBrain",
+    "binaryEmbedsCommit":  true,
+    "appMachineRoot":  "%USERPROFILE%\\AppData\\Local\\io.github.zulucodedesign.SecondBrain",
+    "packageSha256":  "48D3288B129855128C5E024BFD2BAC8A7753449F7CFBE54BAF58AA2C7BF7E8E4",
+    "candidate":  "1f01bf1c4a5ca6714ec4333b8e99dd533ac1a4dd",
+    "os":  {
+               "Caption":  "Microsoft Windows 11 Pro",
+               "Version":  "10.0.26200",
+               "OSArchitecture":  "64-bit"
+           }
+}
