@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -80,6 +80,25 @@ test('the test package helper installs only a plain Second Brain package', { ski
     assert.match(check(manifest).stderr, /not an RPM package/);
   } finally {
     rmSync(topdir, { recursive: true, force: true });
+  }
+});
+
+// The privileged commands are stubbed: this checks the staging and exit status around them.
+test('the test package helper exits 0 after an install and removes its staging copy', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sb-test-package-'));
+  try {
+    const candidate = join(dir, 'candidate.rpm');
+    writeFileSync(candidate, 'package');
+    const stubs = 'runuser() { shift 3; "$@"; }; rpm() { :; }; check_candidate() { :; }';
+    const result = spawnSync('bash', ['-c', `source "$1"; ${stubs}; install_candidate "$2"; echo "$stage"`, 'install', helper, candidate], {
+      encoding: 'utf8', env: { ...process.env, SUDO_USER: 'unused' },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const stage = result.stdout.trim().split('\n').at(-1);
+    assert.match(stage, /^\/var\/tmp\/second-brain-candidate\./);
+    assert.equal(existsSync(stage), false, 'staging directory left behind');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

@@ -71,7 +71,8 @@ check_candidate() {
 }
 
 install_candidate() {
-  local source=$1 stage size
+  # stage stays global: the EXIT trap runs after this function returns, when a local is gone.
+  local source=$1 size
   if [[ $source != /*.rpm ]]; then
     echo "candidate must be an absolute path to an .rpm file: $source" >&2
     exit 2
