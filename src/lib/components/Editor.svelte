@@ -3218,7 +3218,8 @@
 			|| (!!titleInput && !!$activeNote && titleInput.value !== $activeNote.meta.title)
 			|| !!(mathModal || linkModal || secretModal || imageToolbar || codeLangDropdown || slashMenu
 				|| taskMetaMenu || taskDuePicker || wikiLinkMenu || aiMenu || aiLoading || aiResult !== null
-				|| textContextMenu || tableContextMenu || linkContextMenu || tablePickerOpen);
+				|| textContextMenu || tableContextMenu || linkContextMenu || tablePickerOpen
+				|| !!calloutTypeMenu?.isConnected);
 	}
 
 
@@ -5253,6 +5254,10 @@
 		editor.chain().focus().wrapIn('callout', { type, title: '', foldable: false, folded: false }).run();
 	}
 
+	// Built in the DOM rather than in component state, so it counts as a draft for as long as it
+	// is attached: a reload under it would leave its pick nowhere to land (#193).
+	let calloutTypeMenu: HTMLElement | null = null;
+
 	function openCalloutTypeMenu(anchor: HTMLElement, onPick: (type: string) => void) {
 		document.querySelectorAll('.callout-type-menu').forEach((el) => el.remove());
 		const menu = document.createElement('div');
@@ -5303,6 +5308,7 @@
 		});
 		menu.appendChild(customBtn);
 		document.body.appendChild(menu);
+		calloutTypeMenu = menu;
 		const r = anchor.getBoundingClientRect();
 		menu.style.top = `${Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 8)}px`;
 		menu.style.left = `${Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)}px`;
