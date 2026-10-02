@@ -75,6 +75,22 @@ pub struct SaveCommitOutcome {
     pub entry: Option<NoteEntry>,
 }
 
+/// The editor's save (#192): the note was saved, or the draft went to a conflict copy because
+/// the note changed or vanished on disk. `disk` is the note as it is now, `None` when it is gone.
+#[derive(Debug, Clone, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum DraftSaveOutcome {
+    Saved(SaveCommitOutcome),
+    Preserved {
+        copy_path: String,
+        disk: Option<NoteContent>,
+    },
+}
+
 /// Authoritative result of a path mutation. `note` is present whenever the operation
 /// relocates the active document, allowing the frontend to rebase without another read.
 #[derive(Debug, Clone, Serialize, Deserialize)]

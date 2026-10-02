@@ -507,6 +507,7 @@ pub fn run() {
             commands::read_external_note,
             commands::read_unfiled_note,
             commands::save_note,
+            commands::save_note_or_preserve,
             commands::create_note,
             commands::quick_capture_note,
             commands::clip_web_page,

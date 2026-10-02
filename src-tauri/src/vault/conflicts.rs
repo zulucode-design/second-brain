@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-const MARKER: &str = ".sync-conflict-";
+pub(crate) const MARKER: &str = ".sync-conflict-";
 
 /// Return the original Markdown path for a valid Syncthing conflict copy.
 pub(crate) fn original_for_conflict(path: &Path) -> Option<PathBuf> {

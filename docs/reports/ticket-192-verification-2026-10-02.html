@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Ticket #192 — unsaved edits on a note that changed on disk: verification</title>
+  <style>
+    body { margin: 2rem auto; max-width: 64rem; padding: 0 1rem; font: 16px/1.6 system-ui, sans-serif; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #999; padding: .4rem .6rem; text-align: left; vertical-align: top; }
+    code { font-family: ui-monospace, monospace; }
+  </style>
+</head>
+<body>
+  <h1>Ticket #192: unsaved edits on a note that changed on disk</h1>
+  <p>2026-10-02, Fedora laptop. Issue: when the open note had unsaved edits and its file changed on disk
+  (a sync run, a conflict choice), every later save failed with “Save conflict”, the app offered no
+  reload, discard or merge, and the window could not close.</p>
+
+  <h2>Design</h2>
+  <p>Settled by Sol (<code>gpt-6.1-sol</code>, high effort) in two consult passes under Nicolas's delegation.
+  Sol rejected the first proposal, which kept the draft in a copy and silently loaded the disk version,
+  because it chose “take disk” for the user and let the close go ahead without a choice. The final design:</p>
+  <ul>
+    <li>The editor saves through <code>save_note_or_preserve</code>. While the note on disk is still the revision
+    the editor read, that is an ordinary save. Otherwise the draft goes durably to a Syncthing-style conflict
+    copy beside the note, and the note is not touched. A missing note's folder is recreated for the copy only
+    after the path is proven to stay inside the vault and outside its metadata.</li>
+    <li>While the conflict is unresolved, every save refreshes the same copy and never writes the note, even if
+    the disk returns to the expected revision. The editor stays dirty, so a navigation or close is refused at
+    once, with the dialog in place of the generic save alert. The 10 s close handshake never waits on the user.</li>
+    <li>The dialog offers <b>Keep my edits</b> (the copy replaces the note and the disk version goes to Trash),
+    <b>Take disk version</b> (the copy goes to Trash), <b>Compare</b>, and <b>Cancel</b>. For a note that is gone,
+    <b>Close note</b> leaves the copy in Settings › Sync › Conflicts. Cancel keeps a bar above the note, and an
+    explicit save, navigation or close brings the dialog back.</li>
+    <li>A choice first proves the newest text is in the copy, flushing again when the first flush joined an
+    older in-flight save. The editor is frozen while the choice is applied, and any change to the document or
+    a draft ends it with nothing replaced.</li>
+  </ul>
+
+  <h2>Automated checks</h2>
+  <p><code>pnpm verify</code> passes on the fix commit: 199 node tests and 636 Rust tests, plus svelte-check,
+  clippy and the build. New tests:</p>
+  <ul>
+    <li>Rust (<code>vault::operations</code>): a save while the disk is unchanged; a changed note keeps the draft in one
+    copy and refreshes it while unresolved, even when the disk returns to the expected revision; a removed copy
+    is replaced by a new one; a note whose folder is gone; copies of other notes, paths outside the vault,
+    metadata paths, non-Markdown paths and a symlinked folder are never written. Two guards were removed in
+    turn to check that the tests fail without them.</li>
+    <li>Node (<code>tests/disk-conflict.test.mjs</code>), with the real <code>SaveCoordinator</code>: newer typing joined
+    to an older preserving save reaches the copy before Keep, Take or Close; a failed save, an unexpected
+    successful save, typing, a same-path reload, or a draft during the flush or the read ends the choice with
+    nothing replaced; a failed resolve keeps the edits in a fresh copy; the generic alert is suppressed for the
+    conflict; a draft opened while the lock is being taken ends the choice before any flush; source checks
+    for both windows' close and navigation paths, the editor wiring, keyboard containment in the dialog, and an
+    editor recreated during a choice starting frozen. Removing the newest-receipt
+    check or the post-read guard fails them.</li>
+  </ul>
+
+  <h2>Live check</h2>
+  <p>Release binaries built locally (<code>pnpm tauri build --no-bundle</code>) from main <code>f8ecf73</code> and from
+  the fix, driven under <code>tauri-driver</code> with a fresh vault and config. Each scenario types into the open
+  note and then rewrites or deletes its file before the 500 ms autosave, as a sync run would.</p>
+  <table>
+    <tr><th>Scenario</th><th>Checks</th><th>Result</th></tr>
+    <tr><td>main <code>f8ecf73</code></td><td>Dialog shown; draft kept in a copy</td><td>FAIL (no dialog, no copy: the bug)</td></tr>
+    <tr><td>Uncommitted title</td><td>With a title typed but not committed, the bar appears and the dialog is held back;
+    pressing Resolve… keeps focus and the typed title, refuses with a message, and the note is not renamed</td><td>PASS</td></tr>
+    <tr><td>Keep my edits</td><td>Dialog shown; one copy holding the edit; note untouched until the choice; then the note holds
+    my edit, the disk version is in Trash, no copy remains, the editor shows it, and the next edit saves into the note</td><td>PASS</td></tr>
+    <tr><td>Take disk version</td><td>Same, with the disk version kept and my edit in Trash</td><td>PASS</td></tr>
+    <tr><td>Compare and Cancel</td><td>Compare shows both texts; Cancel keeps the bar; more typing refreshes the same copy
+    without reopening the dialog; Resolve reopens it; Keep my edits keeps both drafts</td><td>PASS</td></tr>
+    <tr><td>Note deleted</td><td>Dialog says moved or deleted; the note is not recreated; Close note leaves the copy and
+    closes the editor</td><td>PASS</td></tr>
+    <tr><td>Main window close</td><td>Close refused with the app still running and the dialog back; the close lock is
+    released and the editor editable; after Keep my edits the close exits (0.1 s) with the edit on disk</td><td>PASS</td></tr>
+    <tr><td>Note window close</td><td>Same in a secondary note window: no alert, lock released, closes after the choice</td><td>PASS</td></tr>
+  </table>
+  <p>Windows was not run live; the change has no platform-specific code beyond the existing durable-write
+  helpers, and CI runs the Rust suite on Windows.</p>
+</body>
+</html>
