@@ -3,6 +3,17 @@
 Issue #137 tracks the unattended installed-package harness required by #88. Gates are built
 and run in matrix order. Gates 1, 2, and 3 are implemented.
 
+## Installing the Fedora candidate
+
+Agents install and remove the candidate RPM without Nicolas, through a root-owned helper that
+sudo runs without a password. [linux-test-package.md](linux-test-package.md) covers its use,
+setup, and reach.
+
+The walkthrough and acceptance gates install the `--fedora-rpm` candidate themselves. The
+walkthrough removes it after a passing run; the acceptance gate removes it after every run whose
+Fedora app it could stop. Gates 1 and 2 use whatever is installed, so install the candidate with
+the helper before running them.
+
 ## Gate 1: interrupted sync recovery
 
 Run from the Fedora 44 desktop session while `sb-windows` is reachable:
@@ -101,7 +112,7 @@ and Fedora SSH tunnel then use that port.
 of both machines counts as the gate; `run-start` and `run-complete` record the machines and
 `gate: true` only for a run of both.
 
-The RPM must already be installed (`sudo rpm -Uvh --replacepkgs <rpm>`). The controller checks it
+The controller installs the RPM through the test package helper, then checks it
 with `rpm -V`, `scripts/verify-linux-package.sh`, and the installed desktop entry's `Exec`. It
 installs the NSIS package silently and checks that the Start-menu entry targets the installed
 executable. Each machine first launches that installed entry and checks the app process, then
@@ -143,15 +154,11 @@ under `~/sb88/evidence/walkthrough-<run>/`:
 
 After the last step, the controller records each vault's tree hash. It uninstalls the Windows
 package, checks that the executable and Start-menu entry are gone and the vault hash is unchanged,
-and reinstalls the candidate, also when the uninstall fails. The RPM needs root, so after the run
-Nicolas runs `sudo rpm -e second-brain`, then:
-
-```sh
-node scripts/alpha-harness.mjs walkthrough-uninstalled --run <runId>
-```
-
-This appends the Fedora uninstall result to the same trace. It refuses a run with no completed
-Fedora walkthrough, and compares the vault with the hash the run recorded.
+and reinstalls the candidate, also when the uninstall fails. It removes the Fedora RPM through the
+test package helper and runs the same checks: package, executable, and desktop entry gone, and
+the vault unchanged, so a passing run of the Fedora walkthrough leaves no test build installed.
+The candidate stays installed after a failed run and a `--machine windows` run; an agent removes
+it with the helper when it is no longer needed.
 
 WebDriver cannot answer native dialogs. The diagnostics export calls the button's own
 `export_diagnostics` command with the path the save dialog would return, and the trace says so.
@@ -199,11 +206,9 @@ Actions > Runners page:
 
 `--ephemeral` makes it take exactly one job and deregister. Starting it from the desktop terminal
 gives tauri-driver the session's display and D-Bus, which a system service would not have.
-For a walkthrough dispatch, the job waits up to 30 minutes after both machines finish for Nicolas
-to run `sudo rpm -e second-brain` on Fedora. It then runs `walkthrough-uninstalled`; the job cannot
-pass until package removal and vault preservation both pass. The runner needs no sudo access.
-If the walkthrough fails, the job skips that wait, so the candidate RPM stays installed until
-Nicolas removes it by hand.
+The runner runs as Nicolas's account, so a walkthrough dispatch installs and removes the
+candidate RPM through the test package helper with no one present. The runner gets no other
+sudo access.
 
 ## Keeping both machines awake
 
