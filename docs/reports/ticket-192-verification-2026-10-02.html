@@ -40,7 +40,7 @@
   </ul>
 
   <h2>Automated checks</h2>
-  <p><code>pnpm verify</code> passes on the fix commit: 197 node tests and 636 Rust tests, plus svelte-check,
+  <p><code>pnpm verify</code> passes on the fix commit: 199 node tests and 636 Rust tests, plus svelte-check,
   clippy and the build. New tests:</p>
   <ul>
     <li>Rust (<code>vault::operations</code>): a save while the disk is unchanged; a changed note keeps the draft in one
@@ -52,7 +52,9 @@
     to an older preserving save reaches the copy before Keep, Take or Close; a failed save, an unexpected
     successful save, typing, a same-path reload, or a draft during the flush or the read ends the choice with
     nothing replaced; a failed resolve keeps the edits in a fresh copy; the generic alert is suppressed for the
-    conflict; source checks for both windows' close paths and the editor wiring. Removing the newest-receipt
+    conflict; a draft opened while the lock is being taken ends the choice before any flush; source checks
+    for both windows' close and navigation paths, the editor wiring, keyboard containment in the dialog, and an
+    editor recreated during a choice starting frozen. Removing the newest-receipt
     check or the post-read guard fails them.</li>
   </ul>
 
@@ -63,6 +65,8 @@
   <table>
     <tr><th>Scenario</th><th>Checks</th><th>Result</th></tr>
     <tr><td>main <code>f8ecf73</code></td><td>Dialog shown; draft kept in a copy</td><td>FAIL (no dialog, no copy: the bug)</td></tr>
+    <tr><td>Uncommitted title</td><td>With a title typed but not committed, the bar appears and the dialog is held back;
+    pressing Resolve… keeps focus and the typed title, refuses with a message, and the note is not renamed</td><td>PASS</td></tr>
     <tr><td>Keep my edits</td><td>Dialog shown; one copy holding the edit; note untouched until the choice; then the note holds
     my edit, the disk version is in Trash, no copy remains, the editor shows it, and the next edit saves into the note</td><td>PASS</td></tr>
     <tr><td>Take disk version</td><td>Same, with the disk version kept and my edit in Trash</td><td>PASS</td></tr>

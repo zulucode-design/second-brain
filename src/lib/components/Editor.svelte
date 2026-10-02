@@ -3182,6 +3182,8 @@
 
 	async function chooseDiskConflict(choice: DiskConflictChoice) {
 		if (!diskConflict || diskConflictBusy) return;
+		// Disabled buttons drop focus to the body, out of the dialog's key handler.
+		diskConflictModal?.focus();
 		diskConflictBusy = true;
 		diskConflictMessage = '';
 		try {
@@ -3223,8 +3225,10 @@
 		diskConflictMine = null;
 	}
 
-	// The dialog keeps keyboard focus: Tab cycles its buttons, Escape cancels.
+	// The dialog keeps keyboard focus: Tab cycles its buttons, Escape cancels, and no key reaches
+	// the window's shortcuts (a mode switch would recreate the editor behind the dialog).
 	function trapDiskConflictFocus(event: KeyboardEvent) {
+		event.stopPropagation();
 		if (event.key === 'Escape') {
 			event.preventDefault();
 			cancelDiskConflictDialog();
@@ -4614,7 +4618,7 @@
 
 		editor = new Editor({
 			element: editorElement,
-			editable: !$readOnly,
+			editable: !$readOnly && !diskConflictBusy,
 			extensions: [
 				MixedListShortcuts,
 				StarterKit.configure({ codeBlock: false }),
@@ -6281,7 +6285,8 @@
 				<span class="viewer-banner-label">{diskConflict.disk ? 'This note changed on disk.' : 'This note was moved or deleted on disk.'}</span>
 				<span class="viewer-banner-path">Your edits are kept in a conflict copy until you choose a version.</span>
 				<div class="viewer-banner-actions">
-					<button type="button" class="viewer-banner-btn primary" onclick={resolveDiskConflictFromBar} disabled={diskConflictBusy}>Resolve…</button>
+					<!-- No focus on press: blurring an uncommitted title would commit it as a rename. -->
+					<button type="button" class="viewer-banner-btn primary" onmousedown={(e) => e.preventDefault()} onclick={resolveDiskConflictFromBar} disabled={diskConflictBusy}>Resolve…</button>
 				</div>
 			</div>
 		{/if}
@@ -6573,6 +6578,7 @@
 							pushSourceHistoryDebounced();
 						}}
 						onkeydown={(e) => {
+							if (diskConflictBusy) { e.preventDefault(); return; }
 							if (handleSourceCtrlEnd(e)) return;
 							if (handleSourceSelectionPair(e)) return;
 							const mod = e.ctrlKey || e.metaKey;
@@ -6635,6 +6641,7 @@
 								pushSourceHistoryDebounced();
 							}}
 							onkeydown={(e) => {
+								if (diskConflictBusy) { e.preventDefault(); return; }
 								if (handleSourceCtrlEnd(e)) return;
 								if (handleSourceSelectionPair(e)) return;
 								const mod = e.ctrlKey || e.metaKey;

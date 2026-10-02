@@ -94,7 +94,8 @@
 		},
 		onSaveFailure: (error) => {
 			console.error('Save failed before note-window navigation:', error);
-			window.alert(`Could not save this note. Navigation was cancelled so your edits remain open.\n\n${String(error)}`);
+			// The editor's conflict dialog explains a note that changed on disk (#192).
+			if (!(error instanceof DiskConflictError)) window.alert(`Could not save this note. Navigation was cancelled so your edits remain open.\n\n${String(error)}`);
 		},
 		onReadFailure: (error) => console.error('Failed to navigate note window:', error),
 	});

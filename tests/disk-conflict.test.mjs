@@ -218,3 +218,37 @@ test('both windows and the editor route the conflict the same way', async () => 
   assert.equal([...editor.matchAll(/\|\| \$holdingPreview \|\| diskConflictBusy\}/g)].length, 2);
   assert.match(editor, /readonly=\{\$readOnly \|\| diskConflictBusy\}/);
 });
+
+test('a draft opened while the lock is being taken ends the choice before any flush', async () => {
+  const { state, coordinator, type, options } = editor();
+  type('A');
+  const lock = deferred();
+  const resolving = resolveDiskConflict({
+    ...options('mine'),
+    lock: async () => { state.locks += 1; await lock.promise; return () => { state.releases += 1; }; },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  state.drafting = true;
+  lock.resolve();
+  const result = await resolving;
+  assert.equal(result.ok, false);
+  assert.deepEqual(state.calls, []);
+  assert.equal(coordinator.isDirty(), true);
+  assert.equal(state.releases, 1);
+});
+
+test('the dialog keeps focus and keys while a choice is applied, and nothing reopens editing', async () => {
+  const source = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
+  const noteWindow = await source('src/lib/components/NoteWindow.svelte');
+  // Navigation in a note window reports the conflict through the dialog, not an alert.
+  assert.match(noteWindow, /onSaveFailure: \(error\) => \{[\s\S]{0,200}if \(!\(error instanceof DiskConflictError\)\) window\.alert\(/);
+  const editor = await source('src/lib/components/Editor.svelte');
+  // Resolve… must not take focus from an uncommitted title, which would commit it as a rename.
+  assert.match(editor, /onmousedown=\{\(e\) => e\.preventDefault\(\)\} onclick=\{resolveDiskConflictFromBar\}/);
+  // No key leaves the dialog for the window's shortcuts, and focus stays in it while busy.
+  assert.match(editor, /function trapDiskConflictFocus\(event: KeyboardEvent\) \{\s*event\.stopPropagation\(\);/);
+  assert.match(editor, /diskConflictModal\?\.focus\(\);\s*diskConflictBusy = true;/);
+  // An editor recreated during a choice (a mode switch) starts frozen; source keys do nothing.
+  assert.match(editor, /editable: !\$readOnly && !diskConflictBusy,/);
+  assert.equal([...editor.matchAll(/onkeydown=\{\(e\) => \{\s*if \(diskConflictBusy\) \{ e\.preventDefault\(\); return; \}\s*if \(handleSourceCtrlEnd\(e\)\) return;/g)].length, 2);
+});
