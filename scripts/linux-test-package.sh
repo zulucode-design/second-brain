@@ -10,9 +10,9 @@
 #
 # Any process running as that account can call it, and an agent built the RPM, so
 # check_candidate is the boundary: the package may only install plain root-owned files at the
-# paths a Second Brain build ships, and may carry no scriptlets, triggers, sysusers, or obsoletes. That stops
-# a bad build from writing /etc or running code as root. It does not make the app itself safe to
-# run; the app runs as the ordinary user.
+# paths a Second Brain build ships, and may carry no scriptlets, triggers, sysusers, or
+# obsoletes. That stops a bad build from writing /etc or running code as root. It does not make
+# the app itself safe to run; the app runs as the ordinary user.
 
 set -euo pipefail
 export PATH=/usr/sbin:/usr/bin

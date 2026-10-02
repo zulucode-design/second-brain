@@ -13,15 +13,15 @@ sudo -n /usr/local/libexec/second-brain-test-package install-candidate /absolute
 sudo -n /usr/local/libexec/second-brain-test-package remove-test-install
 ```
 
-The helper takes nothing else. It copies the RPM into a root-owned staging directory, reading
-it as the calling user, then installs that copy only if it is a `second-brain` x86-64 package
-with no scriptlets, triggers, sysusers, or obsoletes, whose files are all plain root-owned files at the
-paths a Second Brain build ships (`/usr/bin/second-brain`, `/usr/bin/syncthing`, its two desktop
-entries, and its hicolor icons). CI runs the same check on every built RPM, so a packaging
-change that would break it fails there first. The check keeps a bad build from writing outside
-those paths or running code as root; installing an agent-built package still means trusting the
-app it installs. Only installation and removal run as root: the app and the controller run as
-the ordinary user.
+The helper takes nothing else. It copies the RPM into a root-owned staging directory, reading it
+as the calling user, then installs that copy only if it is a `second-brain` x86-64 package with
+no scriptlets, triggers, sysusers, or obsoletes, whose files are all plain root-owned files at
+the paths a Second Brain build ships (`/usr/bin/second-brain`, `/usr/bin/syncthing`, its two
+desktop entries, and its hicolor icons). CI runs the same check on every built RPM, so a
+packaging change that would break it fails there first. The check keeps a bad build from writing
+outside those paths or running code as root; installing an agent-built package still means
+trusting the app it installs. Only installation and removal run as root: the app and the
+controller run as the ordinary user.
 
 The setup is one-time and needs Nicolas's password once, from a checkout:
 
