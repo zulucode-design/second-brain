@@ -1,0 +1,31 @@
+{
+  "configRestoredIdentically": true,
+  "configSha256": "0e29e3c37f18176e1213224412ab3e578e74e37309637b784c27d4c32ea9c644",
+  "windowStateRestored": true,
+  "profileRedirectsGone": true,
+  "machineJunctionGone": true,
+  "configLockGone": true,
+  "ownedRunners": [
+    {
+      "mode": "warm",
+      "pid": 22572,
+      "exited": true
+    },
+    {
+      "mode": "measure",
+      "pid": 29300,
+      "exited": true
+    }
+  ],
+  "customTasks": [
+    {
+      "state": "Ready",
+      "triggerCount": 0
+    },
+    {
+      "state": "Ready",
+      "triggerCount": 0
+    }
+  ],
+  "userOllamaServicePreserved": true
+}

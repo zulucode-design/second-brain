@@ -1,0 +1,53 @@
+{
+  "candidate": "a5c367059f98be3e5d4e946d8a407543ab473d8b",
+  "attempt": 2,
+  "scope": "cold startup",
+  "machines": {
+    "windows": {
+      "kind": "startup",
+      "samples": [
+        3453,
+        3229,
+        2994,
+        2921,
+        2900
+      ],
+      "count": 5,
+      "median": 2994,
+      "p95": 3453,
+      "max": 3453,
+      "pass": true
+    },
+    "fedora": {
+      "kind": "startup",
+      "samples": [
+        1425,
+        1391,
+        1400,
+        1366,
+        1384
+      ],
+      "count": 5,
+      "median": 1391,
+      "p95": 1425,
+      "max": 1425,
+      "pass": true
+    }
+  },
+  "pass": true,
+  "settledBeforeAfterEveryLaunch": true,
+  "restored5000WordNoteProvenOnBoth": true,
+  "noteUnchangedAcrossAllLaunches": true,
+  "windowsProfileRestored": true,
+  "fedoraRpmRemoved": true,
+  "ollamaAndOwnedLocalProcessesExited": true,
+  "firstAttemptPreserved": true,
+  "findings": [
+    {
+      "severity": "P3",
+      "scope": "operator read-only proof",
+      "resolved": true,
+      "cause": "Null task trigger array counted as one; corrected non-null count confirmed tasks Ready with zero triggers."
+    }
+  ]
+}

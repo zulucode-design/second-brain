@@ -1,0 +1,24 @@
+{
+  "severity": "P3",
+  "scope": "operator read-only cleanup proof",
+  "cause": "PowerShell array wrapping null trigger property counts one element.",
+  "decisiveObservations": [
+    {
+      "state": "Ready",
+      "triggerPropertyNull": true,
+      "arrayWrappedTriggerCount": 1,
+      "actualTriggerCount": 0,
+      "lastTaskResult": 0
+    },
+    {
+      "state": "Ready",
+      "triggerPropertyNull": true,
+      "arrayWrappedTriggerCount": 1,
+      "actualTriggerCount": 0,
+      "lastTaskResult": 0
+    }
+  ],
+  "correction": "Count non-null triggers.",
+  "performanceRunsRepeated": false,
+  "bothTasksReadyWithNoTriggers": true
+}

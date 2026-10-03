@@ -1,0 +1,13 @@
+[
+  {
+    "kind": "startup",
+    "count": 0,
+    "samples": [],
+    "medianMs": null,
+    "maxMs": null,
+    "budgetMedianMs": 3000,
+    "budgetEveryRunMs": 5000,
+    "verdict": "UNAVAILABLE",
+    "reason": "Stopped at preparation failure before measurements."
+  }
+]

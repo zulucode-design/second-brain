@@ -1,0 +1,9 @@
+{
+  "editorEditable": true,
+  "indexedNotes": 10000,
+  "longNoteWords": 5000,
+  "model": "embeddinggemma",
+  "noteList": true,
+  "queuedNotes": 0,
+  "sidebar": true
+}

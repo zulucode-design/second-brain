@@ -1,0 +1,12 @@
+{
+  "configJournaled": true,
+  "configOriginalSha256": "0e29e3c37f18176e1213224412ab3e578e74e37309637b784c27d4c32ea9c644",
+  "windowStateJournaled": true,
+  "windowStateOriginalSha256": null,
+  "profileRedirects": [
+    "logs",
+    "EBWebView"
+  ],
+  "machineStateJunctioned": true,
+  "fedoraIsolatedXdg": true
+}

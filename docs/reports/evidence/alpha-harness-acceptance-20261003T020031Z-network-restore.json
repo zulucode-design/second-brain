@@ -1,0 +1,9 @@
+{
+  "atUtc": "2026-10-03T02:32:56.666556+00:00",
+  "fedoraDefaultRoutesIdentical": true,
+  "fedoraDefaultRouteCounts": {
+    "-4": 1,
+    "-6": 0
+  },
+  "windowsFirewallSnapshotIdentical": true
+}

@@ -1,0 +1,21 @@
+{
+  "candidate": "a5c367059f98be3e5d4e946d8a407543ab473d8b",
+  "startup": {
+    "kind": "startup",
+    "samples": [
+      3453,
+      3229,
+      2994,
+      2921,
+      2900
+    ],
+    "count": 5,
+    "median": 2994,
+    "p95": 3453,
+    "max": 3453,
+    "pass": true
+  },
+  "settledBeforeAfterEachRun": true,
+  "restoredNoteUnchanged": true,
+  "pass": true
+}
