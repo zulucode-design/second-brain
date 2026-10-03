@@ -240,6 +240,13 @@ The harness selects its port but does not start or stop that process. Keep its c
 powershell.exe -NoProfile -File scripts/windows/ollama-gate.ps1 -Port 11436 -LifetimeSeconds 3600
 ```
 
+From Fedora, run that command through `ssh sb-windows` as a background process that stays
+connected until the gate ends. Do not launch it with `Start-Process` from an SSH command that
+then returns: on 2026-10-03 a supervisor started that way vanished within a minute of answering,
+with nothing on its stderr, and the walkthrough failed its Ollama preflight. The same script
+held open in one SSH session served the whole gate. Before starting the controller, check that
+`/api/tags` still answers with the same server PID a minute or more after the first answer.
+
 Run the walkthrough with `--ollama-port 11436` and probe `/api/tags` before sending requests.
 The output records the supervisor PID and server PID; record them with the gate evidence.
 The default endpoint is `http://127.0.0.1:11436`, separate from the usual user service on

@@ -1,0 +1,30 @@
+{
+  "fieldNames": [
+    "last_open_note",
+    "sidebar_width",
+    "notelist_width",
+    "outline_width",
+    "sidebar_collapsed",
+    "notelist_collapsed",
+    "collapsed_notebooks",
+    "notebook_sort_mode",
+    "notebook_order",
+    "note_order",
+    "sort_mode",
+    "group_notes_by_date",
+    "last_view_mode",
+    "last_notebook",
+    "last_tag",
+    "tasks_layout",
+    "tasks_hide_completed",
+    "tasks_only_flagged",
+    "tasks_sort"
+  ],
+  "requiredNonOptionalFields": [
+    "sidebar_width",
+    "notelist_width",
+    "sidebar_collapsed"
+  ],
+  "sourceSha256": "32dabced9f7582f26025f9785eda028ba6e12aa44cd16691a81da9582be1aa3d",
+  "allFieldsWritten": true
+}

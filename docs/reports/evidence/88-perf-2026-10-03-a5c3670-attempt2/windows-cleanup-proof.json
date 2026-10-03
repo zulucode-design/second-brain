@@ -1,0 +1,12 @@
+{
+  "configRestoredIdentically": true,
+  "originalConfigSha256": "0e29e3c37f18176e1213224412ab3e578e74e37309637b784c27d4c32ea9c644",
+  "restoredConfigSha256": "0e29e3c37f18176e1213224412ab3e578e74e37309637b784c27d4c32ea9c644",
+  "windowStateRestored": true,
+  "windowStateSha256": null,
+  "profileFoldersRestored": true,
+  "machineStateJunctionRemoved": true,
+  "ownedAppsAndDriversStopped": true,
+  "customTasksRetainedWithoutTriggers": true,
+  "disposableStateRetained": true
+}

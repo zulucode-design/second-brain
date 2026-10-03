@@ -1,0 +1,29 @@
+{
+  "atUtc": "2026-10-03T03:19:26.3162615Z",
+  "supervisorPid": 20996,
+  "serverPid": 10416,
+  "workers": [
+    {
+      "pid": 29184,
+      "creationUtc": "2026-10-03T02:56:52.0517544Z",
+      "name": "conhost.exe",
+      "parentPid": 10416
+    },
+    {
+      "pid": 26736,
+      "creationUtc": "2026-10-03T02:59:56.8307928Z",
+      "name": "llama-server.exe",
+      "parentPid": 10416
+    },
+    {
+      "pid": 6580,
+      "creationUtc": "2026-10-03T02:59:56.8367460Z",
+      "name": "conhost.exe",
+      "parentPid": 26736
+    }
+  ],
+  "supervisorGone": true,
+  "serverAndWorkersGone": true,
+  "port11436Gone": true,
+  "port11434Listeners": 1
+}

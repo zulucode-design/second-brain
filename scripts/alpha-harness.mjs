@@ -3055,7 +3055,10 @@ async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir
   };
 
   // A note file is saved by autosave; the check waits for its bytes on the machine itself.
-  const waitForFile = (side, predicate, what, timeoutMs = 60_000) => waitForState(
+  // A save waits for the note lease, which a scheduled run holds through its peer wait,
+  // convergence, and handoff hold (docs/syncthing-sidecar.md), so it can land minutes late.
+  // In run 20261003T012949Z a new note landed just after a 60 s wait gave up, during the 01:50 run.
+  const waitForFile = (side, predicate, what, timeoutMs = 8 * 60_000) => waitForState(
     () => side.machine.vaultSummary(predicate.markers ?? []), (summary) => predicate(summary), timeoutMs, `${side.name}: ${what}`,
   );
   const preSync = (side) => side.machine.backups().filter((name) => name.startsWith('helixnotes-pre-sync-')).sort();

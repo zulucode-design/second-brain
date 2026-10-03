@@ -1,0 +1,50 @@
+{
+  "candidate": "a5c367059f98be3e5d4e946d8a407543ab473d8b",
+  "runId": "20261003T012949Z",
+  "status": "FAIL",
+  "criteria": {
+    "1": "PASS",
+    "2": "PASS",
+    "3": "PASS",
+    "4": "PASS",
+    "5": "PASS",
+    "6": "PASS",
+    "7": "PASS",
+    "8": "PASS",
+    "9": "NOT_REACHED",
+    "10": "NOT_REACHED",
+    "11": "NOT_REACHED"
+  },
+  "issue189": {
+    "status": "FAIL",
+    "failurePhase": "Windows peer-wait setup, before closing Windows",
+    "fedoraPhasesCompleted": 2
+  },
+  "startup": {
+    "fedora": "NOT_RUN",
+    "windows": "NOT_RUN",
+    "reason": "Stopped at first acceptance failure"
+  },
+  "finding": {
+    "severity": "P2",
+    "kind": "harness deadline race",
+    "rootCause": "The 60-second note-save wait does not account for scheduled sync holding the shared note-mutation lock through convergence and handoff. The observed save delay is strongly consistent with this mechanism.",
+    "expectedNoteRetained": true,
+    "expectedMarkerCountIncludingHistory": 2,
+    "expectedNoteSavedUtc": "2026-10-03T01:51:26.8778904Z",
+    "scheduledBoundaryUtc": "2026-10-03T01:50:00Z",
+    "preSyncBackupCompletedUtc": "2026-10-03T01:50:11.0818138Z",
+    "failureRecordedUtc": "2026-10-03T01:51:27.299Z",
+    "decisiveTraceLine": 42,
+    "dataLossObserved": false
+  },
+  "cleanup": {
+    "windowsNoAppProcesses": true,
+    "windowsConfigRestoredSha256": "0E29E3C37F18176E1213224412AB3E578E74E37309637B784C27D4C32EA9C644",
+    "fedoraPackageRemoved": true,
+    "fedoraVaultUnchanged": true,
+    "ollamaUsed": false
+  },
+  "preservedDisposableState": true,
+  "retryAttempted": false
+}

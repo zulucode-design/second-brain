@@ -1,0 +1,54 @@
+{
+  "severity": "P2",
+  "scope": "operator preparation",
+  "appRegressionEstablished": false,
+  "reason": "Startup prerequisites invalid; no measured launches attempted.",
+  "causes": [
+    {
+      "cause": "Prepared restored-note state omitted required deserialization fields.",
+      "operationalLine": 32,
+      "preparedKeys": [
+        "last_open_note",
+        "last_view_mode"
+      ],
+      "missingRequiredKeys": [
+        "sidebar_width",
+        "notelist_width",
+        "sidebar_collapsed"
+      ],
+      "effect": "State load failed; frontend fallback kept no restored note, then saved default state."
+    },
+    {
+      "cause": "Observer read snake_case status fields although API serializes camelCase.",
+      "operationalLine": 48,
+      "expectedFields": [
+        "indexedNotes",
+        "queuedNotes"
+      ],
+      "readFields": [
+        "indexed_notes",
+        "queued_notes"
+      ],
+      "effect": "Recorded counts null; settle predicate could never pass."
+    }
+  ],
+  "decisiveObservationLine": 7,
+  "decisiveObservation": {
+    "epochMs": 1790995459144,
+    "editorEditable": false,
+    "indexedNotes": null,
+    "longNoteWords": 1,
+    "model": "embeddinggemma",
+    "noteList": true,
+    "queuedNotes": null,
+    "sidebar": true
+  },
+  "stoppedBoundary": {
+    "indexedNotes": 9524,
+    "queuedNotes": 476,
+    "sqliteValid": true,
+    "restoredNoteConfigured": false,
+    "requiredStateFieldsPresent": true
+  },
+  "noRetry": true
+}

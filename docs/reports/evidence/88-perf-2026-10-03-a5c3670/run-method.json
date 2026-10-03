@@ -1,0 +1,14 @@
+{
+  "candidate": "a5c367059f98be3e5d4e946d8a407543ab473d8b",
+  "harnessCommit": "6b501ebb741cce03ff626e24a202e7c50307e891",
+  "scope": "Cold startup only. Prior accepted evidence retained for all other performance rows.",
+  "plannedMeasurementOrder": [
+    "windows startup 5",
+    "fedora startup 5"
+  ],
+  "actualMeasurementCount": 0,
+  "boundaryPolicy": "Require 10000 indexed, zero queued, valid SQLite, correct fixture membership and unchanged 5000-word note before and after every launch.",
+  "profileIsolation": "Fedora isolated XDG roots; Windows config and window-state journaled, logs and EBWebView junctioned, then restored.",
+  "ollama": "Bounded supervisor held open through one SSH session; delayed liveness check after 143.935824 seconds passed with same server identity.",
+  "outcome": "Stopped during Windows preparation; no gate retry."
+}

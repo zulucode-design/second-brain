@@ -1,0 +1,27 @@
+{
+  "localSshPid": 3082984,
+  "localSshExitedWithoutStop": true,
+  "stopped": [
+    {
+      "role": "ollamaTunnel",
+      "pid": 3085257,
+      "startTicks": "38052287"
+    },
+    {
+      "role": "gnomeInhibit",
+      "pid": 3085256,
+      "startTicks": "38052287"
+    },
+    {
+      "role": "fedoraInhibit",
+      "pid": 3085270,
+      "startTicks": "38052290"
+    },
+    {
+      "role": "fedoraInhibit",
+      "pid": 3085255,
+      "startTicks": "38052287"
+    }
+  ],
+  "allOwnedLocalProcessesExited": true
+}
