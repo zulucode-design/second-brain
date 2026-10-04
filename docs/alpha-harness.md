@@ -314,3 +314,51 @@ session placement only. Key presses and full-desktop screenshots come from
 `SecondBrainAlphaHarnessDesktop` task.
 
 Gate 1 passed unattended on candidate `4ea6b9e` (run `20260921T114623Z`), so Gate 2 may start.
+
+## Harness upkeep
+
+The sections above describe how to run the harness. This section describes how to keep it true to
+the app as the app changes. It governs every run, not only a maintenance pass, and it is the one
+home for these rules: a later upkeep skill points here instead of restating them.
+
+**Check an instance before driving it.** Run the health check before the first drive of a session,
+again on each fresh session where sessions are the unit, and again after any failed drive. Where
+the check cannot see the failure, such as a wedged view on a healthy process, reset to a known
+state or relaunch rather than drive on. Two runs have already failed this way: the Ollama
+supervisor that vanished within a minute of answering on 2026-10-03, and run `20260926T144833Z`,
+whose WebDriver screenshot timed out under the GNOME lock screen.
+
+**Evidence outlives cleanup, and gets checked where it lives.** Teardown removes instances and
+scratch state. It never removes a trace, a screenshot, or a hash record. After cleanup, confirm
+the evidence is still at the path the gate names. A cleanup that eats its own proof fails the run
+even when every step passed.
+
+**Nothing a drive started outlives that drive.** This already holds for the Ollama supervisor and
+the state junctions. It holds for failed attempts too: an iteration that errored cleans its own
+residue before the next one starts, and a shared instance has its residue removed rather than the
+instance.
+
+**Say how the run ended, in these words.** `clean` means full coverage with nothing worth shipping.
+`changed` means one pull request of proven corrections. `blocked` means coverage could not finish,
+and names what blocked it. Inconclusive is not a pass. Report a negative result instead of
+retrying until it reads better.
+
+**A feature nobody can reach is `verified-unreachable`, with its reason.** Record the concrete
+prerequisite that blocks it, such as an authorization, an entitlement, an operating system, or
+external state, and record the route that was attempted. A prerequisite this file omits is a
+defect in this file. #42 is the current example: its error branch has sat unverified since
+2026-09-07 with no prerequisite written down.
+
+**Triage a mismatch before changing anything.** A description the app no longer matches is
+documentation drift, so fix the documentation. Working behavior the harness cannot drive is a
+harness gap, so fix the harness. Behavior that is actually broken is a product defect, so record
+it for Nicolas and keep it out of the documentation change. Never make a regression disappear by
+editing this file to match it.
+
+**Upkeep touches the harness and this file, never product code.** A maintenance pass that edits
+the app has stopped being a maintenance pass.
+
+**Re-drive a harness fix before it ships.** A change to the controller, a worker, or a gate script
+is proved by a live run of the gate it touches, not by review alone. Commit `6b501eb` is the
+shape: a lease-timing fix in the acceptance save path earns its diff once the acceptance gate has
+passed with it.
