@@ -13,12 +13,15 @@ These bind every report that records a verification result.
 
 **Name the candidate commit for every gate result.** A gate passes on one build of one commit, so the
 commit is part of the result, not context for it. Where a row relies on evidence from an earlier
-candidate, say which commit and why it still applies. Four green rows proved on four different
-candidates are not one green gate.
+candidate, say which commit and why it still applies. When a gate may be called green off those rows is
+the harness document's rule, under Harness upkeep, not this one.
 
-**A count ships with the command that regenerates it and the population it counted.** "42 reports"
-means nothing without both; `git ls-files docs/reports | grep -v evidence/ | wc -l`, direct children
-only, means something a reader can check.
+**A count ships with the command that regenerates it and the population it counted.** "41 reports"
+means nothing without both. `git ls-files docs/reports | awk -F/ 'NF == 3 && $3 != "README.md"' | wc -l`
+returns 41, and names its own population: tracked files directly under `docs/reports`, excluding this
+file and everything under `evidence/`. The looser `grep -v evidence/` form returns 42, because
+`git ls-files` is recursive and this file counts, which is the kind of quiet difference a bare number
+hides.
 
 **A measurement ships with its conditions.** The machine, the fixture, the build, and anything running
 beside it. Two numbers measured under different conditions cannot be compared, and a regression
