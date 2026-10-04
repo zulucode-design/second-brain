@@ -74,8 +74,8 @@ issue, and both processes alive.
 
 ## Capture and edit durability
 
-Writing a note and editing it, including the two races that cost the most defects: editing then
-navigating away at once, and editing then closing the window without waiting. Reached from the note
+Writing a note and editing it, including the two races this area keeps producing defects in: editing
+then navigating away at once, and editing then closing the window without waiting. Reached from the note
 list or quick capture. Gate 3 step 2 drives both races and requires both edits on disk after the app
 exits. Step 7 repeats capture and edit with the embedding backend unreachable. Gotcha: the window
 save and close path has produced #149 (an edit during an in-flight rename), #191 (a note left stale
@@ -127,8 +127,10 @@ requires a forced pre-sync backup on the receiver.
 
 ## Web clipping
 
-Pasting a URL stores readable content as a note. Reached from quick capture or the clip action. Gate
-3 step 4 drives a clip of a known article. Gotcha: one plain fetch in forty stalled past the app's
+Pasting a URL fetches the page and stores its readable content as a note. Reached from the Clip web
+page action, which calls `clip_web_page`. Quick capture is not a route to it: that path saves the text
+it was given through `quick_capture_note` and fetches nothing. Gate 3 step 4 drives a clip of a known
+article. Gotcha: one plain fetch in forty stalled past the app's
 20 second limit from the Windows test machine, so a reported timeout is retried once and recorded;
 any other clip error fails the step.
 
@@ -184,7 +186,8 @@ The global hotkey opens the capture overlay from anywhere, the user types and pi
 and the note lands in that category. This is the capture path SPEC section 5 is about, and the one
 the product exists to make frictionless. **No gate drives it**: Gate 3 step 9 is the only hotkey
 drive and it renames the vault away first, so the overlay never opens. Every note a gate creates
-comes from the main window's New Note button instead. Driving it needs the hotkey pressed from the
+interactively comes from the main window's New Note button instead, through the walkthrough's
+`createNote`. The clip has its own route, and the fixtures write their notes to disk directly. Driving it needs the hotkey pressed from the
 desktop session with the vault present, the overlay reaching focus without the app taking it, a
 category chosen, and the note on disk in that category's folder. Linux needs its own route, because
 the XDG GlobalShortcuts portal registers the chord differently from Windows.
