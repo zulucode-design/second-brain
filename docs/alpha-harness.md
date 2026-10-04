@@ -353,12 +353,14 @@ retrying until it reads better.
 **A feature nobody can reach is `verified-unreachable`, with its reason.** Record the concrete
 prerequisite that blocks it, such as an authorization, an entitlement, an operating system, or
 external state, and record the route that was attempted. A prerequisite this file omits is a
-defect in this file. #42 is the current example, and it has two halves. The vault-unavailable
-notification needed a packaged install, which #49 delivered, and Gate 3 step 9 now proves it
-displays. Its error branch stays unreachable for a different reason:
-`tauri-plugin-notification` 2.4.0 cannot report a display failure, so no route through the app
-reaches that branch. Record the plugin behavior as the prerequisite rather than leaving the entry
-bare.
+defect in this file. #42 is the current example, and both halves of it have moved since it was
+filed. The vault-unavailable notification needed a packaged install, which #49 delivered, and Gate 3
+step 9 now proves it displays. Its error path is no longer unreportable either: `f14b0ac` dropped
+`tauri-plugin-notification`, whose Windows backend swallowed the result, and
+`hotkey::windows::notify_vault_unavailable` logs a warning when the WinRT `Show` call returns an
+error. So that path is reachable and reported, and unverified only because nothing the harness can
+do makes `Show` fail on a signed-in desktop session. Record that missing route as the prerequisite,
+and restate #42 around it.
 
 **Triage a mismatch before changing anything.** A description the app no longer matches is
 documentation drift, so fix the documentation. Working behavior the harness cannot drive is a

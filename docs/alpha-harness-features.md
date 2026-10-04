@@ -11,9 +11,9 @@ feature grows sub-features of its own, or when the file passes roughly 400 lines
 ## Proof level
 
 Every entry records how its strongest proof was established. The scale is this file's own rubric for
-gate coverage. The verification matrix does not use it: that file records a result, its evidence, its
-candidate, and its owner per row, and this scale is a shorter way to say how far a feature's gate
-coverage reaches.
+gate coverage. The verification matrix does not use it: that file carries Area, Evidence, and Status
+columns, names the candidate inside the evidence it cites, and tracks ownership elsewhere. This scale
+is a shorter way to say how far a feature's gate coverage reaches.
 
 1. Asserted.
 2. A line of code was cited.
@@ -23,9 +23,10 @@ coverage reaches.
 
 A level here means gate coverage only. A feature can carry evidence from somewhere else and still sit
 low, so an entry names that evidence rather than hiding behind the number. Compact layout is the case
-to keep in mind: no gate drives it, and a one-off release-build drive recorded in
+to keep in mind: no gate drives it, and it has already passed twice outside the gates, in a
+release-build drive recorded in
 [issue-89-review-fixes-verification-2026-09-28.html](reports/issue-89-review-fixes-verification-2026-09-28.html)
-already passed it.
+and on both installed packages in the matrix's migration and compact-layout row.
 
 Current evidence candidate is `a5c3670`, the commit external alpha 0.1.0-alpha.1 is published from.
 The editor, graph, semantic retrieval, and exact-scan performance budgets keep their `8d290b7`
@@ -50,7 +51,8 @@ evidence for the reasons the matrix records.
 | [Diagnostics export](#diagnostics-export) | Gate 3 step 6 | 5 |
 | [Operation without the AI backend](#operation-without-the-ai-backend) | Gate 3 step 7 | 5 |
 | [Damaged configuration at startup](#damaged-configuration-at-startup) | Gate 3 step 8 | 5 |
-| [Quick capture and the vault-unavailable toast](#quick-capture-and-the-vault-unavailable-toast) | Gate 3 step 9, Windows only | 5 |
+| [Vault-unavailable toast](#vault-unavailable-toast) | Gate 3 step 9, Windows only | 5 |
+| [Quick capture](#quick-capture) | nothing | 2 |
 | [Clean shutdown](#clean-shutdown) | Gate 3 steps 2 and 10, Gate 1 step 6 | 5 |
 | [Sync between machines](#sync-between-machines) | Gate 1, acceptance criteria 1 to 11 | 5 |
 | [Conflicting edits](#conflicting-edits) | Acceptance criterion 8 | 5 |
@@ -61,7 +63,7 @@ evidence for the reasons the matrix records.
 | [Compact layout](#compact-layout) | nothing | 2 |
 | [Second note window](#second-note-window) | nothing | 2 |
 
-The six entries at level 2 are the coverage gaps. Each names what driving it would need.
+The seven entries at level 2 are the coverage gaps. Each names what driving it would need.
 
 ## Vault open and PARA roots
 
@@ -76,8 +78,10 @@ Writing a note and editing it, including the two races that cost the most defect
 navigating away at once, and editing then closing the window without waiting. Reached from the note
 list or quick capture. Gate 3 step 2 drives both races and requires both edits on disk after the app
 exits. Step 7 repeats capture and edit with the embedding backend unreachable. Gotcha: the window
-close path has produced #149, #191, #192, and #196, so a change here needs the whole step re-driven,
-not only the case that broke.
+save and close path has produced #149 (an edit during an in-flight rename), #191 (a note left stale
+after a conflict choice or sync), #192 (unsaved edits on a note that changed on disk), and #196 (a
+close rewriting the note with no edit). The mechanisms differ, so a change here needs the whole step
+re-driven, not only the case that broke.
 
 ## Keyword search
 
@@ -162,15 +166,28 @@ Gate 3 step 7 drives all four against a closed port and requires the edit on dis
 A malformed `config.json` shows the startup error and leaves exactly one damaged copy beside the
 config. Gate 3 step 8 drives it and then restores the run's configuration.
 
-## Quick capture and the vault-unavailable toast
+## Vault-unavailable toast
 
-The global hotkey opens quick capture. When the vault is gone, each press shows a toast that
-replaces the previous one rather than stacking (#153). Gate 3 step 9 drives two presses of
-Ctrl+Alt+N from the Windows desktop session with the vault folder renamed, and requires one toast in
-notification history after each press. Gotcha: Windows only. #42 covers the rest of this feature. Its
-first half, which needed a packaged install, is proven here; `tauri-plugin-notification` 2.4.0
-cannot report a display failure, so the error branch stays unreachable and #42 should be restated
-around that, not around the install it no longer lacks.
+When the vault is gone, each hotkey press shows a toast that replaces the previous one rather than
+stacking (#153). Gate 3 step 9 drives two presses of Ctrl+Alt+N from the Windows desktop session with
+the vault folder renamed away, and requires exactly one "Quick capture" toast in notification history
+after each press. The toast goes straight through WinRT under a fixed tag and group, because
+`tauri-plugin-notification`'s Windows backend dropped the id and set no tag. Gotcha: Windows only, and
+the step renames the vault away first, so it proves the failure path and nothing else. #42 covers
+what is left: the display path is proven here, and the error path is reachable and logged but
+unverified, because nothing the harness can do makes the WinRT `Show` call fail on a signed-in
+session.
+
+## Quick capture
+
+The global hotkey opens the capture overlay from anywhere, the user types and picks a PARA category,
+and the note lands in that category. This is the capture path SPEC section 5 is about, and the one
+the product exists to make frictionless. **No gate drives it**: Gate 3 step 9 is the only hotkey
+drive and it renames the vault away first, so the overlay never opens. Every note a gate creates
+comes from the main window's New Note button instead. Driving it needs the hotkey pressed from the
+desktop session with the vault present, the overlay reaching focus without the app taking it, a
+category chosen, and the note on disk in that category's folder. Linux needs its own route, because
+the XDG GlobalShortcuts portal registers the chord differently from Windows.
 
 ## Clean shutdown
 
@@ -247,7 +264,10 @@ reachable one at a time, and the wide-layout selector replaced by one the compac
 ## Second note window
 
 Opening a note in its own window, through `NoteWindow.svelte` and `NoteSwitcher.svelte`. **No gate
-drives it.** Driving it needs a second window opened on a note, an edit in it, and the same
-durability proof Gate 3 step 2 applies to the main window. This is the highest-risk gap of the six:
-every defect in the open-note lifecycle so far (#149, #151, #191, #192, #193, #196) involved which
-view owns the note, and a second window adds another owner.
+drives it**, though #192's live verification covered one case outside the gates: a secondary note
+window closed after the keep-or-discard choice, with the lock released and no alert
+([ticket-192-verification-2026-10-02.html](reports/ticket-192-verification-2026-10-02.html)).
+Driving it needs a second window opened on a note, an edit in it, and the same durability proof Gate 3
+step 2 applies to the main window. The recent defects here share rename, save, and reload timing
+rather than one cause, so the claim that a second window is the riskiest of the gaps is an inference
+from that area's defect rate, not something the evidence settles.
