@@ -345,6 +345,11 @@ the state junctions. It holds for failed attempts too: an iteration that errored
 residue before the next one starts, and a shared instance has its residue removed rather than the
 instance.
 
+**A gate is green only on one candidate.** Every row the gate depends on reaches a real run on that
+commit. A row carried from an earlier candidate, or one resting on reasoning rather than a run, keeps
+the gate amber until it is re-driven or the reason it still applies is recorded with it. Spreading
+green rows across candidates and reading them together is how a regression survives a passing gate.
+
 **Say how the run ended, in these words.** `clean` means full coverage with nothing worth shipping.
 `changed` means one pull request of proven corrections. `blocked` means coverage could not finish,
 and names what blocked it. Inconclusive is not a pass. Report a negative result instead of
