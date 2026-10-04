@@ -10,14 +10,22 @@ feature grows sub-features of its own, or when the file passes roughly 400 lines
 
 ## Proof level
 
-Every entry records how its strongest proof was established, on the five-level scale the
-verification matrix uses.
+Every entry records how its strongest proof was established. The scale is this file's own rubric for
+gate coverage. The verification matrix does not use it: that file records a result, its evidence, its
+candidate, and its owner per row, and this scale is a shorter way to say how far a feature's gate
+coverage reaches.
 
 1. Asserted.
 2. A line of code was cited.
 3. The failing case was argued unreachable.
 4. A script or test ran.
 5. The feature was driven in the installed app.
+
+A level here means gate coverage only. A feature can carry evidence from somewhere else and still sit
+low, so an entry names that evidence rather than hiding behind the number. Compact layout is the case
+to keep in mind: no gate drives it, and a one-off release-build drive recorded in
+[issue-89-review-fixes-verification-2026-09-28.html](reports/issue-89-review-fixes-verification-2026-09-28.html)
+already passed it.
 
 Current evidence candidate is `a5c3670`, the commit external alpha 0.1.0-alpha.1 is published from.
 The editor, graph, semantic retrieval, and exact-scan performance budgets keep their `8d290b7`
@@ -43,7 +51,7 @@ evidence for the reasons the matrix records.
 | [Operation without the AI backend](#operation-without-the-ai-backend) | Gate 3 step 7 | 5 |
 | [Damaged configuration at startup](#damaged-configuration-at-startup) | Gate 3 step 8 | 5 |
 | [Quick capture and the vault-unavailable toast](#quick-capture-and-the-vault-unavailable-toast) | Gate 3 step 9, Windows only | 5 |
-| [Clean shutdown](#clean-shutdown) | Gate 3 steps 1 and 10, Gate 1 step 6 | 5 |
+| [Clean shutdown](#clean-shutdown) | Gate 3 steps 2 and 10, Gate 1 step 6 | 5 |
 | [Sync between machines](#sync-between-machines) | Gate 1, acceptance criteria 1 to 11 | 5 |
 | [Conflicting edits](#conflicting-edits) | Acceptance criterion 8 | 5 |
 | [External note viewer](#external-note-viewer) | nothing | 2 |
@@ -159,14 +167,17 @@ config. Gate 3 step 8 drives it and then restores the run's configuration.
 The global hotkey opens quick capture. When the vault is gone, each press shows a toast that
 replaces the previous one rather than stacking (#153). Gate 3 step 9 drives two presses of
 Ctrl+Alt+N from the Windows desktop session with the vault folder renamed, and requires one toast in
-notification history after each press. Gotcha: Windows only, and #42 still records an error branch of
-this feature as unverified, with no prerequisite written down.
+notification history after each press. Gotcha: Windows only. #42 covers the rest of this feature. Its
+first half, which needed a packaged install, is proven here; `tauri-plugin-notification` 2.4.0
+cannot report a display failure, so the error branch stays unreachable and #42 should be restated
+around that, not around the install it no longer lacks.
 
 ## Clean shutdown
 
-Exiting through the window's close button leaves no app, sidecar, watchdog, or orphan. Gate 3 steps 1
-and 10 bracket the run with it, and Gate 1 step 6 requires the same after a sync run. The #189 close
-check covers closing during a sync run.
+Exiting through the window's close button leaves no app, sidecar, watchdog, or orphan. Gate 3 closes
+the app first at the end of step 2, where it doubles as the durability proof, and again at step 10
+after relaunching with the sidecar and watchdog running. Gate 1 step 6 requires the same after a sync
+run. The #189 close check covers closing during a sync run.
 
 ## Sync between machines
 
@@ -195,11 +206,17 @@ read-only guarantee is the part worth proving, because breaking it writes outsid
 
 ## Obsidian import
 
-A bulk mutation that brings an external Markdown collection into the vault under the bulk-mutation
-lease. `src-tauri/src/vault/import.rs` implements it and `CONTEXT.md` names it a bulk mutation.
-**No gate drives it**: neither gate script references the import command. Driving it needs a fixture
-collection, the lease check, a terminal outcome of success, changed-incomplete, or failure, and a
-kill point, since an interrupted import is the same class of defect Gate 2 exists for.
+A bulk mutation that converts the active vault from Obsidian's conventions to this app's, in place.
+The user opens the Obsidian directory as their Second Brain vault, then runs the conversion from
+Settings, Import. `import_obsidian` in `commands.rs` reads `active_vault` and
+`src-tauri/src/vault/import.rs` rewrites the files it finds there, so nothing is copied in from
+outside. The Settings copy says so and tells the user to back up first, because the conversion
+changes files in place.
+**No gate drives it**: neither gate script calls the import command, and the `.import-result`
+selectors in the scripts belong to backup, restore, Notion, and sync. Driving it needs an Obsidian
+fixture vault opened as the active vault, the bulk-mutation lease check, a terminal outcome of
+success, changed-incomplete, or failure, and a kill point, since an interrupted in-place conversion
+leaves a half-converted vault, which is the class of defect Gate 2 exists for.
 
 ## Holding area
 
@@ -219,9 +236,13 @@ same observable end state the direct route produces.
 
 The single-panel layout shown while the window is 768 px wide or narrower, on any supported platform,
 showing one panel at a time. Defined in `CONTEXT.md`. **No gate drives it, and the harness actively
-avoids it**: the walkthrough resizes the window before waiting, because a persisted compact window
-hides the elements it drives. Driving it needs a deliberate resize below the threshold and a check
-that each panel is reachable one at a time.
+avoids it**: `alpha-harness.mjs` sets every driven window to 1280 by 860 before waiting, because
+WebDriver's default window or a persisted compact one hides the wide-layout ready selector and folds
+the editor toolbar away. A one-off release-build drive has already passed it, narrowing to 600 px
+inside the 500 ms save delay and widening back to 1200 px with both edits on disk, recorded in
+[issue-89-review-fixes-verification-2026-09-28.html](reports/issue-89-review-fixes-verification-2026-09-28.html).
+Driving it in a gate needs a deliberate resize below the threshold, a check that each panel is
+reachable one at a time, and the wide-layout selector replaced by one the compact layout also shows.
 
 ## Second note window
 

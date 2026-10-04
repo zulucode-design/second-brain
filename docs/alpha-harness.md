@@ -321,7 +321,12 @@ The sections above describe how to run the harness. This section describes how t
 the app as the app changes. It governs every run, not only a maintenance pass, and it is the one
 home for these rules: a later upkeep skill points here instead of restating them.
 [alpha-harness-features.md](alpha-harness-features.md) is the companion coverage record, one entry
-per user-facing feature with the gate that drives it and the gaps that nothing drives.
+per user-facing feature with the gate that drives it and the gaps no gate drives.
+
+Whoever runs a gate owns the drift that run exposes. A step whose observed behavior no longer matches
+this file or the coverage record is that run's finding, and it is carried to one of the three
+outcomes below before the run is called done. Product defects go to Nicolas as issues; nobody else
+inherits the drift.
 
 **Check an instance before driving it.** Run the health check before the first drive of a session,
 again on each fresh session where sessions are the unit, and again after any failed drive. Where
@@ -348,8 +353,12 @@ retrying until it reads better.
 **A feature nobody can reach is `verified-unreachable`, with its reason.** Record the concrete
 prerequisite that blocks it, such as an authorization, an entitlement, an operating system, or
 external state, and record the route that was attempted. A prerequisite this file omits is a
-defect in this file. #42 is the current example: its error branch has sat unverified since
-2026-09-07 with no prerequisite written down.
+defect in this file. #42 is the current example, and it has two halves. The vault-unavailable
+notification needed a packaged install, which #49 delivered, and Gate 3 step 9 now proves it
+displays. Its error branch stays unreachable for a different reason:
+`tauri-plugin-notification` 2.4.0 cannot report a display failure, so no route through the app
+reaches that branch. Record the plugin behavior as the prerequisite rather than leaving the entry
+bare.
 
 **Triage a mismatch before changing anything.** A description the app no longer matches is
 documentation drift, so fix the documentation. Working behavior the harness cannot drive is a
@@ -357,8 +366,10 @@ harness gap, so fix the harness. Behavior that is actually broken is a product d
 it for Nicolas and keep it out of the documentation change. Never make a regression disappear by
 editing this file to match it.
 
-**Upkeep touches the harness and this file, never product code.** A maintenance pass that edits
-the app has stopped being a maintenance pass.
+**Upkeep touches the harness, this file, the coverage record, and the evidence it proves, never
+product code.** That includes the report updates `docs/reports/README.md` requires when findings or
+verification status change. A maintenance pass that edits the app has stopped being a maintenance
+pass: record the defect instead.
 
 **Re-drive a harness fix before it ships.** A change to the controller, a worker, or a gate script
 is proved by a live run of the gate it touches, not by review alone. Commit `6b501eb` is the
