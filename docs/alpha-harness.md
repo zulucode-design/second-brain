@@ -345,6 +345,14 @@ the state junctions. It holds for failed attempts too: an iteration that errored
 residue before the next one starts, and a shared instance has its residue removed rather than the
 instance.
 
+**A gate is green only on one candidate.** Every row the gate depends on reaches a real run, and a row
+that has never been run keeps the gate amber however well the reasoning reads. A row may carry evidence
+from an earlier candidate only when that run happened and nothing since affected it, under the matrix's
+candidate invalidation rule: a later change to runtime code, dependencies, packaging, capabilities, or
+configuration invalidates the affected evidence and that row is rerun. Carried rows name the commit they
+ran on and why the change since does not reach them. Spreading green rows across candidates and reading
+them together is how a regression survives a passing gate.
+
 **Say how the run ended, in these words.** `clean` means full coverage with nothing worth shipping.
 `changed` means one pull request of proven corrections. `blocked` means coverage could not finish,
 and names what blocked it. Inconclusive is not a pass. Report a negative result instead of
