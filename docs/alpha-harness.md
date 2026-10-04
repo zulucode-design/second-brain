@@ -320,6 +320,8 @@ Gate 1 passed unattended on candidate `4ea6b9e` (run `20260921T114623Z`), so Gat
 The sections above describe how to run the harness. This section describes how to keep it true to
 the app as the app changes. It governs every run, not only a maintenance pass, and it is the one
 home for these rules: a later upkeep skill points here instead of restating them.
+[alpha-harness-features.md](alpha-harness-features.md) is the companion coverage record, one entry
+per user-facing feature with the gate that drives it and the gaps that nothing drives.
 
 **Check an instance before driving it.** Run the health check before the first drive of a session,
 again on each fresh session where sessions are the unit, and again after any failed drive. Where
