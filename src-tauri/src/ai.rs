@@ -1,6 +1,9 @@
 use reqwest::Client;
 use serde_json::json;
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex};
 use tauri::{AppHandle, Emitter};
+use tokio::sync::Notify;
 
 use crate::ai_provider::{AiApiProtocol, AiBackendTarget, AiRequestSettings};
 use crate::types::AiStreamEvent;
@@ -19,66 +22,146 @@ fn client() -> Client {
         .unwrap_or_else(|_| Client::new())
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn ai_request(
-    app: AppHandle,
+/// What a provider stream reports while it runs. `ai_request` tags each with its request id,
+/// so two streams running at once (Ask and an editor action) never mix.
+#[derive(Debug, PartialEq)]
+enum StreamEvent {
+    Text(String),
+    /// The model started reasoning before it answers. Reported once; the reasoning itself is
+    /// not forwarded.
+    Thinking,
+}
+
+/// Streams in flight, so a Stop can end one.
+static RUNNING: LazyLock<Mutex<HashMap<String, Arc<Notify>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Ends the stream for `request_id`, if it is still running. It emits nothing afterwards.
+pub fn cancel(request_id: &str) {
+    if let Some(stop) = RUNNING
+        .lock()
+        .ok()
+        .and_then(|running| running.get(request_id).cloned())
+    {
+        stop.notify_one();
+    }
+}
+
+pub fn ai_request<R: tauri::Runtime>(
+    app: AppHandle<R>,
     settings: AiRequestSettings,
     system_prompt: String,
     user_message: String,
     request_id: String,
 ) {
+    let stop = Arc::new(Notify::new());
+    if let Ok(mut running) = RUNNING.lock() {
+        running.insert(request_id.clone(), stop.clone());
+    }
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            // Handle all API keys as optional; ollama and v1 completions doesnt always require it.
-            let result = match settings.protocol() {
-                AiApiProtocol::OpenAiChatCompletions => {
-                    stream_openai(
-                        &app,
-                        settings.endpoint(),
-                        settings.api_key(),
-                        settings.model(),
-                        &system_prompt,
-                        &user_message,
-                        &request_id,
-                    )
-                    .await
-                }
-                AiApiProtocol::AnthropicMessages => {
-                    stream_anthropic(
-                        &app,
-                        settings.endpoint(),
-                        settings.api_key().unwrap_or_default(),
-                        settings.model(),
-                        &system_prompt,
-                        &user_message,
-                        &request_id,
-                    )
-                    .await
-                }
-            };
-            if let Err(e) = result {
-                let _ = app.emit(
-                    crate::events::AI_STREAM,
-                    AiStreamEvent {
-                        event_type: "error".to_string(),
-                        text: None,
-                        error: Some(e),
-                    },
-                );
+        let emit = |event_type: &str, text: Option<String>, error: Option<String>| {
+            let _ = app.emit(
+                crate::events::AI_STREAM,
+                AiStreamEvent {
+                    request_id: request_id.clone(),
+                    event_type: event_type.to_string(),
+                    text,
+                    error,
+                },
+            );
+        };
+        let on_event = |event: StreamEvent| match event {
+            StreamEvent::Text(text) => emit("text", Some(text), None),
+            StreamEvent::Thinking => emit("thinking", None, None),
+        };
+        let finished = rt.block_on(async {
+            tokio::select! {
+                result = stream(&settings, &system_prompt, &user_message, &on_event) => Some(result),
+                _ = stop.notified() => None,
             }
         });
+        if let Ok(mut running) = RUNNING.lock() {
+            running.remove(&request_id);
+        }
+        match finished {
+            Some(Ok(())) => emit("done", None, None),
+            Some(Err(error)) => emit("error", None, Some(error)),
+            None => {}
+        }
     });
 }
 
+async fn stream(
+    settings: &AiRequestSettings,
+    system_prompt: &str,
+    user_message: &str,
+    on_event: &(dyn Fn(StreamEvent) + Sync),
+) -> Result<(), String> {
+    // Handle all API keys as optional; ollama and v1 completions doesnt always require it.
+    match settings.protocol() {
+        AiApiProtocol::OpenAiChatCompletions => {
+            stream_openai(
+                settings.endpoint(),
+                settings.api_key(),
+                settings.model(),
+                system_prompt,
+                user_message,
+                on_event,
+            )
+            .await
+        }
+        AiApiProtocol::AnthropicMessages => {
+            stream_anthropic(
+                settings.endpoint(),
+                settings.api_key().unwrap_or_default(),
+                settings.model(),
+                system_prompt,
+                user_message,
+                on_event,
+            )
+            .await
+        }
+    }
+}
+
+/// Splits a server-sent-events body into its `data:` payloads as chunks arrive. `handle`
+/// returns false once the stream has said it is finished.
+async fn read_sse(
+    response: reqwest::Response,
+    mut handle: impl FnMut(&str) -> Result<bool, String>,
+) -> Result<(), String> {
+    use futures::StreamExt;
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(event_end) = buffer.find("\n\n") {
+            let event_str = buffer[..event_end].to_string();
+            buffer = buffer[event_end + 2..].to_string();
+
+            for line in event_str.lines() {
+                if let Some(data) = line.strip_prefix("data: ") {
+                    if data == "[DONE]" || !handle(data)? {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn stream_anthropic(
-    app: &AppHandle,
     endpoint: &str,
     api_key: &str,
     model: &str,
     system_prompt: &str,
     user_message: &str,
-    _request_id: &str,
+    on_event: &(dyn Fn(StreamEvent) + Sync),
 ) -> Result<(), String> {
     let client = client();
 
@@ -111,103 +194,40 @@ async fn stream_anthropic(
         return Err(format!("API error {}: {}", status, body_text));
     }
 
-    // Parse SSE stream
-    use futures::StreamExt;
-    let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-        // Process complete SSE events from buffer
-        while let Some(event_end) = buffer.find("\n\n") {
-            let event_str = buffer[..event_end].to_string();
-            buffer = buffer[event_end + 2..].to_string();
-
-            for line in event_str.lines() {
-                if let Some(data) = line.strip_prefix("data: ") {
-                    if data == "[DONE]" {
-                        let _ = app.emit(
-                            crate::events::AI_STREAM,
-                            AiStreamEvent {
-                                event_type: "done".to_string(),
-                                text: None,
-                                error: None,
-                            },
-                        );
-                        return Ok(());
-                    }
-
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-                        let event_type = parsed["type"].as_str().unwrap_or("");
-
-                        match event_type {
-                            "content_block_delta" => {
-                                if let Some(text) = parsed["delta"]["text"].as_str() {
-                                    let _ = app.emit(
-                                        crate::events::AI_STREAM,
-                                        AiStreamEvent {
-                                            event_type: "text".to_string(),
-                                            text: Some(text.to_string()),
-                                            error: None,
-                                        },
-                                    );
-                                }
-                            }
-                            "message_stop" => {
-                                let _ = app.emit(
-                                    crate::events::AI_STREAM,
-                                    AiStreamEvent {
-                                        event_type: "done".to_string(),
-                                        text: None,
-                                        error: None,
-                                    },
-                                );
-                                return Ok(());
-                            }
-                            "error" => {
-                                let msg = parsed["error"]["message"]
-                                    .as_str()
-                                    .unwrap_or("Unknown API error");
-                                let _ = app.emit(
-                                    crate::events::AI_STREAM,
-                                    AiStreamEvent {
-                                        event_type: "error".to_string(),
-                                        text: None,
-                                        error: Some(msg.to_string()),
-                                    },
-                                );
-                                return Err(msg.to_string());
-                            }
-                            _ => {}
-                        }
-                    }
+    read_sse(response, |data| {
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) else {
+            return Ok(true);
+        };
+        match parsed["type"].as_str().unwrap_or("") {
+            "content_block_start" if parsed["content_block"]["type"] == "thinking" => {
+                on_event(StreamEvent::Thinking);
+            }
+            "content_block_delta" => {
+                if let Some(text) = parsed["delta"]["text"].as_str() {
+                    on_event(StreamEvent::Text(text.to_string()));
                 }
             }
+            "message_stop" => return Ok(false),
+            "error" => {
+                return Err(parsed["error"]["message"]
+                    .as_str()
+                    .unwrap_or("Unknown API error")
+                    .to_string());
+            }
+            _ => {}
         }
-    }
-
-    let _ = app.emit(
-        crate::events::AI_STREAM,
-        AiStreamEvent {
-            event_type: "done".to_string(),
-            text: None,
-            error: None,
-        },
-    );
-
-    Ok(())
+        Ok(true)
+    })
+    .await
 }
 
 async fn stream_openai(
-    app: &AppHandle,
     url: &str,
     api_key: Option<&str>,
     model: &str,
     system_prompt: &str,
     user_message: &str,
-    _request_id: &str,
+    on_event: &(dyn Fn(StreamEvent) + Sync),
 ) -> Result<(), String> {
     let client = client();
 
@@ -257,90 +277,60 @@ async fn stream_openai(
         return Err(format!("API error {}: {}", status, body_text));
     }
 
-    use futures::StreamExt;
-    let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-        while let Some(event_end) = buffer.find("\n\n") {
-            let event_str = buffer[..event_end].to_string();
-            buffer = buffer[event_end + 2..].to_string();
-
-            for line in event_str.lines() {
-                if let Some(data) = line.strip_prefix("data: ") {
-                    if data == "[DONE]" {
-                        let _ = app.emit(
-                            crate::events::AI_STREAM,
-                            AiStreamEvent {
-                                event_type: "done".to_string(),
-                                text: None,
-                                error: None,
-                            },
-                        );
-                        return Ok(());
-                    }
-
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-                        // OpenAI streaming: choices[0].delta.content
-                        if let Some(content) = parsed["choices"][0]["delta"]["content"].as_str() {
-                            if !content.is_empty() {
-                                let _ = app.emit(
-                                    crate::events::AI_STREAM,
-                                    AiStreamEvent {
-                                        event_type: "text".to_string(),
-                                        text: Some(content.to_string()),
-                                        error: None,
-                                    },
-                                );
-                            }
-                        }
-
-                        // Check finish_reason
-                        if let Some(reason) = parsed["choices"][0]["finish_reason"].as_str() {
-                            if reason == "stop" || reason == "length" {
-                                let _ = app.emit(
-                                    crate::events::AI_STREAM,
-                                    AiStreamEvent {
-                                        event_type: "done".to_string(),
-                                        text: None,
-                                        error: None,
-                                    },
-                                );
-                                return Ok(());
-                            }
-                        }
-
-                        // Check for error in stream
-                        if let Some(err) = parsed["error"]["message"].as_str() {
-                            let _ = app.emit(
-                                crate::events::AI_STREAM,
-                                AiStreamEvent {
-                                    event_type: "error".to_string(),
-                                    text: None,
-                                    error: Some(err.to_string()),
-                                },
-                            );
-                            return Err(err.to_string());
-                        }
-                    }
-                }
+    let mut thinking = false;
+    read_sse(response, |data| {
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) else {
+            return Ok(true);
+        };
+        let delta = &parsed["choices"][0]["delta"];
+        // Ollama reports reasoning as `reasoning`; DeepSeek-style servers as
+        // `reasoning_content`.
+        let reasoning = ["reasoning", "reasoning_content"]
+            .iter()
+            .any(|key| delta[key].as_str().is_some_and(|text| !text.is_empty()));
+        if reasoning && !thinking {
+            thinking = true;
+            on_event(StreamEvent::Thinking);
+        }
+        if let Some(content) = delta["content"].as_str() {
+            if !content.is_empty() {
+                on_event(StreamEvent::Text(content.to_string()));
             }
         }
+        if let Some(reason) = parsed["choices"][0]["finish_reason"].as_str() {
+            if reason == "stop" || reason == "length" {
+                return Ok(false);
+            }
+        }
+        if let Some(err) = parsed["error"]["message"].as_str() {
+            return Err(err.to_string());
+        }
+        Ok(true)
+    })
+    .await
+}
+
+/// The context window Ollama reports for `model`, in tokens, or `None` when it cannot say.
+pub async fn ollama_context_window(
+    base_url: &str,
+    api_key: Option<&str>,
+    model: &str,
+) -> Option<usize> {
+    let mut request = client()
+        .post(format!("{}/api/show", base_url.trim_end_matches('/')))
+        .json(&json!({ "model": model }));
+    if let Some(key) = api_key {
+        request = request.bearer_auth(key);
     }
-
-    let _ = app.emit(
-        crate::events::AI_STREAM,
-        AiStreamEvent {
-            event_type: "done".to_string(),
-            text: None,
-            error: None,
-        },
-    );
-
-    Ok(())
+    let response = request.send().await.ok()?.error_for_status().ok()?;
+    let body: serde_json::Value = response.json().await.ok()?;
+    // The key is prefixed with the model's architecture, as in `llama.context_length`.
+    body["model_info"]
+        .as_object()?
+        .iter()
+        .find(|(key, _)| key.ends_with(".context_length"))
+        .and_then(|(_, value)| value.as_u64())
+        .map(|tokens| tokens as usize)
 }
 
 pub async fn test_connection(
@@ -441,5 +431,230 @@ async fn test_openai(url: &str, api_key: Option<&str>, model: &str) -> Result<St
         let status = response.status();
         let body_text = response.text().await.unwrap_or_default();
         Err(format!("API error {}: {}", status, body_text))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::time::Duration;
+    use tauri::Listener;
+
+    /// Answers one request with `body` as a server-sent-events stream. With `hold_open`, the
+    /// connection stays open after the body, like a model that is still thinking.
+    fn sse_server(body: &'static str, hold_open: bool) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("read test server address");
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            stream
+                .set_read_timeout(Some(Duration::from_millis(200)))
+                .expect("bound request read");
+            let mut buffer = [0_u8; 8192];
+            while stream.read(&mut buffer).unwrap_or(0) == buffer.len() {}
+            let head =
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body.as_bytes());
+            let _ = stream.flush();
+            if hold_open {
+                std::thread::sleep(Duration::from_secs(30));
+            }
+        });
+        format!("http://{address}/v1/chat/completions")
+    }
+
+    fn settings(endpoint: String) -> AiRequestSettings {
+        let config = crate::types::AppConfig {
+            ai_provider: Some(crate::types::AiProvider::OpenAiCompatible),
+            openai_compatible_base_url: Some(
+                endpoint
+                    .trim_end_matches("/v1/chat/completions")
+                    .to_string(),
+            ),
+            ai_model: "test-model".to_string(),
+            ..crate::types::AppConfig::default()
+        };
+        crate::ai_provider::ConfiguredAiProvider::from_config(&config)
+            .request_settings()
+            .expect("test settings")
+    }
+
+    fn collect(app: &tauri::App<tauri::test::MockRuntime>) -> mpsc::Receiver<AiStreamEvent> {
+        let (sender, receiver) = mpsc::channel();
+        app.listen(crate::events::AI_STREAM, move |event| {
+            let parsed: serde_json::Value = serde_json::from_str(event.payload()).unwrap();
+            let _ = sender.send(AiStreamEvent {
+                request_id: parsed["request_id"].as_str().unwrap().to_string(),
+                event_type: parsed["event_type"].as_str().unwrap().to_string(),
+                text: parsed["text"].as_str().map(str::to_string),
+                error: parsed["error"].as_str().map(str::to_string),
+            });
+        });
+        receiver
+    }
+
+    #[test]
+    fn an_openai_stream_reports_reasoning_once_then_the_answer() {
+        let url = sse_server(
+            "data: {\"choices\":[{\"delta\":{\"reasoning\":\"Let me\"}}]}\n\n\
+             data: {\"choices\":[{\"delta\":{\"reasoning\":\" think\"}}]}\n\n\
+             data: {\"choices\":[{\"delta\":{\"content\":\"Coffee [1]\"}}]}\n\n\
+             data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            false,
+        );
+        let events = Mutex::new(Vec::new());
+        let on_event = |event: StreamEvent| events.lock().unwrap().push(event);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        runtime
+            .block_on(stream_openai(&url, None, "m", "system", "user", &on_event))
+            .unwrap();
+
+        assert_eq!(
+            events.into_inner().unwrap(),
+            vec![
+                StreamEvent::Thinking,
+                StreamEvent::Text("Coffee [1]".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn an_error_inside_the_stream_is_returned_once() {
+        let url = sse_server(
+            "data: {\"error\":{\"message\":\"quota exceeded\"}}\n\n",
+            false,
+        );
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        let result = runtime.block_on(stream_openai(&url, None, "m", "s", "u", &|_| {}));
+
+        assert_eq!(result, Err("quota exceeded".to_string()));
+    }
+
+    #[test]
+    fn concurrent_requests_tag_every_event_with_their_own_id() {
+        let app = tauri::test::mock_app();
+        let events = collect(&app);
+        let first = sse_server("data: {\"choices\":[{\"delta\":{\"content\":\"one\"},\"finish_reason\":\"stop\"}]}\n\n", false);
+        let second = sse_server("data: {\"choices\":[{\"delta\":{\"content\":\"two\"},\"finish_reason\":\"stop\"}]}\n\n", false);
+
+        ai_request(
+            app.handle().clone(),
+            settings(first),
+            "s".into(),
+            "u".into(),
+            "ask-1".into(),
+        );
+        ai_request(
+            app.handle().clone(),
+            settings(second),
+            "s".into(),
+            "u".into(),
+            "editor-2".into(),
+        );
+
+        let mut received: Vec<(String, String, Option<String>)> = (0..4)
+            .map(|_| {
+                events
+                    .recv_timeout(Duration::from_secs(10))
+                    .expect("stream event")
+            })
+            .map(|event| (event.request_id, event.event_type, event.text))
+            .collect();
+        received.sort();
+        assert_eq!(
+            received,
+            vec![
+                ("ask-1".into(), "done".into(), None),
+                ("ask-1".into(), "text".into(), Some("one".into())),
+                ("editor-2".into(), "done".into(), None),
+                ("editor-2".into(), "text".into(), Some("two".into())),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_cancelled_request_stops_without_reporting_done_or_error() {
+        let app = tauri::test::mock_app();
+        let events = collect(&app);
+        let url = sse_server(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n",
+            true,
+        );
+
+        ai_request(
+            app.handle().clone(),
+            settings(url),
+            "s".into(),
+            "u".into(),
+            "stop-me".into(),
+        );
+        let first = events
+            .recv_timeout(Duration::from_secs(10))
+            .expect("first chunk");
+        assert_eq!(first.text.as_deref(), Some("partial"));
+        cancel("stop-me");
+
+        // The server keeps the stream open for 30 s, so only the cancel can end it this soon.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while RUNNING.lock().unwrap().contains_key("stop-me") {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the stream should stop"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(events.recv_timeout(Duration::from_millis(200)).is_err());
+    }
+
+    #[test]
+    fn ollama_reports_the_context_window_under_its_architecture_prefix() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_millis(200)))
+                .unwrap();
+            let mut buffer = [0_u8; 8192];
+            let _ = stream.read(&mut buffer);
+            let body = r#"{"model_info":{"general.architecture":"gptoss","gptoss.context_length":131072}}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        let window = runtime.block_on(ollama_context_window(
+            &format!("http://{address}/"),
+            None,
+            "gpt-oss",
+        ));
+
+        assert_eq!(window, Some(131_072));
+    }
+
+    #[test]
+    fn an_unreachable_ollama_reports_no_context_window() {
+        let address = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        let window = runtime.block_on(ollama_context_window(
+            &format!("http://{address}"),
+            None,
+            "m",
+        ));
+
+        assert_eq!(window, None);
     }
 }
