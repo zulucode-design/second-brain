@@ -100,8 +100,11 @@ export function coverageLabel(plan: AskPlan, failed = false): string {
   return `${verb} ${plan.sources.length} of ${plan.relatedNotes} related ${notes}${partly}`;
 }
 
-// `[2]`, or `【2】` as gpt-oss writes it.
-const CITATION = /^(?:\[(\d+(?:\s*,\s*\d+)*)\]|【(\d+(?:\s*,\s*\d+)*)】)/;
+const CITATION = /^\[(\d+(?:\s*,\s*\d+)*)\]/;
+// gpt-oss cites as `【2】`. Markdown-it's text rule runs past `【`, so an inline rule never sees
+// it; rewriting before parsing does.
+// ponytail: also rewrites `【2】` inside code, which only changes the brackets shown there.
+const WIDE_CITATION = /【(\d+(?:\s*,\s*\d+)*)】/g;
 
 /**
  * Renders an answer as Markdown that can only show text and citations.
@@ -116,13 +119,12 @@ export function createAnswerRenderer(MarkdownItClass: typeof MarkdownIt) {
   const md = new MarkdownItClass({ html: false, linkify: false });
   md.disable(['image', 'link', 'autolink', 'reference', 'html_inline', 'html_block']);
   md.inline.ruler.before('text', 'citation', (state, silent) => {
-    const first = state.src.charCodeAt(state.pos);
-    if (first !== 0x5b /* [ */ && first !== 0x3010 /* 【 */) return false;
+    if (state.src.charCodeAt(state.pos) !== 0x5b /* [ */) return false;
     const match = CITATION.exec(state.src.slice(state.pos));
     if (!match) return false;
     if (!silent) {
       const token = state.push('citation', '', 0);
-      token.meta = { numbers: (match[1] ?? match[2]).split(',').map((value) => Number(value.trim())) };
+      token.meta = { numbers: match[1].split(',').map((value) => Number(value.trim())) };
     }
     state.pos += match[0].length;
     return true;
@@ -135,7 +137,8 @@ export function createAnswerRenderer(MarkdownItClass: typeof MarkdownIt) {
       .map((number) => `<button type="button" class="citation" data-source="${number}">[${number}]</button>`)
       .join('');
   };
-  return (text: string, sourceCount: number): string => md.render(text, { sourceCount });
+  return (text: string, sourceCount: number): string =>
+    md.render(text.replace(WIDE_CITATION, '[$1]'), { sourceCount });
 }
 
 /** Why Ask cannot run, or null when it can. */
