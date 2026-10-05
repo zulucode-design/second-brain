@@ -225,10 +225,13 @@
 					<button class:active={mode === 'semantic'} onclick={() => changeMode('semantic')}>Semantic</button>
 					<button
 						class:active={mode === 'ask'}
-						class:unavailable={!$appConfig?.ai_provider}
-						title={$appConfig?.ai_provider ? 'Ask a question answered from your notes' : 'No AI provider is set up'}
+						disabled={!$appConfig?.ai_provider}
+						title="Ask a question answered from your notes"
 						onclick={() => changeMode('ask')}
 					>Ask</button>
+					{#if !$appConfig?.ai_provider}
+						<span class="ask-unavailable">No AI provider is set up for Ask</span>
+					{/if}
 				</div>
 				{#if mode !== 'keyword'}
 					<label>
@@ -400,8 +403,15 @@
 		cursor: pointer;
 	}
 
-	.search-modes button.unavailable {
+	.search-modes button:disabled {
 		opacity: 0.55;
+		cursor: default;
+	}
+
+	.ask-unavailable {
+		align-self: center;
+		font-size: 11px;
+		color: var(--text-tertiary);
 	}
 
 	.search-modes button.active {

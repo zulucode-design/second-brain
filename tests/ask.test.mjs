@@ -6,7 +6,7 @@ import { transformWithEsbuild } from 'vite';
 
 const source = await readFile(new URL('../src/lib/utils/ask.ts', import.meta.url), 'utf8');
 const { code } = await transformWithEsbuild(source, 'ask.ts', { loader: 'ts', format: 'esm', target: 'esnext' });
-const { keepLatest, answersForVault, stageLabel, coverageLabel, createAnswerRenderer, KEPT_ANSWERS } = await import(
+const { keepLatest, forVault, expandedAnswer, stageLabel, coverageLabel, createAnswerRenderer, KEPT_ANSWERS } = await import(
   `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
 );
 
@@ -41,12 +41,29 @@ test('a new answer in another vault drops every answer from the old one', () => 
   assert.deepEqual(dropped.map((item) => item.id), ['b', 'a']);
 });
 
-test('after a vault switch, answers from the previous vault are not shown', () => {
-  const answers = [answer('b', '/old'), answer('a', '/old')];
+test('a vault switch drops every answer from the vault that was left', () => {
+  const answers = [answer('b', '/old', { status: 'answering' }), answer('a', '/old')];
 
-  assert.deepEqual(answersForVault(answers, '/new'), []);
-  assert.deepEqual(answersForVault(answers, '/old').map((item) => item.id), ['b', 'a']);
-  assert.deepEqual(answersForVault(answers, null), []);
+  const switched = forVault(answers, '/new');
+  assert.deepEqual(switched.kept, []);
+  assert.deepEqual(switched.dropped.map((item) => item.id), ['b', 'a']);
+
+  // Switching back finds nothing to restore: the old answers are gone, not hidden.
+  assert.deepEqual(forVault(switched.kept, '/old').kept, []);
+  assert.deepEqual(forVault(answers, '/old').dropped, []);
+  assert.deepEqual(forVault(answers, null).kept, []);
+});
+
+test('a new question expands itself even after the user expanded an older answer', () => {
+  const two = [answer('b'), answer('a')];
+  assert.equal(expandedAnswer(two, null), 'b');
+
+  const picked = { id: 'a', newest: 'b' };
+  assert.equal(expandedAnswer(two, picked), 'a');
+
+  const three = [answer('c'), ...two];
+  assert.equal(expandedAnswer(three, picked), 'c');
+  assert.equal(expandedAnswer([], picked), undefined);
 });
 
 const plan = (sources, relatedNotes, unread = []) => ({

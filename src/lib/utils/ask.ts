@@ -46,9 +46,31 @@ export function keepLatest(
   return { kept, dropped: all.filter((answer) => !kept.includes(answer)) };
 }
 
-/** The answers that belong to `vault`, newest first. A vault switch hides the rest. */
-export function answersForVault(answers: AskAnswer[], vault: string | null | undefined): AskAnswer[] {
-  return vault ? answers.filter((answer) => answer.vault === vault) : [];
+/**
+ * Splits answers by whether they belong to `vault`. A vault switch drops the rest, since
+ * their citations point into the vault that was left; a running one must be stopped.
+ */
+export function forVault(
+  answers: AskAnswer[],
+  vault: string | null | undefined,
+): { kept: AskAnswer[]; dropped: AskAnswer[] } {
+  const kept = answers.filter((answer) => Boolean(vault) && answer.vault === vault);
+  return { kept, dropped: answers.filter((answer) => !kept.includes(answer)) };
+}
+
+/**
+ * The answer shown expanded: the one the user picked, unless a newer question has arrived
+ * since, in which case the newest, so its progress, errors, and Stop stay visible.
+ */
+export function expandedAnswer(
+  answers: AskAnswer[],
+  picked: { id: string; newest: string } | null,
+): string | undefined {
+  const newest = answers[0]?.id;
+  if (picked && picked.newest === newest && answers.some((answer) => answer.id === picked.id)) {
+    return picked.id;
+  }
+  return newest;
 }
 
 /** The progress line shown while an answer is on its way. */

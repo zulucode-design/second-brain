@@ -1,6 +1,7 @@
 use reqwest::Client;
 use serde_json::json;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
@@ -32,18 +33,70 @@ enum StreamEvent {
     Thinking,
 }
 
-/// Streams in flight, so a Stop can end one.
-static RUNNING: LazyLock<Mutex<HashMap<String, Arc<Notify>>>> =
+/// A Stop request for one stream. The flag covers a Stop that lands before the stream starts;
+/// the notification ends one that is already waiting on the network.
+struct Stop {
+    cancelled: AtomicBool,
+    notify: Notify,
+}
+
+/// Requests a Stop can still reach, from registration until their stream ends.
+static RUNNING: LazyLock<Mutex<HashMap<String, Arc<Stop>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Ends the stream for `request_id`, if it is still running. It emits nothing afterwards.
+/// Makes `request_id` stoppable before its stream exists, so a Stop during Ask's retrieval
+/// prevents the model call. Dropping it unregisters, unless `start` took it over.
+pub struct Registration {
+    request_id: String,
+    stop: Arc<Stop>,
+    started: bool,
+}
+
+impl Registration {
+    pub fn is_cancelled(&self) -> bool {
+        self.stop.cancelled.load(Ordering::SeqCst)
+    }
+}
+
+impl Drop for Registration {
+    fn drop(&mut self) {
+        if !self.started {
+            unregister(&self.request_id);
+        }
+    }
+}
+
+pub fn register(request_id: &str) -> Registration {
+    let stop = Arc::new(Stop {
+        cancelled: AtomicBool::new(false),
+        notify: Notify::new(),
+    });
+    if let Ok(mut running) = RUNNING.lock() {
+        running.insert(request_id.to_string(), stop.clone());
+    }
+    Registration {
+        request_id: request_id.to_string(),
+        stop,
+        started: false,
+    }
+}
+
+fn unregister(request_id: &str) {
+    if let Ok(mut running) = RUNNING.lock() {
+        running.remove(request_id);
+    }
+}
+
+/// Stops `request_id`, whether its stream is running or not started yet. A stopped stream
+/// emits nothing afterwards.
 pub fn cancel(request_id: &str) {
     if let Some(stop) = RUNNING
         .lock()
         .ok()
         .and_then(|running| running.get(request_id).cloned())
     {
-        stop.notify_one();
+        stop.cancelled.store(true, Ordering::SeqCst);
+        stop.notify.notify_one();
     }
 }
 
@@ -54,11 +107,31 @@ pub fn ai_request<R: tauri::Runtime>(
     user_message: String,
     request_id: String,
 ) {
-    let stop = Arc::new(Notify::new());
-    if let Ok(mut running) = RUNNING.lock() {
-        running.insert(request_id.clone(), stop.clone());
-    }
+    start(
+        app,
+        settings,
+        system_prompt,
+        user_message,
+        register(&request_id),
+    );
+}
+
+/// Streams the answer for an already registered request, tagging every event with its id.
+pub fn start<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    settings: AiRequestSettings,
+    system_prompt: String,
+    user_message: String,
+    mut registration: Registration,
+) {
+    registration.started = true;
+    let request_id = registration.request_id.clone();
+    let stop = registration.stop.clone();
     std::thread::spawn(move || {
+        if stop.cancelled.load(Ordering::SeqCst) {
+            unregister(&request_id);
+            return;
+        }
         let rt = tokio::runtime::Runtime::new().unwrap();
         let emit = |event_type: &str, text: Option<String>, error: Option<String>| {
             let _ = app.emit(
@@ -78,12 +151,10 @@ pub fn ai_request<R: tauri::Runtime>(
         let finished = rt.block_on(async {
             tokio::select! {
                 result = stream(&settings, &system_prompt, &user_message, &on_event) => Some(result),
-                _ = stop.notified() => None,
+                _ = stop.notify.notified() => None,
             }
         });
-        if let Ok(mut running) = RUNNING.lock() {
-            running.remove(&request_id);
-        }
+        unregister(&request_id);
         match finished {
             Some(Ok(())) => emit("done", None, None),
             Some(Err(error)) => emit("error", None, Some(error)),
@@ -133,15 +204,17 @@ async fn read_sse(
 ) -> Result<(), String> {
     use futures::StreamExt;
     let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
+    // Bytes, not text: a network chunk can end inside a multi-byte character, so only a
+    // complete record is decoded.
+    let mut buffer: Vec<u8> = Vec::new();
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        buffer.extend_from_slice(&chunk);
 
-        while let Some(event_end) = buffer.find("\n\n") {
-            let event_str = buffer[..event_end].to_string();
-            buffer = buffer[event_end + 2..].to_string();
+        while let Some(event_end) = buffer.windows(2).position(|pair| pair == b"\n\n") {
+            let record: Vec<u8> = buffer.drain(..event_end + 2).collect();
+            let event_str = String::from_utf8_lossy(&record[..event_end]);
 
             for line in event_str.lines() {
                 if let Some(data) = line.strip_prefix("data: ") {
@@ -446,10 +519,23 @@ mod tests {
     /// Answers one request with `body` as a server-sent-events stream. With `hold_open`, the
     /// connection stays open after the body, like a model that is still thinking.
     fn sse_server(body: &'static str, hold_open: bool) -> String {
+        sse_server_in_parts(vec![body.as_bytes()], hold_open, None)
+    }
+
+    /// Like `sse_server`, writing each part as its own network chunk. `requested` reports
+    /// whether a request ever arrived.
+    fn sse_server_in_parts(
+        parts: Vec<&'static [u8]>,
+        hold_open: bool,
+        requested: Option<mpsc::Sender<()>>,
+    ) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
         let address = listener.local_addr().expect("read test server address");
         std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept request");
+            if let Some(requested) = requested {
+                let _ = requested.send(());
+            }
             stream
                 .set_read_timeout(Some(Duration::from_millis(200)))
                 .expect("bound request read");
@@ -458,8 +544,11 @@ mod tests {
             let head =
                 "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
             let _ = stream.write_all(head.as_bytes());
-            let _ = stream.write_all(body.as_bytes());
-            let _ = stream.flush();
+            for part in parts {
+                let _ = stream.write_all(part);
+                let _ = stream.flush();
+                std::thread::sleep(Duration::from_millis(50));
+            }
             if hold_open {
                 std::thread::sleep(Duration::from_secs(30));
             }
@@ -610,6 +699,67 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(events.recv_timeout(Duration::from_millis(200)).is_err());
+    }
+
+    #[test]
+    fn a_character_split_across_network_chunks_arrives_intact() {
+        let record = "data: {\"choices\":[{\"delta\":{\"content\":\"café\"},\"finish_reason\":\"stop\"}]}\n\n"
+            .as_bytes();
+        // Split inside the two bytes of "é".
+        let split = record.iter().position(|byte| *byte == 0xc3).unwrap() + 1;
+        let url = sse_server_in_parts(vec![&record[..split], &record[split..]], false, None);
+        let events = Mutex::new(Vec::new());
+        let on_event = |event: StreamEvent| events.lock().unwrap().push(event);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        runtime
+            .block_on(stream_openai(&url, None, "m", "s", "u", &on_event))
+            .unwrap();
+
+        assert_eq!(
+            events.into_inner().unwrap(),
+            vec![StreamEvent::Text("café".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_request_stopped_before_it_starts_never_reaches_the_model() {
+        let app = tauri::test::mock_app();
+        let events = collect(&app);
+        let (requested_tx, requested) = mpsc::channel();
+        let url = sse_server_in_parts(
+            vec![b"data: {\"choices\":[{\"delta\":{\"content\":\"late\"}}]}\n\n"],
+            false,
+            Some(requested_tx),
+        );
+
+        let registration = register("stopped-early");
+        cancel("stopped-early");
+        assert!(registration.is_cancelled());
+        start(
+            app.handle().clone(),
+            settings(url),
+            "s".into(),
+            "u".into(),
+            registration,
+        );
+
+        assert!(requested.recv_timeout(Duration::from_millis(500)).is_err());
+        assert!(events.recv_timeout(Duration::from_millis(100)).is_err());
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while RUNNING.lock().unwrap().contains_key("stopped-early") {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the request should unregister"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn a_registration_that_never_starts_unregisters_when_dropped() {
+        drop(register("abandoned"));
+        assert!(!RUNNING.lock().unwrap().contains_key("abandoned"));
     }
 
     #[test]

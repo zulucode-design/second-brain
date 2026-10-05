@@ -627,12 +627,15 @@ impl SemanticIndex {
     }
 
     /// Every chunk at or above the cutoff, best first, with text for as many as fit in
-    /// `max_characters`. Ask reads these; a note none of whose chunks fit is reported unread.
+    /// `max_characters`. `cost` prices a chunk as the prompt will spell it out: its title,
+    /// its text, and whether it is the first read from its note. Ask reads these; a note none
+    /// of whose chunks fit is reported unread.
     pub fn retrieve(
         &self,
         query: &str,
         category: Option<ParaCategory>,
         max_characters: usize,
+        cost: impl Fn(&str, &str, bool) -> usize,
     ) -> Result<Retrieval, String> {
         let mut scored = self.score(query, category)?;
         scored.chunks.sort_by(|left, right| {
@@ -647,7 +650,7 @@ impl SemanticIndex {
         let mut read = HashSet::new();
         for chunk in &scored.chunks {
             let text = chunk_text(&scored.database, chunk)?;
-            let length = text.chars().count();
+            let length = cost(&chunk.title, &text, !read.contains(chunk.key.as_str()));
             // Chunks are at most CHUNK_CHARACTERS long, so stopping at the first one that does
             // not fit costs little and keeps what was read a clean best-first slice.
             if used + length > max_characters {
@@ -907,6 +910,10 @@ impl SemanticIndex {
 
     /// Stops this index writing, because a newer index on the same database replaces it.
     /// Taking the database mutex first lets a write already in progress finish.
+    pub fn is_retired(&self) -> bool {
+        self.retired.load(Ordering::SeqCst)
+    }
+
     pub fn retire(&self) {
         let _database = self.database.lock();
         self.retired.store(true, Ordering::SeqCst);
@@ -1592,6 +1599,10 @@ mod tests {
         cleanup(root);
     }
 
+    fn text_only(_title: &str, text: &str, _first: bool) -> usize {
+        text.chars().count()
+    }
+
     #[test]
     fn retrieval_reads_every_related_chunk_best_first_within_the_budget() {
         let root = scratch("retrieve-budget");
@@ -1620,7 +1631,9 @@ mod tests {
             index.note_changed(note).unwrap();
         }
         index.retry_pending().unwrap();
-        let everything = index.retrieve("mornings", None, usize::MAX).unwrap();
+        let everything = index
+            .retrieve("mornings", None, usize::MAX, text_only)
+            .unwrap();
         assert_eq!(everything.related_notes, 2);
         assert_eq!(everything.chunks.len(), 4);
         assert!(everything.unread.is_empty());
@@ -1630,7 +1643,7 @@ mod tests {
             .iter()
             .map(|chunk| chunk.text.chars().count())
             .sum();
-        let partial = index.retrieve("mornings", None, budget).unwrap();
+        let partial = index.retrieve("mornings", None, budget, text_only).unwrap();
         let read: Vec<(&str, i64)> = partial
             .chunks
             .iter()
@@ -1645,6 +1658,66 @@ mod tests {
                 title: "Short coffee".to_string(),
             }]
         );
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn retrieval_charges_each_note_its_overhead_so_tiny_notes_cannot_overflow_the_prompt() {
+        let root = scratch("retrieve-overhead");
+        let notes: Vec<_> = (0..4)
+            .map(|index| {
+                let path = root.join(format!("Tiny {index}.md"));
+                write_note(
+                    &path,
+                    &format!("tiny-{index}"),
+                    &format!("Tiny {index}"),
+                    "Areas",
+                    "coffee",
+                );
+                path
+            })
+            .collect();
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
+                .unwrap();
+        for note in &notes {
+            index.note_changed(note).unwrap();
+        }
+        index.retry_pending().unwrap();
+        // Each note's first chunk costs 100 on top of its six characters of text.
+        let with_overhead =
+            |_: &str, text: &str, first: bool| text.chars().count() + if first { 100 } else { 0 };
+
+        let retrieval = index
+            .retrieve("mornings", None, 250, with_overhead)
+            .unwrap();
+
+        assert_eq!(retrieval.chunks.len(), 2);
+        assert_eq!(retrieval.unread.len(), 2);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_replaced_index_refuses_to_retrieve() {
+        let root = scratch("retrieve-retired");
+        let note = root.join("Coffee.md");
+        write_note(&note, "coffee-id", "Coffee", "Areas", "coffee");
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
+                .unwrap();
+        index.note_changed(&note).unwrap();
+        index.retry_pending().unwrap();
+
+        // A vault switch retires the old index; a question started before it must not read
+        // whatever the shared database holds next.
+        index.retire();
+
+        assert!(index.is_retired());
+        assert!(index
+            .retrieve("mornings", None, usize::MAX, text_only)
+            .is_err());
         drop(index);
         cleanup(root);
     }
@@ -1670,7 +1743,12 @@ mod tests {
         index.retry_pending().unwrap();
 
         let retrieval = index
-            .retrieve("mornings", Some(ParaCategory::Projects), usize::MAX)
+            .retrieve(
+                "mornings",
+                Some(ParaCategory::Projects),
+                usize::MAX,
+                text_only,
+            )
             .unwrap();
 
         assert_eq!(retrieval.related_notes, 1);

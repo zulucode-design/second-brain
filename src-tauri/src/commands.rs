@@ -3815,6 +3815,17 @@ pub async fn ask_notes(
     };
     let (settings, health_target) = ai_request_target(&app)?;
     refuse_known_unavailable(&app, health_target.as_ref())?;
+    // Registered now, so a Stop during retrieval prevents the model call.
+    let registration = crate::ai::register(&request_id);
+    // Taken before any await: if the vault changes meanwhile, this index is retired and
+    // refuses to retrieve, so the question never reads the next vault's notes.
+    let semantic = app
+        .state::<AppState>()
+        .semantic_index
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone()
+        .ok_or("Semantic search is not initialized")?;
 
     // Only Ollama reports a model's context window; other providers get the fallback.
     let context_tokens = match &ollama {
@@ -3826,17 +3837,11 @@ pub async fn ask_notes(
     .unwrap_or(crate::ask::FALLBACK_CONTEXT_TOKENS);
     let budget = crate::ask::excerpt_budget(context_tokens, &question);
 
-    let semantic = app
-        .state::<AppState>()
-        .semantic_index
-        .lock()
-        .map_err(|error| error.to_string())?
-        .clone()
-        .ok_or("Semantic search is not initialized")?;
     let query = question.clone();
+    let index = semantic.clone();
     let (retrieval, queued_notes) = tokio::task::spawn_blocking(move || {
-        let retrieval = semantic.retrieve(&query, category, budget)?;
-        let queued = semantic
+        let retrieval = index.retrieve(&query, category, budget, crate::ask::excerpt_cost)?;
+        let queued = index
             .status()
             .map(|status| status.queued_notes)
             .unwrap_or(0);
@@ -3852,13 +3857,16 @@ pub async fn ask_notes(
             "The model's context window ({context_tokens} tokens) is too small to read any note."
         ));
     }
-    if !sources.is_empty() {
-        crate::ai::ai_request(
+    if semantic.is_retired() {
+        return Err("The vault changed while this question was being answered.".to_string());
+    }
+    if !sources.is_empty() && !registration.is_cancelled() {
+        crate::ai::start(
             app,
             settings,
             crate::ask::SYSTEM_PROMPT.to_string(),
             user_message,
-            request_id,
+            registration,
         );
     }
     Ok(crate::ask::AskPlan {

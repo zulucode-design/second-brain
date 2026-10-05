@@ -3,9 +3,9 @@
 	import { appConfig, showSearch } from '$lib/stores/app';
 	import { askAnswers, stop } from '$lib/stores/ask';
 	import {
-		answersForVault,
 		coverageLabel,
 		createAnswerRenderer,
+		expandedAnswer,
 		isRunning,
 		stageLabel,
 		type AskAnswer,
@@ -18,18 +18,15 @@
 	const UNREAD_SHOWN = 25;
 
 	const render = createAnswerRenderer(MarkdownIt);
-	const answers = $derived(answersForVault($askAnswers, $appConfig?.active_vault));
+	const answers = $derived($askAnswers);
 	const hasProvider = $derived(Boolean($appConfig?.ai_provider));
 
-	let expanded = $state<string | null>(null);
+	let picked = $state<{ id: string; newest: string } | null>(null);
 	let missing = $state<Set<string>>(new Set());
 	let now = $state(Date.now());
 	let listEl = $state<HTMLDivElement>(null!);
 
-	// The newest answer opens expanded; the user can expand an older one instead.
-	const openId = $derived(
-		expanded && answers.some((answer) => answer.id === expanded) ? expanded : answers[0]?.id,
-	);
+	const openId = $derived(expandedAnswer(answers, picked));
 
 	$effect(() => {
 		if (!answers.some(isRunning)) return;
@@ -84,7 +81,7 @@
 	{#each answers as answer (answer.id)}
 		{@const isOpen = answer.id === openId}
 		<section class="ask-answer" class:open={isOpen}>
-			<button class="ask-question" onclick={() => (expanded = answer.id)} aria-expanded={isOpen}>
+			<button class="ask-question" onclick={() => (picked = { id: answer.id, newest: answers[0].id })} aria-expanded={isOpen}>
 				{answer.question}
 			</button>
 			{#if isOpen}

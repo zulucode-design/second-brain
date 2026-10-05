@@ -2,8 +2,9 @@ import { get, writable } from 'svelte/store';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { askNotes, cancelAi } from '$lib/api';
 import { listenAppEvent } from '$lib/events';
+import { appConfig } from '$lib/stores/app';
 import type { ParaCategory } from '$lib/types';
-import { isRunning, keepLatest, type AskAnswer } from '$lib/utils/ask';
+import { forVault, isRunning, keepLatest, type AskAnswer } from '$lib/utils/ask';
 
 /**
  * Ask's latest answers, newest first. Held in memory only, so quitting drops them; they
@@ -101,6 +102,17 @@ export async function ask(question: string, category: ParaCategory | undefined, 
     stopListening(id);
   }
 }
+
+// A vault switch drops every answer from the vault that was left and stops any still running.
+appConfig.subscribe((config) => {
+  const { kept, dropped } = forVault(get(askAnswers), config?.active_vault);
+  if (dropped.length === 0) return;
+  askAnswers.set(kept);
+  for (const answer of dropped) {
+    stopListening(answer.id);
+    if (isRunning(answer)) void cancelAi(answer.id).catch(() => {});
+  }
+});
 
 export async function stop(id: string) {
   patch(id, () => ({ status: 'stopped' }));
