@@ -23,13 +23,25 @@ binary gets one only from `scripts/test-rust.mjs`, which sets
 `HELIX_WINDOWS_TEST_MANIFEST=1`. That gate cannot be removed: applied unscoped it
 also hits the app binary, where a second manifest is a hard linker error (`CVT1100`).
 
+## Roles
+
+Two agents split each change. Claude writes the code; Sol (Codex `gpt-6.1-sol`, reasoning effort
+high) does the administrative work around it.
+
+- **Claude** implements the change, runs the checks, and fixes every finding that review or CI
+  raises, CI failures included.
+- **Sol** runs the final review below, opens the pull request once that review is clean, watches CI
+  and reports failures back to Claude, and merges.
+- **Merging waits for Nicolas.** When review and CI pass on the PR's head, Claude tells Nicolas the
+  PR can merge, and Sol merges after his go-ahead.
+
 ## Pull requests
 
 An issue is complete only once its branch has passed a **final review** of its exact head commit:
 review `git diff origin/main...HEAD`, after `git fetch`, on two separate axes. **Spec** checks it
 against what it was asked to do: the issue, or Nicolas's request when there is no issue.
-**Standards** checks it against this repo's rules. Claude runs this as the `code-review` skill; any
-agent without that skill runs both axes by hand.
+**Standards** checks it against this repo's rules. Sol runs it (see Roles), with a review skill or
+both axes by hand.
 
 Fix every finding. A finding may stay unfixed only when a follow-up issue is open to fix it and the
 PR body names the finding, the reason it stays, and that issue's number. The PR body carries a
