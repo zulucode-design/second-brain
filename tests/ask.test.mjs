@@ -8,7 +8,7 @@ const source = await readFile(new URL('../src/lib/utils/ask.ts', import.meta.url
 const { code } = await transformWithEsbuild(source, 'ask.ts', { loader: 'ts', format: 'esm', target: 'esnext' });
 const {
   keepLatest, forVault, expandedAnswer, stageLabel, coverageLabel, createAnswerRenderer, KEPT_ANSWERS,
-  askUnavailableReason, askInputKey, nextSourceIndex, withMissing, visibleUnread, UNREAD_SHOWN,
+  askUnavailableReason, askInputKey, nextSourceIndex, withMissing, visibleUnread, UNREAD_SHOWN, openCitation,
 } = await import(
   `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
 );
@@ -164,4 +164,20 @@ test('the unread list shows the best notes first and every note on request', () 
   const unread = Array.from({ length: UNREAD_SHOWN + 5 }, (_, index) => index);
   assert.equal(visibleUnread(unread, false).length, UNREAD_SHOWN);
   assert.equal(visibleUnread(unread, true).length, UNREAD_SHOWN + 5);
+});
+
+test('a cited note deleted on disk is reported gone even when it is the open note', async () => {
+  const opened = [];
+  const open = async (path) => {
+    opened.push(path);
+    return 'navigated'; // navigation's shortcut for the already-open note never reads disk
+  };
+  const gone = async () => {
+    throw new Error('Note not found');
+  };
+
+  assert.equal(await openCitation('/vault/gone.md', gone, open), 'not-found');
+  assert.deepEqual(opened, []);
+  assert.equal(await openCitation('/vault/here.md', async () => ({}), open), 'navigated');
+  assert.deepEqual(opened, ['/vault/here.md']);
 });

@@ -318,8 +318,10 @@ is the decisions comment on #8.
   multi-turn chat is wanted before building it.
 - **Reads every related chunk the model can hold.** Every chunk scoring at or above the
   semantic cutoff is read, best first, until the model's context window (less room for the
-  answer) is full. Ollama reports the window; other providers, or a failed lookup, get a
-  conservative 32k-token assumption. This budget is a known ceiling for the test: each answer
+  answer) is full. For Ollama that is the window the model actually runs with: full capacity
+  for cloud models, and for local ones the Modelfile's `num_ctx`, the loaded model's context,
+  or else Ollama's smallest default of 4k, since the OpenAI-compatible endpoint cannot ask for
+  more. Other providers, or a failed lookup, get a conservative 32k-token assumption. This budget is a known ceiling for the test: each answer
   shows "Read N of M related notes" and lists what it left out, which is the evidence for
   moving to a broader approach if it starts missing notes.
 - **Grounded and cited.** With no chunk at or above the cutoff, the window says so and no

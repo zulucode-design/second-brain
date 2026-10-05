@@ -1,5 +1,6 @@
 <script lang="ts">
 	import MarkdownIt from 'markdown-it';
+	import { readNote } from '$lib/api';
 	import { appConfig } from '$lib/stores/app';
 	import { askAnswers, stop } from '$lib/stores/ask';
 	import {
@@ -9,6 +10,7 @@
 		expandedAnswer,
 		isRunning,
 		nextSourceIndex,
+		openCitation,
 		stageLabel,
 		visibleUnread,
 		withMissing,
@@ -38,10 +40,10 @@
 	});
 
 	async function open(path: string) {
-		missing = withMissing(missing, path, await onOpen(path));
+		missing = withMissing(missing, path, await openCitation(path, readNote, onOpen));
 	}
 
-	function openCitation(event: MouseEvent, answer: AskAnswer) {
+	function clickCitation(event: MouseEvent, answer: AskAnswer) {
 		const target = (event.target as HTMLElement).closest<HTMLButtonElement>('button.citation');
 		const source = answer.plan?.sources[Number(target?.dataset.source) - 1];
 		if (source) void open(source.path);
@@ -96,7 +98,7 @@
 				{/if}
 				{#if answer.text}
 					<!-- svelte-ignore a11y_click_events_have_key_events -->
-					<div class="ask-text" onclick={(event) => openCitation(event, answer)}>
+					<div class="ask-text" onclick={(event) => clickCitation(event, answer)}>
 						{@html render(answer.text, answer.plan?.sources.length ?? 0)}
 					</div>
 				{/if}

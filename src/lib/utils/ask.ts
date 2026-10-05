@@ -161,3 +161,21 @@ export const UNREAD_SHOWN = 25;
 export function visibleUnread<T>(unread: T[], showAll: boolean): T[] {
   return showAll ? unread : unread.slice(0, UNREAD_SHOWN);
 }
+
+/**
+ * Opens a cited note, first checking it still exists on disk. Navigation skips its read when
+ * the note is already open, so without the check a note deleted outside the app would
+ * "open" and close Ask instead of showing that it is gone.
+ */
+export async function openCitation(
+  path: string,
+  read: (path: string) => Promise<unknown>,
+  open: (path: string) => Promise<string>,
+): Promise<string> {
+  try {
+    await read(path);
+  } catch {
+    return 'not-found';
+  }
+  return open(path);
+}

@@ -388,26 +388,88 @@ async fn stream_openai(
     .await
 }
 
-/// The context window Ollama reports for `model`, in tokens, or `None` when it cannot say.
+/// What Ollama uses for a local model when nothing sets a context size: its default on a GPU
+/// under 24 GiB, the smallest it documents. Assuming more would let Ollama silently cut the
+/// prompt.
+const OLLAMA_LOCAL_DEFAULT_CONTEXT: usize = 4096;
+
+/// The context window, in tokens, that Ollama will actually give `model`, or `None` when it
+/// cannot say.
+///
+/// A model's capacity (`/api/show`) is not what a local server allocates: Ollama runs local
+/// models at a smaller default unless a Modelfile or the server sets more, and the
+/// OpenAI-compatible endpoint cannot ask for more. Cloud models run at full capacity.
 pub async fn ollama_context_window(
     base_url: &str,
     api_key: Option<&str>,
     model: &str,
 ) -> Option<usize> {
-    let mut request = client()
-        .post(format!("{}/api/show", base_url.trim_end_matches('/')))
-        .json(&json!({ "model": model }));
-    if let Some(key) = api_key {
-        request = request.bearer_auth(key);
-    }
-    let response = request.send().await.ok()?.error_for_status().ok()?;
-    let body: serde_json::Value = response.json().await.ok()?;
+    let base_url = base_url.trim_end_matches('/');
+    let show = ollama_get_json(
+        client()
+            .post(format!("{base_url}/api/show"))
+            .json(&json!({ "model": model })),
+        api_key,
+    )
+    .await?;
     // The key is prefixed with the model's architecture, as in `llama.context_length`.
-    body["model_info"]
-        .as_object()?
+    let capacity = show["model_info"]
+        .as_object()
+        .and_then(|info| {
+            info.iter()
+                .find(|(key, _)| key.ends_with(".context_length"))
+                .and_then(|(_, value)| value.as_u64())
+        })
+        .map(|tokens| tokens as usize);
+    let cloud = model.ends_with("cloud")
+        || show.get("remote_host").is_some()
+        || reqwest::Url::parse(base_url)
+            .ok()
+            .and_then(|url| url.host_str().map(|host| host.ends_with("ollama.com")))
+            .unwrap_or(false);
+    if cloud {
+        return capacity;
+    }
+    let allocated = match modelfile_context(&show) {
+        Some(tokens) => tokens,
+        None => loaded_context(base_url, api_key, model)
+            .await
+            .unwrap_or(OLLAMA_LOCAL_DEFAULT_CONTEXT),
+    };
+    Some(capacity.map_or(allocated, |capacity| capacity.min(allocated)))
+}
+
+async fn ollama_get_json(
+    request: reqwest::RequestBuilder,
+    api_key: Option<&str>,
+) -> Option<serde_json::Value> {
+    let request = match api_key {
+        Some(key) => request.bearer_auth(key),
+        None => request,
+    };
+    let response = request.send().await.ok()?.error_for_status().ok()?;
+    response.json().await.ok()
+}
+
+/// A `num_ctx` the model's Modelfile sets, from `/api/show`'s `parameters` text.
+fn modelfile_context(show: &serde_json::Value) -> Option<usize> {
+    show["parameters"].as_str()?.lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        (fields.next() == Some("num_ctx"))
+            .then(|| fields.next()?.parse().ok())
+            .flatten()
+    })
+}
+
+/// The context a running server gave `model`, when it is loaded (`/api/ps`). This is how a
+/// server-wide `OLLAMA_CONTEXT_LENGTH` shows up.
+async fn loaded_context(base_url: &str, api_key: Option<&str>, model: &str) -> Option<usize> {
+    let running = ollama_get_json(client().get(format!("{base_url}/api/ps")), api_key).await?;
+    running["models"]
+        .as_array()?
         .iter()
-        .find(|(key, _)| key.ends_with(".context_length"))
-        .and_then(|(_, value)| value.as_u64())
+        .find(|entry| entry["name"] == model || entry["model"] == model)
+        .and_then(|entry| entry["context_length"].as_u64())
         .map(|tokens| tokens as usize)
 }
 
@@ -814,33 +876,85 @@ mod tests {
         );
     }
 
-    #[test]
-    fn ollama_reports_the_context_window_under_its_architecture_prefix() {
+    /// Serves Ollama's `/api/show` and `/api/ps` with the given bodies; a `None` answers 404.
+    fn ollama_server(show: &'static str, ps: Option<&'static str>) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_millis(200)))
-                .unwrap();
-            let mut buffer = [0_u8; 8192];
-            let _ = stream.read(&mut buffer);
-            let body = r#"{"model_info":{"general.architecture":"gptoss","gptoss.context_length":131072}}"#;
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            stream.write_all(response.as_bytes()).unwrap();
+            for stream in listener.incoming().take(2) {
+                let mut stream = stream.unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_millis(200)))
+                    .unwrap();
+                let mut buffer = [0_u8; 8192];
+                let read = stream.read(&mut buffer).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buffer[..read]);
+                let body = if request.starts_with("POST /api/show") {
+                    Some(show)
+                } else {
+                    ps
+                };
+                let response = match body {
+                    Some(body) => format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    ),
+                    None => "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+                };
+                let _ = stream.write_all(response.as_bytes());
+            }
         });
-        let runtime = tokio::runtime::Runtime::new().unwrap();
+        format!("http://{address}/")
+    }
 
-        let window = runtime.block_on(ollama_context_window(
-            &format!("http://{address}/"),
+    const SHOW_128K: &str =
+        r#"{"model_info":{"general.architecture":"gptoss","gptoss.context_length":131072}}"#;
+
+    fn context(base_url: &str, model: &str) -> Option<usize> {
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(ollama_context_window(base_url, None, model))
+    }
+
+    #[test]
+    fn a_cloud_model_gets_its_full_capacity() {
+        let url = ollama_server(SHOW_128K, None);
+        assert_eq!(context(&url, "gpt-oss:120b-cloud"), Some(131_072));
+    }
+
+    #[test]
+    fn a_local_model_gets_what_its_modelfile_allocates_not_its_capacity() {
+        let url = ollama_server(
+            r#"{"parameters":"stop \"<end>\"\nnum_ctx 8192","model_info":{"llama.context_length":131072}}"#,
             None,
-            "gpt-oss",
-        ));
+        );
+        assert_eq!(context(&url, "llama3.1:8b"), Some(8192));
+    }
 
-        assert_eq!(window, Some(131_072));
+    #[test]
+    fn a_loaded_local_model_gets_the_context_the_server_gave_it() {
+        let url = ollama_server(
+            SHOW_128K,
+            Some(
+                r#"{"models":[{"name":"other:1b","context_length":2048},{"name":"gpt-oss:20b","context_length":16384}]}"#,
+            ),
+        );
+        assert_eq!(context(&url, "gpt-oss:20b"), Some(16_384));
+    }
+
+    #[test]
+    fn an_unloaded_local_model_assumes_ollamas_smallest_default() {
+        let url = ollama_server(SHOW_128K, Some(r#"{"models":[]}"#));
+        assert_eq!(context(&url, "gpt-oss:20b"), Some(4096));
+    }
+
+    #[test]
+    fn a_local_allocation_never_exceeds_the_model_capacity() {
+        let url = ollama_server(
+            r#"{"parameters":"num_ctx 32768","model_info":{"tiny.context_length":2048}}"#,
+            None,
+        );
+        assert_eq!(context(&url, "tiny"), Some(2048));
     }
 
     #[test]
