@@ -197,7 +197,8 @@ async fn stream(
 }
 
 /// Splits a server-sent-events body into its `data:` payloads as chunks arrive. `handle`
-/// returns false once the stream has said it is finished.
+/// returns false once the stream has said it is finished. A body that ends before saying so
+/// is an error: a dropped connection must not pass a cut-off answer off as complete.
 async fn read_sse(
     response: reqwest::Response,
     mut handle: impl FnMut(&str) -> Result<bool, String>,
@@ -210,14 +211,18 @@ async fn read_sse(
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
-        buffer.extend_from_slice(&chunk);
+        // SSE allows CRLF line endings. JSON escapes every carriage return inside a string,
+        // so dropping them leaves only LF-delimited records.
+        buffer.extend(chunk.iter().filter(|byte| **byte != b'\r'));
 
         while let Some(event_end) = buffer.windows(2).position(|pair| pair == b"\n\n") {
             let record: Vec<u8> = buffer.drain(..event_end + 2).collect();
             let event_str = String::from_utf8_lossy(&record[..event_end]);
 
             for line in event_str.lines() {
-                if let Some(data) = line.strip_prefix("data: ") {
+                // The space after the colon is optional.
+                if let Some(data) = line.strip_prefix("data:") {
+                    let data = data.strip_prefix(' ').unwrap_or(data);
                     if data == "[DONE]" || !handle(data)? {
                         return Ok(());
                     }
@@ -225,7 +230,7 @@ async fn read_sse(
             }
         }
     }
-    Ok(())
+    Err("The connection closed before the answer finished.".to_string())
 }
 
 async fn stream_anthropic(
@@ -760,6 +765,53 @@ mod tests {
     fn a_registration_that_never_starts_unregisters_when_dropped() {
         drop(register("abandoned"));
         assert!(!RUNNING.lock().unwrap().contains_key("abandoned"));
+    }
+
+    #[test]
+    fn a_crlf_stream_without_spaces_after_colons_still_streams() {
+        let url = sse_server(
+            "data:{\"choices\":[{\"delta\":{\"content\":\"one\"}}]}\r\n\r\n\
+             data: {\"choices\":[{\"delta\":{\"content\":\" two\"}}]}\r\n\r\n\
+             data:[DONE]\r\n\r\n",
+            false,
+        );
+        let events = Mutex::new(Vec::new());
+        let on_event = |event: StreamEvent| events.lock().unwrap().push(event);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        runtime
+            .block_on(stream_openai(&url, None, "m", "s", "u", &on_event))
+            .unwrap();
+
+        assert_eq!(
+            events.into_inner().unwrap(),
+            vec![
+                StreamEvent::Text("one".to_string()),
+                StreamEvent::Text(" two".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn a_stream_cut_off_before_it_finishes_is_an_error_after_its_partial_text() {
+        let url = sse_server(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n",
+            false,
+        );
+        let events = Mutex::new(Vec::new());
+        let on_event = |event: StreamEvent| events.lock().unwrap().push(event);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        let result = runtime.block_on(stream_openai(&url, None, "m", "s", "u", &on_event));
+
+        assert_eq!(
+            events.into_inner().unwrap(),
+            vec![StreamEvent::Text("partial".to_string())]
+        );
+        assert_eq!(
+            result,
+            Err("The connection closed before the answer finished.".to_string())
+        );
     }
 
     #[test]

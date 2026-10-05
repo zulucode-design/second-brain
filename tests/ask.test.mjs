@@ -6,7 +6,10 @@ import { transformWithEsbuild } from 'vite';
 
 const source = await readFile(new URL('../src/lib/utils/ask.ts', import.meta.url), 'utf8');
 const { code } = await transformWithEsbuild(source, 'ask.ts', { loader: 'ts', format: 'esm', target: 'esnext' });
-const { keepLatest, forVault, expandedAnswer, stageLabel, coverageLabel, createAnswerRenderer, KEPT_ANSWERS } = await import(
+const {
+  keepLatest, forVault, expandedAnswer, stageLabel, coverageLabel, createAnswerRenderer, KEPT_ANSWERS,
+  askUnavailableReason, askInputKey, nextSourceIndex, withMissing, visibleUnread, UNREAD_SHOWN,
+} = await import(
   `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
 );
 
@@ -126,4 +129,39 @@ test('ordinary Markdown still renders', () => {
 
   assert.match(html, /<strong>Bold<\/strong>/);
   assert.match(html, /<li>one<\/li>/);
+});
+
+test('Ask is unavailable, with a reason, until a provider is set', () => {
+  assert.equal(askUnavailableReason(null), 'No AI provider is set up for Ask');
+  assert.equal(askUnavailableReason(undefined), 'No AI provider is set up for Ask');
+  assert.equal(askUnavailableReason('ollama'), null);
+});
+
+test('in the question box, Enter asks and Down or Tab moves into the sources', () => {
+  assert.equal(askInputKey('Enter', false), 'submit');
+  assert.equal(askInputKey('ArrowDown', false), 'focus-sources');
+  assert.equal(askInputKey('Tab', false), 'focus-sources');
+  assert.equal(askInputKey('Tab', true), null);
+  assert.equal(askInputKey('a', false), null);
+});
+
+test('arrow keys move through the sources without leaving the list', () => {
+  assert.equal(nextSourceIndex(0, 3, 'ArrowDown'), 1);
+  assert.equal(nextSourceIndex(2, 3, 'ArrowDown'), 2);
+  assert.equal(nextSourceIndex(0, 3, 'ArrowUp'), 0);
+  assert.equal(nextSourceIndex(-1, 3, 'ArrowDown'), null);
+  assert.equal(nextSourceIndex(1, 3, 'Enter'), null);
+});
+
+test('a citation whose note is gone is marked missing; one that opens is not', () => {
+  const none = new Set();
+  assert.deepEqual([...withMissing(none, '/vault/gone.md', 'not-found')], ['/vault/gone.md']);
+  assert.equal(withMissing(none, '/vault/here.md', 'navigated'), none);
+  assert.equal(withMissing(none, '/vault/busy.md', 'save-failed'), none);
+});
+
+test('the unread list shows the best notes first and every note on request', () => {
+  const unread = Array.from({ length: UNREAD_SHOWN + 5 }, (_, index) => index);
+  assert.equal(visibleUnread(unread, false).length, UNREAD_SHOWN);
+  assert.equal(visibleUnread(unread, true).length, UNREAD_SHOWN + 5);
 });

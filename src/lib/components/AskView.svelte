@@ -1,28 +1,31 @@
 <script lang="ts">
 	import MarkdownIt from 'markdown-it';
-	import { appConfig, showSearch } from '$lib/stores/app';
+	import { appConfig } from '$lib/stores/app';
 	import { askAnswers, stop } from '$lib/stores/ask';
 	import {
 		coverageLabel,
 		createAnswerRenderer,
+		askUnavailableReason,
 		expandedAnswer,
 		isRunning,
+		nextSourceIndex,
 		stageLabel,
+		visibleUnread,
+		withMissing,
+		UNREAD_SHOWN,
 		type AskAnswer,
 	} from '$lib/utils/ask';
 	import type { NoteNavigationResult } from '$lib/utils/navigation';
 
 	let { onOpen }: { onOpen: (path: string) => Promise<NoteNavigationResult> } = $props();
 
-	/** A broad question in a large vault can leave thousands of notes unread; list the best. */
-	const UNREAD_SHOWN = 25;
-
 	const render = createAnswerRenderer(MarkdownIt);
 	const answers = $derived($askAnswers);
-	const hasProvider = $derived(Boolean($appConfig?.ai_provider));
+	const unavailable = $derived(askUnavailableReason($appConfig?.ai_provider));
 
 	let picked = $state<{ id: string; newest: string } | null>(null);
 	let missing = $state<Set<string>>(new Set());
+	let showAllUnread = $state<Set<string>>(new Set());
 	let now = $state(Date.now());
 	let listEl = $state<HTMLDivElement>(null!);
 
@@ -35,7 +38,7 @@
 	});
 
 	async function open(path: string) {
-		if ((await onOpen(path)) === 'not-found') missing = new Set(missing).add(path);
+		missing = withMissing(missing, path, await onOpen(path));
 	}
 
 	function openCitation(event: MouseEvent, answer: AskAnswer) {
@@ -52,26 +55,18 @@
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
-		if (event.key === 'Escape') {
-			$showSearch = false;
-			return;
-		}
-		if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
 		const sources = [...(listEl?.querySelectorAll<HTMLButtonElement>('.ask-answer.open .source') ?? [])];
-		const index = sources.indexOf(document.activeElement as HTMLButtonElement);
-		if (index < 0) return;
+		const next = nextSourceIndex(sources.indexOf(document.activeElement as HTMLButtonElement), sources.length, event.key);
+		if (next === null) return;
 		event.preventDefault();
-		const next = index + (event.key === 'ArrowDown' ? 1 : -1);
-		sources[Math.max(0, Math.min(next, sources.length - 1))].focus();
+		sources[next].focus();
 	}
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="ask" bind:this={listEl} onkeydown={handleKeydown}>
-	{#if !hasProvider}
-		<div class="ask-empty">
-			No AI provider is set up to answer questions. Choose one in Settings to use Ask.
-		</div>
+	{#if unavailable}
+		<div class="ask-empty">{unavailable}. Choose one in Settings to use Ask.</div>
 	{:else if answers.length === 0}
 		<div class="ask-empty">
 			Ask a question about your notes and press <kbd>&crarr;</kbd>. Answers cite the notes they come from.
@@ -123,14 +118,16 @@
 						{/each}
 						{#if answer.plan.unread.length > 0}
 							<div class="ask-coverage">Related but not read</div>
-							{#each answer.plan.unread.slice(0, UNREAD_SHOWN) as note (note.path)}
+							{#each visibleUnread(answer.plan.unread, showAllUnread.has(answer.id)) as note (note.path)}
 								<button class="source unread" onclick={() => open(note.path)}>
 									<span class="source-title">{note.title}</span>
 									{#if missing.has(note.path)}<span class="source-missing">note no longer exists</span>{/if}
 								</button>
 							{/each}
-							{#if answer.plan.unread.length > UNREAD_SHOWN}
-								<div class="ask-coverage">and {answer.plan.unread.length - UNREAD_SHOWN} more</div>
+							{#if answer.plan.unread.length > UNREAD_SHOWN && !showAllUnread.has(answer.id)}
+								<button class="ask-more" onclick={() => (showAllUnread = new Set(showAllUnread).add(answer.id))}>
+									Show all {answer.plan.unread.length}
+								</button>
 							{/if}
 						{/if}
 					</div>
@@ -274,6 +271,16 @@
 		font-size: 11px;
 		color: var(--text-tertiary);
 		padding: 6px 4px 4px;
+	}
+
+	.ask-more {
+		border: none;
+		background: none;
+		padding: 5px 6px;
+		font: inherit;
+		font-size: 12px;
+		color: var(--text-accent);
+		cursor: pointer;
 	}
 
 	.source {

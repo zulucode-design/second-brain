@@ -6,6 +6,7 @@
 	import { PARA_CATEGORIES, type SearchResult, type NotebookEntry, type ParaCategory } from '$lib/types';
 	import type { NoteNavigationResult } from '$lib/utils/navigation';
 	import { ask } from '$lib/stores/ask';
+	import { askInputKey, askUnavailableReason } from '$lib/utils/ask';
 	import AskView from './AskView.svelte';
 	import { compactLayout } from '$lib/stores/app';
 	const isCompact = $derived($compactLayout);
@@ -114,10 +115,11 @@
 		if (e.key === 'Escape') {
 			$showSearch = false;
 		} else if (mode === 'ask') {
-			if (e.key === 'Enter') {
+			const action = askInputKey(e.key, e.shiftKey);
+			if (action === 'submit') {
 				e.preventDefault();
 				submitAsk();
-			} else if ((e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) && askView?.focusSources()) {
+			} else if (action === 'focus-sources' && askView?.focusSources()) {
 				e.preventDefault();
 			}
 		} else if (e.key === 'ArrowDown') {
@@ -197,13 +199,20 @@
 	function close() {
 		$showSearch = false;
 	}
+
+	// Escape closes from anywhere in the panel, whichever control has focus; every other key
+	// stays inside it.
+	function handlePanelKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') close();
+		e.stopPropagation();
+	}
 </script>
 
 {#if $showSearch}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="search-overlay" onclick={close} onkeydown={handleKeydown}>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="search-panel" class:asking={mode === 'ask'} onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+		<div class="search-panel" class:asking={mode === 'ask'} onclick={(e) => e.stopPropagation()} onkeydown={handlePanelKeydown}>
 			<div class="search-input-wrapper">
 				<svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<circle cx="11" cy="11" r="8" />
@@ -225,12 +234,12 @@
 					<button class:active={mode === 'semantic'} onclick={() => changeMode('semantic')}>Semantic</button>
 					<button
 						class:active={mode === 'ask'}
-						disabled={!$appConfig?.ai_provider}
+						disabled={askUnavailableReason($appConfig?.ai_provider) !== null}
 						title="Ask a question answered from your notes"
 						onclick={() => changeMode('ask')}
 					>Ask</button>
-					{#if !$appConfig?.ai_provider}
-						<span class="ask-unavailable">No AI provider is set up for Ask</span>
+					{#if askUnavailableReason($appConfig?.ai_provider)}
+						<span class="ask-unavailable">{askUnavailableReason($appConfig?.ai_provider)}</span>
 					{/if}
 				</div>
 				{#if mode !== 'keyword'}

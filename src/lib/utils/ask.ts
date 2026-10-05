@@ -129,3 +129,35 @@ export function createAnswerRenderer(MarkdownItClass: typeof MarkdownIt) {
   };
   return (text: string, sourceCount: number): string => md.render(text, { sourceCount });
 }
+
+/** Why Ask cannot run, or null when it can. */
+export function askUnavailableReason(provider: string | null | undefined): string | null {
+  return provider ? null : 'No AI provider is set up for Ask';
+}
+
+/** What a key pressed in the question box does in Ask mode. Escape closes the overlay first. */
+export function askInputKey(key: string, shiftKey: boolean): 'submit' | 'focus-sources' | null {
+  if (key === 'Enter') return 'submit';
+  if (key === 'ArrowDown' || (key === 'Tab' && !shiftKey)) return 'focus-sources';
+  return null;
+}
+
+/** The source ↑/↓ moves to from `index`, staying within the list; null for other keys. */
+export function nextSourceIndex(index: number, count: number, key: string): number | null {
+  if (index < 0 || count === 0) return null;
+  if (key === 'ArrowDown') return Math.min(index + 1, count - 1);
+  if (key === 'ArrowUp') return Math.max(index - 1, 0);
+  return null;
+}
+
+/** Records `path` as gone when opening it found no note, so its row can say so. */
+export function withMissing(missing: Set<string>, path: string, outcome: string): Set<string> {
+  return outcome === 'not-found' ? new Set(missing).add(path) : missing;
+}
+
+/** Unread notes shown before "Show all": a broad question can leave thousands unread. */
+export const UNREAD_SHOWN = 25;
+
+export function visibleUnread<T>(unread: T[], showAll: boolean): T[] {
+  return showAll ? unread : unread.slice(0, UNREAD_SHOWN);
+}
