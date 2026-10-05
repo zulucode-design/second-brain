@@ -51,6 +51,7 @@ function setUp(root, model) {
   mkdirSync(join(configHome, APP_IDENTIFIER), { recursive: true });
   mkdirSync(dataHome);
   writeFileSync(join(configHome, APP_IDENTIFIER, 'config.json'), JSON.stringify({
+    theme: 'system',
     vault: { path: vault, name: 'Ask Run', vault_id: vaultId },
     active_vault: vault,
     ai_provider: 'ollama',
