@@ -78,10 +78,12 @@ async function waitForPort(port, child, name) {
   throw new Error(`${name} did not answer on port ${port}`);
 }
 
-// Tauri commands straight from the page, for state the UI does not show.
+// Tauri commands straight from the page, for state the UI does not show. A rejection comes back
+// as `{ failed }`: WebdriverIO reads any script result carrying an `error` field as its own
+// protocol error, so no field read back from the page may be named `error`.
 export function invoke(browser, command, args = {}) {
   return browser.executeAsync((name, payload, done) => {
-    window.__TAURI_INTERNALS__.invoke(name, payload).then(done, (error) => done({ error: String(error) }));
+    window.__TAURI_INTERNALS__.invoke(name, payload).then(done, (error) => done({ failed: String(error) }));
   }, command, args);
 }
 
@@ -129,7 +131,7 @@ async function ask(browser, question) {
     const html = open.querySelector('.ask-text')?.innerHTML ?? '';
     return {
       answer: text('.ask-text'),
-      error: text('.ask-error'),
+      failure: text('.ask-error'),
       empty: text('.ask-empty'),
       warning: text('.ask-warning'),
       stopped: text('.ask-note'),

@@ -33,6 +33,9 @@ function fill(vault) {
   });
 }
 
+// A save rewrites the frontmatter (its modified time), so text is compared below it.
+const body = (raw) => raw.replace(/^---\n[\s\S]*?\n---\n/, '');
+
 const hash = (path) => (existsSync(path) ? createHash('sha256').update(readFileSync(path)).digest('hex') : null);
 
 // The card for the note titled `title`, as the page shows it; null when there is none.
@@ -48,7 +51,7 @@ function readCard(browser, title) {
         excerpt: match.querySelector('.similar-excerpt')?.innerText.trim(),
       })),
       coverage: card.querySelector('.similar-coverage')?.innerText.trim() ?? null,
-      error: card.querySelector('.similar-error')?.innerText.trim() ?? null,
+      failure: card.querySelector('.similar-error')?.innerText.trim() ?? null,
     };
   }, title);
 }
@@ -80,7 +83,7 @@ function press(browser, title, label, matchTitle = null) {
 
 async function capture(browser, text) {
   const entry = await invoke(browser, 'quick_capture_note', { category: 'Areas', text });
-  if (entry.error) throw new Error(`capture failed: ${entry.error}`);
+  if (entry.failed) throw new Error(`capture failed: ${entry.failed}`);
   return entry;
 }
 
@@ -100,7 +103,7 @@ async function main() {
       // The backend's own check sends the card; this asks the same question directly, so the
       // run knows whether a card is due rather than waiting out a timeout.
       const expected = await invoke(browser, 'check_similar_notes', { path: entry.path });
-      if (expected?.error) throw new Error(`check failed: ${expected.error}`);
+      if (expected?.failed) throw new Error(`check failed: ${expected.failed}`);
       let card = null;
       if (expected) {
         card = await waitForCard(browser, entry.meta.title);
@@ -144,7 +147,7 @@ async function main() {
       actions.append = {
         capture: appended.capture,
         target: appended.duplicateOf,
-        keptOriginal: after.startsWith(before.trimEnd()),
+        keptOriginal: body(after).trimStart().startsWith(body(before).trim()),
         marked: after.includes('*Added from capture,'),
         hasCapture: after.includes(appended.title),
         captureGone: !existsSync(appended.path),
@@ -172,10 +175,10 @@ async function main() {
       appendFileSync(target, '\nEdited after the check.\n');
       const hashes = [hash(changed.path), hash(target)];
       await press(browser, changed.title, 'Append', changed.duplicateOf);
-      const card = await waitForCard(browser, changed.title, (current) => Boolean(current?.error));
+      const card = await waitForCard(browser, changed.title, (current) => Boolean(current?.failure));
       actions.changedNote = {
         capture: changed.capture,
-        error: card.error,
+        failure: card.failure,
         unchanged: hash(changed.path) === hashes[0] && hash(target) === hashes[1],
       };
     }
