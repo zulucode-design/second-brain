@@ -52,6 +52,7 @@ pub fn excerpt_budget(context_tokens: usize, question: &str) -> usize {
 pub struct AskSource {
     pub number: usize,
     pub path: String,
+    pub note_id: Option<String>,
     pub title: String,
 }
 
@@ -82,6 +83,7 @@ pub fn prompt(question: &str, retrieval: &Retrieval) -> (Vec<AskSource>, String)
                 sources.push(AskSource {
                     number: sources.len() + 1,
                     path: chunk.path.clone(),
+                    note_id: chunk.note_id.clone(),
                     title: chunk.title.clone(),
                 });
                 excerpts.push(Vec::new());
@@ -119,6 +121,7 @@ mod tests {
     fn chunk(path: &str, title: &str, ordinal: i64, text: &str) -> RetrievedChunk {
         RetrievedChunk {
             path: path.to_string(),
+            note_id: Some(format!("id-{path}")),
             title: title.to_string(),
             ordinal,
             text: text.to_string(),
@@ -155,11 +158,13 @@ mod tests {
                 AskSource {
                     number: 1,
                     path: "/v/b.md".into(),
+                    note_id: Some("id-/v/b.md".into()),
                     title: "Beta".into()
                 },
                 AskSource {
                     number: 2,
                     path: "/v/a.md".into(),
+                    note_id: Some("id-/v/a.md".into()),
                     title: "Alpha".into()
                 },
             ]

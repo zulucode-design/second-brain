@@ -348,6 +348,8 @@ export interface AiStreamEvent {
 export interface AskSource {
   number: number;
   path: string;
+  /** The note's frontmatter id, so a citation can tell it from a later note at the same path. */
+  note_id: string | null;
   title: string;
 }
 
@@ -357,7 +359,7 @@ export interface AskPlan {
   sources: AskSource[];
   relatedNotes: number;
   /** Related notes the context budget left out. */
-  unread: { path: string; title: string }[];
+  unread: { path: string; note_id: string | null; title: string }[];
   /** Notes not yet indexed, which the answer could not consider. */
   queuedNotes: number;
 }

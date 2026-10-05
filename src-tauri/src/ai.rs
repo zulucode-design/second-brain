@@ -173,7 +173,7 @@ async fn stream(
     // report it rather than showing a blank or truncated reply as complete.
     let answered = AtomicBool::new(false);
     let on_event = |event: StreamEvent| {
-        if matches!(event, StreamEvent::Text(_)) {
+        if matches!(&event, StreamEvent::Text(text) if !text.is_empty()) {
             answered.store(true, Ordering::SeqCst);
         }
         on_event(event);
@@ -298,7 +298,10 @@ async fn stream_anthropic(
                 on_event(StreamEvent::Thinking);
             }
             "content_block_delta" => {
-                if let Some(text) = parsed["delta"]["text"].as_str() {
+                if let Some(text) = parsed["delta"]["text"]
+                    .as_str()
+                    .filter(|text| !text.is_empty())
+                {
                     on_event(StreamEvent::Text(text.to_string()));
                 }
             }
@@ -918,6 +921,25 @@ mod tests {
             run(&url),
             Err("The model finished without writing an answer.".to_string())
         );
+    }
+
+    #[test]
+    fn empty_anthropic_text_deltas_are_not_an_answer() {
+        let url = sse_server(
+            "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"\"}}\n\n\
+             data: {\"type\":\"message_stop\"}\n\n",
+            false,
+        );
+        let events = Mutex::new(Vec::new());
+        let on_event = |event: StreamEvent| events.lock().unwrap().push(event);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        runtime
+            .block_on(stream_anthropic(&url, "key", "m", "s", "u", &on_event))
+            .unwrap();
+
+        // With no text reported, `stream` turns this into "finished without an answer".
+        assert!(events.into_inner().unwrap().is_empty());
     }
 
     /// Serves Ollama's `/api/show` with `show`.

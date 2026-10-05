@@ -13,7 +13,7 @@ const askUrl = toUrl(await load('ask.ts'));
 const { createAskSession } = await import(toUrl((await load('ask-session.ts')).replace(/["']\$lib\/utils\/ask["']/, JSON.stringify(askUrl))));
 
 const plan = (count, overrides = {}) => ({
-  sources: Array.from({ length: count }, (_, index) => ({ number: index + 1, path: `/vault/${index}.md`, title: `Note ${index}` })),
+  sources: Array.from({ length: count }, (_, index) => ({ number: index + 1, path: `/vault/${index}.md`, note_id: `n${index}`, title: `Note ${index}` })),
   relatedNotes: count,
   unread: [],
   queuedNotes: 0,

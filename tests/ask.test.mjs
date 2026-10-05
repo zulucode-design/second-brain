@@ -70,7 +70,7 @@ test('a new question expands itself even after the user expanded an older answer
 });
 
 const plan = (sources, relatedNotes, unread = []) => ({
-  sources: sources.map((title, index) => ({ number: index + 1, path: `/vault/${title}.md`, title })),
+  sources: sources.map((title, index) => ({ number: index + 1, path: `/vault/${title}.md`, note_id: `n${index}`, title })),
   relatedNotes,
   unread,
   queuedNotes: 0,
@@ -176,8 +176,22 @@ test('a cited note deleted on disk is reported gone even when it is the open not
     throw new Error('Note not found');
   };
 
-  assert.equal(await openCitation('/vault/gone.md', gone, open), 'not-found');
+  assert.equal(await openCitation('/vault/gone.md', 'id-1', gone, open), 'not-found');
   assert.deepEqual(opened, []);
-  assert.equal(await openCitation('/vault/here.md', async () => ({}), open), 'navigated');
+  assert.equal(await openCitation('/vault/here.md', 'id-2', async () => ({ meta: { id: 'id-2' } }), open), 'navigated');
   assert.deepEqual(opened, ['/vault/here.md']);
+});
+
+test('a different note created at a cited path is reported gone, not opened', async () => {
+  const opened = [];
+  const open = async (path) => {
+    opened.push(path);
+    return 'navigated';
+  };
+  const replacement = async () => ({ meta: { id: 'new-note' } });
+
+  assert.equal(await openCitation('/vault/reused.md', 'old-note', replacement, open), 'not-found');
+  assert.deepEqual(opened, []);
+  // A note with no id can only be checked for existence.
+  assert.equal(await openCitation('/vault/reused.md', null, replacement, open), 'navigated');
 });

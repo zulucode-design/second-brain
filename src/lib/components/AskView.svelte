@@ -39,14 +39,14 @@
 		return () => clearInterval(timer);
 	});
 
-	async function open(path: string) {
-		missing = withMissing(missing, path, await openCitation(path, readNote, onOpen));
+	async function open(path: string, noteId: string | null) {
+		missing = withMissing(missing, path, await openCitation(path, noteId, readNote, onOpen));
 	}
 
 	function clickCitation(event: MouseEvent, answer: AskAnswer) {
 		const target = (event.target as HTMLElement).closest<HTMLButtonElement>('button.citation');
 		const source = answer.plan?.sources[Number(target?.dataset.source) - 1];
-		if (source) void open(source.path);
+		if (source) void open(source.path, source.note_id);
 	}
 
 	/** Moves focus into the open answer's sources; false when it has none. */
@@ -112,7 +112,7 @@
 					<div class="ask-sources">
 						<div class="ask-coverage">{coverageLabel(answer.plan)}</div>
 						{#each answer.plan.sources as source (source.number)}
-							<button class="source" onclick={() => open(source.path)}>
+							<button class="source" onclick={() => open(source.path, source.note_id)}>
 								<span class="source-number">{source.number}</span>
 								<span class="source-title">{source.title}</span>
 								{#if missing.has(source.path)}<span class="source-missing">note no longer exists</span>{/if}
@@ -121,7 +121,7 @@
 						{#if answer.plan.unread.length > 0}
 							<div class="ask-coverage">Related but not read</div>
 							{#each visibleUnread(answer.plan.unread, showAllUnread.has(answer.id)) as note (note.path)}
-								<button class="source unread" onclick={() => open(note.path)}>
+								<button class="source unread" onclick={() => open(note.path, note.note_id)}>
 									<span class="source-title">{note.title}</span>
 									{#if missing.has(note.path)}<span class="source-missing">note no longer exists</span>{/if}
 								</button>

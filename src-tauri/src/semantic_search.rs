@@ -660,6 +660,7 @@ impl SemanticIndex {
             read.insert(chunk.key.as_str());
             retrieval.chunks.push(RetrievedChunk {
                 path: chunk.path.clone(),
+                note_id: note_id(&chunk.key),
                 title: chunk.title.clone(),
                 ordinal: chunk.ordinal,
                 text,
@@ -670,6 +671,7 @@ impl SemanticIndex {
             if listed.insert(chunk.key.as_str()) && !read.contains(chunk.key.as_str()) {
                 retrieval.unread.push(UnreadNote {
                     path: chunk.path.clone(),
+                    note_id: note_id(&chunk.key),
                     title: chunk.title.clone(),
                 });
             }
@@ -1215,6 +1217,11 @@ fn best_per_note(
         .collect()
 }
 
+/// The frontmatter id inside a note key, which is `id:<id>` for notes that have one.
+fn note_id(key: &str) -> Option<String> {
+    key.strip_prefix("id:").map(str::to_string)
+}
+
 fn chunk_text(database: &Connection, chunk: &ScoredChunk) -> Result<String, String> {
     database
         .prepare_cached("SELECT text FROM chunks WHERE note_key = ?1 AND ordinal = ?2")
@@ -1238,6 +1245,9 @@ pub struct Retrieval {
 #[derive(Debug)]
 pub struct RetrievedChunk {
     pub path: String,
+    /// The note's frontmatter id, when it has one, so a citation can tell its note from a
+    /// later note at the same path.
+    pub note_id: Option<String>,
     pub title: String,
     pub ordinal: i64,
     pub text: String,
@@ -1246,6 +1256,7 @@ pub struct RetrievedChunk {
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct UnreadNote {
     pub path: String,
+    pub note_id: Option<String>,
     pub title: String,
 }
 
@@ -1655,6 +1666,7 @@ mod tests {
             partial.unread,
             vec![UnreadNote {
                 path: short.to_string_lossy().to_string(),
+                note_id: Some("short-id".to_string()),
                 title: "Short coffee".to_string(),
             }]
         );
