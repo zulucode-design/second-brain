@@ -3852,17 +3852,16 @@ pub async fn ask_notes(
     .map_err(|error| format!("Semantic search is unavailable: {error}"))?;
 
     let (sources, user_message) = crate::ask::prompt(&question, &retrieval);
-    if sources.is_empty() && retrieval.related_notes > 0 {
-        return Err(format!(
-            "The model's context window ({context_tokens} tokens) has no room for any note after \
-             the question and the space kept for the answer."
-        ));
-    }
+    let answer = crate::ask::should_answer(
+        &sources,
+        retrieval.related_notes,
+        context_tokens,
+        &user_message,
+    )?;
     if semantic.is_retired() {
         return Err("The vault changed while this question was being answered.".to_string());
     }
-    debug_assert!(user_message.len() <= crate::ask::prompt_allowance(context_tokens));
-    if !sources.is_empty() && !registration.is_cancelled() {
+    if answer && !registration.is_cancelled() {
         crate::ai::start(
             app,
             settings,

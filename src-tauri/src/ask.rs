@@ -121,6 +121,31 @@ pub fn prompt(question: &str, retrieval: &Retrieval) -> (Vec<AskSource>, String)
     (sources, message)
 }
 
+/// Whether to ask the model: only when some note was read and the message fits the window.
+/// With no related note there is nothing to answer from, whatever the window; with related
+/// notes but none read, the window had no room for them.
+pub fn should_answer(
+    sources: &[AskSource],
+    related_notes: usize,
+    context_tokens: usize,
+    user_message: &str,
+) -> Result<bool, String> {
+    if sources.is_empty() {
+        return if related_notes == 0 {
+            Ok(false)
+        } else {
+            Err(format!(
+                "The model's context window ({context_tokens} tokens) has no room for any note \
+                 after the question and the space kept for the answer."
+            ))
+        };
+    }
+    if user_message.len() > prompt_allowance(context_tokens) {
+        return Err("The question and notes do not fit the model's context window.".to_string());
+    }
+    Ok(true)
+}
+
 /// Keeps note text from closing its own `<source>` tag and posing as the prompt.
 fn contain(text: &str) -> String {
     text.replace("</source", "</ source")
@@ -276,6 +301,40 @@ mod tests {
         let (_, message) = prompt(question, &retrieval);
 
         assert!(message.len() <= cost + "Question: ".len() + question.len());
+    }
+
+    #[test]
+    fn a_question_with_no_related_note_skips_the_model_even_in_a_tiny_window() {
+        let (sources, message) = prompt("What about my telescope?", &Retrieval::default());
+
+        // A local Ollama model at its 4k default leaves no allowance at all; that must not
+        // matter when there is nothing to read.
+        assert_eq!(prompt_allowance(4096), 0);
+        assert_eq!(should_answer(&sources, 0, 4096, &message), Ok(false));
+    }
+
+    #[test]
+    fn related_notes_that_did_not_fit_are_an_error_not_a_silent_no_match() {
+        let (sources, message) = prompt("q", &Retrieval::default());
+
+        let result = should_answer(&sources, 3, 4096, &message);
+
+        assert!(result.unwrap_err().contains("4096 tokens"));
+    }
+
+    #[test]
+    fn a_read_note_is_answered_only_when_the_message_fits() {
+        let retrieval = Retrieval {
+            chunks: vec![chunk("/v/a.md", "A", 0, "coffee")],
+            related_notes: 1,
+            unread: Vec::new(),
+            partly_read: 0,
+        };
+        let (sources, message) = prompt("q", &retrieval);
+        let roomy = 4096 + 256 + SYSTEM_PROMPT.len() + message.len();
+
+        assert_eq!(should_answer(&sources, 1, roomy, &message), Ok(true));
+        assert!(should_answer(&sources, 1, roomy - 1, &message).is_err());
     }
 
     #[test]
