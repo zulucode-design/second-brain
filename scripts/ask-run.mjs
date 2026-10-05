@@ -89,7 +89,7 @@ async function waitForIndex(browser, notes) {
   let status;
   while (Date.now() < deadline) {
     status = await invoke(browser, 'get_semantic_status');
-    if (status.indexed_notes >= notes && status.queued_notes === 0) return status;
+    if (status.indexedNotes >= notes && status.queuedNotes === 0) return status;
     await sleep(2_000);
   }
   throw new Error(`index did not finish: ${JSON.stringify(status)}`);
