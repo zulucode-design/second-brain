@@ -28,10 +28,11 @@ also hits the app binary, where a second manifest is a hard linker error (`CVT11
 Two agents split each change. Claude writes the code; Sol (Codex `gpt-6.1-sol`, reasoning effort
 high) does the administrative work around it.
 
-- **Claude** implements the change, runs the checks, and fixes every finding that review or CI
-  raises, CI failures included.
-- **Sol** runs the final review below, opens the pull request once that review is clean, watches CI
-  and reports failures back to Claude, and merges.
+- **Claude** writes the code and its tests, and fixes every finding that review, a test run, or CI
+  raises, CI failures included. Claude does not run the tests.
+- **Sol** runs the tests and checks (`pnpm verify`, manual runs, verification matrices) and reports
+  failures back to Claude. Sol also runs the final review below, opens the pull request once that
+  review is clean, watches CI and reports failures back to Claude, and merges.
 - **Merging waits for Nicolas.** When review and CI pass on the PR's head, Claude tells Nicolas the
   PR can merge, and Sol merges after his go-ahead.
 
