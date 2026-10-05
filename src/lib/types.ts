@@ -366,6 +366,25 @@ export interface AskPlan {
   queuedNotes: number;
 }
 
+/** A note the similarity check looked at, with the revision it had then (#9). */
+export interface CheckedNote {
+  path: string;
+  title: string;
+  revision: string;
+}
+
+export interface SimilarMatch extends CheckedNote {
+  /** The passage that matched best: why the note was picked. */
+  excerpt: string;
+}
+
+/** Existing notes like a just-written one: the best few, of `total` past the bar. */
+export interface SimilarityCheck {
+  capture: CheckedNote;
+  matches: SimilarMatch[];
+  total: number;
+}
+
 export interface NoteTitleEntry {
   title: string;
   path: string;

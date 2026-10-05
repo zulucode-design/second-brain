@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { generate, QUESTIONS } from './ask-fixture.mjs';
 
 const APP_IDENTIFIER = 'io.github.zulucodedesign.SecondBrain';
@@ -21,23 +22,23 @@ const NATIVE_PORT = 4447;
 const OLLAMA_PORT = 11435;
 const ANSWER_TIMEOUT = 5 * 60_000;
 
-const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+export const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
-function options(args) {
+export function options(args, runs) {
   const parsed = { model: 'gpt-oss:20b-cloud', ssh: 'sb-windows' };
   for (let index = 0; index < args.length; index += 2) {
     const key = args[index].replace(/^--/, '');
     if (!['app', 'model', 'root', 'ssh'].includes(key) || args[index + 1] === undefined) {
-      throw new Error(`usage: ask-run.mjs --app <binary> [--model <name>] [--root <dir>] [--ssh <host>]`);
+      throw new Error('usage: --app <binary> [--model <name>] [--root <dir>] [--ssh <host>]');
     }
     parsed[key] = args[index + 1];
   }
   if (!parsed.app) throw new Error('--app <binary> is required');
-  parsed.root ??= join(homedir(), 'sb-ask-run', new Date().toISOString().replaceAll(':', '-'));
+  parsed.root ??= join(homedir(), runs, new Date().toISOString().replaceAll(':', '-'));
   return parsed;
 }
 
-function setUp(root, model) {
+function setUp(root, model, fill) {
   const vault = join(root, 'vault');
   const configHome = join(root, 'config');
   const dataHome = join(root, 'data');
@@ -47,12 +48,12 @@ function setUp(root, model) {
   mkdirSync(join(vault, '.helixnotes'));
   const vaultId = randomUUID();
   writeFileSync(join(vault, '.helixnotes', 'vault_id'), vaultId, { flag: 'wx' });
-  generate(vault);
+  fill(vault);
   mkdirSync(join(configHome, APP_IDENTIFIER), { recursive: true });
   mkdirSync(dataHome);
   writeFileSync(join(configHome, APP_IDENTIFIER, 'config.json'), JSON.stringify({
     theme: 'system',
-    vault: { path: vault, name: 'Ask Run', vault_id: vaultId },
+    vault: { path: vault, name: 'Test Run', vault_id: vaultId },
     active_vault: vault,
     ai_provider: 'ollama',
     ai_model: model,
@@ -78,13 +79,13 @@ async function waitForPort(port, child, name) {
 }
 
 // Tauri commands straight from the page, for state the UI does not show.
-function invoke(browser, command, args = {}) {
+export function invoke(browser, command, args = {}) {
   return browser.executeAsync((name, payload, done) => {
     window.__TAURI_INTERNALS__.invoke(name, payload).then(done, (error) => done({ error: String(error) }));
   }, command, args);
 }
 
-async function waitForIndex(browser, notes) {
+export async function waitForIndex(browser, notes) {
   const deadline = Date.now() + 10 * 60_000;
   let status;
   while (Date.now() < deadline) {
@@ -142,9 +143,13 @@ async function ask(browser, question) {
   })) };
 }
 
-async function main() {
-  const { app, model, root, ssh } = options(process.argv.slice(2));
-  const paths = setUp(resolve(root), model);
+/**
+ * Runs `run(browser, session)` against the app at `app`, in a fresh run root whose vault
+ * `fill(vault)` writes, with the desktop's Ollama tunnelled in. Everything it starts is stopped
+ * afterwards.
+ */
+export async function withApp({ app, model, root, ssh, fill }, run) {
+  const paths = setUp(resolve(root), model, fill);
   const children = [];
   try {
     const tunnel = spawn('ssh', ['-N', '-o', 'ExitOnForwardFailure=yes', '-L', `127.0.0.1:${OLLAMA_PORT}:127.0.0.1:11434`, ssh], { stdio: 'ignore' });
@@ -165,18 +170,7 @@ async function main() {
     try {
       await browser.setWindowSize(1280, 860);
       await browser.$('button=New Note').waitForDisplayed({ timeout: 60_000 });
-      const index = await waitForIndex(browser, 40);
-      const results = [];
-      for (const { question, expect, cites } of QUESTIONS) {
-        const result = await ask(browser, question);
-        const cited = result.citations.map((number) => result.sources[number - 1]);
-        results.push({ question, expect, cites, uncited: cites.filter((title) => !cited.includes(title)), ...result });
-        console.log(`${result.seconds}s  ${question}`);
-      }
-      const trace = { when: new Date().toISOString(), app: resolve(app), model, index, results };
-      const out = join(root, 'ask-run.json');
-      writeFileSync(out, JSON.stringify(trace, null, 2));
-      console.log(out);
+      return await run(browser, { vault: paths.vault, tunnel });
     } finally {
       await browser.deleteSession().catch(() => {});
     }
@@ -185,7 +179,29 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+export function runMain(main) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
+}
+
+async function main() {
+  const settings = options(process.argv.slice(2), 'sb-ask-run');
+  await withApp({ ...settings, fill: generate }, async (browser) => {
+    const index = await waitForIndex(browser, 40);
+    const results = [];
+    for (const { question, expect, cites } of QUESTIONS) {
+      const result = await ask(browser, question);
+      const cited = result.citations.map((number) => result.sources[number - 1]);
+      results.push({ question, expect, cites, uncited: cites.filter((title) => !cited.includes(title)), ...result });
+      console.log(`${result.seconds}s  ${question}`);
+    }
+    const trace = { when: new Date().toISOString(), app: resolve(settings.app), model: settings.model, index, results };
+    const out = join(settings.root, 'ask-run.json');
+    writeFileSync(out, JSON.stringify(trace, null, 2));
+    console.log(out);
+  });
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) runMain(main);

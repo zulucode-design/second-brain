@@ -237,6 +237,37 @@ ends after the note is safely stored and its semantic indexing work is durably q
 
 Requires OS-level global hotkey registration on both Windows and Linux.
 
+### Capture-time similarity (#9)
+
+Decided 2026-10-05 (#9 comment 5998786646). The check exists to stop near-duplicates, and a
+prompt that fires on weak matches teaches the user to ignore it, so it surfaces only notes
+that say the same thing.
+
+- **When it runs.** After a quick capture is saved, in the background: the overlay closes
+  exactly as before and never waits on it. A note created in the app is checked once, the
+  first time the user leaves it (switches note or closes it). Web clips are not checked. A
+  note under 3 words is too short to judge, and an unreachable embedding backend skips the
+  check without a word.
+- **What it compares.** The new note is embedded as a document, the way notes are indexed,
+  and compared with every indexed note in all four categories (§12); the note itself is
+  excluded. A note counts as similar at a cosine score of 0.62 or more: midway between the
+  fixture's reworded duplicates (0.714 and up) and every other pair, same-topic notes included
+  (0.533 at most), scored with live embeddinggemma (`similarity_calibration`). It is
+  recalibrated when the embedding model changes. Cards show the best 3, with "Showing 3 of N
+  similar notes" when more pass.
+- **What the user sees.** A card in the main window, bottom right, newest first, that stays
+  until handled: the similar note's title, its best-matching passage (the reason for the
+  match), and Append, Open, and Dismiss. Cards live in memory only. When the main window is
+  not focused, a quick capture also raises a desktop notification, "Similar note found for
+  your capture", that names no note (it can show on a lock screen); clicking it brings the
+  main window forward. Several captures share one notification.
+- **Append.** The new note's text, title line included, goes at the end of the similar note
+  under `---` and *Added from capture, <date>:*, and the new note moves to trash. The similar
+  note's history makes this undoable. Either note having changed since the check refuses the
+  append, so nothing lands in a note the user has not seen as it is. Dismiss changes nothing.
+- **Later.** An AI-assisted merge that explains the match and appends only what is new is
+  #212.
+
 ### Command palette
 
 The command palette is a keyboard shortcut to existing local actions: search; opening All

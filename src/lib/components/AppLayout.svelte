@@ -6,6 +6,7 @@
 	import NoteList from './NoteList.svelte';
 	import Editor from './Editor.svelte';
 	import SearchPanel from './SearchPanel.svelte';
+	import SimilarCards from './SimilarCards.svelte';
 	import CommandPalette from './CommandPalette.svelte';
 	import SettingsPanel from './SettingsPanel.svelte';
 	import InfoPanel from './InfoPanel.svelte';
@@ -866,6 +867,28 @@
 		}
 	}
 
+	// A similar-note append rewrites one note and trashes another; the editor must not keep
+	// unsaved edits to either, nor show the old text afterwards.
+	async function beforeSimilarAppend(paths: string[]): Promise<boolean> {
+		if (!$activeNotePath || !paths.includes($activeNotePath)) return true;
+		return ensureCurrentNoteSaved('Adding to a similar note');
+	}
+
+	function afterSimilarAppend(capturePath: string, targetPath: string) {
+		if (Object.hasOwn($noteOrder, capturePath)) {
+			const { [capturePath]: _, ...rest } = $noteOrder;
+			$noteOrder = rest;
+		}
+		$notes = $notes.filter((note) => note.path !== capturePath);
+		if ($activeNotePath === capturePath) {
+			$activeNote = null;
+			$activeNotePath = null;
+		} else if ($activeNotePath === targetPath) {
+			void reloadOpenNoteFromDisk();
+		}
+		noteList?.refresh(true).catch((error) => console.error('Failed to refresh notes after appending:', error));
+	}
+
 	function handleMouseDown(e: MouseEvent) {
 		if (e.button === 3) { e.preventDefault(); navigateHistory(-1); }
 		if (e.button === 4) { e.preventDefault(); navigateHistory(1); }
@@ -1554,6 +1577,7 @@
 </div>
 
 <SearchPanel onOpenResult={(path, noteId) => navigateToPathResult(path, undefined, false, noteId)} />
+<SimilarCards onOpen={(path) => void navigateToPath(path)} onBeforeAppend={beforeSimilarAppend} onAppended={afterSimilarAppend} />
 <CommandPalette onNavigate={handleViewChanged} onToggleSource={toggleSourceMode} />
 <SettingsPanel onRequestVaultSwitch={requestVaultSwitch} onBeforeRestore={prepareForRestore} onAfterRestore={refreshAfterRestore} onAfterConflictChoice={reloadOpenNoteFromDisk} />
 <InfoPanel />

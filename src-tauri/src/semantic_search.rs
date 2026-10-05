@@ -1603,6 +1603,8 @@ mod tests {
     }
 
     fn write_note(path: &Path, id: &str, title: &str, category: &str, body: &str) {
+        // Quoted, so a title holding `: ` stays a title (a JSON string is valid YAML).
+        let title = serde_json::to_string(title).unwrap();
         let raw = format!(
             "---\nid: {id}\ntitle: {title}\ntags: []\npinned: false\ncreated: 2026-09-10T00:00:00Z\nmodified: 2026-09-10T00:00:00Z\ncategory: {category}\n---\n\n{body}\n"
         );

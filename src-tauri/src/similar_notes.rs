@@ -11,10 +11,11 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tauri::{AppHandle, Emitter, Manager};
 
-/// The score a note must reach to count as saying the same thing.
-// ponytail: placeholder until the calibration run (#9) scores the fixture's duplicate and
-// same-topic pairs with live embeddinggemma; set it between the two and record the scores.
-const SIMILAR_SCORE: f32 = 0.6;
+/// The score a note must reach to count as saying the same thing. Calibrated against live
+/// embeddinggemma on scripts/similarity-fixture.json (#9): its 8 reworded duplicates scored
+/// 0.714 to 0.850 against their notes, and no other pair, same-topic notes included, passed
+/// 0.533. The bar sits midway. Recalibrate when the embedding model changes.
+const SIMILAR_SCORE: f32 = 0.62;
 /// How many similar notes a card shows; the rest are only counted.
 const SHOWN: usize = 3;
 /// Shorter text embeds too loosely to call anything a duplicate.

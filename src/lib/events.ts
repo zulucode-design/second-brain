@@ -1,5 +1,5 @@
 import { listen, type Event, type UnlistenFn } from '@tauri-apps/api/event';
-import type { AiStatus, AiStreamEvent, BackupEntry, BulkMutationTerminal, FileEvent, HotkeyStatus, RepairStatus } from '$lib/types';
+import type { AiStatus, AiStreamEvent, BackupEntry, BulkMutationTerminal, FileEvent, HotkeyStatus, RepairStatus, SimilarityCheck } from '$lib/types';
 import type { ImportDonePayload } from '$lib/utils/import-outcome';
 import type { NotionSummary } from '$lib/utils/notion-settings';
 
@@ -22,6 +22,7 @@ export const EVENTS = {
   restoreDone: 'restore-done',
   saveBeforeClose: 'save-before-close',
   saveCloseReleased: 'save-close-released',
+  similarNotesFound: 'similar-notes-found',
   syncDone: 'sync-done',
   uiScaleChanged: 'ui-scale-changed',
 } as const;
@@ -44,6 +45,7 @@ export interface EventPayloads {
   restoreDone: BulkMutationTerminal;
   saveBeforeClose: { requestId: string };
   saveCloseReleased: { requestId: string; timedOut: boolean };
+  similarNotesFound: SimilarityCheck;
   syncDone: BulkMutationTerminal;
   uiScaleChanged: number;
 }
