@@ -1737,7 +1737,13 @@ mod tests {
         write_note(&capture, "capture-id", "Capture", "Areas", "coffee beans");
         write_note(&first, "first-id", "First", "Areas", "coffee ratio");
         write_note(&second, "second-id", "Second", "Projects", "coffee grinder");
-        write_note(&unrelated, "other-id", "Other", "Areas", "Quantum mechanics.");
+        write_note(
+            &unrelated,
+            "other-id",
+            "Other",
+            "Areas",
+            "Quantum mechanics.",
+        );
         let index =
             SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
                 .unwrap();

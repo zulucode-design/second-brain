@@ -58,7 +58,8 @@ pub fn check(
     path: &str,
 ) -> Result<Option<SimilarityCheck>, String> {
     let note = operations::read_note(vault, path)?;
-    let words = note.meta.title.split_whitespace().count() + note.content.split_whitespace().count();
+    let words =
+        note.meta.title.split_whitespace().count() + note.content.split_whitespace().count();
     if words < MIN_WORDS {
         return Ok(None);
     }
@@ -247,8 +248,8 @@ fn notify(app: &AppHandle) {
 
     let (title, body) = notice(UNSEEN.fetch_add(1, Ordering::SeqCst) + 1);
     let handle = app.clone();
-    let shown = crate::hotkey::windows::toast(&title, body, "similar-notes", "capture").and_then(
-        |toast| {
+    let shown =
+        crate::hotkey::windows::toast(&title, body, "similar-notes", "capture").and_then(|toast| {
             toast.Activated(&TypedEventHandler::<ToastNotification, IInspectable>::new(
                 move |_, _| {
                     open_main_window(&handle);
@@ -256,8 +257,7 @@ fn notify(app: &AppHandle) {
                 },
             ))?;
             crate::hotkey::windows::show_toast(&app.config().identifier, &toast)
-        },
-    );
+        });
     // A nudge only: the card is already waiting in the main window.
     if let Err(error) = shown {
         log::warn!("Could not show the similar-notes notification: {error}");

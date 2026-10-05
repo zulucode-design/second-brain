@@ -1231,7 +1231,13 @@ pub fn append_to_similar_note(
         &capture.content,
         &chrono::Local::now().format("%Y-%m-%d").to_string(),
     );
-    save_note(state.clone(), target_path, target.meta, body, target_revision)?;
+    save_note(
+        state.clone(),
+        target_path,
+        target.meta,
+        body,
+        target_revision,
+    )?;
     delete_note(state, capture_path).map_err(|error| {
         format!("Added to the note, but your capture could not be moved to trash: {error}")
     })
