@@ -606,7 +606,8 @@ pub struct VersionEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiStreamEvent {
-    pub event_type: String, // "text", "done", "error"
+    pub request_id: String,
+    pub event_type: String, // "text", "thinking", "done", "error"
     pub text: Option<String>,
     pub error: Option<String>,
 }

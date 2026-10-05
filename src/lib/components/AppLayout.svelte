@@ -75,7 +75,7 @@
 	import { debounce } from '$lib/utils/debounce';
 	import { openNoteWindow, closeSecondaryWindowsForVaultSwitch } from '$lib/utils/window';
 	import { normalizeStartupView, resolveStartupTarget } from '$lib/utils/startup-view';
-	import { NAVIGATE_NOTE_EVENT, type NavigateNoteRequest, type NoteNavigationResult } from '$lib/utils/navigation';
+	import { NAVIGATE_NOTE_EVENT, isExpectedNote, type NavigateNoteRequest, type NoteNavigationResult } from '$lib/utils/navigation';
 	import { relocateReported, reportSaveFailure as reportSaveResult, runSaveGatedAction } from '$lib/utils/document-lifecycle';
 	import { GenerationGate } from '$lib/utils/generation-gate';
 	import { runActiveDocumentMutation } from '$lib/utils/document-mutation';
@@ -465,9 +465,10 @@
 		return true;
 	}
 
-	async function navigateToPathResult(path: string, task?: TaskItem, holding = false): Promise<NoteNavigationResult> {
+	async function navigateToPathResult(path: string, task?: TaskItem, holding = false, expectedId?: string | null): Promise<NoteNavigationResult> {
 		if (!path || $shutdownPending) return 'blocked';
 		if ($activeNotePath === path && !$viewerNote) {
+			if ($activeNote && !isExpectedNote($activeNote, expectedId)) return 'not-found';
 			if (isCompact) $compactView = 'editor';
 			return 'navigated';
 		}
@@ -484,6 +485,7 @@
 				console.error('Failed to navigate to note:', error);
 				return 'not-found';
 			}
+			if (!isExpectedNote(content, expectedId)) return 'not-found';
 
 			// The destination read yielded to the event loop; drain any edit made in that
 			// interval before synchronously replacing the document.
@@ -1551,7 +1553,7 @@
 	</div>
 </div>
 
-<SearchPanel onOpenResult={navigateToPath} />
+<SearchPanel onOpenResult={(path, noteId) => navigateToPathResult(path, undefined, false, noteId)} />
 <CommandPalette onNavigate={handleViewChanged} onToggleSource={toggleSourceMode} />
 <SettingsPanel onRequestVaultSwitch={requestVaultSwitch} onBeforeRestore={prepareForRestore} onAfterRestore={refreshAfterRestore} onAfterConflictChoice={reloadOpenNoteFromDisk} />
 <InfoPanel />

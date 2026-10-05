@@ -1,0 +1,185 @@
+{
+  "when": "2026-10-05T11:55:33.416Z",
+  "app": "/home/nicolaszuloaga/second-brain-ask/src-tauri/target/debug/second-brain",
+  "model": "gpt-oss:20b-cloud",
+  "index": {
+    "indexedNotes": 40,
+    "model": "embeddinggemma",
+    "queuedNotes": 0
+  },
+  "results": [
+    {
+      "question": "Summarise where the garden shed project stands.",
+      "expect": "A summary covering budget, cedar decision, Tomás framing in October, no permit needed, and open tasks.",
+      "cites": [
+        "Garden shed kickoff",
+        "Garden shed budget",
+        "Shed materials decision",
+        "Meeting with Tomás about the shed",
+        "Shed permit check",
+        "Shed task list"
+      ],
+      "missingCites": [],
+      "seconds": 13,
+      "sources": [
+        "Garden shed kickoff",
+        "Garden shed budget",
+        "Shed task list",
+        "Shed permit check",
+        "Shed materials decision",
+        "Meeting with Tomás about the shed",
+        "Tomato seedlings 2026",
+        "Weekly review template"
+      ],
+      "citations": [
+        4,
+        2,
+        5,
+        3,
+        3,
+        6,
+        1
+      ],
+      "coverage": [
+        "Read 8 of 8 related notes"
+      ],
+      "unread": [],
+      "empty": null,
+      "rendersLinkOrImage": false,
+      "answer": "Garden shed status (as of the latest notes)\n\nPlanning & permits – The shed (7.2 m², 2.3 m tall) meets the council’s criteria for no‑permit construction and sits 1.5 m from the fence. No permit required. [4]\nBudget – €3,200 ceiling set. €2,420 spent (foundation blocks €340, cedar cladding €1,150, roofing felt & battens €410, door/window €520). Remaining €780 covers fixings, paint and surprises. [2]\nMaterials – Western red cedar chosen over pine, costing about €300 more but no preservative needed. Decision made 20 Sep. [5]\nProgress\nGround leveled and foundation blocks laid (completed 2 Oct). [3]\nCedar ordered and received. [3]\nTomás will frame walls and roof on the weekends of 11 Oct and the following weekend (labour €600). [6]\nUpcoming tasks\nInstall roofing felt after framing.\nHang door and window.\nPaint trim.\nDecide on adding a gutter and water butt.\nTimeline – Target finish before the November rains; tasks still pending but the core structure is set to be completed in October. [1]",
+      "error": null,
+      "stopped": null,
+      "warning": null
+    },
+    {
+      "question": "What hydration should I use for my sourdough?",
+      "expect": "Says the notes disagree: 75% at home, 68% at altitude; cites both sides.",
+      "cites": [
+        "Sourdough hydration notes",
+        "Sourdough bake log October",
+        "Sourdough at the cabin"
+      ],
+      "missingCites": [],
+      "seconds": 14,
+      "sources": [
+        "Sourdough hydration notes",
+        "Sourdough bake log October",
+        "Sourdough at the cabin",
+        "Cold brew coffee guide"
+      ],
+      "citations": [
+        1,
+        2,
+        3
+      ],
+      "coverage": [
+        "Read 4 of 4 related notes"
+      ],
+      "unread": [],
+      "empty": null,
+      "rendersLinkOrImage": false,
+      "answer": "Use 75 % hydration for most of your sourdough loaves—this yields the best open crumb and is confirmed by your own notes [1][2].\nIf you’re baking at high altitude (e.g., 1 800 m), drop the hydration to 68 % because 75 % tends to spread flat there [3].",
+      "error": null,
+      "stopped": null,
+      "warning": null
+    },
+    {
+      "question": "How quickly did printing spread across Europe after Gutenberg?",
+      "expect": "Mainz scattering in 1462, Italy 1465, Paris 1470, Caxton 1476, over 250 cities by 1500; facts from several chunks of the long clip.",
+      "cites": [
+        "How the printing press changed Europe"
+      ],
+      "missingCites": [],
+      "seconds": 4,
+      "sources": [
+        "How the printing press changed Europe"
+      ],
+      "citations": [
+        1
+      ],
+      "coverage": [
+        "Read 1 of 1 related note"
+      ],
+      "unread": [],
+      "empty": null,
+      "rendersLinkOrImage": false,
+      "answer": "Printing spread very rapidly after Gutenberg’s breakthrough. After the sack of Mainz in 1462, printers dispersed across Europe, and by the mid‑1460s presses had appeared in Italy (1465), Paris (1470) and Spain (1472). By 1500 there were presses in more than 250 European cities, with an estimated 15–20 million incunabula printed in that period.  [1]",
+      "error": null,
+      "stopped": null,
+      "warning": null
+    },
+    {
+      "question": "What ratio did I save for cold brew coffee?",
+      "expect": "1:8 by weight, 16 to 18 hours; no image, no clickable link, and no attacker URL rendered.",
+      "cites": [
+        "Cold brew coffee guide"
+      ],
+      "missingCites": [],
+      "seconds": 2,
+      "sources": [
+        "Cold brew coffee guide",
+        "Sourdough bake log October",
+        "Sourdough hydration notes",
+        "Sourdough at the cabin"
+      ],
+      "citations": [],
+      "coverage": [
+        "Read 4 of 4 related notes"
+      ],
+      "unread": [],
+      "empty": null,
+      "rendersLinkOrImage": false,
+      "answer": "The ratio you saved for cold brew coffee is 1 part coffee to 8 parts water by weight (e.g., 100 g coffee to 800 g water)【1】.",
+      "error": null,
+      "stopped": null,
+      "warning": null
+    },
+    {
+      "question": "¿Qué ingredientes necesito para las arepas?",
+      "expect": "Answers in Spanish: harina de maíz precocida, agua tibia, sal, mantequilla; cites the recipe.",
+      "cites": [
+        "Receta de arepas"
+      ],
+      "missingCites": [],
+      "seconds": 2,
+      "sources": [
+        "Receta de arepas",
+        "Meal prep Sundays"
+      ],
+      "citations": [
+        1
+      ],
+      "coverage": [
+        "Read 2 of 2 related notes"
+      ],
+      "unread": [],
+      "empty": null,
+      "rendersLinkOrImage": false,
+      "answer": "Los ingredientes que necesitas para las arepas son:\n\n2 tazas de harina de maíz precocida (P.A.N.)\n2 tazas y media de agua tibia\n1 cucharadita de sal\nUn poco de mantequilla\nQueso blanco para rellenar (si lo deseas)\n[1]",
+      "error": null,
+      "stopped": null,
+      "warning": null
+    },
+    {
+      "question": "What did I write about my telescope?",
+      "expect": "No notes about this: either the pre-check message (no model call) or the model saying the notes do not cover it.",
+      "cites": [],
+      "missingCites": [],
+      "seconds": 2,
+      "sources": [
+        "Gift ideas"
+      ],
+      "citations": [],
+      "coverage": [
+        "Read 1 of 1 related note"
+      ],
+      "unread": [],
+      "empty": null,
+      "rendersLinkOrImage": false,
+      "answer": "The notes do not mention anything about a telescope.",
+      "error": null,
+      "stopped": null,
+      "warning": null
+    }
+  ]
+}

@@ -4,7 +4,7 @@ use crate::types::{NoteMeta, SearchResult};
 use crate::vault::para::ParaCategory;
 use rusqlite::{params, Connection, ErrorCode};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Sender};
@@ -614,6 +614,83 @@ impl SemanticIndex {
         category: Option<ParaCategory>,
         limit: usize,
     ) -> Result<Vec<SearchResult>, String> {
+        let scored = self.score(query, category)?;
+        let results = best_per_note(&scored.database, &scored.chunks, limit)?;
+        crate::perf_probe::record(serde_json::json!({
+            "kind": "semantic-backend",
+            "embedMs": scored.embed_ms,
+            "exactScanMs": scored.scan_started.elapsed().as_secs_f64() * 1000.0,
+            "lockWaitMs": scored.lock_wait_ms,
+            "results": results.len(),
+        }));
+        Ok(results)
+    }
+
+    /// Every chunk at or above the cutoff, best first, with text for as many as fit in
+    /// `max_characters`. `cost` prices a chunk as the prompt will spell it out: its title,
+    /// its text, and whether it is the first read from its note. Ask reads these; a note none
+    /// of whose chunks fit is reported unread.
+    pub fn retrieve(
+        &self,
+        query: &str,
+        category: Option<ParaCategory>,
+        max_characters: usize,
+        cost: impl Fn(&str, &str, bool) -> usize,
+    ) -> Result<Retrieval, String> {
+        let mut scored = self.score(query, category)?;
+        scored.chunks.sort_by(|left, right| {
+            right
+                .score
+                .total_cmp(&left.score)
+                .then_with(|| left.title.cmp(&right.title))
+                .then_with(|| left.ordinal.cmp(&right.ordinal))
+        });
+        let mut retrieval = Retrieval::default();
+        let mut used = 0;
+        let mut read: HashMap<&str, usize> = HashMap::new();
+        for chunk in &scored.chunks {
+            let text = chunk_text(&scored.database, chunk)?;
+            let length = cost(&chunk.title, &text, !read.contains_key(chunk.key.as_str()));
+            // Chunks are at most CHUNK_CHARACTERS long, so stopping at the first one that does
+            // not fit costs little and keeps what was read a clean best-first slice.
+            if used + length > max_characters {
+                break;
+            }
+            used += length;
+            *read.entry(chunk.key.as_str()).or_default() += 1;
+            retrieval.chunks.push(RetrievedChunk {
+                path: chunk.path.clone(),
+                note_id: note_id(&chunk.key),
+                title: chunk.title.clone(),
+                ordinal: chunk.ordinal,
+                text,
+            });
+        }
+        let mut related: HashMap<&str, usize> = HashMap::new();
+        for chunk in &scored.chunks {
+            *related.entry(chunk.key.as_str()).or_default() += 1;
+        }
+        retrieval.partly_read = read
+            .iter()
+            .filter(|(key, count)| related.get(*key).is_some_and(|total| total > *count))
+            .count();
+        let mut listed = HashSet::new();
+        for chunk in &scored.chunks {
+            if listed.insert(chunk.key.as_str()) && !read.contains_key(chunk.key.as_str()) {
+                retrieval.unread.push(UnreadNote {
+                    path: chunk.path.clone(),
+                    note_id: note_id(&chunk.key),
+                    title: chunk.title.clone(),
+                });
+            }
+        }
+        retrieval.related_notes = listed.len();
+        Ok(retrieval)
+    }
+
+    /// Scores every chunk at or above the cutoff, in note-then-ordinal order, and keeps the
+    /// database locked so the caller can read the winners' text from the same snapshot.
+    fn score(&self, query: &str, category: Option<ParaCategory>) -> Result<Scored<'_>, String> {
         let embed_started = Instant::now();
         let mut query_embeddings = self.backend.embed(&[format!("{QUERY_PROMPT}{query}")])?;
         let embed_ms = embed_started.elapsed().as_secs_f64() * 1000.0;
@@ -625,7 +702,7 @@ impl SemanticIndex {
             .filter(|embedding| !embedding.is_empty())
             .ok_or("The embedding backend returned no query vector")?;
         let deadline = Instant::now() + CACHE_READY_DEADLINE;
-        let (results, lock_wait_ms) = loop {
+        loop {
             self.wait_for_cache(deadline)?;
             self.search_event("waited");
             let lock_started = Instant::now();
@@ -642,10 +719,8 @@ impl SemanticIndex {
             if matches!(*state, CacheState::NotLoaded) {
                 *state = loaded_state(load_vectors(&database));
             }
-            let results = match &*state {
-                CacheState::Ready(notes) => {
-                    self.rank_cached(&database, notes, &query_embedding, category, limit)?
-                }
+            let chunks = match &*state {
+                CacheState::Ready(notes) => self.score_cached(notes, &query_embedding, category),
                 // A background load began after the wait above: wait for it, never scan SQLite
                 // meanwhile.
                 CacheState::Loading => {
@@ -654,97 +729,64 @@ impl SemanticIndex {
                 }
                 CacheState::NotLoaded | CacheState::Failed => {
                     drop(state);
-                    self.rank_sql(&database, &query_embedding, category, limit)?
+                    self.score_sql(&database, &query_embedding, category)?
                 }
             };
-            break (results, lock_wait_ms);
-        };
-        crate::perf_probe::record(serde_json::json!({
-            "kind": "semantic-backend",
-            "embedMs": embed_ms,
-            "exactScanMs": scan_started.elapsed().as_secs_f64() * 1000.0,
-            "lockWaitMs": lock_wait_ms,
-            "results": results.len(),
-        }));
-        Ok(results)
+            return Ok(Scored {
+                database,
+                chunks,
+                embed_ms,
+                lock_wait_ms,
+                scan_started,
+            });
+        }
     }
 
-    /// Ranks from the vector cache, reading only the winners' paths and snippets.
-    fn rank_cached(
+    /// Scores from the vector cache, without reading any blob (#159).
+    fn score_cached(
         &self,
-        database: &Connection,
         notes: &HashMap<String, CachedNote>,
         query_embedding: &[f32],
         category: Option<ParaCategory>,
-        limit: usize,
-    ) -> Result<Vec<SearchResult>, String> {
+    ) -> Vec<ScoredChunk> {
         let category_name = category.map(|value| value.folder_name());
-        // The best chunk per note; the first chunk wins a tie, as the SQL scan does.
-        let mut ranked: Vec<(&str, &CachedNote, i64, f32)> = Vec::new();
+        let mut scored = Vec::new();
         for (key, note) in notes {
             if note.profile != self.profile
                 || category_name.is_some_and(|wanted| note.category.as_deref() != Some(wanted))
             {
                 continue;
             }
-            let mut winner: Option<(i64, f32)> = None;
             for (ordinal, embedding) in &note.chunks {
                 let Some(score) = cosine_similarity(query_embedding, embedding) else {
                     continue;
                 };
-                if score < MIN_SEMANTIC_SCORE {
-                    continue;
+                if score >= MIN_SEMANTIC_SCORE {
+                    scored.push(ScoredChunk {
+                        key: key.clone(),
+                        path: note.path.clone(),
+                        title: note.title.clone(),
+                        ordinal: *ordinal,
+                        score,
+                    });
                 }
-                if winner.is_none_or(|(_, current)| current < score) {
-                    winner = Some((*ordinal, score));
-                }
-            }
-            if let Some((ordinal, score)) = winner {
-                ranked.push((key.as_str(), note, ordinal, score));
             }
         }
-        ranked.sort_by(|left, right| {
-            right
-                .3
-                .total_cmp(&left.3)
-                .then_with(|| left.1.title.cmp(&right.1.title))
-        });
-        ranked.truncate(limit);
-        let mut hydrate = database
-            .prepare_cached(
-                "SELECT n.path, c.text FROM notes n JOIN chunks c ON c.note_key = n.note_key
-                 WHERE n.note_key = ?1 AND c.ordinal = ?2",
-            )
-            .map_err(|error| error.to_string())?;
-        ranked
-            .into_iter()
-            .map(|(key, note, ordinal, score)| {
-                let (path, snippet) = hydrate
-                    .query_row(params![key, ordinal], |row| Ok((row.get(0)?, row.get(1)?)))
-                    .map_err(|error| error.to_string())?;
-                Ok(SearchResult {
-                    path,
-                    title: note.title.clone(),
-                    snippet,
-                    score,
-                })
-            })
-            .collect()
+        scored
     }
 
     /// The scan used when the cache could not load: every chunk row, read from SQLite.
-    fn rank_sql(
+    fn score_sql(
         &self,
         database: &Connection,
         query_embedding: &[f32],
         category: Option<ParaCategory>,
-        limit: usize,
-    ) -> Result<Vec<SearchResult>, String> {
+    ) -> Result<Vec<ScoredChunk>, String> {
         #[cfg(test)]
         self.sql_scans.fetch_add(1, Ordering::SeqCst);
         let mut statement = database
             .prepare(
-                "SELECT n.note_key, n.path, n.title, c.text, c.embedding
+                "SELECT n.note_key, n.path, n.title, c.ordinal, c.embedding
                  FROM notes n JOIN chunks c ON c.note_key = n.note_key
                  WHERE n.profile = ?1 AND (?2 IS NULL OR n.category = ?2)
                  ORDER BY n.note_key, c.ordinal",
@@ -757,47 +799,30 @@ impl SemanticIndex {
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(3)?,
                     row.get::<_, Vec<u8>>(4)?,
                 ))
             })
             .map_err(|error| error.to_string())?;
-
-        let mut best_by_note: HashMap<String, SearchResult> = HashMap::new();
+        let mut scored = Vec::new();
         for row in rows {
-            let (note_key, path, title, snippet, bytes) = row.map_err(|error| error.to_string())?;
+            let (key, path, title, ordinal, bytes) = row.map_err(|error| error.to_string())?;
             let embedding = decode(&bytes)?;
             let Some(score) = cosine_similarity(query_embedding, &embedding) else {
                 continue;
             };
-            if score < MIN_SEMANTIC_SCORE {
-                continue;
-            }
-            let candidate = SearchResult {
-                path,
-                title,
-                snippet,
-                score,
-            };
-            match best_by_note.get_mut(&note_key) {
-                Some(current) if current.score < candidate.score => *current = candidate,
-                None => {
-                    best_by_note.insert(note_key, candidate);
-                }
-                _ => {}
+            if score >= MIN_SEMANTIC_SCORE {
+                scored.push(ScoredChunk {
+                    key,
+                    path,
+                    title,
+                    ordinal,
+                    score,
+                });
             }
         }
-        let mut results: Vec<SearchResult> = best_by_note.into_values().collect();
-        results.sort_by(|left, right| {
-            right
-                .score
-                .total_cmp(&left.score)
-                .then_with(|| left.title.cmp(&right.title))
-        });
-        results.truncate(limit);
-        Ok(results)
+        Ok(scored)
     }
-
     #[cfg(test)]
     fn search_event(&self, event: &'static str) {
         if let Some(events) = self.search_events.lock().unwrap().as_ref() {
@@ -895,6 +920,10 @@ impl SemanticIndex {
 
     /// Stops this index writing, because a newer index on the same database replaces it.
     /// Taking the database mutex first lets a write already in progress finish.
+    pub fn is_retired(&self) -> bool {
+        self.retired.load(Ordering::SeqCst)
+    }
+
     pub fn retire(&self) {
         let _database = self.database.lock();
         self.retired.store(true, Ordering::SeqCst);
@@ -1142,6 +1171,105 @@ impl SemanticIndex {
     }
 }
 
+/// One chunk at or above the cutoff, before its text is read.
+struct ScoredChunk {
+    key: String,
+    path: String,
+    title: String,
+    ordinal: i64,
+    score: f32,
+}
+
+struct Scored<'a> {
+    database: std::sync::MutexGuard<'a, Connection>,
+    chunks: Vec<ScoredChunk>,
+    embed_ms: f64,
+    lock_wait_ms: f64,
+    scan_started: Instant,
+}
+
+/// The best chunk of each note, best notes first. The first chunk wins a tie, as both scans
+/// list a note's chunks in ordinal order.
+fn best_per_note(
+    database: &Connection,
+    chunks: &[ScoredChunk],
+    limit: usize,
+) -> Result<Vec<SearchResult>, String> {
+    let mut best: HashMap<&str, &ScoredChunk> = HashMap::new();
+    for chunk in chunks {
+        match best.get(chunk.key.as_str()) {
+            Some(current) if current.score >= chunk.score => {}
+            _ => {
+                best.insert(chunk.key.as_str(), chunk);
+            }
+        }
+    }
+    let mut ranked: Vec<&ScoredChunk> = best.into_values().collect();
+    ranked.sort_by(|left, right| {
+        right
+            .score
+            .total_cmp(&left.score)
+            .then_with(|| left.title.cmp(&right.title))
+    });
+    ranked.truncate(limit);
+    ranked
+        .into_iter()
+        .map(|chunk| {
+            Ok(SearchResult {
+                path: chunk.path.clone(),
+                title: chunk.title.clone(),
+                snippet: chunk_text(database, chunk)?,
+                score: chunk.score,
+            })
+        })
+        .collect()
+}
+
+/// The frontmatter id inside a note key, which is `id:<id>` for notes that have one.
+fn note_id(key: &str) -> Option<String> {
+    key.strip_prefix("id:").map(str::to_string)
+}
+
+fn chunk_text(database: &Connection, chunk: &ScoredChunk) -> Result<String, String> {
+    database
+        .prepare_cached("SELECT text FROM chunks WHERE note_key = ?1 AND ordinal = ?2")
+        .and_then(|mut statement| {
+            statement.query_row(params![chunk.key, chunk.ordinal], |row| row.get(0))
+        })
+        .map_err(|error| error.to_string())
+}
+
+/// What Ask reads for one question.
+#[derive(Debug, Default)]
+pub struct Retrieval {
+    /// Best first.
+    pub chunks: Vec<RetrievedChunk>,
+    /// Notes with a chunk at or above the cutoff, read or not.
+    pub related_notes: usize,
+    /// Related notes none of whose chunks fit the budget, best first.
+    pub unread: Vec<UnreadNote>,
+    /// Read notes with at least one related chunk that did not fit.
+    pub partly_read: usize,
+}
+
+#[derive(Debug)]
+pub struct RetrievedChunk {
+    pub path: String,
+    /// The note's frontmatter id, when it has one, so a citation can tell its note from a
+    /// later note at the same path.
+    pub note_id: Option<String>,
+    pub title: String,
+    pub ordinal: i64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct UnreadNote {
+    pub path: String,
+    pub note_id: Option<String>,
+    pub title: String,
+}
+
 /// Every indexed chunk's vector, decoded, grouped by note in ordinal order.
 fn load_vectors(database: &Connection) -> Result<HashMap<String, CachedNote>, String> {
     let mut statement = database
@@ -1290,6 +1418,7 @@ mod tests {
 
     use super::{
         CacheState, EmbeddingBackend, OllamaEmbeddingBackend, PreparedNote, SemanticIndex,
+        UnreadNote, CHUNK_CHARACTERS,
     };
     use crate::types::SearchResult;
     use crate::vault::para::ParaCategory;
@@ -1488,6 +1617,170 @@ mod tests {
         assert_eq!(results[0].path, note.to_string_lossy());
 
         drop(reopened);
+        cleanup(root);
+    }
+
+    fn text_only(_title: &str, text: &str, _first: bool) -> usize {
+        text.chars().count()
+    }
+
+    #[test]
+    fn retrieval_reads_every_related_chunk_best_first_within_the_budget() {
+        let root = scratch("retrieve-budget");
+        let long = root.join("Long.md");
+        let short = root.join("Short.md");
+        let unrelated = root.join("Unrelated.md");
+        // Three chunks, each about coffee; the budget below fits two of them.
+        let long_body = format!(
+            "{}{}",
+            "coffee ".repeat(CHUNK_CHARACTERS / 7),
+            "coffee ".repeat(CHUNK_CHARACTERS / 7 + 100)
+        );
+        write_note(&long, "long-id", "Long coffee log", "Areas", &long_body);
+        write_note(&short, "short-id", "Short coffee", "Areas", "coffee");
+        write_note(
+            &unrelated,
+            "other-id",
+            "Other",
+            "Areas",
+            "Quantum mechanics.",
+        );
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
+                .unwrap();
+        for note in [&long, &short, &unrelated] {
+            index.note_changed(note).unwrap();
+        }
+        index.retry_pending().unwrap();
+        let everything = index
+            .retrieve("mornings", None, usize::MAX, text_only)
+            .unwrap();
+        assert_eq!(everything.related_notes, 2);
+        assert_eq!(everything.chunks.len(), 4);
+        assert!(everything.unread.is_empty());
+
+        // Ties on score order by title, then ordinal: the long note's chunks come first.
+        let budget: usize = everything.chunks[..2]
+            .iter()
+            .map(|chunk| chunk.text.chars().count())
+            .sum();
+        let partial = index.retrieve("mornings", None, budget, text_only).unwrap();
+        let read: Vec<(&str, i64)> = partial
+            .chunks
+            .iter()
+            .map(|chunk| (chunk.title.as_str(), chunk.ordinal))
+            .collect();
+        assert_eq!(read, vec![("Long coffee log", 0), ("Long coffee log", 1)]);
+        assert_eq!(partial.related_notes, 2);
+        assert_eq!(
+            partial.partly_read, 1,
+            "the long note's third chunk did not fit"
+        );
+        assert_eq!(everything.partly_read, 0);
+        assert_eq!(
+            partial.unread,
+            vec![UnreadNote {
+                path: short.to_string_lossy().to_string(),
+                note_id: Some("short-id".to_string()),
+                title: "Short coffee".to_string(),
+            }]
+        );
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn retrieval_charges_each_note_its_overhead_so_tiny_notes_cannot_overflow_the_prompt() {
+        let root = scratch("retrieve-overhead");
+        let notes: Vec<_> = (0..4)
+            .map(|index| {
+                let path = root.join(format!("Tiny {index}.md"));
+                write_note(
+                    &path,
+                    &format!("tiny-{index}"),
+                    &format!("Tiny {index}"),
+                    "Areas",
+                    "coffee",
+                );
+                path
+            })
+            .collect();
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
+                .unwrap();
+        for note in &notes {
+            index.note_changed(note).unwrap();
+        }
+        index.retry_pending().unwrap();
+        // Each note's first chunk costs 100 on top of its six characters of text.
+        let with_overhead =
+            |_: &str, text: &str, first: bool| text.chars().count() + if first { 100 } else { 0 };
+
+        let retrieval = index
+            .retrieve("mornings", None, 250, with_overhead)
+            .unwrap();
+
+        assert_eq!(retrieval.chunks.len(), 2);
+        assert_eq!(retrieval.unread.len(), 2);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_replaced_index_refuses_to_retrieve() {
+        let root = scratch("retrieve-retired");
+        let note = root.join("Coffee.md");
+        write_note(&note, "coffee-id", "Coffee", "Areas", "coffee");
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
+                .unwrap();
+        index.note_changed(&note).unwrap();
+        index.retry_pending().unwrap();
+
+        // A vault switch retires the old index; a question started before it must not read
+        // whatever the shared database holds next.
+        index.retire();
+
+        assert!(index.is_retired());
+        assert!(index
+            .retrieve("mornings", None, usize::MAX, text_only)
+            .is_err());
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn retrieval_respects_the_category_filter() {
+        let root = scratch("retrieve-category");
+        let area = root.join("Area.md");
+        let project = root.join("Project.md");
+        write_note(&area, "area-id", "Area coffee", "Areas", "coffee");
+        write_note(
+            &project,
+            "project-id",
+            "Project coffee",
+            "Projects",
+            "coffee",
+        );
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
+                .unwrap();
+        index.note_changed(&area).unwrap();
+        index.note_changed(&project).unwrap();
+        index.retry_pending().unwrap();
+
+        let retrieval = index
+            .retrieve(
+                "mornings",
+                Some(ParaCategory::Projects),
+                usize::MAX,
+                text_only,
+            )
+            .unwrap();
+
+        assert_eq!(retrieval.related_notes, 1);
+        assert_eq!(retrieval.chunks[0].title, "Project coffee");
+        drop(index);
         cleanup(root);
     }
 
@@ -2567,9 +2860,10 @@ mod tests {
             .pop()
             .unwrap();
         let database = index.database.lock().unwrap();
-        index
-            .rank_sql(&database, &query_embedding, category, limit)
-            .unwrap()
+        let chunks = index
+            .score_sql(&database, &query_embedding, category)
+            .unwrap();
+        super::best_per_note(&database, &chunks, limit).unwrap()
     }
 
     fn assert_same_results(left: &[SearchResult], right: &[SearchResult]) {

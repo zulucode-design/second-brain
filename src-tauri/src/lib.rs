@@ -2,6 +2,7 @@ mod ai;
 mod ai_health;
 mod ai_provider;
 mod app_dirs;
+mod ask;
 mod asset_scope;
 mod autostart;
 mod backup;
@@ -577,6 +578,8 @@ pub fn run() {
             commands::set_ai_settings,
             commands::test_ai_connection,
             commands::ai_ask,
+            commands::ask_notes,
+            commands::ai_cancel,
             notion::commands::notion_status,
             notion::commands::notion_connect,
             notion::commands::notion_disconnect,

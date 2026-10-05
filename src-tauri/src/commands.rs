@@ -3673,6 +3673,52 @@ pub fn test_ai_connection(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// The configured provider's request settings and the health target its requests go to.
+fn ai_request_target(
+    app: &AppHandle,
+) -> Result<
+    (
+        crate::ai_provider::AiRequestSettings,
+        Option<crate::ai_provider::AiTargetId>,
+    ),
+    String,
+> {
+    let state = app.state::<AppState>();
+    let config = state.config.lock().map_err(|e| e.to_string())?;
+    let configured = crate::ai_provider::ConfiguredAiProvider::from_config(&config);
+    let settings = configured
+        .request_settings()
+        .map_err(|error| error.to_string())?;
+    let generation = state
+        .ai_health
+        .lock()
+        .map_err(|e| e.to_string())?
+        .generation;
+    let health_target = configured
+        .health_target(generation)
+        .map(|target| target.id().clone());
+    Ok((settings, health_target))
+}
+
+/// Refuse immediately when the backend is known to be down, with the reason the poller
+/// already worked out. Starting the request instead would leave the user waiting on a
+/// machine that is asleep.
+fn refuse_known_unavailable(
+    app: &AppHandle,
+    health_target: Option<&crate::ai_provider::AiTargetId>,
+) -> Result<(), String> {
+    let status = app
+        .state::<AppState>()
+        .ai_health
+        .lock()
+        .map(|health| health.status.clone())
+        .map_err(|e| e.to_string())?;
+    match crate::ai_health::known_unavailability(&status, health_target) {
+        Some(reason) => Err(reason),
+        None => Ok(()),
+    }
+}
+
 #[tauri::command]
 pub fn ai_ask(
     app: AppHandle,
@@ -3681,37 +3727,15 @@ pub fn ai_ask(
     custom_prompt: Option<String>,
     request_id: String,
 ) -> Result<(), String> {
-    let (settings, writing_style, health_target) = {
-        let state = app.state::<AppState>();
-        let config = state.config.lock().map_err(|e| e.to_string())?;
-        let configured = crate::ai_provider::ConfiguredAiProvider::from_config(&config);
-        let settings = configured
-            .request_settings()
-            .map_err(|error| error.to_string())?;
-        let style = config.ai_writing_style.clone();
-        let generation = state
-            .ai_health
-            .lock()
-            .map_err(|e| e.to_string())?
-            .generation;
-        let health_target = configured
-            .health_target(generation)
-            .map(|target| target.id().clone());
-        (settings, style, health_target)
-    };
-
-    // Refuse immediately when the backend is known to be down, with the reason the poller
-    // already worked out. Starting the request instead would leave the user waiting on a
-    // machine that is asleep.
-    let status = app
+    let (settings, health_target) = ai_request_target(&app)?;
+    let writing_style = app
         .state::<AppState>()
-        .ai_health
+        .config
         .lock()
-        .map(|health| health.status.clone())
-        .map_err(|e| e.to_string())?;
-    if let Some(reason) = crate::ai_health::known_unavailability(&status, health_target.as_ref()) {
-        return Err(reason);
-    }
+        .map_err(|e| e.to_string())?
+        .ai_writing_style
+        .clone();
+    refuse_known_unavailable(&app, health_target.as_ref())?;
 
     let mut system_prompt = "You are a helpful writing assistant inside a note-taking app called Second Brain. \
         You help users improve, rewrite, summarize, and transform their text. \
@@ -3750,6 +3774,115 @@ pub fn ai_ask(
 
     crate::ai::ai_request(app, settings, system_prompt, user_message, request_id);
     Ok(())
+}
+
+/// Ask (#8): retrieves the notes related to `question` and, when there are any, streams an
+/// answer from them under `request_id`. Returns the numbered sources before the answer starts.
+#[tauri::command]
+pub async fn ask_notes(
+    app: AppHandle,
+    question: String,
+    category: Option<String>,
+    request_id: String,
+) -> Result<crate::ask::AskPlan, String> {
+    let question = question.trim().to_string();
+    if question.is_empty() {
+        return Err("Type a question first.".to_string());
+    }
+    let category = category
+        .map(|value| {
+            crate::vault::para::ParaCategory::from_name(&value)
+                .ok_or_else(|| format!("Unknown PARA category: {value}"))
+        })
+        .transpose()?;
+    let ollama = {
+        let state = app.state::<AppState>();
+        let config = state.config.lock().map_err(|e| e.to_string())?;
+        match config.ai_provider {
+            None => return Err("No AI provider is set up to answer questions.".to_string()),
+            Some(AiProvider::Ollama) => {
+                let configured = crate::ai_provider::ConfiguredAiProvider::from_config(&config);
+                Some((
+                    configured
+                        .base_url()
+                        .unwrap_or(crate::ai_provider::DEFAULT_OLLAMA_URL)
+                        .to_string(),
+                    configured.api_key().map(str::to_string),
+                ))
+            }
+            Some(_) => None,
+        }
+    };
+    let (settings, health_target) = ai_request_target(&app)?;
+    refuse_known_unavailable(&app, health_target.as_ref())?;
+    // Registered now, so a Stop during retrieval prevents the model call.
+    let registration = crate::ai::register(&request_id);
+    // Taken before any await: if the vault changes meanwhile, this index is retired and
+    // refuses to retrieve, so the question never reads the next vault's notes.
+    let semantic = app
+        .state::<AppState>()
+        .semantic_index
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone()
+        .ok_or("Semantic search is not initialized")?;
+
+    // Only Ollama reports a model's context window; other providers get the fallback.
+    let context_tokens = match &ollama {
+        Some((base_url, api_key)) => {
+            crate::ai::ollama_context_window(base_url, api_key.as_deref(), settings.model()).await
+        }
+        None => None,
+    }
+    .unwrap_or(crate::ask::FALLBACK_CONTEXT_TOKENS);
+    let budget = crate::ask::excerpt_budget(context_tokens, &question);
+
+    let query = question.clone();
+    let index = semantic.clone();
+    let (retrieval, queued_notes) = tokio::task::spawn_blocking(move || {
+        let retrieval = index.retrieve(&query, category, budget, crate::ask::excerpt_cost)?;
+        let queued = index
+            .status()
+            .map(|status| status.queued_notes)
+            .unwrap_or(0);
+        Ok::<_, String>((retrieval, queued))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| format!("Semantic search is unavailable: {error}"))?;
+
+    let (sources, user_message) = crate::ask::prompt(&question, &retrieval);
+    let answer = crate::ask::should_answer(
+        &sources,
+        retrieval.related_notes,
+        context_tokens,
+        &user_message,
+    )?;
+    if semantic.is_retired() {
+        return Err("The vault changed while this question was being answered.".to_string());
+    }
+    if answer && !registration.is_cancelled() {
+        crate::ai::start(
+            app,
+            settings,
+            crate::ask::SYSTEM_PROMPT.to_string(),
+            user_message,
+            registration,
+        );
+    }
+    Ok(crate::ask::AskPlan {
+        sources,
+        related_notes: retrieval.related_notes,
+        unread: retrieval.unread,
+        partly_read: retrieval.partly_read,
+        queued_notes,
+    })
+}
+
+/// Stops the AI stream for `request_id`, if it is still running.
+#[tauri::command]
+pub fn ai_cancel(request_id: String) {
+    crate::ai::cancel(&request_id);
 }
 
 // ── Helpers ──

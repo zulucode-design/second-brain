@@ -5687,6 +5687,8 @@
 		const requestId = crypto.randomUUID();
 		const unlisten = await listenAppEvent('aiStream', (event) => {
 			const data = event.payload;
+			// Ask can stream at the same time; only this request's events belong here.
+			if (data.request_id !== requestId) return;
 			if (data.event_type === 'text' && data.text) {
 				aiResult = (aiResult ?? '') + data.text;
 			} else if (data.event_type === 'done') {

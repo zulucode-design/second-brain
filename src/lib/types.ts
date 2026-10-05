@@ -336,9 +336,34 @@ export interface VersionEntry {
 }
 
 export interface AiStreamEvent {
+  /** The request this event belongs to; several streams can run at once. */
+  request_id: string;
+  /** "text", "thinking", "done", or "error". */
   event_type: string;
   text: string | null;
   error: string | null;
+}
+
+/** A note an Ask answer read, numbered as its `[n]` citations refer to it. */
+export interface AskSource {
+  number: number;
+  path: string;
+  /** The note's frontmatter id, so a citation can tell it from a later note at the same path. */
+  note_id: string | null;
+  title: string;
+}
+
+/** What Ask found before its answer streams in (src-tauri/src/ask.rs). */
+export interface AskPlan {
+  /** Empty when no note was related; then no model was called. */
+  sources: AskSource[];
+  relatedNotes: number;
+  /** Related notes the context budget left out. */
+  unread: { path: string; note_id: string | null; title: string }[];
+  /** Read notes with some related passages the budget left out. */
+  partlyRead: number;
+  /** Notes not yet indexed, which the answer could not consider. */
+  queuedNotes: number;
 }
 
 export interface NoteTitleEntry {

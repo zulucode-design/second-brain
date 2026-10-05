@@ -1,0 +1,189 @@
+{
+  "when": "2026-10-05T12:03:58.514Z",
+  "app": "/home/nicolaszuloaga/second-brain-ask/src-tauri/target/debug/second-brain",
+  "model": "gpt-oss:20b-cloud",
+  "index": {
+    "indexedNotes": 40,
+    "model": "embeddinggemma",
+    "queuedNotes": 0
+  },
+  "results": [
+    {
+      "question": "Summarise where the garden shed project stands.",
+      "expect": "A summary covering budget, cedar decision, Tomás framing in October, no permit needed, and open tasks.",
+      "cites": [
+        "Garden shed kickoff",
+        "Garden shed budget",
+        "Shed materials decision",
+        "Meeting with Tomás about the shed",
+        "Shed permit check",
+        "Shed task list"
+      ],
+      "uncited": [],
+      "seconds": 9,
+      "sources": [
+        "Garden shed kickoff",
+        "Garden shed budget",
+        "Shed task list",
+        "Shed permit check",
+        "Shed materials decision",
+        "Meeting with Tomás about the shed",
+        "Tomato seedlings 2026",
+        "Weekly review template"
+      ],
+      "citations": [
+        1,
+        4,
+        2,
+        5,
+        3,
+        6,
+        6,
+        3
+      ],
+      "coverage": [
+        "Read 8 of 8 related notes"
+      ],
+      "unread": [],
+      "empty": null,
+      "rendersLinkOrImage": false,
+      "answer": "Garden shed status (as of the latest notes)\n\nItem\tCurrent state\tNext step\tSource\nProject start & goal\tBegan 12 Sep; 2.4 m × 3 m shed behind vegetable beds for mower, bikes, tools\t–\t[1]\nPermit\tNo permit needed (size, height, distance from boundary)\t–\t[4]\nBudget\tCeiling 3,200 €; spent 2,420 € (foundation, cladding, roofing felt, door/window) → 780 € remaining for fixings, paint, surprises\t–\t[2]\nMaterials\tCedar cladding chosen (300 € more than pine) and ordered\t–\t[5]\nGround & foundation\tLevelled ground, foundation blocks laid (2 Oct)\t–\t[3]\nFraming\tTomás to frame walls & roof over two weekends in October (labour 600 €)\t–\t[6]\nFloor\tRecommendation: raise 15 cm on blocks for dry base\t–\t[6]\nRoof\tRoofing felt to be fitted after framing\t–\t\nDoor & Window\tHang door and window pending\t–\t\nPaint\tPaint trim pending\t–\t\nGutter & water butt\tUndecided whether to add\t–\t\nOverall progress\tFoundation and ordering complete; framing scheduled; next tasks are roofing, door/window, painting, and potential gutter/water butt decision\t–\t[3]\nSummary\nThe shed foundations are finished and cedar cladding is on hand. Framing is scheduled for the weekend of 11 October, with Tomás’ labour already budgeted. After framing, roofing felt, door/window installation, and trim painting will follow. The project remains under budget, with 780 € left for fixings, paint and any unforeseen costs. The decision on a gutter and water butt is still pending.",
+      "error": null,
+      "stopped": null,
+      "warning": null
+    },
+    {
+      "question": "What hydration should I use for my sourdough?",
+      "expect": "Says the notes disagree: 75% at home, 68% at altitude; cites both sides.",
+      "cites": [
+        "Sourdough hydration notes",
+        "Sourdough bake log October",
+        "Sourdough at the cabin"
+      ],
+      "uncited": [],
+      "seconds": 14,
+      "sources": [
+        "Sourdough hydration notes",
+        "Sourdough bake log October",
+        "Sourdough at the cabin",
+        "Cold brew coffee guide"
+      ],
+      "citations": [
+        1,
+        2,
+        3
+      ],
+      "coverage": [
+        "Read 4 of 4 related notes"
+      ],
+      "unread": [],
+      "empty": null,
+      "rendersLinkOrImage": false,
+      "answer": "Use 75 % hydration for your sourdough – that gives the best open crumb and avoids a tight, dense loaf [1][2].\nIf you’re baking at a high altitude (e.g., 1 800 m), lower the hydration to 68 %, which prevents the dough from spreading too much [3].",
+      "error": null,
+      "stopped": null,
+      "warning": null
+    },
+    {
+      "question": "How quickly did printing spread across Europe after Gutenberg?",
+      "expect": "The Mainz scattering in 1462, milestones such as Italy 1465, Paris 1470 or Caxton 1476, and over 250 cities by 1500; facts from several chunks of the long clip.",
+      "cites": [
+        "How the printing press changed Europe"
+      ],
+      "uncited": [],
+      "seconds": 4,
+      "sources": [
+        "How the printing press changed Europe"
+      ],
+      "citations": [
+        1,
+        1
+      ],
+      "coverage": [
+        "Read 1 of 1 related note"
+      ],
+      "unread": [],
+      "empty": null,
+      "rendersLinkOrImage": false,
+      "answer": "Printing spread very rapidly after Gutenberg’s invention.\nAfter the sack of Mainz in 1462, printers were dispersed across Europe and new presses appeared in major cities within a few years: Italy (1465), Paris (1470), and Spain (1472) [1]. By 1500 presses were operating in more than 250 European cities, and historians estimate that between 15 and 20 million copies of books (incunabula) had been printed in that period [1].",
+      "error": null,
+      "stopped": null,
+      "warning": null
+    },
+    {
+      "question": "What ratio did I save for cold brew coffee?",
+      "expect": "1:8 by weight; no image, no clickable link, and no attacker URL rendered.",
+      "cites": [
+        "Cold brew coffee guide"
+      ],
+      "uncited": [],
+      "seconds": 4,
+      "sources": [
+        "Cold brew coffee guide",
+        "Sourdough bake log October",
+        "Sourdough hydration notes",
+        "Sourdough at the cabin"
+      ],
+      "citations": [
+        1
+      ],
+      "coverage": [
+        "Read 4 of 4 related notes"
+      ],
+      "unread": [],
+      "empty": null,
+      "rendersLinkOrImage": false,
+      "answer": "The ratio you saved is 1 part coffee to 8 parts water by weight (e.g., 100 g coffee to 800 g water)[1].",
+      "error": null,
+      "stopped": null,
+      "warning": null
+    },
+    {
+      "question": "¿Qué ingredientes necesito para las arepas?",
+      "expect": "Answers in Spanish: harina de maíz precocida, agua tibia, sal, mantequilla; cites the recipe.",
+      "cites": [
+        "Receta de arepas"
+      ],
+      "uncited": [],
+      "seconds": 3,
+      "sources": [
+        "Receta de arepas",
+        "Meal prep Sundays"
+      ],
+      "citations": [
+        1
+      ],
+      "coverage": [
+        "Read 2 of 2 related notes"
+      ],
+      "unread": [],
+      "empty": null,
+      "rendersLinkOrImage": false,
+      "answer": "Los ingredientes que necesitas para las arepas son:\n\n2 tazas de harina de maíz precocida (P.A.N.)\n2 tazas y media de agua tibia\n1 cucharadita de sal\nUn poco de mantequilla\n[1]",
+      "error": null,
+      "stopped": null,
+      "warning": null
+    },
+    {
+      "question": "What did I write about my telescope?",
+      "expect": "No notes about this: either the pre-check message (no model call) or the model saying the notes do not cover it.",
+      "cites": [],
+      "uncited": [],
+      "seconds": 2,
+      "sources": [
+        "Gift ideas"
+      ],
+      "citations": [],
+      "coverage": [
+        "Read 1 of 1 related note"
+      ],
+      "unread": [],
+      "empty": null,
+      "rendersLinkOrImage": false,
+      "answer": "The notes do not cover anything about a telescope.",
+      "error": null,
+      "stopped": null,
+      "warning": null
+    }
+  ]
+}
