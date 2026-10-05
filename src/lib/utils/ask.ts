@@ -165,14 +165,15 @@ export function visibleUnread<T>(unread: T[], showAll: boolean): T[] {
 /**
  * Opens a cited note, first checking that the note at its path is still the one the answer
  * read. Navigation skips its read when the note is already open, so without the check a
- * note deleted outside the app would "open" and close Ask; and a different note created at
- * the old path would open in its place. Notes without an id are checked for existence only.
+ * note deleted outside the app would "open" and close Ask. `open` gets the id too, so
+ * navigation re-checks whatever it reads after waiting on a save. Notes without an id are
+ * checked for existence only.
  */
 export async function openCitation(
   path: string,
   noteId: string | null,
   read: (path: string) => Promise<{ meta: { id: string } }>,
-  open: (path: string) => Promise<string>,
+  open: (path: string, noteId: string | null) => Promise<string>,
 ): Promise<string> {
   try {
     const note = await read(path);
@@ -180,5 +181,5 @@ export async function openCitation(
   } catch {
     return 'not-found';
   }
-  return open(path);
+  return open(path, noteId);
 }

@@ -11,8 +11,9 @@
 	import { compactLayout } from '$lib/stores/app';
 	const isCompact = $derived($compactLayout);
 
-	let { onOpenResult = async (_path: string): Promise<NoteNavigationResult> => 'blocked' }: {
-		onOpenResult?: (path: string) => Promise<NoteNavigationResult>;
+	let { onOpenResult = async (_path: string, _noteId?: string | null): Promise<NoteNavigationResult> => 'blocked' }: {
+		/** `noteId`, when given, must match the note found at `path`. */
+		onOpenResult?: (path: string, noteId?: string | null) => Promise<NoteNavigationResult>;
 	} = $props();
 
 	let query = $state('');
@@ -170,9 +171,9 @@
 		return null;
 	}
 
-	async function openResult(result: Pick<SearchResult, 'path'>): Promise<NoteNavigationResult> {
+	async function openResult(result: Pick<SearchResult, 'path'>, noteId?: string | null): Promise<NoteNavigationResult> {
 		try {
-			const outcome = await onOpenResult(result.path);
+			const outcome = await onOpenResult(result.path, noteId);
 			if (outcome !== 'navigated') return outcome;
 			$showSearch = false;
 			// Reveal the note in the notes list: switch to its notebook (or All Notes).
@@ -256,7 +257,7 @@
 			</div>
 
 			{#if mode === 'ask'}
-				<AskView bind:this={askView} onOpen={(path) => openResult({ path })} />
+				<AskView bind:this={askView} onOpen={(path, noteId) => openResult({ path }, noteId)} />
 			{:else if searchError}
 				<div class="search-error">{searchError}</div>
 			{:else if searching}

@@ -19,7 +19,7 @@
 	} from '$lib/utils/ask';
 	import type { NoteNavigationResult } from '$lib/utils/navigation';
 
-	let { onOpen }: { onOpen: (path: string) => Promise<NoteNavigationResult> } = $props();
+	let { onOpen }: { onOpen: (path: string, noteId: string | null) => Promise<NoteNavigationResult> } = $props();
 
 	const render = createAnswerRenderer(MarkdownIt);
 	const answers = $derived($askAnswers);
