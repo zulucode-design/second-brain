@@ -100,7 +100,8 @@ export function coverageLabel(plan: AskPlan, failed = false): string {
   return `${verb} ${plan.sources.length} of ${plan.relatedNotes} related ${notes}${partly}`;
 }
 
-const CITATION = /^\[(\d+(?:\s*,\s*\d+)*)\]/;
+// `[2]`, or `【2】` as gpt-oss writes it.
+const CITATION = /^(?:\[(\d+(?:\s*,\s*\d+)*)\]|【(\d+(?:\s*,\s*\d+)*)】)/;
 
 /**
  * Renders an answer as Markdown that can only show text and citations.
@@ -108,19 +109,20 @@ const CITATION = /^\[(\d+(?:\s*,\s*\d+)*)\]/;
  * Note excerpts can carry text written by anyone (a clipped web page), and that text can
  * steer the model. Images and links are the ways an answer could send note content to
  * someone else's server, so neither renders: links stay as their literal Markdown text, and
- * raw HTML is escaped. `[n]` markers become citation buttons; a marker naming no source is
+ * raw HTML is escaped. `[n]` (or `【n】`) markers become citation buttons; a marker naming no source is
  * removed, so a citation always points at a note that was actually read.
  */
 export function createAnswerRenderer(MarkdownItClass: typeof MarkdownIt) {
   const md = new MarkdownItClass({ html: false, linkify: false });
   md.disable(['image', 'link', 'autolink', 'reference', 'html_inline', 'html_block']);
   md.inline.ruler.before('text', 'citation', (state, silent) => {
-    if (state.src.charCodeAt(state.pos) !== 0x5b /* [ */) return false;
+    const first = state.src.charCodeAt(state.pos);
+    if (first !== 0x5b /* [ */ && first !== 0x3010 /* 【 */) return false;
     const match = CITATION.exec(state.src.slice(state.pos));
     if (!match) return false;
     if (!silent) {
       const token = state.push('citation', '', 0);
-      token.meta = { numbers: match[1].split(',').map((value) => Number(value.trim())) };
+      token.meta = { numbers: (match[1] ?? match[2]).split(',').map((value) => Number(value.trim())) };
     }
     state.pos += match[0].length;
     return true;

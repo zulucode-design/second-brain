@@ -169,7 +169,8 @@ async function main() {
       const results = [];
       for (const { question, expect, cites } of QUESTIONS) {
         const result = await ask(browser, question);
-        results.push({ question, expect, cites, missingCites: cites.filter((title) => !result.sources.includes(title)), ...result });
+        const cited = result.citations.map((number) => result.sources[number - 1]);
+        results.push({ question, expect, cites, uncited: cites.filter((title) => !cited.includes(title)), ...result });
         console.log(`${result.seconds}s  ${question}`);
       }
       const trace = { when: new Date().toISOString(), app: resolve(app), model, index, results };

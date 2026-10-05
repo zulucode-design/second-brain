@@ -105,6 +105,14 @@ test('citation markers become buttons for real sources and vanish otherwise', ()
   assert.doesNotMatch(html, /\[7\]|\[9\]|data-source="7"|data-source="9"/);
 });
 
+test('gpt-oss citation brackets become buttons too', () => {
+  const html = render('Ratio 1:8【1】. Also【2, 9】.', 2);
+
+  assert.match(html, /data-source="1">\[1\]<\/button>/);
+  assert.match(html, /data-source="2">\[2\]<\/button>/);
+  assert.doesNotMatch(html, /【|data-source="9"/);
+});
+
 test('citations inside code stay literal text', () => {
   assert.doesNotMatch(render('Use `arr[1]` here.', 2), /class="citation"/);
 });
