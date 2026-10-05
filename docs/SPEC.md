@@ -251,7 +251,12 @@ there only when they use the same guarded action as the corresponding visible co
 
 ### Runtime and topology
 
-- **Ollama** on the Windows desktop provides LLM + embedding inference.
+- **Ollama** provides LLM + embedding inference. Embeddings come from `embeddinggemma`
+  through the configured Ollama endpoint. Answers (Ask, the writing tools) come from the
+  active AI provider, which today is an Ollama cloud model, so the excerpts an answer reads
+  leave the tailnet for ollama.com. At beta, answers and embeddings move off Ollama to
+  Anthropic or OpenAI models; that move re-embeds the vault and recalibrates the semantic
+  score cutoff, and is tracked separately from #8.
 - **whisper.cpp on the Windows desktop** provides audio transcription. (Ollama has no
   native speech-to-text — verified; a separate engine is mandatory.) It runs beside Ollama
   as a second desktop-side service, reached the same way.
@@ -301,6 +306,30 @@ control of organization. AI does exactly three things:
 
 External alpha exposes semantic retrieval itself. The Q&A, capture-similarity, and
 suggested-link interaction surfaces arrive in v1 feature-complete beta.
+
+### Ask (Q&A)
+
+Ask is a third mode of the search overlay, beside Keyword and Semantic, so Q&A and search by
+meaning share one surface. The design was settled with Nicolas on 2026-10-04; the full list
+is the decisions comment on #8.
+
+- **One-shot, as an experiment.** Each question runs its own retrieval and gets its own
+  answer; there are no follow-ups. Beta ships it this way on purpose, to learn whether
+  multi-turn chat is wanted before building it.
+- **Reads every related chunk the model can hold.** Every chunk scoring at or above the
+  semantic cutoff is read, best first, until the model's context window (less room for the
+  answer) is full. Ollama reports the window; other providers, or a failed lookup, get a
+  conservative 32k-token assumption. This budget is a known ceiling for the test: each answer
+  shows "Read N of M related notes" and lists what it left out, which is the evidence for
+  moving to a broader approach if it starts missing notes.
+- **Grounded and cited.** With no chunk at or above the cutoff, the window says so and no
+  model is called. Otherwise the model answers only from the excerpts, in the question's
+  language, citing each statement as `[n]`; a marker naming no source is removed.
+- **No exfiltration channel.** Excerpts can carry text written by anyone (a clipped page).
+  Answers render as Markdown with no images, no links, and no raw HTML, so injected text
+  cannot make the window fetch or offer a URL. Citations are the only clickable elements.
+- **Kept in memory only.** The three latest answers stay until the app quits or the vault
+  changes. Ask writes nothing: no note is created, modified, filed, or tagged.
 
 ---
 
