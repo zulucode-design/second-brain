@@ -4,17 +4,21 @@
 	import { debounce } from '$lib/utils/debounce';
 	import { startTimer } from '$lib/perf-probe';
 	import { PARA_CATEGORIES, type SearchResult, type NotebookEntry, type ParaCategory } from '$lib/types';
+	import type { NoteNavigationResult } from '$lib/utils/navigation';
+	import { ask } from '$lib/stores/ask';
+	import AskView from './AskView.svelte';
 	import { compactLayout } from '$lib/stores/app';
 	const isCompact = $derived($compactLayout);
 
-	let { onOpenResult = async (_path: string) => false }: {
-		onOpenResult?: (path: string) => Promise<boolean>;
+	let { onOpenResult = async (_path: string): Promise<NoteNavigationResult> => 'blocked' }: {
+		onOpenResult?: (path: string) => Promise<NoteNavigationResult>;
 	} = $props();
 
 	let query = $state('');
 	let results = $state<SearchResult[]>([]);
 	let selectedIndex = $state(0);
-	let mode = $state<'keyword' | 'semantic'>('keyword');
+	let mode = $state<'keyword' | 'semantic' | 'ask'>('keyword');
+	let askView = $state<AskView>();
 	let category = $state<ParaCategory | ''>('');
 	let searchError = $state('');
 	let searching = $state(false);
@@ -54,7 +58,8 @@
 		const generation = ++requestGeneration;
 		results = [];
 		searchError = '';
-		if (!query.trim()) {
+		// Ask calls a paid model, so it runs on Enter only, never while typing.
+		if (mode === 'ask' || !query.trim()) {
 			searching = false;
 			return;
 		}
@@ -78,7 +83,7 @@
 		requestSearch();
 	}
 
-	function changeMode(next: 'keyword' | 'semantic') {
+	function changeMode(next: 'keyword' | 'semantic' | 'ask') {
 		mode = next;
 		results = [];
 		searchError = '';
@@ -98,9 +103,23 @@
 		if (item) item.scrollIntoView({ block: 'nearest' });
 	}
 
+	function submitAsk() {
+		const vault = $appConfig?.active_vault;
+		if (!query.trim() || !vault || !$appConfig?.ai_provider) return;
+		void ask(query.trim(), category || undefined, vault);
+		query = '';
+	}
+
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
 			$showSearch = false;
+		} else if (mode === 'ask') {
+			if (e.key === 'Enter') {
+				e.preventDefault();
+				submitAsk();
+			} else if ((e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) && askView?.focusSources()) {
+				e.preventDefault();
+			}
 		} else if (e.key === 'ArrowDown') {
 			e.preventDefault();
 			selectedIndex = Math.min(selectedIndex + 1, results.length - 1);
@@ -149,9 +168,10 @@
 		return null;
 	}
 
-	async function openResult(result: SearchResult) {
+	async function openResult(result: Pick<SearchResult, 'path'>): Promise<NoteNavigationResult> {
 		try {
-			if (!(await onOpenResult(result.path))) return;
+			const outcome = await onOpenResult(result.path);
+			if (outcome !== 'navigated') return outcome;
 			$showSearch = false;
 			// Reveal the note in the notes list: switch to its notebook (or All Notes).
 			const sep = result.path.includes('\\') ? '\\' : '/';
@@ -167,8 +187,10 @@
 				$viewMode = 'all';
 			}
 			if (isCompact) $compactView = 'editor';
+			return outcome;
 		} catch (e) {
 			console.error('Failed to open search result:', e);
+			return 'blocked';
 		}
 	}
 
@@ -181,7 +203,7 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="search-overlay" onclick={close} onkeydown={handleKeydown}>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="search-panel" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+		<div class="search-panel" class:asking={mode === 'ask'} onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
 			<div class="search-input-wrapper">
 				<svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<circle cx="11" cy="11" r="8" />
@@ -190,7 +212,7 @@
 				<input
 					bind:this={inputEl}
 					type="text"
-					placeholder="Search notes..."
+					placeholder={mode === 'ask' ? 'Ask about your notes…' : 'Search notes...'}
 					bind:value={query}
 					oninput={handleInput}
 					onkeydown={handleKeydown}
@@ -201,8 +223,14 @@
 				<div class="search-modes" aria-label="Search mode">
 					<button class:active={mode === 'keyword'} onclick={() => changeMode('keyword')}>Keyword</button>
 					<button class:active={mode === 'semantic'} onclick={() => changeMode('semantic')}>Semantic</button>
+					<button
+						class:active={mode === 'ask'}
+						class:unavailable={!$appConfig?.ai_provider}
+						title={$appConfig?.ai_provider ? 'Ask a question answered from your notes' : 'No AI provider is set up'}
+						onclick={() => changeMode('ask')}
+					>Ask</button>
 				</div>
-				{#if mode === 'semantic'}
+				{#if mode !== 'keyword'}
 					<label>
 						<span>Category</span>
 						<select value={category} onchange={changeCategory}>
@@ -215,7 +243,9 @@
 				{/if}
 			</div>
 
-			{#if searchError}
+			{#if mode === 'ask'}
+				<AskView bind:this={askView} onOpen={(path) => openResult({ path })} />
+			{:else if searchError}
 				<div class="search-error">{searchError}</div>
 			{:else if searching}
 				<div class="search-empty"><span>Searching…</span></div>
@@ -310,6 +340,10 @@
 		animation: panel-in 0.15s ease-out;
 	}
 
+	.search-panel.asking {
+		max-height: 75vh;
+	}
+
 	:global(:root.dark) .search-panel {
 		box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset;
 	}
@@ -364,6 +398,10 @@
 		font: inherit;
 		font-size: 12px;
 		cursor: pointer;
+	}
+
+	.search-modes button.unavailable {
+		opacity: 0.55;
 	}
 
 	.search-modes button.active {

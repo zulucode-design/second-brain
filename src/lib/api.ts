@@ -13,6 +13,7 @@ import type {
   NoteTitleEntry,
   ParaCategory,
   SearchResult,
+  AskPlan,
   TrashContents,
   VaultState,
   VaultStats,
@@ -643,6 +644,19 @@ export async function setAiSettings(
 
 export async function testAiConnection(): Promise<void> {
   return invoke("test_ai_connection");
+}
+
+/** Ask (#8): finds the notes related to `question` and starts streaming an answer from them. */
+export async function askNotes(
+  question: string,
+  category: ParaCategory | undefined,
+  requestId: string,
+): Promise<AskPlan> {
+  return invoke("ask_notes", { question, category: category ?? null, requestId });
+}
+
+export async function cancelAi(requestId: string): Promise<void> {
+  return invoke("ai_cancel", { requestId });
 }
 
 export async function aiAsk(

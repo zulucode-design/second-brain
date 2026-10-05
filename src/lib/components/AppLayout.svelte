@@ -1551,7 +1551,7 @@
 	</div>
 </div>
 
-<SearchPanel onOpenResult={navigateToPath} />
+<SearchPanel onOpenResult={(path) => navigateToPathResult(path)} />
 <CommandPalette onNavigate={handleViewChanged} onToggleSource={toggleSourceMode} />
 <SettingsPanel onRequestVaultSwitch={requestVaultSwitch} onBeforeRestore={prepareForRestore} onAfterRestore={refreshAfterRestore} onAfterConflictChoice={reloadOpenNoteFromDisk} />
 <InfoPanel />

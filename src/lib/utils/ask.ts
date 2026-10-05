@@ -1,0 +1,109 @@
+import type MarkdownIt from 'markdown-it';
+import type { AskPlan } from '$lib/types';
+
+/** How many answers Ask keeps in memory. Older ones are dropped, never stored. */
+export const KEPT_ANSWERS = 3;
+
+export type AskStatus =
+  | 'searching'
+  | 'reading'
+  | 'thinking'
+  | 'answering'
+  | 'done'
+  | 'no-match'
+  | 'stopped'
+  | 'error';
+
+export interface AskAnswer {
+  /** The request id its stream events carry. */
+  id: string;
+  /** The vault it was asked in; its citations point there. */
+  vault: string;
+  question: string;
+  status: AskStatus;
+  plan: AskPlan | null;
+  text: string;
+  error: string | null;
+  /** When the current stage began, for the elapsed-seconds counter. */
+  stageStartedAt: number;
+}
+
+/** Whether the answer can still change. */
+export function isRunning(answer: AskAnswer): boolean {
+  return ['searching', 'reading', 'thinking', 'answering'].includes(answer.status);
+}
+
+/**
+ * Adds `next` as the newest answer. Answers from another vault go first, then the oldest
+ * past `KEPT_ANSWERS`; `dropped` lists them so a running one can be cancelled.
+ */
+export function keepLatest(
+  answers: AskAnswer[],
+  next: AskAnswer,
+): { kept: AskAnswer[]; dropped: AskAnswer[] } {
+  const all = [next, ...answers];
+  const kept = all.filter((answer) => answer.vault === next.vault).slice(0, KEPT_ANSWERS);
+  return { kept, dropped: all.filter((answer) => !kept.includes(answer)) };
+}
+
+/** The answers that belong to `vault`, newest first. A vault switch hides the rest. */
+export function answersForVault(answers: AskAnswer[], vault: string | null | undefined): AskAnswer[] {
+  return vault ? answers.filter((answer) => answer.vault === vault) : [];
+}
+
+/** The progress line shown while an answer is on its way. */
+export function stageLabel(answer: AskAnswer, now: number): string {
+  const seconds = Math.max(0, Math.floor((now - answer.stageStartedAt) / 1000));
+  const read = answer.plan?.sources.length ?? 0;
+  switch (answer.status) {
+    case 'searching':
+      return 'Searching notes…';
+    case 'reading':
+      return `Reading ${read} ${read === 1 ? 'note' : 'notes'}… ${seconds}s`;
+    case 'thinking':
+      return `Thinking… ${seconds}s`;
+    default:
+      return '';
+  }
+}
+
+/** "Read 9 of 14 related notes". */
+export function coverageLabel(plan: AskPlan): string {
+  return `Read ${plan.sources.length} of ${plan.relatedNotes} related ${plan.relatedNotes === 1 ? 'note' : 'notes'}`;
+}
+
+const CITATION = /^\[(\d+(?:\s*,\s*\d+)*)\]/;
+
+/**
+ * Renders an answer as Markdown that can only show text and citations.
+ *
+ * Note excerpts can carry text written by anyone (a clipped web page), and that text can
+ * steer the model. Images and links are the ways an answer could send note content to
+ * someone else's server, so neither renders: links stay as their literal Markdown text, and
+ * raw HTML is escaped. `[n]` markers become citation buttons; a marker naming no source is
+ * removed, so a citation always points at a note that was actually read.
+ */
+export function createAnswerRenderer(MarkdownItClass: typeof MarkdownIt) {
+  const md = new MarkdownItClass({ html: false, linkify: false });
+  md.disable(['image', 'link', 'autolink', 'reference', 'html_inline', 'html_block']);
+  md.inline.ruler.before('text', 'citation', (state, silent) => {
+    if (state.src.charCodeAt(state.pos) !== 0x5b /* [ */) return false;
+    const match = CITATION.exec(state.src.slice(state.pos));
+    if (!match) return false;
+    if (!silent) {
+      const token = state.push('citation', '', 0);
+      token.meta = { numbers: match[1].split(',').map((value) => Number(value.trim())) };
+    }
+    state.pos += match[0].length;
+    return true;
+  });
+  md.renderer.rules.citation = (tokens, index, _options, env: { sourceCount: number }) => {
+    const valid = (tokens[index].meta.numbers as number[]).filter(
+      (number) => number >= 1 && number <= env.sourceCount,
+    );
+    return valid
+      .map((number) => `<button type="button" class="citation" data-source="${number}">[${number}]</button>`)
+      .join('');
+  };
+  return (text: string, sourceCount: number): string => md.render(text, { sourceCount });
+}
