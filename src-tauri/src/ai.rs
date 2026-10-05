@@ -169,8 +169,18 @@ async fn stream(
     user_message: &str,
     on_event: &(dyn Fn(StreamEvent) + Sync),
 ) -> Result<(), String> {
+    // An answer that ends with no text, or cut off by the token limit, is not a finished answer:
+    // report it rather than showing a blank or truncated reply as complete.
+    let answered = AtomicBool::new(false);
+    let on_event = |event: StreamEvent| {
+        if matches!(event, StreamEvent::Text(_)) {
+            answered.store(true, Ordering::SeqCst);
+        }
+        on_event(event);
+    };
+    let on_event = &on_event;
     // Handle all API keys as optional; ollama and v1 completions doesnt always require it.
-    match settings.protocol() {
+    let result = match settings.protocol() {
         AiApiProtocol::OpenAiChatCompletions => {
             stream_openai(
                 settings.endpoint(),
@@ -193,8 +203,15 @@ async fn stream(
             )
             .await
         }
+    };
+    if result.is_ok() && !answered.load(Ordering::SeqCst) {
+        return Err("The model finished without writing an answer.".to_string());
     }
+    result
 }
+
+/// The error for an answer cut off by the token limit.
+const LENGTH_LIMIT: &str = "The answer reached the model's length limit before it finished.";
 
 /// Splits a server-sent-events body into its `data:` payloads as chunks arrive. `handle`
 /// returns false once the stream has said it is finished. A body that ends before saying so
@@ -284,6 +301,9 @@ async fn stream_anthropic(
                 if let Some(text) = parsed["delta"]["text"].as_str() {
                     on_event(StreamEvent::Text(text.to_string()));
                 }
+            }
+            "message_delta" if parsed["delta"]["stop_reason"] == "max_tokens" => {
+                return Err(LENGTH_LIMIT.to_string());
             }
             "message_stop" => return Ok(false),
             "error" => {
@@ -375,10 +395,10 @@ async fn stream_openai(
                 on_event(StreamEvent::Text(content.to_string()));
             }
         }
-        if let Some(reason) = parsed["choices"][0]["finish_reason"].as_str() {
-            if reason == "stop" || reason == "length" {
-                return Ok(false);
-            }
+        match parsed["choices"][0]["finish_reason"].as_str() {
+            Some("stop") => return Ok(false),
+            Some("length") => return Err(LENGTH_LIMIT.to_string()),
+            _ => {}
         }
         if let Some(err) = parsed["error"]["message"].as_str() {
             return Err(err.to_string());
@@ -397,8 +417,8 @@ const OLLAMA_LOCAL_DEFAULT_CONTEXT: usize = 4096;
 /// cannot say.
 ///
 /// A model's capacity (`/api/show`) is not what a local server allocates: Ollama runs local
-/// models at a smaller default unless a Modelfile or the server sets more, and the
-/// OpenAI-compatible endpoint cannot ask for more. Cloud models run at full capacity.
+/// models at a smaller default unless their Modelfile sets more, and the OpenAI-compatible
+/// endpoint cannot ask for more. Cloud models run at full capacity.
 pub async fn ollama_context_window(
     base_url: &str,
     api_key: Option<&str>,
@@ -430,12 +450,10 @@ pub async fn ollama_context_window(
     if cloud {
         return capacity;
     }
-    let allocated = match modelfile_context(&show) {
-        Some(tokens) => tokens,
-        None => loaded_context(base_url, api_key, model)
-            .await
-            .unwrap_or(OLLAMA_LOCAL_DEFAULT_CONTEXT),
-    };
+    // ponytail: a server-wide OLLAMA_CONTEXT_LENGTH is invisible here, so a local model without
+    // a Modelfile num_ctx is budgeted at the default even when the server gives it more. A
+    // loaded runner's context is no guide: a request with different options reloads it.
+    let allocated = modelfile_context(&show).unwrap_or(OLLAMA_LOCAL_DEFAULT_CONTEXT);
     Some(capacity.map_or(allocated, |capacity| capacity.min(allocated)))
 }
 
@@ -459,18 +477,6 @@ fn modelfile_context(show: &serde_json::Value) -> Option<usize> {
             .then(|| fields.next()?.parse().ok())
             .flatten()
     })
-}
-
-/// The context a running server gave `model`, when it is loaded (`/api/ps`). This is how a
-/// server-wide `OLLAMA_CONTEXT_LENGTH` shows up.
-async fn loaded_context(base_url: &str, api_key: Option<&str>, model: &str) -> Option<usize> {
-    let running = ollama_get_json(client().get(format!("{base_url}/api/ps")), api_key).await?;
-    running["models"]
-        .as_array()?
-        .iter()
-        .find(|entry| entry["name"] == model || entry["model"] == model)
-        .and_then(|entry| entry["context_length"].as_u64())
-        .map(|tokens| tokens as usize)
 }
 
 pub async fn test_connection(
@@ -876,33 +882,60 @@ mod tests {
         );
     }
 
-    /// Serves Ollama's `/api/show` and `/api/ps` with the given bodies; a `None` answers 404.
-    fn ollama_server(show: &'static str, ps: Option<&'static str>) -> String {
+    fn run(url: &str) -> Result<(), String> {
+        let settings = settings(url.to_string());
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(stream(&settings, "s", "u", &|_| {}))
+    }
+
+    #[test]
+    fn reasoning_that_runs_out_of_tokens_before_answering_is_an_error() {
+        let url = sse_server(
+            "data: {\"choices\":[{\"delta\":{\"reasoning\":\"thinking...\"}}]}\n\n\
+             data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+            false,
+        );
+        assert_eq!(run(&url), Err(LENGTH_LIMIT.to_string()));
+    }
+
+    #[test]
+    fn an_answer_cut_off_by_the_token_limit_is_an_error() {
+        let url = sse_server(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Half an ans\"},\"finish_reason\":\"length\"}]}\n\n",
+            false,
+        );
+        assert_eq!(run(&url), Err(LENGTH_LIMIT.to_string()));
+    }
+
+    #[test]
+    fn a_completion_with_no_answer_text_is_an_error() {
+        let url = sse_server(
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            false,
+        );
+        assert_eq!(
+            run(&url),
+            Err("The model finished without writing an answer.".to_string())
+        );
+    }
+
+    /// Serves Ollama's `/api/show` with `show`.
+    fn ollama_server(show: &'static str) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         std::thread::spawn(move || {
-            for stream in listener.incoming().take(2) {
-                let mut stream = stream.unwrap();
-                stream
-                    .set_read_timeout(Some(Duration::from_millis(200)))
-                    .unwrap();
-                let mut buffer = [0_u8; 8192];
-                let read = stream.read(&mut buffer).unwrap_or(0);
-                let request = String::from_utf8_lossy(&buffer[..read]);
-                let body = if request.starts_with("POST /api/show") {
-                    Some(show)
-                } else {
-                    ps
-                };
-                let response = match body {
-                    Some(body) => format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
-                    ),
-                    None => "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
-                };
-                let _ = stream.write_all(response.as_bytes());
-            }
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_millis(200)))
+                .unwrap();
+            let mut buffer = [0_u8; 8192];
+            let _ = stream.read(&mut buffer);
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{show}",
+                show.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
         });
         format!("http://{address}/")
     }
@@ -918,7 +951,7 @@ mod tests {
 
     #[test]
     fn a_cloud_model_gets_its_full_capacity() {
-        let url = ollama_server(SHOW_128K, None);
+        let url = ollama_server(SHOW_128K);
         assert_eq!(context(&url, "gpt-oss:120b-cloud"), Some(131_072));
     }
 
@@ -926,25 +959,13 @@ mod tests {
     fn a_local_model_gets_what_its_modelfile_allocates_not_its_capacity() {
         let url = ollama_server(
             r#"{"parameters":"stop \"<end>\"\nnum_ctx 8192","model_info":{"llama.context_length":131072}}"#,
-            None,
         );
         assert_eq!(context(&url, "llama3.1:8b"), Some(8192));
     }
 
     #[test]
-    fn a_loaded_local_model_gets_the_context_the_server_gave_it() {
-        let url = ollama_server(
-            SHOW_128K,
-            Some(
-                r#"{"models":[{"name":"other:1b","context_length":2048},{"name":"gpt-oss:20b","context_length":16384}]}"#,
-            ),
-        );
-        assert_eq!(context(&url, "gpt-oss:20b"), Some(16_384));
-    }
-
-    #[test]
-    fn an_unloaded_local_model_assumes_ollamas_smallest_default() {
-        let url = ollama_server(SHOW_128K, Some(r#"{"models":[]}"#));
+    fn a_local_model_without_a_modelfile_size_assumes_ollamas_smallest_default() {
+        let url = ollama_server(SHOW_128K);
         assert_eq!(context(&url, "gpt-oss:20b"), Some(4096));
     }
 
@@ -952,7 +973,6 @@ mod tests {
     fn a_local_allocation_never_exceeds_the_model_capacity() {
         let url = ollama_server(
             r#"{"parameters":"num_ctx 32768","model_info":{"tiny.context_length":2048}}"#,
-            None,
         );
         assert_eq!(context(&url, "tiny"), Some(2048));
     }
