@@ -1143,6 +1143,7 @@ pub fn create_note(
 /// second way to create a note, and the two would drift.
 #[tauri::command]
 pub fn quick_capture_note(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     category: String,
     text: String,
@@ -1160,6 +1161,7 @@ pub fn quick_capture_note(
     // A title-only capture is already complete; writing an empty body would take a second
     // lock and a second index pass to change nothing.
     if capture.body.is_empty() {
+        crate::similar_notes::after_capture(app, entry.path.clone());
         return Ok(entry);
     }
 
@@ -1181,10 +1183,57 @@ pub fn quick_capture_note(
         capture.body.clone(),
         current_revision,
     )?;
+    // Only now that the capture is on disk: the check can never cost the user their note.
+    crate::similar_notes::after_capture(app, entry.path.clone());
 
     Ok(NoteEntry {
         preview: capture.body,
         ..entry
+    })
+}
+
+/// The capture-time similarity check (#9) for a note written in the app, run when the user
+/// first leaves it. `None` when nothing is similar or the check could not run.
+#[tauri::command]
+pub async fn check_similar_notes(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<Option<crate::similar_notes::SimilarityCheck>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::similar_notes::check_now(&app.state::<AppState>(), &path)
+    })
+    .await
+    .map_err(|error| format!("Similarity check failed: {error}"))
+}
+
+/// Fold a capture into a similar note (#9): its text goes at the end of `target_path`, then the
+/// capture moves to trash. Refused when either note changed since the check, so nothing lands
+/// in a note the user has not seen as it is.
+#[tauri::command]
+pub fn append_to_similar_note(
+    state: State<'_, AppState>,
+    capture_path: String,
+    capture_revision: String,
+    target_path: String,
+    target_revision: String,
+) -> Result<(), String> {
+    let vault_path = active_vault(&state)?;
+    let capture = operations::read_note(&vault_path, &capture_path)
+        .map_err(|_| "Your capture is no longer there, so nothing was added.".to_string())?;
+    let target = operations::read_note(&vault_path, &target_path)
+        .map_err(|_| "That note is no longer there, so nothing was added.".to_string())?;
+    if capture.revision != capture_revision || target.revision != target_revision {
+        return Err("One of the notes changed since the check, so nothing was added.".to_string());
+    }
+    let body = crate::similar_notes::appended(
+        &target.content,
+        &capture.meta.title,
+        &capture.content,
+        &chrono::Local::now().format("%Y-%m-%d").to_string(),
+    );
+    save_note(state.clone(), target_path, target.meta, body, target_revision)?;
+    delete_note(state, capture_path).map_err(|error| {
+        format!("Added to the note, but your capture could not be moved to trash: {error}")
     })
 }
 

@@ -614,7 +614,7 @@ impl SemanticIndex {
         category: Option<ParaCategory>,
         limit: usize,
     ) -> Result<Vec<SearchResult>, String> {
-        let scored = self.score(query, category)?;
+        let scored = self.score(format!("{QUERY_PROMPT}{query}"), category)?;
         let results = best_per_note(&scored.database, &scored.chunks, limit)?;
         crate::perf_probe::record(serde_json::json!({
             "kind": "semantic-backend",
@@ -637,7 +637,7 @@ impl SemanticIndex {
         max_characters: usize,
         cost: impl Fn(&str, &str, bool) -> usize,
     ) -> Result<Retrieval, String> {
-        let mut scored = self.score(query, category)?;
+        let mut scored = self.score(format!("{QUERY_PROMPT}{query}"), category)?;
         scored.chunks.sort_by(|left, right| {
             right
                 .score
@@ -688,11 +688,40 @@ impl SemanticIndex {
         Ok(retrieval)
     }
 
+    /// The notes most like a just-written note (#9), best first: at most `limit` of them, out of
+    /// `total` scoring at least `min_score`. `exclude_id` is the written note's own id.
+    ///
+    /// The note is embedded the way notes are indexed, as a document, not as a search query, so
+    /// a near-copy of an indexed chunk scores close to 1. Only its first chunk's worth is used,
+    /// the same length every stored vector covers.
+    pub fn similar(
+        &self,
+        title: &str,
+        text: &str,
+        exclude_id: &str,
+        min_score: f32,
+        limit: usize,
+    ) -> Result<Similar, String> {
+        let text: String = text.chars().take(CHUNK_CHARACTERS).collect();
+        let Scored {
+            database, chunks, ..
+        } = self.score(document_input(title, &text), None)?;
+        let exclude = format!("id:{exclude_id}");
+        let chunks: Vec<ScoredChunk> = chunks
+            .into_iter()
+            .filter(|chunk| chunk.key != exclude && chunk.score >= min_score)
+            .collect();
+        let mut notes = best_per_note(&database, &chunks, usize::MAX)?;
+        let total = notes.len();
+        notes.truncate(limit);
+        Ok(Similar { notes, total })
+    }
+
     /// Scores every chunk at or above the cutoff, in note-then-ordinal order, and keeps the
     /// database locked so the caller can read the winners' text from the same snapshot.
-    fn score(&self, query: &str, category: Option<ParaCategory>) -> Result<Scored<'_>, String> {
+    fn score(&self, input: String, category: Option<ParaCategory>) -> Result<Scored<'_>, String> {
         let embed_started = Instant::now();
-        let mut query_embeddings = self.backend.embed(&[format!("{QUERY_PROMPT}{query}")])?;
+        let mut query_embeddings = self.backend.embed(&[input])?;
         let embed_ms = embed_started.elapsed().as_secs_f64() * 1000.0;
         // Everything after the embedding counts as the scan, waits included, so a slow load or
         // a held lock shows up in exactScanMs instead of being hidden (#159).
@@ -1239,6 +1268,13 @@ fn chunk_text(database: &Connection, chunk: &ScoredChunk) -> Result<String, Stri
         .map_err(|error| error.to_string())
 }
 
+/// What [`SemanticIndex::similar`] found: the best notes, and how many passed in all.
+#[derive(Debug)]
+pub struct Similar {
+    pub notes: Vec<SearchResult>,
+    pub total: usize,
+}
+
 /// What Ask reads for one question.
 #[derive(Debug, Default)]
 pub struct Retrieval {
@@ -1684,6 +1720,98 @@ mod tests {
                 note_id: Some("short-id".to_string()),
                 title: "Short coffee".to_string(),
             }]
+        );
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn similar_notes_skip_the_new_note_itself_and_count_every_match_past_the_cap() {
+        let root = scratch("similar");
+        let capture = root.join("Capture.md");
+        let first = root.join("First.md");
+        let second = root.join("Second.md");
+        let unrelated = root.join("Unrelated.md");
+        write_note(&capture, "capture-id", "Capture", "Areas", "coffee beans");
+        write_note(&first, "first-id", "First", "Areas", "coffee ratio");
+        write_note(&second, "second-id", "Second", "Projects", "coffee grinder");
+        write_note(&unrelated, "other-id", "Other", "Areas", "Quantum mechanics.");
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
+                .unwrap();
+        for note in [&capture, &first, &second, &unrelated] {
+            index.note_changed(note).unwrap();
+        }
+        index.retry_pending().unwrap();
+
+        let found = index
+            .similar("Capture", "coffee beans", "capture-id", 0.9, 1)
+            .unwrap();
+        assert_eq!(found.total, 2, "both coffee notes pass, across categories");
+        assert_eq!(found.notes.len(), 1, "the cap holds");
+        assert_eq!(found.notes[0].title, "First", "ties order by title");
+        drop(index);
+        cleanup(root);
+    }
+
+    /// Scores every fixture capture against every fixture note with live embeddinggemma, the
+    /// numbers the capture-similarity bar (`similar_notes::SIMILAR_SCORE`) is set from (#9). Run:
+    /// `SB_OLLAMA_URL=http://127.0.0.1:11434 cargo test similarity_calibration -- --ignored --nocapture`
+    #[test]
+    #[ignore = "needs embeddinggemma on Ollama at SB_OLLAMA_URL; prints the similarity scores"]
+    fn similarity_calibration() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../scripts/similarity-fixture.json")).unwrap();
+        let url =
+            std::env::var("SB_OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
+        let root = scratch("similarity-calibration");
+        let index = SemanticIndex::open_at(
+            &root.join("semantic.sqlite3"),
+            Arc::new(super::OllamaEmbeddingBackend::new(&url, None).unwrap()),
+        )
+        .unwrap();
+        for (number, note) in fixture["notes"].as_array().unwrap().iter().enumerate() {
+            let path = root.join(format!("{number}.md"));
+            write_note(
+                &path,
+                &format!("note-{number}"),
+                note["title"].as_str().unwrap(),
+                note["category"].as_str().unwrap(),
+                note["body"].as_str().unwrap(),
+            );
+            index.note_changed(&path).unwrap();
+        }
+        index.retry_pending().unwrap();
+
+        let (mut lowest_duplicate, mut highest_other) = (f32::MAX, f32::MIN);
+        for capture in fixture["captures"].as_array().unwrap() {
+            // Filed the way the overlay files it: the first line is the title.
+            let filed = crate::hotkey::capture::split(capture["text"].as_str().unwrap()).unwrap();
+            let found = index
+                .similar(&filed.title, &filed.body, "capture", f32::MIN, usize::MAX)
+                .unwrap();
+            let duplicate = capture["duplicateOf"].as_str();
+            for note in &found.notes {
+                if Some(note.title.as_str()) == duplicate {
+                    lowest_duplicate = lowest_duplicate.min(note.score);
+                } else {
+                    highest_other = highest_other.max(note.score);
+                }
+            }
+            let scores: Vec<String> = found
+                .notes
+                .iter()
+                .map(|note| format!("{:.3} {}", note.score, note.title))
+                .collect();
+            println!(
+                "{}\n  duplicate of: {}\n  {}",
+                filed.title,
+                duplicate.unwrap_or("-"),
+                scores.join("\n  ")
+            );
+        }
+        println!(
+            "lowest duplicate score {lowest_duplicate:.3}; highest score of any other note {highest_other:.3}"
         );
         drop(index);
         cleanup(root);

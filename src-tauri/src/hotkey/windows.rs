@@ -280,6 +280,19 @@ fn show_vault_unavailable_toast(
     title: &str,
     body: &str,
 ) -> windows::core::Result<()> {
+    show_toast(
+        app_id,
+        &toast(title, body, "vault-unavailable", "quick-capture")?,
+    )
+}
+
+/// A two-line toast under `tag` and `group`: a later toast with the same pair replaces it.
+pub(crate) fn toast(
+    title: &str,
+    body: &str,
+    tag: &str,
+    group: &str,
+) -> windows::core::Result<windows::UI::Notifications::ToastNotification> {
     use windows::core::HSTRING;
     use windows::UI::Notifications::{
         ToastNotification, ToastNotificationManager, ToastTemplateType,
@@ -294,9 +307,19 @@ fn show_vault_unavailable_toast(
             .AppendChild(&content.CreateTextNode(&HSTRING::from(text))?)?;
     }
     let toast = ToastNotification::CreateToastNotification(&content)?;
-    toast.SetTag(&HSTRING::from("vault-unavailable"))?;
-    toast.SetGroup(&HSTRING::from("quick-capture"))?;
-    ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(app_id))?.Show(&toast)
+    toast.SetTag(&HSTRING::from(tag))?;
+    toast.SetGroup(&HSTRING::from(group))?;
+    Ok(toast)
+}
+
+pub(crate) fn show_toast(
+    app_id: &str,
+    toast: &windows::UI::Notifications::ToastNotification,
+) -> windows::core::Result<()> {
+    use windows::core::HSTRING;
+    use windows::UI::Notifications::ToastNotificationManager;
+
+    ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(app_id))?.Show(toast)
 }
 
 fn store_and_publish(app: &AppHandle, status: HotkeyStatus) {
