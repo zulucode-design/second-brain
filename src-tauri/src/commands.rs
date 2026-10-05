@@ -3854,12 +3854,14 @@ pub async fn ask_notes(
     let (sources, user_message) = crate::ask::prompt(&question, &retrieval);
     if sources.is_empty() && retrieval.related_notes > 0 {
         return Err(format!(
-            "The model's context window ({context_tokens} tokens) is too small to read any note."
+            "The model's context window ({context_tokens} tokens) has no room for any note after \
+             the question and the space kept for the answer."
         ));
     }
     if semantic.is_retired() {
         return Err("The vault changed while this question was being answered.".to_string());
     }
+    debug_assert!(user_message.len() <= crate::ask::prompt_allowance(context_tokens));
     if !sources.is_empty() && !registration.is_cancelled() {
         crate::ai::start(
             app,
@@ -3873,6 +3875,7 @@ pub async fn ask_notes(
         sources,
         related_notes: retrieval.related_notes,
         unread: retrieval.unread,
+        partly_read: retrieval.partly_read,
         queued_notes,
     })
 }

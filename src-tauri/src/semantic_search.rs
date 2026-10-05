@@ -647,17 +647,17 @@ impl SemanticIndex {
         });
         let mut retrieval = Retrieval::default();
         let mut used = 0;
-        let mut read = HashSet::new();
+        let mut read: HashMap<&str, usize> = HashMap::new();
         for chunk in &scored.chunks {
             let text = chunk_text(&scored.database, chunk)?;
-            let length = cost(&chunk.title, &text, !read.contains(chunk.key.as_str()));
+            let length = cost(&chunk.title, &text, !read.contains_key(chunk.key.as_str()));
             // Chunks are at most CHUNK_CHARACTERS long, so stopping at the first one that does
             // not fit costs little and keeps what was read a clean best-first slice.
             if used + length > max_characters {
                 break;
             }
             used += length;
-            read.insert(chunk.key.as_str());
+            *read.entry(chunk.key.as_str()).or_default() += 1;
             retrieval.chunks.push(RetrievedChunk {
                 path: chunk.path.clone(),
                 note_id: note_id(&chunk.key),
@@ -666,9 +666,17 @@ impl SemanticIndex {
                 text,
             });
         }
+        let mut related: HashMap<&str, usize> = HashMap::new();
+        for chunk in &scored.chunks {
+            *related.entry(chunk.key.as_str()).or_default() += 1;
+        }
+        retrieval.partly_read = read
+            .iter()
+            .filter(|(key, count)| related.get(*key).is_some_and(|total| total > *count))
+            .count();
         let mut listed = HashSet::new();
         for chunk in &scored.chunks {
-            if listed.insert(chunk.key.as_str()) && !read.contains(chunk.key.as_str()) {
+            if listed.insert(chunk.key.as_str()) && !read.contains_key(chunk.key.as_str()) {
                 retrieval.unread.push(UnreadNote {
                     path: chunk.path.clone(),
                     note_id: note_id(&chunk.key),
@@ -1240,6 +1248,8 @@ pub struct Retrieval {
     pub related_notes: usize,
     /// Related notes none of whose chunks fit the budget, best first.
     pub unread: Vec<UnreadNote>,
+    /// Read notes with at least one related chunk that did not fit.
+    pub partly_read: usize,
 }
 
 #[derive(Debug)]
@@ -1662,6 +1672,11 @@ mod tests {
             .collect();
         assert_eq!(read, vec![("Long coffee log", 0), ("Long coffee log", 1)]);
         assert_eq!(partial.related_notes, 2);
+        assert_eq!(
+            partial.partly_read, 1,
+            "the long note's third chunk did not fit"
+        );
+        assert_eq!(everything.partly_read, 0);
         assert_eq!(
             partial.unread,
             vec![UnreadNote {

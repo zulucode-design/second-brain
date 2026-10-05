@@ -320,8 +320,8 @@ is the decisions comment on #8.
   semantic cutoff is read, best first, until the model's context window (less room for the
   answer) is full. For Ollama that is the window the model actually runs with: full capacity
   for cloud models, and for local ones the Modelfile's `num_ctx` or else Ollama's smallest
-  default of 4k, since the OpenAI-compatible endpoint cannot ask for more. Other providers, or a failed lookup, get a conservative 32k-token assumption. This budget is a known ceiling for the test: each answer
-  shows "Read N of M related notes" and lists what it left out, which is the evidence for
+  default of 4k, since the OpenAI-compatible endpoint cannot ask for more. Other providers, or a failed lookup, get a 32k-token assumption; a failed lookup can hide a smaller local window, which that assumption would overflow. The budget counts UTF-8 bytes as tokens: a token covers at least one byte, so no script, emoji, or code can overflow the window, but ordinary English runs several bytes a token, so Ask reads well under what the window could hold. A model tokenizer is the upgrade; the 256-token allowance for the chat template stays an assumption. This budget is a known ceiling for the test: each answer
+  shows "Read N of M related notes" (noting notes read only in part) and lists what it left out, which is the evidence for
   moving to a broader approach if it starts missing notes.
 - **Grounded and cited.** With no chunk at or above the cutoff, the window says so and no
   model is called. Otherwise the model answers only from the excerpts, in the question's

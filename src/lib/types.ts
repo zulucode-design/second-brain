@@ -360,6 +360,8 @@ export interface AskPlan {
   relatedNotes: number;
   /** Related notes the context budget left out. */
   unread: { path: string; note_id: string | null; title: string }[];
+  /** Read notes with some related passages the budget left out. */
+  partlyRead: number;
   /** Notes not yet indexed, which the answer could not consider. */
   queuedNotes: number;
 }

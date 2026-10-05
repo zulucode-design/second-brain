@@ -110,7 +110,7 @@
 				{/if}
 				{#if answer.plan && answer.plan.sources.length > 0}
 					<div class="ask-sources">
-						<div class="ask-coverage">{coverageLabel(answer.plan)}</div>
+						<div class="ask-coverage">{coverageLabel(answer.plan, answer.status === 'error')}</div>
 						{#each answer.plan.sources as source (source.number)}
 							<button class="source" onclick={() => open(source.path, source.note_id)}>
 								<span class="source-number">{source.number}</span>

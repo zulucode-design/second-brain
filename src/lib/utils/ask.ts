@@ -89,9 +89,15 @@ export function stageLabel(answer: AskAnswer, now: number): string {
   }
 }
 
-/** "Read 9 of 14 related notes". */
-export function coverageLabel(plan: AskPlan): string {
-  return `Read ${plan.sources.length} of ${plan.relatedNotes} related ${plan.relatedNotes === 1 ? 'note' : 'notes'}`;
+/**
+ * "Read 9 of 14 related notes (2 only in part)". An answer that failed may not have read
+ * anything, so it says what was selected instead.
+ */
+export function coverageLabel(plan: AskPlan, failed = false): string {
+  const verb = failed ? 'Selected' : 'Read';
+  const notes = plan.relatedNotes === 1 ? 'note' : 'notes';
+  const partly = plan.partlyRead > 0 ? ` (${plan.partlyRead} only in part)` : '';
+  return `${verb} ${plan.sources.length} of ${plan.relatedNotes} related ${notes}${partly}`;
 }
 
 const CITATION = /^\[(\d+(?:\s*,\s*\d+)*)\]/;

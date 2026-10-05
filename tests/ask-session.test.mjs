@@ -16,6 +16,7 @@ const plan = (count, overrides = {}) => ({
   sources: Array.from({ length: count }, (_, index) => ({ number: index + 1, path: `/vault/${index}.md`, note_id: `n${index}`, title: `Note ${index}` })),
   relatedNotes: count,
   unread: [],
+  partlyRead: 0,
   queuedNotes: 0,
   ...overrides,
 });

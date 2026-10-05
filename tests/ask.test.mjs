@@ -73,6 +73,7 @@ const plan = (sources, relatedNotes, unread = []) => ({
   sources: sources.map((title, index) => ({ number: index + 1, path: `/vault/${title}.md`, note_id: `n${index}`, title })),
   relatedNotes,
   unread,
+  partlyRead: 0,
   queuedNotes: 0,
 });
 
@@ -87,9 +88,11 @@ test('the progress line names the stage and counts seconds within it', () => {
   assert.equal(stageLabel(answer('a', '/vault', { status: 'answering' }), started), '');
 });
 
-test('the coverage line shows how many related notes were read', () => {
+test('the coverage line shows how many related notes were read, and which only in part', () => {
   assert.equal(coverageLabel(plan(['One', 'Two'], 5)), 'Read 2 of 5 related notes');
   assert.equal(coverageLabel(plan(['One'], 1)), 'Read 1 of 1 related note');
+  assert.equal(coverageLabel({ ...plan(['One', 'Two'], 5), partlyRead: 1 }), 'Read 2 of 5 related notes (1 only in part)');
+  assert.equal(coverageLabel(plan(['One', 'Two'], 5), true), 'Selected 2 of 5 related notes');
 });
 
 const render = createAnswerRenderer(MarkdownIt);
