@@ -14,6 +14,9 @@
 
 	let { onOpen }: { onOpen: (path: string) => Promise<NoteNavigationResult> } = $props();
 
+	/** A broad question in a large vault can leave thousands of notes unread; list the best. */
+	const UNREAD_SHOWN = 25;
+
 	const render = createAnswerRenderer(MarkdownIt);
 	const answers = $derived(answersForVault($askAnswers, $appConfig?.active_vault));
 	const hasProvider = $derived(Boolean($appConfig?.ai_provider));
@@ -123,12 +126,15 @@
 						{/each}
 						{#if answer.plan.unread.length > 0}
 							<div class="ask-coverage">Related but not read</div>
-							{#each answer.plan.unread as note (note.path)}
+							{#each answer.plan.unread.slice(0, UNREAD_SHOWN) as note (note.path)}
 								<button class="source unread" onclick={() => open(note.path)}>
 									<span class="source-title">{note.title}</span>
 									{#if missing.has(note.path)}<span class="source-missing">note no longer exists</span>{/if}
 								</button>
 							{/each}
+							{#if answer.plan.unread.length > UNREAD_SHOWN}
+								<div class="ask-coverage">and {answer.plan.unread.length - UNREAD_SHOWN} more</div>
+							{/if}
 						{/if}
 					</div>
 				{/if}
