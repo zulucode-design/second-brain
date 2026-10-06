@@ -1,5 +1,5 @@
 {
-  "when": "2026-10-06T12:29:47.223Z",
+  "when": "2026-10-06T22:04:35.133Z",
   "app": "second-brain",
   "index": {
     "queuedNotes": 0,
@@ -19,6 +19,7 @@
       "duplicateOf": "Garden shed budget",
       "path": "Areas/Shed spending so far is about 2,400 euros out of the 3,200 limit, so roughly 780 left for paint and fixings.md",
       "title": "Shed spending so far is about 2,400 euros out of the 3,200 limit, so roughly 780 left for paint and fixings",
+      "captureMs": 45,
       "seconds": 0,
       "shown": [
         "Garden shed budget"
@@ -36,6 +37,7 @@
       "duplicateOf": "Shed materials decision",
       "path": "Areas/Going with cedar for the shed walls rather than treated pine- the pine boards were warped and cedar needs no preservative.md",
       "title": "Going with cedar for the shed walls rather than treated pine: the pine boards were warped and cedar needs no preservative",
+      "captureMs": 78,
       "seconds": 0,
       "shown": [
         "Shed materials decision"
@@ -53,6 +55,7 @@
       "duplicateOf": "Sourdough starter feeding",
       "path": "Areas/Feed the starter equal parts starter, flour and water twice a day and keep it warm, around 24 degrees.md",
       "title": "Feed the starter equal parts starter, flour and water twice a day and keep it warm, around 24 degrees",
+      "captureMs": 85,
       "seconds": 0,
       "shown": [
         "Sourdough starter feeding"
@@ -70,6 +73,7 @@
       "duplicateOf": "Cold brew coffee guide",
       "path": "Areas/Cold brew recipe- coarse grind, one to eight coffee to water, 16 to 18 hours in the fridge.md",
       "title": "Cold brew recipe: coarse grind, one to eight coffee to water, 16 to 18 hours in the fridge",
+      "captureMs": 39,
       "seconds": 0,
       "shown": [
         "Cold brew coffee guide"
@@ -87,6 +91,7 @@
       "duplicateOf": "Espresso dialing in",
       "path": "Areas/Espresso that works with these beans- 18 grams in, 36 out, around 28 seconds.md",
       "title": "Espresso that works with these beans: 18 grams in, 36 out, around 28 seconds",
+      "captureMs": 81,
       "seconds": 0,
       "shown": [
         "Espresso dialing in"
@@ -104,6 +109,7 @@
       "duplicateOf": "Knee pain after long runs",
       "path": "Areas/Outer knee hurts about 10 km into my long runs, likely the IT band; foam rolling helps.md",
       "title": "Outer knee hurts about 10 km into my long runs, likely the IT band; foam rolling helps",
+      "captureMs": 73,
       "seconds": 0,
       "shown": [
         "Knee pain after long runs"
@@ -121,6 +127,7 @@
       "duplicateOf": "Book notes: Atomic Habits",
       "path": "Areas/From Atomic Habits- stack new habits onto existing ones and set up the environment so the good habit is the easy one.md",
       "title": "From Atomic Habits: stack new habits onto existing ones and set up the environment so the good habit is the easy one",
+      "captureMs": 65,
       "seconds": 0,
       "shown": [
         "Book notes: Atomic Habits"
@@ -138,6 +145,7 @@
       "duplicateOf": "Lisbon trip planning",
       "path": "Areas/Lisbon- flying out 14 November, staying in Alfama, want to ride tram 28 and get pastel de nata at Manteigaria.md",
       "title": "Lisbon: flying out 14 November, staying in Alfama, want to ride tram 28 and get pastel de nata at Manteigaria",
+      "captureMs": 66,
       "seconds": 0,
       "shown": [
         "Lisbon trip planning"
@@ -155,6 +163,7 @@
       "duplicateOf": null,
       "path": "Areas/Should the shed get a gutter and a water butt to collect rain for the vegetable beds-.md",
       "title": "Should the shed get a gutter and a water butt to collect rain for the vegetable beds?",
+      "captureMs": 35,
       "seconds": 5,
       "shown": [],
       "coverage": null,
@@ -168,6 +177,7 @@
       "duplicateOf": null,
       "path": "Areas/Tried a rye sourdough today; the crumb came out dense and very sour, next time a longer bulk ferment.md",
       "title": "Tried a rye sourdough today; the crumb came out dense and very sour, next time a longer bulk ferment",
+      "captureMs": 41,
       "seconds": 5,
       "shown": [],
       "coverage": null,
@@ -181,6 +191,7 @@
       "duplicateOf": null,
       "path": "Areas/Bought a burr grinder for the moka pot; it is much quieter than the old blade grinder.md",
       "title": "Bought a burr grinder for the moka pot; it is much quieter than the old blade grinder",
+      "captureMs": 40,
       "seconds": 5,
       "shown": [],
       "coverage": null,
@@ -194,6 +205,7 @@
       "duplicateOf": null,
       "path": "Areas/Signed up for a half marathon in March, so long runs need to reach 18 km by February.md",
       "title": "Signed up for a half marathon in March, so long runs need to reach 18 km by February",
+      "captureMs": 37,
       "seconds": 5,
       "shown": [],
       "coverage": null,
@@ -207,6 +219,7 @@
       "duplicateOf": null,
       "path": "Areas/Book notes on The Psychology of Money- saving is the gap between your ego and your income.md",
       "title": "Book notes on The Psychology of Money: saving is the gap between your ego and your income",
+      "captureMs": 33,
       "seconds": 5,
       "shown": [],
       "coverage": null,
@@ -220,6 +233,7 @@
       "duplicateOf": null,
       "path": "Areas/Day trip to Porto from Lisbon- The train takes about three hours each way.md",
       "title": "Day trip to Porto from Lisbon? The train takes about three hours each way",
+      "captureMs": 39,
       "seconds": 5,
       "shown": [],
       "coverage": null,
@@ -233,6 +247,7 @@
       "duplicateOf": null,
       "path": "Areas/Call the dentist to move Thursday's appointment to next week.md",
       "title": "Call the dentist to move Thursday's appointment to next week",
+      "captureMs": 51,
       "seconds": 5,
       "shown": [],
       "coverage": null,
@@ -246,6 +261,7 @@
       "duplicateOf": null,
       "path": "Areas/Story idea- a lighthouse keeper who collects letters that were never delivered.md",
       "title": "Story idea: a lighthouse keeper who collects letters that were never delivered",
+      "captureMs": 42,
       "seconds": 5,
       "shown": [],
       "coverage": null,
@@ -259,6 +275,7 @@
       "duplicateOf": null,
       "path": "Areas/Replace the flickering bulb in the bathroom and buy spare batteries for the smoke alarm.md",
       "title": "Replace the flickering bulb in the bathroom and buy spare batteries for the smoke alarm",
+      "captureMs": 41,
       "seconds": 5,
       "shown": [],
       "coverage": null,
@@ -275,7 +292,8 @@
       "marked": true,
       "hasCapture": true,
       "captureGone": true,
-      "captureInTrash": true
+      "captureInTrash": true,
+      "undoable": true
     },
     "dismiss": {
       "capture": "Going with cedar for the shed walls rather than treated pine: the pine boards were warped and cedar needs no preservative",
@@ -285,6 +303,22 @@
       "capture": "Feed the starter equal parts starter, flour and water twice a day and keep it warm, around 24 degrees",
       "failure": "One of the notes changed since the check, so nothing was added.",
       "unchanged": true
+    },
+    "notification": {
+      "whileFocused": 0,
+      "calls": [
+        {
+          "replacesId": 0,
+          "summary": "Similar note found for your capture",
+          "body": "Open Second Brain to review."
+        },
+        {
+          "replacesId": 31,
+          "summary": "2 captures have similar notes",
+          "body": "Open Second Brain to review."
+        }
+      ],
+      "replaced": true
     },
     "offline": {
       "saved": true,
