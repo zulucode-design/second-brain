@@ -716,7 +716,7 @@ pub fn run() {
                 }
                 // The user is looking at the main window, so its similar-notes cards are seen.
                 tauri::WindowEvent::Focused(true) if window.label() == "main" => {
-                    similar_notes::seen();
+                    similar_notes::main_window_seen();
                 }
                 tauri::WindowEvent::Destroyed => {
                     let completed = window

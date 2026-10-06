@@ -250,9 +250,10 @@ that say the same thing.
   check without a word.
 - **What it compares.** The new note is embedded as a document, the way notes are indexed,
   and compared with every indexed note in all four categories (§12); the note itself is
-  excluded. A note counts as similar at a cosine score of 0.62 or more: midway between the
-  fixture's reworded duplicates (0.714 and up) and every other pair, same-topic notes included
-  (0.533 at most), scored with live embeddinggemma (`similarity_calibration`). It is
+  excluded. Only its first chunk's worth of text is embedded, the length every stored vector
+  covers. A note counts as similar at a cosine score of 0.65 or more: midway between the
+  fixture's reworded duplicates (0.769 to 0.850) and every other pair, same-topic notes
+  included (0.533 at most), scored with live embeddinggemma (`similarity_calibration`). It is
   recalibrated when the embedding model changes. Cards show the best 3, with "Showing 3 of N
   similar notes" when more pass.
 - **What the user sees.** A card in the main window, bottom right, newest first, that stays

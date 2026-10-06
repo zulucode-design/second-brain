@@ -13,9 +13,9 @@ use tauri::{AppHandle, Emitter, Manager};
 
 /// The score a note must reach to count as saying the same thing. Calibrated against live
 /// embeddinggemma on scripts/similarity-fixture.json (#9): its 8 reworded duplicates scored
-/// 0.714 to 0.850 against their notes, and no other pair, same-topic notes included, passed
+/// 0.769 to 0.850 against their notes, and no other pair, same-topic notes included, passed
 /// 0.533. The bar sits midway. Recalibrate when the embedding model changes.
-const SIMILAR_SCORE: f32 = 0.62;
+const SIMILAR_SCORE: f32 = 0.65;
 /// How many similar notes a card shows; the rest are only counted.
 const SHOWN: usize = 3;
 /// Shorter text embeds too loosely to call anything a duplicate.
@@ -43,11 +43,10 @@ pub struct CheckedNote {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SimilarMatch {
-    pub path: String,
-    pub title: String,
+    #[serde(flatten)]
+    pub note: CheckedNote,
     /// The passage that matched best: why the note was picked.
     pub excerpt: String,
-    pub revision: String,
 }
 
 /// The existing notes most like the note at `path`, or `None` when there are none or the note
@@ -77,10 +76,12 @@ pub fn check(
         .filter_map(|result| {
             let existing = operations::read_note(vault, &result.path).ok()?;
             Some(SimilarMatch {
-                path: result.path,
-                title: result.title,
+                note: CheckedNote {
+                    path: result.path,
+                    title: result.title,
+                    revision: existing.revision,
+                },
                 excerpt: result.snippet,
-                revision: existing.revision,
             })
         })
         .collect();
@@ -98,22 +99,29 @@ pub fn check(
     }))
 }
 
-/// [`check`] against the open vault, with every failure logged and treated as "nothing found":
-/// no index, an unreachable embedding backend, or a note that vanished.
+/// [`check`] against the open vault, with every failure treated as "nothing found": no index,
+/// an unreachable embedding backend, or a note that vanished.
 pub fn check_now(state: &AppState, path: &str) -> Option<SimilarityCheck> {
     let index = state.semantic_index.lock().ok()?.clone()?;
     let vault = state.config.lock().ok()?.active_vault.clone()?;
     match check(&index, &vault, path) {
         Ok(found) => found,
-        Err(error) => {
-            log::info!("Skipped the similarity check for a new note: {error}");
+        Err(_) => {
+            // Without the error: an embedding failure carries the backend's response body,
+            // which docs/log-privacy.md keeps out of the log.
+            log::info!("Skipped the similarity check for a new note");
             None
         }
     }
 }
 
 /// `existing` with the capture added at the end under a dated marker, title line included.
-pub fn appended(existing: &str, capture_title: &str, capture_body: &str, date: &str) -> String {
+pub fn with_capture_appended(
+    existing: &str,
+    capture_title: &str,
+    capture_body: &str,
+    date: &str,
+) -> String {
     let capture = [capture_title.trim(), capture_body.trim()]
         .into_iter()
         .filter(|part| !part.is_empty())
@@ -153,13 +161,13 @@ fn main_window_focused(app: &AppHandle) -> bool {
 static UNSEEN: AtomicUsize = AtomicUsize::new(0);
 
 /// The main window was focused: every card is in front of the user.
-pub fn seen() {
+pub fn main_window_seen() {
     UNSEEN.store(0, Ordering::SeqCst);
 }
 
 /// The notification's wording. Generic on purpose: it can show on a lock screen and stays in
 /// the notification history, so it never names a note.
-fn notice(unseen: usize) -> (String, &'static str) {
+fn notification_text(unseen: usize) -> (String, &'static str) {
     let title = if unseen <= 1 {
         "Similar note found for your capture".to_string()
     } else {
@@ -170,11 +178,11 @@ fn notice(unseen: usize) -> (String, &'static str) {
 
 /// Bring the main window forward, from a notification click on whatever thread delivers it.
 ///
-/// `activation_token` is the compositor's permission to take focus, which a click on a portal
-/// notification carries. Without it GNOME on Wayland refuses the focus request and shows
-/// "Second Brain is ready" instead of raising the window.
+/// `activation_token` is the compositor's permission to take focus, which the notification
+/// service sends just before a click. Without it GNOME on Wayland refuses the focus request and
+/// shows "Second Brain is ready" instead of raising the window.
 fn open_main_window(app: &AppHandle, activation_token: Option<String>) {
-    seen();
+    main_window_seen();
     let handle = app.clone();
     let opened = app.run_on_main_thread(move || {
         #[cfg(target_os = "linux")]
@@ -234,10 +242,14 @@ fn notify(app: &AppHandle) {
     use ashpd::zbus::zvariant::Value;
     use std::collections::HashMap;
 
-    listen_for_clicks(app);
-    let (title, body) = notice(UNSEEN.fetch_add(1, Ordering::SeqCst) + 1);
+    let (title, body) = notification_text(UNSEEN.fetch_add(1, Ordering::SeqCst) + 1);
     let desktop_entry = app.config().identifier.clone();
+    let app = app.clone();
     tauri::async_runtime::spawn(async move {
+        // One send at a time: a second capture must wait for the first's id, or both would go
+        // out as new notifications instead of one replacing the other.
+        static SENDING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        let _sending = SENDING.lock().await;
         let sent = async {
             let hints = HashMap::from([("desktop-entry", Value::from(desktop_entry.as_str()))]);
             let id: u32 = notification_service()
@@ -257,6 +269,8 @@ fn notify(app: &AppHandle) {
                 )
                 .await?;
             NOTIFICATION_ID.store(id, Ordering::SeqCst);
+            // Only once a notification is out, so a missing service logs one line, not two.
+            listen_for_clicks(&app);
             Ok::<(), ashpd::zbus::Error>(())
         }
         .await;
@@ -272,44 +286,48 @@ fn notify(app: &AppHandle) {
 #[cfg(target_os = "linux")]
 fn listen_for_clicks(app: &AppHandle) {
     use futures::StreamExt;
-    static STARTED: std::sync::Once = std::sync::Once::new();
+    use std::sync::atomic::AtomicBool;
+    static LISTENING: AtomicBool = AtomicBool::new(false);
 
+    if LISTENING.swap(true, Ordering::SeqCst) {
+        return;
+    }
     let app = app.clone();
-    STARTED.call_once(move || {
-        tauri::async_runtime::spawn(async move {
-            let listening = async {
-                let service = notification_service().await?;
-                let mut signals = service.receive_all_signals().await?;
-                let mut token = None;
-                while let Some(signal) = signals.next().await {
-                    let header = signal.header();
-                    let Some(member) = header.member() else {
-                        continue;
-                    };
-                    let Ok((id, value)) = signal.body().deserialize::<(u32, String)>() else {
-                        continue;
-                    };
-                    if id != NOTIFICATION_ID.load(Ordering::SeqCst) {
-                        continue;
-                    }
-                    match member.as_str() {
-                        "ActivationToken" => token = Some(value),
-                        "ActionInvoked" if value == "default" => {
-                            if token.is_none() {
-                                log::info!("A notification click came without an activation token");
-                            }
-                            open_main_window(&app, token.take());
-                        }
-                        _ => {}
-                    }
+    tauri::async_runtime::spawn(async move {
+        let listening = async {
+            let service = notification_service().await?;
+            let mut signals = service.receive_all_signals().await?;
+            let mut token = None;
+            while let Some(signal) = signals.next().await {
+                let header = signal.header();
+                let Some(member) = header.member() else {
+                    continue;
+                };
+                let Ok((id, value)) = signal.body().deserialize::<(u32, String)>() else {
+                    continue;
+                };
+                if id != NOTIFICATION_ID.load(Ordering::SeqCst) {
+                    continue;
                 }
-                Ok::<(), ashpd::zbus::Error>(())
+                match member.as_str() {
+                    "ActivationToken" => token = Some(value),
+                    "ActionInvoked" if value == "default" => {
+                        if token.is_none() {
+                            log::info!("A notification click came without an activation token");
+                        }
+                        open_main_window(&app, token.take());
+                    }
+                    _ => {}
+                }
             }
-            .await;
-            if let Err(error) = listening {
-                log::warn!("Notification clicks will not open the app: {error}");
-            }
-        });
+            Ok::<(), ashpd::zbus::Error>(())
+        }
+        .await;
+        if let Err(error) = listening {
+            // Let the next notification try again.
+            LISTENING.store(false, Ordering::SeqCst);
+            log::warn!("Notification clicks will not open the app: {error}");
+        }
     });
 }
 
@@ -321,7 +339,7 @@ fn notify(app: &AppHandle) {
     use windows::Foundation::TypedEventHandler;
     use windows::UI::Notifications::ToastNotification;
 
-    let (title, body) = notice(UNSEEN.fetch_add(1, Ordering::SeqCst) + 1);
+    let (title, body) = notification_text(UNSEEN.fetch_add(1, Ordering::SeqCst) + 1);
     let handle = app.clone();
     let shown =
         crate::hotkey::windows::toast(&title, body, "similar-notes", "capture").and_then(|toast| {
@@ -344,24 +362,27 @@ fn notify(_app: &AppHandle) {}
 
 #[cfg(test)]
 mod tests {
-    use super::{appended, notice};
+    use super::{notification_text, with_capture_appended};
 
     #[test]
     fn an_append_keeps_the_note_and_marks_where_the_capture_starts() {
         assert_eq!(
-            appended("Existing body.\n\n", "Cedar arrived", "Stacked by the shed.", "2026-10-05"),
+            with_capture_appended("Existing body.\n\n", "Cedar arrived", "Stacked by the shed.", "2026-10-05"),
             "Existing body.\n\n---\n\n*Added from capture, 2026-10-05:*\n\nCedar arrived\n\nStacked by the shed.\n"
         );
         assert_eq!(
-            appended("Existing.", "Title only", "", "2026-10-05"),
+            with_capture_appended("Existing.", "Title only", "", "2026-10-05"),
             "Existing.\n\n---\n\n*Added from capture, 2026-10-05:*\n\nTitle only\n"
         );
     }
 
     #[test]
     fn the_notification_never_names_a_note_and_counts_unseen_captures() {
-        assert_eq!(notice(1).0, "Similar note found for your capture");
-        assert_eq!(notice(3).0, "3 captures have similar notes");
-        assert_eq!(notice(1).1, "Open Second Brain to review.");
+        assert_eq!(
+            notification_text(1).0,
+            "Similar note found for your capture"
+        );
+        assert_eq!(notification_text(3).0, "3 captures have similar notes");
+        assert_eq!(notification_text(1).1, "Open Second Brain to review.");
     }
 }

@@ -1762,6 +1762,52 @@ mod tests {
         cleanup(root);
     }
 
+    #[test]
+    fn the_similarity_check_skips_short_notes_and_drops_matches_gone_from_disk() {
+        let root = scratch("similarity-check");
+        let vault = root.to_str().unwrap();
+        let capture = root.join("Capture.md");
+        let short = root.join("Short.md");
+        let kept = root.join("Kept.md");
+        let gone = root.join("Gone.md");
+        write_note(
+            &capture,
+            "capture-id",
+            "Capture",
+            "Areas",
+            "coffee beans today",
+        );
+        write_note(&short, "short-id", "Short", "Areas", "coffee");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        write_note(&gone, "gone-id", "Gone", "Areas", "coffee grinder");
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
+                .unwrap();
+        for note in [&capture, &short, &kept, &gone] {
+            index.note_changed(note).unwrap();
+        }
+        index.retry_pending().unwrap();
+        std::fs::remove_file(&gone).unwrap();
+
+        let check = |note: &Path| {
+            crate::similar_notes::check(&index, vault, note.to_str().unwrap()).unwrap()
+        };
+        assert!(check(&short).is_none(), "two words are too few to judge");
+        let found = check(&capture).expect("the coffee notes are similar");
+        let titles: Vec<&str> = found
+            .matches
+            .iter()
+            .map(|found| found.note.title.as_str())
+            .collect();
+        assert_eq!(
+            titles,
+            ["Kept", "Short"],
+            "a deleted note has nothing to append to"
+        );
+        drop(index);
+        cleanup(root);
+    }
+
     /// Scores every fixture capture against every fixture note with live embeddinggemma, the
     /// numbers the capture-similarity bar (`similar_notes::SIMILAR_SCORE`) is set from (#9). Run:
     /// `SB_OLLAMA_URL=http://127.0.0.1:11434 cargo test similarity_calibration -- --ignored --nocapture`

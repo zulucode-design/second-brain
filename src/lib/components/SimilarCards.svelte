@@ -19,6 +19,12 @@
 		if (!(await onBeforeAppend([capture.path, match.path]))) return;
 		if (await appendSimilar(card.id, capture, match)) onAppended(capture.path, match.path);
 	}
+
+	// Opening the note to edit it is one of the card's three answers, so the card goes.
+	function open(card: SimilarCard, match: SimilarMatch) {
+		dismissSimilar(card.id);
+		onOpen(match.path);
+	}
 </script>
 
 {#if $similarCards.length > 0}
@@ -38,7 +44,7 @@
 						<p class="similar-excerpt">{match.excerpt}</p>
 						<div class="similar-actions">
 							<button disabled={card.busy} onclick={() => append(card, match)}>Append</button>
-							<button disabled={card.busy} onclick={() => onOpen(match.path)}>Open</button>
+							<button disabled={card.busy} onclick={() => open(card, match)}>Open</button>
 						</div>
 					</div>
 				{/each}

@@ -845,20 +845,25 @@
 		if (!$holdingPreview) $sourceMode = !$sourceMode;
 	}
 
+	// A note just moved to trash leaves the list, the manual order, and the editor.
+	function forgetTrashedNote(path: string) {
+		if (Object.hasOwn($noteOrder, path)) {
+			const { [path]: _, ...rest } = $noteOrder;
+			$noteOrder = rest;
+		}
+		$notes = $notes.filter((note) => note.path !== path);
+		if ($activeNotePath === path) {
+			$activeNote = null;
+			$activeNotePath = null;
+		}
+		noteList?.refresh(true).catch((error) => console.error('Failed to refresh notes after trashing:', error));
+	}
+
 	async function trashOpenNote(path: string): Promise<boolean> {
 		if ($shutdownPending || path !== $activeNotePath || $viewerNote || $viewMode === 'trash') return false;
 		try {
 			await deleteNote(path);
-			if (Object.hasOwn($noteOrder, path)) {
-				const { [path]: _, ...rest } = $noteOrder;
-				$noteOrder = rest;
-			}
-			$notes = $notes.filter((note) => note.path !== path);
-			if ($activeNotePath === path) {
-				$activeNote = null;
-				$activeNotePath = null;
-			}
-			noteList?.refresh(true).catch((error) => console.error('Failed to refresh notes after trashing:', error));
+			forgetTrashedNote(path);
 			if (isCompact) $compactView = 'notelist';
 			return true;
 		} catch (error) {
@@ -875,18 +880,8 @@
 	}
 
 	function afterSimilarAppend(capturePath: string, targetPath: string) {
-		if (Object.hasOwn($noteOrder, capturePath)) {
-			const { [capturePath]: _, ...rest } = $noteOrder;
-			$noteOrder = rest;
-		}
-		$notes = $notes.filter((note) => note.path !== capturePath);
-		if ($activeNotePath === capturePath) {
-			$activeNote = null;
-			$activeNotePath = null;
-		} else if ($activeNotePath === targetPath) {
-			void reloadOpenNoteFromDisk();
-		}
-		noteList?.refresh(true).catch((error) => console.error('Failed to refresh notes after appending:', error));
+		if ($activeNotePath === targetPath) void reloadOpenNoteFromDisk();
+		forgetTrashedNote(capturePath);
 	}
 
 	function handleMouseDown(e: MouseEvent) {

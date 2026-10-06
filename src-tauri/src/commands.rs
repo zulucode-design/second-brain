@@ -1225,7 +1225,18 @@ pub fn append_to_similar_note(
     if capture.revision != capture_revision || target.revision != target_revision {
         return Err("One of the notes changed since the check, so nothing was added.".to_string());
     }
-    let body = crate::similar_notes::appended(
+    // Forced, not the save's own snapshot: that one is skipped within 5 minutes of the last,
+    // and the append must always be undoable from the note's history.
+    let max_versions = state
+        .config
+        .lock()
+        .map_err(|error| error.to_string())?
+        .max_versions_per_note;
+    crate::history::force_snapshot(&vault_path, &target.meta.id, &target.raw, max_versions)
+        .map_err(|_| {
+            "Could not keep a copy of the note to undo with, so nothing was added.".to_string()
+        })?;
+    let body = crate::similar_notes::with_capture_appended(
         &target.content,
         &capture.meta.title,
         &capture.content,
