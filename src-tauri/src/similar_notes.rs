@@ -208,16 +208,25 @@ static NOTIFICATION_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::Atomic
 /// a portal notification reaches the app without an activation token (GNOME 50 sends its action
 /// with no platform data), and without one GNOME on Wayland refuses to raise the window and shows
 /// "… is ready" instead. This service sends the token (`ActivationToken`) just before the click.
+///
+/// One connection for the app's lifetime: GNOME Shell withdraws an app's notifications the moment
+/// the connection that sent them closes, so a connection per notification lost each one at once.
 #[cfg(target_os = "linux")]
-async fn notification_service() -> ashpd::zbus::Result<ashpd::zbus::Proxy<'static>> {
-    let connection = ashpd::zbus::Connection::session().await?;
-    ashpd::zbus::Proxy::new(
-        &connection,
-        "org.freedesktop.Notifications",
-        "/org/freedesktop/Notifications",
-        "org.freedesktop.Notifications",
-    )
-    .await
+async fn notification_service() -> ashpd::zbus::Result<&'static ashpd::zbus::Proxy<'static>> {
+    static SERVICE: tokio::sync::OnceCell<ashpd::zbus::Proxy<'static>> =
+        tokio::sync::OnceCell::const_new();
+    SERVICE
+        .get_or_try_init(|| async {
+            let connection = ashpd::zbus::Connection::session().await?;
+            ashpd::zbus::Proxy::new(
+                &connection,
+                "org.freedesktop.Notifications",
+                "/org/freedesktop/Notifications",
+                "org.freedesktop.Notifications",
+            )
+            .await
+        })
+        .await
 }
 
 #[cfg(target_os = "linux")]
