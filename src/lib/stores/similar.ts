@@ -24,16 +24,28 @@ export function dismissSimilar(id: string) {
   similarCards.update((cards) => cards.filter((card) => card.id !== id));
 }
 
-/** Folds the card's capture into `target`; true once appended and the card is gone. */
-export async function appendSimilar(id: string, capture: CheckedNote, target: CheckedNote): Promise<boolean> {
+/**
+ * Folds the card's capture into `target`. 'appended' once done and the card is gone;
+ * 'capture-kept' when the note was written but the capture could not be moved to trash, which
+ * the card then says; null when nothing was written.
+ */
+export async function appendSimilar(
+  id: string,
+  capture: CheckedNote,
+  target: CheckedNote,
+): Promise<'appended' | 'capture-kept' | null> {
   patch(id, { busy: true, error: null });
   try {
-    await appendToSimilarNote(capture, target);
+    const trashFailure = await appendToSimilarNote(capture, target);
+    if (trashFailure) {
+      patch(id, { busy: false, error: trashFailure });
+      return 'capture-kept';
+    }
     dismissSimilar(id);
-    return true;
+    return 'appended';
   } catch (error) {
     patch(id, { busy: false, error: String(error) });
-    return false;
+    return null;
   }
 }
 

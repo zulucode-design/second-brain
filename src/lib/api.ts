@@ -666,8 +666,11 @@ export async function checkSimilarNotes(path: string): Promise<SimilarityCheck |
   return invoke("check_similar_notes", { path });
 }
 
-/** Append the capture to a similar note and move the capture to trash (#9). */
-export async function appendToSimilarNote(capture: CheckedNote, target: CheckedNote): Promise<void> {
+/**
+ * Append the capture to a similar note and move the capture to trash (#9). Resolves to why the
+ * capture could not be moved to trash after the append, or null when it was.
+ */
+export async function appendToSimilarNote(capture: CheckedNote, target: CheckedNote): Promise<string | null> {
   return invoke("append_to_similar_note", {
     capturePath: capture.path,
     captureRevision: capture.revision,

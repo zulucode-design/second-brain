@@ -42,6 +42,10 @@ const CACHE_READY_DEADLINE: Duration = if cfg!(test) {
     Duration::from_secs(5)
 };
 
+fn query_input(query: &str) -> String {
+    format!("{QUERY_PROMPT}{query}")
+}
+
 fn document_input(title: &str, text: &str) -> String {
     let title = if title.trim().is_empty() {
         "none"
@@ -614,7 +618,7 @@ impl SemanticIndex {
         category: Option<ParaCategory>,
         limit: usize,
     ) -> Result<Vec<SearchResult>, String> {
-        let scored = self.score(format!("{QUERY_PROMPT}{query}"), category)?;
+        let scored = self.score(query_input(query), category)?;
         let results = best_per_note(&scored.database, &scored.chunks, limit)?;
         crate::perf_probe::record(serde_json::json!({
             "kind": "semantic-backend",
@@ -637,7 +641,7 @@ impl SemanticIndex {
         max_characters: usize,
         cost: impl Fn(&str, &str, bool) -> usize,
     ) -> Result<Retrieval, String> {
-        let mut scored = self.score(format!("{QUERY_PROMPT}{query}"), category)?;
+        let mut scored = self.score(query_input(query), category)?;
         scored.chunks.sort_by(|left, right| {
             right
                 .score

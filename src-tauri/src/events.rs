@@ -18,8 +18,8 @@ pub const QUICK_CAPTURE_SHOWN: &str = "quick-capture-shown";
 pub const REPAIR_STATUS_CHANGED: &str = "repair-status-changed";
 pub const RESTORE_DONE: &str = "restore-done";
 pub const SAVE_BEFORE_CLOSE: &str = "save-before-close";
+pub const SAVE_CLOSE_RELEASED: &str = "save-close-released";
 /// The similarity check found existing notes like a just-captured one (#9).
 pub const SIMILAR_NOTES_FOUND: &str = "similar-notes-found";
-pub const SAVE_CLOSE_RELEASED: &str = "save-close-released";
 pub const SYNC_DONE: &str = "sync-done";
 pub const UI_SCALE_CHANGED: &str = "ui-scale-changed";

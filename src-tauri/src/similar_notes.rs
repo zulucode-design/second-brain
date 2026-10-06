@@ -8,7 +8,7 @@ use crate::semantic_search::SemanticIndex;
 use crate::state::AppState;
 use crate::vault::operations;
 use serde::Serialize;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// The score a note must reach to count as saying the same thing. Calibrated against live
@@ -69,6 +69,7 @@ pub fn check(
         SIMILAR_SCORE,
         SHOWN,
     )?;
+    let ranked = found.notes.len();
     let matches: Vec<SimilarMatch> = found
         .notes
         .into_iter()
@@ -94,8 +95,9 @@ pub fn check(
             title: note.meta.title,
             revision: note.revision,
         },
+        // Less the ones just dropped, so the card never counts a note it cannot show.
+        total: found.total - (ranked - matches.len()),
         matches,
-        total: found.total,
     }))
 }
 
@@ -144,10 +146,20 @@ pub fn after_capture(app: AppHandle, path: String) {
             log::warn!("Could not show the similar-notes card: {error}");
             return;
         }
-        if !main_window_focused(&app) {
+        if !MAIN_FOCUSED_AT_CAPTURE.load(Ordering::SeqCst) && !main_window_focused(&app) {
             notify(&app);
         }
     });
+}
+
+/// Whether the main window had focus when the capture overlay last opened. The overlay takes
+/// focus, so a check that finishes before it hands focus back would otherwise notify a user who
+/// was in the app all along.
+static MAIN_FOCUSED_AT_CAPTURE: AtomicBool = AtomicBool::new(false);
+
+/// The capture overlay is about to open.
+pub fn capture_opening(app: &AppHandle) {
+    MAIN_FOCUSED_AT_CAPTURE.store(main_window_focused(app), Ordering::SeqCst);
 }
 
 fn main_window_focused(app: &AppHandle) -> bool {
@@ -286,7 +298,6 @@ fn notify(app: &AppHandle) {
 #[cfg(target_os = "linux")]
 fn listen_for_clicks(app: &AppHandle) {
     use futures::StreamExt;
-    use std::sync::atomic::AtomicBool;
     static LISTENING: AtomicBool = AtomicBool::new(false);
 
     if LISTENING.swap(true, Ordering::SeqCst) {

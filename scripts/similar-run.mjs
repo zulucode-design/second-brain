@@ -6,15 +6,16 @@
 // Same setup as ask-run.mjs: a fresh run root, tauri-driver, and the desktop's Ollama tunnelled
 // in. The vault holds scripts/similarity-fixture.json's notes. Each fixture capture is filed
 // through the command the overlay uses (WebDriver cannot press a global hotkey), and the card
-// it raises in the main window is read back. Then Append, Dismiss, a refused Append on a note
-// changed since the check, and a capture with the backend gone are each tried once.
+// it raises in the main window is read back. Then Append, Dismiss, refused Appends on a note
+// edited and a note moved since the check, and a capture with the backend gone are each tried
+// once.
 // On Linux, two more duplicates are captured with the main window minimized, and the
 // notifications the app sends are read off the session bus with dbus-monitor. A click on one
 // cannot be scripted, so that stays a hand check.
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import { invoke, options, runMain, sleep, waitForIndex, withApp } from './ask-run.mjs';
 
@@ -169,6 +170,10 @@ async function main() {
       const target = notePath(appended.duplicateOf);
       const history = join(vault, '.helixnotes', 'history', noteId(fixture.notes.findIndex((note) => note.title === appended.duplicateOf)));
       const before = readFileSync(target, 'utf8');
+      // A snapshot from a moment ago, as if the note had just been saved: a save's own snapshot
+      // is skipped within 5 minutes of the last, so only the append's forced one keeps `before`.
+      mkdirSync(history, { recursive: true });
+      writeFileSync(join(history, `${new Date().toISOString().slice(0, 19).replaceAll(':', '-')}.md`), 'an earlier save\n');
       await press(browser, appended.title, 'Append', appended.duplicateOf);
       await waitForCard(browser, appended.title, (card) => card === null);
       const after = readFileSync(target, 'utf8');
@@ -232,6 +237,22 @@ async function main() {
         replaced: calls.length === 2 && calls[0].replacesId === 0 && calls[1].replacesId > 0,
       };
       bus.kill();
+    }
+
+    // A note moved since the check: the append is refused and nothing is written.
+    const moved = carded[5];
+    if (moved) {
+      const target = notePath(moved.duplicateOf);
+      const movedTo = `${target.slice(0, -3)} (moved).md`;
+      renameSync(target, movedTo);
+      const hashes = [hash(moved.path), hash(movedTo)];
+      await press(browser, moved.title, 'Append', moved.duplicateOf);
+      const card = await waitForCard(browser, moved.title, (current) => Boolean(current?.failure));
+      actions.movedNote = {
+        capture: moved.capture,
+        failure: card.failure,
+        unchanged: hash(moved.path) === hashes[0] && hash(movedTo) === hashes[1],
+      };
     }
 
     // The backend gone: the capture is filed as always and no card appears.

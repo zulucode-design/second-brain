@@ -1208,7 +1208,9 @@ pub async fn check_similar_notes(
 
 /// Fold a capture into a similar note (#9): its text goes at the end of `target_path`, then the
 /// capture moves to trash. Refused when either note changed since the check, so nothing lands
-/// in a note the user has not seen as it is.
+/// in a note the user has not seen as it is. Once the note is written, a capture that cannot be
+/// moved to trash is not an error: the result says why it stayed, and the caller still shows
+/// the note's new text.
 #[tauri::command]
 pub fn append_to_similar_note(
     state: State<'_, AppState>,
@@ -1216,7 +1218,7 @@ pub fn append_to_similar_note(
     capture_revision: String,
     target_path: String,
     target_revision: String,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let vault_path = active_vault(&state)?;
     let capture = operations::read_note(&vault_path, &capture_path)
         .map_err(|_| "Your capture is no longer there, so nothing was added.".to_string())?;
@@ -1249,9 +1251,9 @@ pub fn append_to_similar_note(
         body,
         target_revision,
     )?;
-    delete_note(state, capture_path).map_err(|error| {
+    Ok(delete_note(state, capture_path).err().map(|error| {
         format!("Added to the note, but your capture could not be moved to trash: {error}")
-    })
+    }))
 }
 
 /// Fetch and distil a web page away from Tauri's UI thread, then file it only after the

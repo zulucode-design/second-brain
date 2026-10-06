@@ -258,7 +258,8 @@ that say the same thing.
   similar notes" when more pass.
 - **What the user sees.** A card in the main window, bottom right, newest first, that stays
   until handled: the similar note's title, its best-matching passage (the reason for the
-  match), and Append, Open, and Dismiss. Cards live in memory only. When the main window is
+  match), and Append, Open, and Dismiss. Each of the three ends the card, Open once the note
+  is open. Cards live in memory only. When the main window is
   not focused, a quick capture also raises a desktop notification, "Similar note found for
   your capture", that names no note (it can show on a lock screen); clicking it brings the
   main window forward. Several captures share one notification.

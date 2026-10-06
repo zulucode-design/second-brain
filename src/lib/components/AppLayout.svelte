@@ -855,6 +855,7 @@
 		if ($activeNotePath === path) {
 			$activeNote = null;
 			$activeNotePath = null;
+			if (isCompact) $compactView = 'notelist';
 		}
 		noteList?.refresh(true).catch((error) => console.error('Failed to refresh notes after trashing:', error));
 	}
@@ -864,7 +865,6 @@
 		try {
 			await deleteNote(path);
 			forgetTrashedNote(path);
-			if (isCompact) $compactView = 'notelist';
 			return true;
 		} catch (error) {
 			console.error('Failed to move open note to Trash:', error);
@@ -879,9 +879,9 @@
 		return ensureCurrentNoteSaved('Adding to a similar note');
 	}
 
-	function afterSimilarAppend(capturePath: string, targetPath: string) {
+	function afterSimilarAppend(capturePath: string, targetPath: string, captureTrashed: boolean) {
 		if ($activeNotePath === targetPath) void reloadOpenNoteFromDisk();
-		forgetTrashedNote(capturePath);
+		if (captureTrashed) forgetTrashedNote(capturePath);
 	}
 
 	function handleMouseDown(e: MouseEvent) {
@@ -1572,7 +1572,7 @@
 </div>
 
 <SearchPanel onOpenResult={(path, noteId) => navigateToPathResult(path, undefined, false, noteId)} />
-<SimilarCards onOpen={(path) => void navigateToPath(path)} onBeforeAppend={beforeSimilarAppend} onAppended={afterSimilarAppend} />
+<SimilarCards onOpen={(path) => navigateToPath(path)} onBeforeAppend={beforeSimilarAppend} onAppended={afterSimilarAppend} />
 <CommandPalette onNavigate={handleViewChanged} onToggleSource={toggleSourceMode} />
 <SettingsPanel onRequestVaultSwitch={requestVaultSwitch} onBeforeRestore={prepareForRestore} onAfterRestore={refreshAfterRestore} onAfterConflictChoice={reloadOpenNoteFromDisk} />
 <InfoPanel />

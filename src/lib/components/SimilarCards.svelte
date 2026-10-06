@@ -8,22 +8,25 @@
 		onBeforeAppend,
 		onAppended,
 	}: {
-		onOpen: (path: string) => void;
+		/** Opens the note; false when it could not be opened. */
+		onOpen: (path: string) => Promise<boolean>;
 		/** Saves the open note first when the append touches it; false stops the append. */
 		onBeforeAppend: (paths: string[]) => Promise<boolean>;
-		onAppended: (capturePath: string, targetPath: string) => void;
+		/** The capture stays in place when it could not be moved to trash. */
+		onAppended: (capturePath: string, targetPath: string, captureTrashed: boolean) => void;
 	} = $props();
 
 	async function append(card: SimilarCard, match: SimilarMatch) {
 		const capture = card.check.capture;
 		if (!(await onBeforeAppend([capture.path, match.path]))) return;
-		if (await appendSimilar(card.id, capture, match)) onAppended(capture.path, match.path);
+		const outcome = await appendSimilar(card.id, capture, match);
+		if (outcome) onAppended(capture.path, match.path, outcome === 'appended');
 	}
 
-	// Opening the note to edit it is one of the card's three answers, so the card goes.
-	function open(card: SimilarCard, match: SimilarMatch) {
-		dismissSimilar(card.id);
-		onOpen(match.path);
+	// Opening the note to edit it is one of the card's three answers, so the card goes once the
+	// note is open.
+	async function open(card: SimilarCard, match: SimilarMatch) {
+		if (await onOpen(match.path)) dismissSimilar(card.id);
 	}
 </script>
 

@@ -85,6 +85,7 @@ pub fn show_capture_window(app: &AppHandle) -> Result<(), String> {
             app.webview_windows().keys().collect::<Vec<_>>()
         ));
     };
+    crate::similar_notes::capture_opening(app);
     window
         .show()
         .and_then(|()| window.set_focus())
