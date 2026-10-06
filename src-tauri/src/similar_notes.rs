@@ -169,10 +169,29 @@ fn notice(unseen: usize) -> (String, &'static str) {
 }
 
 /// Bring the main window forward, from a notification click on whatever thread delivers it.
-fn open_main_window(app: &AppHandle) {
+///
+/// `activation_token` is the compositor's permission to take focus, which a click on a portal
+/// notification carries. Without it GNOME on Wayland refuses the focus request and shows
+/// "Second Brain is ready" instead of raising the window.
+fn open_main_window(app: &AppHandle, activation_token: Option<String>) {
     seen();
     let handle = app.clone();
-    if let Err(error) = app.run_on_main_thread(move || crate::show_main_window(&handle)) {
+    let opened = app.run_on_main_thread(move || {
+        #[cfg(target_os = "linux")]
+        if let Some(token) = activation_token {
+            use gtk::prelude::GtkWindowExt;
+            if let Some(Ok(window)) = handle
+                .get_webview_window("main")
+                .map(|main| main.gtk_window())
+            {
+                window.set_startup_id(&token);
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = activation_token;
+        crate::show_main_window(&handle);
+    });
+    if let Err(error) = opened {
         log::warn!("Could not open the main window from the notification: {error}");
     }
 }
@@ -225,7 +244,11 @@ fn listen_for_clicks(app: &AppHandle) {
                 let mut actions = proxy.receive_action_invoked().await?;
                 while let Some(action) = actions.next().await {
                     if action.id() == NOTIFICATION_ID {
-                        open_main_window(&app);
+                        let token = activation_token(action.parameter());
+                        if token.is_none() {
+                            log::info!("A notification click came without an activation token");
+                        }
+                        open_main_window(&app, token);
                     }
                 }
                 Ok::<(), ashpd::Error>(())
@@ -236,6 +259,19 @@ fn listen_for_clicks(app: &AppHandle) {
             }
         });
     });
+}
+
+/// The activation token in a portal action's parameters. Since version 2 of the notification
+/// portal they end with platform data, a dictionary that holds it as `activation-token`.
+#[cfg(target_os = "linux")]
+fn activation_token(parameters: &[ashpd::zvariant::OwnedValue]) -> Option<String> {
+    use std::collections::HashMap;
+    parameters.iter().find_map(|parameter| {
+        let data =
+            HashMap::<String, ashpd::zvariant::OwnedValue>::try_from(parameter.try_clone().ok()?)
+                .ok()?;
+        String::try_from(data.get("activation-token")?.try_clone().ok()?).ok()
+    })
 }
 
 /// A toast under a fixed tag, so a newer one replaces the last (#153). Clicking it raises the
@@ -252,7 +288,7 @@ fn notify(app: &AppHandle) {
         crate::hotkey::windows::toast(&title, body, "similar-notes", "capture").and_then(|toast| {
             toast.Activated(&TypedEventHandler::<ToastNotification, IInspectable>::new(
                 move |_, _| {
-                    open_main_window(&handle);
+                    open_main_window(&handle, None);
                     Ok(())
                 },
             ))?;
