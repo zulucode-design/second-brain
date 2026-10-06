@@ -136,25 +136,10 @@ pub fn after_capture(app: AppHandle, path: String) {
             log::warn!("Could not show the similar-notes card: {error}");
             return;
         }
-        wait_for_overlay_to_close(&app);
         if !main_window_focused(&app) {
             notify(&app);
         }
     });
-}
-
-/// A fast check can finish while the capture overlay is still closing. A notification sent then
-/// comes from the focused app, which GNOME drops at once, so the overlay is given a moment first.
-fn wait_for_overlay_to_close(app: &AppHandle) {
-    for _ in 0..40 {
-        let open = app
-            .get_webview_window(crate::hotkey::WINDOW_LABEL)
-            .is_some_and(|window| window.is_visible().unwrap_or(false));
-        if !open {
-            return;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
 }
 
 fn main_window_focused(app: &AppHandle) -> bool {
