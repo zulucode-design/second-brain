@@ -196,30 +196,59 @@ fn open_main_window(app: &AppHandle, activation_token: Option<String>) {
     }
 }
 
+/// The id GNOME gave the last similar-notes notification, so a newer one replaces it and a click
+/// can be matched to it. 0 is none yet.
 #[cfg(target_os = "linux")]
-const NOTIFICATION_ID: &str = "capture-similar-notes";
+static NOTIFICATION_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
-/// Through the notification portal, like the hotkey's own notice (see
-/// `hotkey::startup::notify_vault_unavailable` for why not `tauri-plugin-notification`). The
-/// fixed id makes a newer notification replace the last.
+/// The desktop's notification service, `org.freedesktop.Notifications`, over the session bus
+/// ashpd already uses.
+///
+/// Not the notification portal that `hotkey::startup::notify_vault_unavailable` uses: a click on
+/// a portal notification reaches the app without an activation token (GNOME 50 sends its action
+/// with no platform data), and without one GNOME on Wayland refuses to raise the window and shows
+/// "… is ready" instead. This service sends the token (`ActivationToken`) just before the click.
+#[cfg(target_os = "linux")]
+async fn notification_service() -> ashpd::zbus::Result<ashpd::zbus::Proxy<'static>> {
+    let connection = ashpd::zbus::Connection::session().await?;
+    ashpd::zbus::Proxy::new(
+        &connection,
+        "org.freedesktop.Notifications",
+        "/org/freedesktop/Notifications",
+        "org.freedesktop.Notifications",
+    )
+    .await
+}
+
 #[cfg(target_os = "linux")]
 fn notify(app: &AppHandle) {
-    use ashpd::desktop::notification::{Notification, NotificationProxy, Priority};
+    use ashpd::zbus::zvariant::Value;
+    use std::collections::HashMap;
 
     listen_for_clicks(app);
     let (title, body) = notice(UNSEEN.fetch_add(1, Ordering::SeqCst) + 1);
+    let desktop_entry = app.config().identifier.clone();
     tauri::async_runtime::spawn(async move {
         let sent = async {
-            NotificationProxy::new()
+            let hints = HashMap::from([("desktop-entry", Value::from(desktop_entry.as_str()))]);
+            let id: u32 = notification_service()
                 .await?
-                .add_notification(
-                    NOTIFICATION_ID,
-                    Notification::new(&title)
-                        .body(body)
-                        .default_action("open")
-                        .priority(Priority::Normal),
+                .call(
+                    "Notify",
+                    &(
+                        "Second Brain",
+                        NOTIFICATION_ID.load(Ordering::SeqCst),
+                        "",
+                        title.as_str(),
+                        body,
+                        vec!["default", "Open"],
+                        hints,
+                        -1i32,
+                    ),
                 )
-                .await
+                .await?;
+            NOTIFICATION_ID.store(id, Ordering::SeqCst);
+            Ok::<(), ashpd::zbus::Error>(())
         }
         .await;
         // A nudge only: the card is already waiting in the main window.
@@ -229,8 +258,8 @@ fn notify(app: &AppHandle) {
     });
 }
 
-/// One listener for the app's lifetime: the portal reports a click on any of its notifications
-/// as an action on its id.
+/// One listener for the app's lifetime. The service announces a click as `ActivationToken` and
+/// then `ActionInvoked` for the notification's id; both come on one stream, in order.
 #[cfg(target_os = "linux")]
 fn listen_for_clicks(app: &AppHandle) {
     use futures::StreamExt;
@@ -240,18 +269,32 @@ fn listen_for_clicks(app: &AppHandle) {
     STARTED.call_once(move || {
         tauri::async_runtime::spawn(async move {
             let listening = async {
-                let proxy = ashpd::desktop::notification::NotificationProxy::new().await?;
-                let mut actions = proxy.receive_action_invoked().await?;
-                while let Some(action) = actions.next().await {
-                    if action.id() == NOTIFICATION_ID {
-                        let token = activation_token(action.parameter());
-                        if token.is_none() {
-                            log::info!("A notification click came without an activation token");
+                let service = notification_service().await?;
+                let mut signals = service.receive_all_signals().await?;
+                let mut token = None;
+                while let Some(signal) = signals.next().await {
+                    let header = signal.header();
+                    let Some(member) = header.member() else {
+                        continue;
+                    };
+                    let Ok((id, value)) = signal.body().deserialize::<(u32, String)>() else {
+                        continue;
+                    };
+                    if id != NOTIFICATION_ID.load(Ordering::SeqCst) {
+                        continue;
+                    }
+                    match member.as_str() {
+                        "ActivationToken" => token = Some(value),
+                        "ActionInvoked" if value == "default" => {
+                            if token.is_none() {
+                                log::info!("A notification click came without an activation token");
+                            }
+                            open_main_window(&app, token.take());
                         }
-                        open_main_window(&app, token);
+                        _ => {}
                     }
                 }
-                Ok::<(), ashpd::Error>(())
+                Ok::<(), ashpd::zbus::Error>(())
             }
             .await;
             if let Err(error) = listening {
@@ -259,19 +302,6 @@ fn listen_for_clicks(app: &AppHandle) {
             }
         });
     });
-}
-
-/// The activation token in a portal action's parameters. Since version 2 of the notification
-/// portal they end with platform data, a dictionary that holds it as `activation-token`.
-#[cfg(target_os = "linux")]
-fn activation_token(parameters: &[ashpd::zvariant::OwnedValue]) -> Option<String> {
-    use std::collections::HashMap;
-    parameters.iter().find_map(|parameter| {
-        let data =
-            HashMap::<String, ashpd::zvariant::OwnedValue>::try_from(parameter.try_clone().ok()?)
-                .ok()?;
-        String::try_from(data.get("activation-token")?.try_clone().ok()?).ok()
-    })
 }
 
 /// A toast under a fixed tag, so a newer one replaces the last (#153). Clicking it raises the
