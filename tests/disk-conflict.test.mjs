@@ -213,10 +213,13 @@ test('both windows and the editor route the conflict the same way', async () => 
   assert.match(editor, /function openDiskConflictDialog\(\) \{\s*if \(!diskConflict \|\| diskConflictBusy \|\| hasPendingDraft\(\)\) return;/);
   // Loading any document ends the conflict; a resolution keeps the editor frozen.
   assert.match(editor, /saveCoordinator\.setDocument\(path, true\);\s*clearDiskConflict\(\);/);
-  assert.match(editor, /editor\.setEditable\(!shouldBeReadOnly && !diskConflictBusy, false\)/);
+  // A conflict being resolved locks editing, as an append's hold does (#9).
+  assert.match(editor, /const editingLocked = \$derived\(diskConflictBusy \|\| operationHeld\);/);
+  assert.match(editor, /const resolving = editingLocked;/);
+  assert.match(editor, /editor\.setEditable\(!shouldBeReadOnly && !editingLocked, false\)/);
   assert.match(editor, /editor\.setEditable\(!ro && !shuttingDown && !preview && !resolving, false\)/);
-  assert.equal([...editor.matchAll(/\|\| \$holdingPreview \|\| diskConflictBusy\}/g)].length, 2);
-  assert.match(editor, /readonly=\{\$readOnly \|\| diskConflictBusy\}/);
+  assert.equal([...editor.matchAll(/\|\| \$holdingPreview \|\| editingLocked\}/g)].length, 2);
+  assert.match(editor, /readonly=\{\$readOnly \|\| editingLocked\}/);
 });
 
 test('a draft opened while the lock is being taken ends the choice before any flush', async () => {
@@ -249,6 +252,6 @@ test('the dialog keeps focus and keys while a choice is applied, and nothing reo
   assert.match(editor, /function trapDiskConflictFocus\(event: KeyboardEvent\) \{\s*event\.stopPropagation\(\);/);
   assert.match(editor, /diskConflictModal\?\.focus\(\);\s*diskConflictBusy = true;/);
   // An editor recreated during a choice (a mode switch) starts frozen; source keys do nothing.
-  assert.match(editor, /editable: !\$readOnly && !diskConflictBusy,/);
-  assert.equal([...editor.matchAll(/onkeydown=\{\(e\) => \{\s*if \(diskConflictBusy\) \{ e\.preventDefault\(\); return; \}\s*if \(handleSourceCtrlEnd\(e\)\) return;/g)].length, 2);
+  assert.match(editor, /editable: !\$readOnly && !editingLocked,/);
+  assert.equal([...editor.matchAll(/onkeydown=\{\(e\) => \{\s*if \(editingLocked\) \{ e\.preventDefault\(\); return; \}\s*if \(handleSourceCtrlEnd\(e\)\) return;/g)].length, 2);
 });
