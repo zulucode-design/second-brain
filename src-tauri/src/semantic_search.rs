@@ -692,8 +692,8 @@ impl SemanticIndex {
         Ok(retrieval)
     }
 
-    /// The notes most like a just-written note (#9), best first: at most `limit` of them, out of
-    /// `total` scoring at least `min_score`. `exclude_id` is the written note's own id.
+    /// Every note scoring at least `min_score` against a just-written note (#9), best first.
+    /// `exclude_id` is the written note's own id.
     ///
     /// The note is embedded the way notes are indexed, as a document, not as a search query, so
     /// a near-copy of an indexed chunk scores close to 1. Only its first chunk's worth is used,
@@ -704,8 +704,7 @@ impl SemanticIndex {
         text: &str,
         exclude_id: &str,
         min_score: f32,
-        limit: usize,
-    ) -> Result<SimilarNotes, String> {
+    ) -> Result<Vec<SimilarNote>, String> {
         let text: String = text.chars().take(CHUNK_CHARACTERS).collect();
         let Scored {
             database, chunks, ..
@@ -715,10 +714,22 @@ impl SemanticIndex {
             .into_iter()
             .filter(|chunk| chunk.key != exclude && chunk.score >= min_score)
             .collect();
-        let mut notes = best_per_note(&database, &chunks, usize::MAX)?;
-        let total = notes.len();
-        notes.truncate(limit);
-        Ok(SimilarNotes { notes, total })
+        best_per_note(&database, &chunks, usize::MAX)?
+            .into_iter()
+            .map(|found| {
+                let indexed_revision = database
+                    .query_row(
+                        "SELECT content_hash FROM notes WHERE path = ?1 AND profile = ?2",
+                        params![found.path, self.profile.as_str()],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| error.to_string())?;
+                Ok(SimilarNote {
+                    found,
+                    indexed_revision,
+                })
+            })
+            .collect()
     }
 
     /// Scores every chunk at or above the cutoff, in note-then-ordinal order, and keeps the
@@ -1272,11 +1283,13 @@ fn chunk_text(database: &Connection, chunk: &ScoredChunk) -> Result<String, Stri
         .map_err(|error| error.to_string())
 }
 
-/// What [`SemanticIndex::similar`] found: the best notes, and how many passed in all.
+/// One note [`SemanticIndex::similar`] found.
 #[derive(Debug)]
-pub struct SimilarNotes {
-    pub notes: Vec<SearchResult>,
-    pub total: usize,
+pub struct SimilarNote {
+    pub found: SearchResult,
+    /// The note's revision when it was indexed. A different revision on disk means the passage
+    /// in `found` may be out of date.
+    pub indexed_revision: String,
 }
 
 /// What Ask reads for one question.
@@ -1732,7 +1745,7 @@ mod tests {
     }
 
     #[test]
-    fn similar_notes_skip_the_new_note_itself_and_count_every_match_past_the_cap() {
+    fn similar_notes_skip_the_new_note_itself_and_carry_the_indexed_revision() {
         let root = scratch("similar");
         let capture = root.join("Capture.md");
         let first = root.join("First.md");
@@ -1757,17 +1770,27 @@ mod tests {
         index.retry_pending().unwrap();
 
         let found = index
-            .similar("Capture", "coffee beans", "capture-id", 0.9, 1)
+            .similar("Capture", "coffee beans", "capture-id", 0.9)
             .unwrap();
-        assert_eq!(found.total, 2, "both coffee notes pass, across categories");
-        assert_eq!(found.notes.len(), 1, "the cap holds");
-        assert_eq!(found.notes[0].title, "First", "ties order by title");
+        let titles: Vec<&str> = found.iter().map(|note| note.found.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            ["First", "Second"],
+            "both coffee notes pass, across categories, ties ordered by title"
+        );
+        assert_eq!(
+            found[0].indexed_revision,
+            crate::vault::operations::read_note(root.to_str().unwrap(), first.to_str().unwrap())
+                .unwrap()
+                .revision,
+            "the indexed revision is the one on disk"
+        );
         drop(index);
         cleanup(root);
     }
 
     #[test]
-    fn the_similarity_check_skips_short_notes_and_drops_matches_gone_from_disk() {
+    fn the_similarity_check_skips_short_notes_drops_gone_or_changed_matches_and_caps_the_card() {
         let root = scratch("similarity-check");
         let vault = root.to_str().unwrap();
         let capture = root.join("Capture.md");
@@ -1784,14 +1807,28 @@ mod tests {
         write_note(&short, "short-id", "Short", "Areas", "coffee");
         write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
         write_note(&gone, "gone-id", "Gone", "Areas", "coffee grinder");
+        let changed = root.join("Changed.md");
+        write_note(&changed, "changed-id", "Changed", "Areas", "coffee kettle");
+        let extra = root.join("Extra.md");
+        write_note(&extra, "extra-id", "Extra", "Areas", "coffee filter");
+        let more = root.join("More.md");
+        write_note(&more, "more-id", "More", "Areas", "coffee scale");
         let index =
             SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
                 .unwrap();
-        for note in [&capture, &short, &kept, &gone] {
+        for note in [&capture, &short, &kept, &gone, &changed, &extra, &more] {
             index.note_changed(note).unwrap();
         }
         index.retry_pending().unwrap();
         std::fs::remove_file(&gone).unwrap();
+        // Edited after indexing, its re-embedding not done yet: the indexed passage is stale.
+        write_note(
+            &changed,
+            "changed-id",
+            "Changed",
+            "Areas",
+            "tea, not coffee, from now on",
+        );
 
         let check = |note: &Path| {
             crate::similar_notes::check(&index, vault, note.to_str().unwrap()).unwrap()
@@ -1805,10 +1842,14 @@ mod tests {
             .collect();
         assert_eq!(
             titles,
-            ["Kept", "Short"],
-            "a deleted note has nothing to append to"
+            ["Extra", "Kept", "More"],
+            "a deleted or changed note is left out, and the card shows three"
         );
-        assert_eq!(found.total, 2, "nor is it counted in the coverage line");
+        assert_eq!(
+            found.total, 4,
+            "the coverage line counts only notes the card could show"
+        );
+        assert_eq!(found.vault, vault);
         drop(index);
         cleanup(root);
     }
@@ -1847,10 +1888,11 @@ mod tests {
             // Filed the way the overlay files it: the first line is the title.
             let filed = crate::hotkey::capture::split(capture["text"].as_str().unwrap()).unwrap();
             let found = index
-                .similar(&filed.title, &filed.body, "capture", f32::MIN, usize::MAX)
+                .similar(&filed.title, &filed.body, "capture", f32::MIN)
                 .unwrap();
+            let found: Vec<SearchResult> = found.into_iter().map(|note| note.found).collect();
             let duplicate = capture["duplicateOf"].as_str();
-            for note in &found.notes {
+            for note in &found {
                 if Some(note.title.as_str()) == duplicate {
                     lowest_duplicate = lowest_duplicate.min(note.score);
                 } else {
@@ -1858,7 +1900,6 @@ mod tests {
                 }
             }
             let scores: Vec<String> = found
-                .notes
                 .iter()
                 .map(|note| format!("{:.3} {}", note.score, note.title))
                 .collect();

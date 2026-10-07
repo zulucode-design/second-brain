@@ -254,22 +254,28 @@ that say the same thing.
   covers. A note counts as similar at a cosine score of 0.65 or more: midway between the
   fixture's reworded duplicates (0.769 to 0.850) and every other pair, same-topic notes
   included (0.533 at most), scored with live embeddinggemma (`similarity_calibration`). It is
-  recalibrated when the embedding model changes. Cards show the best 3, with "Showing 3 of N
-  similar notes" when more pass.
+  recalibrated when the embedding model changes. A note changed since it was indexed is left
+  out until it is indexed again, since its stored passage may no longer be in it. Cards show
+  the best 3, with "Showing 3 of N similar notes" when more pass.
 - **What the user sees.** A card in the main window, bottom right, newest first, that stays
   until handled: the similar note's title, a "Similar" label, its best-matching passage (the
   reason for the match), and Append, Open, and Dismiss. There is one label, not a stronger
   second tier: the duplicates score 0.769 to 0.850 with no clean split among them. Each of the
-  three actions ends the card, Open once the note is open. Cards live in memory only. When the
+  three actions ends the card, Open once the note is open. Cards live in memory only, and a
+  check that finishes after a vault switch shows nothing. When the
   main window is not focused, and did not have focus when the capture overlay opened, a quick
   capture also raises a desktop notification, "Similar note found for your capture", that
   names no note (it can show on a lock screen); clicking it brings the main window forward.
-  Several captures share one notification.
+  Several captures share one notification. A notification that cannot be sent logs one line;
+  one the desktop hides under Do Not Disturb is accepted without a sign to the app, so it
+  logs nothing.
 - **Append.** The new note's text, title line included, goes at the end of the similar note
   under `---` and *Added from capture, <date>:*, and the new note moves to trash; if it cannot,
-  the card says so and the new note stays. The similar
-  note's history makes this undoable. Either note having changed since the check refuses the
-  append, so nothing lands in a note the user has not seen as it is. Dismiss changes nothing.
+  or it changed outside the app while the append ran, the card says so and the new note
+  stays. The similar note's history makes this undoable. Either note having changed since the
+  check refuses the append, so nothing lands in a note the user has not seen as it is. An
+  open note in either role is saved first and stays read-only until the append is done.
+  Dismiss changes nothing.
 - **Later.** An AI-assisted merge that explains the match and appends only what is new is
   #212.
 

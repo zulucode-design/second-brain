@@ -75,9 +75,20 @@ pub fn maybe_snapshot(vault_path: &str, note_id: &str, raw_content: &str, max_ve
     let filename = format!("{}.md", timestamp);
     let path = dir.join(&filename);
 
-    if let Err(e) = fs::write(&path, raw_content) {
-        eprintln!("Failed to write version snapshot: {}", e);
-        return;
+    // Never over an existing snapshot: one forced in this same second (an append's undo point,
+    // #9) holds newer text than this one, which a save queued before it.
+    let written = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .and_then(|mut file| std::io::Write::write_all(&mut file, raw_content.as_bytes()));
+    match written {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return,
+        Err(e) => {
+            eprintln!("Failed to write version snapshot: {}", e);
+            return;
+        }
     }
 
     // Prune old versions

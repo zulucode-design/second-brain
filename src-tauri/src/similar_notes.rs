@@ -26,6 +26,8 @@ const MIN_WORDS: usize = 3;
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SimilarityCheck {
+    /// The vault the check ran in, so a result that lands after a vault switch is dropped.
+    pub vault: String,
     pub capture: CheckedNote,
     pub matches: Vec<SimilarMatch>,
     /// Every note that passed the bar, of which `matches` holds the best few.
@@ -67,36 +69,37 @@ pub fn check(
         &note.content,
         &note.meta.id,
         SIMILAR_SCORE,
-        SHOWN_PER_CARD,
     )?;
-    let ranked = found.notes.len();
-    let matches: Vec<SimilarMatch> = found
-        .notes
+    let mut matches: Vec<SimilarMatch> = found
         .into_iter()
-        // Deleted or unreadable since it was indexed: nothing to append to.
-        .filter_map(|result| {
-            let existing = operations::read_note(vault, &result.path).ok()?;
-            Some(SimilarMatch {
+        // Deleted or unreadable since it was indexed: nothing to append to. Changed since: the
+        // passage may no longer be in it, and the card would vouch for text the user never saw.
+        .filter_map(|similar| {
+            let existing = operations::read_note(vault, &similar.found.path).ok()?;
+            (existing.revision == similar.indexed_revision).then_some(SimilarMatch {
                 note: CheckedNote {
-                    path: result.path,
-                    title: result.title,
+                    path: similar.found.path,
+                    title: similar.found.title,
                     revision: existing.revision,
                 },
-                excerpt: result.snippet,
+                excerpt: similar.found.snippet,
             })
         })
         .collect();
     if matches.is_empty() {
         return Ok(None);
     }
+    // Counted after the drops, so the card never counts a note it cannot show.
+    let total = matches.len();
+    matches.truncate(SHOWN_PER_CARD);
     Ok(Some(SimilarityCheck {
+        vault: vault.to_string(),
         capture: CheckedNote {
             path: note.path,
             title: note.meta.title,
             revision: note.revision,
         },
-        // Less the ones just dropped, so the card never counts a note it cannot show.
-        total: found.total - (ranked - matches.len()),
+        total,
         matches,
     }))
 }
@@ -138,6 +141,8 @@ pub fn with_capture_appended(
 /// Run the check for a quick capture in the background, show what it found in the main
 /// window, and raise a notification when the user is looking elsewhere.
 pub fn after_capture(app: AppHandle, path: String) {
+    // Read now, while it still describes this capture: the next overlay overwrites it.
+    let focused_at_capture = MAIN_FOCUSED_AT_CAPTURE.load(Ordering::SeqCst);
     tauri::async_runtime::spawn_blocking(move || {
         let Some(found) = check_now(&app.state::<AppState>(), &path) else {
             return;
@@ -146,7 +151,7 @@ pub fn after_capture(app: AppHandle, path: String) {
             log::warn!("Could not show the similar-notes card: {error}");
             return;
         }
-        if !MAIN_FOCUSED_AT_CAPTURE.load(Ordering::SeqCst) && !main_window_focused(&app) {
+        if !focused_at_capture && !main_window_focused(&app) {
             notify(&app);
         }
     });
@@ -260,14 +265,15 @@ fn notify(app: &AppHandle) {
     use ashpd::zbus::zvariant::Value;
     use std::collections::HashMap;
 
-    let title = next_notification_title();
     let desktop_entry = app.config().identifier.clone();
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         // One send at a time: a second capture must wait for the first's id, or both would go
-        // out as new notifications instead of one replacing the other.
+        // out as new notifications instead of one replacing the other. Counted inside, so the
+        // notification that replaces another never shows the smaller count.
         static SENDING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
         let _sending = SENDING.lock().await;
+        let title = next_notification_title();
         let sent = async {
             let hints = HashMap::from([("desktop-entry", Value::from(desktop_entry.as_str()))]);
             let id: u32 = notification_service()
@@ -356,6 +362,11 @@ fn notify(app: &AppHandle) {
     use windows::Foundation::TypedEventHandler;
     use windows::UI::Notifications::ToastNotification;
 
+    // Checks finish on their own threads; one toast at a time keeps the newest count on top.
+    static SENDING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _sending = SENDING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let title = next_notification_title();
     let handle = app.clone();
     let shown =

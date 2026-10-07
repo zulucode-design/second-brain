@@ -1,26 +1,22 @@
 <script lang="ts">
 	import { appendSimilar, dismissSimilar, similarCardFailed, similarCards } from '$lib/stores/similar';
 	import type { SimilarMatch } from '$lib/types';
-	import { similarCoverage, type SimilarCard } from '$lib/utils/similar';
+	import { similarCoverage, type AppendOutcome, type SimilarCard } from '$lib/utils/similar';
 
 	let {
 		onOpen,
-		onBeforeAppend,
-		onAppended,
+		onAppend,
 	}: {
 		/** Opens the note; false when it could not be opened. */
 		onOpen: (path: string) => Promise<boolean>;
-		/** Saves the open note first when the append touches it; false stops the append. */
-		onBeforeAppend: (paths: string[]) => Promise<boolean>;
-		/** The capture stays in place when it could not be moved to trash. */
-		onAppended: (capturePath: string, targetPath: string, captureTrashed: boolean) => void;
+		/** Runs `append` with either note, if open, saved and held read-only until the editor
+		 * and note list show the result. */
+		onAppend: (capturePath: string, targetPath: string, append: () => Promise<AppendOutcome>) => Promise<void>;
 	} = $props();
 
-	async function append(card: SimilarCard, match: SimilarMatch) {
+	function append(card: SimilarCard, match: SimilarMatch) {
 		const capture = card.check.capture;
-		if (!(await onBeforeAppend([capture.path, match.path]))) return;
-		const outcome = await appendSimilar(card.id, capture, match);
-		if (outcome) onAppended(capture.path, match.path, outcome === 'appended');
+		return onAppend(capture.path, match.path, () => appendSimilar(card.id, capture, match));
 	}
 
 	// Opening the note to edit it is one of the card's three answers, so the card goes once the

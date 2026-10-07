@@ -4,14 +4,15 @@ import { appendToSimilarNote, checkSimilarNotes } from '$lib/api';
 import { listenAppEvent } from '$lib/events';
 import { activeNote, appConfig } from '$lib/stores/app';
 import type { CheckedNote, SimilarityCheck } from '$lib/types';
-import { createLeaveWatcher, forVault, withCard, type SimilarCard } from '$lib/utils/similar';
+import { createLeaveWatcher, forVault, withCard, type AppendOutcome, type SimilarCard } from '$lib/utils/similar';
 
 /** Similarity cards, newest first. Held in memory only, so quitting drops them. */
 export const similarCards = writable<SimilarCard[]>([]);
 
 function show(check: SimilarityCheck) {
   const vault = get(appConfig)?.active_vault;
-  if (!vault) return;
+  // A check that finished after a vault switch belongs to the vault that was left.
+  if (!vault || check.vault !== vault) return;
   similarCards.update((cards) =>
     withCard(cards, { id: crypto.randomUUID(), vault, check, busy: false, error: null }),
   );
@@ -39,7 +40,7 @@ export async function appendSimilar(
   id: string,
   capture: CheckedNote,
   target: CheckedNote,
-): Promise<'appended' | 'capture-kept' | null> {
+): Promise<AppendOutcome> {
   patch(id, { busy: true, error: null });
   try {
     const trashFailure = await appendToSimilarNote(capture, target);

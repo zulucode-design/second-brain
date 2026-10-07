@@ -991,6 +991,17 @@ pub fn save_note(
         .note_mutation
         .lock()
         .map_err(|error| error.to_string())?;
+    save_note_held(&state, path, meta, body, expected_revision)
+}
+
+/// [`save_note`] for a caller that already holds `note_mutation`.
+fn save_note_held(
+    state: &State<'_, AppState>,
+    path: String,
+    meta: NoteMeta,
+    body: String,
+    expected_revision: String,
+) -> Result<SaveCommitOutcome, String> {
     let config = state.config.lock().map_err(|error| error.to_string())?;
     let vault_path = config
         .active_vault
@@ -1009,7 +1020,7 @@ pub fn save_note(
         |written, revision| state.own_writes.record(written, revision),
     )?;
     Ok(after_note_saved(
-        &state,
+        state,
         &vault_path,
         max_versions,
         &path,
@@ -1217,6 +1228,11 @@ pub fn append_to_similar_note(
     capture: crate::similar_notes::CheckedNote,
     target: crate::similar_notes::CheckedNote,
 ) -> Result<Option<String>, String> {
+    // One lock from the revision checks to the trash, so no save in the app lands in between.
+    let _mutation = state
+        .note_mutation
+        .lock()
+        .map_err(|error| error.to_string())?;
     let vault_path = active_vault(&state)?;
     let capture_note = operations::read_note(&vault_path, &capture.path).map_err(|error| {
         log::warn!("Similar append could not read the capture: {error}");
@@ -1254,8 +1270,16 @@ pub fn append_to_similar_note(
         &capture_note.content,
         &chrono::Local::now().format("%Y-%m-%d").to_string(),
     );
-    save_note(state.clone(), target.path, meta, body, target.revision)?;
-    Ok(delete_note(state, capture.path).err().map(|error| {
+    save_note_held(&state, target.path, meta, body, target.revision)?;
+    // An editor outside the app takes no lock: a capture changed on disk meanwhile stays.
+    let unchanged = operations::read_note(&vault_path, &capture.path)
+        .is_ok_and(|note| note.revision == capture.revision);
+    if !unchanged {
+        return Ok(Some(
+            "Added to the note, but your capture changed meanwhile, so it was kept.".to_string(),
+        ));
+    }
+    Ok(delete_note_held(&state, capture.path).err().map(|error| {
         format!("Added to the note, but your capture could not be moved to trash: {error}")
     }))
 }
@@ -1591,6 +1615,11 @@ pub fn delete_note(state: State<'_, AppState>, path: String) -> Result<(), Strin
         .note_mutation
         .lock()
         .map_err(|error| error.to_string())?;
+    delete_note_held(&state, path)
+}
+
+/// [`delete_note`] for a caller that already holds `note_mutation`.
+fn delete_note_held(state: &State<'_, AppState>, path: String) -> Result<(), String> {
     let _notion_deletions = state.notion_deletions.try_lock().map_err(|_| {
         "Notion is processing deletions; try the note deletion again in a moment".to_string()
     })?;
@@ -1606,7 +1635,7 @@ pub fn delete_note(state: State<'_, AppState>, path: String) -> Result<(), Strin
         || operations::delete_note(vault_path, &path),
     ) {
         record_transaction_repair_if_needed(
-            &state,
+            state,
             vault_path,
             "delete-note",
             vec![path.clone()],
@@ -1615,8 +1644,8 @@ pub fn delete_note(state: State<'_, AppState>, path: String) -> Result<(), Strin
         return Err(error);
     }
 
-    remove_note_now(&state, vault_path, &path)?;
-    remove_semantic_note_now(&state, &path);
+    remove_note_now(state, vault_path, &path)?;
+    remove_semantic_note_now(state, &path);
 
     Ok(())
 }

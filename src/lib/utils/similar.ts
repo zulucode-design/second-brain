@@ -19,6 +19,33 @@ export function forVault(cards: SimilarCard[], vault: string | null | undefined)
   return cards.filter((card) => card.vault === vault);
 }
 
+/** What an append did. 'capture-kept': the note was written but the capture stayed. null:
+ * nothing was written. */
+export type AppendOutcome = 'appended' | 'capture-kept' | null;
+
+/**
+ * Runs an append with the open note held, when it is one of the two: saved first, then kept
+ * read-only until `settle` has shown the result, so nothing typed meanwhile is lost with a
+ * trashed capture or under the reloaded note.
+ */
+export async function appendWhileHeld(steps: {
+  held: boolean;
+  /** Makes the editor read-only; the returned function lets it go. */
+  hold: () => Promise<() => void>;
+  save: () => Promise<boolean>;
+  append: () => Promise<AppendOutcome>;
+  settle: (outcome: 'appended' | 'capture-kept') => void;
+}): Promise<void> {
+  const release = steps.held ? await steps.hold() : null;
+  try {
+    if (release && !(await steps.save())) return;
+    const outcome = await steps.append();
+    if (outcome) steps.settle(outcome);
+  } finally {
+    release?.();
+  }
+}
+
 /** "Showing 3 of 5 similar notes" when more passed the bar than the card shows. */
 export function similarCoverage(check: SimilarityCheck): string | null {
   return check.total > check.matches.length

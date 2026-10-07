@@ -7,6 +7,7 @@
 	import Editor from './Editor.svelte';
 	import SearchPanel from './SearchPanel.svelte';
 	import SimilarCards from './SimilarCards.svelte';
+	import { appendWhileHeld, type AppendOutcome } from '$lib/utils/similar';
 	import CommandPalette from './CommandPalette.svelte';
 	import SettingsPanel from './SettingsPanel.svelte';
 	import InfoPanel from './InfoPanel.svelte';
@@ -872,17 +873,39 @@
 		}
 	}
 
-	// A similar-note append rewrites one note and trashes another; the editor must not keep
-	// unsaved edits to either, nor show the old text afterwards.
-	async function beforeSimilarAppend(paths: string[]): Promise<boolean> {
-		if (!$activeNotePath || !paths.includes($activeNotePath)) return true;
-		return ensureCurrentNoteSaved('Adding to a similar note');
-	}
-
-	function afterSimilarAppend(capturePath: string, targetPath: string, captureTrashed: boolean) {
-		if ($activeNotePath === targetPath) void reloadOpenNoteFromDisk();
-		if (captureTrashed) forgetTrashedNote(capturePath);
-		else noteList?.refresh(true).catch((error) => console.error('Failed to refresh notes after appending:', error));
+	// A similar-note append rewrites one note and trashes another; when either is open, the
+	// editor is held through it (appendWhileHeld).
+	function appendToSimilarNote(capturePath: string, targetPath: string, append: () => Promise<AppendOutcome>): Promise<void> {
+		const reason = 'Adding to a similar note';
+		const run = navigationQueue.then(() => appendWhileHeld({
+			held: !!$activeNotePath && [capturePath, targetPath].includes($activeNotePath),
+			hold: async () => {
+				const readOnlyBefore = $readOnly;
+				$readOnly = true;
+				await tick();
+				try {
+					const unlock = editor ? await editor.lockMutations() : null;
+					return () => {
+						unlock?.();
+						$readOnly = readOnlyBefore;
+					};
+				} catch (error) {
+					$readOnly = readOnlyBefore;
+					throw error;
+				}
+			},
+			save: async () => reportSaveResult(reason, await editor?.flushSave()),
+			append,
+			settle: (outcome) => {
+				if ($activeNotePath === targetPath) void reloadOpenNoteFromDisk();
+				if (outcome === 'appended') forgetTrashedNote(capturePath);
+				else noteList?.refresh(true).catch((error) => console.error('Failed to refresh notes after appending:', error));
+			},
+		}).catch((error) => {
+			reportSaveResult(reason, { ok: false, status: 'failed', revision: 0, error });
+		}));
+		navigationQueue = run.then(() => {}, () => {});
+		return run;
 	}
 
 	function handleMouseDown(e: MouseEvent) {
@@ -1573,7 +1596,7 @@
 </div>
 
 <SearchPanel onOpenResult={(path, noteId) => navigateToPathResult(path, undefined, false, noteId)} />
-<SimilarCards onOpen={(path) => navigateToPath(path)} onBeforeAppend={beforeSimilarAppend} onAppended={afterSimilarAppend} />
+<SimilarCards onOpen={(path) => navigateToPath(path)} onAppend={appendToSimilarNote} />
 <CommandPalette onNavigate={handleViewChanged} onToggleSource={toggleSourceMode} />
 <SettingsPanel onRequestVaultSwitch={requestVaultSwitch} onBeforeRestore={prepareForRestore} onAfterRestore={refreshAfterRestore} onAfterConflictChoice={reloadOpenNoteFromDisk} />
 <InfoPanel />

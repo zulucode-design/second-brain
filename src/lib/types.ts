@@ -380,6 +380,8 @@ export interface SimilarMatch extends CheckedNote {
 
 /** Existing notes like a just-written one: the best few, of `total` past the bar. */
 export interface SimilarityCheck {
+  /** The vault the check ran in. */
+  vault: string;
   capture: CheckedNote;
   matches: SimilarMatch[];
   total: number;
