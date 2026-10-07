@@ -1111,13 +1111,26 @@ fn ensure_file_snapshot(
     Ok(())
 }
 
+const NOTE_CHANGED_BEFORE_TRASH: &str =
+    "The note changed since it was last read, so it was not moved to Trash";
+
 pub fn delete_note(vault_path: &str, note_path: &str) -> Result<(), String> {
-    delete_note_inner(vault_path, note_path, false)
+    delete_note_inner(vault_path, note_path, None, false)
+}
+
+/// [`delete_note`] only if the note is still at `expected_revision`; otherwise it stays.
+pub fn delete_note_if_revision(
+    vault_path: &str,
+    note_path: &str,
+    expected_revision: &str,
+) -> Result<(), String> {
+    delete_note_inner(vault_path, note_path, Some(expected_revision), false)
 }
 
 fn delete_note_inner(
     vault_path: &str,
     note_path: &str,
+    expected_revision: Option<&str>,
     fail_manifest_write: bool,
 ) -> Result<(), String> {
     let validated = ensure_note_path(vault_path, Path::new(note_path))?;
@@ -1126,6 +1139,9 @@ fn delete_note_inner(
 
     let raw = fs::read_to_string(src).map_err(|error| error.to_string())?;
     let source_hash = content_sha256(raw.as_bytes());
+    if expected_revision.is_some_and(|expected| expected != source_hash) {
+        return Err(NOTE_CHANGED_BEFORE_TRASH.to_string());
+    }
     let filename = src.file_name().unwrap_or_default().to_string_lossy();
     let note_id = frontmatter::parse_note(&raw, &filename).0.id;
     let original_relative_path = src
@@ -1168,7 +1184,15 @@ fn delete_note_inner(
         src,
         &trash_dir,
         std::ffi::OsStr::new(&trash_name),
-        |bytes| Ok(bytes.to_vec()),
+        // Only the text read above, which the restore metadata describes: a note changed since
+        // stays where it is.
+        |bytes| {
+            if Some(content_sha256(bytes).as_str()) == manifest.content_sha256.as_deref() {
+                Ok(bytes.to_vec())
+            } else {
+                Err(NOTE_CHANGED_BEFORE_TRASH.to_string())
+            }
+        },
     ) {
         Ok(path) => path,
         Err(error) => {
@@ -3987,6 +4011,27 @@ mod tests {
     }
 
     #[test]
+    fn a_note_changed_since_it_was_read_is_not_moved_to_trash() {
+        let vault = scaffolded_vault("delete-if-revision");
+        let vault_str = vault.to_string_lossy().to_string();
+        let note = create_note(&vault_str, Some("Projects"), "Plan").unwrap();
+        let checked = read_note(&vault_str, &note.path).unwrap().revision;
+        fs::write(&note.path, "---\ntitle: Plan\n---\nEdited elsewhere.\n").unwrap();
+
+        let refused = super::delete_note_if_revision(&vault_str, &note.path, &checked);
+        let kept = fs::read_to_string(&note.path).unwrap();
+        let current = read_note(&vault_str, &note.path).unwrap().revision;
+        let deleted = super::delete_note_if_revision(&vault_str, &note.path, &current);
+        let gone = !std::path::Path::new(&note.path).exists();
+        fs::remove_dir_all(vault).unwrap();
+
+        assert_eq!(refused, Err(super::NOTE_CHANGED_BEFORE_TRASH.to_string()));
+        assert!(kept.contains("Edited elsewhere."));
+        assert_eq!(deleted, Ok(()));
+        assert!(gone);
+    }
+
+    #[test]
     fn restoring_a_categorized_note_uses_its_category_without_overwriting() {
         let vault = scaffolded_vault("restore-category");
         let vault_str = vault.to_string_lossy().to_string();
@@ -4092,7 +4137,7 @@ mod tests {
         let quick_access_path = helixnotes_dir(&vault_str).join("quick_access.json");
         let quick_access_before = fs::read(&quick_access_path).unwrap();
 
-        let result = super::delete_note_inner(&vault_str, &note.path, true);
+        let result = super::delete_note_inner(&vault_str, &note.path, None, true);
 
         assert!(result.is_err());
         assert_eq!(fs::read(&note.path).unwrap(), note_before);

@@ -77,7 +77,10 @@ test('an append holds the open note read-only from its save until the result sho
         if (fails) throw new Error('backend gone');
         return outcome;
       },
-      settle: (result) => steps.push(`settle ${result} read-only=${readOnly}`),
+      settle: async (result) => {
+        await new Promise((done) => setTimeout(done, 1));
+        steps.push(`settle ${result} read-only=${readOnly}`);
+      },
     }).catch(() => steps.push('threw'));
     return steps;
   };

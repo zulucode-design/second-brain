@@ -874,30 +874,33 @@
 	}
 
 	// A similar-note append rewrites one note and trashes another; when either is open, the
-	// editor is held through it (appendWhileHeld).
+	// editor is held through it (appendWhileHeld), and an open target shows its new text before
+	// the hold ends.
 	function appendToSimilarNote(capturePath: string, targetPath: string, append: () => Promise<AppendOutcome>): Promise<void> {
 		const reason = 'Adding to a similar note';
 		const run = navigationQueue.then(() => appendWhileHeld({
 			held: !!$activeNotePath && [capturePath, targetPath].includes($activeNotePath),
-			hold: async () => {
-				const readOnlyBefore = $readOnly;
-				$readOnly = true;
-				await tick();
-				try {
-					const unlock = editor ? await editor.lockMutations() : null;
-					return () => {
-						unlock?.();
-						$readOnly = readOnlyBefore;
-					};
-				} catch (error) {
-					$readOnly = readOnlyBefore;
-					throw error;
-				}
-			},
+			hold: async () => (editor ? editor.holdForOperation() : () => {}),
 			save: async () => reportSaveResult(reason, await editor?.flushSave()),
 			append,
-			settle: (outcome) => {
-				if ($activeNotePath === targetPath) void reloadOpenNoteFromDisk();
+			settle: async (outcome) => {
+				const current = editor;
+				if (current && $activeNotePath === targetPath) {
+					const reloaded = await reloadCleanDocument({
+						capture: () => ($activeNotePath === targetPath && !$editorDirty ? { path: targetPath, revision: current.getLoadedRevision() } : null),
+						drafting: () => current.hasPendingDraft(),
+						read: readNote,
+						// Already held: taking the lock again would throw.
+						lock: async () => () => {},
+						stillValid: (captured) => editor === current && $activeNotePath === captured.path && !$editorDirty,
+						commit: (path, content) => {
+							$activeNote = content;
+							current.loadNote(path, content.content, undefined, false, content.revision, true);
+						},
+					});
+					// An editor dialog was open: the usual reload retries once it closes.
+					if (reloaded === 'deferred') void reloadOpenNoteFromDisk();
+				}
 				if (outcome === 'appended') forgetTrashedNote(capturePath);
 				else noteList?.refresh(true).catch((error) => console.error('Failed to refresh notes after appending:', error));
 			},

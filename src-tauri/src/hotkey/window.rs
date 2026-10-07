@@ -88,7 +88,11 @@ pub fn show_capture_window(app: &AppHandle) -> Result<(), String> {
             app.webview_windows().keys().collect::<Vec<_>>()
         ));
     };
-    crate::similar_notes::capture_opening(app);
+    // Pressed again while it is up: the overlay already has focus, and the main window's state
+    // from when it opened still stands.
+    if !window.is_visible().unwrap_or(false) {
+        crate::similar_notes::capture_opening(app);
+    }
     window
         .show()
         .and_then(|()| window.set_focus())

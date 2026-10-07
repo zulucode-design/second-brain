@@ -21,6 +21,10 @@ pub(crate) fn safe_path_component<'a>(value: &'a str, label: &str) -> Result<&'a
     Ok(value)
 }
 
+/// One snapshot write at a time. Snapshots are named by the second, so a save's queued snapshot
+/// and an append's forced one (#9) can share a file; taking turns, the later write decides.
+static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Directory: .helixnotes/history/<note-id>/
 fn history_dir(vault_path: &str, note_id: &str) -> Result<PathBuf, String> {
     Ok(Path::new(vault_path)
@@ -32,6 +36,9 @@ fn history_dir(vault_path: &str, note_id: &str) -> Result<PathBuf, String> {
 /// Save a version snapshot if enough time has passed since the last one.
 /// Minimum interval: 5 minutes between snapshots.
 pub fn maybe_snapshot(vault_path: &str, note_id: &str, raw_content: &str, max_versions: u32) {
+    let _writing = WRITING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let Ok(dir) = history_dir(vault_path, note_id) else {
         log::warn!("Skipping history snapshot with an invalid note ID");
         return;
@@ -104,6 +111,9 @@ pub fn force_snapshot(
     raw_content: &str,
     max_versions: u32,
 ) -> Result<(), String> {
+    let _writing = WRITING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let dir = history_dir(vault_path, note_id)?;
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
 

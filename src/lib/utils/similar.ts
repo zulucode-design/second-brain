@@ -34,13 +34,13 @@ export async function appendWhileHeld(steps: {
   hold: () => Promise<() => void>;
   save: () => Promise<boolean>;
   append: () => Promise<AppendOutcome>;
-  settle: (outcome: 'appended' | 'capture-kept') => void;
+  settle: (outcome: 'appended' | 'capture-kept') => void | Promise<void>;
 }): Promise<void> {
   const release = steps.held ? await steps.hold() : null;
   try {
     if (release && !(await steps.save())) return;
     const outcome = await steps.append();
-    if (outcome) steps.settle(outcome);
+    if (outcome) await steps.settle(outcome);
   } finally {
     release?.();
   }

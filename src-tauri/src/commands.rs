@@ -1271,17 +1271,14 @@ pub fn append_to_similar_note(
         &chrono::Local::now().format("%Y-%m-%d").to_string(),
     );
     save_note_held(&state, target.path, meta, body, target.revision)?;
-    // An editor outside the app takes no lock: a capture changed on disk meanwhile stays.
-    let unchanged = operations::read_note(&vault_path, &capture.path)
-        .is_ok_and(|note| note.revision == capture.revision);
-    if !unchanged {
-        return Ok(Some(
-            "Added to the note, but your capture changed meanwhile, so it was kept.".to_string(),
-        ));
-    }
-    Ok(delete_note_held(&state, capture.path).err().map(|error| {
-        format!("Added to the note, but your capture could not be moved to trash: {error}")
-    }))
+    // An editor outside the app takes no lock: the trash takes only the capture as checked.
+    Ok(
+        delete_note_held(&state, capture.path, Some(&capture.revision))
+            .err()
+            .map(|error| {
+                format!("Added to the note, but your capture could not be moved to trash: {error}")
+            }),
+    )
 }
 
 #[cfg(test)]
@@ -1615,11 +1612,16 @@ pub fn delete_note(state: State<'_, AppState>, path: String) -> Result<(), Strin
         .note_mutation
         .lock()
         .map_err(|error| error.to_string())?;
-    delete_note_held(&state, path)
+    delete_note_held(&state, path, None)
 }
 
-/// [`delete_note`] for a caller that already holds `note_mutation`.
-fn delete_note_held(state: &State<'_, AppState>, path: String) -> Result<(), String> {
+/// [`delete_note`] for a caller that already holds `note_mutation`; with `expected_revision`,
+/// a note changed since is left in place.
+fn delete_note_held(
+    state: &State<'_, AppState>,
+    path: String,
+    expected_revision: Option<&str>,
+) -> Result<(), String> {
     let _notion_deletions = state.notion_deletions.try_lock().map_err(|_| {
         "Notion is processing deletions; try the note deletion again in a moment".to_string()
     })?;
@@ -1632,7 +1634,10 @@ fn delete_note_held(state: &State<'_, AppState>, path: String) -> Result<(), Str
     if let Err(error) = crate::notion::commands::with_notes_deleted(
         std::path::Path::new(vault_path),
         std::slice::from_ref(&path),
-        || operations::delete_note(vault_path, &path),
+        || match expected_revision {
+            Some(revision) => operations::delete_note_if_revision(vault_path, &path, revision),
+            None => operations::delete_note(vault_path, &path),
+        },
     ) {
         record_transaction_repair_if_needed(
             state,

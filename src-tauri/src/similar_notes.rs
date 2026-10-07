@@ -273,6 +273,10 @@ fn notify(app: &AppHandle) {
         // notification that replaces another never shows the smaller count.
         static SENDING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
         let _sending = SENDING.lock().await;
+        // Sends can queue; one whose turn comes after the user went back to the app is moot.
+        if main_window_focused(&app) {
+            return;
+        }
         let title = next_notification_title();
         let sent = async {
             let hints = HashMap::from([("desktop-entry", Value::from(desktop_entry.as_str()))]);
@@ -367,6 +371,9 @@ fn notify(app: &AppHandle) {
     let _sending = SENDING
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if main_window_focused(app) {
+        return;
+    }
     let title = next_notification_title();
     let handle = app.clone();
     let shown =
