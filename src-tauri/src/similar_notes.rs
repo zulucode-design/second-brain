@@ -147,12 +147,16 @@ pub fn after_capture(app: AppHandle, path: String) {
         let Some(found) = check_now(&app.state::<AppState>(), &path) else {
             return;
         };
+        // A check can outlast a vault switch; its card and its nudge belong to the old vault.
+        if !vault_still_open(&app, &found.vault) {
+            return;
+        }
         if let Err(error) = app.emit_to("main", crate::events::SIMILAR_NOTES_FOUND, &found) {
             log::warn!("Could not show the similar-notes card: {error}");
             return;
         }
         if !focused_at_capture && !main_window_focused(&app) {
-            notify(&app);
+            notify(&app, found.vault);
         }
     });
 }
@@ -165,6 +169,19 @@ static MAIN_FOCUSED_AT_CAPTURE: AtomicBool = AtomicBool::new(false);
 /// The capture overlay is about to open.
 pub fn capture_opening(app: &AppHandle) {
     MAIN_FOCUSED_AT_CAPTURE.store(main_window_focused(app), Ordering::SeqCst);
+}
+
+fn vault_still_open(app: &AppHandle, vault: &str) -> bool {
+    app.state::<AppState>()
+        .config
+        .lock()
+        .is_ok_and(|config| config.active_vault.as_deref() == Some(vault))
+}
+
+/// A queued notification whose turn comes after the user went back to the app, or after a
+/// vault switch, is moot.
+fn notification_moot(app: &AppHandle, vault: &str) -> bool {
+    main_window_focused(app) || !vault_still_open(app, vault)
 }
 
 fn main_window_focused(app: &AppHandle) -> bool {
@@ -261,7 +278,7 @@ async fn notification_service() -> ashpd::zbus::Result<&'static ashpd::zbus::Pro
 }
 
 #[cfg(target_os = "linux")]
-fn notify(app: &AppHandle) {
+fn notify(app: &AppHandle, vault: String) {
     use ashpd::zbus::zvariant::Value;
     use std::collections::HashMap;
 
@@ -273,8 +290,7 @@ fn notify(app: &AppHandle) {
         // notification that replaces another never shows the smaller count.
         static SENDING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
         let _sending = SENDING.lock().await;
-        // Sends can queue; one whose turn comes after the user went back to the app is moot.
-        if main_window_focused(&app) {
+        if notification_moot(&app, &vault) {
             return;
         }
         let title = next_notification_title();
@@ -361,7 +377,7 @@ fn listen_for_clicks(app: &AppHandle) {
 /// A toast under a fixed tag, so a newer one replaces the last (#153). Clicking it raises the
 /// main window while the app runs, which it does whenever a capture was just made.
 #[cfg(target_os = "windows")]
-fn notify(app: &AppHandle) {
+fn notify(app: &AppHandle, vault: String) {
     use windows::core::IInspectable;
     use windows::Foundation::TypedEventHandler;
     use windows::UI::Notifications::ToastNotification;
@@ -371,7 +387,7 @@ fn notify(app: &AppHandle) {
     let _sending = SENDING
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if main_window_focused(app) {
+    if notification_moot(app, &vault) {
         return;
     }
     let title = next_notification_title();
@@ -394,7 +410,7 @@ fn notify(app: &AppHandle) {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-fn notify(_app: &AppHandle) {}
+fn notify(_app: &AppHandle, _vault: String) {}
 
 #[cfg(test)]
 mod tests {

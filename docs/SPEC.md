@@ -274,8 +274,8 @@ that say the same thing.
   or it changed outside the app while the append ran, the card says so and the new note
   stays. The similar note's history makes this undoable. Either note having changed since the
   check refuses the append, so nothing lands in a note the user has not seen as it is. An
-  open note in either role is saved first and stays read-only until the append is done.
-  Dismiss changes nothing.
+  open note in either role is saved and closed first, then reopened once the append is done,
+  unless it went to trash. Dismiss changes nothing.
 - **Later.** An AI-assisted merge that explains the match and appends only what is new is
   #212.
 

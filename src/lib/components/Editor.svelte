@@ -133,9 +133,6 @@
 	let diskConflict = $state<PreservationReceipt<NoteContent> | null>(null);
 	let diskConflictDialog = $state(false);
 	let diskConflictBusy = $state(false);
-	// Set by holdForOperation: read-only whatever the View/Edit toggle says.
-	let operationHeld = $state(false);
-	const editingLocked = $derived(diskConflictBusy || operationHeld);
 	let diskConflictMessage = $state('');
 	let diskConflictMine = $state<string | null>(null);
 	let diskConflictModal = $state<HTMLDivElement | null>(null);
@@ -3258,25 +3255,6 @@
 		return mutationBarrier.lockAndDrain();
 	}
 
-	/**
-	 * Read-only for an operation that rewrites or closes the open note, which the View/Edit
-	 * toggle cannot undo, with its mutations locked too, until the returned function runs.
-	 */
-	export async function holdForOperation(): Promise<() => void> {
-		operationHeld = true;
-		await tick();
-		try {
-			const unlock = await lockMutations();
-			return () => {
-				unlock();
-				operationHeld = false;
-			};
-		} catch (error) {
-			operationHeld = false;
-			throw error;
-		}
-	}
-
 	// The main window passes its navigation-queued relocation; secondary note windows have no
 	// queue and relocate directly.
 	export function relocateUnqueued(path: string, reason: string, mutation: () => Promise<RelocationOutcome>): Promise<string | null> {
@@ -3398,7 +3376,7 @@
 		const ro = $readOnly;
 		const shuttingDown = $shutdownPending;
 		const preview = !!$viewerNote || $holdingPreview;
-		const resolving = editingLocked;
+		const resolving = diskConflictBusy;
 		untrack(() => {
 			if (editor) {
 				if (ro && !shuttingDown && !resolving && $editorDirty) forceSave();
@@ -3625,7 +3603,7 @@
 		lastSourceMode = $sourceMode;
 		const shouldBeReadOnly = isViewer || holding ? true : preserveModes ? $readOnly : (isNewNote ? false : ($appConfig?.default_view_mode ?? false));
 		$readOnly = shouldBeReadOnly;
-		if (editor) editor.setEditable(!shouldBeReadOnly && !editingLocked, false);
+		if (editor) editor.setEditable(!shouldBeReadOnly && !diskConflictBusy, false);
 		const editorBody = editorElement?.closest('.editor-body') as HTMLElement | null;
 		if ($sourceMode) {
 			sourceContent = stripTitleH1(content);
@@ -4642,7 +4620,7 @@
 
 		editor = new Editor({
 			element: editorElement,
-			editable: !$readOnly && !editingLocked,
+			editable: !$readOnly && !diskConflictBusy,
 			extensions: [
 				MixedListShortcuts,
 				StarterKit.configure({ codeBlock: false }),
@@ -6322,7 +6300,7 @@
 				<input
 					bind:this={titleInput}
 					type="text"
-					readonly={$readOnly || editingLocked}
+					readonly={$readOnly || diskConflictBusy}
 					value={$activeNote.meta.title}
 					onkeydown={(e) => {
 						if (e.key === 'Tab') {
@@ -6597,14 +6575,14 @@
 						class="source-editor"
 						bind:this={sourceElement}
 						bind:value={sourceContent}
-						readonly={$readOnly || $shutdownPending || !!$viewerNote || $holdingPreview || editingLocked}
+						readonly={$readOnly || $shutdownPending || !!$viewerNote || $holdingPreview || diskConflictBusy}
 						oninput={() => {
 							$editorDirty = true;
 							markDirty();
 							pushSourceHistoryDebounced();
 						}}
 						onkeydown={(e) => {
-							if (editingLocked) { e.preventDefault(); return; }
+							if (diskConflictBusy) { e.preventDefault(); return; }
 							if (handleSourceCtrlEnd(e)) return;
 							if (handleSourceSelectionPair(e)) return;
 							const mod = e.ctrlKey || e.metaKey;
@@ -6660,14 +6638,14 @@
 							class:with-line-numbers={$appConfig?.show_line_numbers}
 							bind:this={sourceElement}
 							bind:value={sourceContent}
-							readonly={$readOnly || $shutdownPending || !!$viewerNote || $holdingPreview || editingLocked}
+							readonly={$readOnly || $shutdownPending || !!$viewerNote || $holdingPreview || diskConflictBusy}
 							oninput={() => {
 								$editorDirty = true;
 								markDirty();
 								pushSourceHistoryDebounced();
 							}}
 							onkeydown={(e) => {
-								if (editingLocked) { e.preventDefault(); return; }
+								if (diskConflictBusy) { e.preventDefault(); return; }
 								if (handleSourceCtrlEnd(e)) return;
 								if (handleSourceSelectionPair(e)) return;
 								const mod = e.ctrlKey || e.metaKey;

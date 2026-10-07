@@ -5,7 +5,7 @@ import { transformWithEsbuild } from 'vite';
 
 const source = await readFile(new URL('../src/lib/utils/similar.ts', import.meta.url), 'utf8');
 const { code } = await transformWithEsbuild(source, 'similar.ts', { loader: 'ts', format: 'esm', target: 'esnext' });
-const { withCard, forVault, similarCoverage, createLeaveWatcher, appendWhileHeld } = await import(
+const { withCard, forVault, similarCoverage, createLeaveWatcher, appendWithNoteClosed } = await import(
   `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
 );
 
@@ -57,37 +57,26 @@ test('closing a new note counts as leaving it; older notes are never checked', (
   assert.equal(watcher.opened(null), '/v/New.md');
 });
 
-test('an append holds the open note read-only from its save until the result shows', async () => {
-  const runAppend = async ({ held = true, saved = true, outcome = 'appended', fails = false } = {}) => {
+test('an append closes the open note first and reopens it after', async () => {
+  const runAppend = async ({ open = '/v/capture.md', closed = true, outcome = 'appended', fails = false } = {}) => {
     const steps = [];
-    let readOnly = false;
-    await appendWhileHeld({
-      held,
-      hold: async () => {
-        readOnly = true;
-        steps.push('hold');
-        return () => {
-          readOnly = false;
-          steps.push('release');
-        };
-      },
-      save: async () => (steps.push(`save read-only=${readOnly}`), saved),
+    await appendWithNoteClosed({
+      open,
+      close: async () => (steps.push('close'), closed),
       append: async () => {
-        steps.push(`append read-only=${readOnly}`);
+        steps.push('append');
         if (fails) throw new Error('backend gone');
         return outcome;
       },
-      settle: async (result) => {
-        await new Promise((done) => setTimeout(done, 1));
-        steps.push(`settle ${result} read-only=${readOnly}`);
-      },
+      settle: (result) => steps.push(`settle ${result}`),
+      reopen: (path, result) => steps.push(`reopen ${path} ${result}`),
     }).catch(() => steps.push('threw'));
     return steps;
   };
 
-  assert.deepEqual(await runAppend(), ['hold', 'save read-only=true', 'append read-only=true', 'settle appended read-only=true', 'release']);
-  assert.deepEqual(await runAppend({ saved: false }), ['hold', 'save read-only=true', 'release'], 'an unsaved note stops the append');
-  assert.deepEqual(await runAppend({ outcome: null }), ['hold', 'save read-only=true', 'append read-only=true', 'release'], 'nothing written, nothing to show');
-  assert.deepEqual(await runAppend({ fails: true }), ['hold', 'save read-only=true', 'append read-only=true', 'release', 'threw']);
-  assert.deepEqual(await runAppend({ held: false, outcome: 'capture-kept' }), ['append read-only=false', 'settle capture-kept read-only=false'], 'a note not open is not held');
+  assert.deepEqual(await runAppend(), ['close', 'append', 'settle appended', 'reopen /v/capture.md appended']);
+  assert.deepEqual(await runAppend({ closed: false }), ['close'], 'a note that would not save stops the append');
+  assert.deepEqual(await runAppend({ outcome: null }), ['close', 'append', 'reopen /v/capture.md null'], 'refused: the note comes back as it was');
+  assert.deepEqual(await runAppend({ fails: true }), ['close', 'append', 'reopen /v/capture.md null', 'threw']);
+  assert.deepEqual(await runAppend({ open: null, outcome: 'capture-kept' }), ['append', 'settle capture-kept'], 'nothing open, nothing to close');
 });

@@ -22,7 +22,7 @@ pub(crate) fn safe_path_component<'a>(value: &'a str, label: &str) -> Result<&'a
 }
 
 /// One snapshot write at a time. Snapshots are named by the second, so a save's queued snapshot
-/// and an append's forced one (#9) can share a file; taking turns, the later write decides.
+/// and an append's forced one (#9) can want the same file; taking turns, neither overwrites.
 static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Directory: .helixnotes/history/<note-id>/
@@ -117,16 +117,28 @@ pub fn force_snapshot(
     let dir = history_dir(vault_path, note_id)?;
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
 
-    let timestamp = Utc::now().format("%Y-%m-%dT%H-%M-%S").to_string();
-    let filename = format!("{}.md", timestamp);
-    let path = dir.join(&filename);
-
-    fs::write(&path, raw_content).map_err(|error| error.to_string())?;
-
-    if max_versions > 0 {
-        prune_versions(&dir, max_versions)?;
+    // Names are by the second, so two forced snapshots in one second (two quick appends to one
+    // note, #9) must not share a file: the later takes the next free second, keeping both.
+    let now = Utc::now();
+    for offset in 0..60 {
+        let timestamp = (now + chrono::Duration::seconds(offset)).format("%Y-%m-%dT%H-%M-%S");
+        let written = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(dir.join(format!("{}.md", timestamp)))
+            .and_then(|mut file| std::io::Write::write_all(&mut file, raw_content.as_bytes()));
+        match written {
+            Ok(()) => {
+                if max_versions > 0 {
+                    prune_versions(&dir, max_versions)?;
+                }
+                return Ok(());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
     }
-    Ok(())
+    Err("No free history slot for this snapshot".to_string())
 }
 
 /// List all version snapshots for a note, newest first.
@@ -212,7 +224,7 @@ fn prune_versions(dir: &Path, max: u32) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_version, list_versions};
+    use super::{force_snapshot, get_version, list_versions};
     use std::fs;
     use uuid::Uuid;
 
@@ -229,6 +241,26 @@ mod tests {
 
         assert!(list_versions(&vault.to_string_lossy(), "../escaped").is_err());
         assert!(get_version(&vault.to_string_lossy(), "safe", "../../secret").is_err());
+
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn two_forced_snapshots_in_one_second_keep_both_texts() {
+        let vault =
+            std::env::temp_dir().join(format!("helixnotes-history-test-{}", Uuid::new_v4()));
+        let vault_path = vault.to_string_lossy();
+
+        force_snapshot(&vault_path, "note", "first", 0).unwrap();
+        force_snapshot(&vault_path, "note", "second", 0).unwrap();
+
+        let mut texts: Vec<String> = list_versions(&vault_path, "note")
+            .unwrap()
+            .iter()
+            .map(|version| get_version(&vault_path, "note", &version.timestamp).unwrap())
+            .collect();
+        texts.sort();
+        assert_eq!(texts, ["first", "second"]);
 
         fs::remove_dir_all(vault).unwrap();
     }

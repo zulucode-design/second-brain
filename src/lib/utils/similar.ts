@@ -24,25 +24,25 @@ export function forVault(cards: SimilarCard[], vault: string | null | undefined)
 export type AppendOutcome = 'appended' | 'capture-kept' | null;
 
 /**
- * Runs an append with the open note held, when it is one of the two: saved first, then kept
- * read-only until `settle` has shown the result, so nothing typed meanwhile is lost with a
- * trashed capture or under the reloaded note.
+ * Runs an append with neither note open in the editor. The open one, if it is the capture or
+ * the target, is saved and closed first, so nothing can change it while the append runs, and
+ * `reopen` brings it back afterwards (what to reopen depends on the outcome).
  */
-export async function appendWhileHeld(steps: {
-  held: boolean;
-  /** Makes the editor read-only; the returned function lets it go. */
-  hold: () => Promise<() => void>;
-  save: () => Promise<boolean>;
+export async function appendWithNoteClosed(steps: {
+  open: string | null;
+  /** Saves and closes the open note; false stops the append. */
+  close: () => Promise<boolean>;
   append: () => Promise<AppendOutcome>;
-  settle: (outcome: 'appended' | 'capture-kept') => void | Promise<void>;
+  settle: (outcome: 'appended' | 'capture-kept') => void;
+  reopen: (path: string, outcome: AppendOutcome) => void;
 }): Promise<void> {
-  const release = steps.held ? await steps.hold() : null;
+  if (steps.open && !(await steps.close())) return;
+  let outcome: AppendOutcome = null;
   try {
-    if (release && !(await steps.save())) return;
-    const outcome = await steps.append();
-    if (outcome) await steps.settle(outcome);
+    outcome = await steps.append();
+    if (outcome) steps.settle(outcome);
   } finally {
-    release?.();
+    if (steps.open) steps.reopen(steps.open, outcome);
   }
 }
 

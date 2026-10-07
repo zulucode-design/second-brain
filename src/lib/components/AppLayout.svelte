@@ -7,7 +7,7 @@
 	import Editor from './Editor.svelte';
 	import SearchPanel from './SearchPanel.svelte';
 	import SimilarCards from './SimilarCards.svelte';
-	import { appendWhileHeld, type AppendOutcome } from '$lib/utils/similar';
+	import { appendWithNoteClosed, type AppendOutcome } from '$lib/utils/similar';
 	import CommandPalette from './CommandPalette.svelte';
 	import SettingsPanel from './SettingsPanel.svelte';
 	import InfoPanel from './InfoPanel.svelte';
@@ -873,36 +873,27 @@
 		}
 	}
 
-	// A similar-note append rewrites one note and trashes another; when either is open, the
-	// editor is held through it (appendWhileHeld), and an open target shows its new text before
-	// the hold ends.
+	// A similar-note append rewrites one note and trashes another; an open one is saved and closed
+	// first and reopened afterwards (appendWithNoteClosed), so the editor never holds stale text.
 	function appendToSimilarNote(capturePath: string, targetPath: string, append: () => Promise<AppendOutcome>): Promise<void> {
 		const reason = 'Adding to a similar note';
-		const run = navigationQueue.then(() => appendWhileHeld({
-			held: !!$activeNotePath && [capturePath, targetPath].includes($activeNotePath),
-			hold: async () => (editor ? editor.holdForOperation() : () => {}),
-			save: async () => reportSaveResult(reason, await editor?.flushSave()),
+		const run = navigationQueue.then(() => appendWithNoteClosed({
+			open: $activeNotePath && [capturePath, targetPath].includes($activeNotePath) ? $activeNotePath : null,
+			close: async () => {
+				if (!(await ensureCurrentNoteSaved(reason))) return false;
+				$activeNote = null;
+				$activeNotePath = null;
+				return true;
+			},
 			append,
-			settle: async (outcome) => {
-				const current = editor;
-				if (current && $activeNotePath === targetPath) {
-					const reloaded = await reloadCleanDocument({
-						capture: () => ($activeNotePath === targetPath && !$editorDirty ? { path: targetPath, revision: current.getLoadedRevision() } : null),
-						drafting: () => current.hasPendingDraft(),
-						read: readNote,
-						// Already held: taking the lock again would throw.
-						lock: async () => () => {},
-						stillValid: (captured) => editor === current && $activeNotePath === captured.path && !$editorDirty,
-						commit: (path, content) => {
-							$activeNote = content;
-							current.loadNote(path, content.content, undefined, false, content.revision, true);
-						},
-					});
-					// An editor dialog was open: the usual reload retries once it closes.
-					if (reloaded === 'deferred') void reloadOpenNoteFromDisk();
-				}
+			settle: (outcome) => {
 				if (outcome === 'appended') forgetTrashedNote(capturePath);
 				else noteList?.refresh(true).catch((error) => console.error('Failed to refresh notes after appending:', error));
+			},
+			// Queued behind this run, so it reads the note as the append left it. A capture moved
+			// to trash has nothing to reopen.
+			reopen: (path, outcome) => {
+				if (!(path === capturePath && outcome === 'appended')) void navigateToPath(path);
 			},
 		}).catch((error) => {
 			reportSaveResult(reason, { ok: false, status: 'failed', revision: 0, error });
