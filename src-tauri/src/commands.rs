@@ -1218,10 +1218,14 @@ pub fn append_to_similar_note(
     target: crate::similar_notes::CheckedNote,
 ) -> Result<Option<String>, String> {
     let vault_path = active_vault(&state)?;
-    let capture_note = operations::read_note(&vault_path, &capture.path)
-        .map_err(|_| "Your capture is no longer there, so nothing was added.".to_string())?;
-    let target_note = operations::read_note(&vault_path, &target.path)
-        .map_err(|_| "That note is no longer there, so nothing was added.".to_string())?;
+    let capture_note = operations::read_note(&vault_path, &capture.path).map_err(|error| {
+        log::warn!("Similar append could not read the capture: {error}");
+        "Your capture is no longer there, so nothing was added.".to_string()
+    })?;
+    let target_note = operations::read_note(&vault_path, &target.path).map_err(|error| {
+        log::warn!("Similar append could not read the note: {error}");
+        "That note is no longer there, so nothing was added.".to_string()
+    })?;
     if capture_note.revision != capture.revision || target_note.revision != target.revision {
         return Err("One of the notes changed since the check, so nothing was added.".to_string());
     }
@@ -1239,7 +1243,10 @@ pub fn append_to_similar_note(
         .map_err(|error| error.to_string())?
         .max_versions_per_note;
     crate::history::force_snapshot(&vault_path, &meta.id, &target_note.raw, max_versions).map_err(
-        |_| "Could not keep a copy of the note to undo with, so nothing was added.".to_string(),
+        |error| {
+            log::warn!("Similar append could not snapshot the note: {error}");
+            "Could not keep a copy of the note to undo with, so nothing was added.".to_string()
+        },
     )?;
     let body = crate::similar_notes::with_capture_appended(
         &target_note.content,
@@ -1330,6 +1337,49 @@ mod similar_append_tests {
             kept.iter().any(|text| text == old_target),
             "the old text is in history"
         );
+        drop(app);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The note is written before the capture moves to trash, so a capture that cannot move is
+    /// reported, not an error, and the note keeps the appended text.
+    #[test]
+    fn an_append_whose_capture_cannot_move_to_trash_keeps_both_and_says_why() {
+        let root = std::env::temp_dir().join(format!("sb-similar-kept-{}", uuid::Uuid::new_v4()));
+        let vault = root.join("vault");
+        fs::create_dir_all(vault.join("Areas")).unwrap();
+        let capture_path = vault.join("Areas/Cedar arrived.md");
+        let target_path = vault.join("Areas/Shed.md");
+        fs::write(
+            &capture_path,
+            "---\nid: capture-id\ntitle: Cedar arrived\n---\nStacked by the shed.\n",
+        )
+        .unwrap();
+        fs::write(
+            &target_path,
+            "---\nid: shed-id\ntitle: Shed\n---\nCedar ordered.\n",
+        )
+        .unwrap();
+        let vault_path = vault.to_string_lossy().into_owned();
+        let app = tauri::test::mock_builder()
+            .manage(AppState::new(AppConfig {
+                active_vault: Some(vault_path.clone()),
+                ..Default::default()
+            }))
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let capture = checked(&vault_path, capture_path.to_str().unwrap());
+        let target = checked(&vault_path, target_path.to_str().unwrap());
+
+        // A Notion deletion pass in progress makes the move to trash refuse.
+        let state = app.state::<AppState>();
+        let _deleting = state.notion_deletions.try_lock().unwrap();
+        let kept = append_to_similar_note(app.state(), capture, target).unwrap();
+        assert!(kept.is_some_and(|why| why.starts_with("Added to the note, but")));
+        let appended = operations::read_note(&vault_path, target_path.to_str().unwrap()).unwrap();
+        assert!(appended.content.contains("Stacked by the shed."));
+        assert!(capture_path.exists(), "the capture stayed");
+        drop(_deleting);
         drop(app);
         fs::remove_dir_all(root).unwrap();
     }

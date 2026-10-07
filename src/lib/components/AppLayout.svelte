@@ -882,6 +882,7 @@
 	function afterSimilarAppend(capturePath: string, targetPath: string, captureTrashed: boolean) {
 		if ($activeNotePath === targetPath) void reloadOpenNoteFromDisk();
 		if (captureTrashed) forgetTrashedNote(capturePath);
+		else noteList?.refresh(true).catch((error) => console.error('Failed to refresh notes after appending:', error));
 	}
 
 	function handleMouseDown(e: MouseEvent) {

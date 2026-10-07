@@ -257,14 +257,17 @@ that say the same thing.
   recalibrated when the embedding model changes. Cards show the best 3, with "Showing 3 of N
   similar notes" when more pass.
 - **What the user sees.** A card in the main window, bottom right, newest first, that stays
-  until handled: the similar note's title, its best-matching passage (the reason for the
-  match), and Append, Open, and Dismiss. Each of the three ends the card, Open once the note
-  is open. Cards live in memory only. When the main window is
-  not focused, a quick capture also raises a desktop notification, "Similar note found for
-  your capture", that names no note (it can show on a lock screen); clicking it brings the
-  main window forward. Several captures share one notification.
+  until handled: the similar note's title, a "Similar" label, its best-matching passage (the
+  reason for the match), and Append, Open, and Dismiss. There is one label, not a stronger
+  second tier: the duplicates score 0.769 to 0.850 with no clean split among them. Each of the
+  three actions ends the card, Open once the note is open. Cards live in memory only. When the
+  main window is not focused, and did not have focus when the capture overlay opened, a quick
+  capture also raises a desktop notification, "Similar note found for your capture", that
+  names no note (it can show on a lock screen); clicking it brings the main window forward.
+  Several captures share one notification.
 - **Append.** The new note's text, title line included, goes at the end of the similar note
-  under `---` and *Added from capture, <date>:*, and the new note moves to trash. The similar
+  under `---` and *Added from capture, <date>:*, and the new note moves to trash; if it cannot,
+  the card says so and the new note stays. The similar
   note's history makes this undoable. Either note having changed since the check refuses the
   append, so nothing lands in a note the user has not seen as it is. Dismiss changes nothing.
 - **Later.** An AI-assisted merge that explains the match and appends only what is new is

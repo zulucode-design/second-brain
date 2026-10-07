@@ -1,3 +1,4 @@
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { get, writable } from 'svelte/store';
 import { appendToSimilarNote, checkSimilarNotes } from '$lib/api';
 import { listenAppEvent } from '$lib/events';
@@ -56,9 +57,10 @@ export async function appendSimilar(
 
 const watcher = createLeaveWatcher();
 
-/** A note was created in the app; it is checked when the user first leaves it. */
+/** A note was created in the app; it is checked when the user first leaves it. Only the main
+ * window shows cards, so a note made in a note window is not checked. */
 export function noteCreatedInApp(id: string) {
-  watcher.created(id);
+  if (getCurrentWindow().label === 'main') watcher.created(id);
 }
 
 // Quick captures are checked by the backend, which sends what it found.

@@ -17,7 +17,7 @@ use tauri::{AppHandle, Emitter, Manager};
 /// 0.533. The bar sits midway. Recalibrate when the embedding model changes.
 const SIMILAR_SCORE: f32 = 0.65;
 /// How many similar notes a card shows; the rest are only counted.
-const SHOWN: usize = 3;
+const SHOWN_PER_CARD: usize = 3;
 /// Shorter text embeds too loosely to call anything a duplicate.
 const MIN_WORDS: usize = 3;
 
@@ -67,7 +67,7 @@ pub fn check(
         &note.content,
         &note.meta.id,
         SIMILAR_SCORE,
-        SHOWN,
+        SHOWN_PER_CARD,
     )?;
     let ranked = found.notes.len();
     let matches: Vec<SimilarMatch> = found
@@ -177,21 +177,22 @@ pub fn main_window_seen() {
     UNSEEN.store(0, Ordering::SeqCst);
 }
 
-/// One more capture the user has not seen, and the wording that counts it.
-fn next_notification_text() -> (String, &'static str) {
-    notification_text(UNSEEN.fetch_add(1, Ordering::SeqCst) + 1)
+/// One more capture the user has not seen, and the title that counts it.
+fn next_notification_title() -> String {
+    notification_title(UNSEEN.fetch_add(1, Ordering::SeqCst) + 1)
 }
 
 /// The notification's wording. Generic on purpose: it can show on a lock screen and stays in
 /// the notification history, so it never names a note.
-fn notification_text(unseen: usize) -> (String, &'static str) {
-    let title = if unseen <= 1 {
+fn notification_title(unseen: usize) -> String {
+    if unseen <= 1 {
         "Similar note found for your capture".to_string()
     } else {
         format!("{unseen} captures have similar notes")
-    };
-    (title, "Open Second Brain to review.")
+    }
 }
+
+const NOTIFICATION_BODY: &str = "Open Second Brain to review.";
 
 /// Bring the main window forward, from a notification click on whatever thread delivers it.
 ///
@@ -259,7 +260,7 @@ fn notify(app: &AppHandle) {
     use ashpd::zbus::zvariant::Value;
     use std::collections::HashMap;
 
-    let (title, body) = next_notification_text();
+    let title = next_notification_title();
     let desktop_entry = app.config().identifier.clone();
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -278,7 +279,7 @@ fn notify(app: &AppHandle) {
                         NOTIFICATION_ID.load(Ordering::SeqCst),
                         "",
                         title.as_str(),
-                        body,
+                        NOTIFICATION_BODY,
                         vec!["default", "Open"],
                         hints,
                         -1i32,
@@ -355,18 +356,19 @@ fn notify(app: &AppHandle) {
     use windows::Foundation::TypedEventHandler;
     use windows::UI::Notifications::ToastNotification;
 
-    let (title, body) = next_notification_text();
+    let title = next_notification_title();
     let handle = app.clone();
     let shown =
-        crate::hotkey::windows::toast(&title, body, "similar-notes", "capture").and_then(|toast| {
-            toast.Activated(&TypedEventHandler::<ToastNotification, IInspectable>::new(
-                move |_, _| {
-                    open_main_window(&handle, None);
-                    Ok(())
-                },
-            ))?;
-            crate::hotkey::windows::show_toast(&app.config().identifier, &toast)
-        });
+        crate::hotkey::windows::toast(&title, NOTIFICATION_BODY, "similar-notes", "capture")
+            .and_then(|toast| {
+                toast.Activated(&TypedEventHandler::<ToastNotification, IInspectable>::new(
+                    move |_, _| {
+                        open_main_window(&handle, None);
+                        Ok(())
+                    },
+                ))?;
+                crate::hotkey::windows::show_toast(&app.config().identifier, &toast)
+            });
     // A nudge only: the card is already waiting in the main window.
     if let Err(error) = shown {
         log::warn!("Could not show the similar-notes notification: {error}");
@@ -378,7 +380,7 @@ fn notify(_app: &AppHandle) {}
 
 #[cfg(test)]
 mod tests {
-    use super::{notification_text, with_capture_appended};
+    use super::{notification_title, with_capture_appended};
 
     #[test]
     fn an_append_keeps_the_note_and_marks_where_the_capture_starts() {
@@ -394,11 +396,7 @@ mod tests {
 
     #[test]
     fn the_notification_never_names_a_note_and_counts_unseen_captures() {
-        assert_eq!(
-            notification_text(1).0,
-            "Similar note found for your capture"
-        );
-        assert_eq!(notification_text(3).0, "3 captures have similar notes");
-        assert_eq!(notification_text(1).1, "Open Second Brain to review.");
+        assert_eq!(notification_title(1), "Similar note found for your capture");
+        assert_eq!(notification_title(3), "3 captures have similar notes");
     }
 }

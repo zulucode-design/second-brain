@@ -27,7 +27,7 @@
 	// note is open.
 	async function open(card: SimilarCard, match: SimilarMatch) {
 		if (await onOpen(match.path)) dismissSimilar(card.id);
-		else similarCardFailed(card.id, 'That note could not be opened. It may have been moved or deleted.');
+		else similarCardFailed(card.id, 'That note could not be opened.');
 	}
 </script>
 
@@ -45,7 +45,7 @@
 							<span>{match.title}</span>
 							<span class="similar-label">Similar</span>
 						</div>
-						<p class="similar-excerpt">{match.excerpt}</p>
+						<p class="similar-excerpt" title={match.excerpt}>{match.excerpt}</p>
 						<div class="similar-actions">
 							<button disabled={card.busy} onclick={() => append(card, match)}>Append</button>
 							<button disabled={card.busy} onclick={() => open(card, match)}>Open</button>
@@ -125,8 +125,8 @@
 		color: var(--text-secondary);
 		line-height: 1.45;
 		display: -webkit-box;
-		-webkit-line-clamp: 3;
-		line-clamp: 3;
+		-webkit-line-clamp: 5;
+		line-clamp: 5;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
 		user-select: text;
