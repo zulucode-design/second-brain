@@ -165,8 +165,9 @@ answers varied:
 - f83a489: the shed answer called the shed "80 % complete", which no note says, and the sourdough
   answer was a refusal.
 
-These are model outcomes, not script failures, and nobody rejudged them for #8. Overstated and
-uncited shed answers are #210.
+These are model outcomes, not script failures. Sol assessed the Ask answers at 0cb920c and
+f83a489 and recorded failures; those #8 findings remain separate from #9. Overstated and uncited
+shed answers are #210.
 
 ## Desktop notification, by hand
 
