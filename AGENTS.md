@@ -35,6 +35,8 @@ high) does the administrative work around it.
   review is clean, watches CI and reports failures back to Claude, and merges.
 - **Merging waits for Nicolas.** When review and CI pass on the PR's head, Claude tells Nicolas the
   PR can merge, and Sol merges after his go-ahead.
+- **When Sol's usage runs out,** Claude Sonnet 5.5 agents at extra-high (`xhigh`) reasoning effort
+  take over her part until it resets. Claude still writes and fixes the code.
 
 ## Pull requests
 
