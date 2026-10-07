@@ -93,16 +93,26 @@ async function capture(browser, text) {
 }
 
 // The app's Notify calls on the session bus, as dbus-monitor prints them: each call's
-// replaces_id, summary, and body. Other apps' notifications are left out, and so is GNOME
-// relaying each call on to another bus client.
+// replaces_id, summary, and body, and the id the notification service returned for it. Other
+// apps' notifications are left out, and so is GNOME relaying each call on to another client.
 function notifyCalls(output) {
-  return output
-    .split(/^method call /m)
-    .slice(1)
-    .filter((call) => call.split('\n')[0].includes('destination=org.freedesktop.Notifications '))
-    .map((call) => [...call.matchAll(/^\s+(string|uint32) "?(.*?)"?$/gm)].map((match) => match[2]))
-    .filter((values) => values[0] === 'Second Brain')
-    .map(([, replacesId, , summary, body]) => ({ replacesId: Number(replacesId), summary, body }));
+  const messages = output.split(/^(?=method (?:call|return) )/m).map((message) => ({
+    header: message.split('\n')[0],
+    values: [...message.matchAll(/^\s+(string|uint32) "?(.*?)"?$/gm)].map((match) => match[2]),
+  }));
+  const field = (header, name) => header.match(new RegExp(`\\b${name}=(\\S+)`))?.[1];
+  return messages
+    .filter(({ header, values }) =>
+      header.startsWith('method call ') &&
+      field(header, 'destination') === 'org.freedesktop.Notifications' &&
+      values[0] === 'Second Brain')
+    .map(({ header, values: [, replacesId, , summary, body] }) => {
+      const reply = messages.find((message) =>
+        message.header.startsWith('method return ') &&
+        field(message.header, 'reply_serial') === field(header, 'serial') &&
+        field(message.header, 'destination') === field(header, 'sender'));
+      return { replacesId: Number(replacesId), id: reply ? Number(reply.values[0]) : null, summary, body };
+    });
 }
 
 const trashed = (vault, path) =>
@@ -115,7 +125,11 @@ async function main() {
   await withApp({ ...settings, fill }, async (browser, { vault, tunnel }) => {
     let busOutput = '';
     const bus = process.platform === 'linux'
-      ? spawn('dbus-monitor', ['--session', "type='method_call',interface='org.freedesktop.Notifications',member='Notify'"])
+      ? spawn('dbus-monitor', [
+          '--session',
+          "type='method_call',interface='org.freedesktop.Notifications',member='Notify'",
+          "type='method_return',sender='org.freedesktop.Notifications'",
+        ])
       : null;
     bus?.stdout.on('data', (chunk) => (busOutput += chunk));
     process.on('exit', () => bus?.kill());
@@ -234,7 +248,8 @@ async function main() {
       actions.notification = {
         whileFocused,
         calls,
-        replaced: calls.length === 2 && calls[0].replacesId === 0 && calls[1].replacesId > 0,
+        // The second call names the first one's id, so the service shows it in its place.
+        replaced: calls.length === 2 && calls[0].replacesId === 0 && calls[0].id > 0 && calls[1].replacesId === calls[0].id,
       };
       bus.kill();
     }
