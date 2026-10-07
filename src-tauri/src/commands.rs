@@ -1289,7 +1289,46 @@ mod similar_append_tests {
     use crate::types::AppConfig;
     use crate::vault::operations;
     use std::fs;
+    use std::path::PathBuf;
     use tauri::Manager;
+
+    struct Fixture {
+        root: PathBuf,
+        vault: String,
+        capture: PathBuf,
+        target: PathBuf,
+        app: tauri::App<tauri::test::MockRuntime>,
+    }
+
+    /// A vault with a capture and the note it repeats, and an app whose open vault it is.
+    fn fixture(target_text: &str) -> Fixture {
+        let root = std::env::temp_dir().join(format!("sb-similar-append-{}", uuid::Uuid::new_v4()));
+        let vault = root.join("vault");
+        fs::create_dir_all(vault.join("Areas")).unwrap();
+        let capture = vault.join("Areas/Cedar arrived.md");
+        let target = vault.join("Areas/Shed.md");
+        fs::write(
+            &capture,
+            "---\nid: capture-id\ntitle: Cedar arrived\n---\nStacked by the shed.\n",
+        )
+        .unwrap();
+        fs::write(&target, target_text).unwrap();
+        let vault = vault.to_string_lossy().into_owned();
+        let app = tauri::test::mock_builder()
+            .manage(AppState::new(AppConfig {
+                active_vault: Some(vault.clone()),
+                ..Default::default()
+            }))
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        Fixture {
+            root,
+            vault,
+            capture,
+            target,
+            app,
+        }
+    }
 
     fn checked(vault: &str, path: &str) -> CheckedNote {
         let note = operations::read_note(vault, path).unwrap();
@@ -1304,26 +1343,14 @@ mod similar_append_tests {
     /// the index still finds by path, is appended to with its old text kept in history.
     #[test]
     fn an_append_refuses_a_changed_note_and_keeps_an_id_less_notes_old_text() {
-        let root = std::env::temp_dir().join(format!("sb-similar-append-{}", uuid::Uuid::new_v4()));
-        let vault = root.join("vault");
-        fs::create_dir_all(vault.join("Areas")).unwrap();
-        let capture_path = vault.join("Areas/Cedar arrived.md");
-        let target_path = vault.join("Areas/Shed.md");
-        fs::write(
-            &capture_path,
-            "---\nid: capture-id\ntitle: Cedar arrived\n---\nStacked by the shed.\n",
-        )
-        .unwrap();
         let old_target = "---\ntitle: Shed\n---\nCedar ordered.\n";
-        fs::write(&target_path, old_target).unwrap();
-        let vault_path = vault.to_string_lossy().into_owned();
-        let app = tauri::test::mock_builder()
-            .manage(AppState::new(AppConfig {
-                active_vault: Some(vault_path.clone()),
-                ..Default::default()
-            }))
-            .build(tauri::test::mock_context(tauri::test::noop_assets()))
-            .unwrap();
+        let Fixture {
+            root,
+            vault: vault_path,
+            capture: capture_path,
+            target: target_path,
+            app,
+        } = fixture(old_target);
         let capture = checked(&vault_path, capture_path.to_str().unwrap());
         let target = checked(&vault_path, target_path.to_str().unwrap());
 
@@ -1349,7 +1376,9 @@ mod similar_append_tests {
         assert!(appended.content.contains("*Added from capture,"));
         assert!(appended.content.contains("Stacked by the shed."));
         assert!(!capture_path.exists(), "the capture moved to trash");
-        let history = vault.join(".helixnotes/history").join(&appended.meta.id);
+        let history = std::path::Path::new(&vault_path)
+            .join(".helixnotes/history")
+            .join(&appended.meta.id);
         let kept: Vec<String> = fs::read_dir(history)
             .unwrap()
             .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
@@ -1367,29 +1396,13 @@ mod similar_append_tests {
     /// reported, not an error, and the note keeps the appended text.
     #[test]
     fn an_append_whose_capture_cannot_move_to_trash_keeps_both_and_says_why() {
-        let root = std::env::temp_dir().join(format!("sb-similar-kept-{}", uuid::Uuid::new_v4()));
-        let vault = root.join("vault");
-        fs::create_dir_all(vault.join("Areas")).unwrap();
-        let capture_path = vault.join("Areas/Cedar arrived.md");
-        let target_path = vault.join("Areas/Shed.md");
-        fs::write(
-            &capture_path,
-            "---\nid: capture-id\ntitle: Cedar arrived\n---\nStacked by the shed.\n",
-        )
-        .unwrap();
-        fs::write(
-            &target_path,
-            "---\nid: shed-id\ntitle: Shed\n---\nCedar ordered.\n",
-        )
-        .unwrap();
-        let vault_path = vault.to_string_lossy().into_owned();
-        let app = tauri::test::mock_builder()
-            .manage(AppState::new(AppConfig {
-                active_vault: Some(vault_path.clone()),
-                ..Default::default()
-            }))
-            .build(tauri::test::mock_context(tauri::test::noop_assets()))
-            .unwrap();
+        let Fixture {
+            root,
+            vault: vault_path,
+            capture: capture_path,
+            target: target_path,
+            app,
+        } = fixture("---\nid: shed-id\ntitle: Shed\n---\nCedar ordered.\n");
         let capture = checked(&vault_path, capture_path.to_str().unwrap());
         let target = checked(&vault_path, target_path.to_str().unwrap());
 

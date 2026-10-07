@@ -890,10 +890,19 @@
 				if (outcome === 'appended') forgetTrashedNote(capturePath);
 				else noteList?.refresh(true).catch((error) => console.error('Failed to refresh notes after appending:', error));
 			},
-			// Queued behind this run, so it reads the note as the append left it. A capture moved
-			// to trash has nothing to reopen.
-			reopen: (path, outcome) => {
-				if (!(path === capturePath && outcome === 'appended')) void navigateToPath(path);
+			// Within this run, so a note the user picked meanwhile opens after it, not under it. A
+			// capture moved to trash has nothing to reopen.
+			reopen: async (path, outcome) => {
+				if (!(path === capturePath && outcome === 'appended')) {
+					try {
+						const content = await readNote(path);
+						if (!$activeNotePath && commitNote(path, content)) return;
+					} catch (error) {
+						console.error('Failed to reopen the note after appending:', error);
+					}
+				}
+				// Nothing reopened: the compact layout goes back to the list, as after any trash.
+				if (!$activeNotePath && isCompact) $compactView = 'notelist';
 			},
 		}).catch((error) => {
 			reportSaveResult(reason, { ok: false, status: 'failed', revision: 0, error });

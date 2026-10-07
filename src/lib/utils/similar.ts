@@ -34,7 +34,8 @@ export async function appendWithNoteClosed(steps: {
   close: () => Promise<boolean>;
   append: () => Promise<AppendOutcome>;
   settle: (outcome: 'appended' | 'capture-kept') => void;
-  reopen: (path: string, outcome: AppendOutcome) => void;
+  /** Awaited, so the note is back before any navigation queued behind the append runs. */
+  reopen: (path: string, outcome: AppendOutcome) => Promise<void>;
 }): Promise<void> {
   if (steps.open && !(await steps.close())) return;
   let outcome: AppendOutcome = null;
@@ -42,7 +43,7 @@ export async function appendWithNoteClosed(steps: {
     outcome = await steps.append();
     if (outcome) steps.settle(outcome);
   } finally {
-    if (steps.open) steps.reopen(steps.open, outcome);
+    if (steps.open) await steps.reopen(steps.open, outcome);
   }
 }
 

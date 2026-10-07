@@ -9,8 +9,8 @@
 	}: {
 		/** Opens the note; false when it could not be opened. */
 		onOpen: (path: string) => Promise<boolean>;
-		/** Runs `append` with either note, if open, saved and held read-only until the editor
-		 * and note list show the result. */
+		/** Runs `append` with either note, if open, saved and closed first and reopened after
+		 * (unless it went to trash). */
 		onAppend: (capturePath: string, targetPath: string, append: () => Promise<AppendOutcome>) => Promise<void>;
 	} = $props();
 

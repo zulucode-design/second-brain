@@ -69,7 +69,10 @@ test('an append closes the open note first and reopens it after', async () => {
         return outcome;
       },
       settle: (result) => steps.push(`settle ${result}`),
-      reopen: (path, result) => steps.push(`reopen ${path} ${result}`),
+      reopen: async (path, result) => {
+        await new Promise((resolve) => setTimeout(resolve));
+        steps.push(`reopen ${path} ${result}`);
+      },
     }).catch(() => steps.push('threw'));
     return steps;
   };

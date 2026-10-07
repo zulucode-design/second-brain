@@ -290,14 +290,15 @@ fn notify(app: &AppHandle, vault: String) {
         // notification that replaces another never shows the smaller count.
         static SENDING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
         let _sending = SENDING.lock().await;
-        if notification_moot(&app, &vault) {
-            return;
-        }
-        let title = next_notification_title();
         let sent = async {
+            let service = notification_service().await?;
+            // Checked after connecting, which can wait: focus or the vault may have changed.
+            if notification_moot(&app, &vault) {
+                return Ok(());
+            }
+            let title = next_notification_title();
             let hints = HashMap::from([("desktop-entry", Value::from(desktop_entry.as_str()))]);
-            let id: u32 = notification_service()
-                .await?
+            let id: u32 = service
                 .call(
                     "Notify",
                     &(
