@@ -21,6 +21,10 @@ pub(crate) fn safe_path_component<'a>(value: &'a str, label: &str) -> Result<&'a
     Ok(value)
 }
 
+/// One snapshot write at a time. Snapshots are named by the second, so a save's queued snapshot
+/// and an append's forced one (#9) can want the same file; taking turns, neither overwrites.
+static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Directory: .helixnotes/history/<note-id>/
 fn history_dir(vault_path: &str, note_id: &str) -> Result<PathBuf, String> {
     Ok(Path::new(vault_path)
@@ -32,36 +36,18 @@ fn history_dir(vault_path: &str, note_id: &str) -> Result<PathBuf, String> {
 /// Save a version snapshot if enough time has passed since the last one.
 /// Minimum interval: 5 minutes between snapshots.
 pub fn maybe_snapshot(vault_path: &str, note_id: &str, raw_content: &str, max_versions: u32) {
+    let _writing = WRITING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let Ok(dir) = history_dir(vault_path, note_id) else {
         log::warn!("Skipping history snapshot with an invalid note ID");
         return;
     };
 
     // Check if we should create a snapshot (5 min cooldown)
-    if let Ok(entries) = fs::read_dir(&dir) {
-        let mut files: Vec<String> = entries
-            .filter_map(|e| e.ok())
-            .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
-            .filter(|n| n.ends_with(".md"))
-            .collect();
-        files.sort();
-
-        if let Some(last) = files.last() {
-            if let Some(ts) = last.strip_suffix(".md") {
-                // Parse timestamp: 2026-02-08T18-30-00.md
-                if let Some(t_pos) = ts.find('T') {
-                    let date_part = &ts[..t_pos];
-                    let time_part = &ts[t_pos + 1..];
-                    let time_colons = time_part.replace('-', ":");
-                    let iso = format!("{}T{}Z", date_part, time_colons);
-                    if let Ok(last_time) = iso.parse::<DateTime<Utc>>() {
-                        let elapsed = Utc::now() - last_time;
-                        if elapsed.num_minutes() < 5 {
-                            return; // Too soon, skip
-                        }
-                    }
-                }
-            }
+    if let Some(last_time) = latest_snapshot_time(&dir) {
+        if (Utc::now() - last_time).num_minutes() < 5 {
+            return; // Too soon, skip
         }
     }
 
@@ -75,9 +61,20 @@ pub fn maybe_snapshot(vault_path: &str, note_id: &str, raw_content: &str, max_ve
     let filename = format!("{}.md", timestamp);
     let path = dir.join(&filename);
 
-    if let Err(e) = fs::write(&path, raw_content) {
-        eprintln!("Failed to write version snapshot: {}", e);
-        return;
+    // Never over an existing snapshot: one forced in this same second (an append's undo point,
+    // #9) holds newer text than this one, which a save queued before it.
+    let written = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .and_then(|mut file| std::io::Write::write_all(&mut file, raw_content.as_bytes()));
+    match written {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return,
+        Err(e) => {
+            eprintln!("Failed to write version snapshot: {}", e);
+            return;
+        }
     }
 
     // Prune old versions
@@ -93,19 +90,44 @@ pub fn force_snapshot(
     raw_content: &str,
     max_versions: u32,
 ) -> Result<(), String> {
+    let _writing = WRITING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let dir = history_dir(vault_path, note_id)?;
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
 
-    let timestamp = Utc::now().format("%Y-%m-%dT%H-%M-%S").to_string();
-    let filename = format!("{}.md", timestamp);
-    let path = dir.join(&filename);
-
-    fs::write(&path, raw_content).map_err(|error| error.to_string())?;
+    // Names are by the second, so a forced snapshot (an append's undo point, #9) landing in the
+    // second of the newest one takes the second after it: never overwritten, and still newest,
+    // so pruning removes older ones first.
+    let mut at = Utc::now();
+    if let Some(latest) = latest_snapshot_time(&dir) {
+        if latest.timestamp() >= at.timestamp() {
+            at = latest + chrono::Duration::seconds(1);
+        }
+    }
+    let path = dir.join(format!("{}.md", at.format("%Y-%m-%dT%H-%M-%S")));
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .and_then(|mut file| std::io::Write::write_all(&mut file, raw_content.as_bytes()))
+        .map_err(|error| error.to_string())?;
 
     if max_versions > 0 {
         prune_versions(&dir, max_versions)?;
     }
     Ok(())
+}
+
+/// When the newest snapshot in `dir` was taken, from its name (`2026-02-08T18-30-00.md`).
+fn latest_snapshot_time(dir: &Path) -> Option<DateTime<Utc>> {
+    let latest = fs::read_dir(dir)
+        .ok()?
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .filter_map(|name| name.strip_suffix(".md").map(str::to_string))
+        .max()?;
+    let (date, time) = latest.split_once('T')?;
+    format!("{}T{}Z", date, time.replace('-', ":")).parse().ok()
 }
 
 /// List all version snapshots for a note, newest first.
@@ -191,7 +213,7 @@ fn prune_versions(dir: &Path, max: u32) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_version, list_versions};
+    use super::{force_snapshot, get_version, list_versions};
     use std::fs;
     use uuid::Uuid;
 
@@ -208,6 +230,32 @@ mod tests {
 
         assert!(list_versions(&vault.to_string_lossy(), "../escaped").is_err());
         assert!(get_version(&vault.to_string_lossy(), "safe", "../../secret").is_err());
+
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn forced_snapshots_in_one_second_keep_the_newest_text() {
+        let vault =
+            std::env::temp_dir().join(format!("helixnotes-history-test-{}", Uuid::new_v4()));
+        let vault_path = vault.to_string_lossy();
+        let texts = |vault_path: &str| -> Vec<String> {
+            list_versions(vault_path, "note")
+                .unwrap()
+                .iter()
+                .map(|version| get_version(vault_path, "note", &version.timestamp).unwrap())
+                .collect()
+        };
+
+        force_snapshot(&vault_path, "note", "first", 0).unwrap();
+        force_snapshot(&vault_path, "note", "second", 0).unwrap();
+        // Newest first.
+        assert_eq!(texts(&vault_path), ["second", "first"]);
+
+        // Keeping one, each new snapshot must outlive the pruning it triggers.
+        force_snapshot(&vault_path, "note", "third", 1).unwrap();
+        force_snapshot(&vault_path, "note", "fourth", 1).unwrap();
+        assert_eq!(texts(&vault_path), ["fourth"]);
 
         fs::remove_dir_all(vault).unwrap();
     }

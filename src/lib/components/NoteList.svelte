@@ -54,6 +54,7 @@
 	import TasksView from './TasksView.svelte';
 	import TagSuggestInput from './TagSuggestInput.svelte';
 	import { compactLayout } from '$lib/stores/app';
+	import { noteCreatedInApp } from '$lib/stores/similar';
 	const isCompact = $derived($compactLayout);
 
 	let { onOpenNote = async (_path: string, _task?: TaskItem, _holding?: boolean) => false, onNoteMoved = () => {}, onBeforeNoteSwitch = async () => true, onBeforeNoteDuplicate = async () => true, onBeforeOpenWindow = async () => true, onRelocateActiveDocument = async (_path: string, _reason: string, _mutation: () => Promise<RelocationOutcome>) => null, onUpdateActiveMetadata = async (_path: string, _patch: Partial<NoteMeta>, _reason: string) => false, onNoteCreated = () => {}, onRequestCreateNote = () => {}, onToggleTask = async (_t: TaskItem) => {}, onSetTaskPriority = async (_t: TaskItem, _p: string | null) => {}, onSetTaskDue = async (_t: TaskItem, _d: string | null) => {} }: {
@@ -393,6 +394,7 @@
 		try {
 			if (!(await onBeforeNoteSwitch())) throw new Error('Could not save the current note.');
 			const entry = await createNote(nbRelative, 'Untitled');
+			noteCreatedInApp(entry.meta.id);
 			if ($sortMode === 'custom') appendManualNoteOrder(entry.path);
 			noteCache.clear();
 			$notes = [entry, ...$notes];

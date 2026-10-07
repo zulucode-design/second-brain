@@ -6,6 +6,8 @@
 	import NoteList from './NoteList.svelte';
 	import Editor from './Editor.svelte';
 	import SearchPanel from './SearchPanel.svelte';
+	import SimilarCards from './SimilarCards.svelte';
+	import { appendWithNoteClosed, type AppendOutcome } from '$lib/utils/similar';
 	import CommandPalette from './CommandPalette.svelte';
 	import SettingsPanel from './SettingsPanel.svelte';
 	import InfoPanel from './InfoPanel.svelte';
@@ -844,26 +846,69 @@
 		if (!$holdingPreview) $sourceMode = !$sourceMode;
 	}
 
+	// A note just moved to trash leaves the list, the manual order, and the editor.
+	function forgetTrashedNote(path: string) {
+		if (Object.hasOwn($noteOrder, path)) {
+			const { [path]: _, ...rest } = $noteOrder;
+			$noteOrder = rest;
+		}
+		$notes = $notes.filter((note) => note.path !== path);
+		if ($activeNotePath === path) {
+			$activeNote = null;
+			$activeNotePath = null;
+			if (isCompact) $compactView = 'notelist';
+		}
+		noteList?.refresh(true).catch((error) => console.error('Failed to refresh notes after trashing:', error));
+	}
+
 	async function trashOpenNote(path: string): Promise<boolean> {
 		if ($shutdownPending || path !== $activeNotePath || $viewerNote || $viewMode === 'trash') return false;
 		try {
 			await deleteNote(path);
-			if (Object.hasOwn($noteOrder, path)) {
-				const { [path]: _, ...rest } = $noteOrder;
-				$noteOrder = rest;
-			}
-			$notes = $notes.filter((note) => note.path !== path);
-			if ($activeNotePath === path) {
-				$activeNote = null;
-				$activeNotePath = null;
-			}
-			noteList?.refresh(true).catch((error) => console.error('Failed to refresh notes after trashing:', error));
-			if (isCompact) $compactView = 'notelist';
+			forgetTrashedNote(path);
 			return true;
 		} catch (error) {
 			console.error('Failed to move open note to Trash:', error);
 			return false;
 		}
+	}
+
+	// A similar-note append rewrites one note and trashes another; an open one is saved and closed
+	// first and reopened afterwards (appendWithNoteClosed), so the editor never holds stale text.
+	function appendToSimilarNote(capturePath: string, targetPath: string, append: () => Promise<AppendOutcome>): Promise<void> {
+		const reason = 'Adding to a similar note';
+		const run = navigationQueue.then(() => appendWithNoteClosed({
+			open: $activeNotePath && [capturePath, targetPath].includes($activeNotePath) ? $activeNotePath : null,
+			close: async () => {
+				if (!(await ensureCurrentNoteSaved(reason))) return false;
+				$activeNote = null;
+				$activeNotePath = null;
+				return true;
+			},
+			append,
+			settle: (outcome) => {
+				if (outcome === 'appended') forgetTrashedNote(capturePath);
+				else noteList?.refresh(true).catch((error) => console.error('Failed to refresh notes after appending:', error));
+			},
+			// Within this run, so a note the user picked meanwhile opens after it, not under it. A
+			// capture moved to trash has nothing to reopen.
+			reopen: async (path, outcome) => {
+				if (!(path === capturePath && outcome === 'appended')) {
+					try {
+						const content = await readNote(path);
+						if (!$activeNotePath && commitNote(path, content)) return;
+					} catch (error) {
+						console.error('Failed to reopen the note after appending:', error);
+					}
+				}
+				// Nothing reopened: the compact layout goes back to the list, as after any trash.
+				if (!$activeNotePath && isCompact) $compactView = 'notelist';
+			},
+		}).catch((error) => {
+			reportSaveResult(reason, { ok: false, status: 'failed', revision: 0, error });
+		}));
+		navigationQueue = run.then(() => {}, () => {});
+		return run;
 	}
 
 	function handleMouseDown(e: MouseEvent) {
@@ -1554,6 +1599,7 @@
 </div>
 
 <SearchPanel onOpenResult={(path, noteId) => navigateToPathResult(path, undefined, false, noteId)} />
+<SimilarCards onOpen={(path) => navigateToPath(path)} onAppend={appendToSimilarNote} />
 <CommandPalette onNavigate={handleViewChanged} onToggleSource={toggleSourceMode} />
 <SettingsPanel onRequestVaultSwitch={requestVaultSwitch} onBeforeRestore={prepareForRestore} onAfterRestore={refreshAfterRestore} onAfterConflictChoice={reloadOpenNoteFromDisk} />
 <InfoPanel />

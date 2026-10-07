@@ -14,6 +14,8 @@ import type {
   ParaCategory,
   SearchResult,
   AskPlan,
+  CheckedNote,
+  SimilarityCheck,
   TrashContents,
   VaultState,
   VaultStats,
@@ -657,6 +659,19 @@ export async function askNotes(
 
 export async function cancelAi(requestId: string): Promise<void> {
   return invoke("ai_cancel", { requestId });
+}
+
+/** Existing notes like the note at `path`, or null when none are or the check could not run. */
+export async function checkSimilarNotes(path: string): Promise<SimilarityCheck | null> {
+  return invoke("check_similar_notes", { path });
+}
+
+/**
+ * Append the capture to a similar note and move the capture to trash (#9). Resolves to why the
+ * capture could not be moved to trash after the append, or null when it was.
+ */
+export async function appendToSimilarNote(capture: CheckedNote, target: CheckedNote): Promise<string | null> {
+  return invoke("append_to_similar_note", { capture, target });
 }
 
 export async function aiAsk(

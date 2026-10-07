@@ -1,0 +1,348 @@
+{
+  "when": "2026-10-07T22:48:45.239Z",
+  "app": "second-brain",
+  "index": {
+    "queuedNotes": 0,
+    "model": "embeddinggemma",
+    "indexedNotes": 13
+  },
+  "summary": {
+    "captures": 17,
+    "duplicatesFound": 8,
+    "duplicates": 8,
+    "wrongCards": 0
+  },
+  "results": [
+    {
+      "capture": "Shed spending so far is about 2,400 euros out of the 3,200 limit, so roughly 780 left for paint and fixings",
+      "kind": "duplicate",
+      "duplicateOf": "Garden shed budget",
+      "path": "Areas/Shed spending so far is about 2,400 euros out of the 3,200 limit, so roughly 780 left for paint and fixings.md",
+      "title": "Shed spending so far is about 2,400 euros out of the 3,200 limit, so roughly 780 left for paint and fixings",
+      "captureMs": 41,
+      "seconds": 0,
+      "shown": [
+        "Garden shed budget"
+      ],
+      "coverage": null,
+      "excerpts": [
+        "Shed budget so far: foundation blocks 340 euros, cedar cladding 1,150 euros, roofing felt and battens 410 euros, door and window 520 euros. Total committed 2,420 euros, leaving 780 euros of the 3,200 ceiling for fixings, paint and surprises."
+      ],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Going with cedar for the shed walls rather than treated pine: the pine boards were warped and cedar needs no preservative",
+      "kind": "duplicate",
+      "duplicateOf": "Shed materials decision",
+      "path": "Areas/Going with cedar for the shed walls rather than treated pine- the pine boards were warped and cedar needs no preservative.md",
+      "title": "Going with cedar for the shed walls rather than treated pine: the pine boards were warped and cedar needs no preservative",
+      "captureMs": 43,
+      "seconds": 0,
+      "shown": [
+        "Shed materials decision"
+      ],
+      "coverage": null,
+      "excerpts": [
+        "Decided on western red cedar cladding instead of pressure-treated pine. Cedar costs about 300 euros more but needs no preservative and weathers to silver. Pine was rejected because the treated boards from the yard were warped."
+      ],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Feed the starter equal parts starter, flour and water twice a day and keep it warm, around 24 degrees",
+      "kind": "duplicate",
+      "duplicateOf": "Sourdough starter feeding",
+      "path": "Areas/Feed the starter equal parts starter, flour and water twice a day and keep it warm, around 24 degrees.md",
+      "title": "Feed the starter equal parts starter, flour and water twice a day and keep it warm, around 24 degrees",
+      "captureMs": 80,
+      "seconds": 0,
+      "shown": [
+        "Sourdough starter feeding"
+      ],
+      "coverage": null,
+      "excerpts": [
+        "Starter routine: feed 1:1:1 by weight (starter, flour, water) every 12 hours and keep it near 24 degrees. It peaks about 6 hours after feeding; use it for dough at the peak."
+      ],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Cold brew recipe: coarse grind, one to eight coffee to water, 16 to 18 hours in the fridge",
+      "kind": "duplicate",
+      "duplicateOf": "Cold brew coffee guide",
+      "path": "Areas/Cold brew recipe- coarse grind, one to eight coffee to water, 16 to 18 hours in the fridge.md",
+      "title": "Cold brew recipe: coarse grind, one to eight coffee to water, 16 to 18 hours in the fridge",
+      "captureMs": 43,
+      "seconds": 0,
+      "shown": [
+        "Cold brew coffee guide"
+      ],
+      "coverage": null,
+      "excerpts": [
+        "Cold brew basics: coarse grind, 1 part coffee to 8 parts water by weight, steep in the fridge 16 to 18 hours, filter twice, then dilute the concentrate 1:1 before drinking."
+      ],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Espresso that works with these beans: 18 grams in, 36 out, around 28 seconds",
+      "kind": "duplicate",
+      "duplicateOf": "Espresso dialing in",
+      "path": "Areas/Espresso that works with these beans- 18 grams in, 36 out, around 28 seconds.md",
+      "title": "Espresso that works with these beans: 18 grams in, 36 out, around 28 seconds",
+      "captureMs": 38,
+      "seconds": 0,
+      "shown": [
+        "Espresso dialing in"
+      ],
+      "coverage": null,
+      "excerpts": [
+        "Espresso with the new beans: 18 g of coffee in, 36 g out, in about 28 seconds. Grind finer if it runs fast and sour, coarser if it runs slow and bitter."
+      ],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Outer knee hurts about 10 km into my long runs, likely the IT band; foam rolling helps",
+      "kind": "duplicate",
+      "duplicateOf": "Knee pain after long runs",
+      "path": "Areas/Outer knee hurts about 10 km into my long runs, likely the IT band; foam rolling helps.md",
+      "title": "Outer knee hurts about 10 km into my long runs, likely the IT band; foam rolling helps",
+      "captureMs": 94,
+      "seconds": 0,
+      "shown": [
+        "Knee pain after long runs"
+      ],
+      "coverage": null,
+      "excerpts": [
+        "Pain on the outside of the right knee starts around 10 km into long runs. Probably the IT band. Foam rolling the outer thigh and adding hip strength work twice a week helps."
+      ],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "From Atomic Habits: stack new habits onto existing ones and set up the environment so the good habit is the easy one",
+      "kind": "duplicate",
+      "duplicateOf": "Book notes: Atomic Habits",
+      "path": "Areas/From Atomic Habits- stack new habits onto existing ones and set up the environment so the good habit is the easy one.md",
+      "title": "From Atomic Habits: stack new habits onto existing ones and set up the environment so the good habit is the easy one",
+      "captureMs": 81,
+      "seconds": 0,
+      "shown": [
+        "Book notes: Atomic Habits"
+      ],
+      "coverage": null,
+      "excerpts": [
+        "Habit stacking: attach a new habit to one you already do. Design the environment so good habits are the easy default. Aim to get 1% better each day; identity follows repeated small actions."
+      ],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Lisbon: flying out 14 November, staying in Alfama, want to ride tram 28 and get pastel de nata at Manteigaria",
+      "kind": "duplicate",
+      "duplicateOf": "Lisbon trip planning",
+      "path": "Areas/Lisbon- flying out 14 November, staying in Alfama, want to ride tram 28 and get pastel de nata at Manteigaria.md",
+      "title": "Lisbon: flying out 14 November, staying in Alfama, want to ride tram 28 and get pastel de nata at Manteigaria",
+      "captureMs": 39,
+      "seconds": 0,
+      "shown": [
+        "Lisbon trip planning"
+      ],
+      "coverage": null,
+      "excerpts": [
+        "Lisbon trip: flights on 14 November, a hotel in Alfama for four nights. Ride tram 28, see the Belém tower, and get pastel de nata at Manteigaria."
+      ],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Should the shed get a gutter and a water butt to collect rain for the vegetable beds?",
+      "kind": "same topic",
+      "duplicateOf": null,
+      "path": "Areas/Should the shed get a gutter and a water butt to collect rain for the vegetable beds-.md",
+      "title": "Should the shed get a gutter and a water butt to collect rain for the vegetable beds?",
+      "captureMs": 92,
+      "seconds": 5,
+      "shown": [],
+      "coverage": null,
+      "excerpts": [],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Tried a rye sourdough today; the crumb came out dense and very sour, next time a longer bulk ferment",
+      "kind": "same topic",
+      "duplicateOf": null,
+      "path": "Areas/Tried a rye sourdough today; the crumb came out dense and very sour, next time a longer bulk ferment.md",
+      "title": "Tried a rye sourdough today; the crumb came out dense and very sour, next time a longer bulk ferment",
+      "captureMs": 39,
+      "seconds": 5,
+      "shown": [],
+      "coverage": null,
+      "excerpts": [],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Bought a burr grinder for the moka pot; it is much quieter than the old blade grinder",
+      "kind": "same topic",
+      "duplicateOf": null,
+      "path": "Areas/Bought a burr grinder for the moka pot; it is much quieter than the old blade grinder.md",
+      "title": "Bought a burr grinder for the moka pot; it is much quieter than the old blade grinder",
+      "captureMs": 43,
+      "seconds": 5,
+      "shown": [],
+      "coverage": null,
+      "excerpts": [],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Signed up for a half marathon in March, so long runs need to reach 18 km by February",
+      "kind": "same topic",
+      "duplicateOf": null,
+      "path": "Areas/Signed up for a half marathon in March, so long runs need to reach 18 km by February.md",
+      "title": "Signed up for a half marathon in March, so long runs need to reach 18 km by February",
+      "captureMs": 36,
+      "seconds": 5,
+      "shown": [],
+      "coverage": null,
+      "excerpts": [],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Book notes on The Psychology of Money: saving is the gap between your ego and your income",
+      "kind": "same topic",
+      "duplicateOf": null,
+      "path": "Areas/Book notes on The Psychology of Money- saving is the gap between your ego and your income.md",
+      "title": "Book notes on The Psychology of Money: saving is the gap between your ego and your income",
+      "captureMs": 46,
+      "seconds": 5,
+      "shown": [],
+      "coverage": null,
+      "excerpts": [],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Day trip to Porto from Lisbon? The train takes about three hours each way",
+      "kind": "same topic",
+      "duplicateOf": null,
+      "path": "Areas/Day trip to Porto from Lisbon- The train takes about three hours each way.md",
+      "title": "Day trip to Porto from Lisbon? The train takes about three hours each way",
+      "captureMs": 47,
+      "seconds": 5,
+      "shown": [],
+      "coverage": null,
+      "excerpts": [],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Call the dentist to move Thursday's appointment to next week",
+      "kind": "unrelated",
+      "duplicateOf": null,
+      "path": "Areas/Call the dentist to move Thursday's appointment to next week.md",
+      "title": "Call the dentist to move Thursday's appointment to next week",
+      "captureMs": 47,
+      "seconds": 5,
+      "shown": [],
+      "coverage": null,
+      "excerpts": [],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Story idea: a lighthouse keeper who collects letters that were never delivered",
+      "kind": "unrelated",
+      "duplicateOf": null,
+      "path": "Areas/Story idea- a lighthouse keeper who collects letters that were never delivered.md",
+      "title": "Story idea: a lighthouse keeper who collects letters that were never delivered",
+      "captureMs": 41,
+      "seconds": 5,
+      "shown": [],
+      "coverage": null,
+      "excerpts": [],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Replace the flickering bulb in the bathroom and buy spare batteries for the smoke alarm",
+      "kind": "unrelated",
+      "duplicateOf": null,
+      "path": "Areas/Replace the flickering bulb in the bathroom and buy spare batteries for the smoke alarm.md",
+      "title": "Replace the flickering bulb in the bathroom and buy spare batteries for the smoke alarm",
+      "captureMs": 35,
+      "seconds": 5,
+      "shown": [],
+      "coverage": null,
+      "excerpts": [],
+      "missed": false,
+      "wrong": []
+    }
+  ],
+  "actions": {
+    "append": {
+      "capture": "Shed spending so far is about 2,400 euros out of the 3,200 limit, so roughly 780 left for paint and fixings",
+      "target": "Garden shed budget",
+      "keptOriginal": true,
+      "marked": true,
+      "hasCapture": true,
+      "captureGone": true,
+      "captureInTrash": true,
+      "undoable": true
+    },
+    "dismiss": {
+      "capture": "Going with cedar for the shed walls rather than treated pine: the pine boards were warped and cedar needs no preservative",
+      "unchanged": true
+    },
+    "changedNote": {
+      "capture": "Feed the starter equal parts starter, flour and water twice a day and keep it warm, around 24 degrees",
+      "failure": "One of the notes changed since the check, so nothing was added.",
+      "unchanged": true
+    },
+    "notification": {
+      "whileFocused": 0,
+      "calls": [
+        {
+          "replacesId": 0,
+          "id": 24,
+          "summary": "Similar note found for your capture",
+          "body": "Open Second Brain to review."
+        },
+        {
+          "replacesId": 24,
+          "id": 24,
+          "summary": "2 captures have similar notes",
+          "body": "Open Second Brain to review."
+        }
+      ],
+      "replaced": true
+    },
+    "movedNote": {
+      "capture": "Outer knee hurts about 10 km into my long runs, likely the IT band; foam rolling helps",
+      "failure": "That note is no longer there, so nothing was added.",
+      "unchanged": true
+    },
+    "open": {
+      "capture": "From Atomic Habits: stack new habits onto existing ones and set up the environment so the good habit is the easy one",
+      "target": "Book notes: Atomic Habits",
+      "editorTitle": "Book notes: Atomic Habits"
+    },
+    "titleAndBody": {
+      "capture": "Lisbon: flying out 14 November, staying in Alfama, want to ride tram 28 and get pastel de nata at Manteigaria",
+      "target": "Lisbon trip planning",
+      "shown": [
+        "Lisbon: flying out 14 November, staying in Alfama, want to ride tram 28 and get pastel de nata at Manteigaria",
+        "Lisbon trip planning"
+      ]
+    },
+    "offline": {
+      "saved": true,
+      "card": null
+    }
+  }
+}

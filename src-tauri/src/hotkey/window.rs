@@ -76,6 +76,9 @@ pub async fn ensure_window(app: &AppHandle) -> Result<(), String> {
 
 /// Bring the overlay up and put the caret in it.
 ///
+/// First it notes whether the main window had focus, because the overlay is about to take it:
+/// the similarity check (#9) does not notify a user who was in the app when they captured.
+///
 /// The window already exists, hidden, created at startup: showing it is a compositor
 /// operation, where creating it would be a WebView load with the user waiting on it.
 pub fn show_capture_window(app: &AppHandle) -> Result<(), String> {
@@ -85,6 +88,11 @@ pub fn show_capture_window(app: &AppHandle) -> Result<(), String> {
             app.webview_windows().keys().collect::<Vec<_>>()
         ));
     };
+    // Pressed again while it is up: the overlay already has focus, and the main window's state
+    // from when it opened still stands.
+    if !window.is_visible().unwrap_or(false) {
+        crate::similar_notes::capture_opening(app);
+    }
     window
         .show()
         .and_then(|()| window.set_focus())

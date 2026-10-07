@@ -67,6 +67,7 @@
 	import TagSuggestInput from './TagSuggestInput.svelte';
 	import ImageViewer from './ImageViewer.svelte';
 	import { compactLayout } from '$lib/stores/app';
+	import { noteCreatedInApp } from '$lib/stores/similar';
 	import ResizeHandle from './ResizeHandle.svelte';
 	const isCompact = $derived($compactLayout);
 
@@ -2952,6 +2953,7 @@
 			if (!(await forceSave())) throw new Error('Could not save the current note.');
 			const { createNote } = await import('$lib/api');
 			const newNote = await createNote(nbRelative, title);
+			noteCreatedInApp(newNote.meta.id);
 			await refreshWikiLinkTitles();
 			if (!(await onNavigateNote(newNote.path))) throw new Error('Could not open the new note.');
 		} catch (error) {

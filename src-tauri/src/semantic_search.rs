@@ -42,6 +42,10 @@ const CACHE_READY_DEADLINE: Duration = if cfg!(test) {
     Duration::from_secs(5)
 };
 
+fn query_input(query: &str) -> String {
+    format!("{QUERY_PROMPT}{query}")
+}
+
 fn document_input(title: &str, text: &str) -> String {
     let title = if title.trim().is_empty() {
         "none"
@@ -614,7 +618,7 @@ impl SemanticIndex {
         category: Option<ParaCategory>,
         limit: usize,
     ) -> Result<Vec<SearchResult>, String> {
-        let scored = self.score(query, category)?;
+        let scored = self.score(query_input(query), category)?;
         let results = best_per_note(&scored.database, &scored.chunks, limit)?;
         crate::perf_probe::record(serde_json::json!({
             "kind": "semantic-backend",
@@ -637,7 +641,7 @@ impl SemanticIndex {
         max_characters: usize,
         cost: impl Fn(&str, &str, bool) -> usize,
     ) -> Result<Retrieval, String> {
-        let mut scored = self.score(query, category)?;
+        let mut scored = self.score(query_input(query), category)?;
         scored.chunks.sort_by(|left, right| {
             right
                 .score
@@ -688,11 +692,51 @@ impl SemanticIndex {
         Ok(retrieval)
     }
 
+    /// Every note scoring at least `min_score` against a just-written note (#9), best first.
+    /// `exclude_id` is the written note's own id.
+    ///
+    /// The note is embedded the way notes are indexed, as a document, not as a search query, so
+    /// a near-copy of an indexed chunk scores close to 1. Only its first chunk's worth is used,
+    /// the same length every stored vector covers.
+    pub fn similar(
+        &self,
+        title: &str,
+        text: &str,
+        exclude_id: &str,
+        min_score: f32,
+    ) -> Result<Vec<SimilarNote>, String> {
+        let text: String = text.chars().take(CHUNK_CHARACTERS).collect();
+        let Scored {
+            database, chunks, ..
+        } = self.score(document_input(title, &text), None)?;
+        let exclude = format!("id:{exclude_id}");
+        let chunks: Vec<ScoredChunk> = chunks
+            .into_iter()
+            .filter(|chunk| chunk.key != exclude && chunk.score >= min_score)
+            .collect();
+        best_per_note(&database, &chunks, usize::MAX)?
+            .into_iter()
+            .map(|found| {
+                let indexed_revision = database
+                    .query_row(
+                        "SELECT content_hash FROM notes WHERE path = ?1 AND profile = ?2",
+                        params![found.path, self.profile.as_str()],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| error.to_string())?;
+                Ok(SimilarNote {
+                    found,
+                    indexed_revision,
+                })
+            })
+            .collect()
+    }
+
     /// Scores every chunk at or above the cutoff, in note-then-ordinal order, and keeps the
     /// database locked so the caller can read the winners' text from the same snapshot.
-    fn score(&self, query: &str, category: Option<ParaCategory>) -> Result<Scored<'_>, String> {
+    fn score(&self, input: String, category: Option<ParaCategory>) -> Result<Scored<'_>, String> {
         let embed_started = Instant::now();
-        let mut query_embeddings = self.backend.embed(&[format!("{QUERY_PROMPT}{query}")])?;
+        let mut query_embeddings = self.backend.embed(&[input])?;
         let embed_ms = embed_started.elapsed().as_secs_f64() * 1000.0;
         // Everything after the embedding counts as the scan, waits included, so a slow load or
         // a held lock shows up in exactScanMs instead of being hidden (#159).
@@ -1239,6 +1283,15 @@ fn chunk_text(database: &Connection, chunk: &ScoredChunk) -> Result<String, Stri
         .map_err(|error| error.to_string())
 }
 
+/// One note [`SemanticIndex::similar`] found.
+#[derive(Debug)]
+pub struct SimilarNote {
+    pub found: SearchResult,
+    /// The note's revision when it was indexed. A different revision on disk means the passage
+    /// in `found` may be out of date.
+    pub indexed_revision: String,
+}
+
 /// What Ask reads for one question.
 #[derive(Debug, Default)]
 pub struct Retrieval {
@@ -1567,6 +1620,8 @@ mod tests {
     }
 
     fn write_note(path: &Path, id: &str, title: &str, category: &str, body: &str) {
+        // Quoted, so a title holding `: ` stays a title (a JSON string is valid YAML).
+        let title = serde_json::to_string(title).unwrap();
         let raw = format!(
             "---\nid: {id}\ntitle: {title}\ntags: []\npinned: false\ncreated: 2026-09-10T00:00:00Z\nmodified: 2026-09-10T00:00:00Z\ncategory: {category}\n---\n\n{body}\n"
         );
@@ -1684,6 +1739,179 @@ mod tests {
                 note_id: Some("short-id".to_string()),
                 title: "Short coffee".to_string(),
             }]
+        );
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn similar_notes_skip_the_new_note_itself_and_carry_the_indexed_revision() {
+        let root = scratch("similar");
+        let capture = root.join("Capture.md");
+        let first = root.join("First.md");
+        let second = root.join("Second.md");
+        let unrelated = root.join("Unrelated.md");
+        write_note(&capture, "capture-id", "Capture", "Areas", "coffee beans");
+        write_note(&first, "first-id", "First", "Areas", "coffee ratio");
+        write_note(&second, "second-id", "Second", "Projects", "coffee grinder");
+        write_note(
+            &unrelated,
+            "other-id",
+            "Other",
+            "Areas",
+            "Quantum mechanics.",
+        );
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
+                .unwrap();
+        for note in [&capture, &first, &second, &unrelated] {
+            index.note_changed(note).unwrap();
+        }
+        index.retry_pending().unwrap();
+
+        let found = index
+            .similar("Capture", "coffee beans", "capture-id", 0.9)
+            .unwrap();
+        let titles: Vec<&str> = found.iter().map(|note| note.found.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            ["First", "Second"],
+            "both coffee notes pass, across categories, ties ordered by title"
+        );
+        assert_eq!(
+            found[0].indexed_revision,
+            crate::vault::operations::read_note(root.to_str().unwrap(), first.to_str().unwrap())
+                .unwrap()
+                .revision,
+            "the indexed revision is the one on disk"
+        );
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn the_similarity_check_skips_short_notes_drops_gone_or_changed_matches_and_caps_the_card() {
+        let root = scratch("similarity-check");
+        let vault = root.to_str().unwrap();
+        let capture = root.join("Capture.md");
+        let short = root.join("Short.md");
+        let kept = root.join("Kept.md");
+        let gone = root.join("Gone.md");
+        write_note(
+            &capture,
+            "capture-id",
+            "Capture",
+            "Areas",
+            "coffee beans today",
+        );
+        write_note(&short, "short-id", "Short", "Areas", "coffee");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        write_note(&gone, "gone-id", "Gone", "Areas", "coffee grinder");
+        let changed = root.join("Changed.md");
+        write_note(&changed, "changed-id", "Changed", "Areas", "coffee kettle");
+        let extra = root.join("Extra.md");
+        write_note(&extra, "extra-id", "Extra", "Areas", "coffee filter");
+        let more = root.join("More.md");
+        write_note(&more, "more-id", "More", "Areas", "coffee scale");
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
+                .unwrap();
+        for note in [&capture, &short, &kept, &gone, &changed, &extra, &more] {
+            index.note_changed(note).unwrap();
+        }
+        index.retry_pending().unwrap();
+        std::fs::remove_file(&gone).unwrap();
+        // Edited after indexing, its re-embedding not done yet: the indexed passage is stale.
+        write_note(
+            &changed,
+            "changed-id",
+            "Changed",
+            "Areas",
+            "tea, not coffee, from now on",
+        );
+
+        let check = |note: &Path| {
+            crate::similar_notes::check(&index, vault, note.to_str().unwrap()).unwrap()
+        };
+        assert!(check(&short).is_none(), "two words are too few to judge");
+        let found = check(&capture).expect("the coffee notes are similar");
+        let titles: Vec<&str> = found
+            .matches
+            .iter()
+            .map(|found| found.note.title.as_str())
+            .collect();
+        assert_eq!(
+            titles,
+            ["Extra", "Kept", "More"],
+            "a deleted or changed note is left out, and the card shows three"
+        );
+        assert_eq!(
+            found.total, 4,
+            "the coverage line counts only notes the card could show"
+        );
+        assert_eq!(found.vault, vault);
+        drop(index);
+        cleanup(root);
+    }
+
+    /// Scores every fixture capture against every fixture note with live embeddinggemma, the
+    /// numbers the capture-similarity bar (`similar_notes::SIMILAR_SCORE`) is set from (#9). Run:
+    /// `SB_OLLAMA_URL=http://127.0.0.1:11434 pnpm test:rust similarity_calibration -- --ignored --nocapture`
+    #[test]
+    #[ignore = "needs embeddinggemma on Ollama at SB_OLLAMA_URL; prints the similarity scores"]
+    fn similarity_calibration() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../scripts/similarity-fixture.json")).unwrap();
+        let url =
+            std::env::var("SB_OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
+        let root = scratch("similarity-calibration");
+        let index = SemanticIndex::open_at(
+            &root.join("semantic.sqlite3"),
+            Arc::new(super::OllamaEmbeddingBackend::new(&url, None).unwrap()),
+        )
+        .unwrap();
+        for (number, note) in fixture["notes"].as_array().unwrap().iter().enumerate() {
+            let path = root.join(format!("{number}.md"));
+            write_note(
+                &path,
+                &format!("note-{number}"),
+                note["title"].as_str().unwrap(),
+                note["category"].as_str().unwrap(),
+                note["body"].as_str().unwrap(),
+            );
+            index.note_changed(&path).unwrap();
+        }
+        index.retry_pending().unwrap();
+
+        let (mut lowest_duplicate, mut highest_other) = (f32::MAX, f32::MIN);
+        for capture in fixture["captures"].as_array().unwrap() {
+            // Filed the way the overlay files it: the first line is the title.
+            let filed = crate::hotkey::capture::split(capture["text"].as_str().unwrap()).unwrap();
+            let found = index
+                .similar(&filed.title, &filed.body, "capture", f32::MIN)
+                .unwrap();
+            let found: Vec<SearchResult> = found.into_iter().map(|note| note.found).collect();
+            let duplicate = capture["duplicateOf"].as_str();
+            for note in &found {
+                if Some(note.title.as_str()) == duplicate {
+                    lowest_duplicate = lowest_duplicate.min(note.score);
+                } else {
+                    highest_other = highest_other.max(note.score);
+                }
+            }
+            let scores: Vec<String> = found
+                .iter()
+                .map(|note| format!("{:.3} {}", note.score, note.title))
+                .collect();
+            println!(
+                "{}\n  duplicate of: {}\n  {}",
+                filed.title,
+                duplicate.unwrap_or("-"),
+                scores.join("\n  ")
+            );
+        }
+        println!(
+            "lowest duplicate score {lowest_duplicate:.3}; highest score of any other note {highest_other:.3}"
         );
         drop(index);
         cleanup(root);

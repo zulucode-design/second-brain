@@ -1,0 +1,129 @@
+# similarity_calibration at b1be541, run by Sol on 2026-10-05 (16:38 -05:00) on the Fedora 44 laptop.
+# SB_OLLAMA_URL=http://127.0.0.1:11436, an ssh -L tunnel to the desktop's usual Ollama on 127.0.0.1:11434.
+# Ollama version not recorded at the time (the #8 run that day reported 0.35.0; 0.35.1 answers on 2026-10-06).
+# embeddinggemma:latest, digest 85462619ee72, pulled 2026-09-10, so the same weights either way.
+# This header was added on 2026-10-06; everything below it is the test's output, unchanged.
+Shed spending so far is about 2,400 euros out of the 3,200 limit, so roughly 780 left for paint and fixings
+  duplicate of: Garden shed budget
+  0.769 Garden shed budget
+  0.526 Shed permit check
+  0.474 Shed materials decision
+  0.237 Tax documents checklist
+  0.236 Sourdough starter feeding
+  0.222 Sourdough hydration notes
+Going with cedar for the shed walls rather than treated pine: the pine boards were warped and cedar needs no preservative
+  duplicate of: Shed materials decision
+  0.785 Shed materials decision
+  0.508 Garden shed budget
+  0.418 Shed permit check
+  0.284 Sourdough hydration notes
+Feed the starter equal parts starter, flour and water twice a day and keep it warm, around 24 degrees
+  duplicate of: Sourdough starter feeding
+  0.784 Sourdough starter feeding
+  0.457 Sourdough hydration notes
+  0.436 Cold brew coffee guide
+  0.302 Espresso dialing in
+  0.257 Book notes: Atomic Habits
+  0.257 Running plan October
+  0.226 Garden shed budget
+Cold brew recipe: coarse grind, one to eight coffee to water, 16 to 18 hours in the fridge
+  duplicate of: Cold brew coffee guide
+  0.850 Cold brew coffee guide
+  0.511 Espresso dialing in
+  0.403 Sourdough starter feeding
+  0.327 Sourdough hydration notes
+  0.239 Book notes: Atomic Habits
+  0.226 Running plan October
+  0.222 Knee pain after long runs
+  0.220 Book notes: Deep Work
+Espresso that works with these beans: 18 grams in, 36 out, around 28 seconds
+  duplicate of: Espresso dialing in
+  0.789 Espresso dialing in
+  0.507 Cold brew coffee guide
+  0.308 Sourdough starter feeding
+  0.298 Sourdough hydration notes
+  0.243 Running plan October
+  0.225 Book notes: Atomic Habits
+Outer knee hurts about 10 km into my long runs, likely the IT band; foam rolling helps
+  duplicate of: Knee pain after long runs
+  0.848 Knee pain after long runs
+  0.377 Running plan October
+  0.268 Sourdough hydration notes
+  0.227 Espresso dialing in
+  0.222 Sourdough starter feeding
+From Atomic Habits: stack new habits onto existing ones and set up the environment so the good habit is the easy one
+  duplicate of: Book notes: Atomic Habits
+  0.777 Book notes: Atomic Habits
+  0.393 Book notes: Deep Work
+  0.280 Cold brew coffee guide
+  0.268 Running plan October
+  0.264 Sourdough starter feeding
+  0.246 Espresso dialing in
+Lisbon: flying out 14 November, staying in Alfama, want to ride tram 28 and get pastel de nata at Manteigaria
+  duplicate of: Lisbon trip planning
+  0.812 Lisbon trip planning
+Should the shed get a gutter and a water butt to collect rain for the vegetable beds?
+  duplicate of: -
+  0.476 Garden shed budget
+  0.470 Shed permit check
+  0.392 Shed materials decision
+  0.251 Tax documents checklist
+  0.240 Sourdough hydration notes
+  0.234 Book notes: Deep Work
+  0.234 Sourdough starter feeding
+  0.226 Running plan October
+Tried a rye sourdough today; the crumb came out dense and very sour, next time a longer bulk ferment
+  duplicate of: -
+  0.533 Sourdough hydration notes
+  0.520 Sourdough starter feeding
+  0.349 Cold brew coffee guide
+  0.307 Shed materials decision
+  0.279 Espresso dialing in
+  0.255 Knee pain after long runs
+  0.253 Garden shed budget
+Bought a burr grinder for the moka pot; it is much quieter than the old blade grinder
+  duplicate of: -
+  0.441 Espresso dialing in
+  0.370 Cold brew coffee guide
+  0.278 Sourdough hydration notes
+  0.239 Shed materials decision
+  0.236 Garden shed budget
+Signed up for a half marathon in March, so long runs need to reach 18 km by February
+  duplicate of: -
+  0.479 Running plan October
+  0.405 Knee pain after long runs
+  0.260 Tax documents checklist
+  0.257 Espresso dialing in
+  0.249 Cold brew coffee guide
+  0.248 Shed permit check
+  0.231 Book notes: Atomic Habits
+Book notes on The Psychology of Money: saving is the gap between your ego and your income
+  duplicate of: -
+  0.307 Book notes: Atomic Habits
+  0.290 Book notes: Deep Work
+  0.232 Tax documents checklist
+Day trip to Porto from Lisbon? The train takes about three hours each way
+  duplicate of: -
+  0.475 Lisbon trip planning
+  0.270 Running plan October
+  0.256 Cold brew coffee guide
+  0.234 Espresso dialing in
+  0.225 Sourdough starter feeding
+  0.224 Garden shed budget
+Call the dentist to move Thursday's appointment to next week
+  duplicate of: -
+  0.297 Running plan October
+  0.283 Book notes: Deep Work
+  0.251 Tax documents checklist
+Story idea: a lighthouse keeper who collects letters that were never delivered
+  duplicate of: -
+  0.237 Book notes: Atomic Habits
+  0.224 Book notes: Deep Work
+  0.221 Tax documents checklist
+Replace the flickering bulb in the bathroom and buy spare batteries for the smoke alarm
+  duplicate of: -
+  0.299 Garden shed budget
+  0.272 Book notes: Atomic Habits
+  0.259 Tax documents checklist
+  0.222 Book notes: Deep Work
+lowest duplicate score 0.769; highest score of any other note 0.533
