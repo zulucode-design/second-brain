@@ -1338,7 +1338,8 @@ mod similar_append_tests {
             "the old text is in history"
         );
         drop(app);
-        fs::remove_dir_all(root).unwrap();
+        // The save's history snapshot runs on a detached thread that may still be writing.
+        let _ = fs::remove_dir_all(root);
     }
 
     /// The note is written before the capture moves to trash, so a capture that cannot move is
@@ -1381,7 +1382,8 @@ mod similar_append_tests {
         assert!(capture_path.exists(), "the capture stayed");
         drop(_deleting);
         drop(app);
-        fs::remove_dir_all(root).unwrap();
+        // The save's history snapshot runs on a detached thread that may still be writing.
+        let _ = fs::remove_dir_all(root);
     }
 }
 
