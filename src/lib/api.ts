@@ -671,12 +671,7 @@ export async function checkSimilarNotes(path: string): Promise<SimilarityCheck |
  * capture could not be moved to trash after the append, or null when it was.
  */
 export async function appendToSimilarNote(capture: CheckedNote, target: CheckedNote): Promise<string | null> {
-  return invoke("append_to_similar_note", {
-    capturePath: capture.path,
-    captureRevision: capture.revision,
-    targetPath: target.path,
-    targetRevision: target.revision,
-  });
+  return invoke("append_to_similar_note", { capture, target });
 }
 
 export async function aiAsk(

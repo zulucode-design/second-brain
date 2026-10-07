@@ -76,6 +76,9 @@ pub async fn ensure_window(app: &AppHandle) -> Result<(), String> {
 
 /// Bring the overlay up and put the caret in it.
 ///
+/// First it notes whether the main window had focus, because the overlay is about to take it:
+/// the similarity check (#9) does not notify a user who was in the app when they captured.
+///
 /// The window already exists, hidden, created at startup: showing it is a compositor
 /// operation, where creating it would be a WebView load with the user waiting on it.
 pub fn show_capture_window(app: &AppHandle) -> Result<(), String> {

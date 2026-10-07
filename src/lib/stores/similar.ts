@@ -20,6 +20,11 @@ function patch(id: string, change: Partial<SimilarCard>) {
   similarCards.update((cards) => cards.map((card) => (card.id === id ? { ...card, ...change } : card)));
 }
 
+/** The card's action failed; the card stays and says why. */
+export function similarCardFailed(id: string, error: string) {
+  patch(id, { busy: false, error });
+}
+
 export function dismissSimilar(id: string) {
   similarCards.update((cards) => cards.filter((card) => card.id !== id));
 }

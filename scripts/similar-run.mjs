@@ -7,8 +7,8 @@
 // in. The vault holds scripts/similarity-fixture.json's notes. Each fixture capture is filed
 // through the command the overlay uses (WebDriver cannot press a global hotkey), and the card
 // it raises in the main window is read back. Then Append, Dismiss, refused Appends on a note
-// edited and a note moved since the check, and a capture with the backend gone are each tried
-// once.
+// edited and a note moved since the check, Open, a capture with a body under its title, and a
+// capture with the backend gone are each tried once.
 // On Linux, two more duplicates are captured with the main window minimized, and the
 // notifications the app sends are read off the session bus with dbus-monitor. A click on one
 // cannot be scripted, so that stays a hand check.
@@ -267,6 +267,30 @@ async function main() {
         capture: moved.capture,
         failure: card.failure,
         unchanged: hash(moved.path) === hashes[0] && hash(movedTo) === hashes[1],
+      };
+    }
+
+    // Open: the similar note opens in the editor and the card goes.
+    const opened = carded[6];
+    if (opened) {
+      await press(browser, opened.title, 'Open', opened.duplicateOf);
+      await waitForCard(browser, opened.title, (card) => card === null);
+      actions.open = {
+        capture: opened.capture,
+        target: opened.duplicateOf,
+        editorTitle: await browser.execute(() => document.querySelector('.editor-title input')?.value ?? null),
+      };
+    }
+
+    // A capture with a body under its title line, the other way the overlay files a note.
+    const lined = carded[7];
+    if (lined) {
+      const entry = await capture(browser, `Note to self\n${lined.capture}`);
+      const card = await waitForCard(browser, entry.meta.title);
+      actions.titleAndBody = {
+        capture: lined.capture,
+        target: lined.duplicateOf,
+        shown: card.matches.map((match) => match.title),
       };
     }
 

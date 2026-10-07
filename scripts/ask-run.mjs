@@ -24,7 +24,7 @@ const ANSWER_TIMEOUT = 5 * 60_000;
 
 export const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
-export function options(args, runs) {
+export function options(args, runsDir) {
   const parsed = { model: 'gpt-oss:20b-cloud', ssh: 'sb-windows' };
   for (let index = 0; index < args.length; index += 2) {
     const key = args[index].replace(/^--/, '');
@@ -34,7 +34,7 @@ export function options(args, runs) {
     parsed[key] = args[index + 1];
   }
   if (!parsed.app) throw new Error('--app <binary> is required');
-  parsed.root ??= join(homedir(), runs, new Date().toISOString().replaceAll(':', '-'));
+  parsed.root ??= join(homedir(), runsDir, new Date().toISOString().replaceAll(':', '-'));
   return parsed;
 }
 

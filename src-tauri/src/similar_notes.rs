@@ -7,7 +7,7 @@
 use crate::semantic_search::SemanticIndex;
 use crate::state::AppState;
 use crate::vault::operations;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -32,7 +32,7 @@ pub struct SimilarityCheck {
     pub total: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckedNote {
     pub path: String,
@@ -177,6 +177,11 @@ pub fn main_window_seen() {
     UNSEEN.store(0, Ordering::SeqCst);
 }
 
+/// One more capture the user has not seen, and the wording that counts it.
+fn next_notification_text() -> (String, &'static str) {
+    notification_text(UNSEEN.fetch_add(1, Ordering::SeqCst) + 1)
+}
+
 /// The notification's wording. Generic on purpose: it can show on a lock screen and stays in
 /// the notification history, so it never names a note.
 fn notification_text(unseen: usize) -> (String, &'static str) {
@@ -254,7 +259,7 @@ fn notify(app: &AppHandle) {
     use ashpd::zbus::zvariant::Value;
     use std::collections::HashMap;
 
-    let (title, body) = notification_text(UNSEEN.fetch_add(1, Ordering::SeqCst) + 1);
+    let (title, body) = next_notification_text();
     let desktop_entry = app.config().identifier.clone();
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -350,7 +355,7 @@ fn notify(app: &AppHandle) {
     use windows::Foundation::TypedEventHandler;
     use windows::UI::Notifications::ToastNotification;
 
-    let (title, body) = notification_text(UNSEEN.fetch_add(1, Ordering::SeqCst) + 1);
+    let (title, body) = next_notification_text();
     let handle = app.clone();
     let shown =
         crate::hotkey::windows::toast(&title, body, "similar-notes", "capture").and_then(|toast| {

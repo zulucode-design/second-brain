@@ -775,7 +775,8 @@ pub fn run() {
 /// Every caller here — the tray menu, a tray click, a second launch — used to be
 /// `if let Some(window) = get_webview_window("main")` and nothing else, so each of them
 /// silently did nothing whenever `main` had been destroyed rather than hidden. A tray icon
-/// that answers a click by doing nothing is indistinguishable from a hung app.
+/// that answers a click by doing nothing is indistinguishable from a hung app. A click on a
+/// similar-notes notification (#9) brings the window back the same way.
 ///
 /// Rebuilding from the config is the same move `hotkey::window::ensure_window` makes for the
 /// capture overlay, and it is safe for the same reason: it runs from an event callback, long

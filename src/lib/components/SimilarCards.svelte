@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { appendSimilar, dismissSimilar, similarCards } from '$lib/stores/similar';
+	import { appendSimilar, dismissSimilar, similarCardFailed, similarCards } from '$lib/stores/similar';
 	import type { SimilarMatch } from '$lib/types';
 	import { similarCoverage, type SimilarCard } from '$lib/utils/similar';
 
@@ -27,11 +27,12 @@
 	// note is open.
 	async function open(card: SimilarCard, match: SimilarMatch) {
 		if (await onOpen(match.path)) dismissSimilar(card.id);
+		else similarCardFailed(card.id, 'That note could not be opened. It may have been moved or deleted.');
 	}
 </script>
 
 {#if $similarCards.length > 0}
-	<div class="similar-cards" aria-label="Similar notes">
+	<div class="similar-cards" role="region" aria-label="Similar notes">
 		{#each $similarCards as card (card.id)}
 			{@const coverage = similarCoverage(card.check)}
 			<section class="similar-card">
@@ -52,7 +53,7 @@
 					</div>
 				{/each}
 				{#if coverage}<div class="similar-coverage">{coverage}</div>{/if}
-				{#if card.error}<div class="similar-error">{card.error}</div>{/if}
+				{#if card.error}<div class="similar-error" role="alert">{card.error}</div>{/if}
 				<button class="similar-dismiss" disabled={card.busy} onclick={() => dismissSimilar(card.id)}>
 					Dismiss
 				</button>
@@ -72,7 +73,9 @@
 		display: flex;
 		flex-direction: column;
 		gap: 10px;
-		z-index: 900;
+		/* Over the search, palette, info, and settings panels (2000), so a notification click that
+		   brings the window forward shows the cards; under the editor's own dialogs (2100 and up). */
+		z-index: 2050;
 	}
 
 	.similar-card {
@@ -158,7 +161,7 @@
 	}
 
 	.similar-error {
-		color: var(--error, #c94b5d);
+		color: var(--danger);
 		font-size: 12px;
 		padding: 4px 0;
 	}

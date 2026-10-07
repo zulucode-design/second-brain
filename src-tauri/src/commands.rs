@@ -1206,7 +1206,7 @@ pub async fn check_similar_notes(
     .map_err(|error| format!("Similarity check failed: {error}"))
 }
 
-/// Fold a capture into a similar note (#9): its text goes at the end of `target_path`, then the
+/// Fold a capture into a similar note (#9): its text goes at the end of `target`, then the
 /// capture moves to trash. Refused when either note changed since the check, so nothing lands
 /// in a note the user has not seen as it is. Once the note is written, a capture that cannot be
 /// moved to trash is not an error: the result says why it stayed, and the caller still shows
@@ -1214,18 +1214,22 @@ pub async fn check_similar_notes(
 #[tauri::command]
 pub fn append_to_similar_note(
     state: State<'_, AppState>,
-    capture_path: String,
-    capture_revision: String,
-    target_path: String,
-    target_revision: String,
+    capture: crate::similar_notes::CheckedNote,
+    target: crate::similar_notes::CheckedNote,
 ) -> Result<Option<String>, String> {
     let vault_path = active_vault(&state)?;
-    let capture = operations::read_note(&vault_path, &capture_path)
+    let capture_note = operations::read_note(&vault_path, &capture.path)
         .map_err(|_| "Your capture is no longer there, so nothing was added.".to_string())?;
-    let target = operations::read_note(&vault_path, &target_path)
+    let target_note = operations::read_note(&vault_path, &target.path)
         .map_err(|_| "That note is no longer there, so nothing was added.".to_string())?;
-    if capture.revision != capture_revision || target.revision != target_revision {
+    if capture_note.revision != capture.revision || target_note.revision != target.revision {
         return Err("One of the notes changed since the check, so nothing was added.".to_string());
+    }
+    // A note without an id yet (ADR-0007) gets the one its save would give it, so its history
+    // has somewhere to live.
+    let mut meta = target_note.meta;
+    if meta.id.is_empty() {
+        meta.id = uuid::Uuid::new_v4().to_string();
     }
     // Forced, not the save's own snapshot: that one is skipped within 5 minutes of the last,
     // and the append must always be undoable from the note's history.
@@ -1234,26 +1238,101 @@ pub fn append_to_similar_note(
         .lock()
         .map_err(|error| error.to_string())?
         .max_versions_per_note;
-    crate::history::force_snapshot(&vault_path, &target.meta.id, &target.raw, max_versions)
-        .map_err(|_| {
-            "Could not keep a copy of the note to undo with, so nothing was added.".to_string()
-        })?;
+    crate::history::force_snapshot(&vault_path, &meta.id, &target_note.raw, max_versions).map_err(
+        |_| "Could not keep a copy of the note to undo with, so nothing was added.".to_string(),
+    )?;
     let body = crate::similar_notes::with_capture_appended(
-        &target.content,
-        &capture.meta.title,
-        &capture.content,
+        &target_note.content,
+        &capture_note.meta.title,
+        &capture_note.content,
         &chrono::Local::now().format("%Y-%m-%d").to_string(),
     );
-    save_note(
-        state.clone(),
-        target_path,
-        target.meta,
-        body,
-        target_revision,
-    )?;
-    Ok(delete_note(state, capture_path).err().map(|error| {
+    save_note(state.clone(), target.path, meta, body, target.revision)?;
+    Ok(delete_note(state, capture.path).err().map(|error| {
         format!("Added to the note, but your capture could not be moved to trash: {error}")
     }))
+}
+
+#[cfg(test)]
+mod similar_append_tests {
+    use super::append_to_similar_note;
+    use crate::similar_notes::CheckedNote;
+    use crate::state::AppState;
+    use crate::types::AppConfig;
+    use crate::vault::operations;
+    use std::fs;
+    use tauri::Manager;
+
+    fn checked(vault: &str, path: &str) -> CheckedNote {
+        let note = operations::read_note(vault, path).unwrap();
+        CheckedNote {
+            path: note.path,
+            title: note.meta.title,
+            revision: note.revision,
+        }
+    }
+
+    /// Drives the command itself: a stale revision refuses, and a note with no id yet, which
+    /// the index still finds by path, is appended to with its old text kept in history.
+    #[test]
+    fn an_append_refuses_a_changed_note_and_keeps_an_id_less_notes_old_text() {
+        let root = std::env::temp_dir().join(format!("sb-similar-append-{}", uuid::Uuid::new_v4()));
+        let vault = root.join("vault");
+        fs::create_dir_all(vault.join("Areas")).unwrap();
+        let capture_path = vault.join("Areas/Cedar arrived.md");
+        let target_path = vault.join("Areas/Shed.md");
+        fs::write(
+            &capture_path,
+            "---\nid: capture-id\ntitle: Cedar arrived\n---\nStacked by the shed.\n",
+        )
+        .unwrap();
+        let old_target = "---\ntitle: Shed\n---\nCedar ordered.\n";
+        fs::write(&target_path, old_target).unwrap();
+        let vault_path = vault.to_string_lossy().into_owned();
+        let app = tauri::test::mock_builder()
+            .manage(AppState::new(AppConfig {
+                active_vault: Some(vault_path.clone()),
+                ..Default::default()
+            }))
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let capture = checked(&vault_path, capture_path.to_str().unwrap());
+        let target = checked(&vault_path, target_path.to_str().unwrap());
+
+        let stale = CheckedNote {
+            revision: "stale".to_string(),
+            ..checked(&vault_path, target_path.to_str().unwrap())
+        };
+        assert!(append_to_similar_note(
+            app.state(),
+            checked(&vault_path, capture_path.to_str().unwrap()),
+            stale
+        )
+        .is_err());
+        assert_eq!(fs::read_to_string(&target_path).unwrap(), old_target);
+        assert!(capture_path.exists());
+
+        assert_eq!(
+            append_to_similar_note(app.state(), capture, target),
+            Ok(None)
+        );
+        let appended = operations::read_note(&vault_path, target_path.to_str().unwrap()).unwrap();
+        assert!(appended.content.contains("Cedar ordered."));
+        assert!(appended.content.contains("*Added from capture,"));
+        assert!(appended.content.contains("Stacked by the shed."));
+        assert!(!capture_path.exists(), "the capture moved to trash");
+        let history = vault.join(".helixnotes/history").join(&appended.meta.id);
+        let kept: Vec<String> = fs::read_dir(history)
+            .unwrap()
+            .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+            .collect();
+        assert!(
+            kept.iter().any(|text| text == old_target),
+            "the old text is in history"
+        );
+        drop(app);
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 /// Fetch and distil a web page away from Tauri's UI thread, then file it only after the

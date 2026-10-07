@@ -705,7 +705,7 @@ impl SemanticIndex {
         exclude_id: &str,
         min_score: f32,
         limit: usize,
-    ) -> Result<Similar, String> {
+    ) -> Result<SimilarNotes, String> {
         let text: String = text.chars().take(CHUNK_CHARACTERS).collect();
         let Scored {
             database, chunks, ..
@@ -718,7 +718,7 @@ impl SemanticIndex {
         let mut notes = best_per_note(&database, &chunks, usize::MAX)?;
         let total = notes.len();
         notes.truncate(limit);
-        Ok(Similar { notes, total })
+        Ok(SimilarNotes { notes, total })
     }
 
     /// Scores every chunk at or above the cutoff, in note-then-ordinal order, and keeps the
@@ -1274,7 +1274,7 @@ fn chunk_text(database: &Connection, chunk: &ScoredChunk) -> Result<String, Stri
 
 /// What [`SemanticIndex::similar`] found: the best notes, and how many passed in all.
 #[derive(Debug)]
-pub struct Similar {
+pub struct SimilarNotes {
     pub notes: Vec<SearchResult>,
     pub total: usize,
 }
@@ -1808,13 +1808,14 @@ mod tests {
             ["Kept", "Short"],
             "a deleted note has nothing to append to"
         );
+        assert_eq!(found.total, 2, "nor is it counted in the coverage line");
         drop(index);
         cleanup(root);
     }
 
     /// Scores every fixture capture against every fixture note with live embeddinggemma, the
     /// numbers the capture-similarity bar (`similar_notes::SIMILAR_SCORE`) is set from (#9). Run:
-    /// `SB_OLLAMA_URL=http://127.0.0.1:11434 cargo test similarity_calibration -- --ignored --nocapture`
+    /// `SB_OLLAMA_URL=http://127.0.0.1:11434 pnpm test:rust similarity_calibration -- --ignored --nocapture`
     #[test]
     #[ignore = "needs embeddinggemma on Ollama at SB_OLLAMA_URL; prints the similarity scores"]
     fn similarity_calibration() {
