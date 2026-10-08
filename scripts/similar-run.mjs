@@ -182,7 +182,11 @@ function heldBackend(upstreamPort) {
   return {
     requests,
     answers,
-    listen: () => new Promise((done) => server.listen(OLLAMA_PORT, '127.0.0.1', done)),
+    listen: () =>
+      new Promise((done, fail) => {
+        server.once('error', fail);
+        server.listen(OLLAMA_PORT, '127.0.0.1', done);
+      }),
     hold: () => {
       held = [];
     },
@@ -467,79 +471,82 @@ async function main() {
         process.on('exit', () => relay.kill());
         await waitForPort(OLLAMA_PORT + 1, relay, 'Ollama relay tunnel');
         const backend = heldBackend(OLLAMA_PORT + 1);
-        await backend.listen();
-        const other = join(settings.root, 'other-vault');
-        mkdirSync(join(other, '.helixnotes'), { recursive: true });
-        writeFileSync(join(other, '.helixnotes', 'vault_id'), randomUUID(), { flag: 'wx' });
-        // Requests carrying `marker` (the capture's text, as the check and the indexer embed it)
-        // that reached the relay since `since`.
-        const sent = (marker, since) =>
-          backend.requests.filter((request) => request.at >= since && request.text.includes(marker)).length;
-        const waitForRequest = (marker, since) =>
-          browser.waitUntil(async () => sent(marker, since) > 0, {
-            timeout: 20_000,
-            timeoutMsg: `no embedding request for "${marker}" reached the backend`,
+        try {
+          await backend.listen();
+          const other = join(settings.root, 'other-vault');
+          mkdirSync(join(other, '.helixnotes'), { recursive: true });
+          writeFileSync(join(other, '.helixnotes', 'vault_id'), randomUUID(), { flag: 'wx' });
+          // Requests carrying `marker` (the capture's text, as the check and the indexer embed it)
+          // that reached the relay since `since`.
+          const sent = (marker, since) =>
+            backend.requests.filter((request) => request.at >= since && request.text.includes(marker)).length;
+          const waitForRequest = (marker, since) =>
+            browser.waitUntil(async () => sent(marker, since) > 0, {
+              timeout: 20_000,
+              timeoutMsg: `no embedding request for "${marker}" reached the backend`,
+            });
+
+          // Control: a check held and then released, with no switch, still shows its card and,
+          // with the main window minimized, sends a notification.
+          await invoke(browser, 'plugin:window|minimize', { label: 'main' });
+          await sleep(1_000);
+          const notifiedBeforeControl = notifyCalls(busOutput).length;
+          backend.hold();
+          let since = Date.now();
+          const control = await capture(browser, `${duplicates[2].text} (held)`);
+          await waitForRequest('(held)', since);
+          await sleep(HOLD);
+          const controlCardWhileHeld = await readCard(browser, control.meta.title);
+          backend.release();
+          await waitForCard(browser, control.meta.title);
+          await sleep(2_000);
+          const controlNotifications = notifyCalls(busOutput).length - notifiedBeforeControl;
+
+          // The late check: its embedding is held while the vault switches, then released.
+          const notifiedBeforeLate = notifyCalls(busOutput).length;
+          const cardsBeforeLate = await cardCount(browser);
+          const skippedBeforeLate = skippedChecks(settings.root);
+          backend.hold();
+          since = Date.now();
+          const late = await capture(browser, `${duplicates[3].text} (late)`);
+          await waitForRequest('(late)', since);
+          const heldRequests = sent('(late)', since);
+          const switchStarted = Date.now();
+          let switchedAt = null;
+          const switching = switchVault(browser, other).then(() => {
+            switchedAt = Date.now();
           });
-
-        // Control: a check held and then released, with no switch, still shows its card and,
-        // with the main window minimized, sends a notification.
-        await invoke(browser, 'plugin:window|minimize', { label: 'main' });
-        await sleep(1_000);
-        const notifiedBeforeControl = notifyCalls(busOutput).length;
-        backend.hold();
-        let since = Date.now();
-        const control = await capture(browser, `${duplicates[2].text} (held)`);
-        await waitForRequest('(held)', since);
-        await sleep(HOLD);
-        const controlCardWhileHeld = await readCard(browser, control.meta.title);
-        backend.release();
-        await waitForCard(browser, control.meta.title);
-        await sleep(2_000);
-        const controlNotifications = notifyCalls(busOutput).length - notifiedBeforeControl;
-
-        // The late check: its embedding is held while the vault switches, then released.
-        const notifiedBeforeLate = notifyCalls(busOutput).length;
-        const cardsBeforeLate = await cardCount(browser);
-        const skippedBeforeLate = skippedChecks(settings.root);
-        backend.hold();
-        since = Date.now();
-        const late = await capture(browser, `${duplicates[3].text} (late)`);
-        await waitForRequest('(late)', since);
-        const heldRequests = sent('(late)', since);
-        const switchStarted = Date.now();
-        let switchedAt = null;
-        const switching = switchVault(browser, other).then(() => {
-          switchedAt = Date.now();
-        });
-        // If the switch waits on the held request, release it anyway; the trace then says so.
-        await Promise.race([switching, sleep(10_000)]);
-        const switchedWhileHeld = switchedAt !== null;
-        const releasedAt = Date.now();
-        backend.release();
-        await switching;
-        await sleep(10_000);
-        actions.vaultSwitch = {
-          holdSeconds: HOLD / 1000,
-          // The control's card must wait for the release, or the hold did not hold its check.
-          controlCardWhileHeld: controlCardWhileHeld !== null,
-          controlNotifications,
-          lateCapture: late.meta.title,
-          // Embedding requests for the late capture held when the switch started.
-          heldRequests,
-          // The switch must finish while those are held, or it proves nothing.
-          switchedWhileHeld,
-          switchSeconds: (switchedAt - switchStarted) / 1000,
-          answersAfterRelease: backend.answers.filter((at) => at >= releasedAt).length,
-          // 1 when the late check failed (a retired index, or the capture read under the new
-          // vault); 0 when it finished and the vault check dropped it.
-          lateCheckSkipped: skippedBeforeLate === null ? null : skippedChecks(settings.root) - skippedBeforeLate,
-          // The control's card stays (the page was not switched); any more is the late one.
-          cardsAfterSwitch: (await cardCount(browser)) - cardsBeforeLate,
-          notificationsAfterSwitch: notifyCalls(busOutput).length - notifiedBeforeLate,
-          activeVaultIsOther: (await invoke(browser, 'get_app_config'))?.active_vault === other,
-        };
-        backend.close();
-        relay.kill();
+          // If the switch waits on the held request, release it anyway; the trace then says so.
+          await Promise.race([switching, sleep(10_000)]);
+          const switchedWhileHeld = switchedAt !== null;
+          const releasedAt = Date.now();
+          backend.release();
+          await switching;
+          await sleep(10_000);
+          actions.vaultSwitch = {
+            holdSeconds: HOLD / 1000,
+            // The control's card must wait for the release, or the hold did not hold its check.
+            controlCardWhileHeld: controlCardWhileHeld !== null,
+            controlNotifications,
+            lateCapture: late.meta.title,
+            // Embedding requests for the late capture held when the switch started.
+            heldRequests,
+            // The switch must finish while those are held, or it proves nothing.
+            switchedWhileHeld,
+            switchSeconds: (switchedAt - switchStarted) / 1000,
+            answersAfterRelease: backend.answers.filter((at) => at >= releasedAt).length,
+            // 1 when the late check failed (a retired index, or the capture read under the new
+            // vault); 0 when it finished and the vault check dropped it.
+            lateCheckSkipped: skippedBeforeLate === null ? null : skippedChecks(settings.root) - skippedBeforeLate,
+            // The control's card stays (the page was not switched); any more is the late one.
+            cardsAfterSwitch: (await cardCount(browser)) - cardsBeforeLate,
+            notificationsAfterSwitch: notifyCalls(busOutput).length - notifiedBeforeLate,
+            activeVaultIsOther: (await invoke(browser, 'get_app_config'))?.active_vault === other,
+          };
+        } finally {
+          backend.close();
+          relay.kill();
+        }
       }
       bus?.kill();
 

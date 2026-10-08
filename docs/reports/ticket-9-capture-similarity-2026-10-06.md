@@ -284,7 +284,7 @@ fixes, each held by a unit test or argued from the code:
 
 #9 merged as b46e718. Nicolas asked for the gaps listed under Not proven to be tested before the
 next ticket. Branch `test/9-post-merge-checks` adds checks to `scripts/similar-run.mjs` and changes
-no app code: `git diff --stat b46e718 b61a6fa` lists only the two run scripts and this report.
+no app code: `git diff --stat b46e718 b61a6fa -- src src-tauri` prints nothing.
 
 **End-to-end run.** Sol built `pnpm tauri build --debug --no-bundle` at b61a6fa and ran
 `node scripts/similar-run.mjs --app src-tauri/target/debug/second-brain` on the Fedora laptop, at
@@ -301,19 +301,20 @@ checks:
 | --- | --- |
 | Append with the capture open in the editor | No failure. The capture moved to trash, the similar note gained it, and the editor was left empty rather than on the trashed capture |
 | Append with the similar note open | No failure. The capture moved to trash, and the note reopened in the editor showing the appended capture |
-| A check still waiting when the vault switches | A relay held every request to the backend until released. Control: a capture whose embedding was held for 3 s showed no card while held, then its card, and sent 1 notification with the main window minimized. Then a second capture: once its embedding request reached the relay and was held, the vault switched, finishing in 0.029 s with the request still held. On release the backend answered, the check failed (the app logged `Skipped the similarity check for a new note`), and over the next 10 s no card and no notification appeared |
+| A capture just before a vault switch | A relay held every request to the backend until released. Control: a capture whose embedding was held for 3 s showed no card while held, then its card, and sent 1 notification with the main window minimized. Then a second capture: once a request carrying its text reached the relay and was held, the vault switched, finishing in 0.029 s with the request still held. The request was then released and the backend answered. The app logged one `Skipped the similarity check for a new note`, a failed check, in the same second, and over the next 10 s no card and no notification appeared |
 
 The run switches vaults through `open_vault`, the command the vault picker calls, and leaves the
 page on the old vault. The picker's native folder dialog cannot be driven, and a page reload
 waited on startup that had already happened. With the page on the old vault, its own vault check
 would pass a late card, so a card or a notification there could only come from the backend.
 
-What this shows is the failure path: the held check failed once released, and a failed check is
-dropped quietly. It does not reach the vault check that drops a check finishing normally after a
-switch (`similar_notes.rs`, `vault_still_open`); that stays argued from the code. One held
-request carried the capture's text, and the check and the indexer both embed that text, so the
-run does not show which of the two it was. The picker path, which clears cards from the vault
-left, has a unit test only.
+What this shows: a check for a capture made just before a switch failed, and a failed check is
+dropped quietly. It does not show when the check failed. The check and the indexer both embed the
+capture's text, so the held request may have been the indexer's, and the check may have started
+after the switch and failed reading the capture under the new vault. The log's one-second
+resolution cannot order the two. Nor does it reach the vault check that drops a check finishing
+normally after a switch (`similar_notes.rs`, `vault_still_open`); that stays argued from the
+code. The picker path, which clears cards from the vault left, has a unit test only.
 
 An earlier version of this check (0af164f) delayed only new connections. The app reused an open
 one, so its late check was not held, and the review caught it before this report was merged.
@@ -369,9 +370,10 @@ The list as written for e5ae7af. Items settled after the merge are marked; the r
   only.
 - A check that finishes after a vault switch, dropped before its card and its notification:
   argued from the code, with no test. **Partly settled 2026-10-08** by the b61a6fa run: a check
-  held across a switch through `open_vault` failed once released and left no card and no
-  notification. A check that finishes normally after a switch, the case the vault check drops,
-  is still argued from the code.
+  for a capture made just before a switch through `open_vault` failed and left no card and no
+  notification. Whether the check itself was waiting on the backend at the switch is not shown,
+  and a check that finishes normally after a switch, the case the vault check drops, is still
+  argued from the code.
 - Calibration on notes with a separate title and body. Every fixture capture is one line, so its
   body is empty (#213). The run's one capture with a body matched as expected, which is a single
   case, not a calibration.
