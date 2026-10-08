@@ -1,6 +1,6 @@
 # Capture-time similarity (#9): verification
 
-Dates: 2026-10-05 to 2026-10-07 (UTC−5); evidence files are named by their UTC date. Candidate:
+Dates: 2026-10-05 to 2026-10-08 (UTC−5); evidence files are named by their UTC date. Candidate:
 commit e5ae7af on `feat/9-capture-similarity`, after nine rounds of review. This report's own
 commit changes only the report and its evidence. Earlier evidence on b1be541, 4d0844a, fc4d283,
 413af12, 18d1bb2 and a38b4e6 is named where it is used, with the reason it still applies. The
@@ -280,24 +280,100 @@ fixes, each held by a unit test or argued from the code:
   `tests/similar.test.mjs` covers. A check that finishes after the switch shows no card and sends
   no notification. That part is argued from the code, with no test.
 
+## After the merge (2026-10-08)
+
+#9 merged as b46e718. Nicolas asked for the gaps listed under Not proven to be tested before the
+next ticket. Branch `test/9-post-merge-checks` adds checks to `scripts/similar-run.mjs` and changes
+no app code: `git diff --stat b46e718 b61a6fa -- src src-tauri` prints nothing.
+
+**End-to-end run.** Sol built `pnpm tauri build --debug --no-bundle` at b61a6fa and ran
+`node scripts/similar-run.mjs --app src-tauri/target/debug/second-brain` on the Fedora laptop, at
+06:58 UTC−5 on 2026-10-08. Just before it, Sol read the desktop's Ollama as 0.35.1 and
+`embeddinggemma:latest` as digest `85462619ee72` (`/api/version`, `/api/tags`); the trace does not
+record them. Run root, kept on the laptop: `~/sb-similar-run/2026-10-08T11-58-10.393Z`.
+[Trace](evidence/9-similar-run-2026-10-08-b61a6fa.json). The original checks passed as at e5ae7af:
+8 of 8 duplicates, no wrong cards, every card action, and the replaced notification pair (ids 63
+and 63). Capture took 36 to 120 ms (median 39); 39 to 120 ms after a card (median 81.5), 36 to
+43 ms after a wait (median 37), 41 ms for the first, by the command under End-to-end run. The new
+checks:
+
+| Check | Result |
+| --- | --- |
+| Append with the capture open in the editor | No failure. The capture moved to trash, the similar note gained it, and the editor was left empty rather than on the trashed capture |
+| Append with the similar note open | No failure. The capture moved to trash, and the note reopened in the editor showing the appended capture |
+| A capture just before a vault switch | A relay held every request to the backend until released. Control: a capture whose embedding was held for 3 s showed no card while held, then its card, and sent 1 notification with the main window minimized. Then a second capture: once a request carrying its text reached the relay and was held, the vault switched, finishing in 0.029 s with the request still held. The request was then released and the backend answered. The app logged one `Skipped the similarity check for a new note`, a failed check, in the same second, and over the next 10 s no card and no notification appeared |
+
+The run switches vaults through `open_vault`, the command the vault picker calls, and leaves the
+page on the old vault. The picker's native folder dialog cannot be driven, and a page reload
+waited on startup that had already happened. With the page on the old vault, its own vault check
+would pass a late card, so a card or a notification there could only come from the backend.
+
+What this shows: a check for a capture made just before a switch failed, and a failed check is
+dropped quietly. It does not show when the check failed. The check and the indexer both embed the
+capture's text, so the held request may have been the indexer's, and the check may have started
+after the switch and failed reading the capture under the new vault. The log's one-second
+resolution cannot order the two. Nor does it reach the vault check that drops a check finishing
+normally after a switch (`similar_notes.rs`, `vault_still_open`); that stays argued from the
+code. The picker path, which clears cards from the vault left, has a unit test only.
+
+An earlier version of this check (0af164f) delayed only new connections. The app reused an open
+one, so its late check was not held, and the review caught it before this report was merged.
+
+**Installed builds.** Sol built both packages at daa43f9, the same app code as b46e718:
+
+- Fedora 44, GNOME 50 (Wayland): the RPM, installed through the test package helper at 20:09
+  UTC−5 on 2026-10-07. Embeddings from the desktop's Ollama over an `ssh -L` tunnel on port 11437.
+- Windows 11: the NSIS installer, built on the desktop in `D:\SecondBrainTest\src9` with no
+  compile errors, the first local Windows compile since 4d0844a, and installed per user to
+  `D:\SecondBrainTest\app`. Embeddings from the desktop's own Ollama.
+
+Each machine got a fresh vault of the 13 fixture notes, with `close_to_tray` on.
+
+**Hand checks.** On 2026-10-08 Nicolas captured a duplicate with Ctrl+Alt+N three times on each
+machine:
+
+| Case | Fedora | Windows |
+| --- | --- | --- |
+| Another app focused | Notification shown; its click raised the main window with the card | Same |
+| Main window focused | Card shown, no notification | Same |
+| Main window closed to the tray | Notification shown; its click restored the window with the card | Same |
+
+The passes rest on what Nicolas saw and on screenshots shared in the conversation, not committed.
+The first Fedora attempt showed nothing: the tunnel had stopped forwarding overnight while its
+process lived on, so the app logged `Skipped the similarity check for a new note` for each
+capture, as designed for an unreachable backend. After the tunnel was restarted, all three cases
+passed. A check skipped that way is never run later; #216 covers that.
+
 ## Not proven
+
+The list as written for e5ae7af. Items settled after the merge are marked; the rest still hold.
 
 - The notification and its click at e5ae7af on Windows, and the click on Fedora (argued above).
   The Windows code at e5ae7af is compiled only by CI, and the card was not seen on Windows.
-- Any installed package of e5ae7af: every result at e5ae7af comes from a debug build.
+  **Settled 2026-10-08:** compiled on Windows and clicked on both machines at daa43f9.
+- Any installed package of e5ae7af: every result at e5ae7af comes from a debug build. **Settled
+  2026-10-08** for the hand checks above, on packages of daa43f9.
 - The focus guard: no notification when the main window had focus as the overlay opened. It needs
-  the hotkey, which WebDriver cannot press.
+  the hotkey, which WebDriver cannot press. **Settled 2026-10-08** by hand on both machines.
 - A hotkey capture while the main window is hidden to the tray. The run minimized it instead.
+  **Settled 2026-10-08** by hand on both machines.
 - Appending while the capture or the similar note is open in the editor, which closes and reopens
-  it. The run appended with neither open; the order of steps has a unit test.
+  it. The run appended with neither open; the order of steps has a unit test. **Settled
+  2026-10-08** by the b61a6fa run, for one append each way. A note picked during an append still
+  has the unit test only.
 - Restoring a note from history after an append. The run checks only that the snapshot exists.
 - Open on a note that cannot be opened: handled in code, not run. The capture that cannot move to
   trash has a Rust test, not an end-to-end run.
 - Capture speed compared with a build without the check: there is no baseline run.
 - The in-app trigger (a note created in the app, checked on first leave), the "Showing 3 of N"
-  line, and clearing cards on a vault switch, end to end. Each has unit tests only.
+  line, and clearing cards on a vault switch through the picker, end to end. Each has unit tests
+  only.
 - A check that finishes after a vault switch, dropped before its card and its notification:
-  argued from the code, with no test.
+  argued from the code, with no test. **Partly settled 2026-10-08** by the b61a6fa run: a check
+  for a capture made just before a switch through `open_vault` failed and left no card and no
+  notification. Whether the check itself was waiting on the backend at the switch is not shown,
+  and a check that finishes normally after a switch, the case the vault check drops, is still
+  argued from the code.
 - Calibration on notes with a separate title and body. Every fixture capture is one line, so its
   body is empty (#213). The run's one capture with a body matched as expected, which is a single
   case, not a calibration.

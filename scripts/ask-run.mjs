@@ -19,7 +19,7 @@ import { generate, QUESTIONS } from './ask-fixture.mjs';
 const APP_IDENTIFIER = 'io.github.zulucodedesign.SecondBrain';
 const DRIVER_PORT = 4444;
 const NATIVE_PORT = 4447;
-const OLLAMA_PORT = 11435;
+export const OLLAMA_PORT = 11435;
 const ANSWER_TIMEOUT = 5 * 60_000;
 
 export const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -65,7 +65,7 @@ function setUp(root, model, fill) {
   return { vault, configHome, dataHome };
 }
 
-async function waitForPort(port, child, name) {
+export async function waitForPort(port, child, name) {
   for (let attempt = 0; attempt < 60; attempt += 1) {
     if (child.exitCode !== null) throw new Error(`${name} exited ${child.exitCode}; is port ${port} taken?`);
     try {
