@@ -140,14 +140,12 @@ const editorTitle = (browser) => browser.execute(() => document.querySelector('.
 const editorText = (browser) => browser.execute(() => document.querySelector('.ProseMirror')?.innerText ?? null);
 const cardCount = (browser) => browser.execute(() => document.querySelectorAll('.similar-card').length);
 
-// Switches to `folder` through the command the vault picker calls. The picker's native folder
-// dialog cannot be driven, and Tauri's IPC cannot be stubbed from the page, so the page reloads
-// into the new vault instead of the picker's in-page handover.
+// Switches the backend to `folder` through the command the vault picker calls. The picker's
+// native folder dialog cannot be driven, so the page is left on the old vault: a late card the
+// backend let through would then still show, since the page's own vault check would pass it.
 async function switchVault(browser, folder) {
   const opened = await invoke(browser, 'open_vault', { path: folder });
   if (opened?.failed) throw new Error(`open_vault failed: ${opened.failed}`);
-  await browser.execute(() => location.reload());
-  await browser.$('button=New Note').waitForExist({ timeout: 30_000 });
 }
 
 // A relay that holds each connection to the backend for `delay` ms before passing it on, so an
@@ -230,252 +228,262 @@ async function main() {
       console.log(`${shown.length ? shown.join(', ') : '(no card)'}  <-  ${item.text}`);
     }
 
-    const carded = results.filter((result) => result.duplicateOf && result.shown.includes(result.duplicateOf));
-    const notePath = (title) => {
-      const note = fixture.notes.find((item) => item.title === title);
-      return join(vault, note.category, `${title}.md`);
-    };
     const actions = {};
-
-    // Append: the capture lands at the end of the similar note, which keeps its text, and the
-    // capture moves to trash.
-    const appended = carded[0];
-    if (appended) {
-      const target = notePath(appended.duplicateOf);
-      const history = join(vault, '.helixnotes', 'history', noteId(fixture.notes.findIndex((note) => note.title === appended.duplicateOf)));
-      const before = readFileSync(target, 'utf8');
-      // A snapshot from a moment ago, as if the note had just been saved: a save's own snapshot
-      // is skipped within 5 minutes of the last, so only the append's forced one keeps `before`.
-      mkdirSync(history, { recursive: true });
-      writeFileSync(join(history, `${new Date().toISOString().slice(0, 19).replaceAll(':', '-')}.md`), 'an earlier save\n');
-      await press(browser, appended.title, 'Append', appended.duplicateOf);
-      await waitForCard(browser, appended.title, (card) => card === null);
-      const after = readFileSync(target, 'utf8');
-      actions.append = {
-        capture: appended.capture,
-        target: appended.duplicateOf,
-        keptOriginal: body(after).trimStart().startsWith(body(before).trim()),
-        marked: after.includes('*Added from capture,'),
-        hasCapture: after.includes(appended.title),
-        captureGone: !existsSync(appended.path),
-        captureInTrash: trashed(vault, appended.path),
-        // The note's history holds its text from before the append, so the append can be undone.
-        undoable: existsSync(history) && readdirSync(history).some((name) => readFileSync(join(history, name), 'utf8') === before),
+    // Written again at the end; a run that stops part-way still leaves what it found.
+    const save = (aborted = null) => {
+      const trace = {
+        when: new Date().toISOString(),
+        app: basename(settings.app),
+        index,
+        summary: {
+          captures: results.length,
+          duplicatesFound: results.filter((result) => result.duplicateOf && !result.missed).length,
+          duplicates: results.filter((result) => result.duplicateOf).length,
+          wrongCards: results.filter((result) => result.wrong.length > 0).length,
+        },
+        // Vault-relative, so the trace names no home directory when it is committed as evidence.
+        results: results.map((result) => ({ ...result, path: relative(vault, result.path) })),
+        actions,
+        ...(aborted ? { aborted } : {}),
       };
-    }
-
-    // Dismiss: both notes stay exactly as they were.
-    const dismissed = carded[1];
-    if (dismissed) {
-      const target = notePath(dismissed.duplicateOf);
-      const hashes = [hash(dismissed.path), hash(target)];
-      await press(browser, dismissed.title, 'Dismiss');
-      await waitForCard(browser, dismissed.title, (card) => card === null);
-      actions.dismiss = {
-        capture: dismissed.capture,
-        unchanged: hash(dismissed.path) === hashes[0] && hash(target) === hashes[1],
+      writeFileSync(join(settings.root, 'similar-run.json'), JSON.stringify(trace, null, 2));
+      return trace;
+    };
+    try {
+      const carded = results.filter((result) => result.duplicateOf && result.shown.includes(result.duplicateOf));
+      const notePath = (title) => {
+        const note = fixture.notes.find((item) => item.title === title);
+        return join(vault, note.category, `${title}.md`);
       };
-    }
 
-    // A note edited since the check: the append is refused and nothing is written.
-    const changed = carded[2];
-    if (changed) {
-      const target = notePath(changed.duplicateOf);
-      appendFileSync(target, '\nEdited after the check.\n');
-      const hashes = [hash(changed.path), hash(target)];
-      await press(browser, changed.title, 'Append', changed.duplicateOf);
-      const card = await waitForCard(browser, changed.title, (current) => Boolean(current?.failure));
-      actions.changedNote = {
-        capture: changed.capture,
-        failure: card.failure,
-        unchanged: hash(changed.path) === hashes[0] && hash(target) === hashes[1],
-      };
-    }
-
-    const duplicates = fixture.captures.filter((item) => item.duplicateOf);
-
-    // Append with the capture open in the editor: it is saved and closed first, moves to trash,
-    // and is not reopened.
-    {
-      const item = duplicates[0];
-      const entry = await capture(browser, `${item.text} (open capture)`);
-      await waitForCard(browser, entry.meta.title);
-      await openFromList(browser, entry.meta.title);
-      await press(browser, entry.meta.title, 'Append', item.duplicateOf);
-      const card = await waitForCard(browser, entry.meta.title, (current) => current === null || Boolean(current.failure));
-      actions.appendWithCaptureOpen = {
-        capture: entry.meta.title,
-        target: item.duplicateOf,
-        failure: card?.failure ?? null,
-        captureInTrash: !existsSync(entry.path) && trashed(vault, entry.path),
-        targetHasCapture: readFileSync(notePath(item.duplicateOf), 'utf8').includes(entry.meta.title),
-        editorTitle: await editorTitle(browser),
-      };
-    }
-
-    // Append with the similar note open: it is saved and closed first, then reopened showing the
-    // appended capture.
-    {
-      const item = duplicates[1];
-      const entry = await capture(browser, `${item.text} (open target)`);
-      await waitForCard(browser, entry.meta.title);
-      await openFromList(browser, item.duplicateOf);
-      await press(browser, entry.meta.title, 'Append', item.duplicateOf);
-      const card = await waitForCard(browser, entry.meta.title, (current) => current === null || Boolean(current.failure));
-      await browser.waitUntil(async () => (await editorTitle(browser)) === item.duplicateOf, { timeout: 10_000 }).catch(() => {});
-      actions.appendWithTargetOpen = {
-        capture: entry.meta.title,
-        target: item.duplicateOf,
-        failure: card?.failure ?? null,
-        captureInTrash: !existsSync(entry.path) && trashed(vault, entry.path),
-        targetHasCapture: readFileSync(notePath(item.duplicateOf), 'utf8').includes(entry.meta.title),
-        editorTitle: await editorTitle(browser),
-        editorShowsCapture: ((await editorText(browser)) ?? '').includes(entry.meta.title),
-      };
-    }
-
-    // The main window minimized: each duplicate also raises a notification that names no note,
-    // and the second replaces the first. Every capture above ran with the window focused.
-    if (bus) {
-      await sleep(2_000);
-      const whileFocused = notifyCalls(busOutput).length;
-      await invoke(browser, 'plugin:window|minimize', { label: 'main' });
-      await sleep(1_000);
-      for (const item of fixture.captures.filter((capture) => capture.duplicateOf).slice(3, 5)) {
-        const entry = await capture(browser, `${item.text} (unfocused)`);
-        await waitForCard(browser, entry.meta.title);
-        await sleep(2_000);
+      // Append: the capture lands at the end of the similar note, which keeps its text, and the
+      // capture moves to trash.
+      const appended = carded[0];
+      if (appended) {
+        const target = notePath(appended.duplicateOf);
+        const history = join(vault, '.helixnotes', 'history', noteId(fixture.notes.findIndex((note) => note.title === appended.duplicateOf)));
+        const before = readFileSync(target, 'utf8');
+        // A snapshot from a moment ago, as if the note had just been saved: a save's own snapshot
+        // is skipped within 5 minutes of the last, so only the append's forced one keeps `before`.
+        mkdirSync(history, { recursive: true });
+        writeFileSync(join(history, `${new Date().toISOString().slice(0, 19).replaceAll(':', '-')}.md`), 'an earlier save\n');
+        await press(browser, appended.title, 'Append', appended.duplicateOf);
+        await waitForCard(browser, appended.title, (card) => card === null);
+        const after = readFileSync(target, 'utf8');
+        actions.append = {
+          capture: appended.capture,
+          target: appended.duplicateOf,
+          keptOriginal: body(after).trimStart().startsWith(body(before).trim()),
+          marked: after.includes('*Added from capture,'),
+          hasCapture: after.includes(appended.title),
+          captureGone: !existsSync(appended.path),
+          captureInTrash: trashed(vault, appended.path),
+          // The note's history holds its text from before the append, so the append can be undone.
+          undoable: existsSync(history) && readdirSync(history).some((name) => readFileSync(join(history, name), 'utf8') === before),
+        };
       }
-      const calls = notifyCalls(busOutput).slice(whileFocused);
-      actions.notification = {
-        whileFocused,
-        calls,
-        // The second call names the first one's id, so the service shows it in its place.
-        replaced: calls.length === 2 && calls[0].replacesId === 0 && calls[0].id > 0 && calls[1].replacesId === calls[0].id,
-      };
-    }
 
-    // A note moved since the check: the append is refused and nothing is written.
-    const moved = carded[5];
-    if (moved) {
-      const target = notePath(moved.duplicateOf);
-      const movedTo = `${target.slice(0, -3)} (moved).md`;
-      renameSync(target, movedTo);
-      const hashes = [hash(moved.path), hash(movedTo)];
-      await press(browser, moved.title, 'Append', moved.duplicateOf);
-      const card = await waitForCard(browser, moved.title, (current) => Boolean(current?.failure));
-      actions.movedNote = {
-        capture: moved.capture,
-        failure: card.failure,
-        unchanged: hash(moved.path) === hashes[0] && hash(movedTo) === hashes[1],
-      };
-    }
+      // Dismiss: both notes stay exactly as they were.
+      const dismissed = carded[1];
+      if (dismissed) {
+        const target = notePath(dismissed.duplicateOf);
+        const hashes = [hash(dismissed.path), hash(target)];
+        await press(browser, dismissed.title, 'Dismiss');
+        await waitForCard(browser, dismissed.title, (card) => card === null);
+        actions.dismiss = {
+          capture: dismissed.capture,
+          unchanged: hash(dismissed.path) === hashes[0] && hash(target) === hashes[1],
+        };
+      }
 
-    // Open: the similar note opens in the editor and the card goes.
-    const opened = carded[6];
-    if (opened) {
-      await press(browser, opened.title, 'Open', opened.duplicateOf);
-      await waitForCard(browser, opened.title, (card) => card === null);
-      actions.open = {
-        capture: opened.capture,
-        target: opened.duplicateOf,
-        editorTitle: await browser.execute(() => document.querySelector('.editor-title input')?.value ?? null),
-      };
-    }
+      // A note edited since the check: the append is refused and nothing is written.
+      const changed = carded[2];
+      if (changed) {
+        const target = notePath(changed.duplicateOf);
+        appendFileSync(target, '\nEdited after the check.\n');
+        const hashes = [hash(changed.path), hash(target)];
+        await press(browser, changed.title, 'Append', changed.duplicateOf);
+        const card = await waitForCard(browser, changed.title, (current) => Boolean(current?.failure));
+        actions.changedNote = {
+          capture: changed.capture,
+          failure: card.failure,
+          unchanged: hash(changed.path) === hashes[0] && hash(target) === hashes[1],
+        };
+      }
 
-    // A capture with a body under its title line, the other way the overlay files a note.
-    const lined = carded[7];
-    if (lined) {
-      const entry = await capture(browser, `Note to self\n${lined.capture}`);
-      const card = await waitForCard(browser, entry.meta.title);
-      actions.titleAndBody = {
-        capture: lined.capture,
-        target: lined.duplicateOf,
-        shown: card.matches.map((match) => match.title),
-      };
-    }
+      const duplicates = fixture.captures.filter((item) => item.duplicateOf);
 
-    // The backend gone: the capture is filed as always and no card appears.
-    tunnel.kill();
-    await sleep(1_000);
-    const offline = await capture(browser, `${fixture.captures[0].text} (while offline)`);
-    await sleep(10_000);
-    actions.offline = {
-      saved: existsSync(offline.path),
-      card: await readCard(browser, offline.meta.title),
-    };
+      // Append with the capture open in the editor: it is saved and closed first, moves to trash,
+      // and is not reopened.
+      {
+        const item = duplicates[0];
+        const entry = await capture(browser, `${item.text} (open capture)`);
+        await waitForCard(browser, entry.meta.title);
+        await openFromList(browser, entry.meta.title);
+        await press(browser, entry.meta.title, 'Append', item.duplicateOf);
+        const card = await waitForCard(browser, entry.meta.title, (current) => current === null || Boolean(current.failure));
+        actions.appendWithCaptureOpen = {
+          capture: entry.meta.title,
+          target: item.duplicateOf,
+          failure: card?.failure ?? null,
+          captureInTrash: !existsSync(entry.path) && trashed(vault, entry.path),
+          targetHasCapture: readFileSync(notePath(item.duplicateOf), 'utf8').includes(entry.meta.title),
+          editorTitle: await editorTitle(browser),
+        };
+      }
 
-    // A check that outlasts a vault switch. The backend comes back behind a relay that holds
-    // each connection for DELAY ms.
-    if (bus) {
-      const DELAY = 8_000;
-      const relay = spawn('ssh', ['-N', '-o', 'ExitOnForwardFailure=yes', '-L', `127.0.0.1:${OLLAMA_PORT + 1}:127.0.0.1:11434`, settings.ssh], { stdio: 'ignore' });
-      process.on('exit', () => relay.kill());
-      await waitForPort(OLLAMA_PORT + 1, relay, 'Ollama relay tunnel');
-      const slow = slowBackend(OLLAMA_PORT + 1, DELAY);
-      await slow.listen();
-      const other = join(settings.root, 'other-vault');
-      mkdirSync(join(other, '.helixnotes'), { recursive: true });
-      writeFileSync(join(other, '.helixnotes', 'vault_id'), randomUUID(), { flag: 'wx' });
+      // Append with the similar note open: it is saved and closed first, then reopened showing the
+      // appended capture.
+      {
+        const item = duplicates[1];
+        const entry = await capture(browser, `${item.text} (open target)`);
+        await waitForCard(browser, entry.meta.title);
+        await openFromList(browser, item.duplicateOf);
+        await press(browser, entry.meta.title, 'Append', item.duplicateOf);
+        const card = await waitForCard(browser, entry.meta.title, (current) => current === null || Boolean(current.failure));
+        await browser.waitUntil(async () => (await editorTitle(browser)) === item.duplicateOf, { timeout: 10_000 }).catch(() => {});
+        actions.appendWithTargetOpen = {
+          capture: entry.meta.title,
+          target: item.duplicateOf,
+          failure: card?.failure ?? null,
+          captureInTrash: !existsSync(entry.path) && trashed(vault, entry.path),
+          targetHasCapture: readFileSync(notePath(item.duplicateOf), 'utf8').includes(entry.meta.title),
+          editorTitle: await editorTitle(browser),
+          editorShowsCapture: ((await editorText(browser)) ?? '').includes(entry.meta.title),
+        };
+      }
 
-      // Control: a slow check with no switch still shows its card, and with the main window
-      // minimized it sends a notification.
-      await invoke(browser, 'plugin:window|minimize', { label: 'main' });
+      // The main window minimized: each duplicate also raises a notification that names no note,
+      // and the second replaces the first. Every capture above ran with the window focused.
+      if (bus) {
+        await sleep(2_000);
+        const whileFocused = notifyCalls(busOutput).length;
+        await invoke(browser, 'plugin:window|minimize', { label: 'main' });
+        await sleep(1_000);
+        for (const item of fixture.captures.filter((capture) => capture.duplicateOf).slice(3, 5)) {
+          const entry = await capture(browser, `${item.text} (unfocused)`);
+          await waitForCard(browser, entry.meta.title);
+          await sleep(2_000);
+        }
+        const calls = notifyCalls(busOutput).slice(whileFocused);
+        actions.notification = {
+          whileFocused,
+          calls,
+          // The second call names the first one's id, so the service shows it in its place.
+          replaced: calls.length === 2 && calls[0].replacesId === 0 && calls[0].id > 0 && calls[1].replacesId === calls[0].id,
+        };
+      }
+
+      // A note moved since the check: the append is refused and nothing is written.
+      const moved = carded[5];
+      if (moved) {
+        const target = notePath(moved.duplicateOf);
+        const movedTo = `${target.slice(0, -3)} (moved).md`;
+        renameSync(target, movedTo);
+        const hashes = [hash(moved.path), hash(movedTo)];
+        await press(browser, moved.title, 'Append', moved.duplicateOf);
+        const card = await waitForCard(browser, moved.title, (current) => Boolean(current?.failure));
+        actions.movedNote = {
+          capture: moved.capture,
+          failure: card.failure,
+          unchanged: hash(moved.path) === hashes[0] && hash(movedTo) === hashes[1],
+        };
+      }
+
+      // Open: the similar note opens in the editor and the card goes.
+      const opened = carded[6];
+      if (opened) {
+        await press(browser, opened.title, 'Open', opened.duplicateOf);
+        await waitForCard(browser, opened.title, (card) => card === null);
+        actions.open = {
+          capture: opened.capture,
+          target: opened.duplicateOf,
+          editorTitle: await browser.execute(() => document.querySelector('.editor-title input')?.value ?? null),
+        };
+      }
+
+      // A capture with a body under its title line, the other way the overlay files a note.
+      const lined = carded[7];
+      if (lined) {
+        const entry = await capture(browser, `Note to self\n${lined.capture}`);
+        const card = await waitForCard(browser, entry.meta.title);
+        actions.titleAndBody = {
+          capture: lined.capture,
+          target: lined.duplicateOf,
+          shown: card.matches.map((match) => match.title),
+        };
+      }
+
+      // The backend gone: the capture is filed as always and no card appears.
+      tunnel.kill();
       await sleep(1_000);
-      const before = notifyCalls(busOutput).length;
-      let started = Date.now();
-      const control = await capture(browser, `${duplicates[2].text} (slow)`);
-      await waitForCard(browser, control.meta.title);
-      const controlSeconds = Math.round((Date.now() - started) / 1000);
-      await sleep(2_000);
-      const controlCalls = notifyCalls(busOutput).length - before;
-
-      // A capture whose check is still waiting on the backend when the vault switches.
-      const afterControl = notifyCalls(busOutput).length;
-      started = Date.now();
-      const late = await capture(browser, `${duplicates[3].text} (late)`);
-      await switchVault(browser, other);
-      const switchSeconds = (Date.now() - started) / 1000;
-      await sleep(DELAY + 10_000);
-      actions.vaultSwitch = {
-        delaySeconds: DELAY / 1000,
-        controlSeconds,
-        controlCard: true,
-        controlNotifications: controlCalls,
-        // The switch must finish while the late check still waits, or it proves nothing.
-        switchSeconds,
-        switchedBeforeCheck: switchSeconds < DELAY / 1000,
-        lateCapture: late.meta.title,
-        // Cards live in memory and the page reloaded, so this shows only a card the late check
-        // raised after the switch.
-        cardsAfterSwitch: await cardCount(browser),
-        notificationsAfterSwitch: notifyCalls(busOutput).length - afterControl,
-        activeVaultIsOther: (await invoke(browser, 'get_app_config'))?.active_vault === other,
+      const offline = await capture(browser, `${fixture.captures[0].text} (while offline)`);
+      await sleep(10_000);
+      actions.offline = {
+        saved: existsSync(offline.path),
+        card: await readCard(browser, offline.meta.title),
       };
-      slow.close();
-      relay.kill();
-    }
-    bus?.kill();
 
-    const trace = {
-      when: new Date().toISOString(),
-      app: basename(settings.app),
-      index,
-      summary: {
-        captures: results.length,
-        duplicatesFound: results.filter((result) => result.duplicateOf && !result.missed).length,
-        duplicates: results.filter((result) => result.duplicateOf).length,
-        wrongCards: results.filter((result) => result.wrong.length > 0).length,
-      },
-      // Vault-relative, so the trace names no home directory when it is committed as evidence.
-      results: results.map((result) => ({ ...result, path: relative(vault, result.path) })),
-      actions,
-    };
-    const out = join(settings.root, 'similar-run.json');
-    writeFileSync(out, JSON.stringify(trace, null, 2));
+      // A check that outlasts a vault switch. The backend comes back behind a relay that holds
+      // each connection for DELAY ms.
+      if (bus) {
+        const DELAY = 8_000;
+        const relay = spawn('ssh', ['-N', '-o', 'ExitOnForwardFailure=yes', '-L', `127.0.0.1:${OLLAMA_PORT + 1}:127.0.0.1:11434`, settings.ssh], { stdio: 'ignore' });
+        process.on('exit', () => relay.kill());
+        await waitForPort(OLLAMA_PORT + 1, relay, 'Ollama relay tunnel');
+        const slow = slowBackend(OLLAMA_PORT + 1, DELAY);
+        await slow.listen();
+        const other = join(settings.root, 'other-vault');
+        mkdirSync(join(other, '.helixnotes'), { recursive: true });
+        writeFileSync(join(other, '.helixnotes', 'vault_id'), randomUUID(), { flag: 'wx' });
+
+        // Control: a slow check with no switch still shows its card, and with the main window
+        // minimized it sends a notification.
+        await invoke(browser, 'plugin:window|minimize', { label: 'main' });
+        await sleep(1_000);
+        const before = notifyCalls(busOutput).length;
+        let started = Date.now();
+        const control = await capture(browser, `${duplicates[2].text} (slow)`);
+        await waitForCard(browser, control.meta.title);
+        const controlSeconds = Math.round((Date.now() - started) / 1000);
+        await sleep(2_000);
+        const controlCalls = notifyCalls(busOutput).length - before;
+
+        // A capture whose check is still waiting on the backend when the vault switches.
+        const afterControl = notifyCalls(busOutput).length;
+        const cardsBeforeSwitch = await cardCount(browser);
+        started = Date.now();
+        const late = await capture(browser, `${duplicates[3].text} (late)`);
+        await switchVault(browser, other);
+        const switchSeconds = (Date.now() - started) / 1000;
+        await sleep(DELAY + 10_000);
+        actions.vaultSwitch = {
+          delaySeconds: DELAY / 1000,
+          controlSeconds,
+          controlCard: true,
+          controlNotifications: controlCalls,
+          // The switch must finish while the late check still waits, or it proves nothing.
+          switchSeconds,
+          switchedBeforeCheck: switchSeconds < DELAY / 1000,
+          lateCapture: late.meta.title,
+          // The control's card stays (the page was not switched); any more is the late one.
+          cardsAfterSwitch: (await cardCount(browser)) - cardsBeforeSwitch,
+          notificationsAfterSwitch: notifyCalls(busOutput).length - afterControl,
+          activeVaultIsOther: (await invoke(browser, 'get_app_config'))?.active_vault === other,
+        };
+        slow.close();
+        relay.kill();
+      }
+      bus?.kill();
+
+    } catch (error) {
+      save(error.message);
+      throw error;
+    }
+    const trace = save();
     console.log(JSON.stringify(trace.summary));
     console.log(JSON.stringify(actions, null, 2));
-    console.log(out);
+    console.log(join(settings.root, 'similar-run.json'));
   });
 }
 
