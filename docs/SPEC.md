@@ -227,7 +227,7 @@ the moment of capture.
 Flow:
 
 1. Hotkey pressed → capture overlay appears
-2. User types/pastes content and picks a PARA category
+2. User types/pastes a title and a body, both required (#213), and picks a PARA category
 3. Note is saved to the correct PARA folder
 4. **AI similarity check runs**: if a semantically similar note already exists, the app
    surfaces it and offers to merge into / edit that note instead of leaving a duplicate

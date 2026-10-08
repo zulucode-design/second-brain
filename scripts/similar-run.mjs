@@ -7,8 +7,7 @@
 // in. The vault holds scripts/similarity-fixture.json's notes. Each fixture capture is filed
 // through the command the overlay uses (WebDriver cannot press a global hotkey), and the card
 // it raises in the main window is read back. Then Append, Dismiss, refused Appends on a note
-// edited and a note moved since the check, Open, a capture with a body under its title, Append
-// with the capture open in the editor, Append with the similar note open, and a capture with the
+// edited and a note moved since the check, Open, Append with the capture open in the editor, Append with the similar note open, and a capture with the
 // backend gone are each tried once.
 // On Linux, two more duplicates are captured with the main window minimized, and the
 // notifications the app sends are read off the session bus with dbus-monitor. A click on one
@@ -92,8 +91,8 @@ function press(browser, title, label, matchTitle = null) {
   }, title, label, matchTitle);
 }
 
-async function capture(browser, text) {
-  const entry = await invoke(browser, 'quick_capture_note', { category: 'Areas', text });
+async function capture(browser, title, body) {
+  const entry = await invoke(browser, 'quick_capture_note', { category: 'Areas', title, body });
   if (entry.failed) throw new Error(`capture failed: ${entry.failed}`);
   return entry;
 }
@@ -256,7 +255,7 @@ async function main() {
     try {
       for (const item of fixture.captures) {
         const started = Date.now();
-        const entry = await capture(browser, item.text);
+        const entry = await capture(browser, item.title, item.body);
         // The overlay closes once this command returns, so this is what the user waits for.
         const captureMs = Date.now() - started;
         // The backend's own check sends the card; this asks the same question directly, so the
@@ -272,7 +271,7 @@ async function main() {
         }
         const shown = card?.matches.map((match) => match.title) ?? [];
         results.push({
-          capture: item.text,
+          capture: item.title,
           kind: item.duplicateOf ? 'duplicate' : item.sameTopic?.length ? 'same topic' : 'unrelated',
           duplicateOf: item.duplicateOf ?? null,
           path: entry.path,
@@ -286,7 +285,7 @@ async function main() {
           missed: Boolean(item.duplicateOf) && !shown.includes(item.duplicateOf),
           wrong: shown.filter((title) => title !== item.duplicateOf),
         });
-        console.log(`${shown.length ? shown.join(', ') : '(no card)'}  <-  ${item.text}`);
+        console.log(`${shown.length ? shown.join(', ') : '(no card)'}  <-  ${item.title}`);
       }
 
       const carded = results.filter((result) => result.duplicateOf && result.shown.includes(result.duplicateOf));
@@ -356,7 +355,7 @@ async function main() {
       // and is not reopened.
       {
         const item = duplicates[0];
-        const entry = await capture(browser, `${item.text} (open capture)`);
+        const entry = await capture(browser, `${item.title} (open capture)`, item.body);
         await waitForCard(browser, entry.meta.title);
         await openFromList(browser, entry.meta.title);
         await press(browser, entry.meta.title, 'Append', item.duplicateOf);
@@ -375,7 +374,7 @@ async function main() {
       // appended capture.
       {
         const item = duplicates[1];
-        const entry = await capture(browser, `${item.text} (open target)`);
+        const entry = await capture(browser, `${item.title} (open target)`, item.body);
         await waitForCard(browser, entry.meta.title);
         await openFromList(browser, item.duplicateOf);
         await press(browser, entry.meta.title, 'Append', item.duplicateOf);
@@ -400,7 +399,7 @@ async function main() {
         await invoke(browser, 'plugin:window|minimize', { label: 'main' });
         await sleep(1_000);
         for (const item of fixture.captures.filter((capture) => capture.duplicateOf).slice(3, 5)) {
-          const entry = await capture(browser, `${item.text} (unfocused)`);
+          const entry = await capture(browser, `${item.title} (unfocused)`, item.body);
           await waitForCard(browser, entry.meta.title);
           await sleep(2_000);
         }
@@ -441,22 +440,10 @@ async function main() {
         };
       }
 
-      // A capture with a body under its title line, the other way the overlay files a note.
-      const lined = carded[7];
-      if (lined) {
-        const entry = await capture(browser, `Note to self\n${lined.capture}`);
-        const card = await waitForCard(browser, entry.meta.title);
-        actions.titleAndBody = {
-          capture: lined.capture,
-          target: lined.duplicateOf,
-          shown: card.matches.map((match) => match.title),
-        };
-      }
-
       // The backend gone: the capture is filed as always and no card appears.
       tunnel.kill();
       await sleep(1_000);
-      const offline = await capture(browser, `${fixture.captures[0].text} (while offline)`);
+      const offline = await capture(browser, `${fixture.captures[0].title} (while offline)`, fixture.captures[0].body);
       await sleep(10_000);
       actions.offline = {
         saved: existsSync(offline.path),
@@ -493,7 +480,7 @@ async function main() {
           const notifiedBeforeControl = notifyCalls(busOutput).length;
           backend.hold();
           let since = Date.now();
-          const control = await capture(browser, `${duplicates[2].text} (held)`);
+          const control = await capture(browser, `${duplicates[2].title} (held)`, duplicates[2].body);
           await waitForRequest('(held)', since);
           await sleep(HOLD);
           const controlCardWhileHeld = await readCard(browser, control.meta.title);
@@ -508,7 +495,7 @@ async function main() {
           const skippedBeforeLate = skippedChecks(settings.root);
           backend.hold();
           since = Date.now();
-          const late = await capture(browser, `${duplicates[3].text} (late)`);
+          const late = await capture(browser, `${duplicates[3].title} (late)`, duplicates[3].body);
           await waitForRequest('(late)', since);
           const heldRequests = sent('(late)', since);
           const switchStarted = Date.now();

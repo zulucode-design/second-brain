@@ -1885,8 +1885,12 @@ mod tests {
 
         let (mut lowest_duplicate, mut highest_other) = (f32::MAX, f32::MIN);
         for capture in fixture["captures"].as_array().unwrap() {
-            // Filed the way the overlay files it: the first line is the title.
-            let filed = crate::hotkey::capture::split(capture["text"].as_str().unwrap()).unwrap();
+            // Filed the way the overlay files it: a title field and a body field.
+            let filed = crate::hotkey::capture::validate(
+                capture["title"].as_str().unwrap(),
+                capture["body"].as_str().unwrap(),
+            )
+            .unwrap();
             let found = index
                 .similar(&filed.title, &filed.body, "capture", f32::MIN)
                 .unwrap();

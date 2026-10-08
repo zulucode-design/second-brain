@@ -193,12 +193,13 @@ export async function saveNoteOrPreserve(
   return invoke("save_note_or_preserve", { path, meta, body, expectedRevision, copyPath });
 }
 
-/// File a quick capture. The first line of `text` becomes the title, the rest the body.
+/// File a quick capture. Both `title` and `body` are required (#213).
 export async function quickCaptureNote(
   category: string,
-  text: string,
+  title: string,
+  body: string,
 ): Promise<NoteEntry> {
-  return invoke("quick_capture_note", { category, text });
+  return invoke("quick_capture_note", { category, title, body });
 }
 
 export async function createNote(
