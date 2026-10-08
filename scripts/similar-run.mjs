@@ -140,24 +140,13 @@ const editorTitle = (browser) => browser.execute(() => document.querySelector('.
 const editorText = (browser) => browser.execute(() => document.querySelector('.ProseMirror')?.innerText ?? null);
 const cardCount = (browser) => browser.execute(() => document.querySelectorAll('.similar-card').length);
 
-// Switches to `folder` through the title bar's vault button and the picker, as a user does. The
-// picker's native folder dialog cannot be driven, so the page answers it with `folder`.
+// Switches to `folder` through the command the vault picker calls. The picker's native folder
+// dialog cannot be driven, and Tauri's IPC cannot be stubbed from the page, so the page reloads
+// into the new vault instead of the picker's in-page handover.
 async function switchVault(browser, folder) {
-  await browser.execute((path) => {
-    const internals = window.__TAURI_INTERNALS__;
-    const original = internals.invoke.bind(internals);
-    internals.invoke = (command, args, rest) =>
-      command === 'plugin:dialog|open' ? Promise.resolve(path) : original(command, args, rest);
-    document.querySelector('.switch-vault-btn[title="Change vault folder"]').click();
-  }, folder);
-  const choose = await browser.$('button=Choose vault folder');
-  await choose.waitForExist({ timeout: 10_000 });
-  await browser.execute(() => [...document.querySelectorAll('button')].find((button) => button.innerText.trim() === 'Choose vault folder').click());
-  await browser.waitUntil(() => browser.execute(() => Boolean(document.querySelector('.vault-picker .confirm input'))), { timeout: 10_000 });
-  await browser.execute(() => {
-    document.querySelector('.vault-picker .confirm input').click();
-  });
-  await browser.execute(() => [...document.querySelectorAll('button')].find((button) => button.innerText.trim() === 'Open selected folder').click());
+  const opened = await invoke(browser, 'open_vault', { path: folder });
+  if (opened?.failed) throw new Error(`open_vault failed: ${opened.failed}`);
+  await browser.execute(() => location.reload());
   await browser.$('button=New Note').waitForExist({ timeout: 30_000 });
 }
 
@@ -457,7 +446,8 @@ async function main() {
         switchSeconds,
         switchedBeforeCheck: switchSeconds < DELAY / 1000,
         lateCapture: late.meta.title,
-        // The control's card belonged to the vault left, so none may remain.
+        // Cards live in memory and the page reloaded, so this shows only a card the late check
+        // raised after the switch.
         cardsAfterSwitch: await cardCount(browser),
         notificationsAfterSwitch: notifyCalls(busOutput).length - afterControl,
         activeVaultIsOther: (await invoke(browser, 'get_app_config'))?.active_vault === other,
