@@ -13,13 +13,15 @@
 // On Linux, two more duplicates are captured with the main window minimized, and the
 // notifications the app sends are read off the session bus with dbus-monitor. A click on one
 // cannot be scripted, so that stays a hand check.
-// Last, the backend is slowed so a check outlasts a vault switch: one slow check with no switch
-// shows its card, then a switch made while another runs must leave no card and no notification.
+// Last, a relay holds the backend's requests so a check waits across a vault switch: one held
+// check with no switch shows its card, then one held while the vault switches must leave no card
+// and no notification once released.
 
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { connect, createServer } from 'node:net';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, join, relative } from 'node:path';
 import { OLLAMA_PORT, invoke, options, runMain, sleep, waitForIndex, waitForPort, withApp } from './ask-run.mjs';
 
@@ -148,29 +150,61 @@ async function switchVault(browser, folder) {
   if (opened?.failed) throw new Error(`open_vault failed: ${opened.failed}`);
 }
 
-// A relay that holds each connection to the backend for `delay` ms before passing it on, so an
-// embedding, and the check waiting on it, finishes late.
-function slowBackend(upstreamPort, delay) {
+// A relay to the backend that can hold every request it receives until released, on pooled
+// connections too, so a check's embedding can be kept waiting across a vault switch. It records
+// when requests arrive and answers come back.
+function heldBackend(upstreamPort) {
   const sockets = new Set();
+  let held = null;
+  const requests = [];
+  const answers = [];
   const server = createServer((client) => {
-    sockets.add(client);
-    client.on('error', () => {});
-    client.on('close', () => sockets.delete(client));
-    setTimeout(() => {
-      const upstream = connect(upstreamPort, '127.0.0.1');
-      sockets.add(upstream);
-      upstream.on('error', () => client.destroy());
-      upstream.on('close', () => sockets.delete(upstream));
-      client.pipe(upstream).pipe(client);
-    }, delay);
+    const upstream = connect(upstreamPort, '127.0.0.1');
+    for (const socket of [client, upstream]) {
+      sockets.add(socket);
+      socket.on('error', () => {});
+      socket.on('close', () => {
+        sockets.delete(socket);
+        client.destroy();
+        upstream.destroy();
+      });
+    }
+    client.on('data', (chunk) => {
+      requests.push({ at: Date.now(), text: chunk.toString() });
+      if (held) held.push(() => upstream.write(chunk));
+      else upstream.write(chunk);
+    });
+    upstream.on('data', (chunk) => {
+      answers.push(Date.now());
+      client.write(chunk);
+    });
   });
   return {
+    requests,
+    answers,
     listen: () => new Promise((done) => server.listen(OLLAMA_PORT, '127.0.0.1', done)),
+    hold: () => {
+      held = [];
+    },
+    release: () => {
+      const waiting = held ?? [];
+      held = null;
+      for (const send of waiting) send();
+    },
     close: () => {
+      held = null;
       server.close();
       for (const socket of sockets) socket.destroy();
     },
   };
+}
+
+// How many times the app has logged skipping a check for a note: its check failed, which an
+// unreachable backend or a retired index both cause.
+function skippedChecks(root) {
+  const log = readdirSync(join(root, 'data'), { recursive: true }).find((name) => String(name).endsWith('Second Brain.log'));
+  if (!log) return null;
+  return readFileSync(join(root, 'data', String(log)), 'utf8').split('Skipped the similarity check for a new note').length - 1;
 }
 
 const trashed = (vault, path) =>
@@ -193,41 +227,6 @@ async function main() {
     process.on('exit', () => bus?.kill());
     const index = await waitForIndex(browser, fixture.notes.length);
     const results = [];
-    for (const item of fixture.captures) {
-      const started = Date.now();
-      const entry = await capture(browser, item.text);
-      // The overlay closes once this command returns, so this is what the user waits for.
-      const captureMs = Date.now() - started;
-      // The backend's own check sends the card; this asks the same question directly, so the
-      // run knows whether a card is due rather than waiting out a timeout.
-      const expected = await invoke(browser, 'check_similar_notes', { path: entry.path });
-      if (expected?.failed) throw new Error(`check failed: ${expected.failed}`);
-      let card = null;
-      if (expected) {
-        card = await waitForCard(browser, entry.meta.title);
-      } else {
-        await sleep(5_000);
-        card = await readCard(browser, entry.meta.title);
-      }
-      const shown = card?.matches.map((match) => match.title) ?? [];
-      results.push({
-        capture: item.text,
-        kind: item.duplicateOf ? 'duplicate' : item.sameTopic?.length ? 'same topic' : 'unrelated',
-        duplicateOf: item.duplicateOf ?? null,
-        path: entry.path,
-        title: entry.meta.title,
-        captureMs,
-        // From the capture to the card, or to the end of the 5-second wait when none is due.
-        seconds: Math.round((Date.now() - started) / 1000),
-        shown,
-        coverage: card?.coverage ?? null,
-        excerpts: card?.matches.map((match) => match.excerpt) ?? [],
-        missed: Boolean(item.duplicateOf) && !shown.includes(item.duplicateOf),
-        wrong: shown.filter((title) => title !== item.duplicateOf),
-      });
-      console.log(`${shown.length ? shown.join(', ') : '(no card)'}  <-  ${item.text}`);
-    }
-
     const actions = {};
     // Written again at the end; a run that stops part-way still leaves what it found.
     const save = (aborted = null) => {
@@ -244,12 +243,48 @@ async function main() {
         // Vault-relative, so the trace names no home directory when it is committed as evidence.
         results: results.map((result) => ({ ...result, path: relative(vault, result.path) })),
         actions,
-        ...(aborted ? { aborted } : {}),
+        // The error can name files under the run root or the home directory; neither is committed.
+        ...(aborted ? { aborted: aborted.replaceAll(settings.root, '<run root>').replaceAll(homedir(), '~') } : {}),
       };
       writeFileSync(join(settings.root, 'similar-run.json'), JSON.stringify(trace, null, 2));
       return trace;
     };
     try {
+      for (const item of fixture.captures) {
+        const started = Date.now();
+        const entry = await capture(browser, item.text);
+        // The overlay closes once this command returns, so this is what the user waits for.
+        const captureMs = Date.now() - started;
+        // The backend's own check sends the card; this asks the same question directly, so the
+        // run knows whether a card is due rather than waiting out a timeout.
+        const expected = await invoke(browser, 'check_similar_notes', { path: entry.path });
+        if (expected?.failed) throw new Error(`check failed: ${expected.failed}`);
+        let card = null;
+        if (expected) {
+          card = await waitForCard(browser, entry.meta.title);
+        } else {
+          await sleep(5_000);
+          card = await readCard(browser, entry.meta.title);
+        }
+        const shown = card?.matches.map((match) => match.title) ?? [];
+        results.push({
+          capture: item.text,
+          kind: item.duplicateOf ? 'duplicate' : item.sameTopic?.length ? 'same topic' : 'unrelated',
+          duplicateOf: item.duplicateOf ?? null,
+          path: entry.path,
+          title: entry.meta.title,
+          captureMs,
+          // From the capture to the card, or to the end of the 5-second wait when none is due.
+          seconds: Math.round((Date.now() - started) / 1000),
+          shown,
+          coverage: card?.coverage ?? null,
+          excerpts: card?.matches.map((match) => match.excerpt) ?? [],
+          missed: Boolean(item.duplicateOf) && !shown.includes(item.duplicateOf),
+          wrong: shown.filter((title) => title !== item.duplicateOf),
+        });
+        console.log(`${shown.length ? shown.join(', ') : '(no card)'}  <-  ${item.text}`);
+      }
+
       const carded = results.filter((result) => result.duplicateOf && result.shown.includes(result.duplicateOf));
       const notePath = (title) => {
         const note = fixture.notes.find((item) => item.title === title);
@@ -424,54 +459,86 @@ async function main() {
         card: await readCard(browser, offline.meta.title),
       };
 
-      // A check that outlasts a vault switch. The backend comes back behind a relay that holds
-      // each connection for DELAY ms.
+      // A check held across a vault switch. The backend comes back behind a relay that can hold
+      // every request until released.
       if (bus) {
-        const DELAY = 8_000;
+        const HOLD = 3_000;
         const relay = spawn('ssh', ['-N', '-o', 'ExitOnForwardFailure=yes', '-L', `127.0.0.1:${OLLAMA_PORT + 1}:127.0.0.1:11434`, settings.ssh], { stdio: 'ignore' });
         process.on('exit', () => relay.kill());
         await waitForPort(OLLAMA_PORT + 1, relay, 'Ollama relay tunnel');
-        const slow = slowBackend(OLLAMA_PORT + 1, DELAY);
-        await slow.listen();
+        const backend = heldBackend(OLLAMA_PORT + 1);
+        await backend.listen();
         const other = join(settings.root, 'other-vault');
         mkdirSync(join(other, '.helixnotes'), { recursive: true });
         writeFileSync(join(other, '.helixnotes', 'vault_id'), randomUUID(), { flag: 'wx' });
+        // Requests carrying `marker` (the capture's text, as the check and the indexer embed it)
+        // that reached the relay since `since`.
+        const sent = (marker, since) =>
+          backend.requests.filter((request) => request.at >= since && request.text.includes(marker)).length;
+        const waitForRequest = (marker, since) =>
+          browser.waitUntil(async () => sent(marker, since) > 0, {
+            timeout: 20_000,
+            timeoutMsg: `no embedding request for "${marker}" reached the backend`,
+          });
 
-        // Control: a slow check with no switch still shows its card, and with the main window
-        // minimized it sends a notification.
+        // Control: a check held and then released, with no switch, still shows its card and,
+        // with the main window minimized, sends a notification.
         await invoke(browser, 'plugin:window|minimize', { label: 'main' });
         await sleep(1_000);
-        const before = notifyCalls(busOutput).length;
-        let started = Date.now();
-        const control = await capture(browser, `${duplicates[2].text} (slow)`);
+        const notifiedBeforeControl = notifyCalls(busOutput).length;
+        backend.hold();
+        let since = Date.now();
+        const control = await capture(browser, `${duplicates[2].text} (held)`);
+        await waitForRequest('(held)', since);
+        await sleep(HOLD);
+        const controlCardWhileHeld = await readCard(browser, control.meta.title);
+        backend.release();
         await waitForCard(browser, control.meta.title);
-        const controlSeconds = Math.round((Date.now() - started) / 1000);
         await sleep(2_000);
-        const controlCalls = notifyCalls(busOutput).length - before;
+        const controlNotifications = notifyCalls(busOutput).length - notifiedBeforeControl;
 
-        // A capture whose check is still waiting on the backend when the vault switches.
-        const afterControl = notifyCalls(busOutput).length;
-        const cardsBeforeSwitch = await cardCount(browser);
-        started = Date.now();
+        // The late check: its embedding is held while the vault switches, then released.
+        const notifiedBeforeLate = notifyCalls(busOutput).length;
+        const cardsBeforeLate = await cardCount(browser);
+        const skippedBeforeLate = skippedChecks(settings.root);
+        backend.hold();
+        since = Date.now();
         const late = await capture(browser, `${duplicates[3].text} (late)`);
-        await switchVault(browser, other);
-        const switchSeconds = (Date.now() - started) / 1000;
-        await sleep(DELAY + 10_000);
+        await waitForRequest('(late)', since);
+        const heldRequests = sent('(late)', since);
+        const switchStarted = Date.now();
+        let switchedAt = null;
+        const switching = switchVault(browser, other).then(() => {
+          switchedAt = Date.now();
+        });
+        // If the switch waits on the held request, release it anyway; the trace then says so.
+        await Promise.race([switching, sleep(10_000)]);
+        const switchedWhileHeld = switchedAt !== null;
+        const releasedAt = Date.now();
+        backend.release();
+        await switching;
+        await sleep(10_000);
         actions.vaultSwitch = {
-          delaySeconds: DELAY / 1000,
-          controlSeconds,
-          controlCard: true,
-          controlNotifications: controlCalls,
-          // The switch must finish while the late check still waits, or it proves nothing.
-          switchSeconds,
-          switchedBeforeCheck: switchSeconds < DELAY / 1000,
+          holdSeconds: HOLD / 1000,
+          // The control's card must wait for the release, or the hold did not hold its check.
+          controlCardWhileHeld: controlCardWhileHeld !== null,
+          controlNotifications,
           lateCapture: late.meta.title,
+          // Embedding requests for the late capture held when the switch started.
+          heldRequests,
+          // The switch must finish while those are held, or it proves nothing.
+          switchedWhileHeld,
+          switchSeconds: (switchedAt - switchStarted) / 1000,
+          answersAfterRelease: backend.answers.filter((at) => at >= releasedAt).length,
+          // 1 when the late check failed (a retired index, or the capture read under the new
+          // vault); 0 when it finished and the vault check dropped it.
+          lateCheckSkipped: skippedBeforeLate === null ? null : skippedChecks(settings.root) - skippedBeforeLate,
           // The control's card stays (the page was not switched); any more is the late one.
-          cardsAfterSwitch: (await cardCount(browser)) - cardsBeforeSwitch,
-          notificationsAfterSwitch: notifyCalls(busOutput).length - afterControl,
+          cardsAfterSwitch: (await cardCount(browser)) - cardsBeforeLate,
+          notificationsAfterSwitch: notifyCalls(busOutput).length - notifiedBeforeLate,
           activeVaultIsOther: (await invoke(browser, 'get_app_config'))?.active_vault === other,
         };
-        slow.close();
+        backend.close();
         relay.kill();
       }
       bus?.kill();
