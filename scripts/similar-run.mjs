@@ -7,17 +7,21 @@
 // in. The vault holds scripts/similarity-fixture.json's notes. Each fixture capture is filed
 // through the command the overlay uses (WebDriver cannot press a global hotkey), and the card
 // it raises in the main window is read back. Then Append, Dismiss, refused Appends on a note
-// edited and a note moved since the check, Open, a capture with a body under its title, and a
-// capture with the backend gone are each tried once.
+// edited and a note moved since the check, Open, a capture with a body under its title, Append
+// with the capture open in the editor, Append with the similar note open, and a capture with the
+// backend gone are each tried once.
 // On Linux, two more duplicates are captured with the main window minimized, and the
 // notifications the app sends are read off the session bus with dbus-monitor. A click on one
 // cannot be scripted, so that stays a hand check.
+// Last, the backend is slowed so a check outlasts a vault switch: one slow check with no switch
+// shows its card, then a switch made while another runs must leave no card and no notification.
 
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { connect, createServer } from 'node:net';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
-import { invoke, options, runMain, sleep, waitForIndex, withApp } from './ask-run.mjs';
+import { OLLAMA_PORT, invoke, options, runMain, sleep, waitForIndex, waitForPort, withApp } from './ask-run.mjs';
 
 const fixture = JSON.parse(readFileSync(new URL('./similarity-fixture.json', import.meta.url), 'utf8'));
 const CARD_TIMEOUT = 60_000;
@@ -113,6 +117,73 @@ function notifyCalls(output) {
         field(message.header, 'destination') === field(header, 'sender'));
       return { replacesId: Number(replacesId), id: reply ? Number(reply.values[0]) : null, summary, body };
     });
+}
+
+// Opens the note titled `title` from the note list, as a click on its row does.
+async function openFromList(browser, title) {
+  const found = await browser.execute((wanted) => {
+    const row = [...document.querySelectorAll('.note-item')].find((item) => {
+      const label = item.querySelector('.note-title')?.getAttribute('title') ?? '';
+      return label === wanted || label.endsWith(`/${wanted}`);
+    });
+    row?.click();
+    return Boolean(row);
+  }, title);
+  if (!found) throw new Error(`the note list does not show "${title}"`);
+  await browser.waitUntil(async () => (await editorTitle(browser)) === title, {
+    timeout: 10_000,
+    timeoutMsg: `"${title}" did not open in the editor`,
+  });
+}
+
+const editorTitle = (browser) => browser.execute(() => document.querySelector('.editor-title input')?.value ?? null);
+const editorText = (browser) => browser.execute(() => document.querySelector('.ProseMirror')?.innerText ?? null);
+const cardCount = (browser) => browser.execute(() => document.querySelectorAll('.similar-card').length);
+
+// Switches to `folder` through the title bar's vault button and the picker, as a user does. The
+// picker's native folder dialog cannot be driven, so the page answers it with `folder`.
+async function switchVault(browser, folder) {
+  await browser.execute((path) => {
+    const internals = window.__TAURI_INTERNALS__;
+    const original = internals.invoke.bind(internals);
+    internals.invoke = (command, args, rest) =>
+      command === 'plugin:dialog|open' ? Promise.resolve(path) : original(command, args, rest);
+    document.querySelector('.switch-vault-btn[title="Change vault folder"]').click();
+  }, folder);
+  const choose = await browser.$('button=Choose vault folder');
+  await choose.waitForExist({ timeout: 10_000 });
+  await browser.execute(() => [...document.querySelectorAll('button')].find((button) => button.innerText.trim() === 'Choose vault folder').click());
+  await browser.waitUntil(() => browser.execute(() => Boolean(document.querySelector('.vault-picker .confirm input'))), { timeout: 10_000 });
+  await browser.execute(() => {
+    document.querySelector('.vault-picker .confirm input').click();
+  });
+  await browser.execute(() => [...document.querySelectorAll('button')].find((button) => button.innerText.trim() === 'Open selected folder').click());
+  await browser.$('button=New Note').waitForExist({ timeout: 30_000 });
+}
+
+// A relay that holds each connection to the backend for `delay` ms before passing it on, so an
+// embedding, and the check waiting on it, finishes late.
+function slowBackend(upstreamPort, delay) {
+  const sockets = new Set();
+  const server = createServer((client) => {
+    sockets.add(client);
+    client.on('error', () => {});
+    client.on('close', () => sockets.delete(client));
+    setTimeout(() => {
+      const upstream = connect(upstreamPort, '127.0.0.1');
+      sockets.add(upstream);
+      upstream.on('error', () => client.destroy());
+      upstream.on('close', () => sockets.delete(upstream));
+      client.pipe(upstream).pipe(client);
+    }, delay);
+  });
+  return {
+    listen: () => new Promise((done) => server.listen(OLLAMA_PORT, '127.0.0.1', done)),
+    close: () => {
+      server.close();
+      for (const socket of sockets) socket.destroy();
+    },
+  };
 }
 
 const trashed = (vault, path) =>
@@ -232,6 +303,48 @@ async function main() {
       };
     }
 
+    const duplicates = fixture.captures.filter((item) => item.duplicateOf);
+
+    // Append with the capture open in the editor: it is saved and closed first, moves to trash,
+    // and is not reopened.
+    {
+      const item = duplicates[0];
+      const entry = await capture(browser, `${item.text} (open capture)`);
+      await waitForCard(browser, entry.meta.title);
+      await openFromList(browser, entry.meta.title);
+      await press(browser, entry.meta.title, 'Append', item.duplicateOf);
+      const card = await waitForCard(browser, entry.meta.title, (current) => current === null || Boolean(current.failure));
+      actions.appendWithCaptureOpen = {
+        capture: entry.meta.title,
+        target: item.duplicateOf,
+        failure: card?.failure ?? null,
+        captureInTrash: !existsSync(entry.path) && trashed(vault, entry.path),
+        targetHasCapture: readFileSync(notePath(item.duplicateOf), 'utf8').includes(entry.meta.title),
+        editorTitle: await editorTitle(browser),
+      };
+    }
+
+    // Append with the similar note open: it is saved and closed first, then reopened showing the
+    // appended capture.
+    {
+      const item = duplicates[1];
+      const entry = await capture(browser, `${item.text} (open target)`);
+      await waitForCard(browser, entry.meta.title);
+      await openFromList(browser, item.duplicateOf);
+      await press(browser, entry.meta.title, 'Append', item.duplicateOf);
+      const card = await waitForCard(browser, entry.meta.title, (current) => current === null || Boolean(current.failure));
+      await browser.waitUntil(async () => (await editorTitle(browser)) === item.duplicateOf, { timeout: 10_000 }).catch(() => {});
+      actions.appendWithTargetOpen = {
+        capture: entry.meta.title,
+        target: item.duplicateOf,
+        failure: card?.failure ?? null,
+        captureInTrash: !existsSync(entry.path) && trashed(vault, entry.path),
+        targetHasCapture: readFileSync(notePath(item.duplicateOf), 'utf8').includes(entry.meta.title),
+        editorTitle: await editorTitle(browser),
+        editorShowsCapture: ((await editorText(browser)) ?? '').includes(entry.meta.title),
+      };
+    }
+
     // The main window minimized: each duplicate also raises a notification that names no note,
     // and the second replaces the first. Every capture above ran with the window focused.
     if (bus) {
@@ -251,7 +364,6 @@ async function main() {
         // The second call names the first one's id, so the service shows it in its place.
         replaced: calls.length === 2 && calls[0].replacesId === 0 && calls[0].id > 0 && calls[1].replacesId === calls[0].id,
       };
-      bus.kill();
     }
 
     // A note moved since the check: the append is refused and nothing is written.
@@ -303,6 +415,57 @@ async function main() {
       saved: existsSync(offline.path),
       card: await readCard(browser, offline.meta.title),
     };
+
+    // A check that outlasts a vault switch. The backend comes back behind a relay that holds
+    // each connection for DELAY ms.
+    if (bus) {
+      const DELAY = 8_000;
+      const relay = spawn('ssh', ['-N', '-o', 'ExitOnForwardFailure=yes', '-L', `127.0.0.1:${OLLAMA_PORT + 1}:127.0.0.1:11434`, settings.ssh], { stdio: 'ignore' });
+      process.on('exit', () => relay.kill());
+      await waitForPort(OLLAMA_PORT + 1, relay, 'Ollama relay tunnel');
+      const slow = slowBackend(OLLAMA_PORT + 1, DELAY);
+      await slow.listen();
+      const other = join(settings.root, 'other-vault');
+      mkdirSync(join(other, '.helixnotes'), { recursive: true });
+      writeFileSync(join(other, '.helixnotes', 'vault_id'), randomUUID(), { flag: 'wx' });
+
+      // Control: a slow check with no switch still shows its card, and with the main window
+      // minimized it sends a notification.
+      await invoke(browser, 'plugin:window|minimize', { label: 'main' });
+      await sleep(1_000);
+      const before = notifyCalls(busOutput).length;
+      let started = Date.now();
+      const control = await capture(browser, `${duplicates[2].text} (slow)`);
+      await waitForCard(browser, control.meta.title);
+      const controlSeconds = Math.round((Date.now() - started) / 1000);
+      await sleep(2_000);
+      const controlCalls = notifyCalls(busOutput).length - before;
+
+      // A capture whose check is still waiting on the backend when the vault switches.
+      const afterControl = notifyCalls(busOutput).length;
+      started = Date.now();
+      const late = await capture(browser, `${duplicates[3].text} (late)`);
+      await switchVault(browser, other);
+      const switchSeconds = (Date.now() - started) / 1000;
+      await sleep(DELAY + 10_000);
+      actions.vaultSwitch = {
+        delaySeconds: DELAY / 1000,
+        controlSeconds,
+        controlCard: true,
+        controlNotifications: controlCalls,
+        // The switch must finish while the late check still waits, or it proves nothing.
+        switchSeconds,
+        switchedBeforeCheck: switchSeconds < DELAY / 1000,
+        lateCapture: late.meta.title,
+        // The control's card belonged to the vault left, so none may remain.
+        cardsAfterSwitch: await cardCount(browser),
+        notificationsAfterSwitch: notifyCalls(busOutput).length - afterControl,
+        activeVaultIsOther: (await invoke(browser, 'get_app_config'))?.active_vault === other,
+      };
+      slow.close();
+      relay.kill();
+    }
+    bus?.kill();
 
     const trace = {
       when: new Date().toISOString(),
