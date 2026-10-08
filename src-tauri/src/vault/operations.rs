@@ -5062,11 +5062,14 @@ mod tests {
         let first = duplicate_note(&source.path, &vault_str).unwrap();
         let second = duplicate_note(&source.path, &vault_str).unwrap();
 
-        let stem = note_file_stem(&format!("{title} copy"));
-        assert_eq!(first.meta.title, format!("{title} copy"));
-        assert_eq!(second.meta.title, format!("{title} copy 2"));
-        assert_eq!(first.relative_path, format!("Areas/{stem}.md"));
-        assert_eq!(second.relative_path, format!("Areas/{stem} 2.md"));
+        // " copy" falls past the cut, so the first free name is the source's own plus " 2".
+        let stem = note_file_stem(&title);
+        assert_eq!(note_file_stem(&format!("{title} copy")), stem);
+        assert_eq!(first.meta.title, format!("{title} copy 2"));
+        assert_eq!(second.meta.title, format!("{title} copy 3"));
+        assert_eq!(first.relative_path, format!("Areas/{stem} 2.md"));
+        assert_eq!(second.relative_path, format!("Areas/{stem} 3.md"));
+        assert_eq!(source.relative_path, format!("Areas/{stem}.md"));
         fs::remove_dir_all(vault).unwrap();
     }
 
