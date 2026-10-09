@@ -3056,9 +3056,11 @@ fn note_file_stem(title: &str) -> String {
         .map(|(_, (at, _))| at);
     match cut {
         // A cut can land just after a space or a full stop; neither belongs at the end of a name.
-        Some(cut) => stem[..cut]
-            .trim_end_matches(|c: char| c.is_whitespace() || c == '.')
-            .to_string(),
+        // A title of nothing but full stops would trim to nothing, and `.md` alone is no note.
+        Some(cut) => match stem[..cut].trim_end_matches(|c: char| c.is_whitespace() || c == '.') {
+            "" => stem[..cut].to_string(),
+            trimmed => trimmed.to_string(),
+        },
         None => stem,
     }
 }
@@ -3080,7 +3082,7 @@ mod tests {
         compare_natural_names, create_note, create_notebook, create_web_clipping, duplicate_note,
         ensure_vault_structure, get_note_switcher_titles, helixnotes_dir, load_notebook_icons,
         load_quick_access, load_vault_state, move_note, move_note_with_outcome, note_file_stem,
-        permanent_delete, read_note, rename_note, restore_notebook, save_note,
+        permanent_delete, read_note, read_vault_note, rename_note, restore_notebook, save_note,
         save_note_if_revision, save_note_or_preserve, save_quick_access, save_vault_state,
         scan_notebooks, set_notebook_icon, DraftSave, ParaCategory,
     };
@@ -5063,6 +5065,20 @@ mod tests {
             create_note(&vault_str, Some("Areas"), &format!("{words}. . and more")).unwrap();
 
         assert_eq!(entry.relative_path, format!("Areas/{words}.md"));
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn a_long_title_of_full_stops_is_not_trimmed_to_an_empty_name() {
+        let vault = scaffolded_vault("all-dots");
+        let vault_str = vault.to_string_lossy().to_string();
+        let title = ".".repeat(101);
+
+        let entry = create_note(&vault_str, Some("Areas"), &title).unwrap();
+
+        assert_eq!(entry.relative_path, format!("Areas/{}.md", ".".repeat(100)));
+        let read = read_vault_note(&vault_str, &entry.path).unwrap();
+        assert_eq!(read.meta.title, title);
         fs::remove_dir_all(vault).unwrap();
     }
 
