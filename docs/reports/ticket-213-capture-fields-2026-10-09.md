@@ -1,6 +1,6 @@
 # Quick capture title and body fields (#213): verification
 
-Dates: 2026-10-08 to 2026-10-09 (UTC−5). Candidate: commit fdde8d5 on `fix/213-capture-fields`.
+Dates: 2026-10-08 to 2026-10-09 (UTC−5). Candidate: commit 638b540 on `fix/213-capture-fields`.
 This report's own commit changes only the reports and their evidence. The design is in two #213
 comments: 6068855989 (the grilling decisions) and 6089263819 (Ctrl+Z and the message size, added
 by Nicolas after the first hand checks).
@@ -29,18 +29,19 @@ the `pnpm verify` on the candidate. Nicolas did the hand checks.
 
 ## Checks on the candidate
 
-Sol ran `pnpm verify` at fdde8d5 on the Fedora 44 laptop (kernel 7.2.8-200.fc44.x86_64). It
+Sol ran `pnpm verify` at 638b540 on the Fedora 44 laptop (kernel 7.2.8-200.fc44.x86_64). It
 passed: svelte-check with no errors or warnings, the Node tests, the Rust tests, rustfmt, clippy
 with warnings denied, and the frontend build. The logs are not committed. The counts are their
 summary lines:
 
 - `ℹ pass 248` and `ℹ fail 0`, from `node --test tests/*.test.mjs`, the 36 `.test.mjs` files
   directly under `tests/` (`ls tests/*.test.mjs | wc -l`).
-- `681 passed; 0 failed; 10 ignored`, from `pnpm test:rust`. The 10 ignored are the live and
+- `682 passed; 0 failed; 10 ignored`, from `pnpm test:rust`. The 10 ignored are the live and
   measurement tests (`grep -rc '#\[ignore' src-tauri/src` sums to 10), `similarity_calibration`
   among them.
 
-Earlier runs by the Sonnet agent passed at 5435dba and 1da54a7. The first `pnpm verify`, at 6cc023f, failed one new test: the expectation for duplicating a
+Sol's run at fdde8d5 passed too, and so did earlier runs by the Sonnet agent at 5435dba and
+1da54a7. The first `pnpm verify`, at 6cc023f, failed one new test: the expectation for duplicating a
 long-titled note was wrong, not the code. The cut name of "<title> copy" is the source's own
 name, so the first copy correctly takes number 2. 5435dba fixed the test.
 
@@ -49,10 +50,10 @@ request; it had not run when this report was written.
 
 ## Evidence from b672554
 
-The calibration and the end-to-end run were done at b672554. They still apply to fdde8d5:
+The calibration and the end-to-end run were done at b672554. They still apply to 638b540:
 
-- No script changed: `git diff --stat b672554 fdde8d5 -- scripts` prints nothing.
-- The only backend change is in `note_file_stem` (`git diff --stat b672554 fdde8d5 -- src-tauri`
+- No script changed: `git diff --stat b672554 638b540 -- scripts` prints nothing.
+- The only backend change is in `note_file_stem` (`git diff --stat b672554 638b540 -- src-tauri`
   lists only `vault/operations.rs`). It changes a file name only past 100 characters or 200 bytes.
   The fixture's capture titles are short ASCII, so every note in the run is named the same.
 - The other changes are in the frontend: the text-undo helper, the root layout, the overlay page,
@@ -143,6 +144,11 @@ spec, standards, adversarial. Standards had no findings. Three P2 findings follo
 | 100 characters of Chinese or emoji are 300 to 400 bytes, over Linux's 255 | Cap at 200 UTF-8 bytes as well; tested with 3- and 4-byte characters |
 | A rename's list entry built its `relative_path` from the title, so a cut name left a path that does not exist (a Quick Access pin made before the next refresh would point at it) | `withRenamedFile` in `utils/paths.ts` takes the name from the returned path, in `NoteList.svelte` and `Editor.svelte` |
 
+Round 2 reviewed 65fe2a3 (fdde8d5 plus the report). Spec and standards had no findings. One
+adversarial P2: a title of more than 100 full stops was cut, then trimmed to an empty name, so the
+note was written as `.md` and could not be read back. 638b540 keeps the cut untrimmed when trimming
+would empty it, with a test that saves such a note and reads it back.
+
 The rename fix also covers titles with characters the backend replaces (`a/b` is filed as
 `a-b.md`), which built the same wrong path before #213.
 
@@ -151,7 +157,7 @@ The rename fix also covers titles with characters the backend replaces (`a/b` is
 - CI's `windows-rust` job on the pull request.
 - The rename fix from the final review (`withRenamedFile`) has unit tests only. No hand check
   renamed a note to a long title in an installed build. The overlay hand checks on 1da54a7 still
-  apply to fdde8d5, which does not change the overlay.
+  apply to 638b540, which does not change the overlay.
 - A rename to a long title whose first 100 characters match another note's in the same folder is
   refused with "A note with that name already exists". This was argued from the code, not tested.
   It is rare, and the message is accurate about the file name.
