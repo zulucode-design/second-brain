@@ -158,33 +158,35 @@
 		aria-label="Body"
 	></textarea>
 
-	{#if error}
-		<p class="error">{error}</p>
-	{/if}
+	<div class="footer">
+		{#if confirmingDiscard}
+			<div class="bar">
+				<span>Discard this capture?</span>
+				<kbd>D</kbd> discard <kbd>S</kbd> save <kbd>Esc</kbd> keep writing
+			</div>
+		{:else if phase === 'choosing'}
+			<div class="bar categories">
+				{#each CAPTURE_CATEGORIES as category, index}
+					<button
+						type="button"
+						class:selected={index === selected}
+						onclick={() => save(category)}
+					>
+						<kbd>{index + 1}</kbd>
+						{category}
+					</button>
+				{/each}
+			</div>
+		{:else}
+			<div class="bar hint">
+				<kbd>Ctrl</kbd>+<kbd>Enter</kbd> choose a category <kbd>Esc</kbd> dismiss
+			</div>
+		{/if}
 
-	{#if confirmingDiscard}
-		<div class="bar">
-			<span>Discard this capture?</span>
-			<kbd>D</kbd> discard <kbd>S</kbd> save <kbd>Esc</kbd> keep writing
-		</div>
-	{:else if phase === 'choosing'}
-		<div class="bar categories">
-			{#each CAPTURE_CATEGORIES as category, index}
-				<button
-					type="button"
-					class:selected={index === selected}
-					onclick={() => save(category)}
-				>
-					<kbd>{index + 1}</kbd>
-					{category}
-				</button>
-			{/each}
-		</div>
-	{:else}
-		<div class="bar hint">
-			<kbd>Ctrl</kbd>+<kbd>Enter</kbd> choose a category <kbd>Esc</kbd> dismiss
-		</div>
-	{/if}
+		{#if error}
+			<p class="error" role="alert">{error}</p>
+		{/if}
+	</div>
 </div>
 
 <style>
@@ -258,9 +260,18 @@
 		font-size: 0.76rem;
 	}
 
+	.footer {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+
+	/* Bottom right, beside the keys, and larger than them: it is the one thing to read here. */
 	.error {
-		margin: 0;
+		margin: 0 0 0 auto;
 		color: var(--text-primary);
-		font-size: 0.82rem;
+		font-size: 0.95rem;
+		font-weight: 600;
+		text-align: right;
 	}
 </style>
