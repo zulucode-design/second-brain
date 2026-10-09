@@ -1,12 +1,13 @@
 # Quick capture title and body fields (#213): verification
 
-Dates: 2026-10-08 to 2026-10-09 (UTC−5). Candidate: commit 1da54a7 on `fix/213-capture-fields`.
+Dates: 2026-10-08 to 2026-10-09 (UTC−5). Candidate: commit fdde8d5 on `fix/213-capture-fields`.
 This report's own commit changes only the reports and their evidence. The design is in two #213
 comments: 6068855989 (the grilling decisions) and 6089263819 (Ctrl+Z and the message size, added
 by Nicolas after the first hand checks).
 
-Sol's usage had run out until 2026-10-09 19:28, so a Claude Sonnet 5.5 agent at extra-high effort
-ran the tests and checks in her place, as AGENTS.md (Roles) provides. Nicolas did the hand checks.
+Until 2026-10-09 a Claude Sonnet 5.5 agent at extra-high effort ran the tests and checks in Sol's
+place, because her usage had run out, as AGENTS.md (Roles) provides. Sol ran the final review and
+the `pnpm verify` on the candidate. Nicolas did the hand checks.
 
 ## What changed
 
@@ -28,18 +29,18 @@ ran the tests and checks in her place, as AGENTS.md (Roles) provides. Nicolas di
 
 ## Checks on the candidate
 
-The agent ran `pnpm verify` at 1da54a7 on the Fedora 44 laptop (kernel 7.2.8-200.fc44.x86_64). It
+Sol ran `pnpm verify` at fdde8d5 on the Fedora 44 laptop (kernel 7.2.8-200.fc44.x86_64). It
 passed: svelte-check with no errors or warnings, the Node tests, the Rust tests, rustfmt, clippy
 with warnings denied, and the frontend build. The logs are not committed. The counts are their
 summary lines:
 
-- 247 passed, 0 failed, from `node --test tests/*.test.mjs`, the 36 `.test.mjs` files directly
-  under `tests/` (`ls tests/*.test.mjs | wc -l`).
-- `680 passed; 0 failed; 10 ignored`, from `pnpm test:rust`. The 10 ignored are the live and
+- `ℹ pass 248` and `ℹ fail 0`, from `node --test tests/*.test.mjs`, the 36 `.test.mjs` files
+  directly under `tests/` (`ls tests/*.test.mjs | wc -l`).
+- `681 passed; 0 failed; 10 ignored`, from `pnpm test:rust`. The 10 ignored are the live and
   measurement tests (`grep -rc '#\[ignore' src-tauri/src` sums to 10), `similarity_calibration`
   among them.
 
-The first `pnpm verify`, at 6cc023f, failed one new test: the expectation for duplicating a
+Earlier runs by the Sonnet agent passed at 5435dba and 1da54a7. The first `pnpm verify`, at 6cc023f, failed one new test: the expectation for duplicating a
 long-titled note was wrong, not the code. The cut name of "<title> copy" is the source's own
 name, so the first copy correctly takes number 2. 5435dba fixed the test.
 
@@ -48,10 +49,15 @@ request; it had not run when this report was written.
 
 ## Evidence from b672554
 
-The calibration and the end-to-end run were done at b672554. They still apply to 1da54a7, which
-changes no backend code and no script: `git diff --stat b672554 1da54a7 -- src-tauri scripts`
-prints nothing. Its four changed files are the text-undo helper and its test, the root layout, and
-the overlay page.
+The calibration and the end-to-end run were done at b672554. They still apply to fdde8d5:
+
+- No script changed: `git diff --stat b672554 fdde8d5 -- scripts` prints nothing.
+- The only backend change is in `note_file_stem` (`git diff --stat b672554 fdde8d5 -- src-tauri`
+  lists only `vault/operations.rs`). It changes a file name only past 100 characters or 200 bytes.
+  The fixture's capture titles are short ASCII, so every note in the run is named the same.
+- The other changes are in the frontend: the text-undo helper, the root layout, the overlay page,
+  and the rename callers in the note list and editor. The run calls commands directly and never
+  renames.
 
 ### The similarity bar
 
@@ -143,6 +149,9 @@ The rename fix also covers titles with characters the backend replaces (`a/b` is
 ## Not proven
 
 - CI's `windows-rust` job on the pull request.
+- The rename fix from the final review (`withRenamedFile`) has unit tests only. No hand check
+  renamed a note to a long title in an installed build. The overlay hand checks on 1da54a7 still
+  apply to fdde8d5, which does not change the overlay.
 - A rename to a long title whose first 100 characters match another note's in the same folder is
   refused with "A note with that name already exists". This was argued from the code, not tested.
   It is rare, and the message is accurate about the file name.
