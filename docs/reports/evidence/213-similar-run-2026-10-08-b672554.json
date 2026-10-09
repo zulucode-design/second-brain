@@ -1,0 +1,371 @@
+{
+  "when": "2026-10-08T21:11:25.606Z",
+  "app": "second-brain",
+  "index": {
+    "queuedNotes": 0,
+    "model": "embeddinggemma",
+    "indexedNotes": 13
+  },
+  "summary": {
+    "captures": 17,
+    "duplicatesFound": 8,
+    "duplicates": 8,
+    "wrongCards": 0
+  },
+  "results": [
+    {
+      "capture": "Shed spending",
+      "kind": "duplicate",
+      "duplicateOf": "Garden shed budget",
+      "path": "Areas/Shed spending.md",
+      "title": "Shed spending",
+      "captureMs": 95,
+      "seconds": 3,
+      "shown": [
+        "Garden shed budget"
+      ],
+      "coverage": null,
+      "excerpts": [
+        "Shed budget so far: foundation blocks 340 euros, cedar cladding 1,150 euros, roofing felt and battens 410 euros, door and window 520 euros. Total committed 2,420 euros, leaving 780 euros of the 3,200 ceiling for fixings, paint and surprises."
+      ],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Shed wall wood",
+      "kind": "duplicate",
+      "duplicateOf": "Shed materials decision",
+      "path": "Areas/Shed wall wood.md",
+      "title": "Shed wall wood",
+      "captureMs": 76,
+      "seconds": 0,
+      "shown": [
+        "Shed materials decision"
+      ],
+      "coverage": null,
+      "excerpts": [
+        "Decided on western red cedar cladding instead of pressure-treated pine. Cedar costs about 300 euros more but needs no preservative and weathers to silver. Pine was rejected because the treated boards from the yard were warped."
+      ],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Starter routine",
+      "kind": "duplicate",
+      "duplicateOf": "Sourdough starter feeding",
+      "path": "Areas/Starter routine.md",
+      "title": "Starter routine",
+      "captureMs": 76,
+      "seconds": 0,
+      "shown": [
+        "Sourdough starter feeding"
+      ],
+      "coverage": null,
+      "excerpts": [
+        "Starter routine: feed 1:1:1 by weight (starter, flour, water) every 12 hours and keep it near 24 degrees. It peaks about 6 hours after feeding; use it for dough at the peak."
+      ],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Cold brew ratio",
+      "kind": "duplicate",
+      "duplicateOf": "Cold brew coffee guide",
+      "path": "Areas/Cold brew ratio.md",
+      "title": "Cold brew ratio",
+      "captureMs": 115,
+      "seconds": 0,
+      "shown": [
+        "Cold brew coffee guide"
+      ],
+      "coverage": null,
+      "excerpts": [
+        "Cold brew basics: coarse grind, 1 part coffee to 8 parts water by weight, steep in the fridge 16 to 18 hours, filter twice, then dilute the concentrate 1:1 before drinking."
+      ],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Espresso recipe",
+      "kind": "duplicate",
+      "duplicateOf": "Espresso dialing in",
+      "path": "Areas/Espresso recipe.md",
+      "title": "Espresso recipe",
+      "captureMs": 129,
+      "seconds": 0,
+      "shown": [
+        "Espresso dialing in"
+      ],
+      "coverage": null,
+      "excerpts": [
+        "Espresso with the new beans: 18 g of coffee in, 36 g out, in about 28 seconds. Grind finer if it runs fast and sour, coarser if it runs slow and bitter."
+      ],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Knee pain on runs",
+      "kind": "duplicate",
+      "duplicateOf": "Knee pain after long runs",
+      "path": "Areas/Knee pain on runs.md",
+      "title": "Knee pain on runs",
+      "captureMs": 74,
+      "seconds": 2,
+      "shown": [
+        "Knee pain after long runs"
+      ],
+      "coverage": null,
+      "excerpts": [
+        "Pain on the outside of the right knee starts around 10 km into long runs. Probably the IT band. Foam rolling the outer thigh and adding hip strength work twice a week helps."
+      ],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Habit stacking",
+      "kind": "duplicate",
+      "duplicateOf": "Book notes: Atomic Habits",
+      "path": "Areas/Habit stacking.md",
+      "title": "Habit stacking",
+      "captureMs": 83,
+      "seconds": 0,
+      "shown": [
+        "Book notes: Atomic Habits"
+      ],
+      "coverage": null,
+      "excerpts": [
+        "Habit stacking: attach a new habit to one you already do. Design the environment so good habits are the easy default. Aim to get 1% better each day; identity follows repeated small actions."
+      ],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Lisbon plans",
+      "kind": "duplicate",
+      "duplicateOf": "Lisbon trip planning",
+      "path": "Areas/Lisbon plans.md",
+      "title": "Lisbon plans",
+      "captureMs": 133,
+      "seconds": 0,
+      "shown": [
+        "Lisbon trip planning"
+      ],
+      "coverage": null,
+      "excerpts": [
+        "Lisbon trip: flights on 14 November, a hotel in Alfama for four nights. Ride tram 28, see the Belém tower, and get pastel de nata at Manteigaria."
+      ],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Shed gutter idea",
+      "kind": "same topic",
+      "duplicateOf": null,
+      "path": "Areas/Shed gutter idea.md",
+      "title": "Shed gutter idea",
+      "captureMs": 120,
+      "seconds": 5,
+      "shown": [],
+      "coverage": null,
+      "excerpts": [],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Rye sourdough attempt",
+      "kind": "same topic",
+      "duplicateOf": null,
+      "path": "Areas/Rye sourdough attempt.md",
+      "title": "Rye sourdough attempt",
+      "captureMs": 82,
+      "seconds": 5,
+      "shown": [],
+      "coverage": null,
+      "excerpts": [],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "New burr grinder",
+      "kind": "same topic",
+      "duplicateOf": null,
+      "path": "Areas/New burr grinder.md",
+      "title": "New burr grinder",
+      "captureMs": 78,
+      "seconds": 5,
+      "shown": [],
+      "coverage": null,
+      "excerpts": [],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Half marathon in March",
+      "kind": "same topic",
+      "duplicateOf": null,
+      "path": "Areas/Half marathon in March.md",
+      "title": "Half marathon in March",
+      "captureMs": 86,
+      "seconds": 5,
+      "shown": [],
+      "coverage": null,
+      "excerpts": [],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "The Psychology of Money",
+      "kind": "same topic",
+      "duplicateOf": null,
+      "path": "Areas/The Psychology of Money.md",
+      "title": "The Psychology of Money",
+      "captureMs": 88,
+      "seconds": 5,
+      "shown": [],
+      "coverage": null,
+      "excerpts": [],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Porto day trip",
+      "kind": "same topic",
+      "duplicateOf": null,
+      "path": "Areas/Porto day trip.md",
+      "title": "Porto day trip",
+      "captureMs": 78,
+      "seconds": 5,
+      "shown": [],
+      "coverage": null,
+      "excerpts": [],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Dentist",
+      "kind": "unrelated",
+      "duplicateOf": null,
+      "path": "Areas/Dentist.md",
+      "title": "Dentist",
+      "captureMs": 75,
+      "seconds": 7,
+      "shown": [],
+      "coverage": null,
+      "excerpts": [],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Lighthouse story idea",
+      "kind": "unrelated",
+      "duplicateOf": null,
+      "path": "Areas/Lighthouse story idea.md",
+      "title": "Lighthouse story idea",
+      "captureMs": 89,
+      "seconds": 5,
+      "shown": [],
+      "coverage": null,
+      "excerpts": [],
+      "missed": false,
+      "wrong": []
+    },
+    {
+      "capture": "Bathroom bulb and smoke alarm",
+      "kind": "unrelated",
+      "duplicateOf": null,
+      "path": "Areas/Bathroom bulb and smoke alarm.md",
+      "title": "Bathroom bulb and smoke alarm",
+      "captureMs": 82,
+      "seconds": 7,
+      "shown": [],
+      "coverage": null,
+      "excerpts": [],
+      "missed": false,
+      "wrong": []
+    }
+  ],
+  "actions": {
+    "append": {
+      "capture": "Shed spending",
+      "target": "Garden shed budget",
+      "keptOriginal": true,
+      "marked": true,
+      "hasCapture": true,
+      "captureGone": true,
+      "captureInTrash": true,
+      "undoable": true
+    },
+    "dismiss": {
+      "capture": "Shed wall wood",
+      "unchanged": true
+    },
+    "changedNote": {
+      "capture": "Starter routine",
+      "failure": "One of the notes changed since the check, so nothing was added.",
+      "unchanged": true
+    },
+    "appendWithCaptureOpen": {
+      "capture": "Shed spending (open capture)",
+      "target": "Garden shed budget",
+      "failure": null,
+      "captureInTrash": true,
+      "targetHasCapture": true,
+      "editorTitle": null
+    },
+    "appendWithTargetOpen": {
+      "capture": "Shed wall wood (open target)",
+      "target": "Shed materials decision",
+      "failure": null,
+      "captureInTrash": true,
+      "targetHasCapture": true,
+      "editorTitle": "Shed materials decision",
+      "editorShowsCapture": true
+    },
+    "notification": {
+      "whileFocused": 0,
+      "calls": [
+        {
+          "replacesId": 0,
+          "id": 65,
+          "summary": "Similar note found for your capture",
+          "body": "Open Second Brain to review."
+        },
+        {
+          "replacesId": 65,
+          "id": 65,
+          "summary": "2 captures have similar notes",
+          "body": "Open Second Brain to review."
+        }
+      ],
+      "replaced": true
+    },
+    "movedNote": {
+      "capture": "Knee pain on runs",
+      "failure": "That note is no longer there, so nothing was added.",
+      "unchanged": true
+    },
+    "open": {
+      "capture": "Habit stacking",
+      "target": "Book notes: Atomic Habits",
+      "editorTitle": "Book notes: Atomic Habits"
+    },
+    "offline": {
+      "saved": true,
+      "card": null
+    },
+    "vaultSwitch": {
+      "holdSeconds": 3,
+      "controlCardWhileHeld": false,
+      "controlNotifications": 1,
+      "lateCapture": "Cold brew ratio (late)",
+      "heldRequests": 1,
+      "switchedWhileHeld": true,
+      "switchSeconds": 0.028,
+      "answersAfterRelease": 3,
+      "lateCheckSkipped": 1,
+      "cardsAfterSwitch": 0,
+      "notificationsAfterSwitch": 0,
+      "activeVaultIsOther": true
+    }
+  }
+}

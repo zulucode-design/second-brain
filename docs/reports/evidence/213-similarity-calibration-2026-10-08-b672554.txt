@@ -1,0 +1,121 @@
+# similarity_calibration at b672554, run on 2026-10-08 (16:07 -05:00) on the Fedora 44 laptop by a
+# Claude Sonnet 5.5 agent standing in for Sol, whose usage had run out.
+# SB_OLLAMA_URL=http://127.0.0.1:11437, an ssh -L tunnel to the desktop's usual Ollama on 127.0.0.1:11434.
+# Ollama 0.35.1; embeddinggemma:latest, digest 85462619ee72, the same weights as the #9 calibration.
+# Captures are a title and a body (#213). Everything below this header is the test's output, unchanged.
+Shed spending
+  duplicate of: Garden shed budget
+  0.778 Garden shed budget
+  0.511 Shed permit check
+  0.455 Shed materials decision
+  0.237 Sourdough starter feeding
+  0.233 Tax documents checklist
+Shed wall wood
+  duplicate of: Shed materials decision
+  0.813 Shed materials decision
+  0.520 Garden shed budget
+  0.424 Shed permit check
+  0.278 Sourdough hydration notes
+Starter routine
+  duplicate of: Sourdough starter feeding
+  0.820 Sourdough starter feeding
+  0.452 Sourdough hydration notes
+  0.438 Cold brew coffee guide
+  0.320 Espresso dialing in
+  0.279 Running plan October
+  0.266 Book notes: Atomic Habits
+  0.229 Garden shed budget
+  0.223 Knee pain after long runs
+Cold brew ratio
+  duplicate of: Cold brew coffee guide
+  0.907 Cold brew coffee guide
+  0.571 Espresso dialing in
+  0.451 Sourdough starter feeding
+  0.370 Sourdough hydration notes
+  0.227 Book notes: Atomic Habits
+  0.220 Running plan October
+Espresso recipe
+  duplicate of: Espresso dialing in
+  0.811 Espresso dialing in
+  0.532 Cold brew coffee guide
+  0.319 Sourdough starter feeding
+  0.302 Sourdough hydration notes
+  0.248 Running plan October
+  0.220 Book notes: Atomic Habits
+Knee pain on runs
+  duplicate of: Knee pain after long runs
+  0.917 Knee pain after long runs
+  0.395 Running plan October
+  0.277 Sourdough hydration notes
+  0.236 Espresso dialing in
+Habit stacking
+  duplicate of: Book notes: Atomic Habits
+  0.841 Book notes: Atomic Habits
+  0.417 Book notes: Deep Work
+  0.304 Cold brew coffee guide
+  0.275 Sourdough starter feeding
+  0.261 Espresso dialing in
+  0.257 Running plan October
+Lisbon plans
+  duplicate of: Lisbon trip planning
+  0.877 Lisbon trip planning
+  0.240 Running plan October
+Shed gutter idea
+  duplicate of: -
+  0.473 Garden shed budget
+  0.467 Shed permit check
+  0.416 Shed materials decision
+  0.242 Sourdough hydration notes
+  0.235 Tax documents checklist
+  0.230 Sourdough starter feeding
+  0.228 Book notes: Deep Work
+Rye sourdough attempt
+  duplicate of: -
+  0.523 Sourdough hydration notes
+  0.512 Sourdough starter feeding
+  0.338 Cold brew coffee guide
+  0.316 Shed materials decision
+  0.266 Espresso dialing in
+  0.255 Garden shed budget
+  0.237 Knee pain after long runs
+New burr grinder
+  duplicate of: -
+  0.474 Espresso dialing in
+  0.358 Cold brew coffee guide
+  0.280 Sourdough hydration notes
+  0.260 Shed materials decision
+  0.228 Garden shed budget
+Half marathon in March
+  duplicate of: -
+  0.477 Running plan October
+  0.382 Knee pain after long runs
+  0.269 Tax documents checklist
+  0.269 Shed permit check
+  0.252 Espresso dialing in
+  0.251 Cold brew coffee guide
+The Psychology of Money
+  duplicate of: -
+  0.319 Book notes: Atomic Habits
+  0.296 Book notes: Deep Work
+Porto day trip
+  duplicate of: -
+  0.491 Lisbon trip planning
+  0.266 Cold brew coffee guide
+  0.264 Running plan October
+  0.229 Espresso dialing in
+  0.227 Sourdough starter feeding
+  0.225 Garden shed budget
+Dentist
+  duplicate of: -
+  0.291 Running plan October
+  0.286 Book notes: Deep Work
+  0.244 Tax documents checklist
+Lighthouse story idea
+  duplicate of: -
+  0.244 Book notes: Atomic Habits
+Bathroom bulb and smoke alarm
+  duplicate of: -
+  0.266 Garden shed budget
+  0.257 Book notes: Atomic Habits
+  0.222 Tax documents checklist
+lowest duplicate score 0.778; highest score of any other note 0.571
