@@ -3038,15 +3038,25 @@ pub fn get_quick_access_notes(vault_path: &str) -> Result<Vec<NoteEntry>, String
 /// full length in the frontmatter. Uncapped, a sentence-long title could not be saved at all:
 /// Linux refuses names over 255 bytes.
 const NOTE_FILE_STEM_CHARS: usize = 100;
+/// The same limit in UTF-8 bytes, for titles in scripts that take 3 or 4 bytes a character. It
+/// leaves room under 255 for a collision number such as " 12" and the `.md`.
+const NOTE_FILE_STEM_BYTES: usize = 200;
 
 /// The file name, without `.md`, for a note titled `title`.
 ///
 /// Attachments keep plain `sanitize_filename`: cutting theirs would cut off the extension.
 fn note_file_stem(title: &str) -> String {
     let stem = sanitize_filename(title);
-    match stem.char_indices().nth(NOTE_FILE_STEM_CHARS) {
+    let cut = stem
+        .char_indices()
+        .enumerate()
+        .find(|&(count, (at, c))| {
+            count == NOTE_FILE_STEM_CHARS || at + c.len_utf8() > NOTE_FILE_STEM_BYTES
+        })
+        .map(|(_, (at, _))| at);
+    match cut {
         // A cut can land just after a space or a full stop; neither belongs at the end of a name.
-        Some((cut, _)) => stem[..cut]
+        Some(cut) => stem[..cut]
             .trim_end_matches(|c: char| c.is_whitespace() || c == '.')
             .to_string(),
         None => stem,
@@ -5022,6 +5032,24 @@ mod tests {
         assert_eq!(first.meta.title, title);
         let raw = fs::read_to_string(&first.path).unwrap();
         assert_eq!(frontmatter::parse_note(&raw, "x.md").0.title, title);
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn a_title_in_wide_characters_is_cut_by_bytes_and_still_saves() {
+        // 100 three- or four-byte characters would be 300 or 400 bytes, over Linux's 255.
+        let vault = scaffolded_vault("wide-title");
+        let vault_str = vault.to_string_lossy().to_string();
+        for (title, kept) in [
+            ("中".repeat(150), "中".repeat(66)),
+            ("😀".repeat(150), "😀".repeat(50)),
+        ] {
+            let first = create_note(&vault_str, Some("Areas"), &title).unwrap();
+            let second = create_note(&vault_str, Some("Areas"), &title).unwrap();
+            assert_eq!(first.relative_path, format!("Areas/{kept}.md"));
+            assert_eq!(second.relative_path, format!("Areas/{kept} 1.md"));
+            assert_eq!(first.meta.title, title);
+        }
         fs::remove_dir_all(vault).unwrap();
     }
 

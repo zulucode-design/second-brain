@@ -61,7 +61,7 @@
 	import { clearFormatting } from '$lib/editor/clearFormatting';
 	import { serializeInlineMarkdown } from '$lib/editor/markdown';
 	import { replaceWithWikiLink } from '$lib/editor/wikiLinks';
-	import { assetSourceToMarkdown, assetUrlToLocalPath, normalizeLocalAssetPath, resolveVaultFilePath } from '$lib/utils/paths';
+	import { assetSourceToMarkdown, assetUrlToLocalPath, normalizeLocalAssetPath, resolveVaultFilePath, withRenamedFile } from '$lib/utils/paths';
 	import { clampMenuPosition, placeSubmenu } from '$lib/utils/menu-position';
 	import GraphView from './GraphView.svelte';
 	import TagSuggestInput from './TagSuggestInput.svelte';
@@ -6337,7 +6337,7 @@
 								if (titleWasStripped) strippedTitle = newTitle;
 								notes.update(list => list.map(n =>
 									n.path === oldPath
-										? { ...n, path: newPath, relative_path: n.relative_path.replace(/[^/]+$/, newTitle + '.md'), meta: { ...n.meta, title: newTitle } }
+										? { ...n, path: newPath, relative_path: withRenamedFile(n.relative_path, newPath), meta: { ...n.meta, title: newTitle } }
 										: n
 								));
 								// Refresh wiki-link titles cache so links resolve to renamed note

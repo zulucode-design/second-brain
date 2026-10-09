@@ -16,9 +16,11 @@ ran the tests and checks in her place, as AGENTS.md (Roles) provides. Nicolas di
   prompt's S follows the same rule. Esc asks before discarding when either field has text.
 - `quick_capture_note` takes `title` and `body` and refuses either one empty.
   `hotkey::capture::validate` replaces `split`.
-- Note file names are cut to 100 characters (`note_file_stem` in `vault/operations.rs`) for create,
-  web clipping, rename and duplicate. The frontmatter title keeps its full length. Attachments
-  keep plain `sanitize_filename`, so their extensions are never cut.
+- Note file names are cut to 100 characters and 200 UTF-8 bytes (`note_file_stem` in
+  `vault/operations.rs`) for create, web clipping, rename and duplicate. The frontmatter title keeps
+  its full length. Attachments keep plain `sanitize_filename`, so their extensions are never cut.
+  After a rename, the note list takes the new file name from the path the backend returns, not
+  from the title.
 - Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y undo and redo in plain inputs and textareas in every window.
 - The similarity fixture's 17 captures each gained a short title. `scripts/similar-run.mjs` and
   `similarity_calibration` send both fields. The run's "capture with a body under its title" check
@@ -123,6 +125,20 @@ build showed Ctrl+Z clearing the text in all three fields.
 
 The probe's keys are synthesized by WebDriver, so on its own it is weaker proof than a real key
 press. Nicolas's hand checks on both machines are the real key presses.
+
+## Final review
+
+Sol (Codex `gpt-6.1-sol`, effort high) reviewed `git diff origin/main...35e1d9a` in three phases:
+spec, standards, adversarial. Standards had no findings. Three P2 findings followed:
+
+| Finding | Fix |
+|---|---|
+| Trailing dots stay on a name that is not cut (`Buy paint etc..md`), against the decision's wording | The decision's stated reason was wrong, so it is corrected on #213 (comment 6089869944) and the code stays: `.md` follows every name, and trimming every title would name `...` as the hidden file `.md` |
+| 100 characters of Chinese or emoji are 300 to 400 bytes, over Linux's 255 | Cap at 200 UTF-8 bytes as well; tested with 3- and 4-byte characters |
+| A rename's list entry built its `relative_path` from the title, so a cut name left a path that does not exist (a Quick Access pin made before the next refresh would point at it) | `withRenamedFile` in `utils/paths.ts` takes the name from the returned path, in `NoteList.svelte` and `Editor.svelte` |
+
+The rename fix also covers titles with characters the backend replaces (`a/b` is filed as
+`a-b.md`), which built the same wrong path before #213.
 
 ## Not proven
 
