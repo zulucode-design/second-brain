@@ -55,6 +55,7 @@
 	import TagSuggestInput from './TagSuggestInput.svelte';
 	import { compactLayout } from '$lib/stores/app';
 	import { noteCreatedInApp } from '$lib/stores/similar';
+	import { withRenamedFile } from '$lib/utils/paths';
 	const isCompact = $derived($compactLayout);
 
 	let { onOpenNote = async (_path: string, _task?: TaskItem, _holding?: boolean) => false, onNoteMoved = () => {}, onBeforeNoteSwitch = async () => true, onBeforeNoteDuplicate = async () => true, onBeforeOpenWindow = async () => true, onRelocateActiveDocument = async (_path: string, _reason: string, _mutation: () => Promise<RelocationOutcome>) => null, onUpdateActiveMetadata = async (_path: string, _patch: Partial<NoteMeta>, _reason: string) => false, onNoteCreated = () => {}, onRequestCreateNote = () => {}, onToggleTask = async (_t: TaskItem) => {}, onSetTaskPriority = async (_t: TaskItem, _p: string | null) => {}, onSetTaskDue = async (_t: TaskItem, _d: string | null) => {} }: {
@@ -454,7 +455,7 @@
 			// Update local store immediately (avoid full vault re-scan)
 			$notes = $notes.map(n =>
 				n.path === note.path
-					? { ...n, path: newPath, relative_path: n.relative_path.replace(/[^/]+$/, newTitle + '.md'), meta: { ...n.meta, title: newTitle } }
+					? { ...n, path: newPath, relative_path: withRenamedFile(n.relative_path, newPath), meta: { ...n.meta, title: newTitle } }
 					: n
 			);
 		} catch (e) {

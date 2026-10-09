@@ -12,9 +12,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// The score a note must reach to count as saying the same thing. Calibrated against live
-/// embeddinggemma on scripts/similarity-fixture.json (#9): its 8 reworded duplicates scored
-/// 0.769 to 0.850 against their notes, and no other pair, same-topic notes included, passed
-/// 0.533. The bar sits midway. Recalibrate when the embedding model changes.
+/// embeddinggemma on scripts/similarity-fixture.json (#9). With captures as a title and a body
+/// (#213), its 8 reworded duplicates scored 0.778 to 0.917 against their notes, and no other
+/// pair, same-topic notes included, passed 0.571. The bar sits in that gap. Recalibrate when the
+/// embedding model changes.
 const SIMILAR_SCORE: f32 = 0.65;
 /// How many similar notes a card shows; the rest are only counted.
 const SHOWN_PER_CARD: usize = 3;

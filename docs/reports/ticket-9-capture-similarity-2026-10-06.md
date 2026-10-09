@@ -376,12 +376,15 @@ The list as written for e5ae7af. Items settled after the merge are marked; the r
   argued from the code.
 - Calibration on notes with a separate title and body. Every fixture capture is one line, so its
   body is empty (#213). The run's one capture with a body matched as expected, which is a single
-  case, not a calibration.
+  case, not a calibration. **Settled 2026-10-08 by #213**: the fixture's captures now have a title
+  and a body, and the recalibration at b672554 kept the 0.65 bar (see
+  [the #213 report](ticket-213-capture-fields-2026-10-09.md)).
 - The Do Not Disturb path: the card waits as designed, and nothing is logged. This was seen by
   hand, not tested.
 
 ## Seen, not part of #9
 
 - **One-line quick captures become all title** (#213): the first line of a capture is its title,
-  so a one-line thought leaves the body empty. Nicolas wants it resolved before #10.
+  so a one-line thought leaves the body empty. Nicolas wants it resolved before #10. **Resolved by
+  #213**: the overlay now has separate, required Title and Body fields.
 - GNOME labels the main window "Tauri App" (its title bar and the "… is ready" notice).

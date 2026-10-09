@@ -1157,9 +1157,11 @@ pub fn quick_capture_note(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     category: String,
-    text: String,
+    title: String,
+    body: String,
 ) -> Result<NoteEntry, String> {
-    let capture = hotkey::capture::split(&text).map_err(|error| error.message().to_string())?;
+    let capture =
+        hotkey::capture::validate(&title, &body).map_err(|error| error.message().to_string())?;
     let category = crate::vault::para::ParaCategory::from_name(&category)
         .ok_or("Choose a category: Projects, Areas, Resources, or Archives")?;
 
@@ -1168,13 +1170,6 @@ pub fn quick_capture_note(
         Some(category.folder_name().to_string()),
         capture.title,
     )?;
-
-    // A title-only capture is already complete; writing an empty body would take a second
-    // lock and a second index pass to change nothing.
-    if capture.body.is_empty() {
-        crate::similar_notes::after_capture(app, entry.path.clone());
-        return Ok(entry);
-    }
 
     let current_revision = operations::read_vault_note(
         &state

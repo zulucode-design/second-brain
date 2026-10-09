@@ -1,5 +1,5 @@
 {
-  "about": "Capture-time similarity fixture (#9). `notes` are the existing notes; each capture is typed as one line, as the quick-capture overlay files it. `duplicateOf` names the note the capture repeats (it should be surfaced); `sameTopic` names notes on its subject that it does not repeat (they should not be). Captures with neither are unrelated to every note.",
+  "about": "Capture-time similarity fixture (#9). `notes` are the existing notes; each capture is a short title and a one-line body, the two fields the quick-capture overlay requires (#213). `duplicateOf` names the note the capture repeats (it should be surfaced); `sameTopic` names notes on its subject that it does not repeat (they should not be). Captures with neither are unrelated to every note.",
   "notes": [
     { "title": "Garden shed budget", "category": "Projects", "body": "Shed budget so far: foundation blocks 340 euros, cedar cladding 1,150 euros, roofing felt and battens 410 euros, door and window 520 euros. Total committed 2,420 euros, leaving 780 euros of the 3,200 ceiling for fixings, paint and surprises." },
     { "title": "Shed materials decision", "category": "Projects", "body": "Decided on western red cedar cladding instead of pressure-treated pine. Cedar costs about 300 euros more but needs no preservative and weathers to silver. Pine was rejected because the treated boards from the yard were warped." },
@@ -16,22 +16,22 @@
     { "title": "Tax documents checklist", "category": "Areas", "body": "For this year's tax return: salary certificates, bank interest statements, receipts for donations, and the health insurance summary. Deadline is 30 April." }
   ],
   "captures": [
-    { "text": "Shed spending so far is about 2,400 euros out of the 3,200 limit, so roughly 780 left for paint and fixings", "duplicateOf": "Garden shed budget", "sameTopic": ["Shed materials decision", "Shed permit check"] },
-    { "text": "Going with cedar for the shed walls rather than treated pine: the pine boards were warped and cedar needs no preservative", "duplicateOf": "Shed materials decision", "sameTopic": ["Garden shed budget", "Shed permit check"] },
-    { "text": "Feed the starter equal parts starter, flour and water twice a day and keep it warm, around 24 degrees", "duplicateOf": "Sourdough starter feeding", "sameTopic": ["Sourdough hydration notes"] },
-    { "text": "Cold brew recipe: coarse grind, one to eight coffee to water, 16 to 18 hours in the fridge", "duplicateOf": "Cold brew coffee guide", "sameTopic": ["Espresso dialing in"] },
-    { "text": "Espresso that works with these beans: 18 grams in, 36 out, around 28 seconds", "duplicateOf": "Espresso dialing in", "sameTopic": ["Cold brew coffee guide"] },
-    { "text": "Outer knee hurts about 10 km into my long runs, likely the IT band; foam rolling helps", "duplicateOf": "Knee pain after long runs", "sameTopic": ["Running plan October"] },
-    { "text": "From Atomic Habits: stack new habits onto existing ones and set up the environment so the good habit is the easy one", "duplicateOf": "Book notes: Atomic Habits", "sameTopic": ["Book notes: Deep Work"] },
-    { "text": "Lisbon: flying out 14 November, staying in Alfama, want to ride tram 28 and get pastel de nata at Manteigaria", "duplicateOf": "Lisbon trip planning", "sameTopic": [] },
-    { "text": "Should the shed get a gutter and a water butt to collect rain for the vegetable beds?", "sameTopic": ["Garden shed budget", "Shed materials decision", "Shed permit check"] },
-    { "text": "Tried a rye sourdough today; the crumb came out dense and very sour, next time a longer bulk ferment", "sameTopic": ["Sourdough hydration notes", "Sourdough starter feeding"] },
-    { "text": "Bought a burr grinder for the moka pot; it is much quieter than the old blade grinder", "sameTopic": ["Espresso dialing in", "Cold brew coffee guide"] },
-    { "text": "Signed up for a half marathon in March, so long runs need to reach 18 km by February", "sameTopic": ["Running plan October", "Knee pain after long runs"] },
-    { "text": "Book notes on The Psychology of Money: saving is the gap between your ego and your income", "sameTopic": ["Book notes: Atomic Habits", "Book notes: Deep Work"] },
-    { "text": "Day trip to Porto from Lisbon? The train takes about three hours each way", "sameTopic": ["Lisbon trip planning"] },
-    { "text": "Call the dentist to move Thursday's appointment to next week" },
-    { "text": "Story idea: a lighthouse keeper who collects letters that were never delivered" },
-    { "text": "Replace the flickering bulb in the bathroom and buy spare batteries for the smoke alarm" }
+    { "title": "Shed spending", "body": "Shed spending so far is about 2,400 euros out of the 3,200 limit, so roughly 780 left for paint and fixings", "duplicateOf": "Garden shed budget", "sameTopic": ["Shed materials decision", "Shed permit check"] },
+    { "title": "Shed wall wood", "body": "Going with cedar for the shed walls rather than treated pine: the pine boards were warped and cedar needs no preservative", "duplicateOf": "Shed materials decision", "sameTopic": ["Garden shed budget", "Shed permit check"] },
+    { "title": "Starter routine", "body": "Feed the starter equal parts starter, flour and water twice a day and keep it warm, around 24 degrees", "duplicateOf": "Sourdough starter feeding", "sameTopic": ["Sourdough hydration notes"] },
+    { "title": "Cold brew ratio", "body": "Cold brew recipe: coarse grind, one to eight coffee to water, 16 to 18 hours in the fridge", "duplicateOf": "Cold brew coffee guide", "sameTopic": ["Espresso dialing in"] },
+    { "title": "Espresso recipe", "body": "Espresso that works with these beans: 18 grams in, 36 out, around 28 seconds", "duplicateOf": "Espresso dialing in", "sameTopic": ["Cold brew coffee guide"] },
+    { "title": "Knee pain on runs", "body": "Outer knee hurts about 10 km into my long runs, likely the IT band; foam rolling helps", "duplicateOf": "Knee pain after long runs", "sameTopic": ["Running plan October"] },
+    { "title": "Habit stacking", "body": "From Atomic Habits: stack new habits onto existing ones and set up the environment so the good habit is the easy one", "duplicateOf": "Book notes: Atomic Habits", "sameTopic": ["Book notes: Deep Work"] },
+    { "title": "Lisbon plans", "body": "Lisbon: flying out 14 November, staying in Alfama, want to ride tram 28 and get pastel de nata at Manteigaria", "duplicateOf": "Lisbon trip planning", "sameTopic": [] },
+    { "title": "Shed gutter idea", "body": "Should the shed get a gutter and a water butt to collect rain for the vegetable beds?", "sameTopic": ["Garden shed budget", "Shed materials decision", "Shed permit check"] },
+    { "title": "Rye sourdough attempt", "body": "Tried a rye sourdough today; the crumb came out dense and very sour, next time a longer bulk ferment", "sameTopic": ["Sourdough hydration notes", "Sourdough starter feeding"] },
+    { "title": "New burr grinder", "body": "Bought a burr grinder for the moka pot; it is much quieter than the old blade grinder", "sameTopic": ["Espresso dialing in", "Cold brew coffee guide"] },
+    { "title": "Half marathon in March", "body": "Signed up for a half marathon in March, so long runs need to reach 18 km by February", "sameTopic": ["Running plan October", "Knee pain after long runs"] },
+    { "title": "The Psychology of Money", "body": "Book notes on The Psychology of Money: saving is the gap between your ego and your income", "sameTopic": ["Book notes: Atomic Habits", "Book notes: Deep Work"] },
+    { "title": "Porto day trip", "body": "Day trip to Porto from Lisbon? The train takes about three hours each way", "sameTopic": ["Lisbon trip planning"] },
+    { "title": "Dentist", "body": "Call the dentist to move Thursday's appointment to next week" },
+    { "title": "Lighthouse story idea", "body": "Story idea: a lighthouse keeper who collects letters that were never delivered" },
+    { "title": "Bathroom bulb and smoke alarm", "body": "Replace the flickering bulb in the bathroom and buy spare batteries for the smoke alarm" }
   ]
 }

@@ -9,6 +9,17 @@ function pathRoot(path: string): string {
 	return normalized.startsWith('/') ? '/' : '';
 }
 
+/**
+ * `relative` with its file name swapped for the one `renamedPath` ends in.
+ *
+ * A rename's file name is the backend's to choose (it replaces some characters and cuts long
+ * titles, #213), so it is read from the path the rename returned, never rebuilt from the title.
+ */
+export function withRenamedFile(relative: string, renamedPath: string): string {
+	const fileName = pathParts(renamedPath).pop() ?? '';
+	return relative.replace(/[^/]+$/, () => fileName);
+}
+
 export function relativePath(fromDirectory: string, targetPath: string): string {
 	const from = pathParts(fromDirectory);
 	const target = pathParts(targetPath);

@@ -8,6 +8,7 @@
 	import ResizeHandles from '$lib/components/ResizeHandles.svelte';
 	import { resolveVaultFilePath } from '$lib/utils/paths';
 	import { requestNoteNavigation } from '$lib/utils/navigation';
+	import { undoCommand } from '$lib/utils/text-undo';
 
 	let { children } = $props();
 
@@ -92,6 +93,21 @@
 		return () => {
 			document.removeEventListener('click', handleLinkClick, true);
 		};
+	});
+
+	// Undo and redo in plain text fields, which the Linux WebView leaves unbound (#213). Bubble
+	// phase, so a field that handles these keys itself goes first.
+	onMount(() => {
+		function undoInField(e: KeyboardEvent) {
+			if (e.defaultPrevented) return;
+			if (!(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) return;
+			const command = undoCommand(e);
+			if (!command) return;
+			e.preventDefault();
+			document.execCommand(command);
+		}
+		window.addEventListener('keydown', undoInField);
+		return () => window.removeEventListener('keydown', undoInField);
 	});
 
 	// On Windows the native OS drag-drop handler is disabled (dragDropEnabled:false

@@ -826,7 +826,7 @@ pub fn create_note(
     let requested_dir = Path::new(vault_path).join(safe_relative_path(notebook_relative)?);
     let dir = ensure_vault_content_dir(vault_path, &requested_dir)?;
 
-    let filename = sanitize_filename(title);
+    let filename = note_file_stem(title);
     let mut file_path = dir.join(format!("{}.md", filename));
 
     // Deduplicate filename
@@ -881,7 +881,7 @@ pub fn create_web_clipping(
     })?;
     let requested_dir = Path::new(vault_path).join(safe_relative_path(notebook_relative)?);
     let dir = ensure_vault_content_dir(vault_path, &requested_dir)?;
-    let filename = sanitize_filename(title);
+    let filename = note_file_stem(title);
     let now = Utc::now();
     let meta = NoteMeta {
         id: Uuid::new_v4().to_string(),
@@ -949,12 +949,15 @@ pub fn duplicate_note(path: &str, vault_path: &str) -> Result<NoteEntry, String>
     let base_title = format!("{} copy", source_title.trim_end());
     let mut copy_title = base_title.clone();
     let mut copy_number = 2;
-    let mut copy_path = parent.join(format!("{}.md", sanitize_filename(&copy_title)));
+    // The number goes after the capped stem, not into the title before capping: on a long title
+    // the cap would cut it off again, and every candidate would be the same taken name.
+    let stem = note_file_stem(&base_title);
+    let mut copy_path = parent.join(format!("{stem}.md"));
 
     while copy_path.exists() {
         copy_title = format!("{} {}", base_title, copy_number);
+        copy_path = parent.join(format!("{stem} {copy_number}.md"));
         copy_number += 1;
-        copy_path = parent.join(format!("{}.md", sanitize_filename(&copy_title)));
     }
 
     let now = Utc::now();
@@ -1387,7 +1390,7 @@ fn rename_note_with_outcome_inner(
     }
     let updated = frontmatter::merge_frontmatter(&raw, &meta, &content);
 
-    let new_filename = sanitize_filename(new_title);
+    let new_filename = note_file_stem(new_title);
     if new_filename.is_empty() {
         return Err("Note title must contain a valid filename character".to_string());
     }
@@ -3031,6 +3034,37 @@ pub fn get_quick_access_notes(vault_path: &str) -> Result<Vec<NoteEntry>, String
     Ok(notes)
 }
 
+/// The longest file name, in characters, that a note's title becomes (#213). The title keeps its
+/// full length in the frontmatter. Uncapped, a sentence-long title could not be saved at all:
+/// Linux refuses names over 255 bytes.
+const NOTE_FILE_STEM_CHARS: usize = 100;
+/// The same limit in UTF-8 bytes, for titles in scripts that take 3 or 4 bytes a character. It
+/// leaves room under 255 for a collision number such as " 12" and the `.md`.
+const NOTE_FILE_STEM_BYTES: usize = 200;
+
+/// The file name, without `.md`, for a note titled `title`.
+///
+/// Attachments keep plain `sanitize_filename`: cutting theirs would cut off the extension.
+fn note_file_stem(title: &str) -> String {
+    let stem = sanitize_filename(title);
+    let cut = stem
+        .char_indices()
+        .enumerate()
+        .find(|&(count, (at, c))| {
+            count == NOTE_FILE_STEM_CHARS || at + c.len_utf8() > NOTE_FILE_STEM_BYTES
+        })
+        .map(|(_, (at, _))| at);
+    match cut {
+        // A cut can land just after a space or a full stop; neither belongs at the end of a name.
+        // A title of nothing but full stops would trim to nothing, and `.md` alone is no note.
+        Some(cut) => match stem[..cut].trim_end_matches(|c: char| c.is_whitespace() || c == '.') {
+            "" => stem[..cut].to_string(),
+            trimmed => trimmed.to_string(),
+        },
+        None => stem,
+    }
+}
+
 pub fn sanitize_filename(name: &str) -> String {
     name.chars()
         .map(|c| match c {
@@ -3047,10 +3081,10 @@ mod tests {
     use super::{
         compare_natural_names, create_note, create_notebook, create_web_clipping, duplicate_note,
         ensure_vault_structure, get_note_switcher_titles, helixnotes_dir, load_notebook_icons,
-        load_quick_access, load_vault_state, move_note, move_note_with_outcome, permanent_delete,
-        read_note, restore_notebook, save_note, save_note_if_revision, save_note_or_preserve,
-        save_quick_access, save_vault_state, scan_notebooks, set_notebook_icon, DraftSave,
-        ParaCategory,
+        load_quick_access, load_vault_state, move_note, move_note_with_outcome, note_file_stem,
+        permanent_delete, read_note, read_vault_note, rename_note, restore_notebook, save_note,
+        save_note_if_revision, save_note_or_preserve, save_quick_access, save_vault_state,
+        scan_notebooks, set_notebook_icon, DraftSave, ParaCategory,
     };
     use crate::search::SearchIndex;
     use crate::types::VaultState;
@@ -4981,6 +5015,120 @@ mod tests {
         assert!(!first_raw.contains("\n# Project\n"));
         assert_eq!(fs::read_to_string(&source_path).unwrap(), source_raw);
 
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn a_long_title_is_cut_to_a_short_file_name_and_kept_whole_in_the_note() {
+        // 300 two-byte characters: 600 bytes, more than Linux allows in one file name (#213).
+        let vault = scaffolded_vault("long-title");
+        let vault_str = vault.to_string_lossy().to_string();
+        let title = "é".repeat(300);
+
+        let first = create_note(&vault_str, Some("Areas"), &title).unwrap();
+        let second = create_note(&vault_str, Some("Areas"), &title).unwrap();
+
+        let cut = "é".repeat(100);
+        assert_eq!(first.relative_path, format!("Areas/{cut}.md"));
+        assert_eq!(second.relative_path, format!("Areas/{cut} 1.md"));
+        assert_eq!(first.meta.title, title);
+        let raw = fs::read_to_string(&first.path).unwrap();
+        assert_eq!(frontmatter::parse_note(&raw, "x.md").0.title, title);
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn a_title_in_wide_characters_is_cut_by_bytes_and_still_saves() {
+        // 100 three- or four-byte characters would be 300 or 400 bytes, over Linux's 255.
+        let vault = scaffolded_vault("wide-title");
+        let vault_str = vault.to_string_lossy().to_string();
+        for (title, kept) in [
+            ("中".repeat(150), "中".repeat(66)),
+            ("😀".repeat(150), "😀".repeat(50)),
+        ] {
+            let first = create_note(&vault_str, Some("Areas"), &title).unwrap();
+            let second = create_note(&vault_str, Some("Areas"), &title).unwrap();
+            assert_eq!(first.relative_path, format!("Areas/{kept}.md"));
+            assert_eq!(second.relative_path, format!("Areas/{kept} 1.md"));
+            assert_eq!(first.meta.title, title);
+        }
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn a_cut_file_name_does_not_end_in_a_space_or_a_full_stop() {
+        let vault = scaffolded_vault("cut-ending");
+        let vault_str = vault.to_string_lossy().to_string();
+        let words = "a".repeat(97);
+
+        let entry =
+            create_note(&vault_str, Some("Areas"), &format!("{words}. . and more")).unwrap();
+
+        assert_eq!(entry.relative_path, format!("Areas/{words}.md"));
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn a_long_title_of_full_stops_is_not_trimmed_to_an_empty_name() {
+        let vault = scaffolded_vault("all-dots");
+        let vault_str = vault.to_string_lossy().to_string();
+        let title = ".".repeat(101);
+
+        let entry = create_note(&vault_str, Some("Areas"), &title).unwrap();
+
+        assert_eq!(entry.relative_path, format!("Areas/{}.md", ".".repeat(100)));
+        let read = read_vault_note(&vault_str, &entry.path).unwrap();
+        assert_eq!(read.meta.title, title);
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn a_short_title_ending_in_a_full_stop_keeps_it() {
+        // Only a cut trims; a whole title is named as typed.
+        let vault = scaffolded_vault("short-dot");
+        let vault_str = vault.to_string_lossy().to_string();
+
+        let entry = create_note(&vault_str, Some("Areas"), "Buy paint etc.").unwrap();
+
+        assert_eq!(entry.relative_path, "Areas/Buy paint etc..md");
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn duplicating_a_long_titled_note_finds_a_free_name_each_time() {
+        // The copy number used to go into the title before the name was made from it; with a cap
+        // that number would be cut off, and the search for a free name would never end.
+        let vault = scaffolded_vault("duplicate-long");
+        let vault_str = vault.to_string_lossy().to_string();
+        let title = "word ".repeat(40).trim_end().to_string();
+        let source = create_note(&vault_str, Some("Areas"), &title).unwrap();
+
+        let first = duplicate_note(&source.path, &vault_str).unwrap();
+        let second = duplicate_note(&source.path, &vault_str).unwrap();
+
+        // " copy" falls past the cut, so the first free name is the source's own plus " 2".
+        let stem = note_file_stem(&title);
+        assert_eq!(note_file_stem(&format!("{title} copy")), stem);
+        assert_eq!(first.meta.title, format!("{title} copy 2"));
+        assert_eq!(second.meta.title, format!("{title} copy 3"));
+        assert_eq!(first.relative_path, format!("Areas/{stem} 2.md"));
+        assert_eq!(second.relative_path, format!("Areas/{stem} 3.md"));
+        assert_eq!(source.relative_path, format!("Areas/{stem}.md"));
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn renaming_to_a_long_title_cuts_the_file_name_and_keeps_the_title() {
+        let vault = scaffolded_vault("rename-long");
+        let vault_str = vault.to_string_lossy().to_string();
+        let source = create_note(&vault_str, Some("Areas"), "Short").unwrap();
+        let title = "é".repeat(300);
+
+        let renamed = rename_note(&source.path, &title, &vault_str).unwrap();
+
+        assert!(renamed.ends_with(&format!("{}.md", "é".repeat(100))));
+        let raw = fs::read_to_string(&renamed).unwrap();
+        assert_eq!(frontmatter::parse_note(&raw, "x.md").0.title, title);
         fs::remove_dir_all(vault).unwrap();
     }
 }

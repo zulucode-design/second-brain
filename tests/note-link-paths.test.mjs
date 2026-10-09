@@ -18,7 +18,8 @@ const {
   isExternalNotePath,
   normalizeLocalAssetPath,
   resolvePathFromFile,
-  resolveVaultFilePath
+  resolveVaultFilePath,
+  withRenamedFile
 } = await import(
   `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
 );
@@ -132,4 +133,15 @@ test('a file outside the vault is external, and a sibling prefix is not inside',
   assert.equal(isExternalNotePath('/home/u/vault', '/home/u/vault-archive/note.md'), true);
   // No vault open: everything is external.
   assert.equal(isExternalNotePath(null, '/home/u/vault/note.md'), true);
+});
+
+test('a renamed note keeps the file name the backend gave it, not its title (#213)', () => {
+  // A long title is cut to a shorter file name, and some characters are replaced.
+  assert.equal(
+    withRenamedFile('Areas/Old.md', '/vault/Areas/' + 'a'.repeat(100) + '.md'),
+    'Areas/' + 'a'.repeat(100) + '.md'
+  );
+  assert.equal(withRenamedFile('Areas/Old.md', 'C:\\Vault\\Areas\\a-b.md'), 'Areas/a-b.md');
+  // `$&` in a name is text, not a replacement pattern.
+  assert.equal(withRenamedFile('Old.md', '/vault/Price $& tax.md'), 'Price $& tax.md');
 });

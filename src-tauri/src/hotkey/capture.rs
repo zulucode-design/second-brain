@@ -1,12 +1,11 @@
-//! Turning what the user typed into a note's title and body.
+//! Checking what the user typed before it becomes a note.
 //!
-//! The capture overlay is one text field, not a title field and a body field. Asking for a
-//! title is a second decision at the moment the point is to have none: the user pressed a
-//! hotkey because a thought was in the way, and every field between them and putting it down
-//! is friction the whole feature exists to remove.
+//! The capture overlay has a title field and a body field, and both are required (#213). The
+//! first design (#4) used one field and made its first line the title, but a capture typed as
+//! one line, which is how most are written, became all title and no body.
 //!
-//! So the first line becomes the title and the rest becomes the body, which is the convention
-//! the vault already uses everywhere else.
+//! The overlay checks the same rule before it offers the category picker. This check is the
+//! one that holds: the command is a trust boundary, and nothing else stops an empty field.
 
 /// What the user typed, resolved into the two things a note needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,38 +15,40 @@ pub struct Capture {
 }
 
 /// Why a capture cannot be filed. Both cases are the user's to fix, not errors to log.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureError {
-    /// Nothing but whitespace. Saving it would file an empty note the user never sees again.
-    Empty,
+    /// The title is empty or whitespace. It names the note and its file.
+    NoTitle,
+    /// The body is empty or whitespace. A title alone is not the thought the user came to save.
+    NoBody,
 }
 
 impl CaptureError {
     pub fn message(&self) -> &'static str {
         match self {
-            Self::Empty => "There is nothing to save yet.",
+            Self::NoTitle => "Add a title.",
+            Self::NoBody => "Add a body.",
         }
     }
 }
 
-/// Split what was typed into a title and a body.
+/// Check both fields and tidy them for saving.
 ///
-/// Leading blank lines are skipped rather than becoming an empty title: a paste often carries
-/// them, and an empty title would produce a note named after nothing.
-pub fn split(text: &str) -> Result<Capture, CaptureError> {
-    let mut lines = text.lines().skip_while(|line| line.trim().is_empty());
-    let title = lines.next().map(str::trim).unwrap_or_default();
+/// The title is trimmed on both ends: it becomes a file name, and stray spaces there are never
+/// meant. The body loses only trailing whitespace. Leading blank lines and indentation inside it
+/// are the user's formatting.
+pub fn validate(title: &str, body: &str) -> Result<Capture, CaptureError> {
+    let title = title.trim();
     if title.is_empty() {
-        return Err(CaptureError::Empty);
+        return Err(CaptureError::NoTitle);
     }
-
-    // Only the newline that separated title from body is consumed. Blank lines *inside* the
-    // body are the user's paragraphs and are left exactly as typed.
-    let body = lines.collect::<Vec<_>>().join("\n");
-
+    let body = body.trim_end();
+    if body.trim().is_empty() {
+        return Err(CaptureError::NoBody);
+    }
     Ok(Capture {
         title: title.to_string(),
-        body: body.trim_end().to_string(),
+        body: body.to_string(),
     })
 }
 
@@ -57,39 +58,47 @@ mod tests {
     use crate::vault::para::ParaCategory;
 
     #[test]
-    fn the_first_line_becomes_the_title_and_the_rest_the_body() {
-        let capture = split("Ring the dentist\nBefore Friday, they close at noon").expect("splits");
+    fn the_title_and_body_are_kept_as_typed() {
+        let capture =
+            validate("Ring the dentist", "Before Friday, they close at noon").expect("valid");
         assert_eq!(capture.title, "Ring the dentist");
         assert_eq!(capture.body, "Before Friday, they close at noon");
     }
 
     #[test]
-    fn a_single_line_is_all_title_and_no_body() {
-        let capture = split("Ring the dentist").expect("splits");
+    fn the_title_is_trimmed_and_the_body_loses_only_trailing_whitespace() {
+        let capture =
+            validate("  Ring the dentist \t", "\n  indented\n\nSecond para \n\n").expect("valid");
         assert_eq!(capture.title, "Ring the dentist");
-        assert_eq!(capture.body, "");
+        assert_eq!(capture.body, "\n  indented\n\nSecond para");
     }
 
     #[test]
-    fn leading_blank_lines_do_not_become_an_empty_title() {
-        // Pasted text very often starts with them, and an empty title names the file after
-        // nothing.
-        let capture = split("\n\n  \nRing the dentist\nbody").expect("splits");
-        assert_eq!(capture.title, "Ring the dentist");
-        assert_eq!(capture.body, "body");
-    }
-
-    #[test]
-    fn blank_lines_inside_the_body_are_the_users_paragraphs_and_survive() {
-        let capture = split("Title\n\nFirst para\n\nSecond para").expect("splits");
-        assert_eq!(capture.body, "\nFirst para\n\nSecond para");
-    }
-
-    #[test]
-    fn whitespace_alone_is_refused_rather_than_filed() {
-        for empty in ["", "   ", "\n\n", "  \n \t \n"] {
-            assert_eq!(split(empty), Err(CaptureError::Empty), "{empty:?}");
+    fn an_empty_or_whitespace_title_is_refused() {
+        for empty in ["", "   ", "\t \n"] {
+            assert_eq!(
+                validate(empty, "body"),
+                Err(CaptureError::NoTitle),
+                "{empty:?}"
+            );
         }
+    }
+
+    #[test]
+    fn an_empty_or_whitespace_body_is_refused() {
+        for empty in ["", "   ", "\n\n", "  \n \t \n"] {
+            assert_eq!(
+                validate("Title", empty),
+                Err(CaptureError::NoBody),
+                "{empty:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_title_is_checked_first_when_both_are_empty() {
+        // The overlay focuses the field named in the message, and the title comes first.
+        assert_eq!(validate(" ", " "), Err(CaptureError::NoTitle));
     }
 
     #[test]

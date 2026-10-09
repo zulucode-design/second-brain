@@ -5,19 +5,25 @@
 	import { quickCaptureNote } from '$lib/api';
 	import {
 		CAPTURE_CATEGORIES,
+		MISSING_FIELD_MESSAGE,
 		captureAction,
+		missingField,
 		moveSelection,
 		type CaptureCategory,
+		type CaptureField,
 		type CapturePhase
 	} from '$lib/utils/quick-capture-policy';
 
-	let text = $state('');
+	let title = $state('');
+	let body = $state('');
+	let field = $state<CaptureField>('title');
 	let phase = $state<CapturePhase>('writing');
 	let selected = $state(0);
 	let confirmingDiscard = $state(false);
 	let error = $state<string | null>(null);
 	let saving = $state(false);
-	let textarea = $state<HTMLTextAreaElement | null>(null);
+	let titleInput = $state<HTMLInputElement | null>(null);
+	let bodyInput = $state<HTMLTextAreaElement | null>(null);
 
 	const appWindow = getCurrentWindow();
 
@@ -27,8 +33,20 @@
 	 * The window is reused for every capture, so anything left behind would be sitting there
 	 * the next time the hotkey is pressed — the previous thought, in the way of the new one.
 	 */
+	function focusField(next: CaptureField) {
+		(next === 'title' ? titleInput : bodyInput)?.focus();
+	}
+
+	/** Back to the field that is still empty, saying so, instead of a picker that would refuse. */
+	function showMissing(missing: CaptureField) {
+		error = MISSING_FIELD_MESSAGE[missing];
+		phase = 'writing';
+		focusField(missing);
+	}
+
 	async function dismiss() {
-		text = '';
+		title = '';
+		body = '';
 		phase = 'writing';
 		selected = 0;
 		confirmingDiscard = false;
@@ -41,7 +59,7 @@
 		saving = true;
 		error = null;
 		try {
-			await quickCaptureNote(category, text);
+			await quickCaptureNote(category, title, body);
 			await dismiss();
 		} catch (cause) {
 			// Staying open with the text intact is the point: the thought is still only here.
@@ -61,19 +79,28 @@
 			// category: a note is never filed somewhere the user did not choose.
 			if (event.key.toLowerCase() === 's') {
 				confirmingDiscard = false;
-				phase = 'choosing';
+				const missing = missingField(title, body);
+				if (missing) showMissing(missing);
+				else phase = 'choosing';
 			}
 			return;
 		}
 
-		const action = captureAction(phase, event, { hasText: text.trim().length > 0, selected });
+		const action = captureAction(phase, event, { title, body, field, selected });
 		if (action.type === 'insert' || action.type === 'none') {
 			if (action.type === 'none') event.preventDefault();
 			return;
 		}
 		event.preventDefault();
 		switch (action.type) {
+			case 'focus':
+				focusField(action.field);
+				break;
+			case 'missing':
+				showMissing(action.field);
+				break;
 			case 'choose':
+				error = null;
 				phase = 'choosing';
 				break;
 			case 'move':
@@ -84,7 +111,7 @@
 				break;
 			case 'back':
 				phase = 'writing';
-				textarea?.focus();
+				focusField(field);
 				break;
 			case 'confirmDiscard':
 				confirmingDiscard = true;
@@ -102,9 +129,9 @@
 			phase = 'writing';
 			confirmingDiscard = false;
 			error = null;
-			queueMicrotask(() => textarea?.focus());
+			queueMicrotask(() => titleInput?.focus());
 		});
-		queueMicrotask(() => textarea?.focus());
+		queueMicrotask(() => titleInput?.focus());
 		return () => {
 			shown.then((unlisten) => unlisten());
 		};
@@ -114,41 +141,52 @@
 <svelte:window on:keydown={onKeydown} />
 
 <div class="overlay">
+	<input
+		bind:this={titleInput}
+		bind:value={title}
+		onfocus={() => (field = 'title')}
+		placeholder="Title"
+		spellcheck="false"
+		aria-label="Title"
+	/>
 	<textarea
-		bind:this={textarea}
-		bind:value={text}
+		bind:this={bodyInput}
+		bind:value={body}
+		onfocus={() => (field = 'body')}
 		placeholder="Capture a thought…"
 		spellcheck="false"
-		aria-label="Quick capture"
+		aria-label="Body"
 	></textarea>
 
-	{#if error}
-		<p class="error">{error}</p>
-	{/if}
+	<div class="footer">
+		{#if confirmingDiscard}
+			<div class="bar">
+				<span>Discard this capture?</span>
+				<kbd>D</kbd> discard <kbd>S</kbd> save <kbd>Esc</kbd> keep writing
+			</div>
+		{:else if phase === 'choosing'}
+			<div class="bar categories">
+				{#each CAPTURE_CATEGORIES as category, index}
+					<button
+						type="button"
+						class:selected={index === selected}
+						onclick={() => save(category)}
+					>
+						<kbd>{index + 1}</kbd>
+						{category}
+					</button>
+				{/each}
+			</div>
+		{:else}
+			<div class="bar hint">
+				<kbd>Ctrl</kbd>+<kbd>Enter</kbd> choose a category <kbd>Esc</kbd> dismiss
+			</div>
+		{/if}
 
-	{#if confirmingDiscard}
-		<div class="bar">
-			<span>Discard this capture?</span>
-			<kbd>D</kbd> discard <kbd>S</kbd> save <kbd>Esc</kbd> keep writing
-		</div>
-	{:else if phase === 'choosing'}
-		<div class="bar categories">
-			{#each CAPTURE_CATEGORIES as category, index}
-				<button
-					type="button"
-					class:selected={index === selected}
-					onclick={() => save(category)}
-				>
-					<kbd>{index + 1}</kbd>
-					{category}
-				</button>
-			{/each}
-		</div>
-	{:else}
-		<div class="bar hint">
-			<kbd>Ctrl</kbd>+<kbd>Enter</kbd> choose a category <kbd>Esc</kbd> dismiss
-		</div>
-	{/if}
+		{#if error}
+			<p class="error" role="alert">{error}</p>
+		{/if}
+	</div>
 </div>
 
 <style>
@@ -164,8 +202,8 @@
 		box-sizing: border-box;
 	}
 
+	input,
 	textarea {
-		flex: 1;
 		resize: none;
 		border: none;
 		outline: none;
@@ -174,6 +212,16 @@
 		font-family: inherit;
 		font-size: 1.05rem;
 		line-height: 1.5;
+	}
+
+	input {
+		padding-bottom: 8px;
+		border-bottom: 1px solid var(--border-color);
+		font-weight: 600;
+	}
+
+	textarea {
+		flex: 1;
 	}
 
 	.bar {
@@ -212,9 +260,18 @@
 		font-size: 0.76rem;
 	}
 
+	.footer {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+
+	/* Bottom right, beside the keys, and larger than them: it is the one thing to read here. */
 	.error {
-		margin: 0;
+		margin: 0 0 0 auto;
 		color: var(--text-primary);
-		font-size: 0.82rem;
+		font-size: 0.95rem;
+		font-weight: 600;
+		text-align: right;
 	}
 </style>
