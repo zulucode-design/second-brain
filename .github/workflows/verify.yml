@@ -27,7 +27,13 @@ jobs:
             librsvg2-devel \
             patchelf \
             rpm-build \
-            cpio
+            cpio \
+            diffutils
+
+      - name: Check the kiro-workflow skill copies are identical
+        run: |
+          diff -r .claude/skills/kiro-workflow .agents/skills/kiro-workflow
+          diff -r .claude/skills/kiro-workflow .kiro/skills/kiro-workflow
 
       - name: Install pnpm
         uses: pnpm/action-setup@v5
