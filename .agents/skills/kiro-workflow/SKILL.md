@@ -156,8 +156,9 @@ While a Kiro task is open, Claude runs a background shell loop against the worki
 
 - `git fetch` every ref, then list the refs that changed since the last poll, not only `kiro/*`.
   `git ls-remote` alone does not update local refs, so fetch before reading a handoff.
-- Read the handoff on each changed branch whose history contains `brief_sha`, and list pull requests
-  by `app/kiro-agent`.
+- Read the handoff on each changed branch whose history contains `brief_sha`, and list open pull
+  requests whose head contains `brief_sha`, whoever authored them. Kiro can open pull requests as
+  `app/kiro-agent` or, if a setting allows it, as Nicolas's GitHub user.
 - Wake Claude only on a change: `ready_for_claude` or `question`, a new branch, a pull request, or a
   push after the handoff froze.
 - Retry a failed fetch or API call with backoff, and report it once it keeps failing. A failure is
@@ -217,7 +218,9 @@ the secret is revoked or rotated, and any deletion or history rewrite waits for 
    a diagnosis and takes it to Nicolas.
 4. Sol merges `origin/main` once. Conflicts go to Claude.
 5. Sol's full verification on that head, on both machines: `pnpm verify` and the machine and package
-   checks the brief names.
+   checks the brief names. Sol matches the tests the change adds against the tests that actually ran.
+   A new Rust test marked `#[ignore]` runs by name through `pnpm test:rust`, which passes its
+   arguments on to `cargo test`; otherwise the acceptance it covers is recorded as unverified.
 6. Sol commits the report, recording the candidate commit, the review rounds and Claude's fix
    commits.
 7. The final review of that exact head.
