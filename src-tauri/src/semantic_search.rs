@@ -305,6 +305,12 @@ fn whole_ms(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
+/// While Ollama is down the worker retries every 20 s, and each retry is a pass that embeds
+/// nothing. Only the first of those in an outage is logged; Settings still shows the latest.
+fn worth_logging(pass: &IndexingPass, outage_already_reported: bool) -> bool {
+    !(pass.stopped && pass.notes == 0 && outage_already_reported)
+}
+
 enum RetryOutcome {
     QueueProcessed,
     BackendUnavailable,
@@ -1211,6 +1217,7 @@ impl SemanticIndex {
     fn retry_pending(&self) -> Result<RetryOutcome, String> {
         let started = Instant::now();
         let mut timing = PassTiming::default();
+        let outage_already_reported = self.embedding_outage_reported.load(Ordering::SeqCst);
         let paths = {
             let database = self.database.lock().map_err(|error| error.to_string())?;
             let mut statement = database
@@ -1252,7 +1259,7 @@ impl SemanticIndex {
             self.refresh_pending_text(&note)?;
             timing.database += refreshing.elapsed();
             if !self.embed_pending_text(&note, &mut timing)? {
-                self.record_pass(timing, started.elapsed(), true);
+                self.record_pass(timing, started.elapsed(), true, outage_already_reported);
                 return Ok(RetryOutcome::BackendUnavailable);
             }
         }
@@ -1266,28 +1273,36 @@ impl SemanticIndex {
         {
             log::warn!("Semantic retry left unreadable notes queued: {unreadable}");
         }
-        self.record_pass(timing, started.elapsed(), false);
+        self.record_pass(timing, started.elapsed(), false, outage_already_reported);
         Ok(RetryOutcome::QueueProcessed)
     }
 
     /// Logs a finished pass and keeps it as the last one, unless it never reached the backend:
     /// then the earlier record stays. Counts and times only, never a path or note text.
-    fn record_pass(&self, timing: PassTiming, total: Duration, stopped: bool) {
+    fn record_pass(
+        &self,
+        timing: PassTiming,
+        total: Duration,
+        stopped: bool,
+        outage_already_reported: bool,
+    ) {
         let Some(pass) = timing.finish(total, stopped) else {
             return;
         };
-        log::info!(
-            "Semantic indexing pass: notes={} chunks={} total_ms={} read_ms={} chunk_ms={} \
-             embed_ms={} database_ms={} stopped={}",
-            pass.notes,
-            pass.chunks,
-            pass.total_ms,
-            pass.read_ms,
-            pass.chunk_ms,
-            pass.embed_ms,
-            pass.database_ms,
-            pass.stopped,
-        );
+        if worth_logging(&pass, outage_already_reported) {
+            log::info!(
+                "Semantic indexing pass: notes={} chunks={} total_ms={} read_ms={} chunk_ms={} \
+                 embed_ms={} database_ms={} stopped={}",
+                pass.notes,
+                pass.chunks,
+                pass.total_ms,
+                pass.read_ms,
+                pass.chunk_ms,
+                pass.embed_ms,
+                pass.database_ms,
+                pass.stopped,
+            );
+        }
         if let Ok(mut last_pass) = self.last_pass.lock() {
             *last_pass = Some(pass);
         }
@@ -2613,9 +2628,43 @@ mod tests {
             assert!(pass.stopped, "{label}: {pass:?}");
             assert_eq!((pass.notes, pass.chunks), (0, 0), "{label}");
             assert!(stage_sum(&pass) <= pass.total_ms, "{label}: {pass:?}");
+            assert!(
+                index.embedding_outage_reported.load(Ordering::SeqCst),
+                "{label}: the next pass of this outage is not logged again"
+            );
             drop(index);
             cleanup(root);
         }
+    }
+
+    #[test]
+    fn only_the_first_empty_pass_of_an_outage_is_logged() {
+        let pass = |notes, stopped| super::IndexingPass {
+            notes,
+            chunks: notes,
+            total_ms: 0,
+            read_ms: 0,
+            chunk_ms: 0,
+            embed_ms: 0,
+            database_ms: 0,
+            stopped,
+        };
+        assert!(
+            super::worth_logging(&pass(0, true), false),
+            "the outage's first pass"
+        );
+        assert!(
+            !super::worth_logging(&pass(0, true), true),
+            "a repeat while it lasts"
+        );
+        assert!(
+            super::worth_logging(&pass(2, true), true),
+            "notes embedded before it stopped"
+        );
+        assert!(
+            super::worth_logging(&pass(2, false), true),
+            "a pass through the whole queue"
+        );
     }
 
     #[test]

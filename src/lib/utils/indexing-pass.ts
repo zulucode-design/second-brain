@@ -1,4 +1,4 @@
-import type { IndexingPass } from "../types";
+import type { IndexingPass } from "$lib/types";
 
 /**
  * A pass duration as Settings shows it: seconds with one decimal under a minute, minutes and
