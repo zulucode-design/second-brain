@@ -1,6 +1,6 @@
 ---
 name: kiro-workflow
-description: "How work moves between Kiro, Claude and Sol when Kiro writes the first pass of an issue: the brief, the exchange branch, the handoff, import, intake, fixes, review, verification and publication. Use whenever a task involves Kiro: writing or reading a Kiro brief or handoff, a `kiro/*` branch, a pull request opened by Kiro, the private Kiro mirror, or an issue given to Kiro."
+description: "Kiro first-pass workflow: the brief, exchange branch, handoff, import, intake, fixes, review and publication. Use whenever a task involves Kiro: a Kiro brief or handoff, a `kiro/*` branch, a pull request Kiro opened, the Kiro mirror, or an issue given to Kiro."
 ---
 
 # Kiro workflow
@@ -60,8 +60,8 @@ The mirror:
 - has its main set by Sol to the pinned main of this repository before each task, at a commit that
   contains this skill. Mirror main then stays frozen until the task closes: protected where GitHub
   allows it, and checked against the pinned commit at intake.
-- is never a source for main. Only the frozen exchange head is imported; mirror main and any merge
-  commit from a mirror pull request never are.
+- is never a source for main. Claude imports only the frozen exchange head, never mirror main or a
+  merge commit from a mirror pull request.
 - never carries closing keywords. Commit messages and pull request text in the mirror use no form of
   "close", "fix" or "resolve" next to an issue reference. Issue closure goes into the reviewed pull
   request on this repository, added by Sol.
@@ -113,11 +113,11 @@ Kiro, this section is yours.
   `CLAUDE.md`, `.claude/`, `.agents/`, `.kiro/`, `docs/reports/`, lockfiles, dependency lists in
   `package.json` or `Cargo.toml`, or any file under `docs/handoffs/` other than your handoff, unless
   the brief names it.
-- Make one commit per logical step. Never amend, rebase, squash or force-push a commit you have
-  pushed. Never merge main or any other branch into yours.
+- Make one commit per logical step, and fix a mistake with a new commit. Never amend, rebase, squash
+  or force-push a commit you have pushed, and never merge main or any other branch into yours.
 - Write no closing keyword next to an issue reference, in commit messages or pull request text.
-- Put new tests where the runners find them: JavaScript tests in `tests/*.test.mjs`, Rust tests in
-  the crate. A Rust test marked `#[ignore]` runs only when asked, so name it in the handoff.
+- Put new tests where `pnpm test` and `pnpm test:rust` find them. A Rust test marked `#[ignore]`
+  runs only when asked, so name it in the handoff.
 - Run what you like in your sandbox and record the commands and results in the handoff. Anything that
   needs the Fedora or Windows machine goes under "What I could not check"; never imitate it.
 - Take the conservative reading of a reversible choice within scope, and record it under
@@ -130,7 +130,7 @@ Kiro, this section is yours.
   set to that commit's parent. Then push your branch and stop.
 - Direct mode: never open a pull request. Mirror mode: you may open one in the mirror if your tools
   insist, with no closing keywords, and never merge it.
-- Pushes after the handoff commit are not imported. Push again only if asked.
+- Claude imports nothing you push after the handoff commit, so push again only if asked.
 
 The handoff template:
 
@@ -183,7 +183,7 @@ On `ready_for_claude`, Claude freezes the attempt at the handoff commit `H`:
 - `brief_sha` is an ancestor of `H`, and `base_sha` of `brief_sha`, with the brief file unchanged.
 - In mirror mode, mirror main still equals `base_sha`.
 
-Later pushes are not imported. Claude reads them, and if they matter, the next attempt covers them.
+Claude does not import later pushes. It reads them, and if they matter, the next attempt covers them.
 
 Claude creates the delivery branch `fix/<N>-<slug>` in a worktree at `base_sha` on this repository.
 `git cherry-pick -x` copies each code commit in `brief_sha..code_head`, skipping brief and handoff
@@ -201,11 +201,11 @@ brief:
    ignore rule; new tests sit where the runners find them; no secrets, hostnames, private paths or
    personal data.
 2. A read of the diff, commit by commit.
-3. Fixes, committed by Claude. An out-of-scope or forbidden change is reverted in a Claude commit, not
-   argued.
+3. Fixes, committed by Claude. Claude reverts an out-of-scope or forbidden change in its own commit
+   rather than arguing it.
 
-A revert does not remove a secret from history. A leaked secret stops the task: Claude tells Nicolas,
-the secret is revoked or rotated, and any deletion or history rewrite waits for his approval.
+A revert does not remove a secret from history. A leaked secret stops the task. Claude tells Nicolas,
+who revokes or rotates it, and any deletion or history rewrite waits for his approval.
 
 ## 7. Fixes, review, verification and publication
 
@@ -220,7 +220,7 @@ the secret is revoked or rotated, and any deletion or history rewrite waits for 
 5. Sol's full verification on that head, on both machines: `pnpm verify` and the machine and package
    checks the brief names. Sol matches the tests the change adds against the tests that actually ran.
    A new Rust test marked `#[ignore]` runs by name through `pnpm test:rust`, which passes its
-   arguments on to `cargo test`; otherwise the acceptance it covers is recorded as unverified.
+   arguments on to `cargo test`; otherwise Sol records the acceptance it covers as unverified.
 6. Sol commits the report, recording the candidate commit, the review rounds and Claude's fix
    commits.
 7. The final review of that exact head.
@@ -235,21 +235,21 @@ If main moves again before the pull request opens, Sol merges it, reruns the aff
 reviews the whole branch again. Evidence carried from an earlier candidate names that commit and says
 why it still applies.
 
-Before each review or test run, Sol's usage is checked as `AGENTS.md` describes; a usage limit hands
-that run to the fallback it names. Pushes, the pull request, CI watching, mirror updates and the merge
-wait for Sol.
+Before each review or test run, check Sol's usage as `AGENTS.md` describes; at a usage limit, the
+fallback it names runs that review or test instead. Pushes, the pull request, CI watching, mirror
+updates and the merge wait for Sol.
 
 ## 8. A pull request opened by Kiro
 
-- **Direct mode:** the gate is breached. The attempt halts, Sol closes the pull request unmerged and
+- **Direct mode.** This breaches the gate. The attempt halts, Sol closes the pull request unmerged and
   never reuses it, and Sol checks its closing references and the state of every issue it names. Claude
   tells Nicolas, and work returns to mirror mode until he decides otherwise.
-- **Mirror mode:** expected and harmless. Nobody merges it. Sol closes it unmerged after import.
+- **Mirror mode.** Expected and harmless. Nobody merges it. Sol closes it unmerged after import.
 
 ## 9. Measurement
 
 After three Kiro issues, Claude reports, for each one, Claude's fix commits after import and the
-number of review rounds, taken from git and the committed reports. Nicolas judges from there.
+number of review rounds, taken from git and the committed reports.
 
 ## 10. First task in each mode
 
@@ -286,4 +286,4 @@ diff -r .claude/skills/kiro-workflow .agents/skills/kiro-workflow
 diff -r .claude/skills/kiro-workflow .kiro/skills/kiro-workflow
 ```
 
-If a copy is missing or differs, Kiro work stops until it is fixed.
+If a copy is missing or differs, stop Kiro work until the copies match again.
