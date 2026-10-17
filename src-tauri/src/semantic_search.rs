@@ -196,6 +196,8 @@ pub struct SemanticIndex {
     wake_worker: OnceLock<Sender<()>>,
     embedding_outage_reported: AtomicBool,
     last_reported_unreadable: AtomicUsize,
+    /// The last recorded indexing pass, shown in Settings. Never persisted (#158).
+    last_pass: Mutex<Option<IndexingPass>>,
     profile: String,
 }
 
@@ -236,6 +238,77 @@ pub struct SemanticStatus {
     pub indexed_notes: usize,
     pub queued_notes: usize,
     pub model: String,
+    /// The last recorded indexing pass since this index opened. `None` until there is one.
+    pub last_pass: Option<IndexingPass>,
+}
+
+/// One finished indexing pass: a call to `retry_pending` that sent at least one note to the
+/// embedding backend (#158). It exists to show where indexing time goes, so it lives in memory
+/// only and is lost on restart.
+///
+/// Times are whole milliseconds. The four stage times cover separate spans of the pass, so
+/// they never add up to more than `total_ms`. The rest is mostly listing the queue, dropping
+/// vanished notes and updating the in-memory vector cache.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexingPass {
+    /// Notes the backend returned usable vectors for.
+    pub notes: usize,
+    /// Chunks embedded for those notes.
+    pub chunks: usize,
+    /// Wall-clock time of the whole pass.
+    pub total_ms: u64,
+    /// Reading note files.
+    pub read_ms: u64,
+    /// Turning notes into embedding inputs: parsing them and cutting them into chunks.
+    pub chunk_ms: u64,
+    /// The embedding backend calls.
+    pub embed_ms: u64,
+    /// SQLite work refreshing pending rows and committing vectors, lock waits included.
+    pub database_ms: u64,
+    /// The pass ended because the backend was unavailable or returned unusable vectors.
+    pub stopped: bool,
+}
+
+/// What a pass has measured so far. Kept as `Duration`s and converted once, in `finish`, so
+/// rounding each stage cannot push their sum past the total.
+#[derive(Default)]
+struct PassTiming {
+    backend_called: bool,
+    notes: usize,
+    chunks: usize,
+    read: Duration,
+    chunk: Duration,
+    embed: Duration,
+    database: Duration,
+}
+
+impl PassTiming {
+    /// The record of a pass that took `total`, or `None` when it sent nothing to the backend.
+    fn finish(self, total: Duration, stopped: bool) -> Option<IndexingPass> {
+        self.backend_called.then(|| IndexingPass {
+            notes: self.notes,
+            chunks: self.chunks,
+            total_ms: whole_ms(total),
+            read_ms: whole_ms(self.read),
+            chunk_ms: whole_ms(self.chunk),
+            embed_ms: whole_ms(self.embed),
+            database_ms: whole_ms(self.database),
+            stopped,
+        })
+    }
+}
+
+/// Truncates rather than rounds: truncated parts never add up to more than the truncated
+/// whole they came from.
+fn whole_ms(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// While Ollama is down the worker retries every 20 s, and each retry is a pass that embeds
+/// nothing. Only the first of those in an outage is logged; Settings still shows the latest.
+fn worth_logging(pass: &IndexingPass, outage_already_reported: bool) -> bool {
+    !(pass.stopped && pass.notes == 0 && outage_already_reported)
 }
 
 enum RetryOutcome {
@@ -284,6 +357,7 @@ impl SemanticIndex {
             wake_worker: OnceLock::new(),
             embedding_outage_reported: AtomicBool::new(false),
             last_reported_unreadable: AtomicUsize::new(0),
+            last_pass: Mutex::new(None),
             profile: profile.to_string(),
         })
     }
@@ -486,11 +560,21 @@ impl SemanticIndex {
 
     /// Embed one queued note from its text. `Ok(false)` means inference is unavailable and
     /// the item was deliberately left in the durable queue; local storage failures remain real
-    /// errors.
-    fn embed_pending_text(&self, note: &PreparedNote) -> Result<bool, String> {
+    /// errors. Adds its chunking, backend and database time to `timing`.
+    fn embed_pending_text(
+        &self,
+        note: &PreparedNote,
+        timing: &mut PassTiming,
+    ) -> Result<bool, String> {
+        let chunking = Instant::now();
         let chunks = chunks_for(&note.meta.title, &note.body);
         let inputs: Vec<String> = chunks.iter().map(|chunk| chunk.input.clone()).collect();
-        let embeddings = match self.backend.embed(&inputs) {
+        timing.chunk += chunking.elapsed();
+        timing.backend_called = true;
+        let embedding = Instant::now();
+        let embedded = self.backend.embed(&inputs);
+        timing.embed += embedding.elapsed();
+        let embeddings = match embedded {
             Ok(embeddings) => embeddings,
             Err(error) => {
                 if !self.embedding_outage_reported.swap(true, Ordering::SeqCst) {
@@ -517,10 +601,49 @@ impl SemanticIndex {
         }
         self.embedding_outage_reported
             .store(false, Ordering::SeqCst);
+        timing.notes += 1;
+        timing.chunks += embeddings.len();
 
+        let committing = Instant::now();
         let mut database = self.database.lock().map_err(|error| error.to_string())?;
+        let committed = self.commit_embeddings(&mut database, note, &chunks, &embeddings)?;
+        timing.database += committing.elapsed();
+        if committed {
+            // The DELETE in the commit displaced the note under this key and any note at this
+            // path.
+            self.publish(|notes| {
+                notes.retain(|key, cached| key != &note.key && cached.path != note.path);
+                notes.insert(
+                    note.key.clone(),
+                    CachedNote {
+                        path: note.path.clone(),
+                        title: note.meta.title.clone(),
+                        profile: self.profile.clone(),
+                        category: note
+                            .meta
+                            .category
+                            .map(|category| category.folder_name().to_string()),
+                        chunks: (0_i64..).zip(embeddings).collect(),
+                    },
+                );
+            });
+        }
+        drop(database);
+        Ok(true)
+    }
+
+    /// Replace one note's stored vectors in a single transaction, under the database lock the
+    /// caller holds. Returns `false`, writing nothing, when this index is retired or the queued
+    /// revision is no longer the one that was embedded.
+    fn commit_embeddings(
+        &self,
+        database: &mut Connection,
+        note: &PreparedNote,
+        chunks: &[NoteChunk],
+        embeddings: &[Vec<f32>],
+    ) -> Result<bool, String> {
         if self.retired.load(Ordering::SeqCst) {
-            return Ok(true);
+            return Ok(false);
         }
         let transaction = database.transaction().map_err(|error| error.to_string())?;
         let still_current = transaction
@@ -534,7 +657,7 @@ impl SemanticIndex {
             )
             .map_err(|error| error.to_string())?;
         if !still_current {
-            return Ok(true);
+            return Ok(false);
         }
         transaction
             .execute(
@@ -556,7 +679,7 @@ impl SemanticIndex {
                 ],
             )
             .map_err(|error| error.to_string())?;
-        for (ordinal, (chunk, embedding)) in chunks.iter().zip(&embeddings).enumerate() {
+        for (ordinal, (chunk, embedding)) in chunks.iter().zip(embeddings).enumerate() {
             transaction
                 .execute(
                     "INSERT INTO chunks (note_key, ordinal, text, embedding)
@@ -572,24 +695,6 @@ impl SemanticIndex {
             )
             .map_err(|error| error.to_string())?;
         transaction.commit().map_err(|error| error.to_string())?;
-        // The DELETE above displaced the note under this key and any note at this path.
-        self.publish(|notes| {
-            notes.retain(|key, cached| key != &note.key && cached.path != note.path);
-            notes.insert(
-                note.key.clone(),
-                CachedNote {
-                    path: note.path.clone(),
-                    title: note.meta.title.clone(),
-                    profile: self.profile.clone(),
-                    category: note
-                        .meta
-                        .category
-                        .map(|category| category.folder_name().to_string()),
-                    chunks: (0_i64..).zip(embeddings).collect(),
-                },
-            );
-        });
-        drop(database);
         Ok(true)
     }
 
@@ -1082,6 +1187,12 @@ impl SemanticIndex {
     }
 
     pub fn status(&self) -> Result<SemanticStatus, String> {
+        // Copied out before the database lock, so the two locks are never held together.
+        let last_pass = self
+            .last_pass
+            .lock()
+            .map_err(|error| error.to_string())?
+            .clone();
         let database = self.database.lock().map_err(|error| error.to_string())?;
         let indexed_notes = database
             .query_row("SELECT COUNT(*) FROM notes", [], |row| {
@@ -1097,10 +1208,16 @@ impl SemanticIndex {
             indexed_notes,
             queued_notes,
             model: "embeddinggemma".to_string(),
+            last_pass,
         })
     }
 
+    /// One pass over the durable queue. A pass that reaches the backend is measured and
+    /// recorded when it returns `Ok`; an `Err` records nothing.
     fn retry_pending(&self) -> Result<RetryOutcome, String> {
+        let started = Instant::now();
+        let mut timing = PassTiming::default();
+        let outage_already_reported = self.embedding_outage_reported.load(Ordering::SeqCst);
         let paths = {
             let database = self.database.lock().map_err(|error| error.to_string())?;
             let mut statement = database
@@ -1117,7 +1234,10 @@ impl SemanticIndex {
             let path = std::path::PathBuf::from(path);
             // One read serves both steps, so a note removed mid-retry is caught here instead of
             // failing a later read (#144).
-            let raw = match std::fs::read_to_string(&path) {
+            let reading = Instant::now();
+            let read = std::fs::read_to_string(&path);
+            timing.read += reading.elapsed();
+            let raw = match read {
                 Ok(raw) => raw,
                 // Gone, or no longer a file: dropped from the queue and the index. If it comes
                 // back (a restore that rolled back), the next reconcile queues it again.
@@ -1132,9 +1252,14 @@ impl SemanticIndex {
                     continue;
                 }
             };
+            let chunking = Instant::now();
             let note = PreparedNote::from_text(&path, &raw);
+            timing.chunk += chunking.elapsed();
+            let refreshing = Instant::now();
             self.refresh_pending_text(&note)?;
-            if !self.embed_pending_text(&note)? {
+            timing.database += refreshing.elapsed();
+            if !self.embed_pending_text(&note, &mut timing)? {
+                self.record_pass(timing, started.elapsed(), true, outage_already_reported);
                 return Ok(RetryOutcome::BackendUnavailable);
             }
         }
@@ -1148,7 +1273,39 @@ impl SemanticIndex {
         {
             log::warn!("Semantic retry left unreadable notes queued: {unreadable}");
         }
+        self.record_pass(timing, started.elapsed(), false, outage_already_reported);
         Ok(RetryOutcome::QueueProcessed)
+    }
+
+    /// Logs a finished pass and keeps it as the last one, unless it never reached the backend:
+    /// then the earlier record stays. Counts and times only, never a path or note text.
+    fn record_pass(
+        &self,
+        timing: PassTiming,
+        total: Duration,
+        stopped: bool,
+        outage_already_reported: bool,
+    ) {
+        let Some(pass) = timing.finish(total, stopped) else {
+            return;
+        };
+        if worth_logging(&pass, outage_already_reported) {
+            log::info!(
+                "Semantic indexing pass: notes={} chunks={} total_ms={} read_ms={} chunk_ms={} \
+                 embed_ms={} database_ms={} stopped={}",
+                pass.notes,
+                pass.chunks,
+                pass.total_ms,
+                pass.read_ms,
+                pass.chunk_ms,
+                pass.embed_ms,
+                pass.database_ms,
+                pass.stopped,
+            );
+        }
+        if let Ok(mut last_pass) = self.last_pass.lock() {
+            *last_pass = Some(pass);
+        }
     }
 
     pub fn start_background(self: &Arc<Self>) {
@@ -1470,8 +1627,8 @@ mod tests {
     }
 
     use super::{
-        CacheState, EmbeddingBackend, OllamaEmbeddingBackend, PreparedNote, SemanticIndex,
-        UnreadNote, CHUNK_CHARACTERS,
+        CacheState, EmbeddingBackend, OllamaEmbeddingBackend, PassTiming, PreparedNote,
+        SemanticIndex, UnreadNote, CHUNK_CHARACTERS,
     };
     use crate::types::SearchResult;
     use crate::vault::para::ParaCategory;
@@ -2346,6 +2503,255 @@ mod tests {
         cleanup(root);
     }
 
+    /// Holds every embedding call for `delay`, so a pass has backend time worth measuring.
+    struct SlowBackend {
+        delay: Duration,
+    }
+
+    impl EmbeddingBackend for SlowBackend {
+        fn embed(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>, String> {
+            std::thread::sleep(self.delay);
+            MeaningBackend.embed(inputs)
+        }
+    }
+
+    /// Reachable, but answers with no vectors at all.
+    struct NoVectorsBackend;
+
+    impl EmbeddingBackend for NoVectorsBackend {
+        fn embed(&self, _inputs: &[String]) -> Result<Vec<Vec<f32>>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn stage_sum(pass: &super::IndexingPass) -> u64 {
+        pass.read_ms + pass.chunk_ms + pass.embed_ms + pass.database_ms
+    }
+
+    #[test]
+    fn a_pass_records_its_counts_and_stage_times_in_memory_only() {
+        let root = scratch("pass-timing");
+        let database = root.join("semantic.sqlite3");
+        let notes = [
+            root.join("Short.md"),
+            root.join("Other.md"),
+            root.join("Long.md"),
+        ];
+        write_note(
+            &notes[0],
+            "short-id",
+            "Short",
+            "Areas",
+            "coffee before work",
+        );
+        write_note(
+            &notes[1],
+            "other-id",
+            "Other",
+            "Projects",
+            "a plan for the garden",
+        );
+        // Longer than one chunk and well short of three, so it is embedded as two.
+        let long_body = "x".repeat(CHUNK_CHARACTERS + 500);
+        write_note(&notes[2], "long-id", "Long", "Resources", &long_body);
+        let delay = Duration::from_millis(10);
+        let index = SemanticIndex::open_at(&database, Arc::new(SlowBackend { delay })).unwrap();
+        assert_eq!(
+            index.status().unwrap().last_pass,
+            None,
+            "nothing recorded yet"
+        );
+        for note in &notes {
+            index.note_changed(note).unwrap();
+        }
+
+        assert!(matches!(
+            index.retry_pending().unwrap(),
+            super::RetryOutcome::QueueProcessed
+        ));
+
+        let status = index.status().unwrap();
+        assert_eq!((status.indexed_notes, status.queued_notes), (3, 0));
+        let pass = status
+            .last_pass
+            .expect("a pass that embedded notes is recorded");
+        assert_eq!((pass.notes, pass.chunks, pass.stopped), (3, 4, false));
+        assert!(
+            u128::from(pass.embed_ms) >= 3 * delay.as_millis(),
+            "three backend calls, each held for the delay, belong to the Ollama stage: {pass:?}"
+        );
+        assert!(stage_sum(&pass) <= pass.total_ms, "{pass:?}");
+        drop(index);
+
+        let reopened = SemanticIndex::open_at(&database, Arc::new(MeaningBackend)).unwrap();
+        assert_eq!(
+            reopened.status().unwrap().last_pass,
+            None,
+            "the record lives in memory, not in the database"
+        );
+        drop(reopened);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_pass_that_cannot_use_the_backend_records_that_it_stopped() {
+        let backends: [(&str, Arc<dyn EmbeddingBackend>); 2] = [
+            ("unavailable", Arc::new(UnavailableBackend)),
+            ("no vectors", Arc::new(NoVectorsBackend)),
+        ];
+        for (label, backend) in backends {
+            let root = scratch("pass-stopped");
+            let note = root.join("Offline.md");
+            write_note(
+                &note,
+                "offline-id",
+                "Offline thought",
+                "Projects",
+                "A thought saved while the desktop is asleep.",
+            );
+            let index = SemanticIndex::open_at(&root.join("semantic.sqlite3"), backend).unwrap();
+            index.note_changed(&note).unwrap();
+
+            assert!(
+                matches!(
+                    index.retry_pending().unwrap(),
+                    super::RetryOutcome::BackendUnavailable
+                ),
+                "{label}"
+            );
+
+            let status = index.status().unwrap();
+            assert_eq!(status.queued_notes, 1, "{label}: the note stays queued");
+            let pass = status
+                .last_pass
+                .unwrap_or_else(|| panic!("{label}: a pass that reached the backend is recorded"));
+            assert!(pass.stopped, "{label}: {pass:?}");
+            assert_eq!((pass.notes, pass.chunks), (0, 0), "{label}");
+            assert!(stage_sum(&pass) <= pass.total_ms, "{label}: {pass:?}");
+            assert!(
+                index.embedding_outage_reported.load(Ordering::SeqCst),
+                "{label}: the next pass of this outage is not logged again"
+            );
+            drop(index);
+            cleanup(root);
+        }
+    }
+
+    #[test]
+    fn only_the_first_empty_pass_of_an_outage_is_logged() {
+        let pass = |notes, stopped| super::IndexingPass {
+            notes,
+            chunks: notes,
+            total_ms: 0,
+            read_ms: 0,
+            chunk_ms: 0,
+            embed_ms: 0,
+            database_ms: 0,
+            stopped,
+        };
+        assert!(
+            super::worth_logging(&pass(0, true), false),
+            "the outage's first pass"
+        );
+        assert!(
+            !super::worth_logging(&pass(0, true), true),
+            "a repeat while it lasts"
+        );
+        assert!(
+            super::worth_logging(&pass(2, true), true),
+            "notes embedded before it stopped"
+        );
+        assert!(
+            super::worth_logging(&pass(2, false), true),
+            "a pass through the whole queue"
+        );
+    }
+
+    #[test]
+    fn a_pass_that_sends_nothing_to_the_backend_keeps_the_earlier_record() {
+        let root = scratch("pass-nothing-sent");
+        let kept = root.join("Kept.md");
+        let vanishing = root.join("Vanishing.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee before work");
+        write_note(
+            &vanishing,
+            "vanishing-id",
+            "Vanishing",
+            "Areas",
+            "soon gone",
+        );
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
+                .unwrap();
+        index.note_changed(&kept).unwrap();
+        index.retry_pending().unwrap();
+        let recorded = index
+            .status()
+            .unwrap()
+            .last_pass
+            .expect("the first pass is recorded");
+        assert_eq!((recorded.notes, recorded.stopped), (1, false));
+
+        // An empty queue.
+        assert!(matches!(
+            index.retry_pending().unwrap(),
+            super::RetryOutcome::QueueProcessed
+        ));
+        assert_eq!(index.status().unwrap().last_pass.as_ref(), Some(&recorded));
+
+        // A queue whose only note is gone before the pass reads it.
+        index.note_changed(&vanishing).unwrap();
+        std::fs::remove_file(&vanishing).unwrap();
+        index.retry_pending().unwrap();
+        let status = index.status().unwrap();
+        assert_eq!(status.queued_notes, 0);
+        assert_eq!(status.last_pass, Some(recorded));
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn the_status_carries_the_last_pass_in_the_shape_settings_reads() {
+        let status = |last_pass| super::SemanticStatus {
+            indexed_notes: 2,
+            queued_notes: 1,
+            model: "embeddinggemma".to_string(),
+            last_pass,
+        };
+        let pass = super::IndexingPass {
+            notes: 2,
+            chunks: 3,
+            total_ms: 900,
+            read_ms: 10,
+            chunk_ms: 20,
+            embed_ms: 800,
+            database_ms: 60,
+            stopped: true,
+        };
+        assert_eq!(
+            serde_json::to_value(status(Some(pass))).unwrap(),
+            serde_json::json!({
+                "indexedNotes": 2,
+                "queuedNotes": 1,
+                "model": "embeddinggemma",
+                "lastPass": {
+                    "notes": 2,
+                    "chunks": 3,
+                    "totalMs": 900,
+                    "readMs": 10,
+                    "chunkMs": 20,
+                    "embedMs": 800,
+                    "databaseMs": 60,
+                    "stopped": true,
+                },
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(status(None)).unwrap()["lastPass"],
+            serde_json::Value::Null
+        );
+    }
+
     #[test]
     fn rebuilding_uses_markdown_as_truth_and_discards_stale_entries() {
         let root = scratch("rebuild");
@@ -2462,12 +2868,15 @@ mod tests {
         index.retry_pending().unwrap();
         index.note_removed(&note).unwrap();
 
+        let status = index.status().unwrap();
         assert_eq!(
-            index.status().unwrap(),
+            status,
             super::SemanticStatus {
                 indexed_notes: 0,
                 queued_notes: 0,
                 model: "embeddinggemma".to_string(),
+                // Timing is not what this test is about; the pass tests below cover it.
+                last_pass: status.last_pass.clone(),
             }
         );
         drop(index);
@@ -3326,10 +3735,10 @@ mod tests {
         old.note_removed(&paths[0]).unwrap();
         old.rebuild_from_notes(&root).unwrap();
         assert!(old
-            .embed_pending_text(&PreparedNote::from_text(
-                &paths[1],
-                &std::fs::read_to_string(&paths[1]).unwrap()
-            ))
+            .embed_pending_text(
+                &PreparedNote::from_text(&paths[1], &std::fs::read_to_string(&paths[1]).unwrap()),
+                &mut PassTiming::default()
+            )
             .unwrap());
         assert_eq!(cached_snapshot(&replacement), sqlite_snapshot(&replacement));
         assert_eq!(replacement.status().unwrap().indexed_notes, 1);
@@ -3365,7 +3774,9 @@ mod tests {
         let committed = sqlite_snapshot(&index);
         let cached = cached_snapshot(&index);
 
-        assert!(index.embed_pending_text(&old_revision).unwrap());
+        assert!(index
+            .embed_pending_text(&old_revision, &mut PassTiming::default())
+            .unwrap());
         assert_eq!(sqlite_snapshot(&index), committed);
         assert_eq!(cached_snapshot(&index), cached);
         let pending_hash: String = index
@@ -3448,7 +3859,9 @@ mod tests {
 
         // The first instance's worker finishes its embedding late: it must commit nothing.
         let late = PreparedNote::from_text(&paths[0], &std::fs::read_to_string(&paths[0]).unwrap());
-        assert!(first.embed_pending_text(&late).unwrap());
+        assert!(first
+            .embed_pending_text(&late, &mut PassTiming::default())
+            .unwrap());
         assert_eq!(cached_snapshot(&back), snapshot);
         assert_eq!(cached_snapshot(&back), sqlite_snapshot(&back));
         assert!(first.retired.load(Ordering::SeqCst) && elsewhere.retired.load(Ordering::SeqCst));

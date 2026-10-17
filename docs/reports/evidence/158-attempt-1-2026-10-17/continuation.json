@@ -1,0 +1,254 @@
+{
+  "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10",
+  "verificationHead": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10",
+  "measurementHead": null,
+  "previousReportCommit": "152c04b0be9bd690b0ec9f1ddab33c427d20df54",
+  "outcome": "blocked",
+  "verify": "FAIL",
+  "mainFilesUnchanged": true,
+  "knownWindowsFailures": {
+    "issue": 221,
+    "url": "https://github.com/zulucode-design/second-brain/issues/221",
+    "names": [
+      "pnpm install fails when the prepare svelte-kit sync fails",
+      "the test package helper exits 0 after an install and removes its staging copy",
+      "the test package helper refuses to run without sudo"
+    ],
+    "actualNames": [
+      "pnpm install fails when the prepare svelte-kit sync fails",
+      "the test package helper exits 0 after an install and removes its staging copy",
+      "the test package helper refuses to run without sudo"
+    ],
+    "exactMatch": true,
+    "spawnProbe": {
+      "pnpm": {
+        "status": null,
+        "error": "ENOENT"
+      },
+      "bash": {
+        "status": null,
+        "error": "ENOENT"
+      }
+    },
+    "ciWindowsJob": "pnpm test:rust; does not run JavaScript tests"
+  },
+  "fedora": {
+    "pnpm verify": {
+      "result": "PASS",
+      "source": "carried from first verification on unchanged candidate",
+      "exit": 0,
+      "elapsedSeconds": 47.99518156051636,
+      "typecheck": {
+        "errors": 0,
+        "warnings": 0
+      },
+      "javascript": {
+        "tests": 253,
+        "passed": 253,
+        "failed": 0,
+        "skipped": 0
+      },
+      "rust": {
+        "passed": 687,
+        "failed": 0,
+        "ignored": 10
+      },
+      "rustLint": "PASS",
+      "webBuild": "PASS"
+    },
+    "pnpm tauri:build": {
+      "result": "FAIL",
+      "command": "pnpm tauri:build",
+      "exit": 1,
+      "elapsedSeconds": 1.1072508189972723,
+      "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10",
+      "error": "ERR_PNPM_UNSAFE_MODULES_DIR",
+      "cause": "pnpm refused a node_modules symlink whose target lies outside the detached candidate checkout; its automatic dependency install stopped before the build scripts ran",
+      "productCompilationStarted": false
+    },
+    "scripts/verify-linux-package.sh <rpm>": {
+      "result": "NOT RUN"
+    }
+  },
+  "windows": {
+    "pnpm check": {
+      "result": "PASS",
+      "source": "carried from first verification on unchanged candidate",
+      "errors": 0,
+      "warnings": 0
+    },
+    "pnpm test": {
+      "started": "2026-10-17T13:36:35.8306027Z",
+      "command": "pnpm test",
+      "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10",
+      "elapsedSeconds": 63.6120619,
+      "exit": 1,
+      "result": "FAIL; only the permitted issue 221 failures",
+      "tests": 253,
+      "pass": 247,
+      "fail": 3,
+      "cancelled": 0,
+      "skipped": 3
+    },
+    "pnpm test:rust": {
+      "started": "2026-10-17T13:38:07.1361725Z",
+      "command": "pnpm test:rust",
+      "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10",
+      "elapsedSeconds": 22.9781829,
+      "exit": 0,
+      "result": "PASS",
+      "passed": 662,
+      "failed": 0,
+      "ignored": 9
+    },
+    "pnpm lint:rust": {
+      "result": "NOT RUN"
+    },
+    "pnpm build": {
+      "result": "NOT RUN"
+    },
+    "pnpm tauri:build": {
+      "result": "NOT RUN"
+    },
+    "diskBefore": [
+      {
+        "DriveLetter": "D",
+        "SizeRemaining": 26859368448,
+        "Size": 910168158208
+      },
+      {
+        "DriveLetter": "C",
+        "SizeRemaining": 53555417088,
+        "Size": 254832275456
+      }
+    ]
+  },
+  "namedTests": [
+    {
+      "name": "semantic_search::tests::a_pass_records_its_counts_and_stage_times_in_memory_only",
+      "file": "src-tauri/src/semantic_search.rs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried full verification on candidate",
+      "windowsSource": "fresh continuation run on candidate"
+    },
+    {
+      "name": "semantic_search::tests::a_pass_that_cannot_use_the_backend_records_that_it_stopped",
+      "file": "src-tauri/src/semantic_search.rs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried full verification on candidate",
+      "windowsSource": "fresh continuation run on candidate"
+    },
+    {
+      "name": "semantic_search::tests::only_the_first_empty_pass_of_an_outage_is_logged",
+      "file": "src-tauri/src/semantic_search.rs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried full verification on candidate",
+      "windowsSource": "fresh continuation run on candidate"
+    },
+    {
+      "name": "semantic_search::tests::a_pass_that_sends_nothing_to_the_backend_keeps_the_earlier_record",
+      "file": "src-tauri/src/semantic_search.rs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried full verification on candidate",
+      "windowsSource": "fresh continuation run on candidate"
+    },
+    {
+      "name": "semantic_search::tests::the_status_carries_the_last_pass_in_the_shape_settings_reads",
+      "file": "src-tauri/src/semantic_search.rs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried full verification on candidate",
+      "windowsSource": "fresh continuation run on candidate"
+    },
+    {
+      "name": "shows times under a minute in seconds with one decimal",
+      "file": "tests/indexing-pass.test.mjs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried full verification on candidate",
+      "windowsSource": "fresh continuation run on candidate"
+    },
+    {
+      "name": "shows a minute and longer as minutes and seconds",
+      "file": "tests/indexing-pass.test.mjs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried full verification on candidate",
+      "windowsSource": "fresh continuation run on candidate"
+    },
+    {
+      "name": "never shows a time that rounds up to a minute as 60 seconds",
+      "file": "tests/indexing-pass.test.mjs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried full verification on candidate",
+      "windowsSource": "fresh continuation run on candidate"
+    },
+    {
+      "name": "summarises a pass as its notes, chunks and total time",
+      "file": "tests/indexing-pass.test.mjs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried full verification on candidate",
+      "windowsSource": "fresh continuation run on candidate"
+    },
+    {
+      "name": "labels the four stage times in order",
+      "file": "tests/indexing-pass.test.mjs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried full verification on candidate",
+      "windowsSource": "fresh continuation run on candidate"
+    }
+  ],
+  "baseline": {
+    "fedora": "NOT RUN",
+    "windows": "NOT RUN",
+    "rebuildRuns": 0,
+    "reason": "Stopped after new Fedora package setup failure"
+  },
+  "cleanup": {
+    "fedoraPackageProcessAbsent": true,
+    "fedoraPackageUnitHasEmptyControlGroup": true,
+    "windowsRemainingRunProcesses": 0,
+    "windowsTreeClean": true,
+    "configurationTouched": false,
+    "baselineVaultCreated": false,
+    "packageInstalled": false,
+    "manualDeletionPerformed": false,
+    "retainedWindowsTestScratch": [
+      {
+        "kind": "machine state",
+        "files": 149,
+        "bytes": 78652
+      },
+      {
+        "kind": "semantic async fixture",
+        "files": 1,
+        "bytes": 36
+      }
+    ]
+  },
+  "sourceLogs": {
+    "windows-javascript": {
+      "sha256": "ddb54d030c085a22fe15f5afcd95ac56569099fcf1b53287c02165af877399bd",
+      "bytes": 23123
+    },
+    "windows-rust": {
+      "sha256": "d5e840d07a384d15b749e49c2e3123730729ab45da7c466221f5e5e1e836539f",
+      "bytes": 59914
+    },
+    "windows-spawn-probe": {
+      "sha256": "d26d764e691e8411c04c139d4d141b95fdd2fc6b7a96c05a14c478d6769368c5",
+      "bytes": 60
+    },
+    "fedora-package": {
+      "sha256": "f9275b984ca378ed993ac9b66c544dfe2e359e324b6e9d472cd7e943822df42d",
+      "bytes": 1728
+    }
+  }
+}

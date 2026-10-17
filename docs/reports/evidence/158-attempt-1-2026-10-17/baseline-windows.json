@@ -1,0 +1,475 @@
+{
+  "schema": "indexing-baseline/1",
+  "issue": 158,
+  "platform": "windows",
+  "facts": {
+    "candidate": {
+      "measuredHead": "32c7fbf75413eb0cfcd294afece2aa3e9600ca8f",
+      "reviewedProductHead": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10",
+      "headsDifferOnlyInDocs": true,
+      "installerSha256": "638204d5c60cd3b6c8b2e8a0848020d7c1799b65944d251f446011f6edabd102",
+      "installedBinarySha256": "cbf835d93e2dabf63fa79c43f8ebd9dff6f4e6e930a51a57458415a1e6de3d3f",
+      "installedBinaryBytes": 35600384,
+      "installedBinaryEmbedsMeasuredHead": true,
+      "installerBuiltOn": "the Windows desktop checkout at the measured head",
+      "installMethod": "NSIS installer, silent (/S) with an explicit install directory in the test area on D:",
+      "priorSecondBrainInstalls": "none (no uninstall entry, Start menu entry or desktop shortcut before the install)"
+    },
+    "machine": {
+      "os": "Windows 11 Pro build 26200",
+      "cpu": "AMD Ryzen 7 5700X, 8 cores / 16 threads",
+      "memoryGiB": 31.9,
+      "gpu": "NVIDIA GeForce RTX 3080",
+      "appStateDisk": "the system SSD (KIOXIA KBG30ZMV256G, 238 GB); the semantic database lives under the per-user local data folder",
+      "vaultDisk": "Samsung SSD 980 1TB (D:)",
+      "appData": "the real per-user roaming and local app folders (Windows ignores XDG); the original config.json bytes were journaled and restored",
+      "desktopSession": "app started in the desktop user's interactive console session through a scheduled task with an Interactive principal; the machine was unlocked with its sleep timeout set to never, and a power request was held for the run"
+    },
+    "fixture": {
+      "notes": 10000,
+      "explicitLinks": 19998,
+      "longNoteWords": 5000,
+      "contentDigestSha256": "9f190bc822a7b9359e2e11a9d8a55bc88dc89b4c60bdd3ffca373062210d81e9",
+      "digestMatchesFedoraRun": true,
+      "digestMethod": "sha256 over sorted lines of vault-relative path, NUL, sha256 of file text, for every .md outside .helixnotes; generated on the Windows machine with the repo's perf-fixture.mjs (hash-identical copy) before the app opened it"
+    },
+    "coldState": {
+      "freshVaultIdentity": true,
+      "semanticIndexAbsentBeforeLaunch": true,
+      "keywordIndexAbsentBeforeLaunch": true,
+      "localAppFolderAbsentBeforeFirstLaunch": true,
+      "osPageCachesCold": false,
+      "note": "cold means an empty index, a first launch with no WebView2 profile, and a freshly started embedding server with no model loaded; OS page caches and the GPU were not cleared"
+    },
+    "embeddingBackend": {
+      "model": "embeddinggemma:latest",
+      "host": "the same Windows desktop as the app",
+      "route": "direct loopback, no forward",
+      "port": 11436,
+      "ownership": "gate-owned Ollama server under the bounded job supervisor, held open by one SSH session",
+      "leaseSeconds": 7200,
+      "ollamaClientVersion": "0.35.1",
+      "answeredTagsWithModelListed": true,
+      "sameServerPidAfterSeconds": 88,
+      "loadedBeforeRun": [],
+      "loadedAfterRun": [
+        {
+          "name": "embeddinggemma:latest",
+          "sizeBytes": 681417113,
+          "sizeVramBytes": 681417113
+        }
+      ],
+      "modelWorker": "llama-server.exe child of the server, created when the first note was embedded, 42.7 seconds after the launch request"
+    },
+    "method": {
+      "launch": "installed second-brain.exe started by Start-Process inside a scheduled task (Interactive principal, interactive desktop session); launch epoch taken immediately before Start-Process",
+      "countsRead": "node:sqlite read-only connection to semantic.sqlite3 every 5 s: SELECT COUNT(*) FROM notes and FROM pending_notes; a locked read is retried up to 3 times 200 ms apart inside the same poll",
+      "appMemory": "WorkingSet64 and PeakWorkingSet64 of the app process and all its descendants every 2 s over SSH",
+      "ollamaMemory": "WorkingSet64 and PeakWorkingSet64 of the server and all its descendants every 2 s over SSH",
+      "close": "CloseMainWindow() on the exact app PID from the interactive session (a normal window close, the save-aware shutdown); no process was stopped by force"
+    },
+    "departures": [
+      "semantic.sqlite3 is not on the drive that holds the vault: it sits under the per-user local data folder on the system SSD, while the vault and run files are on D:",
+      "the first launch also ran the one-time legacy-directory and WebDAV-retirement checks, and created the WebView2 profile, so the start of the run includes first-run setup",
+      "the poller retries a locked read inside the poll (up to 3 retries), as instructed; Fedora left locked polls as empty rows",
+      "typing and keyword latency were not measured (WebDriver tooling removed on 2026-10-01 and not reinstalled)",
+      "Settings was not read on Windows (no WebDriver); the Fedora run covered the UI"
+    ],
+    "teardown": {
+      "appClosedViaNormalWindowClose": true,
+      "ollamaSupervisorStoppedByExactPidWithCreationCheck": true,
+      "ollamaServerAndModelWorkersGone": true,
+      "noOllamaLikeProcessOrListenerOnTheDesktopAfterwards": true,
+      "awakeHolderStoppedByExactPidWithCreationCheck": true,
+      "realConfigRestoredByteForByte": true,
+      "appProcessesAfterClose": 0,
+      "scheduledTaskLeftRegistered": "SecondBrainBaseline158 (Ready)",
+      "installLeftInPlace": true,
+      "appExitMillisecondsAfterCloseRequest": 102
+    }
+  },
+  "rebuild": {
+    "notes": 10000,
+    "wallSecondsFromLaunchToFirstConvergedPoll": 844.673,
+    "wallSecondsLowerBound": 839.665,
+    "pollIntervalSeconds": 5,
+    "pollCount": 187,
+    "notesPerSecond": 11.84,
+    "notesPerSecondAtLowerBound": 11.91,
+    "chunksFromDatabase": 10024,
+    "chunksPerSecond": 11.87,
+    "chunksFromPassLines": 10024,
+    "firstPollWithDatabaseAtSeconds": 38.424,
+    "firstPollWithQueue": {
+      "atSeconds": 43.436,
+      "waiting": 89
+    },
+    "peakWaiting": {
+      "waiting": 6692,
+      "atSeconds": 383.982
+    },
+    "queueFullAtSeconds": 383.982,
+    "queueFillNote": "first poll where indexed + waiting reached the fixture size; before that the vault was still being queued while earlier notes were indexed",
+    "enqueuedNotesPerSecondFromFirstDatabasePollToQueueFull": 28.94,
+    "indexedNotesPerSecondByWindowAfterLaunch": {
+      "60-200s": 9.57,
+      "200-400s": 10.57,
+      "400-600s": 14.7,
+      "600-800s": 14.57
+    },
+    "logLandmarks": {
+      "quickCaptureHotkeyRegisteredAtSeconds": 4.405,
+      "firstVaultActivityAtSeconds": 33.405,
+      "firstPassLineAtSeconds": 44.405,
+      "passLineTimesAtSeconds": [
+        44.405,
+        57.405,
+        91.405,
+        187.405,
+        427.405,
+        841.405
+      ],
+      "note": "one-second resolution; a pass line is logged when the pass ends"
+    },
+    "pollRowsEvery30Seconds": [
+      {
+        "atSeconds": 3,
+        "indexed": null,
+        "waiting": null
+      },
+      {
+        "atSeconds": 33,
+        "indexed": null,
+        "waiting": null
+      },
+      {
+        "atSeconds": 63,
+        "indexed": 169,
+        "waiting": 426
+      },
+      {
+        "atSeconds": 94,
+        "indexed": 444,
+        "waiting": 936
+      },
+      {
+        "atSeconds": 124,
+        "indexed": 728,
+        "waiting": 1472
+      },
+      {
+        "atSeconds": 154,
+        "indexed": 1002,
+        "waiting": 1976
+      },
+      {
+        "atSeconds": 184,
+        "indexed": 1300,
+        "waiting": 2583
+      },
+      {
+        "atSeconds": 214,
+        "indexed": 1611,
+        "waiting": 3241
+      },
+      {
+        "atSeconds": 244,
+        "indexed": 1900,
+        "waiting": 3815
+      },
+      {
+        "atSeconds": 274,
+        "indexed": 2182,
+        "waiting": 4361
+      },
+      {
+        "atSeconds": 304,
+        "indexed": 2501,
+        "waiting": 5060
+      },
+      {
+        "atSeconds": 334,
+        "indexed": 2807,
+        "waiting": 5687
+      },
+      {
+        "atSeconds": 364,
+        "indexed": 3134,
+        "waiting": 6387
+      },
+      {
+        "atSeconds": 394,
+        "indexed": 3468,
+        "waiting": 6532
+      },
+      {
+        "atSeconds": 424,
+        "indexed": 3940,
+        "waiting": 6060
+      },
+      {
+        "atSeconds": 454,
+        "indexed": 4356,
+        "waiting": 5644
+      },
+      {
+        "atSeconds": 484,
+        "indexed": 4757,
+        "waiting": 5243
+      },
+      {
+        "atSeconds": 514,
+        "indexed": 5199,
+        "waiting": 4801
+      },
+      {
+        "atSeconds": 544,
+        "indexed": 5662,
+        "waiting": 4338
+      },
+      {
+        "atSeconds": 574,
+        "indexed": 6104,
+        "waiting": 3896
+      },
+      {
+        "atSeconds": 604,
+        "indexed": 6573,
+        "waiting": 3427
+      },
+      {
+        "atSeconds": 634,
+        "indexed": 6997,
+        "waiting": 3003
+      },
+      {
+        "atSeconds": 664,
+        "indexed": 7406,
+        "waiting": 2594
+      },
+      {
+        "atSeconds": 694,
+        "indexed": 7847,
+        "waiting": 2153
+      },
+      {
+        "atSeconds": 725,
+        "indexed": 8325,
+        "waiting": 1675
+      },
+      {
+        "atSeconds": 755,
+        "indexed": 8795,
+        "waiting": 1205
+      },
+      {
+        "atSeconds": 785,
+        "indexed": 9226,
+        "waiting": 774
+      },
+      {
+        "atSeconds": 815,
+        "indexed": 9633,
+        "waiting": 367
+      },
+      {
+        "atSeconds": 845,
+        "indexed": 10000,
+        "waiting": 0
+      }
+    ],
+    "unreadablePolls": 0,
+    "pollsThatNeededARetry": 0
+  },
+  "passes": {
+    "lines": 6,
+    "stopped": 0,
+    "sum": {
+      "notes": 10000,
+      "chunks": 10024,
+      "totalMs": 800043,
+      "readMs": 1684,
+      "chunkMs": 777,
+      "embedMs": 213448,
+      "databaseMs": 580587
+    },
+    "shareOfSummedTotal": {
+      "fileReads": 0.0021,
+      "chunking": 0.00097,
+      "ollama": 0.2668,
+      "database": 0.72569,
+      "unattributed": 0.00443
+    },
+    "summedNotesReachFixture": true,
+    "repeatNotesOverFixture": 0,
+    "summedPassSecondsVersusWallSeconds": {
+      "summedPassSeconds": 800.043,
+      "wallSeconds": 844.673
+    },
+    "list": [
+      {
+        "notes": 1,
+        "chunks": 1,
+        "totalMs": 2707,
+        "readMs": 0,
+        "chunkMs": 0,
+        "embedMs": 2614,
+        "databaseMs": 92,
+        "stopped": false
+      },
+      {
+        "notes": 115,
+        "chunks": 115,
+        "totalMs": 13542,
+        "readMs": 19,
+        "chunkMs": 8,
+        "embedMs": 2296,
+        "databaseMs": 11144,
+        "stopped": false
+      },
+      {
+        "notes": 315,
+        "chunks": 315,
+        "totalMs": 33925,
+        "readMs": 54,
+        "chunkMs": 25,
+        "embedMs": 6936,
+        "databaseMs": 26884,
+        "stopped": false
+      },
+      {
+        "notes": 913,
+        "chunks": 913,
+        "totalMs": 95700,
+        "readMs": 154,
+        "chunkMs": 72,
+        "embedMs": 19791,
+        "databaseMs": 75570,
+        "stopped": false
+      },
+      {
+        "notes": 2663,
+        "chunks": 2663,
+        "totalMs": 240553,
+        "readMs": 444,
+        "chunkMs": 206,
+        "embedMs": 57233,
+        "databaseMs": 182123,
+        "stopped": false
+      },
+      {
+        "notes": 5993,
+        "chunks": 6017,
+        "totalMs": 413616,
+        "readMs": 1013,
+        "chunkMs": 466,
+        "embedMs": 124578,
+        "databaseMs": 284774,
+        "stopped": false
+      }
+    ],
+    "passLinesCarryOnlyAllowedFields": true,
+    "otherLogLinesNamingAPath": 3,
+    "logLines": 18
+  },
+  "memory": {
+    "app": {
+      "method": "WorkingSet64 of second-brain.exe and every descendant (msedgewebview2.exe included), sampled over SSH; PeakWorkingSet64 read alongside",
+      "sampleIntervalSecondsMedian": 2.012,
+      "sampleIntervalSecondsMax": 2.157,
+      "samples": 446,
+      "idleSamplesBeforeLaunch": 43,
+      "peakProcessCount": 9,
+      "firstLiveSampleTreeMiB": 163.1,
+      "peakTreeWorkingSetMiBUntilConvergence": 577.5,
+      "peakTreeAtSecondsUntilConvergence": 123.038,
+      "peakTreeByNameAtThatSample": {
+        "second-brain.exe": {
+          "processes": 1,
+          "workingSetMiB": 74.8
+        },
+        "msedgewebview2.exe": {
+          "processes": 8,
+          "workingSetMiB": 502.7
+        }
+      },
+      "peakRootWorkingSetMiBUntilConvergence": 81.6,
+      "rootPeakWorkingSet64LifetimeMiB": 105.5,
+      "peakTreePrivateMiBUntilConvergence": 349.7,
+      "peakTreeWorkingSetMiBWholeRun": 577.5,
+      "peakTreeAtSecondsWholeRun": 123.038,
+      "lifetimePeakWorkingSet64ByName": {
+        "second-brain.exe": {
+          "processes": 1,
+          "largestMiB": 105.5,
+          "sumOfPerProcessPeaksMiB": 105.5
+        },
+        "msedgewebview2.exe": {
+          "processes": 10,
+          "largestMiB": 161,
+          "sumOfPerProcessPeaksMiB": 606.4
+        }
+      },
+      "sumOfPerProcessPeaksNote": "the per-process PeakWorkingSet64 values are lifetime peaks reached at different moments, so their sum is an upper bound on the tree, not a concurrent peak"
+    },
+    "ollama": {
+      "method": "WorkingSet64 of the gate-owned ollama.exe and every descendant, sampled over SSH; PeakWorkingSet64 read alongside",
+      "sampleIntervalSecondsMedian": 2.011,
+      "samples": 503,
+      "samplesDuringRun": 460,
+      "firstSampleTreeMiB": 57,
+      "peakProcessCount": 4,
+      "peakTreeWorkingSetMiBUntilConvergence": 1398.4,
+      "peakTreeAtSecondsUntilConvergence": 842.506,
+      "peakTreeByNameAtThatSample": {
+        "ollama.exe": {
+          "processes": 1,
+          "workingSetMiB": 57
+        },
+        "conhost.exe": {
+          "processes": 2,
+          "workingSetMiB": 20.4
+        },
+        "llama-server.exe": {
+          "processes": 1,
+          "workingSetMiB": 1321
+        }
+      },
+      "peakTreeWorkingSetMiBWholeSampling": 1398.4,
+      "workerFirstSeenAtSeconds": 44.452,
+      "lifetimePeakWorkingSet64ByProcess": [
+        {
+          "name": "ollama.exe",
+          "lifetimePeakMiB": 58.2,
+          "observedMaxMiB": 57.5
+        },
+        {
+          "name": "conhost.exe",
+          "lifetimePeakMiB": 13,
+          "observedMaxMiB": 13
+        },
+        {
+          "name": "llama-server.exe",
+          "lifetimePeakMiB": 1321,
+          "observedMaxMiB": 1321
+        },
+        {
+          "name": "conhost.exe",
+          "lifetimePeakMiB": 7.5,
+          "observedMaxMiB": 7.5
+        }
+      ]
+    }
+  },
+  "close": {
+    "outcome": "exited after normal window close",
+    "exited": true,
+    "requestedAtSeconds": 897.528,
+    "exitedAtSeconds": 897.63
+  },
+  "duringIndexing": {
+    "editorKey": "not measured: the Windows WebDriver tooling (tauri-driver, msedgedriver) was removed on 2026-10-01 and was not reinstalled",
+    "keywordSearch": "not measured: same reason"
+  },
+  "settings": "not captured on Windows; the Fedora run covered the Settings UI"
+}

@@ -1,0 +1,275 @@
+{
+  "reviewedCandidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10",
+  "freshBuildAndSelectedMeasurementHead": "8c2a375136d81f91a8694095fb9be6e6447c7921",
+  "measurementHead": null,
+  "previousReportCommit": "8c2a375136d81f91a8694095fb9be6e6447c7921",
+  "finished": "2026-10-17",
+  "outcome": "stopped on a new Windows Rust lint failure",
+  "verify": "FAIL",
+  "merge": {
+    "main": "9eb5d20cd066465490467588228febc4a290c2df",
+    "result": "no merge needed"
+  },
+  "parityChecks": {
+    "appCodeMatchesReviewedCandidate": true,
+    "known221FilesMatchMain": true,
+    "lintFailureFileMatchesMain": true
+  },
+  "carriedResults": {
+    "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10",
+    "fedora": {
+      "verify": {
+        "result": "PASS",
+        "source": "carried from first verification on unchanged candidate",
+        "exit": 0,
+        "elapsedSeconds": 47.99518156051636,
+        "typecheck": {
+          "errors": 0,
+          "warnings": 0
+        },
+        "javascript": {
+          "tests": 253,
+          "passed": 253,
+          "failed": 0,
+          "skipped": 0
+        },
+        "rust": {
+          "passed": 687,
+          "failed": 0,
+          "ignored": 10
+        },
+        "rustLint": "PASS",
+        "webBuild": "PASS"
+      }
+    },
+    "windows": {
+      "pnpm check": {
+        "result": "PASS",
+        "source": "carried from first verification on unchanged candidate",
+        "errors": 0,
+        "warnings": 0
+      },
+      "pnpm test": {
+        "started": "2026-10-17T13:36:35.8306027Z",
+        "command": "pnpm test",
+        "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10",
+        "elapsedSeconds": 63.6120619,
+        "exit": 1,
+        "result": "FAIL; only the permitted issue 221 failures",
+        "tests": 253,
+        "pass": 247,
+        "fail": 3,
+        "cancelled": 0,
+        "skipped": 3
+      },
+      "pnpm test:rust": {
+        "started": "2026-10-17T13:38:07.1361725Z",
+        "command": "pnpm test:rust",
+        "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10",
+        "elapsedSeconds": 22.9781829,
+        "exit": 0,
+        "result": "PASS",
+        "passed": 662,
+        "failed": 0,
+        "ignored": 9
+      }
+    }
+  },
+  "fedora": {
+    "pnpm tauri:build": {
+      "result": "CANCELLED",
+      "head": "8c2a375136d81f91a8694095fb9be6e6447c7921",
+      "reason": "Stopped after Windows lint failed; web build completed and Rust release compilation began; no RPM produced",
+      "productCompilationStarted": true,
+      "dependencyDirectoryRefusal": false
+    },
+    "scripts/verify-linux-package.sh <rpm>": {
+      "result": "NOT RUN"
+    }
+  },
+  "windows": {
+    "preflight": {
+      "result": "PASS",
+      "head": "8c2a375136d81f91a8694095fb9be6e6447c7921",
+      "treeClean": true,
+      "diskBefore": [
+        {
+          "drive": "D",
+          "freeBytes": 24857862144
+        },
+        {
+          "drive": "C",
+          "freeBytes": 53483966464
+        }
+      ],
+      "nonTestInstalls": 0,
+      "allDetectedInstalls": 0
+    },
+    "pnpm lint:rust": {
+      "started": "2026-10-17T13:48:29.7580527Z",
+      "command": "pnpm lint:rust",
+      "candidate": "8c2a375136d81f91a8694095fb9be6e6447c7921",
+      "elapsedSeconds": 117.5843031,
+      "exit": 101,
+      "result": "FAIL",
+      "formatCheck": "PASS",
+      "diagnostic": "clippy::bind_instead_of_map",
+      "location": "src-tauri/src/commands.rs:4295",
+      "warningsDenied": true,
+      "errors": 1
+    },
+    "pnpm build": {
+      "result": "NOT RUN"
+    },
+    "pnpm tauri:build": {
+      "result": "NOT RUN"
+    }
+  },
+  "knownWindowsFailures": {
+    "issue": 221,
+    "url": "https://github.com/zulucode-design/second-brain/issues/221",
+    "names": [
+      "pnpm install fails when the prepare svelte-kit sync fails",
+      "the test package helper exits 0 after an install and removes its staging copy",
+      "the test package helper refuses to run without sudo"
+    ],
+    "actualNames": [
+      "pnpm install fails when the prepare svelte-kit sync fails",
+      "the test package helper exits 0 after an install and removes its staging copy",
+      "the test package helper refuses to run without sudo"
+    ],
+    "exactMatch": true,
+    "spawnProbe": {
+      "pnpm": {
+        "status": null,
+        "error": "ENOENT"
+      },
+      "bash": {
+        "status": null,
+        "error": "ENOENT"
+      }
+    },
+    "ciWindowsJob": "pnpm test:rust; does not run JavaScript tests"
+  },
+  "namedTests": [
+    {
+      "name": "semantic_search::tests::a_pass_records_its_counts_and_stage_times_in_memory_only",
+      "file": "src-tauri/src/semantic_search.rs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried first-run full verification on 6f30ae6",
+      "windowsSource": "carried run-2 test on 6f30ae6"
+    },
+    {
+      "name": "semantic_search::tests::a_pass_that_cannot_use_the_backend_records_that_it_stopped",
+      "file": "src-tauri/src/semantic_search.rs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried first-run full verification on 6f30ae6",
+      "windowsSource": "carried run-2 test on 6f30ae6"
+    },
+    {
+      "name": "semantic_search::tests::only_the_first_empty_pass_of_an_outage_is_logged",
+      "file": "src-tauri/src/semantic_search.rs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried first-run full verification on 6f30ae6",
+      "windowsSource": "carried run-2 test on 6f30ae6"
+    },
+    {
+      "name": "semantic_search::tests::a_pass_that_sends_nothing_to_the_backend_keeps_the_earlier_record",
+      "file": "src-tauri/src/semantic_search.rs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried first-run full verification on 6f30ae6",
+      "windowsSource": "carried run-2 test on 6f30ae6"
+    },
+    {
+      "name": "semantic_search::tests::the_status_carries_the_last_pass_in_the_shape_settings_reads",
+      "file": "src-tauri/src/semantic_search.rs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried first-run full verification on 6f30ae6",
+      "windowsSource": "carried run-2 test on 6f30ae6"
+    },
+    {
+      "name": "shows times under a minute in seconds with one decimal",
+      "file": "tests/indexing-pass.test.mjs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried first-run full verification on 6f30ae6",
+      "windowsSource": "carried run-2 test on 6f30ae6"
+    },
+    {
+      "name": "shows a minute and longer as minutes and seconds",
+      "file": "tests/indexing-pass.test.mjs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried first-run full verification on 6f30ae6",
+      "windowsSource": "carried run-2 test on 6f30ae6"
+    },
+    {
+      "name": "never shows a time that rounds up to a minute as 60 seconds",
+      "file": "tests/indexing-pass.test.mjs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried first-run full verification on 6f30ae6",
+      "windowsSource": "carried run-2 test on 6f30ae6"
+    },
+    {
+      "name": "summarises a pass as its notes, chunks and total time",
+      "file": "tests/indexing-pass.test.mjs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried first-run full verification on 6f30ae6",
+      "windowsSource": "carried run-2 test on 6f30ae6"
+    },
+    {
+      "name": "labels the four stage times in order",
+      "file": "tests/indexing-pass.test.mjs",
+      "fedora": "PASS",
+      "windows": "PASS",
+      "fedoraSource": "carried first-run full verification on 6f30ae6",
+      "windowsSource": "carried run-2 test on 6f30ae6"
+    }
+  ],
+  "baseline": {
+    "fedora": "NOT RUN",
+    "windows": "NOT RUN",
+    "rebuildRuns": 0,
+    "selectedHead": "8c2a375136d81f91a8694095fb9be6e6447c7921",
+    "installedBinaryIdentity": "NOT CHECKED; neither package installed",
+    "reason": "Stopped in protocol step 1 after Windows Rust lint failed; steps 2 through 8 not exercised"
+  },
+  "cleanup": {
+    "fedoraTrackedBuildIdentities": 5,
+    "fedoraSameIdentitySurvivors": 0,
+    "fedoraBuildUnit": "inactive/dead; MainPID 0; empty control group",
+    "windowsRemainingRunProcesses": 0,
+    "windowsTreeClean": true,
+    "windowsConfigMatchesPreflight": true,
+    "configurationTouched": false,
+    "baselineVaultCreated": false,
+    "packageInstalled": false,
+    "modelServerStarted": false,
+    "tunnelStarted": false,
+    "manualDeletionPerformed": false,
+    "run2CheckoutAndRegistration": "retained unchanged",
+    "newCheckoutsCreated": 0,
+    "newDependencySymlinksCreated": 0
+  },
+  "sourceLogs": {
+    "fedora-package": {
+      "sha256": "6edcae7146f3797fc615bebaa4e5abe6ac60027eafa599f783ef96b57cbbfbf3",
+      "bytes": 28151
+    },
+    "windows-rust-lint": {
+      "sha256": "219418e8c78575c20db0f8e109dec1c5df501eebdb441402d0a7a287f4fb12db",
+      "bytes": 13262
+    },
+    "windows-rust-lint-result": {
+      "sha256": "7a296bc2da8cd9172e4c83f22cd0e83bd74d66fd8531aab31cc776c2556dfb05",
+      "bytes": 169
+    }
+  }
+}

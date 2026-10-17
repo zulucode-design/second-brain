@@ -1,0 +1,43 @@
+{
+  "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10",
+  "fedora": {
+    "cancelledBuild": true,
+    "launchedBuildPids": 17,
+    "survivingOriginalPids": [],
+    "appStarted": false,
+    "driverStarted": false,
+    "ollamaStarted": false,
+    "tunnelStarted": false,
+    "configTouched": false,
+    "vaultCreated": false,
+    "candidatePackageInstalled": false
+  },
+  "windows": {
+    "gateProcessesRemaining": 0,
+    "checkoutChanges": 0,
+    "recentTestDirectoriesRemaining": 0,
+    "appStarted": false,
+    "driverStarted": false,
+    "ollamaStarted": false,
+    "configTouched": false,
+    "vaultCreated": false,
+    "packageInstalled": false
+  },
+  "retainedTestScratch": {
+    "fedoraSemanticAsync": {
+      "bytes": 36,
+      "files": 1
+    },
+    "fedoraMachineState": {
+      "bytes": 77486,
+      "files": 149
+    }
+  },
+  "configBackups": 0,
+  "baselineVaults": 0,
+  "newBundles": 0,
+  "baselinePackagesInstalled": 0,
+  "manualDeletions": 0,
+  "processCleanup": "Cancelled only the recorded Fedora build process group; all 17 original process identities absent afterward",
+  "note": "The requested test commands perform their own internal fixture cleanup. No separate artifact deletion was performed."
+}
