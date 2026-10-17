@@ -198,6 +198,8 @@ pub struct SemanticIndex {
     last_reported_unreadable: AtomicUsize,
     /// The last recorded indexing pass, shown in Settings. Never persisted (#158).
     last_pass: Mutex<Option<IndexingPass>>,
+    /// Called after a pass that shows the backend back with the queue indexed (#216).
+    caught_up_hook: OnceLock<Box<dyn Fn() + Send + Sync>>,
     profile: String,
 }
 
@@ -358,6 +360,7 @@ impl SemanticIndex {
             embedding_outage_reported: AtomicBool::new(false),
             last_reported_unreadable: AtomicUsize::new(0),
             last_pass: Mutex::new(None),
+            caught_up_hook: OnceLock::new(),
             profile: profile.to_string(),
         })
     }
@@ -837,6 +840,30 @@ impl SemanticIndex {
             .collect()
     }
 
+    /// Where the index has the note whose frontmatter id is `id`: its queued path first, the
+    /// newer one when a move is not embedded yet, then its indexed path. Empty when the index
+    /// holds no such note (#216).
+    pub fn paths_of_note(&self, id: &str) -> Result<Vec<String>, String> {
+        let key = format!("id:{id}");
+        let database = self.database.lock().map_err(|error| error.to_string())?;
+        let mut statement = database
+            .prepare(
+                "SELECT path, 0 FROM pending_notes WHERE note_key = ?1
+                 UNION ALL
+                 SELECT path, 1 FROM notes WHERE note_key = ?1
+                 ORDER BY 2",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map([key], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?;
+        let mut paths = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        paths.dedup();
+        Ok(paths)
+    }
+
     /// Scores every chunk at or above the cutoff, in note-then-ordinal order, and keeps the
     /// database locked so the caller can read the winners' text from the same snapshot.
     fn score(&self, input: String, category: Option<ParaCategory>) -> Result<Scored<'_>, String> {
@@ -1213,7 +1240,8 @@ impl SemanticIndex {
     }
 
     /// One pass over the durable queue. A pass that reaches the backend is measured and
-    /// recorded when it returns `Ok`; an `Err` records nothing.
+    /// recorded when it returns `Ok`; an `Err` records nothing. A pass that embedded notes and
+    /// got through the queue then calls the caught-up hook (#216).
     fn retry_pending(&self) -> Result<RetryOutcome, String> {
         let started = Instant::now();
         let mut timing = PassTiming::default();
@@ -1273,7 +1301,18 @@ impl SemanticIndex {
         {
             log::warn!("Semantic retry left unreadable notes queued: {unreadable}");
         }
+        let embedded = timing.notes;
         self.record_pass(timing, started.elapsed(), false, outage_already_reported);
+        // When this pass embedded notes, its record holds `notes > 0` and `stopped == false`:
+        // the backend answered and the queue is through, notes saved without it included (#216).
+        // An empty queue embedded nothing and never reached the backend, and a pass that stopped
+        // returned above. A retired index's commits were refused, so its pass says nothing
+        // about the index that replaced it.
+        if embedded > 0 && !self.retired.load(Ordering::SeqCst) {
+            if let Some(hook) = self.caught_up_hook.get() {
+                hook();
+            }
+        }
         Ok(RetryOutcome::QueueProcessed)
     }
 
@@ -1306,6 +1345,14 @@ impl SemanticIndex {
         if let Ok(mut last_pass) = self.last_pass.lock() {
             *last_pass = Some(pass);
         }
+    }
+
+    /// Calls `hook` after every pass that embedded at least one note and got through the queue
+    /// without stopping: the embedding backend is back, and the notes saved while it was away
+    /// are indexed (#216). It runs on the worker's thread, so slow work belongs elsewhere. Set
+    /// it before the worker starts; only the first hook set is kept.
+    pub fn on_caught_up(&self, hook: impl Fn() + Send + Sync + 'static) {
+        let _ = self.caught_up_hook.set(Box::new(hook));
     }
 
     pub fn start_background(self: &Arc<Self>) {

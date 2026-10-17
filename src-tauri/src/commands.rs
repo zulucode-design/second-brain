@@ -475,6 +475,9 @@ fn open_vault_path(
     let new_watcher = watcher::start_watcher(app.clone(), path.clone(), search.clone())?;
     asset_scope::allow_vault_assets(&app, Path::new(&path))?;
     let stable_vault_id = crate::machine_local::vault_id(Path::new(&path))?;
+    // Read now and installed with the rest below, so a vault that fails to open leaves the open
+    // vault's list alone. Reading it never fails (#216).
+    let deferred_checks = crate::similar_notes::DeferredChecks::load(&path);
 
     // Replace the configured vault only after the new one is ready. The old directory is
     // never modified or deleted by this configuration change.
@@ -507,6 +510,12 @@ fn open_vault_path(
     next.max_versions_per_note = shared_settings.max_versions_per_note;
     save_app_config(&next)?;
     *search_slot = Some(search);
+    // Before the worker starts, so its first pass that reaches the embedding backend reruns
+    // this vault's failed similarity checks (#216).
+    if let Ok(mut deferred) = state.deferred_checks.lock() {
+        *deferred = deferred_checks;
+    }
+    crate::similar_notes::rerun_when_caught_up(&app, &semantic);
     crate::semantic_search::SemanticIndex::replace_in(&mut semantic_slot, semantic.clone());
     *watcher_slot = Some(new_watcher);
     *config = next;
@@ -3780,6 +3789,8 @@ fn restart_semantic_index(app: &AppHandle) -> Result<(), String> {
         &base_url,
         token,
     )?);
+    // The vault's deferred similarity checks stay loaded; the new worker reruns them (#216).
+    crate::similar_notes::rerun_when_caught_up(app, &semantic);
     crate::semantic_search::SemanticIndex::replace_in(
         &mut *app
             .state::<AppState>()
