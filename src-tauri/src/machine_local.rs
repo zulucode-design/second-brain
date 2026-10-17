@@ -13,6 +13,8 @@
 //!   manifest is exactly the data loss the manifests exist to prevent.
 //! - `state.json`, `sync_state.json`, and `repair_issues.json` — UI state and records of
 //!   what *this* machine saw.
+//! - `deferred_similarity.json` — similarity checks that failed while the embedding backend
+//!   was away, waiting to run (#216).
 //!
 //! What deliberately does NOT live here: the staging directory used to publish rewritten
 //! notes (`.helixnotes/staging/`). Publishing is an `fs::rename` onto the note's own path,
