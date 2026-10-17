@@ -116,7 +116,8 @@ if ($Action -eq 'EnsureTask') {
   if ($TaskArguments) { $taskActionOptions.Argument = $TaskArguments }
   $taskAction = New-ScheduledTaskAction @taskActionOptions
   $taskPrincipal = New-ScheduledTaskPrincipal -UserId $interactiveUser -LogonType Interactive -RunLevel Limited
-  $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+  # Two hours: Gate 1 keeps the app open for up to a 70-minute wait on an hourly scheduled batch.
+  $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 2)
   Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Principal $taskPrincipal -Settings $taskSettings -Force | Out-Null
   [pscustomobject]@{ at = Get-NowUtc; action = 'ensure-task'; task = $TaskName; executable = $resolvedExecutable } |
     ConvertTo-Json -Compress
