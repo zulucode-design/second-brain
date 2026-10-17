@@ -38,6 +38,26 @@ export interface SemanticStatus {
   indexedNotes: number;
   queuedNotes: number;
   model: string;
+  /** The last recorded indexing pass since the index opened; `null` until there is one. */
+  lastPass: IndexingPass | null;
+}
+
+/**
+ * One finished semantic indexing pass, kept in memory only. Times are whole milliseconds; the
+ * four stage times never add up to more than `totalMs`.
+ */
+export interface IndexingPass {
+  /** Notes the backend returned usable vectors for. */
+  notes: number;
+  chunks: number;
+  totalMs: number;
+  readMs: number;
+  chunkMs: number;
+  /** Time spent in the embedding backend (Ollama). */
+  embedMs: number;
+  databaseMs: number;
+  /** The pass ended because the backend was unavailable or returned unusable vectors. */
+  stopped: boolean;
 }
 
 /** Whether the global quick-capture hotkey is registered, and why not when it is not. */
