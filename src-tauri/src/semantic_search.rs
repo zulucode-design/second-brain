@@ -1677,7 +1677,9 @@ mod tests {
         CacheState, EmbeddingBackend, OllamaEmbeddingBackend, PassTiming, PreparedNote,
         SemanticIndex, UnreadNote, CHUNK_CHARACTERS,
     };
-    use crate::types::SearchResult;
+    use crate::similar_notes::{check_now, rerun_deferred_checks, DeferredChecks, SimilarityCheck};
+    use crate::state::AppState;
+    use crate::types::{AppConfig, SearchResult};
     use crate::vault::para::ParaCategory;
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -2054,6 +2056,419 @@ mod tests {
             "the coverage line counts only notes the card could show"
         );
         assert_eq!(found.vault, vault);
+        drop(index);
+        cleanup(root);
+    }
+
+    /// An app whose open vault is `vault` and whose semantic index is `index`, with the vault's
+    /// deferred similarity checks read the way opening it reads them (#216).
+    fn open_app(vault: &str, index: &Arc<SemanticIndex>) -> Arc<AppState> {
+        let app = Arc::new(AppState::new(AppConfig {
+            active_vault: Some(vault.to_string()),
+            ..Default::default()
+        }));
+        *app.semantic_index.lock().unwrap() = Some(index.clone());
+        *app.deferred_checks.lock().unwrap() = DeferredChecks::load(vault);
+        app
+    }
+
+    /// Reruns the deferred checks after each pass that shows the backend back, as the app does,
+    /// and collects the cards they deliver. Holds the app weakly: the app holds the index, and a
+    /// cycle would keep the database open past cleanup.
+    fn cards_from_reruns(
+        index: &SemanticIndex,
+        app: &Arc<AppState>,
+    ) -> Arc<Mutex<Vec<SimilarityCheck>>> {
+        let cards = Arc::new(Mutex::new(Vec::new()));
+        let (app, delivered) = (Arc::downgrade(app), cards.clone());
+        index.on_caught_up(move || {
+            if let Some(app) = app.upgrade() {
+                rerun_deferred_checks(&app, |card| delivered.lock().unwrap().push(card));
+            }
+        });
+        cards
+    }
+
+    /// Deferred checks as `(id, path)`.
+    fn listed(checks: &DeferredChecks) -> Vec<(String, String)> {
+        checks
+            .checks()
+            .iter()
+            .map(|check| (check.id.clone(), check.path.clone()))
+            .collect()
+    }
+
+    fn waiting(app: &AppState) -> Vec<(String, String)> {
+        listed(&app.deferred_checks.lock().unwrap())
+    }
+
+    fn path_text(path: &Path) -> String {
+        path.to_string_lossy().to_string()
+    }
+
+    /// Each card as its capture's title and its matches' titles.
+    fn shown(cards: &Mutex<Vec<SimilarityCheck>>) -> Vec<(String, Vec<String>)> {
+        cards
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|card| {
+                (
+                    card.capture.title.clone(),
+                    card.matches
+                        .iter()
+                        .map(|found| found.note.title.clone())
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_failed_similarity_check_is_recorded_and_survives_reloading_its_file() {
+        let root = scratch("deferred-recorded");
+        let vault = root.to_str().unwrap();
+        let capture = root.join("Capture.md");
+        let short = root.join("Short.md");
+        let unrelated = root.join("Unrelated.md");
+        write_note(
+            &capture,
+            "capture-id",
+            "Capture",
+            "Areas",
+            "coffee beans today",
+        );
+        write_note(&short, "short-id", "Short", "Areas", "coffee");
+        write_note(
+            &unrelated,
+            "unrelated-id",
+            "Unrelated",
+            "Areas",
+            "quantum mechanics lecture notes",
+        );
+        let available = Arc::new(AtomicBool::new(true));
+        let index = Arc::new(
+            SemanticIndex::open_at(
+                &root.join("semantic.sqlite3"),
+                Arc::new(RecoveringBackend {
+                    available: available.clone(),
+                }),
+            )
+            .unwrap(),
+        );
+        let app = open_app(vault, &index);
+
+        assert!(check_now(&app, unrelated.to_str().unwrap()).is_none());
+        available.store(false, Ordering::SeqCst);
+        assert!(check_now(&app, short.to_str().unwrap()).is_none());
+        assert!(
+            waiting(&app).is_empty(),
+            "nothing similar, or too short to judge, is a check that ran"
+        );
+
+        assert!(check_now(&app, capture.to_str().unwrap()).is_none());
+        let recorded = vec![("capture-id".to_string(), path_text(&capture))];
+        assert_eq!(waiting(&app), recorded, "recorded by its id, with its path");
+
+        // A restart: opening the vault again reads what the file kept.
+        drop(app);
+        drop(index);
+        assert_eq!(listed(&DeferredChecks::load(vault)), recorded);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_deferred_check_runs_after_the_backend_returns_and_its_card_is_delivered() {
+        let root = scratch("deferred-rerun");
+        let vault = root.to_str().unwrap();
+        let kept = root.join("Kept.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        let available = Arc::new(AtomicBool::new(true));
+        let index = Arc::new(
+            SemanticIndex::open_at(
+                &root.join("semantic.sqlite3"),
+                Arc::new(RecoveringBackend {
+                    available: available.clone(),
+                }),
+            )
+            .unwrap(),
+        );
+        let app = open_app(vault, &index);
+        let cards = cards_from_reruns(&index, &app);
+        index.note_changed(&kept).unwrap();
+        index.retry_pending().unwrap();
+
+        // Offline: two captures that say the same thing and an unrelated one, saved and queued,
+        // each check failing.
+        available.store(false, Ordering::SeqCst);
+        let first = root.join("First capture.md");
+        let second = root.join("Second capture.md");
+        let unrelated = root.join("Unrelated.md");
+        write_note(
+            &first,
+            "first-id",
+            "First capture",
+            "Areas",
+            "coffee beans today",
+        );
+        write_note(
+            &second,
+            "second-id",
+            "Second capture",
+            "Areas",
+            "more coffee beans",
+        );
+        write_note(
+            &unrelated,
+            "unrelated-id",
+            "Unrelated",
+            "Areas",
+            "quantum mechanics lecture notes",
+        );
+        for note in [&first, &second, &unrelated] {
+            index.note_changed(note).unwrap();
+            assert!(check_now(&app, note.to_str().unwrap()).is_none());
+        }
+        assert_eq!(waiting(&app).len(), 3);
+        assert!(shown(&cards).is_empty());
+
+        available.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            index.retry_pending().unwrap(),
+            super::RetryOutcome::QueueProcessed
+        ));
+
+        assert_eq!(
+            shown(&cards),
+            [
+                (
+                    "First capture".to_string(),
+                    vec!["Kept".to_string(), "Second capture".to_string()]
+                ),
+                (
+                    "Second capture".to_string(),
+                    vec!["First capture".to_string(), "Kept".to_string()]
+                ),
+            ],
+            "oldest first, so the newest card lands on top; notes saved offline match each other"
+        );
+        assert!(
+            waiting(&app).is_empty(),
+            "a check that ran leaves the list, whether it found matches or not"
+        );
+        assert!(DeferredChecks::load(vault).checks().is_empty());
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_moved_note_still_gets_its_deferred_check_and_a_deleted_one_is_dropped() {
+        let root = scratch("deferred-moved");
+        let vault = root.to_str().unwrap();
+        std::fs::create_dir_all(root.join("Projects")).unwrap();
+        let kept = root.join("Kept.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        let available = Arc::new(AtomicBool::new(true));
+        let index = Arc::new(
+            SemanticIndex::open_at(
+                &root.join("semantic.sqlite3"),
+                Arc::new(RecoveringBackend {
+                    available: available.clone(),
+                }),
+            )
+            .unwrap(),
+        );
+        let app = open_app(vault, &index);
+        let cards = cards_from_reruns(&index, &app);
+        index.note_changed(&kept).unwrap();
+        index.retry_pending().unwrap();
+
+        available.store(false, Ordering::SeqCst);
+        let moving = root.join("Moving.md");
+        let deleted = root.join("Deleted.md");
+        write_note(
+            &moving,
+            "moving-id",
+            "Moving",
+            "Areas",
+            "coffee beans today",
+        );
+        write_note(
+            &deleted,
+            "deleted-id",
+            "Deleted",
+            "Areas",
+            "coffee beans again",
+        );
+        for note in [&moving, &deleted] {
+            index.note_changed(note).unwrap();
+            assert!(check_now(&app, note.to_str().unwrap()).is_none());
+        }
+        // Renamed and moved the way the app moves a note: the old path leaves the index and the
+        // new one is queued. The other is deleted.
+        let moved = root.join("Projects").join("Moved.md");
+        std::fs::rename(&moving, &moved).unwrap();
+        index.note_removed(&moving).unwrap();
+        index.note_changed(&moved).unwrap();
+        std::fs::remove_file(&deleted).unwrap();
+        index.note_removed(&deleted).unwrap();
+
+        available.store(true, Ordering::SeqCst);
+        index.retry_pending().unwrap();
+
+        assert_eq!(
+            shown(&cards),
+            [("Moving".to_string(), vec!["Kept".to_string()])]
+        );
+        assert_eq!(
+            cards.lock().unwrap()[0].capture.path,
+            path_text(&moved),
+            "the check found the note where it is now"
+        );
+        assert!(
+            waiting(&app).is_empty(),
+            "the moved note's check ran, and the deleted note's was dropped"
+        );
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_deferred_check_that_fails_again_stays_recorded() {
+        let root = scratch("deferred-fails-again");
+        let vault = root.to_str().unwrap();
+        let kept = root.join("Kept.md");
+        let capture = root.join("Capture.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        write_note(
+            &capture,
+            "capture-id",
+            "Capture",
+            "Areas",
+            "coffee beans today",
+        );
+        let available = Arc::new(AtomicBool::new(true));
+        let index = Arc::new(
+            SemanticIndex::open_at(
+                &root.join("semantic.sqlite3"),
+                Arc::new(RecoveringBackend {
+                    available: available.clone(),
+                }),
+            )
+            .unwrap(),
+        );
+        let app = open_app(vault, &index);
+        index.note_changed(&kept).unwrap();
+        index.retry_pending().unwrap();
+        // The backend drops again, once, between the pass and the rerun.
+        let cards = Arc::new(Mutex::new(Vec::new()));
+        let drop_once = Arc::new(AtomicBool::new(true));
+        let (app_ref, delivered, backend) =
+            (Arc::downgrade(&app), cards.clone(), available.clone());
+        index.on_caught_up(move || {
+            if drop_once.swap(false, Ordering::SeqCst) {
+                backend.store(false, Ordering::SeqCst);
+            }
+            if let Some(app) = app_ref.upgrade() {
+                rerun_deferred_checks(&app, |card| delivered.lock().unwrap().push(card));
+            }
+        });
+
+        available.store(false, Ordering::SeqCst);
+        index.note_changed(&capture).unwrap();
+        assert!(check_now(&app, capture.to_str().unwrap()).is_none());
+        available.store(true, Ordering::SeqCst);
+        index.retry_pending().unwrap();
+
+        assert!(shown(&cards).is_empty());
+        let recorded = vec![("capture-id".to_string(), path_text(&capture))];
+        assert_eq!(waiting(&app), recorded, "a check that failed again stays");
+        assert_eq!(listed(&DeferredChecks::load(vault)), recorded);
+
+        // The next pass that reaches the backend runs it.
+        available.store(true, Ordering::SeqCst);
+        let later = root.join("Later.md");
+        write_note(&later, "later-id", "Later", "Areas", "quantum mechanics");
+        index.note_changed(&later).unwrap();
+        index.retry_pending().unwrap();
+        assert_eq!(
+            shown(&cards),
+            [("Capture".to_string(), vec!["Kept".to_string()])]
+        );
+        assert!(waiting(&app).is_empty());
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_pass_that_stopped_or_found_the_queue_empty_reruns_nothing() {
+        let root = scratch("deferred-no-rerun");
+        let vault = root.to_str().unwrap();
+        let kept = root.join("Kept.md");
+        let capture = root.join("Capture.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        write_note(
+            &capture,
+            "capture-id",
+            "Capture",
+            "Areas",
+            "coffee beans today",
+        );
+        let available = Arc::new(AtomicBool::new(true));
+        let index = Arc::new(
+            SemanticIndex::open_at(
+                &root.join("semantic.sqlite3"),
+                Arc::new(RecoveringBackend {
+                    available: available.clone(),
+                }),
+            )
+            .unwrap(),
+        );
+        let app = open_app(vault, &index);
+        let cards = cards_from_reruns(&index, &app);
+        for note in [&kept, &capture] {
+            index.note_changed(note).unwrap();
+        }
+        index.retry_pending().unwrap();
+        // Both notes are indexed; the capture's check fails all the same.
+        available.store(false, Ordering::SeqCst);
+        assert!(check_now(&app, capture.to_str().unwrap()).is_none());
+        assert_eq!(waiting(&app).len(), 1);
+
+        available.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            index.retry_pending().unwrap(),
+            super::RetryOutcome::QueueProcessed
+        ));
+        assert!(
+            shown(&cards).is_empty(),
+            "an empty queue never reached the backend"
+        );
+        assert_eq!(waiting(&app).len(), 1);
+
+        available.store(false, Ordering::SeqCst);
+        let later = root.join("Later.md");
+        write_note(&later, "later-id", "Later", "Areas", "quantum mechanics");
+        index.note_changed(&later).unwrap();
+        assert!(matches!(
+            index.retry_pending().unwrap(),
+            super::RetryOutcome::BackendUnavailable
+        ));
+        assert!(shown(&cards).is_empty(), "a pass that stopped");
+        assert_eq!(waiting(&app).len(), 1);
+
+        // The pass that embeds the queued note does rerun it.
+        available.store(true, Ordering::SeqCst);
+        index.retry_pending().unwrap();
+        assert_eq!(
+            shown(&cards),
+            [("Capture".to_string(), vec!["Kept".to_string()])]
+        );
+        assert!(waiting(&app).is_empty());
+        drop(app);
         drop(index);
         cleanup(root);
     }

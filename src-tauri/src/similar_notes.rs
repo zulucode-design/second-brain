@@ -217,6 +217,11 @@ impl DeferredChecks {
         self.checks.push(check);
         self.save();
     }
+
+    #[cfg(test)]
+    pub(crate) fn checks(&self) -> &[DeferredCheck] {
+        &self.checks
+    }
 }
 
 /// Keeps the check that just failed for the note at `path`, to run once the backend is back.
@@ -673,7 +678,41 @@ fn notify(_app: &AppHandle, _vault: String) {}
 
 #[cfg(test)]
 mod tests {
-    use super::{notification_title, with_capture_appended};
+    use super::{
+        deferred_file, notification_title, with_capture_appended, DeferredCheck, DeferredChecks,
+    };
+
+    #[test]
+    fn an_unreadable_deferred_file_gives_an_empty_list_and_the_vault_still_opens() {
+        let vault = std::env::temp_dir().join(format!("sb-deferred-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&vault).unwrap();
+        let vault_text = vault.to_str().unwrap();
+        let file = deferred_file(vault_text).unwrap();
+        assert!(
+            DeferredChecks::load(vault_text).checks().is_empty(),
+            "a missing file is an empty list"
+        );
+
+        // `load` has no error to return, so opening the vault goes on with an empty list.
+        std::fs::write(&file, b"{ not json").unwrap();
+        let mut loaded = DeferredChecks::load(vault_text);
+        assert!(loaded.checks().is_empty(), "a damaged file");
+        // The next change writes a whole file over the damaged one.
+        loaded.keep(DeferredCheck {
+            id: "note-id".to_string(),
+            path: "Areas/Note.md".to_string(),
+        });
+        assert_eq!(DeferredChecks::load(vault_text).checks(), loaded.checks());
+
+        std::fs::remove_file(&file).unwrap();
+        std::fs::create_dir(&file).unwrap();
+        assert!(
+            DeferredChecks::load(vault_text).checks().is_empty(),
+            "a file that cannot be read at all"
+        );
+        std::fs::remove_dir(&file).unwrap();
+        std::fs::remove_dir_all(&vault).unwrap();
+    }
 
     #[test]
     fn an_append_keeps_the_note_and_marks_where_the_capture_starts() {
