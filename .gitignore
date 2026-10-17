@@ -38,5 +38,16 @@ vite.config.ts.timestamp-*
 **/.claude/*
 !/.claude/settings.json
 
+# Agent skills stay local, except kiro-workflow, which Kiro's sandbox must see (see AGENTS.md)
+!/.claude/skills/
+/.claude/skills/*
+!/.claude/skills/kiro-workflow/
+/.agents/*
+!/.agents/skills/
+/.agents/skills/*
+!/.agents/skills/kiro-workflow/
+/.kiro/skills/*
+!/.kiro/skills/kiro-workflow/
+
 # Signing keys
 *.key

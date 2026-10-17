@@ -25,8 +25,9 @@ also hits the app binary, where a second manifest is a hard linker error (`CVT11
 
 ## Roles
 
-Two agents split each change. Claude writes the code; Sol (Codex `gpt-6.1-sol`, reasoning effort
-high) does the administrative work around it.
+Claude and Sol split each change. Claude writes the code; Sol (Codex `gpt-6.1-sol`, reasoning
+effort xhigh) does the administrative work around it. Kiro, Amazon's coding agent, may write the
+first pass of an issue (see Kiro workflow below); Claude owns every fix after it.
 
 - **Claude** writes the code and its tests, and fixes every finding that review, a test run, or CI
   raises, CI failures included. Claude does not run the tests.
@@ -46,8 +47,8 @@ high) does the administrative work around it.
 An issue is complete only once its branch has passed a **final review** of its exact head commit:
 review `git diff origin/main...HEAD`, after `git fetch`, on two separate axes. **Spec** checks it
 against what it was asked to do: the issue, or Nicolas's request when there is no issue.
-**Standards** checks it against this repo's rules. Sol runs it (see Roles), with a review skill or
-both axes by hand.
+**Standards** checks it against this repo's rules. Sol runs it (see Roles), both axes with
+`gpt-6.1-sol` at `xhigh` reasoning effort, through a review skill or by hand.
 
 Fix every finding. A finding may stay unfixed only when a follow-up issue is open to fix it and the
 PR body names the finding, the reason it stays, and that issue's number. The PR body carries a
@@ -61,6 +62,9 @@ is pushed to a pull request branch or to main, until the final review of that ex
 
 Why: PR #140 was opened on 2026-09-21 without one; the review that followed found a
 silent-failure path and an unverified Windows build.
+
+Published history is append-only, for every agent and on every branch: no force-push, and no
+amending or rebasing a commit once it has been pushed. Fix forward with a new commit.
 
 ## PowerShell on the Windows machine
 
@@ -99,6 +103,17 @@ Deleting anything on either machine needs Nicolas's approval for that item first
 and sizes, then wait for his answer.
 
 ## Agent skills
+
+### Kiro workflow
+
+When a task involves Kiro (a Kiro brief or handoff, a `kiro/*` branch, a pull request opened by
+Kiro, or an issue given to Kiro), invoke the `kiro-workflow` skill before acting. If native
+invocation is unavailable, read
+[.claude/skills/kiro-workflow/SKILL.md](.claude/skills/kiro-workflow/SKILL.md) directly; identical
+copies live in `.agents/skills/` and `.kiro/skills/`. If the skill is missing or the copies differ,
+stop Kiro work. Kiro never merges, pushes only its own working branch, and opens pull requests only
+in the private mirror the skill describes, never in this repository. This is the only skill committed
+to the repository; every other project skill stays local.
 
 ### Ollama in Windows gates
 
