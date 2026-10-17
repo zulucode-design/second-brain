@@ -70,6 +70,9 @@ Syncthing instance.
 
 ## Guarded batch contract
 
+Scheduled runs start at the top of every hour (UTC) on both machines, and "Sync now" runs one at
+once.
+
 Each manual or scheduled run uses the shared bulk-mutation lease from issue #83. The order
 is fixed:
 
