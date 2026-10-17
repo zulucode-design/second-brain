@@ -57,9 +57,9 @@ The mirror:
 - is an independent private repository, not a GitHub fork. Kiro's GitHub app can reach the mirror and
   not this repository, and Kiro's sandbox and connected tools hold no credentials for this repository.
 - has GitHub Actions disabled.
-- has its main set by Sol to the pinned main of this repository before each task, at a commit that
-  contains this skill. Mirror main then stays frozen until the task closes: protected where GitHub
-  allows it, and checked against the pinned commit at intake.
+- has its main set by Sol to the pinned main of this repository before each task or set of parallel
+  tasks, at a commit that contains this skill. Mirror main then stays frozen until the last open task
+  closes: protected where GitHub allows it, and checked against the pinned commit at intake.
 - is never a source for main. Claude imports only the frozen exchange head, never mirror main or a
   merge commit from a mirror pull request.
 - never carries closing keywords. Commit messages and pull request text in the mirror use no form of
@@ -69,7 +69,10 @@ The mirror:
 
 ## 1. Brief
 
-One Kiro task runs at a time.
+Kiro tasks may run in parallel when their issues touch different files and features. Parallel tasks
+share one `base_sha`, their briefs' allowed files do not overlap, and each brief names the tasks
+running beside it. Each task still has its own exchange branch, handoff, delivery branch and pull
+request.
 
 Before writing the brief, Claude grills Nicolas on anything material: behaviour the issue leaves open,
 scope, security, data loss and the product contract. A Kiro session is a poor place to answer
@@ -152,12 +155,13 @@ state: working | question | ready_for_claude
 
 ## 3. Watcher
 
-While a Kiro task is open, Claude runs a background shell loop against the working repository:
+While any Kiro task is open, Claude runs one background shell loop against the working repository,
+covering every open task:
 
 - `git fetch` every ref, then list the refs that changed since the last poll, not only `kiro/*`.
   `git ls-remote` alone does not update local refs, so fetch before reading a handoff.
-- Read the handoff on each changed branch whose history contains `brief_sha`, and list open pull
-  requests whose head contains `brief_sha`, whoever authored them. Kiro can open pull requests as
+- Read the handoff on each changed branch whose history contains an open task's `brief_sha`, and list
+  open pull requests whose head contains one, whoever authored them. Kiro can open pull requests as
   `app/kiro-agent` or, if a setting allows it, as Nicolas's GitHub user.
 - Wake Claude only on a change: `ready_for_claude` or `question`, a new branch, a pull request, or a
   push after the handoff froze.
@@ -165,8 +169,8 @@ While a Kiro task is open, Claude runs a background shell loop against the worki
   never read as "nothing changed".
 - After 24 hours with no push, tell Nicolas once.
 
-The watcher stops when the task closes. If Claude's session restarts, Claude restarts it from the
-pinned commits.
+The watcher stops when the last open task closes. If Claude's session restarts, Claude restarts it
+from the pinned commits.
 
 ## 4. Questions
 
