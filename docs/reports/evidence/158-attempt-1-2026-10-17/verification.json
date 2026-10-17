@@ -1,0 +1,241 @@
+{
+  "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10",
+  "verificationHead": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10",
+  "measurementHead": null,
+  "main": "9eb5d20cd066465490467588228febc4a290c2df",
+  "merge": "no merge needed",
+  "outcome": "blocked",
+  "verify": "FAIL",
+  "fedora": {
+    "pnpm verify": {
+      "exit": 0,
+      "elapsedSeconds": 47.99518156051636,
+      "typecheck": {
+        "errors": 0,
+        "warnings": 0
+      },
+      "javascript": {
+        "tests": 253,
+        "passed": 253,
+        "failed": 0,
+        "skipped": 0
+      },
+      "rust": {
+        "passed": 687,
+        "failed": 0,
+        "ignored": 10
+      },
+      "rustLint": "PASS",
+      "webBuild": "PASS"
+    },
+    "pnpm tauri:build": {
+      "result": "CANCELLED",
+      "controllerExit": 143,
+      "reason": "Stopped after Windows full verification failed; no package result"
+    },
+    "scripts/verify-linux-package.sh <rpm>": {
+      "result": "NOT RUN"
+    }
+  },
+  "windows": {
+    "pnpm verify": {
+      "exit": 1,
+      "elapsedSeconds": 86.88399849999999,
+      "typecheck": {
+        "errors": 0,
+        "warnings": 0
+      },
+      "javascript": {
+        "tests": 253,
+        "passed": 247,
+        "failed": 3,
+        "skipped": 3
+      },
+      "rust": "NOT RUN",
+      "rustLint": "NOT RUN",
+      "webBuild": "NOT RUN"
+    },
+    "pnpm tauri:build": {
+      "result": "NOT RUN"
+    },
+    "carriedRustGate": {
+      "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10",
+      "command": "pnpm test:rust",
+      "passed": 662,
+      "failed": 0,
+      "ignored": 9,
+      "reason": "Candidate and clean checkout unchanged; source log matched each named test"
+    },
+    "installInventory": {
+      "registryEntries": 0,
+      "knownExecutables": 0,
+      "shortcuts": 0
+    }
+  },
+  "namedTests": [
+    {
+      "name": "semantic_search::tests::a_pass_records_its_counts_and_stage_times_in_memory_only",
+      "fedora": {
+        "result": "PASS",
+        "source": "full verification",
+        "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10"
+      },
+      "windows": {
+        "result": "PASS",
+        "source": "earlier build gate; not reached in full verification",
+        "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10"
+      }
+    },
+    {
+      "name": "semantic_search::tests::a_pass_that_cannot_use_the_backend_records_that_it_stopped",
+      "fedora": {
+        "result": "PASS",
+        "source": "full verification",
+        "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10"
+      },
+      "windows": {
+        "result": "PASS",
+        "source": "earlier build gate; not reached in full verification",
+        "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10"
+      }
+    },
+    {
+      "name": "semantic_search::tests::only_the_first_empty_pass_of_an_outage_is_logged",
+      "fedora": {
+        "result": "PASS",
+        "source": "full verification",
+        "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10"
+      },
+      "windows": {
+        "result": "PASS",
+        "source": "earlier build gate; not reached in full verification",
+        "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10"
+      }
+    },
+    {
+      "name": "semantic_search::tests::a_pass_that_sends_nothing_to_the_backend_keeps_the_earlier_record",
+      "fedora": {
+        "result": "PASS",
+        "source": "full verification",
+        "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10"
+      },
+      "windows": {
+        "result": "PASS",
+        "source": "earlier build gate; not reached in full verification",
+        "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10"
+      }
+    },
+    {
+      "name": "semantic_search::tests::the_status_carries_the_last_pass_in_the_shape_settings_reads",
+      "fedora": {
+        "result": "PASS",
+        "source": "full verification",
+        "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10"
+      },
+      "windows": {
+        "result": "PASS",
+        "source": "earlier build gate; not reached in full verification",
+        "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10"
+      }
+    },
+    {
+      "name": "shows times under a minute in seconds with one decimal",
+      "file": "tests/indexing-pass.test.mjs",
+      "fedora": {
+        "result": "PASS",
+        "source": "full verification"
+      },
+      "windows": {
+        "result": "PASS",
+        "source": "full verification"
+      }
+    },
+    {
+      "name": "shows a minute and longer as minutes and seconds",
+      "file": "tests/indexing-pass.test.mjs",
+      "fedora": {
+        "result": "PASS",
+        "source": "full verification"
+      },
+      "windows": {
+        "result": "PASS",
+        "source": "full verification"
+      }
+    },
+    {
+      "name": "never shows a time that rounds up to a minute as 60 seconds",
+      "file": "tests/indexing-pass.test.mjs",
+      "fedora": {
+        "result": "PASS",
+        "source": "full verification"
+      },
+      "windows": {
+        "result": "PASS",
+        "source": "full verification"
+      }
+    },
+    {
+      "name": "summarises a pass as its notes, chunks and total time",
+      "file": "tests/indexing-pass.test.mjs",
+      "fedora": {
+        "result": "PASS",
+        "source": "full verification"
+      },
+      "windows": {
+        "result": "PASS",
+        "source": "full verification"
+      }
+    },
+    {
+      "name": "labels the four stage times in order",
+      "file": "tests/indexing-pass.test.mjs",
+      "fedora": {
+        "result": "PASS",
+        "source": "full verification"
+      },
+      "windows": {
+        "result": "PASS",
+        "source": "full verification"
+      }
+    }
+  ],
+  "rawLogDigests": {
+    "fedora-full-verify": {
+      "sha256": "9d3fd4385be492bf5f63d4a6abae8335565a76cc89cfff47dbd4ccc8857538b7",
+      "bytes": 109870
+    },
+    "fedora-package-build-cancelled": {
+      "sha256": "10240bad922aaaa93ca2581efdc6b7b792b302b739362f290c55d51e8055a504",
+      "bytes": 41407
+    },
+    "windows-full-verify": {
+      "sha256": "bb92bc0a3292f6094d3349c0163aa688bfee78ada769ee08532abe2b41524bb4",
+      "bytes": 23437
+    },
+    "windows-rust-build-gate": {
+      "sha256": "5357fed985445c0bc417390c5cf6a8419d349cbc95607da01260836a31c982b0",
+      "bytes": 59991
+    }
+  },
+  "reviewRounds": [
+    {
+      "round": 1,
+      "axis": "Spec",
+      "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10",
+      "verdict": "CLEAN"
+    },
+    {
+      "round": 1,
+      "axis": "Standards",
+      "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10",
+      "verdict": "CLEAN"
+    }
+  ],
+  "baseline": {
+    "fedora": "NOT RUN",
+    "windows": "NOT RUN",
+    "reason": "Stopped after Windows verification failed",
+    "measurements": 0
+  },
+  "issue158": "open; this attempt adds measurement instrumentation and does not improve indexing speed"
+}

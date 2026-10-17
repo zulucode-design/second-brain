@@ -1,0 +1,31 @@
+{
+  "candidate": "6f30ae6d4a882e1059a395ccf5ae84b8d0658a10",
+  "command": "pnpm verify",
+  "failedTests": [
+    {
+      "file": "tests/install-failure.test.mjs",
+      "line": 12,
+      "name": "pnpm install fails when the prepare svelte-kit sync fails",
+      "assertionLine": 37,
+      "expected": "output matches /INTENTIONAL_SYNC_FAILURE/",
+      "actual": "undefined\\nundefined"
+    },
+    {
+      "file": "tests/linux-test-package.test.mjs",
+      "line": 87,
+      "name": "the test package helper exits 0 after an install and removes its staging copy",
+      "assertionLine": 96,
+      "expectedExitStatus": 0,
+      "actualExitStatus": null
+    },
+    {
+      "file": "tests/linux-test-package.test.mjs",
+      "line": 105,
+      "name": "the test package helper refuses to run without sudo",
+      "assertionLine": 107,
+      "expectedExitStatus": 1,
+      "actualExitStatus": null
+    }
+  ],
+  "additionalDiagnosis": "Not attempted after failure; no fix or rerun"
+}
