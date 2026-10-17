@@ -1,21 +1,23 @@
 # Issue #158, attempt 1: indexing baseline verification
 
-Finished: 2026-10-17. Owner: Sol. Outcome: **blocked**. **VERIFY: FAIL**.
+Run ended: 2026-10-17. Owner: Sol. Outcome: **blocked**. **VERIFY: FAIL**.
 
-Windows full verification failed in three JavaScript tests. Verification stopped at that failure, without fixes or retries. The concurrent Fedora package build was cancelled. Neither installed-app baseline ran, so this report contains no indexing performance measurements.
+The continuation confirmed that Windows JavaScript verification has exactly the three known failures from main tracked in [#221](https://github.com/zulucode-design/second-brain/issues/221). Windows Rust tests passed fresh. A new Fedora package setup failure then stopped the run before any installed-app baseline. No indexing performance measurements were collected.
+
+The first run, recorded in `152c04b`, stopped on the three #221 failures and cancelled its concurrent Fedora package build. Nicolas permitted those three failures for this continuation and required an immediate stop on any new failure. The original evidence remains unchanged; [continuation evidence](evidence/158-attempt-1-2026-10-17/continuation.json) records the new results.
 
 Issue #158 stays open. This attempt adds measurement instrumentation; it does not speed indexing up. Its baseline acceptance criterion remains unverified.
 
 ## Candidate, merge, and reviews
 
 - Candidate and verification head: `6f30ae6d4a882e1059a395ccf5ae84b8d0658a10`.
-- Measurement head: none; zero measurement runs started.
-- Initial branch: `fix/158-indexing-pass-timing`, clean at the candidate.
-- `git fetch origin` passed. Fetched main and merge base both remained `9eb5d20cd066465490467588228febc4a290c2df`: **no merge needed**. No bundle transfer was needed.
+- Measurement head: none; zero measurement runs started. Both planned measurements still target `6f30ae6`.
+- Delivery branch: `fix/158-indexing-pass-timing`, clean at report commit `152c04b` when the continuation began. That commit changed only the report and its evidence; product sources match the candidate.
+- Carried merge result: the first run's `git fetch origin` found main and merge base at `9eb5d20cd066465490467588228febc4a290c2df`: **no merge needed**. This continuation made no merge or bundle transfer.
 - Round 1 Spec: **CLEAN**, on `6f30ae6`.
 - Round 1 Standards: **CLEAN**, on `6f30ae6`.
-- Those reviews are earlier Sol evidence supplied for this task. No new final review was performed. The report commit needs the exact-head final review required by `AGENTS.md` before any publication.
-- No push or pull request was made.
+- These are earlier Sol reviews. No new final review was performed. The new report commit still needs the exact-head final review required by `AGENTS.md` before publication.
+- No push or pull request was made. No commit was amended, reset, or rebased.
 
 Imported Kiro commits:
 
@@ -29,58 +31,66 @@ Claude's fix after import: `6f30ae6`, `fix(semantic): log only the first empty p
 
 ## Verification results
 
-Every result below names the candidate above. Four Sol usage probes returned `OK`: before Fedora verification, Fedora packaging, Windows verification, and the report checks. The three Kiro skill copies matched.
+All results below concern `6f30ae6`. Fedora full verification and Windows typecheck carry from the first run on that unchanged candidate. Windows JavaScript and Rust results are fresh continuation runs. The three Kiro skill copies matched. Sol usage probes returned `OK` before the test and package runs; a further probe for Windows lint completed, but lint never started after the Fedora failure.
 
 | Machine | Command or stage | Result and counts |
 | --- | --- | --- |
-| Fedora | `pnpm verify` | **PASS**, exit 0, 48.00 seconds. |
-| Fedora | `pnpm check`, inside verify | **PASS**, 0 errors, 0 warnings. |
-| Fedora | `pnpm test`, inside verify | **PASS**, 253 passed, 0 failed, 0 skipped. |
-| Fedora | `pnpm test:rust`, inside verify | **PASS**, 687 passed, 0 failed, 10 ignored. |
-| Fedora | `pnpm lint:rust`, inside verify | **PASS**, formatting and Clippy with warnings denied. |
-| Fedora | `pnpm build`, inside verify | **PASS**. |
-| Fedora | `pnpm tauri:build` | **CANCELLED** after Windows failed; controller exit 143. The build had reached Rust release compilation. No completed RPM or compile verdict. |
+| Fedora | `pnpm verify` | **PASS, carried**, exit 0, 48.00 seconds. |
+| Fedora | `pnpm check`, inside verify | **PASS, carried**, 0 errors, 0 warnings. |
+| Fedora | `pnpm test`, inside verify | **PASS, carried**, 253 passed, 0 failed, 0 skipped. |
+| Fedora | `pnpm test:rust`, inside verify | **PASS, carried**, 687 passed, 0 failed, 10 ignored. |
+| Fedora | `pnpm lint:rust`, inside verify | **PASS, carried**, formatting and Clippy with warnings denied. |
+| Fedora | `pnpm build`, inside verify | **PASS, carried**. |
+| Fedora | `pnpm tauri:build` | **FAIL**, exit 1 after 1.11 seconds; `ERR_PNPM_UNSAFE_MODULES_DIR`, before build scripts or product compilation. |
 | Fedora | `scripts/verify-linux-package.sh <rpm>` | **NOT RUN**; no RPM available. |
-| Windows | Disk and checkout preflight | **PASS**, clean at the candidate. C: 49.89 GiB free; D: 26.70 GiB free, above the 15 GiB stop threshold. |
-| Windows | `pnpm verify` | **FAIL**, exit 1, 86.88 seconds. |
-| Windows | `pnpm check`, inside verify | **PASS**, 0 errors, 0 warnings. |
-| Windows | `pnpm test`, inside verify | **FAIL**, 247 passed, 3 failed, 3 skipped, 253 total. |
-| Windows | Rust tests, Rust lint, web build inside verify | **NOT RUN**; the command stopped at JavaScript tests. |
+| Windows | Checkout and disk preflight | **PASS**, clean at candidate. C: 49.88 GiB free; D: 25.01 GiB free, above the 15 GiB threshold. No Windows package build started. |
+| Windows | `pnpm check`, first verify | **PASS, carried**, 0 errors, 0 warnings. |
+| Windows | `pnpm test` | **FAIL, permitted #221 failures only**, exit 1, 63.61 seconds: 247 passed, 3 failed, 3 skipped, 253 total. No cancelled tests or additional failures. |
+| Windows | `pnpm test:rust` | **PASS, fresh**, exit 0, 22.98 seconds: 662 passed, 0 failed, 9 ignored. |
+| Windows | `pnpm lint:rust` | **NOT RUN**; stopped after Fedora package failure. |
+| Windows | `pnpm build` | **NOT RUN**. |
 | Windows | `pnpm tauri:build` | **NOT RUN**. |
-| Windows | `pnpm test:rust`, earlier build gate | **PASS, carried evidence**: 662 passed, 0 failed, 9 ignored on the same unchanged candidate. This does not make the failed full verification pass. |
 
-Windows installation inventory returned zero matching registry entries, zero known installed executables, and zero Start-menu or desktop shortcuts. No installer was run. No candidate package was installed on either machine.
+Windows `pnpm verify` was not repeated: its first-run exit 1 at JavaScript tests is historical evidence. The continuation ran the requested stages separately until the new Fedora failure. Neither package was installed. The first-run Windows install inventory found zero matching registry entries, known installed executables, or shortcuts; this continuation did not change installs.
 
-### Windows failures
+### Known Windows failures from main: #221
 
-| Test and location | Observed failure |
+| Test and location | Fresh continuation result |
 | --- | --- |
-| `pnpm install fails when the prepare svelte-kit sync fails`, `tests/install-failure.test.mjs:12` | Assertion at line 37 expected output matching `/INTENTIONAL_SYNC_FAILURE/`; received `undefined\nundefined`. |
-| `the test package helper exits 0 after an install and removes its staging copy`, `tests/linux-test-package.test.mjs:87` | Assertion at line 96 expected exit status 0; received `null`. |
-| `the test package helper refuses to run without sudo`, `tests/linux-test-package.test.mjs:105` | Assertion at line 107 expected exit status 1; received `null`. |
+| `pnpm install fails when the prepare svelte-kit sync fails`, `tests/install-failure.test.mjs:12` | Assertion expected `/INTENTIONAL_SYNC_FAILURE/`; received `undefined\nundefined`. |
+| `the test package helper exits 0 after an install and removes its staging copy`, `tests/linux-test-package.test.mjs:87` | Expected exit status 0; received `null`. |
+| `the test package helper refuses to run without sudo`, `tests/linux-test-package.test.mjs:105` | Expected exit status 1; received `null`. |
 
-The first test calls `spawnSync('pnpm', ...)`; the other two call `spawnSync('bash', ...)`. Their recorded outputs do not identify the process-launch error. No further diagnosis, environment change, code fix, or rerun was attempted. Claude owns any fixes.
+Sol confirmed that `git diff --quiet 9eb5d20 HEAD -- tests/install-failure.test.mjs tests/linux-test-package.test.mjs scripts/linux-test-package.sh package.json` exits 0. These files are unchanged from main. Sol also reran Claude's Windows spawn probe: both `spawnSync('pnpm', ...)` and `spawnSync('bash', ...)` returned `status: null`, `error: ENOENT`. Windows provides pnpm through a `.cmd` shim; bash is not on PATH. The `windows-rust` job in `.github/workflows/verify.yml` runs `pnpm test:rust`, not JavaScript tests, so it does not exercise these failures.
 
-A private console-log reader also encountered Windows output that was not valid UTF-8. The existing logs were copied and inspected with replacement decoding; no test was rerun. The exit-1 result and the three assertion failures come from the preserved verification log and result file.
+The fresh JavaScript log names exactly the three tests above. All 247 other executed tests passed; three platform skips remain. These #221 failures are permitted for this attempt and did not cause the continuation to stop.
+
+### New blocker: Fedora package setup
+
+The build embeds its checkout's HEAD through `src-tauri/build.rs`. To build `6f30ae6` while keeping `152c04b` on the delivery branch, Sol created a detached candidate worktree and linked its `node_modules` to the delivery checkout's existing dependencies. The existing Rust target cache was selected through `CARGO_TARGET_DIR`.
+
+`pnpm tauri:build` automatically entered dependency installation, then refused the shared modules directory because its resolved target lies outside the temporary project's root: `ERR_PNPM_UNSAFE_MODULES_DIR`. This was Sol's build setup failure. The refusal occurred before the package scripts ran; it provides no product compile or packaging verdict. The shared dependency directory remains present, and both working trees stayed clean.
+
+Sol stopped without fixing the setup or retrying the command, as instructed. The Windows Rust run had already completed successfully. No later verification or baseline stage ran.
 
 ### Named-test reconciliation
 
-All Rust names have prefix `semantic_search::tests::`. None of these five tests is ignored.
+All Rust names have prefix `semantic_search::tests::`. None of these five tests is ignored. Windows results now come from the fresh Rust run, rather than the earlier build gate.
 
-| Test | Fedora full verify | Windows |
+| Test | Fedora full verify, carried | Windows continuation, fresh |
 | --- | --- | --- |
-| `a_pass_records_its_counts_and_stage_times_in_memory_only` | PASS | PASS, earlier build gate only |
-| `a_pass_that_cannot_use_the_backend_records_that_it_stopped` | PASS | PASS, earlier build gate only |
-| `only_the_first_empty_pass_of_an_outage_is_logged` | PASS | PASS, earlier build gate only |
-| `a_pass_that_sends_nothing_to_the_backend_keeps_the_earlier_record` | PASS | PASS, earlier build gate only |
-| `the_status_carries_the_last_pass_in_the_shape_settings_reads` | PASS | PASS, earlier build gate only |
-| `tests/indexing-pass.test.mjs` | PASS, all 5 tests | PASS, all 5 tests in the failed full verify |
+| `a_pass_records_its_counts_and_stage_times_in_memory_only` | PASS | PASS |
+| `a_pass_that_cannot_use_the_backend_records_that_it_stopped` | PASS | PASS |
+| `only_the_first_empty_pass_of_an_outage_is_logged` | PASS | PASS |
+| `a_pass_that_sends_nothing_to_the_backend_keeps_the_earlier_record` | PASS | PASS |
+| `the_status_carries_the_last_pass_in_the_shape_settings_reads` | PASS | PASS |
+| `tests/indexing-pass.test.mjs` | PASS, 5/5 | PASS, 5/5 |
 
-The five JavaScript cases cover sub-minute seconds, minute formatting, rounding across a minute, the pass summary, and stage labels in order. Their exact names and both Rust evidence sources appear in [verification evidence](evidence/158-attempt-1-2026-10-17/verification.json). The earlier Windows Rust results apply because the checkout and candidate did not change. They were not run again after the full-verification failure.
+The five JavaScript cases cover sub-minute seconds, minute formatting, rounding across a minute, the pass summary, and stage labels in order. Exact names and source-log SHA-256 digests appear in the continuation evidence. The carried Fedora log was checked against the same names.
 
-## Baseline protocol: planned, not executed
+## Baseline protocol and execution
 
-This protocol follows `scripts/perf-fixture.mjs`, `perf-interactive.mjs`, `perf-startup.mjs`, `perf-summary.mjs`, the Windows helpers, and the #88 performance matrix. These are conditions for a future run, not claims about this stopped attempt.
+The original eight-step protocol is retained below. It follows `scripts/perf-fixture.mjs`, `perf-interactive.mjs`, `perf-startup.mjs`, `perf-summary.mjs`, the Windows helpers, and the #88 performance matrix. Step 1 stopped at Fedora packaging. No installation, configuration swap, fixture generation, model selection, app launch, or measurement began; steps 2 through 8 were not exercised. Process checks for the verification commands appear after the results.
 
 1. **Packages and identity.** Build both packages on one head. Check the RPM with the package-verification script, install it through the privileged test-package helper, and remove it through that helper afterward. Before a Windows install, inventory existing installs and stop for any install outside the test area. Install the NSIS package silently into the test app directory. Hash both installed binaries and confirm they contain the full candidate commit.
 2. **Isolation and recovery.** Back up existing configuration bytes and hashes before changing app state. Use isolated Fedora XDG config/data roots. Journal Windows config, window geometry, logs, WebView data, and machine-local vault state as the alpha harness requires; restore original state on success or failure. Retain scratch artifacts rather than deleting them without approval. Keep a process ledger with PID and creation identity, and hold both desktops awake and unlocked.
@@ -110,14 +120,15 @@ This protocol follows `scripts/perf-fixture.mjs`, `perf-interactive.mjs`, `perf-
 
 ## State left behind and evidence
 
-No baseline vault, configuration backup, new bundle, installed package, app, driver, model server, or tunnel was created. Configuration restoration was unnecessary because configuration was never changed. Fedora retained build outputs and two test scratch directories; Windows retained verification logs and generated typecheck files. The earlier build-gate evidence and its bundle were left intact.
+No baseline vault, configuration backup, new bundle, installed package, app, driver, model server, or tunnel was created. No app configuration was changed, so no configuration restoration was needed. The detached candidate worktree, its dependency symlink, scripts, logs, and process records remain as private artifacts. The failed Fedora systemd unit has an empty control group, and its recorded build PID is absent. Windows' final check found no run processes and a clean checkout.
 
-The Fedora build was cancelled by its recorded process group. All 17 original process identities were absent afterward. The Windows final observation found no remaining gate processes and a clean checkout. No manual file deletion was performed; the requested test commands perform their own internal fixture cleanup.
+The first run's scratch directories and build outputs, and the earlier build-gate evidence and bundles, remain intact. Fresh Windows tests also left two temporary directories: machine state (149 files, 78,652 bytes) and an asynchronous semantic-test fixture (one file, 36 bytes). Both are retained. No manual deletion was performed; the requested tests performed their own internal fixture cleanup. Retained artifact paths and logical byte sizes are provided in the private final handoff, with symlink targets excluded from directory totals.
 
-Committed evidence contains only counts, test names, outcomes, commit IDs, and raw-log digests. Private raw logs, paths, and the artifact inventory remain outside the repository. The final handoff lists retained locations and sizes. These scratch artifacts may be removed only after approval; no removal is required to preserve this failure record.
+Committed evidence contains only counts, test names, outcomes, commit IDs, sanitized failure descriptions, and source-log digests. Private raw logs, hostnames, usernames, and machine paths are excluded.
 
-- [Verification, named tests, and source-log hashes](evidence/158-attempt-1-2026-10-17/verification.json)
-- [Three Windows assertion failures](evidence/158-attempt-1-2026-10-17/windows-failures.json)
-- [Process cleanup and untouched-state evidence](evidence/158-attempt-1-2026-10-17/cleanup.json)
+- [Continuation: fresh tests, known #221 failures, package blocker, and cleanup](evidence/158-attempt-1-2026-10-17/continuation.json)
+- [First run: verification, named tests, and source-log hashes](evidence/158-attempt-1-2026-10-17/verification.json)
+- [First run: Windows assertions, now classified under #221](evidence/158-attempt-1-2026-10-17/windows-failures.json)
+- [First run: process cleanup and untouched-state evidence](evidence/158-attempt-1-2026-10-17/cleanup.json)
 
-Next work belongs to Claude: address the Windows verification failures. Then Sol must rerun the required gates on the resulting head, complete the two installed-app baselines, update this record, and obtain the exact-head final review before publication. No indexing-speed conclusion can be drawn from this attempt.
+Remaining work: a Fedora package build with dependencies belonging to its candidate checkout; Windows Rust lint, web build, and NSIS packaging; RPM verification; both installed-app baselines; and an exact-head final review before publication. Nothing in this run establishes indexing throughput or responsiveness.
