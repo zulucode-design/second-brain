@@ -200,6 +200,9 @@ pub struct SemanticIndex {
     last_pass: Mutex<Option<IndexingPass>>,
     /// Called after a pass that shows the backend back with the queue indexed (#216).
     caught_up_hook: OnceLock<Box<dyn Fn() + Send + Sync>>,
+    /// Set when a pass embeds notes, cleared when the hook runs: notes queued mid-pass can
+    /// leave the hook owed to a later pass (#216).
+    caught_up_owed: AtomicBool,
     profile: String,
 }
 
@@ -361,6 +364,7 @@ impl SemanticIndex {
             last_reported_unreadable: AtomicUsize::new(0),
             last_pass: Mutex::new(None),
             caught_up_hook: OnceLock::new(),
+            caught_up_owed: AtomicBool::new(false),
             profile: profile.to_string(),
         })
     }
@@ -1240,8 +1244,9 @@ impl SemanticIndex {
     }
 
     /// One pass over the durable queue. A pass that reaches the backend is measured and
-    /// recorded when it returns `Ok`; an `Err` records nothing. A pass that embedded notes and
-    /// got through the queue then calls the caught-up hook (#216).
+    /// recorded when it returns `Ok`; an `Err` records nothing. A pass that leaves only
+    /// unreadable notes queued, after this pass or an earlier one embedded notes, then calls the
+    /// caught-up hook (#216).
     fn retry_pending(&self) -> Result<RetryOutcome, String> {
         let started = Instant::now();
         let mut timing = PassTiming::default();
@@ -1301,19 +1306,40 @@ impl SemanticIndex {
         {
             log::warn!("Semantic retry left unreadable notes queued: {unreadable}");
         }
-        let embedded = timing.notes;
+        if timing.notes > 0 {
+            self.caught_up_owed.store(true, Ordering::SeqCst);
+        }
         self.record_pass(timing, started.elapsed(), false, outage_already_reported);
-        // When this pass embedded notes, its record holds `notes > 0` and `stopped == false`:
-        // the backend answered and the queue is through, notes saved without it included (#216).
-        // An empty queue embedded nothing and never reached the backend, and a pass that stopped
-        // returned above. A retired index's commits were refused, so its pass says nothing
-        // about the index that replaced it.
-        if embedded > 0 && !self.retired.load(Ordering::SeqCst) {
+        // The backend answered, and the queue holds nothing it could still embed: notes saved
+        // without it are indexed (#216). A pass embeds only the queue it started with, so notes
+        // queued since, by a save or a rebuild, keep the hook owed to the pass that embeds them.
+        // A pass that stopped returned above. A retired index's commits were refused, so its
+        // pass says nothing about the index that replaced it.
+        if !self.retired.load(Ordering::SeqCst)
+            && self.queued_notes() <= unreadable
+            && self.caught_up_owed.swap(false, Ordering::SeqCst)
+        {
             if let Some(hook) = self.caught_up_hook.get() {
                 hook();
             }
         }
         Ok(RetryOutcome::QueueProcessed)
+    }
+
+    /// Notes still queued; `usize::MAX` when the count cannot be read, so nothing looks
+    /// caught up.
+    fn queued_notes(&self) -> usize {
+        self.database
+            .lock()
+            .ok()
+            .and_then(|database| {
+                database
+                    .query_row("SELECT COUNT(*) FROM pending_notes", [], |row| {
+                        row.get::<_, usize>(0)
+                    })
+                    .ok()
+            })
+            .unwrap_or(usize::MAX)
     }
 
     /// Logs a finished pass and keeps it as the last one, unless it never reached the backend:
@@ -1347,9 +1373,9 @@ impl SemanticIndex {
         }
     }
 
-    /// Calls `hook` after every pass that embedded at least one note and got through the queue
-    /// without stopping: the embedding backend is back, and the notes saved while it was away
-    /// are indexed (#216). It runs on the worker's thread, so slow work belongs elsewhere. Set
+    /// Calls `hook` after a pass that leaves only unreadable notes queued, once notes have been
+    /// embedded since the hook last ran: the embedding backend is back, and the notes saved
+    /// while it was away are indexed (#216). It runs on the worker's thread, so slow work belongs elsewhere. Set
     /// it before the worker starts; only the first hook set is kept.
     pub fn on_caught_up(&self, hook: impl Fn() + Send + Sync + 'static) {
         let _ = self.caught_up_hook.set(Box::new(hook));
@@ -1708,6 +1734,13 @@ mod tests {
         available: Arc<AtomicBool>,
     }
 
+    /// Embeds like `RecoveringBackend`, and runs `during_embed` once, inside the next call: a
+    /// note saved while a pass is embedding.
+    struct MidPassBackend {
+        available: AtomicBool,
+        during_embed: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    }
+
     struct ObservedRecoveringBackend {
         available: Arc<AtomicBool>,
         first_call: Mutex<Option<std::sync::mpsc::Sender<()>>>,
@@ -1760,6 +1793,18 @@ mod tests {
         fn embed(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>, String> {
             if !self.available.load(Ordering::SeqCst) {
                 return Err("desktop is asleep".to_string());
+            }
+            MeaningBackend.embed(inputs)
+        }
+    }
+
+    impl EmbeddingBackend for MidPassBackend {
+        fn embed(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>, String> {
+            if !self.available.load(Ordering::SeqCst) {
+                return Err("desktop is asleep".to_string());
+            }
+            if let Some(during_embed) = self.during_embed.lock().unwrap().take() {
+                during_embed();
             }
             MeaningBackend.embed(inputs)
         }
@@ -2301,7 +2346,15 @@ mod tests {
             "Areas",
             "coffee beans again",
         );
-        for note in [&moving, &deleted] {
+        let wandering = root.join("Wandering.md");
+        write_note(
+            &wandering,
+            "wandering-id",
+            "Wandering",
+            "Areas",
+            "coffee mornings again",
+        );
+        for note in [&moving, &deleted, &wandering] {
             index.note_changed(note).unwrap();
             assert!(check_now(&app, note.to_str().unwrap()).is_none());
         }
@@ -2313,22 +2366,35 @@ mod tests {
         index.note_changed(&moved).unwrap();
         std::fs::remove_file(&deleted).unwrap();
         index.note_removed(&deleted).unwrap();
+        // Moved while the app was closed: the pass drops the old path from the queue, so only
+        // the vault knows where the note went.
+        let wandered = root.join("Projects").join("Wandered.md");
+        std::fs::rename(&wandering, &wandered).unwrap();
 
         available.store(true, Ordering::SeqCst);
         index.retry_pending().unwrap();
 
         assert_eq!(
-            shown(&cards),
-            [("Moving".to_string(), vec!["Kept".to_string()])]
+            shown(&cards)[0],
+            ("Moving".to_string(), vec!["Kept".to_string()])
         );
+        let found: Vec<(String, String)> = cards
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|card| (card.capture.title.clone(), card.capture.path.clone()))
+            .collect();
         assert_eq!(
-            cards.lock().unwrap()[0].capture.path,
-            path_text(&moved),
-            "the check found the note where it is now"
+            found,
+            [
+                ("Moving".to_string(), path_text(&moved)),
+                ("Wandering".to_string(), path_text(&wandered)),
+            ],
+            "each check found its note where it is now"
         );
         assert!(
             waiting(&app).is_empty(),
-            "the moved note's check ran, and the deleted note's was dropped"
+            "the moved notes' checks ran, and the deleted note's was dropped"
         );
         drop(app);
         drop(index);
@@ -2462,6 +2528,66 @@ mod tests {
 
         // The pass that embeds the queued note does rerun it.
         available.store(true, Ordering::SeqCst);
+        index.retry_pending().unwrap();
+        assert_eq!(
+            shown(&cards),
+            [("Capture".to_string(), vec!["Kept".to_string()])]
+        );
+        assert!(waiting(&app).is_empty());
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_pass_that_leaves_notes_queued_reruns_nothing_until_the_queue_is_through() {
+        let root = scratch("deferred-mid-pass");
+        let vault = root.to_str().unwrap();
+        let kept = root.join("Kept.md");
+        let capture = root.join("Capture.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        write_note(
+            &capture,
+            "capture-id",
+            "Capture",
+            "Areas",
+            "coffee beans today",
+        );
+        let backend = Arc::new(MidPassBackend {
+            available: AtomicBool::new(true),
+            during_embed: Mutex::new(None),
+        });
+        let index = Arc::new(
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), backend.clone()).unwrap(),
+        );
+        let app = open_app(vault, &index);
+        let cards = cards_from_reruns(&index, &app);
+        for note in [&kept, &capture] {
+            index.note_changed(note).unwrap();
+        }
+        index.retry_pending().unwrap();
+        backend.available.store(false, Ordering::SeqCst);
+        assert!(check_now(&app, capture.to_str().unwrap()).is_none());
+        assert_eq!(waiting(&app).len(), 1);
+
+        // Back: one note is queued, and another is saved while the pass embeds the first.
+        backend.available.store(true, Ordering::SeqCst);
+        let first = root.join("First.md");
+        let second = root.join("Second.md");
+        write_note(&first, "first-id", "First", "Areas", "quantum mechanics");
+        write_note(&second, "second-id", "Second", "Areas", "quantum fields");
+        index.note_changed(&first).unwrap();
+        let (saving, saved) = (Arc::downgrade(&index), second.clone());
+        *backend.during_embed.lock().unwrap() = Some(Box::new(move || {
+            saving.upgrade().unwrap().note_changed(&saved).unwrap();
+        }));
+        index.retry_pending().unwrap();
+        assert!(shown(&cards).is_empty(), "the pass left a note queued");
+        assert_eq!(waiting(&app).len(), 1);
+
+        // The next pass finds that note gone and embeds nothing, but the queue is through, so
+        // the rerun the earlier pass owed runs now.
+        std::fs::remove_file(&second).unwrap();
         index.retry_pending().unwrap();
         assert_eq!(
             shown(&cards),

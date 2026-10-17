@@ -248,12 +248,13 @@ that say the same thing.
   first time the user leaves it (switches note or closes it). Web clips are not checked. A
   note under 3 words is too short to judge. A check that fails, as it does while the
   embedding backend is unreachable, is kept for the vault in a small machine-local file, so a
-  restart keeps it and sync never carries it (#216). It runs after the first indexing pass
-  that reaches the backend and gets through the queue without stopping: by then the notes
-  saved offline are indexed too, so two duplicates written in the same offline session can
-  match each other. It runs on the note's current text, wherever the note was renamed or
-  moved to, and has no time limit: it is dropped only when the note is deleted. A result
-  shows as the ordinary card, newest first, with no notification and no summary.
+  restart keeps it and sync never carries it (#216). It runs once the backend is back and
+  the indexing queue is through: after the first pass that leaves nothing queued but
+  unreadable notes, once notes have been embedded. By then the notes saved offline are
+  indexed too, so two duplicates written in the same offline session can match each other.
+  It runs on the note's current text, wherever the note was renamed or moved to. It never
+  expires: it leaves the list when it runs or when the note is deleted. A result shows as
+  the ordinary card, newest first, with no notification and no summary.
 - **What it compares.** The new note is embedded as a document, the way notes are indexed,
   and compared with every indexed note in all four categories (§12); the note itself is
   excluded. Only its first chunk's worth of text is embedded, the length every stored vector

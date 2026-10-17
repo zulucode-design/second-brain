@@ -113,13 +113,25 @@ pub fn check(
 pub fn check_now(state: &AppState, path: &str) -> Option<SimilarityCheck> {
     let index = state.semantic_index.lock().ok()?.clone()?;
     let vault = state.config.lock().ok()?.active_vault.clone()?;
+    // Read before the check, while the note is surely at `path`: a failing check can wait out
+    // the backend's timeout, and the id finds the note after a move.
+    let id = operations::read_note(&vault, path)
+        .map(|note| note.meta.id)
+        .unwrap_or_default();
     match check(&index, &vault, path) {
         Ok(found) => found,
         Err(_) => {
             // Without the error: an embedding failure carries the backend's response body,
             // which docs/log-privacy.md keeps out of the log.
             log::info!("Skipped the similarity check for a new note");
-            defer(state, &vault, path);
+            defer(
+                state,
+                &vault,
+                DeferredCheck {
+                    id,
+                    path: path.to_string(),
+                },
+            );
             None
         }
     }
@@ -224,16 +236,8 @@ impl DeferredChecks {
     }
 }
 
-/// Keeps the check that just failed for the note at `path`, to run once the backend is back.
-fn defer(state: &AppState, vault: &str, path: &str) {
-    // Read while the note is surely where the check looked: the id finds it after a move.
-    let id = operations::read_note(vault, path)
-        .map(|note| note.meta.id)
-        .unwrap_or_default();
-    let check = DeferredCheck {
-        id,
-        path: path.to_string(),
-    };
+/// Keeps a check that just failed, to run once the backend is back.
+fn defer(state: &AppState, vault: &str, check: DeferredCheck) {
     let Ok(mut open) = state.deferred_checks.lock() else {
         return;
     };
@@ -263,7 +267,8 @@ enum Location {
     Unsure,
 }
 
-/// Finds a deferred check's note: by its id through the index, then at its recorded path.
+/// Finds a deferred check's note: by its id through the index, then at its recorded path, then
+/// by its id across the vault.
 fn locate(
     index: &SemanticIndex,
     vault: &str,
@@ -287,11 +292,20 @@ fn locate(
             Err(_) => {}
         }
     }
-    Ok(if unsure {
-        Location::Unsure
-    } else {
-        Location::Gone
-    })
+    if unsure {
+        return Ok(Location::Unsure);
+    }
+    // The index can miss a note moved while the app was closed, so the vault has the last word
+    // before the check is dropped.
+    if !deferred.id.is_empty() {
+        if let Some(note) = operations::scan_notes(vault, None)?
+            .into_iter()
+            .find(|note| note.meta.id == deferred.id)
+        {
+            return Ok(Location::At(note.path));
+        }
+    }
+    Ok(Location::Gone)
 }
 
 /// One rerun at a time, so two passes that finish close together never run a check twice.
@@ -324,15 +338,18 @@ pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(Si
     let (mut found, mut dropped) = (0, 0);
     for deferred in &waiting {
         match locate(&index, &vault, deferred) {
-            Ok(Location::At(path)) => {
-                if let Ok(result) = check(&index, &vault, &path) {
+            Ok(Location::At(path)) => match check(&index, &vault, &path) {
+                Ok(result) => {
                     settled.push(deferred);
                     if let Some(result) = result {
                         found += 1;
                         deliver(result);
                     }
                 }
-            }
+                // Most likely the backend is away again: the rest wait for the next pass rather
+                // than each waiting out its timeout.
+                Err(_) => break,
+            },
             Ok(Location::Gone) => {
                 dropped += 1;
                 settled.push(deferred);
