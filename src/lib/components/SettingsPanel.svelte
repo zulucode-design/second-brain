@@ -3,6 +3,7 @@
 	import { setTheme, setSystemThemes, setAccentColor, setFontSize, setFontFamily, setLineHeight, setUiScale, setContentWidth, setGeneralSettings, importObsidian, createBackup, listBackups, restoreBackup, deleteBackup, setBackupSettings, setAiSettings, testAiConnection, notionStatus, notionConnect, notionDisconnect, notionSetEnabled, notionVisiblePages, notionSetup, notionPublishNow, getAppConfig, saveCustomTheme, deleteCustomTheme, exportCustomTheme, importCustomThemes, getVaultStats, findOrphanedAttachments, trashOrphanedAttachments, refreshAiStatus, openHotkeySettings, getSemanticStatus, rebuildSemanticIndex, getSyncStatus, setSyncEnabled, pairSyncDevice, syncNow, listSyncConflicts, resolveSyncConflict, copyTextToClipboard, exportDiagnostics } from '$lib/api';
 	import type { AiProvider, AppConfig } from '$lib/types';
 	import { importOutcomeView, type ImportDonePayload } from '$lib/utils/import-outcome';
+	import { indexingPassStages, indexingPassSummary } from '$lib/utils/indexing-pass';
 	import { AI_PROVIDER_METADATA, AI_PROVIDER_OPTIONS, modelForProvider } from '$lib/utils/ai-provider';
 	import { isLinux, isWindows } from '$lib/platform';
 	import { applyTheme, isDarkTheme } from '$lib/theme';
@@ -1621,6 +1622,23 @@
 											<span class="maintenance-stat-label">Waiting for embedding</span>
 											<span class="maintenance-stat-value">{semanticStatus.queuedNotes}</span>
 										</div>
+										<div class="maintenance-stat-row">
+											<span class="maintenance-stat-label">Last indexing pass</span>
+											<span class="maintenance-stat-value">{semanticStatus.lastPass ? indexingPassSummary(semanticStatus.lastPass) : 'None since the app started'}</span>
+										</div>
+										{#if semanticStatus.lastPass}
+											{#each indexingPassStages(semanticStatus.lastPass) as stage (stage.label)}
+												<div class="maintenance-stat-row">
+													<span class="maintenance-stat-label">{stage.label}</span>
+													<span class="maintenance-stat-value">{stage.time}</span>
+												</div>
+											{/each}
+											{#if semanticStatus.lastPass.stopped}
+												<div class="maintenance-stat-row">
+													<span class="maintenance-stat-label">Stopped: Ollama unavailable</span>
+												</div>
+											{/if}
+										{/if}
 									</div>
 								{:else if semanticStatusError}
 									<p class="setting-desc">Semantic index status could not be loaded.</p>
