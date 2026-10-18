@@ -3781,6 +3781,72 @@ mod tests {
         cleanup(root);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_note_without_an_id_never_matches_itself_through_a_vault_link() {
+        let root = scratch("similar-no-id-link");
+        let (vault, link) = (root.join("Vault"), root.join("Link"));
+        std::fs::create_dir_all(&vault).unwrap();
+        std::os::unix::fs::symlink(&vault, &link).unwrap();
+        std::fs::write(
+            vault.join("Capture.md"),
+            "---\ntitle: Capture\ncategory: Areas\n---\n\ncoffee beans today\n",
+        )
+        .unwrap();
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
+                .unwrap();
+        // Indexed through the link, as a reconcile of the vault opened through it lists it, and
+        // checked at its resolved path.
+        index.note_changed(&link.join("Capture.md")).unwrap();
+        index.retry_pending().unwrap();
+        let found = crate::similar_notes::check(
+            &index,
+            vault.to_str().unwrap(),
+            vault.join("Capture.md").to_str().unwrap(),
+        )
+        .unwrap();
+        assert!(found.is_none(), "the note is its own only match");
+        drop(index);
+        cleanup(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_check_kept_under_another_path_to_the_open_vault_joins_its_list() {
+        let root = scratch("deferred-vault-link");
+        let (vault, link) = (root.join("Vault"), root.join("Link"));
+        std::fs::create_dir_all(&vault).unwrap();
+        std::os::unix::fs::symlink(&vault, &link).unwrap();
+        let (first, second) = (vault.join("First.md"), vault.join("Second.md"));
+        write_note(&first, "first-id", "First", "Areas", "coffee beans today");
+        write_note(
+            &second,
+            "second-id",
+            "Second",
+            "Areas",
+            "coffee ratio notes",
+        );
+        let index = Arc::new(
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(UnavailableBackend))
+                .unwrap(),
+        );
+        // Saved in the vault at its target, then reopened through the link before the check ran.
+        let (vault_text, link_text) = (vault.to_str().unwrap(), link.to_str().unwrap());
+        let app = open_app(link_text, &index);
+        assert!(check_now(&app, vault_text, first.to_str().unwrap()).is_none());
+        assert_eq!(waiting(&app).len(), 1, "kept in the open list");
+        assert!(check_now(&app, link_text, second.to_str().unwrap()).is_none());
+        assert_eq!(
+            listed(&DeferredChecks::load(vault_text)).len(),
+            2,
+            "the file keeps both"
+        );
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
     #[test]
     fn the_worker_retries_a_failed_fill_once_an_interval_until_it_completes() {
         let (root, index, app) =

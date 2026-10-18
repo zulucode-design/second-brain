@@ -76,7 +76,7 @@ pub fn check(
     let mut matches: Vec<SimilarMatch> = found
         .into_iter()
         // A note without an id is indexed by its path, which `similar` cannot exclude.
-        .filter(|similar| similar.found.path != path)
+        .filter(|similar| !same_path(&similar.found.path, path))
         // Deleted or unreadable since it was indexed: nothing to append to. Changed since: the
         // passage may no longer be in it, and the card would vouch for text the user never saw.
         .filter_map(|similar| {
@@ -138,12 +138,13 @@ pub fn check_now(state: &AppState, vault: &str, path: &str) -> Option<Similarity
     if !waiting {
         return None;
     }
-    // Another vault's index cannot judge the note; its own vault's list keeps the check.
+    // Another vault's index cannot judge the note; its own vault's list keeps the check. Run
+    // under the open vault's path, which its card is shown for.
     let (index, open) = open_index(state)?;
-    if open != vault {
+    if !same_path(&open, vault) {
         return None;
     }
-    match check(&index, vault, path) {
+    match check(&index, &open, path) {
         Ok(found) => {
             with_kept(state, vault, |checks| checks.forget(&[&kept]));
             found
@@ -155,6 +156,16 @@ pub fn check_now(state: &AppState, vault: &str, path: &str) -> Option<Similarity
             None
         }
     }
+}
+
+/// Whether two paths name the same file or folder, as a vault opened through a link and
+/// through its target do, and their notes.
+fn same_path(one: &str, other: &str) -> bool {
+    one == other
+        || matches!(
+            (dunce::canonicalize(one), dunce::canonicalize(other)),
+            (Ok(one), Ok(other)) if one == other
+        )
 }
 
 /// Whether the note at `path` is in `vault`, compared as resolved paths, since a vault opened
@@ -256,7 +267,11 @@ impl DeferredChecks {
     /// Makes `vault`'s checks the open ones, read from its file. Reopening the open vault keeps
     /// the list it has: a check kept since the file was read is only there.
     pub fn open(&mut self, vault: &str) {
-        if self.vault.as_deref() != Some(vault) {
+        if !self
+            .vault
+            .as_deref()
+            .is_some_and(|open| same_path(open, vault))
+        {
             *self = Self::load(vault);
         }
     }
@@ -349,7 +364,11 @@ fn with_kept(state: &AppState, vault: &str, with: impl FnOnce(&mut DeferredCheck
     let Ok(mut open) = state.deferred_checks.lock() else {
         return;
     };
-    match open.vault.as_deref().map(|open_vault| open_vault == vault) {
+    match open
+        .vault
+        .as_deref()
+        .map(|open_vault| same_path(open_vault, vault))
+    {
         Some(true) => with(&mut open),
         // The vault was switched while the check ran. The check belongs to the vault it ran in,
         // whose file keeps it for that vault's next open. The open list stays locked meanwhile,
@@ -530,7 +549,12 @@ pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(Si
         return;
     };
     let waiting = match state.deferred_checks.lock() {
-        Ok(mut list) if list.vault.as_deref() == Some(vault.as_str()) => {
+        Ok(mut list)
+            if list
+                .vault
+                .as_deref()
+                .is_some_and(|open| same_path(open, &vault)) =>
+        {
             // A file that could not be read when the vault opened gives up its checks once it can.
             list.recover();
             list.checks.clone()
@@ -605,7 +629,11 @@ pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(Si
     if let Ok(mut list) = state.deferred_checks.lock() {
         // Unless the vault was switched meanwhile: its file then keeps every check for its next
         // open, and those that ran run once more.
-        if list.vault.as_deref() == Some(vault.as_str()) {
+        if list
+            .vault
+            .as_deref()
+            .is_some_and(|open| same_path(open, &vault))
+        {
             list.forget(&settled);
         }
     }
