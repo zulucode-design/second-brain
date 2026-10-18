@@ -1,0 +1,188 @@
+{
+  "candidate": "9fd70814fd43a57cbaad8a0b3d190e1a4bed7d9f",
+  "runId": "20261017T230950Z",
+  "executor": "Sonnet 5.5 stand-in for Sol",
+  "checkedBy": "Sol",
+  "fedoraBackups": [
+    {
+      "name": "helixnotes-pre-sync-2026-10-18T00-00-11.zip",
+      "bytes": 1483774,
+      "modified": "2026-10-18T00:00:12.275729+00:00",
+      "notes": 5000
+    },
+    {
+      "name": "helixnotes-pre-sync-2026-10-18T01-00-11.zip",
+      "bytes": 1483774,
+      "modified": "2026-10-18T01:00:12.259431+00:00",
+      "notes": 5000
+    }
+  ],
+  "fedoraState": [
+    {
+      "name": "semantic.sqlite3",
+      "bytes": 2215936,
+      "modified": "2026-10-18T01:00:21.148297+00:00"
+    },
+    {
+      "name": "config.xml",
+      "bytes": 9348,
+      "modified": "2026-10-18T01:00:17.262047+00:00"
+    }
+  ],
+  "windows": {
+    "state": [
+      {
+        "name": "semantic.sqlite3",
+        "bytes": 970752,
+        "modified": "2026-10-18T01:00:28.6720381Z"
+      },
+      {
+        "name": "config.xml",
+        "bytes": 9537,
+        "modified": "2026-10-18T01:00:16.3385364Z"
+      }
+    ],
+    "backups": [
+      {
+        "name": "helixnotes-pre-sync-2026-10-18T00-00-11.zip",
+        "bytes": 1315,
+        "created": "2026-10-18T00:00:11.7853404Z",
+        "modified": "2026-10-18T00:00:11.7904971Z"
+      },
+      {
+        "name": "helixnotes-pre-sync-2026-10-18T01-00-10.zip",
+        "bytes": 634404,
+        "created": "2026-10-18T01:00:10.9073522Z",
+        "modified": "2026-10-18T01:00:11.3345885Z"
+      }
+    ]
+  },
+  "polls": [
+    {
+      "at": "2026-10-18T00:00:17.9315217Z",
+      "event": "sidecar-stopped",
+      "machine": "windows",
+      "action": "stop",
+      "target": "Sidecar",
+      "pid": 28600,
+      "path": "<windows-test-root>\\app\\syncthing.exe",
+      "processesAfter": [
+        {
+          "Role": "App",
+          "Name": "second-brain.exe",
+          "Id": 62948,
+          "ParentId": 2212,
+          "Path": "<windows-test-root>\\app\\second-brain.exe",
+          "Started": "2026-10-17T23:10:19.8071310Z"
+        }
+      ]
+    },
+    {
+      "at": "2026-10-18T00:00:20.881Z",
+      "event": "sidecar-relaunched",
+      "machine": "windows",
+      "pid": 3724
+    },
+    {
+      "at": "2026-10-18T01:00:09.194Z",
+      "event": "fixture-poll",
+      "machine": "windows",
+      "expected": 5000,
+      "matching": 2146,
+      "missing": 2854,
+      "wrongContent": 0,
+      "sentinelPresent": false,
+      "duplicateIds": 0,
+      "conflictCopies": [],
+      "conflictCopyCount": 0,
+      "strays": [],
+      "strayCount": 0,
+      "complete": false
+    },
+    {
+      "at": "2026-10-18T01:00:10.983Z",
+      "event": "fixture-poll",
+      "machine": "windows",
+      "expected": 5000,
+      "matching": 2146,
+      "missing": 2854,
+      "wrongContent": 0,
+      "sentinelPresent": false,
+      "duplicateIds": 0,
+      "conflictCopies": [],
+      "conflictCopyCount": 0,
+      "strays": [],
+      "strayCount": 0,
+      "complete": false
+    },
+    {
+      "at": "2026-10-18T01:00:13.904Z",
+      "event": "fixture-poll",
+      "machine": "windows",
+      "expected": 5000,
+      "matching": 2716,
+      "missing": 2284,
+      "wrongContent": 0,
+      "sentinelPresent": false,
+      "duplicateIds": 0,
+      "conflictCopies": [],
+      "conflictCopyCount": 0,
+      "strays": [],
+      "strayCount": 0,
+      "complete": false
+    },
+    {
+      "at": "2026-10-18T01:00:19.693Z",
+      "event": "fixture-poll",
+      "machine": "windows",
+      "expected": 5000,
+      "matching": 4567,
+      "missing": 433,
+      "wrongContent": 0,
+      "sentinelPresent": true,
+      "duplicateIds": 0,
+      "conflictCopies": [],
+      "conflictCopyCount": 0,
+      "strays": [],
+      "strayCount": 0,
+      "complete": false
+    },
+    {
+      "at": "2026-10-18T01:00:21.812Z",
+      "event": "fixture-poll",
+      "machine": "windows",
+      "expected": 5000,
+      "matching": 5000,
+      "missing": 0,
+      "wrongContent": 0,
+      "sentinelPresent": true,
+      "duplicateIds": 0,
+      "conflictCopies": [],
+      "conflictCopyCount": 0,
+      "strays": [],
+      "strayCount": 0,
+      "complete": true
+    },
+    {
+      "at": "2026-10-18T01:00:37.859Z",
+      "event": "process-final",
+      "machine": "fedora",
+      "processes": []
+    },
+    {
+      "at": "2026-10-18T01:00:39.6101733Z",
+      "event": "process-final",
+      "machine": "windows",
+      "action": "report",
+      "installDir": [
+        "<windows-test-root>\\app"
+      ],
+      "processes": []
+    }
+  ],
+  "limitations": [
+    "Exact batch start/end and lease acquire/release were not logged. Batch 1 was deliberately interrupted. Batch 2 reached complete transfer, then the harness closed the apps; natural batch completion was not recorded.",
+    "The approximate 11\u201339 second Windows lease estimate is a timing proxy, not an instrumented duration or a rigorous lower bound; fixture polling adds uncertainty. Fedora has an approximately 38 second upper bound from app exit and no independently measured lower bound.",
+    "Fedora was the sender; the backup-before-receive-only mismatch predates this candidate and remains open."
+  ]
+}
