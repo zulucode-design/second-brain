@@ -205,7 +205,7 @@ pub struct SemanticIndex {
     caught_up_owed: AtomicBool,
     /// Rebuilds and reconciles still filling the queue, plus one for a started index's first:
     /// while any runs, an empty queue can still be missing notes (#216).
-    filling: AtomicUsize,
+    fills_running: AtomicUsize,
     /// Set when the index starts, cleared when its first rebuild or reconcile ends.
     first_fill_owed: AtomicBool,
     profile: String,
@@ -221,8 +221,8 @@ impl Drop for Filling<'_> {
         // A started index's first fill also ends its own share: it finds the notes changed
         // while the app was closed.
         let ended = 1 + usize::from(index.first_fill_owed.swap(false, Ordering::SeqCst));
-        if index.filling.fetch_sub(ended, Ordering::SeqCst) == ended {
-            index.rerun_if_caught_up(index.last_reported_unreadable.load(Ordering::SeqCst));
+        if index.fills_running.fetch_sub(ended, Ordering::SeqCst) == ended {
+            index.run_caught_up_hook_if_due(index.last_reported_unreadable.load(Ordering::SeqCst));
         }
     }
 }
@@ -386,7 +386,7 @@ impl SemanticIndex {
             last_pass: Mutex::new(None),
             caught_up_hook: OnceLock::new(),
             caught_up_owed: AtomicBool::new(false),
-            filling: AtomicUsize::new(0),
+            fills_running: AtomicUsize::new(0),
             first_fill_owed: AtomicBool::new(false),
             profile: profile.to_string(),
         })
@@ -1144,7 +1144,7 @@ impl SemanticIndex {
     }
 
     pub fn rebuild_from_notes(&self, vault: &Path) -> Result<(), String> {
-        let _filling = self.filling();
+        let _filling = self.begin_fill();
         let paths = note_paths(vault);
         {
             let mut database = self.database.lock().map_err(|error| error.to_string())?;
@@ -1176,6 +1176,9 @@ impl SemanticIndex {
     }
 
     pub fn reconcile_from_notes(&self, vault: &Path) -> Result<(), String> {
+        // Before the walk: an empty queue proves nothing until the reconcile has queued what
+        // changed.
+        let _filling = self.begin_fill();
         // Collected before any per-note work: a lazy walk keeps its directory handles open
         // for the whole pass, and on Windows an open handle under a folder stops a restore
         // from moving that folder (#144).
@@ -1183,7 +1186,6 @@ impl SemanticIndex {
     }
 
     fn reconcile_paths(&self, paths: &[std::path::PathBuf]) -> Result<(), String> {
-        let _filling = self.filling();
         let recorded: HashMap<String, (String, String)> = {
             let database = self.database.lock().map_err(|error| error.to_string())?;
             let mut statement = database
@@ -1338,7 +1340,7 @@ impl SemanticIndex {
         // The backend answered. A pass embeds only the queue it started with, so notes queued
         // since, by a save or a rebuild, keep the hook owed to the pass that embeds them. A pass
         // that stopped returned above.
-        self.rerun_if_caught_up(unreadable);
+        self.run_caught_up_hook_if_due(unreadable);
         Ok(RetryOutcome::QueueProcessed)
     }
 
@@ -1346,9 +1348,9 @@ impl SemanticIndex {
     /// embedded, and no rebuild or reconcile is still filling it: notes saved without the
     /// backend are indexed (#216). A retired index's commits were refused, so its queue says
     /// nothing about the index that replaced it.
-    fn rerun_if_caught_up(&self, unreadable: usize) {
+    fn run_caught_up_hook_if_due(&self, unreadable: usize) {
         if !self.retired.load(Ordering::SeqCst)
-            && self.filling.load(Ordering::SeqCst) == 0
+            && self.fills_running.load(Ordering::SeqCst) == 0
             && self.queued_notes() <= unreadable
             && self.caught_up_owed.swap(false, Ordering::SeqCst)
         {
@@ -1359,13 +1361,15 @@ impl SemanticIndex {
     }
 
     /// Every started index is reconciled once; until then the queue can be missing notes.
+    /// Owed once, however often the index is started before that reconcile ends.
     fn owe_first_fill(&self) {
-        self.filling.fetch_add(1, Ordering::SeqCst);
-        self.first_fill_owed.store(true, Ordering::SeqCst);
+        if !self.first_fill_owed.swap(true, Ordering::SeqCst) {
+            self.fills_running.fetch_add(1, Ordering::SeqCst);
+        }
     }
 
-    fn filling(&self) -> Filling<'_> {
-        self.filling.fetch_add(1, Ordering::SeqCst);
+    fn begin_fill(&self) -> Filling<'_> {
+        self.fills_running.fetch_add(1, Ordering::SeqCst);
         Filling(self)
     }
 
@@ -2695,6 +2699,132 @@ mod tests {
     }
 
     #[test]
+    fn a_check_waiting_behind_another_is_kept_while_it_waits() {
+        let root = scratch("deferred-queued");
+        let vault = root.to_str().unwrap();
+        let kept = root.join("Kept.md");
+        let first = root.join("First.md");
+        let second = root.join("Second.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        write_note(&first, "first-id", "First", "Areas", "coffee beans today");
+        write_note(
+            &second,
+            "second-id",
+            "Second",
+            "Areas",
+            "coffee grinder setting",
+        );
+        let backend = Arc::new(MidPassBackend {
+            available: AtomicBool::new(true),
+            during_embed: Mutex::new(None),
+        });
+        let index = Arc::new(
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), backend.clone()).unwrap(),
+        );
+        let app = open_app(vault, &index);
+        for note in [&kept, &first, &second] {
+            index.note_changed(note).unwrap();
+        }
+        index.retry_pending().unwrap();
+
+        // While the first check waits on the backend, a second capture's check starts behind it.
+        let kept_while_waiting = Arc::new(AtomicBool::new(false));
+        let second_check = Arc::new(Mutex::new(None));
+        let (waiter, queued, seen, handle) = (
+            app.clone(),
+            path_text(&second),
+            kept_while_waiting.clone(),
+            second_check.clone(),
+        );
+        *backend.during_embed.lock().unwrap() = Some(Box::new(move || {
+            let checking = waiter.clone();
+            *handle.lock().unwrap() =
+                Some(std::thread::spawn(move || check_now(&checking, &queued)));
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while std::time::Instant::now() < deadline {
+                if waiting(&waiter).iter().any(|(id, _)| id == "second-id") {
+                    seen.store(true, Ordering::SeqCst);
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }));
+        let found = check_now(&app, first.to_str().unwrap()).unwrap();
+        let queued_found = second_check
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+        assert!(
+            kept_while_waiting.load(Ordering::SeqCst),
+            "a quit while it waited would have lost it"
+        );
+        assert_eq!(found.matches[0].note.title, "Kept");
+        assert_eq!(queued_found.capture.title, "Second");
+        assert!(waiting(&app).is_empty());
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_started_index_reruns_nothing_before_its_first_reconcile() {
+        let root = scratch("deferred-first-reconcile");
+        let vault = root.to_str().unwrap();
+        let kept = root.join("Kept.md");
+        let capture = root.join("Capture.md");
+        let first = root.join("First.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        write_note(
+            &capture,
+            "capture-id",
+            "Capture",
+            "Areas",
+            "coffee beans today",
+        );
+        write_note(&first, "first-id", "First", "Areas", "quantum mechanics");
+        let available = Arc::new(AtomicBool::new(true));
+        let index = Arc::new(
+            SemanticIndex::open_at(
+                &root.join("semantic.sqlite3"),
+                Arc::new(RecoveringBackend {
+                    available: available.clone(),
+                }),
+            )
+            .unwrap(),
+        );
+        let app = open_app(vault, &index);
+        let cards = cards_from_reruns(&index, &app);
+        for note in [&kept, &capture] {
+            index.note_changed(note).unwrap();
+        }
+        index.retry_pending().unwrap();
+        available.store(false, Ordering::SeqCst);
+        assert!(check_now(&app, capture.to_str().unwrap()).is_none());
+        available.store(true, Ordering::SeqCst);
+        // Queued before the worker starts, so nothing wakes it: its first tick is 20 s away.
+        index.note_changed(&first).unwrap();
+        index.start_background();
+
+        // A pass that embeds notes and leaves the queue empty still waits for the reconcile that
+        // finds notes changed while the app was closed.
+        index.retry_pending().unwrap();
+        assert!(shown(&cards).is_empty(), "the first reconcile has not run");
+        index.reconcile_from_notes(&root).unwrap();
+        assert_eq!(
+            shown(&cards),
+            [("Capture".to_string(), vec!["Kept".to_string()])]
+        );
+        assert!(waiting(&app).is_empty());
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
     fn a_rerun_waits_until_no_rebuild_or_reconcile_is_filling_the_queue() {
         let root = scratch("deferred-filling");
         let vault = root.to_str().unwrap();
@@ -2724,34 +2854,13 @@ mod tests {
             index.note_changed(note).unwrap();
         }
         index.retry_pending().unwrap();
-        let defer_capture = || {
-            available.store(false, Ordering::SeqCst);
-            assert!(check_now(&app, capture.to_str().unwrap()).is_none());
-            assert_eq!(waiting(&app).len(), 1);
-            available.store(true, Ordering::SeqCst);
-        };
+        available.store(false, Ordering::SeqCst);
+        assert!(check_now(&app, capture.to_str().unwrap()).is_none());
+        available.store(true, Ordering::SeqCst);
 
-        // A started index waits for its first reconcile, which finds notes changed while the
-        // app was closed, even after a pass that embeds notes and leaves the queue empty.
-        defer_capture();
-        index.owe_first_fill();
-        let first = root.join("First.md");
-        write_note(&first, "first-id", "First", "Areas", "quantum mechanics");
-        index.note_changed(&first).unwrap();
-        index.retry_pending().unwrap();
-        assert!(shown(&cards).is_empty(), "the first reconcile has not run");
-        index.reconcile_from_notes(&root).unwrap();
-        assert_eq!(
-            shown(&cards),
-            [("Capture".to_string(), vec!["Kept".to_string()])]
-        );
-        assert!(waiting(&app).is_empty());
-
-        // A rebuild still filling the queue when a pass ends holds the rerun, and the notes it
-        // queued hold it until the pass that embeds them.
-        cards.lock().unwrap().clear();
-        defer_capture();
-        let filling = index.filling();
+        // A fill still running when a pass ends holds the rerun, and the notes it queued hold it
+        // until the pass that embeds them.
+        let filling = index.begin_fill();
         let second = root.join("Second.md");
         let third = root.join("Third.md");
         write_note(&second, "second-id", "Second", "Areas", "quantum fields");
@@ -2760,7 +2869,7 @@ mod tests {
         index.retry_pending().unwrap();
         index.note_changed(&third).unwrap();
         drop(filling);
-        assert!(shown(&cards).is_empty(), "the rebuild left a note queued");
+        assert!(shown(&cards).is_empty(), "the fill left a note queued");
         index.retry_pending().unwrap();
         assert_eq!(
             shown(&cards),
@@ -2768,6 +2877,27 @@ mod tests {
         );
         assert!(waiting(&app).is_empty());
         drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn the_end_of_a_rebuild_runs_the_caught_up_hook_it_held() {
+        let root = scratch("caught-up-rebuild");
+        let empty_vault = root.join("vault");
+        std::fs::create_dir_all(&empty_vault).unwrap();
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
+                .unwrap();
+        let runs = Arc::new(AtomicUsize::new(0));
+        let counted = runs.clone();
+        index.on_caught_up(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+        });
+        // As a pass that embedded notes and ended while the rebuild ran leaves it.
+        index.caught_up_owed.store(true, Ordering::SeqCst);
+        index.rebuild_from_notes(&empty_vault).unwrap();
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
         drop(index);
         cleanup(root);
     }

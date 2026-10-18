@@ -247,13 +247,14 @@ that say the same thing.
   exactly as before and never waits on it. A note created in the app is checked once, the
   first time the user leaves it (switches note or closes it). Web clips are not checked. A
   note under 3 words is too short to judge. A check is kept for the vault in a small
-  machine-local file while it runs, and stays kept if it fails, as it does while the
-  embedding backend is unreachable, so quitting or restarting keeps it and sync never
-  carries it (#216). It runs once the backend is back and the indexing queue is through:
-  after the first pass that leaves nothing queued but unreadable notes, once notes have been
-  embedded and no reconcile or rebuild is still filling the queue, including the one that
-  follows opening the vault. By then the notes saved offline are
-  indexed too, so two duplicates written in the same offline session can match each other.
+  machine-local file while it waits its turn or runs, and stays kept if it fails, as it does
+  while the embedding backend is unreachable, so quitting or restarting keeps it and sync
+  never carries it (#216). It runs once the backend is back and the indexing queue is
+  through: notes have been embedded, nothing is queued but unreadable notes, and no
+  reconcile or rebuild is still filling the queue, including the one that follows opening
+  the vault. It runs at the end of the pass, reconcile or rebuild that makes all three true.
+  By then the notes saved offline are indexed too, so two duplicates written in the same
+  offline session can match each other.
   A check kept while nothing is left to index, as when the backend comes back during the
   check itself or drops again during a rerun, waits for the next pass that embeds a note.
   It runs on the note's current text, wherever the note was renamed or moved to. It never
