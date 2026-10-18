@@ -203,7 +203,7 @@ run. The #189 close check covers closing during a sync run.
 
 Direct machine-to-machine sync through the bundled Syncthing sidecar, as a Settings toggle. Gate 1
 drives an interrupted paired sync: it pairs both installed apps over their loopback REST APIs, lets
-the product's five-minute scheduler trigger the batch, stops the Windows sidecar partway, relaunches
+the product's hourly scheduler trigger the batch, stops the Windows sidecar partway, relaunches
 both apps, and requires both replicas to converge to exactly 5,000 notes with no conflicts, duplicate
 IDs, wrong content, or strays. The acceptance gate drives all eleven #28 criteria, including pairing
 that survives relaunch, deletion propagation, a category move that neither duplicates nor loses the

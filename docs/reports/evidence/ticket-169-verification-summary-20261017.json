@@ -1,0 +1,120 @@
+{
+  "candidate": "9fd70814fd43a57cbaad8a0b3d190e1a4bed7d9f",
+  "baseline": "70859f6bc09811d90305ec69cfec5d808b77cb5c",
+  "executor": "Sol (gpt-6.1-sol, xhigh)",
+  "sourceLogs": [
+    {
+      "source": "progress.json",
+      "bytes": 2530,
+      "sha256": "b5a1a1c69224ff48271faeab4d20913621ed9982575fd919e1d1dbd42753d9f2"
+    },
+    {
+      "source": "fedora-verify.log",
+      "bytes": 110043,
+      "sha256": "7ae51674b812dbc9b98e1b66d8f07029b3b2f4f15f4701fd176586102848a34a"
+    },
+    {
+      "source": "fedora-tauri-build.log",
+      "bytes": 43347,
+      "sha256": "bebc53b2e9f778fba67f397d0986c4a93dd960b28ca49428c60d44f890c8699e"
+    },
+    {
+      "source": "fedora-package-check.log",
+      "bytes": 120,
+      "sha256": "2be515eccce0dab02c4b0b125bb7abbcda28fe2f98d4f287cf44d674e3e71f6c"
+    },
+    {
+      "source": "windows-test-rust.log",
+      "bytes": 60048,
+      "sha256": "5ea8cbb6a8ed57d586eb1bde00b8bcfa7bfb2bc4c6268c61c958678a5ec8bee5"
+    },
+    {
+      "source": "windows-lint-rust.log",
+      "bytes": 1255,
+      "sha256": "dd93d5174fa987db827d813df0840cfbccc1cdde512ea36506cd45c297ed3d00"
+    },
+    {
+      "source": "windows-build.log",
+      "bytes": 35907,
+      "sha256": "b36ab3bf7faf36d00c4d53181f5eca8eaa8ede1f67ef83d6fda0b7108955b24b"
+    },
+    {
+      "source": "windows-tauri-build.log",
+      "bytes": 37072,
+      "sha256": "467a9684f9c344f2e56edbcd031208018052130704d4087e4e8704061ae7de21"
+    }
+  ],
+  "results": {
+    "candidate": "9fd70814fd43a57cbaad8a0b3d190e1a4bed7d9f",
+    "origin_main": "70859f6bc09811d90305ec69cfec5d808b77cb5c",
+    "merge": "no merge needed",
+    "fedora_verify": {
+      "exit": 0,
+      "check_errors": 0,
+      "check_warnings": 0,
+      "js_passed": 253,
+      "js_failed": 0,
+      "rust_passed": 687,
+      "rust_failed": 0,
+      "rust_ignored": 10,
+      "named_test": "passed",
+      "formatting": "passed",
+      "clippy": "passed",
+      "build": "passed"
+    },
+    "windows_test_rust": {
+      "exit": 0,
+      "passed": 662,
+      "failed": 0,
+      "ignored": 9,
+      "named_test": "passed"
+    },
+    "windows_lint_rust": {
+      "exit": 101,
+      "formatting": "passed",
+      "errors": [
+        "commands.rs:4295 clippy::bind_instead_of_map"
+      ],
+      "allowed_exception": "#221"
+    },
+    "windows_build": {
+      "exit": 0
+    },
+    "fedora_tauri_build": {
+      "exit": 0,
+      "rpm_bundles": 1
+    },
+    "fedora_package_check": {
+      "exit": 0,
+      "desktop_entries_checked": 1
+    },
+    "windows_tauri_build": {
+      "exit": 0,
+      "nsis_bundles": 1,
+      "linker_information_warnings": 1
+    }
+  },
+  "namedTestEvidence": {
+    "fedora": [
+      "test sync_sidecar::tests::scheduled_windows_are_aligned_and_never_more_than_one_interval_away ... ok"
+    ],
+    "windows": [
+      "test sync_sidecar::tests::scheduled_windows_are_aligned_and_never_more_than_one_interval_away ... ok"
+    ]
+  },
+  "reviewRounds": [
+    {
+      "round": 1,
+      "candidate": "fe6a93725d839a3f9c225c1a4955d8318f7cf822",
+      "spec": "P2: 70-minute Gate 1 wait exceeded one-hour Windows app task limit",
+      "standards": "CLEAN",
+      "fixedIn": "9fd70814fd43a57cbaad8a0b3d190e1a4bed7d9f"
+    },
+    {
+      "round": 2,
+      "candidate": "9fd70814fd43a57cbaad8a0b3d190e1a4bed7d9f",
+      "spec": "CLEAN",
+      "standards": "CLEAN"
+    }
+  ]
+}

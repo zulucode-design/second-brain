@@ -39,7 +39,9 @@ const LINUX_APP = '/usr/bin/second-brain';
 // scripts/install-linux-test-package.sh. `sudo -n` fails instead of prompting.
 const LINUX_PACKAGE_HELPER = '/usr/local/libexec/second-brain-test-package';
 const MIN_FREE_BYTES = 5 * 1024 ** 3;
-const DEFAULT_TIMEOUT_MS = 20 * 60_000;
+// Gate 1 waits twice for the product's hourly scheduled batch, so each wait covers a full
+// interval plus the transfer.
+const DEFAULT_TIMEOUT_MS = 70 * 60_000;
 const WINDOWS_TASK = 'SecondBrainAlphaHarness';
 // Test-only tools installed under D:\SecondBrainTest; msedgedriver must match the WebView2 version.
 const WINDOWS_DRIVER = 'D:\\SecondBrainTest\\sb88\\driver\\bin\\tauri-driver.exe';
@@ -3747,7 +3749,7 @@ async function main() {
     return;
   }
   console.error([
-    'usage: node scripts/alpha-harness.mjs sync|restore [--candidate <sha>] [--ssh sb-windows] [--linux-root ~/sb88] [--timeout-minutes 20]',
+    'usage: node scripts/alpha-harness.mjs sync|restore [--candidate <sha>] [--ssh sb-windows] [--linux-root ~/sb88] [--timeout-minutes 70]',
     '       node scripts/alpha-harness.mjs walkthrough --windows-installer <D:\\...setup.exe> --fedora-rpm <rpm> [--candidate <sha>] [--machine fedora|windows] [--ollama-port 11434]',
     '       node scripts/alpha-harness.mjs acceptance --fedora-rpm <rpm> [--candidate <sha>]',
   ].join('\n'));

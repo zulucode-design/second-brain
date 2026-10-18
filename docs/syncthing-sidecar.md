@@ -47,8 +47,8 @@ Enable restores the sidecar for the active vault. Disable and vault switching re
 authenticated shutdown and kill a process that does not exit promptly. Unexpected exits are
 restarted at most three times. A minimal watchdog process receives the API key through its
 environment and requests authenticated sidecar shutdown if the app process disappears; this
-also bounds cleanup after a forced app termination that cannot run normal Tauri teardown. A
-five-minute scheduler requests guarded sync runs on shared UTC boundaries
+also bounds cleanup after a forced app termination that cannot run normal Tauri teardown. An
+hourly scheduler requests guarded sync runs on shared UTC boundaries
 so independently launched machines overlap; it does not leave the folder or paired device
 continuously resumed. An immediate manual transfer requires pressing Sync now on both
 machines within the 30-second reachability window.
@@ -69,6 +69,9 @@ being silently combined. Only the active vault folder is configured in the app-o
 Syncthing instance.
 
 ## Guarded batch contract
+
+Scheduled runs start at the top of every hour (UTC) on both machines, and "Sync now" runs one at
+once.
 
 Each manual or scheduled run uses the shared bulk-mutation lease from issue #83. The order
 is fixed:

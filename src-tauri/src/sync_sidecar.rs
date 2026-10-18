@@ -20,7 +20,12 @@ const STARTUP_ATTEMPTS: usize = 50;
 const STARTUP_WAIT: Duration = Duration::from_millis(100);
 const MAX_RESTARTS: u8 = 3;
 const STABLE_RUN: Duration = Duration::from_secs(30);
-const SYNC_INTERVAL: Duration = Duration::from_secs(5 * 60);
+// Scheduled batches run once an hour. Each batch holds the bulk-mutation lease, which pauses note
+// writes, and runs a convergence cycle that takes a full pre-sync backup when changes are incoming
+// (#14). Two personal machines need far less than every 5 minutes, and "Sync now" covers anything
+// that cannot wait. An hour is a multiple of the earlier 5 minutes, so a machine on either build
+// still meets the other at each aligned window.
+const SYNC_INTERVAL: Duration = Duration::from_secs(60 * 60);
 // A peer can report the previously known index as complete while a fresh scan is still in
 // progress. Keep observing a clean cluster long enough for that scan to publish; any late index
 // update makes the observation incomplete and resets the latch.
