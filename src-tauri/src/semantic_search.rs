@@ -212,23 +212,43 @@ pub struct SemanticIndex {
     /// can tell one started since.
     fills_started: AtomicUsize,
     caught_up_at: AtomicUsize,
+    /// A rebuild or reconcile that stopped part way, by its vault and start, until a fill started
+    /// after it completes: notes can be neither queued nor indexed meanwhile.
+    failed_fill: Mutex<Option<(std::path::PathBuf, usize)>>,
     profile: String,
 }
 
 /// Held while a rebuild or reconcile fills the queue; the caught-up hook waits for the last one
-/// to end (#216).
-struct Filling<'a>(&'a SemanticIndex);
+/// to end (#216). One dropped without [`Filling::finish`] stopped part way.
+struct Filling<'a> {
+    index: &'a SemanticIndex,
+    vault: &'a Path,
+    started: usize,
+    finished: bool,
+}
+
+impl Filling<'_> {
+    /// Every note in the vault is now queued or indexed.
+    fn finish(mut self) {
+        self.finished = true;
+    }
+}
 
 impl Drop for Filling<'_> {
     fn drop(&mut self) {
-        let index = self.0;
+        let index = self.index;
+        if let Ok(mut failed) = index.failed_fill.lock() {
+            if !self.finished {
+                *failed = Some((self.vault.to_path_buf(), self.started));
+            } else if failed.as_ref().is_some_and(|(_, at)| *at < self.started) {
+                *failed = None;
+            }
+        }
         // A started index's first fill also ends its own share: it finds the notes changed
         // while the app was closed.
         let ended = 1 + usize::from(index.first_fill_owed.swap(false, Ordering::SeqCst));
-        // Only with the queue empty: the last pass's unreadable count says nothing about what
-        // this fill queued, so anything queued waits for the next pass to count it.
         if index.fills_running.fetch_sub(ended, Ordering::SeqCst) == ended {
-            index.run_caught_up_hook_if_due(0, index.fills_quiet());
+            index.run_caught_up_hook_if_due(index.fills_quiet());
         }
     }
 }
@@ -396,6 +416,7 @@ impl SemanticIndex {
             first_fill_owed: AtomicBool::new(false),
             fills_started: AtomicUsize::new(0),
             caught_up_at: AtomicUsize::new(0),
+            failed_fill: Mutex::new(None),
             profile: profile.to_string(),
         })
     }
@@ -1152,7 +1173,7 @@ impl SemanticIndex {
     }
 
     pub fn rebuild_from_notes(&self, vault: &Path) -> Result<(), String> {
-        let _filling = self.begin_fill();
+        let filling = self.begin_fill(vault);
         let paths = note_paths(vault);
         {
             let mut database = self.database.lock().map_err(|error| error.to_string())?;
@@ -1180,17 +1201,20 @@ impl SemanticIndex {
         if unreadable > 0 {
             log::warn!("Semantic rebuild skipped unreadable notes: {unreadable}");
         }
+        filling.finish();
         Ok(())
     }
 
     pub fn reconcile_from_notes(&self, vault: &Path) -> Result<(), String> {
         // Before the walk: an empty queue proves nothing until the reconcile has queued what
         // changed.
-        let _filling = self.begin_fill();
+        let filling = self.begin_fill(vault);
         // Collected before any per-note work: a lazy walk keeps its directory handles open
         // for the whole pass, and on Windows an open handle under a folder stops a restore
         // from moving that folder (#144).
-        self.reconcile_paths(&note_paths(vault))
+        self.reconcile_paths(&note_paths(vault))?;
+        filling.finish();
+        Ok(())
     }
 
     fn reconcile_paths(&self, paths: &[std::path::PathBuf]) -> Result<(), String> {
@@ -1286,7 +1310,7 @@ impl SemanticIndex {
         let started = Instant::now();
         let mut timing = PassTiming::default();
         let outage_already_reported = self.embedding_outage_reported.load(Ordering::SeqCst);
-        // Before the queue is read: a fill during the pass makes its unreadable count stale.
+        // Before the queue is read: a fill during the pass can change what is queued behind it.
         let quiet_since = self.fills_quiet();
         let paths = {
             let database = self.database.lock().map_err(|error| error.to_string())?;
@@ -1350,7 +1374,7 @@ impl SemanticIndex {
         // The backend answered. A pass embeds only the queue it started with, so notes queued
         // since, by a save or a rebuild, keep the hook owed to the pass that embeds them. A pass
         // that stopped returned above.
-        self.run_caught_up_hook_if_due(unreadable, quiet_since);
+        self.run_caught_up_hook_if_due(quiet_since);
         Ok(RetryOutcome::QueueProcessed)
     }
 
@@ -1358,15 +1382,15 @@ impl SemanticIndex {
     /// embedded, and no rebuild or reconcile is still filling it: notes saved without the
     /// backend are indexed (#216). A retired index's commits were refused, so its queue says
     /// nothing about the index that replaced it. `quiet_since` is [`Self::fills_quiet`] from
-    /// before the caller counted the unreadable notes: a fill since then can make that count
-    /// stale, so the hook stays owed to a later pass.
-    fn run_caught_up_hook_if_due(&self, unreadable: usize, quiet_since: Option<usize>) {
+    /// before the caller read the queue: a fill since then can have changed it, so the hook
+    /// stays owed to a later pass.
+    fn run_caught_up_hook_if_due(&self, quiet_since: Option<usize>) {
         let Some(since) = quiet_since else {
             return;
         };
         if !self.retired.load(Ordering::SeqCst)
             && self.fills_quiet() == Some(since)
-            && self.queued_notes() <= unreadable
+            && self.only_unreadable_queued()
             && self.caught_up_owed.swap(false, Ordering::SeqCst)
         {
             self.caught_up_at.store(since, Ordering::SeqCst);
@@ -1384,10 +1408,29 @@ impl SemanticIndex {
         }
     }
 
-    fn begin_fill(&self) -> Filling<'_> {
+    fn begin_fill<'a>(&'a self, vault: &'a Path) -> Filling<'a> {
         self.fills_running.fetch_add(1, Ordering::SeqCst);
-        self.fills_started.fetch_add(1, Ordering::SeqCst);
-        Filling(self)
+        Filling {
+            index: self,
+            vault,
+            started: self.fills_started.fetch_add(1, Ordering::SeqCst) + 1,
+            finished: false,
+        }
+    }
+
+    /// Reconciles again after a rebuild or reconcile that stopped part way, until one
+    /// completes. The worker calls it before each pass.
+    fn retry_failed_fill(&self) {
+        let failed = self
+            .failed_fill
+            .lock()
+            .ok()
+            .and_then(|failed| failed.clone());
+        if let Some((vault, _)) = failed {
+            if let Err(error) = self.reconcile_from_notes(&vault) {
+                log::error!("Could not reconcile the semantic index again: {error}");
+            }
+        }
     }
 
     /// A mark while no rebuild or reconcile has started since the caught-up hook last ran, so
@@ -1399,12 +1442,17 @@ impl SemanticIndex {
             .filter(|started| *started == self.caught_up_at.load(Ordering::SeqCst))
     }
 
-    /// The rebuilds and reconciles started so far, while none is running; `None` while one is.
+    /// The rebuilds and reconciles started so far, while none is running and none stopped part
+    /// way; `None` otherwise.
     fn fills_quiet(&self) -> Option<usize> {
         // Started before running: `begin_fill` counts them the other way round, so a fill that
         // starts meanwhile shows in one or the other.
         let started = self.fills_started.load(Ordering::SeqCst);
-        (self.fills_running.load(Ordering::SeqCst) == 0).then_some(started)
+        let failed = self
+            .failed_fill
+            .lock()
+            .map_or(true, |failed| failed.is_some());
+        (self.fills_running.load(Ordering::SeqCst) == 0 && !failed).then_some(started)
     }
 
     /// Owes the caught-up hook again, to the next pass or fill that leaves the queue through.
@@ -1412,20 +1460,24 @@ impl SemanticIndex {
         self.caught_up_owed.store(true, Ordering::SeqCst);
     }
 
-    /// Notes still queued; `usize::MAX` when the count cannot be read, so nothing looks
-    /// caught up.
-    fn queued_notes(&self) -> usize {
-        self.database
-            .lock()
-            .ok()
-            .and_then(|database| {
-                database
-                    .query_row("SELECT COUNT(*) FROM pending_notes", [], |row| {
-                        row.get::<_, usize>(0)
-                    })
-                    .ok()
+    /// Every note still queued is a file that cannot be read now, so nothing queued could be
+    /// embedded. Read again rather than counted: a note queued in place of an unreadable one,
+    /// or one that has become readable, leaves the count the same. False when the queue cannot
+    /// be read.
+    fn only_unreadable_queued(&self) -> bool {
+        let paths = self.database.lock().ok().and_then(|database| {
+            let mut statement = database.prepare("SELECT path FROM pending_notes").ok()?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .ok()?;
+            rows.collect::<Result<Vec<_>, _>>().ok()
+        });
+        paths.is_some_and(|paths| {
+            paths.iter().all(|path| {
+                let path = Path::new(path);
+                path.is_file() && std::fs::read_to_string(path).is_err()
             })
-            .unwrap_or(usize::MAX)
+        })
     }
 
     /// Logs a finished pass and keeps it as the last one, unless it never reached the backend:
@@ -1519,6 +1571,7 @@ impl SemanticIndex {
                 if index.retired.load(Ordering::SeqCst) {
                     break;
                 }
+                index.retry_failed_fill();
                 match index.retry_pending() {
                     Ok(RetryOutcome::QueueProcessed) => offline_until = None,
                     Ok(RetryOutcome::BackendUnavailable) => {
@@ -2900,7 +2953,7 @@ mod tests {
 
         // A fill still running when a pass ends holds the rerun, and the notes it queued hold it
         // until the pass that embeds them.
-        let filling = index.begin_fill();
+        let filling = index.begin_fill(&root);
         let second = root.join("Second.md");
         let third = root.join("Third.md");
         write_note(&second, "second-id", "Second", "Areas", "quantum fields");
@@ -2908,7 +2961,7 @@ mod tests {
         index.note_changed(&second).unwrap();
         index.retry_pending().unwrap();
         index.note_changed(&third).unwrap();
-        drop(filling);
+        filling.finish();
         assert!(shown(&cards).is_empty(), "the fill left a note queued");
         index.retry_pending().unwrap();
         assert_eq!(
@@ -3007,12 +3060,13 @@ mod tests {
         let fill_first = Arc::new(AtomicBool::new(false));
         let hold_next = Arc::new(AtomicBool::new(false));
         let cards = Arc::new(Mutex::new(Vec::new()));
-        let (filling, holding, app_ref, index_ref, delivered) = (
+        let (filling, holding, app_ref, index_ref, delivered, filled) = (
             fill_first.clone(),
             hold_next.clone(),
             Arc::downgrade(&app),
             Arc::downgrade(&index),
             cards.clone(),
+            root.clone(),
         );
         index.on_caught_up(move || {
             let (Some(app), Some(index)) = (app_ref.upgrade(), index_ref.upgrade()) else {
@@ -3023,7 +3077,7 @@ mod tests {
                 return;
             }
             if filling.swap(false, Ordering::SeqCst) {
-                drop(index.begin_fill());
+                index.begin_fill(&filled).finish();
             }
             rerun_deferred_checks(&app, |card| delivered.lock().unwrap().push(card));
         });
@@ -3049,10 +3103,10 @@ mod tests {
 
         // A fill starts while the rerun's check runs, and a pass after it finds the index caught
         // up again before the check returns.
-        let (started, hold) = (Arc::downgrade(&index), hold_next.clone());
+        let (started, hold, filled) = (Arc::downgrade(&index), hold_next.clone(), root.clone());
         *backend.during_embed.lock().unwrap() = Some(Box::new(move || {
             let index = started.upgrade().unwrap();
-            drop(index.begin_fill());
+            index.begin_fill(&filled).finish();
             hold.store(true, Ordering::SeqCst);
             index.owe_caught_up();
             index.retry_pending().unwrap();
@@ -3346,6 +3400,154 @@ mod tests {
         // Moved while the app was closed, so only the vault scan can find it.
         std::fs::rename(&capture, root.join("Moved.md")).unwrap();
         let cards = Mutex::new(Vec::new());
+        rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
+        assert_eq!(
+            shown(&cards),
+            [("Capture".to_string(), vec!["Kept".to_string()])]
+        );
+        assert!(waiting(&app).is_empty());
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    /// The capture's check fails while the backend is away, with `Kept` already indexed.
+    fn deferred_capture(
+        name: &str,
+        backend: Arc<MidPassBackend>,
+    ) -> (std::path::PathBuf, Arc<SemanticIndex>, Arc<AppState>) {
+        let root = scratch(name);
+        let kept = root.join("Kept.md");
+        let capture = root.join("Capture.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        write_note(
+            &capture,
+            "capture-id",
+            "Capture",
+            "Areas",
+            "coffee beans today",
+        );
+        let index = Arc::new(
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), backend.clone()).unwrap(),
+        );
+        let app = open_app(root.to_str().unwrap(), &index);
+        index.note_changed(&kept).unwrap();
+        index.retry_pending().unwrap();
+        backend.available.store(false, Ordering::SeqCst);
+        assert!(check_now(&app, capture.to_str().unwrap()).is_none());
+        backend.available.store(true, Ordering::SeqCst);
+        (root, index, app)
+    }
+
+    fn mid_pass_backend() -> Arc<MidPassBackend> {
+        Arc::new(MidPassBackend {
+            available: AtomicBool::new(true),
+            during_embed: Mutex::new(None),
+        })
+    }
+
+    #[test]
+    fn a_note_queued_in_place_of_an_unreadable_one_holds_the_rerun() {
+        let backend = mid_pass_backend();
+        let (root, index, app) = deferred_capture("deferred-replaced-unreadable", backend.clone());
+        let cards = cards_from_reruns(&index, &app);
+        let broken = root.join("Broken.md");
+        let other = root.join("Other.md");
+        write_note(&broken, "broken-id", "Broken", "Areas", "taxes");
+        write_note(&other, "other-id", "Other", "Areas", "quantum mechanics");
+        // Queued first, so the pass counts it unreadable before it embeds the other note.
+        index.note_changed(&broken).unwrap();
+        std::fs::write(&broken, [0xff, 0xfe, 0xfd]).unwrap();
+        index.note_changed(&other).unwrap();
+
+        // Meanwhile the unreadable note is deleted and a readable one that matches the capture
+        // is queued: one note is still queued, but this one can be embedded.
+        let (saving, vault_dir) = (Arc::downgrade(&index), root.clone());
+        *backend.during_embed.lock().unwrap() = Some(Box::new(move || {
+            let index = saving.upgrade().unwrap();
+            let broken = vault_dir.join("Broken.md");
+            std::fs::remove_file(&broken).unwrap();
+            index.note_removed(&broken).unwrap();
+            let matching = vault_dir.join("Match.md");
+            write_note(&matching, "match-id", "Match", "Areas", "coffee ratio");
+            index.note_changed(&matching).unwrap();
+        }));
+        index.retry_pending().unwrap();
+        assert!(
+            shown(&cards).is_empty(),
+            "the matching note is not embedded yet"
+        );
+        assert_eq!(waiting(&app).len(), 1);
+        index.retry_pending().unwrap();
+        let shown = shown(&cards);
+        assert_eq!(shown.len(), 1);
+        assert!(shown[0].1.contains(&"Match".to_string()));
+        assert!(waiting(&app).is_empty());
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_fill_that_stops_part_way_holds_the_rerun_until_a_reconcile_completes() {
+        let (root, index, app) = deferred_capture("deferred-failed-fill", mid_pass_backend());
+        let cards = cards_from_reruns(&index, &app);
+        // As a reconcile that hits a database error: notes can be neither queued nor indexed.
+        drop(index.begin_fill(&root));
+        index.owe_caught_up();
+        index.retry_pending().unwrap();
+        assert!(shown(&cards).is_empty(), "the index may be missing notes");
+        assert_eq!(waiting(&app).len(), 1);
+        // What the worker does at its next tick: reconcile again, then the pass.
+        index.retry_failed_fill();
+        index.retry_pending().unwrap();
+        assert_eq!(
+            shown(&cards),
+            [("Capture".to_string(), vec!["Kept".to_string()])]
+        );
+        assert!(waiting(&app).is_empty());
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_rerun_waits_while_a_bulk_change_holds_the_note_lock() {
+        let backend = mid_pass_backend();
+        let (root, index, app) = deferred_capture("deferred-bulk-change", backend.clone());
+        let cards = Mutex::new(Vec::new());
+        // A restore holds the note lock while it moves notes, and has moved the capture aside.
+        let capture = root.join("Capture.md");
+        let aside = root.join("Capture.restoring");
+        {
+            let _bulk = app.note_mutation.lock().unwrap();
+            std::fs::rename(&capture, &aside).unwrap();
+            rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
+            std::fs::rename(&aside, &capture).unwrap();
+        }
+        assert!(shown(&cards).is_empty());
+        assert_eq!(waiting(&app).len(), 1, "the note is only moved aside");
+
+        // One that starts while the check runs, and is still moving notes when it returns.
+        let (held, holding) = mpsc::channel();
+        let (release, released) = mpsc::channel::<()>();
+        let bulk = Arc::new(Mutex::new(None));
+        let (state, handle) = (Arc::downgrade(&app), bulk.clone());
+        *backend.during_embed.lock().unwrap() = Some(Box::new(move || {
+            *handle.lock().unwrap() = Some(std::thread::spawn(move || {
+                let state = state.upgrade().unwrap();
+                let _bulk = state.note_mutation.lock().unwrap();
+                held.send(()).unwrap();
+                released.recv().unwrap();
+            }));
+            holding.recv().unwrap();
+        }));
+        rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
+        assert!(shown(&cards).is_empty(), "the check may have missed notes");
+        assert_eq!(waiting(&app).len(), 1);
+        release.send(()).unwrap();
+        bulk.lock().unwrap().take().unwrap().join().unwrap();
+
         rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
         assert_eq!(
             shown(&cards),

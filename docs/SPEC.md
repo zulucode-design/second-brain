@@ -252,10 +252,11 @@ that say the same thing.
   never carries it (#216). It runs once the backend is back and the indexing queue is
   through: notes have been embedded, nothing is queued but unreadable notes, and no
   reconcile or rebuild is still filling the queue, including the one that follows opening
-  the vault. It runs at the end of the pass that makes all three true, or of the reconcile
-  or rebuild that does so with nothing left queued; a pass that a reconcile or rebuild
+  the vault, or stopped part way with none completed since. It runs at the end of the pass,
+  reconcile or rebuild that makes all three true; a pass that a reconcile or rebuild
   overlapped leaves it to the next pass. A reconcile or rebuild that starts before the
-  checks finish stops them, and those left run once the queue is through again.
+  checks finish stops them, as does a restore, import or sync batch moving notes, and those
+  left run once the queue is through again.
   By then the notes saved offline are indexed too, so two duplicates written in the same
   offline session can match each other.
   A check kept while nothing is left to index, as when the backend comes back during the

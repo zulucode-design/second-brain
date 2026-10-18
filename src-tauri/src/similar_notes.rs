@@ -10,7 +10,7 @@ use crate::vault::operations;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// The score a note must reach to count as saying the same thing. Calibrated against live
@@ -448,6 +448,16 @@ fn scan_ids(vault: &str) -> Scan {
     (ids, complete)
 }
 
+/// The note lock, unless something holds it: a save for a moment, or a bulk change for as long
+/// as it moves notes.
+fn notes_settled(state: &AppState) -> Option<MutexGuard<'_, ()>> {
+    match state.note_mutation.try_lock() {
+        Ok(guard) => Some(guard),
+        Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+        Err(TryLockError::WouldBlock) => None,
+    }
+}
+
 /// One run of kept checks at a time, so two passes that finish close together never run a check
 /// twice, and a rerun never runs one that [`check_now`] is still running.
 static CHECKING: Mutex<()> = Mutex::new(());
@@ -490,9 +500,18 @@ pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(Si
             index.owe_caught_up();
             break;
         };
-        match locate(&index, &vault, deferred, &mut scanned) {
+        // A restore, an import or a sync batch holds the note lock while it moves notes, and can
+        // leave some missing until it ends: located only while it is free, checked only if it
+        // stayed free, and otherwise this check and the rest wait for the next pass.
+        let Some(settled_notes) = notes_settled(state) else {
+            index.owe_caught_up();
+            break;
+        };
+        let located = locate(&index, &vault, deferred, &mut scanned);
+        drop(settled_notes);
+        match located {
             Ok(Location::At(path)) => match check(&index, &vault, &path) {
-                Ok(_) if index.caught_up_mark() != Some(mark) => {
+                Ok(_) if index.caught_up_mark() != Some(mark) || notes_settled(state).is_none() => {
                     index.owe_caught_up();
                     break;
                 }
