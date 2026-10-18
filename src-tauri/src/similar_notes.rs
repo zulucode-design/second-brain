@@ -379,7 +379,7 @@ fn locate(
             }
             // Another note has that path now.
             Ok(_) => {}
-            Err(_) if Path::new(path).is_file() => unsure = true,
+            Err(_) if !absent(path) => unsure = true,
             Err(_) => {}
         }
     }
@@ -398,6 +398,18 @@ fn locate(
         }
     }
     Ok(Location::Gone)
+}
+
+/// Nothing is at `path`, or nothing a note could be: a file there that cannot be read, or a
+/// folder above it that cannot be, does not count.
+fn absent(path: &str) -> bool {
+    match std::fs::metadata(path) {
+        Ok(metadata) => !metadata.is_file(),
+        Err(error) => matches!(
+            error.kind(),
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+        ),
+    }
 }
 
 /// Walks the vault's notes as the index sees them, each read in full: the note list's scan

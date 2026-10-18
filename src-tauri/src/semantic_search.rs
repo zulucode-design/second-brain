@@ -3213,6 +3213,67 @@ mod tests {
         cleanup(root);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_deferred_note_without_an_id_behind_a_folder_that_cannot_be_read_is_not_taken_for_deleted()
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let root = scratch("deferred-no-id-locked");
+        let vault = root.to_str().unwrap();
+        let kept = root.join("Kept.md");
+        let folder = root.join("Areas");
+        let capture = folder.join("Capture.md");
+        std::fs::create_dir(&folder).unwrap();
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        // No id: the check is kept by its path alone.
+        std::fs::write(
+            &capture,
+            "---\ntitle: Capture\ncategory: Areas\n---\n\ncoffee beans today\n",
+        )
+        .unwrap();
+        let available = Arc::new(AtomicBool::new(true));
+        let index = Arc::new(
+            SemanticIndex::open_at(
+                &root.join("semantic.sqlite3"),
+                Arc::new(RecoveringBackend {
+                    available: available.clone(),
+                }),
+            )
+            .unwrap(),
+        );
+        let app = open_app(vault, &index);
+        index.note_changed(&kept).unwrap();
+        index.retry_pending().unwrap();
+        available.store(false, Ordering::SeqCst);
+        assert!(check_now(&app, capture.to_str().unwrap()).is_none());
+        available.store(true, Ordering::SeqCst);
+        assert_eq!(waiting(&app), [(String::new(), path_text(&capture))]);
+
+        let mode = |bits| std::fs::Permissions::from_mode(bits);
+        std::fs::set_permissions(&folder, mode(0o000)).unwrap();
+        let cards = Mutex::new(Vec::new());
+        // Root reads it anyway, and then there is nothing to prove.
+        if std::fs::metadata(&capture).is_err() {
+            rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
+            assert!(shown(&cards).is_empty());
+            assert_eq!(
+                waiting(&app).len(),
+                1,
+                "the folder it cannot read may hold it"
+            );
+        }
+        std::fs::set_permissions(&folder, mode(0o755)).unwrap();
+        rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
+        assert_eq!(
+            shown(&cards),
+            [("Capture".to_string(), vec!["Kept".to_string()])]
+        );
+        assert!(waiting(&app).is_empty());
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
     #[test]
     fn a_deferred_note_moved_with_a_long_frontmatter_is_still_found() {
         let root = scratch("deferred-long-frontmatter");
