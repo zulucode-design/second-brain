@@ -342,7 +342,12 @@ The passes rest on what Nicolas saw and on screenshots shared in the conversatio
 The first Fedora attempt showed nothing: the tunnel had stopped forwarding overnight while its
 process lived on, so the app logged `Skipped the similarity check for a new note` for each
 capture, as designed for an unreachable backend. After the tunnel was restarted, all three cases
-passed. A check skipped that way is never run later; #216 covers that.
+passed. At that build, a check skipped that way was never run later. **Partly settled
+2026-10-17 by #216 at `19727aab6a2dcc0e1c5f1b7fc9db53b1110d6c37`:** failed checks now persist
+across a restart and rerun after the backend returns and indexing catches up; all seven named
+regression tests passed on both machines. The installed-package recovery check remains unverified:
+its embedding-backend preflight returned an empty reply before the app launched. See
+[the #216 verification report](ticket-216-deferred-similarity-2026-10-17.md).
 
 ## Not proven
 

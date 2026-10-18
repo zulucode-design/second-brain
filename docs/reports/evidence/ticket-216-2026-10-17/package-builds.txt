@@ -1,0 +1,44 @@
+Candidate: 19727aab6a2dcc0e1c5f1b7fc9db53b1110d6c37
+
+Fedora: pnpm tauri:build
+Exit: 0
+   Compiling rusqlite v0.32.1
+    Finished `release` profile [optimized] target(s) in 6m 19s
+       Built application at: <checkout>/src-tauri/target/release/second-brain
+    Bundling Second Brain-0.1.0-alpha.1-1.x86_64.rpm (<checkout>/src-tauri/target/release/bundle/rpm/Second Brain-0.1.0-alpha.1-1.x86_64.rpm)
+    Finished 1 bundle at:
+        <checkout>/src-tauri/target/release/bundle/rpm/Second Brain-0.1.0-alpha.1-1.x86_64.rpm
+
+
+Fedora: scripts/verify-linux-package.sh <candidate RPM>
+Exit: 0
+verified usr/share/applications/io.github.zulucodedesign.SecondBrain.desktop in Second Brain-0.1.0-alpha.1-1.x86_64.rpm
+
+Windows: pnpm build
+Exit: 0
+
+Run npm run preview to preview your production build locally.
+
+> Using @sveltejs/adapter-static
+  Wrote site to "build"
+  ✔ done
+
+Windows: pnpm tauri:build
+Exit: 0
+Run npm run preview to preview your production build locally.
+
+> Using @sveltejs/adapter-static
+  Wrote site to "build"
+  ✔ done
+   Compiling second-brain v0.1.0-alpha.1 (<Windows candidate>\src-tauri)
+warning: linker stdout: Creando biblioteca <Windows shared Rust target>\release\deps\app_lib.dll.lib y objeto <Windows shared Rust target>\release\deps\app_lib.dll.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `second-brain` (lib) generated 1 warning
+    Finished `release` profile [optimized] target(s) in 1m 21s
+       Built application at: <Windows shared Rust target>\release\second-brain.exe
+        Info Target: x64
+     Running makensis to produce <Windows shared Rust target>\release\bundle\nsis\Second Brain_0.1.0-alpha.1_x64-setup.exe
+    Finished 1 bundle at:
+        <Windows shared Rust target>\release\bundle\nsis\Second Brain_0.1.0-alpha.1_x64-setup.exe

@@ -1,0 +1,17 @@
+Candidate: 19727aab6a2dcc0e1c5f1b7fc9db53b1110d6c37
+Command: pnpm test:rust
+Exit: 0
+CARGO_TARGET_DIR: <Windows shared Rust target>
+Selected output; test-name population is the seven required tests.
+
+$ node scripts/test-rust.mjs
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 28.05s
+running 678 tests
+test semantic_search::tests::a_failed_similarity_check_is_recorded_and_survives_reloading_its_file ... ok
+test semantic_search::tests::a_deferred_check_that_fails_again_stays_recorded ... ok
+test semantic_search::tests::a_deferred_check_runs_after_the_backend_returns_and_its_card_is_delivered ... ok
+test semantic_search::tests::a_moved_note_still_gets_its_deferred_check_and_a_deleted_one_is_dropped ... ok
+test semantic_search::tests::a_pass_that_leaves_notes_queued_reruns_nothing_until_the_queue_is_through ... ok
+test semantic_search::tests::a_pass_that_stopped_or_found_the_queue_empty_reruns_nothing ... ok
+test similar_notes::tests::an_unreadable_deferred_file_gives_an_empty_list_and_the_vault_still_opens ... ok
+test result: ok. 669 passed; 0 failed; 9 ignored; 0 measured; 0 filtered out; finished in 15.88s

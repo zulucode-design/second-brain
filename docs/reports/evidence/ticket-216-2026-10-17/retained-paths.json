@@ -1,0 +1,331 @@
+{
+  "candidate": "19727aab6a2dcc0e1c5f1b7fc9db53b1110d6c37",
+  "unit": "logical file bytes, excluding directory metadata; nested entries are not additive",
+  "aliases": {
+    "<Fedora run>": "Private local gate directory named verify-19727aa-6HTmERxd.",
+    "<Windows run>": "Windows test root, sb216/verify-19727aa-6HTmERxd.",
+    "<Windows candidate>": "The reused build-gate candidate checkout.",
+    "<Windows shared Rust target>": "The shared target cache specified for this run.",
+    "<Fedora temp>": "The Fedora temporary directory.",
+    "<Windows temp>": "The Windows user temporary directory."
+  },
+  "roots": {
+    "Fedora": [
+      {
+        "path": ".svelte-kit",
+        "bytes": 8529713,
+        "kind": "build output or reused cache"
+      },
+      {
+        "path": "build",
+        "bytes": 6787276,
+        "kind": "build output or reused cache"
+      },
+      {
+        "path": "src-tauri/binaries",
+        "bytes": 26818686,
+        "kind": "build output or reused cache"
+      },
+      {
+        "path": "src-tauri/target",
+        "bytes": 14190529056,
+        "kind": "build output or reused cache"
+      },
+      {
+        "path": "<Fedora temp>/tmp.Aj8Sak82Ct",
+        "bytes": 79016175,
+        "kind": "package verifier extraction retained instead of cleanup"
+      },
+      {
+        "path": "<Fedora temp>/helixnotes-machine-state-58933606-067e-47d3-a1c4-4a37a22837ec",
+        "bytes": 77439,
+        "kind": "test-created temporary state"
+      },
+      {
+        "path": "<Fedora temp>/semantic-async-6df80a99-5642-4cd4-ab65-251458079a0f",
+        "bytes": 36,
+        "kind": "test-created temporary state"
+      },
+      {
+        "path": "<Fedora run>",
+        "bytes": 5538018,
+        "kind": "private logs, scripts, bundle, backups, and failed-check observations"
+      },
+      {
+        "path": "src-tauri/target/release/bundle/rpm/Second Brain-0.1.0-alpha.1-1.x86_64.rpm",
+        "bytes": 30178896,
+        "kind": "included in src-tauri/target total"
+      }
+    ],
+    "Windows": [
+      {
+        "path": "<Windows run>",
+        "bytes": 5339645
+      },
+      {
+        "path": "<Windows test root>/sb216/${name}",
+        "bytes": 0
+      },
+      {
+        "path": "<Windows candidate>/.svelte-kit",
+        "bytes": 8527827
+      },
+      {
+        "path": "<Windows candidate>/build",
+        "bytes": 6787758
+      },
+      {
+        "path": "<Windows shared Rust target>",
+        "bytes": 8974631052
+      },
+      {
+        "path": "<Windows shared Rust target>/release/bundle/nsis/Second Brain_0.1.0-alpha.1_x64-setup.exe",
+        "bytes": 20299624
+      },
+      {
+        "path": "<Windows temp>/helixnotes-machine-state-b27e2502-852d-4ccf-b718-9c26b95c14f9",
+        "bytes": 78940
+      },
+      {
+        "path": "<Windows temp>/semantic-async-f0787625-ee73-40a4-bf06-32906cc35ba9",
+        "bytes": 36
+      }
+    ]
+  },
+  "privateRunFiles": {
+    "Fedora": [
+      {
+        "path": "<Fedora run>/candidate.bundle",
+        "bytes": 5203751
+      },
+      {
+        "path": "<Fedora run>/fedora-install.log",
+        "bytes": 36
+      },
+      {
+        "path": "<Fedora run>/fedora-inventory.json",
+        "bytes": 877
+      },
+      {
+        "path": "<Fedora run>/fedora-package-verify.log",
+        "bytes": 120
+      },
+      {
+        "path": "<Fedora run>/fedora-remove.log",
+        "bytes": 0
+      },
+      {
+        "path": "<Fedora run>/fedora-tauri-build.log",
+        "bytes": 43347
+      },
+      {
+        "path": "<Fedora run>/fedora-verify.log",
+        "bytes": 110783
+      },
+      {
+        "path": "<Fedora run>/installed-binary.json",
+        "bytes": 184
+      },
+      {
+        "path": "<Fedora run>/manual-check.log",
+        "bytes": 257
+      },
+      {
+        "path": "<Fedora run>/manual-check.mjs",
+        "bytes": 11858
+      },
+      {
+        "path": "<Fedora run>/owned-tunnel-stop.private.json",
+        "bytes": 142
+      },
+      {
+        "path": "<Fedora run>/retained-package-extraction.txt",
+        "bytes": 24
+      },
+      {
+        "path": "<Fedora run>/usage-fedora-build.log",
+        "bytes": 489
+      },
+      {
+        "path": "<Fedora run>/usage-installed-check.log",
+        "bytes": 489
+      },
+      {
+        "path": "<Fedora run>/usage-linux-package.log",
+        "bytes": 489
+      },
+      {
+        "path": "<Fedora run>/usage-report-validation.log",
+        "bytes": 489
+      },
+      {
+        "path": "<Fedora run>/usage-windows-build.log",
+        "bytes": 489
+      },
+      {
+        "path": "<Fedora run>/usage-windows-lint.log",
+        "bytes": 489
+      },
+      {
+        "path": "<Fedora run>/usage-windows-rust.log",
+        "bytes": 489
+      },
+      {
+        "path": "<Fedora run>/usage-windows-tauri.log",
+        "bytes": 489
+      },
+      {
+        "path": "<Fedora run>/win-build.ps1",
+        "bytes": 427
+      },
+      {
+        "path": "<Fedora run>/win-build.ps1.log",
+        "bytes": 1314
+      },
+      {
+        "path": "<Fedora run>/win-disk.ps1",
+        "bytes": 143
+      },
+      {
+        "path": "<Fedora run>/win-disk.ps1.log",
+        "bytes": 205
+      },
+      {
+        "path": "<Fedora run>/win-init.ps1",
+        "bytes": 754
+      },
+      {
+        "path": "<Fedora run>/win-init.ps1.log",
+        "bytes": 281
+      },
+      {
+        "path": "<Fedora run>/win-inventory.ps1",
+        "bytes": 2071
+      },
+      {
+        "path": "<Fedora run>/win-inventory.ps1.log",
+        "bytes": 1147
+      },
+      {
+        "path": "<Fedora run>/win-lint-rust.ps1",
+        "bytes": 501
+      },
+      {
+        "path": "<Fedora run>/win-lint-rust.ps1.log",
+        "bytes": 1289
+      },
+      {
+        "path": "<Fedora run>/win-prep.ps1",
+        "bytes": 1121
+      },
+      {
+        "path": "<Fedora run>/win-prep.ps1.log",
+        "bytes": 672
+      },
+      {
+        "path": "<Fedora run>/win-progress.ps1",
+        "bytes": 239
+      },
+      {
+        "path": "<Fedora run>/win-progress.ps1.log",
+        "bytes": 705
+      },
+      {
+        "path": "<Fedora run>/win-ssh.py",
+        "bytes": 463
+      },
+      {
+        "path": "<Fedora run>/win-tauri-build.ps1",
+        "bytes": 505
+      },
+      {
+        "path": "<Fedora run>/win-tauri-build.ps1.log",
+        "bytes": 1759
+      },
+      {
+        "path": "<Fedora run>/win-test-rust.ps1",
+        "bytes": 501
+      },
+      {
+        "path": "<Fedora run>/win-test-rust.ps1.log",
+        "bytes": 2139
+      },
+      {
+        "path": "<Fedora run>/win-transfer-dir.ps1",
+        "bytes": 296
+      },
+      {
+        "path": "<Fedora run>/win-transfer-dir.ps1.log",
+        "bytes": 71
+      },
+      {
+        "path": "<Fedora run>/windows-build.log",
+        "bytes": 35907
+      },
+      {
+        "path": "<Fedora run>/windows-inventory-refresh.log",
+        "bytes": 1147
+      },
+      {
+        "path": "<Fedora run>/windows-inventory.json",
+        "bytes": 952
+      },
+      {
+        "path": "<Fedora run>/windows-lint-rust.log",
+        "bytes": 1255
+      },
+      {
+        "path": "<Fedora run>/windows-tauri-build.log",
+        "bytes": 37009
+      },
+      {
+        "path": "<Fedora run>/windows-test-rust.log",
+        "bytes": 60771
+      },
+      {
+        "path": "<Fedora run>/manual/observations.json",
+        "bytes": 465
+      }
+    ],
+    "Windows": [
+      {
+        "path": "<Windows run>/candidate.bundle",
+        "bytes": 5203751
+      },
+      {
+        "path": "<Windows run>/test-rust.log",
+        "bytes": 60771
+      },
+      {
+        "path": "<Windows run>/lint-rust.log",
+        "bytes": 1255
+      },
+      {
+        "path": "<Windows run>/build.log",
+        "bytes": 35907
+      },
+      {
+        "path": "<Windows run>/tauri-build.log",
+        "bytes": 37009
+      },
+      {
+        "path": "<Windows run>/inventory.json",
+        "bytes": 952
+      }
+    ]
+  },
+  "privateBackupGroups": [
+    {
+      "path": "<Fedora run>/machine-state-before",
+      "bytes": 4201,
+      "contents": "Private original-profile backup and manifest; not published."
+    },
+    {
+      "path": "<Fedora run>/manual/profile-backup",
+      "bytes": 4417,
+      "contents": "Private original-profile backup and manifest; not published."
+    }
+  ],
+  "cleanupCandidates": "Private run roots, copied bundles, retained extraction, empty typo directory, and test-created temp state only after item-specific approval. Keep the shared caches for reuse.",
+  "cleanupPerformed": false
+}
