@@ -350,8 +350,8 @@ enum Location {
     Gone,
     /// Not readable where the index or the record puts it, and not shown gone either: the file
     /// is there but cannot be read just now, the index has not caught up yet with a move made
-    /// while the app was closed, or a note the vault scan could not open may be it. It is
-    /// looked for again after the next pass.
+    /// while the app was closed, a note the vault scan could not open may be it, or a bulk
+    /// change came or went while it scanned. It is looked for again after the next pass.
     Unsure,
 }
 
@@ -359,12 +359,15 @@ enum Location {
 /// it could not may be a deferred check's note, moved.
 type Scan = (Vec<(String, String)>, bool);
 
-/// Finds a deferred check's note: by its id through the index, then at its recorded path, then
-/// by its id across the vault, scanned into `scanned` once for every check of a rerun.
+/// Finds a deferred check's note: by its id through the index, then at its recorded path, while
+/// `settled_notes` holds the note lock, then by its id across the vault, scanned into `scanned`
+/// once for every check of a rerun after it lets the lock go.
 fn locate(
+    state: &AppState,
     index: &SemanticIndex,
     vault: &str,
     deferred: &DeferredCheck,
+    settled_notes: MutexGuard<'_, ()>,
     scanned: &mut Option<Scan>,
 ) -> Result<Location, String> {
     let indexed = if deferred.id.is_empty() {
@@ -391,7 +394,17 @@ fn locate(
     // The index can miss a note moved while the app was closed, so the vault has the last word
     // before the check is dropped.
     if !deferred.id.is_empty() {
-        let (notes, complete) = scanned.get_or_insert_with(|| scan_ids(vault));
+        // Read while the lock shows no lease running. The scan runs without it, since a save
+        // waits for that lock on the main thread, and a bulk change that came or went meanwhile
+        // can have hidden a note from it.
+        let leases = state.bulk_mutation.granted();
+        drop(settled_notes);
+        let (notes, complete) = scanned.get_or_insert_with(|| {
+            let (notes, complete) = scan_ids(vault);
+            let settled =
+                notes_settled(state).is_some_and(|_held| state.bulk_mutation.granted() == leases);
+            (notes, complete && settled)
+        });
         if let Some((_, path)) = notes.iter().find(|(id, _)| *id == deferred.id) {
             return Ok(Location::At(path.clone()));
         }
@@ -414,9 +427,18 @@ fn absent(path: &str) -> bool {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Runs as a vault scan starts on this thread, so a test can act while it runs.
+    pub(crate) static DURING_SCAN: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Walks the vault's notes as the index sees them, each read in full: the note list's scan
 /// reads only the start of a note, which can cut a long frontmatter short of its id.
 fn scan_ids(vault: &str) -> Scan {
+    #[cfg(test)]
+    DURING_SCAN.with_borrow_mut(|during| during.as_mut().map(|during| during()));
     let root = Path::new(vault);
     let (mut ids, mut complete) = (Vec::new(), true);
     for entry in walkdir::WalkDir::new(root)
@@ -464,8 +486,10 @@ static CHECKING: Mutex<()> = Mutex::new(());
 
 /// Runs each of the open vault's deferred checks once, oldest first, on the note's current
 /// text, and hands every result with matches to `deliver` (#216). A check that runs leaves the
-/// list, matches or not; one that fails again stays; a deleted note's is dropped. A rebuild or
-/// reconcile that starts before they finish stops them, and the rest wait for the next rerun.
+/// list, matches or not; one that fails again stays; a deleted note's is dropped. They stop, and
+/// the rest wait for the next rerun, once a rebuild or reconcile has started since the index
+/// caught up or stopped part way, or when something holds the note lock as a check looks for
+/// its note or ends.
 pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(SimilarityCheck)) {
     let _checking = CHECKING.lock().unwrap_or_else(PoisonError::into_inner);
     // One lock at a time: renaming a notebook holds `config` while it takes the index slot. The
@@ -507,9 +531,7 @@ pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(Si
             index.owe_caught_up();
             break;
         };
-        let located = locate(&index, &vault, deferred, &mut scanned);
-        drop(settled_notes);
-        match located {
+        match locate(state, &index, &vault, deferred, settled_notes, &mut scanned) {
             Ok(Location::At(path)) => match check(&index, &vault, &path) {
                 Ok(_) if index.caught_up_mark() != Some(mark) || notes_settled(state).is_none() => {
                     index.owe_caught_up();

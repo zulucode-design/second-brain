@@ -208,9 +208,9 @@ pub struct SemanticIndex {
     fills_running: AtomicUsize,
     /// Set when the index starts, cleared when its first rebuild or reconcile ends.
     first_fill_owed: AtomicBool,
-    /// Rebuilds and reconciles ever started, and how many had when the hook last ran: a rerun
-    /// can tell one started since.
+    /// Rebuilds and reconciles ever started.
     fills_started: AtomicUsize,
+    /// `fills_started` when the caught-up hook last ran, so a rerun can tell one started since.
     caught_up_at: AtomicUsize,
     /// A rebuild or reconcile that stopped part way, by its vault and start, until a fill started
     /// after it completes: notes can be neither queued nor indexed meanwhile.
@@ -1419,18 +1419,21 @@ impl SemanticIndex {
     }
 
     /// Reconciles again after a rebuild or reconcile that stopped part way, until one
-    /// completes. The worker calls it before each pass.
-    fn retry_failed_fill(&self) {
+    /// completes. The worker calls it before a pass, once an interval at most. False when no
+    /// fill had stopped.
+    fn retry_failed_fill(&self) -> bool {
         let failed = self
             .failed_fill
             .lock()
             .ok()
             .and_then(|failed| failed.clone());
-        if let Some((vault, _)) = failed {
-            if let Err(error) = self.reconcile_from_notes(&vault) {
-                log::error!("Could not reconcile the semantic index again: {error}");
-            }
+        let Some((vault, _)) = failed else {
+            return false;
+        };
+        if let Err(error) = self.reconcile_from_notes(&vault) {
+            log::error!("Could not reconcile the semantic index again: {error}");
         }
+        true
     }
 
     /// A mark while no rebuild or reconcile has started since the caught-up hook last ran, so
@@ -1543,6 +1546,7 @@ impl SemanticIndex {
         let index = Arc::downgrade(self);
         std::thread::spawn(move || {
             let mut offline_until: Option<std::time::Instant> = None;
+            let mut fill_retried: Option<std::time::Instant> = None;
             loop {
                 if let Some(deadline) = offline_until {
                     // Notes are already durable. Coalesce every wake received during an
@@ -1571,7 +1575,13 @@ impl SemanticIndex {
                 if index.retired.load(Ordering::SeqCst) {
                     break;
                 }
-                index.retry_failed_fill();
+                // Every note a failed fill queued also woke the worker, and each retry walks the
+                // whole vault.
+                if fill_retried.is_none_or(|at| at.elapsed() >= interval)
+                    && index.retry_failed_fill()
+                {
+                    fill_retried = Some(std::time::Instant::now());
+                }
                 match index.retry_pending() {
                     Ok(RetryOutcome::QueueProcessed) => offline_until = None,
                     Ok(RetryOutcome::BackendUnavailable) => {
@@ -2695,10 +2705,7 @@ mod tests {
             "Areas",
             "coffee beans today",
         );
-        let backend = Arc::new(MidPassBackend {
-            available: AtomicBool::new(true),
-            during_embed: Mutex::new(None),
-        });
+        let backend = mid_pass_backend();
         let index = Arc::new(
             SemanticIndex::open_at(&root.join("semantic.sqlite3"), backend.clone()).unwrap(),
         );
@@ -2759,10 +2766,7 @@ mod tests {
             "Areas",
             "coffee beans today",
         );
-        let backend = Arc::new(MidPassBackend {
-            available: AtomicBool::new(true),
-            during_embed: Mutex::new(None),
-        });
+        let backend = mid_pass_backend();
         let index = Arc::new(
             SemanticIndex::open_at(&root.join("semantic.sqlite3"), backend.clone()).unwrap(),
         );
@@ -2807,10 +2811,7 @@ mod tests {
             "Areas",
             "coffee grinder setting",
         );
-        let backend = Arc::new(MidPassBackend {
-            available: AtomicBool::new(true),
-            during_embed: Mutex::new(None),
-        });
+        let backend = mid_pass_backend();
         let index = Arc::new(
             SemanticIndex::open_at(&root.join("semantic.sqlite3"), backend.clone()).unwrap(),
         );
@@ -3022,10 +3023,8 @@ mod tests {
         index.on_caught_up(move || {
             counted.fetch_add(1, Ordering::SeqCst);
         });
-        // As a pass that embedded notes and left two unreadable ones queued leaves it. The
-        // rebuild empties the queue and queues two readable notes in their place.
+        // As a pass that embedded notes leaves it. The rebuild queues two readable notes.
         index.caught_up_owed.store(true, Ordering::SeqCst);
-        index.last_reported_unreadable.store(2, Ordering::SeqCst);
         index.rebuild_from_notes(&vault).unwrap();
         assert_eq!(runs.load(Ordering::SeqCst), 0, "neither note is embedded");
         index.retry_pending().unwrap();
@@ -3048,10 +3047,7 @@ mod tests {
             "Areas",
             "coffee beans today",
         );
-        let backend = Arc::new(MidPassBackend {
-            available: AtomicBool::new(true),
-            during_embed: Mutex::new(None),
-        });
+        let backend = mid_pass_backend();
         let index = Arc::new(
             SemanticIndex::open_at(&root.join("semantic.sqlite3"), backend.clone()).unwrap(),
         );
@@ -3129,7 +3125,7 @@ mod tests {
     }
 
     #[test]
-    fn a_rebuild_during_a_pass_leaves_the_rerun_to_a_pass_that_counts_the_queue_again() {
+    fn a_rebuild_during_a_pass_leaves_the_rerun_to_the_pass_that_embeds_what_it_queued() {
         let root = scratch("deferred-rebuild-mid-pass");
         let vault = root.to_str().unwrap();
         let capture = root.join("Capture.md");
@@ -3159,8 +3155,7 @@ mod tests {
         backend.available.store(true, Ordering::SeqCst);
 
         // While the pass embeds the capture, a matching note arrives and a rebuild runs. The
-        // rebuild skips the unreadable note and queues the new one, so the one unreadable note
-        // the pass counts no longer says what is left in the queue.
+        // rebuild skips the unreadable note and queues the new one behind the pass.
         let (rebuilding, vault_dir) = (Arc::downgrade(&index), root.clone());
         *backend.during_embed.lock().unwrap() = Some(Box::new(move || {
             write_note(
@@ -3479,9 +3474,9 @@ mod tests {
         );
         assert_eq!(waiting(&app).len(), 1);
         index.retry_pending().unwrap();
-        let shown = shown(&cards);
-        assert_eq!(shown.len(), 1);
-        assert!(shown[0].1.contains(&"Match".to_string()));
+        let delivered = shown(&cards);
+        assert_eq!(delivered.len(), 1);
+        assert!(delivered[0].1.contains(&"Match".to_string()));
         assert!(waiting(&app).is_empty());
         drop(app);
         drop(index);
@@ -3549,6 +3544,97 @@ mod tests {
         bulk.lock().unwrap().take().unwrap().join().unwrap();
 
         rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
+        assert_eq!(
+            shown(&cards),
+            [("Capture".to_string(), vec!["Kept".to_string()])]
+        );
+        assert!(waiting(&app).is_empty());
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_rerun_scans_the_vault_without_the_note_lock_and_a_bulk_change_meanwhile_keeps_the_check() {
+        let (root, index, app) = deferred_capture("deferred-unlocked-scan", mid_pass_backend());
+        // Deleted, so only the vault scan can tell.
+        std::fs::remove_file(root.join("Capture.md")).unwrap();
+        let state = Arc::downgrade(&app);
+        crate::similar_notes::DURING_SCAN.set(Some(Box::new(move || {
+            let state = state.upgrade().unwrap();
+            assert!(
+                state.note_mutation.try_lock().is_ok(),
+                "a save would wait for the scan"
+            );
+            // A restore that starts and ends while the scan runs.
+            drop(
+                state
+                    .bulk_mutation
+                    .acquire(&state.note_mutation, &state.vault_activity)
+                    .unwrap(),
+            );
+        })));
+        rerun_deferred_checks(&app, |_| {});
+        assert_eq!(
+            waiting(&app).len(),
+            1,
+            "the restore may have hidden the note from the scan"
+        );
+        crate::similar_notes::DURING_SCAN.set(None);
+        rerun_deferred_checks(&app, |_| {});
+        assert!(waiting(&app).is_empty(), "the note is deleted");
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn the_worker_retries_a_failed_fill_once_an_interval_until_it_completes() {
+        let (root, index, app) =
+            deferred_capture("deferred-worker-failed-fill", mid_pass_backend());
+        let cards = cards_from_reruns(&index, &app);
+        let rename = |from: &str, to: &str| {
+            let database = index.database.lock().unwrap();
+            database
+                .execute(&format!("ALTER TABLE {from} RENAME TO {to}"), [])
+                .unwrap();
+        };
+        // A database error stops a rebuild or reconcile part way.
+        rename("notes", "notes_aside");
+        assert!(index.rebuild_from_notes(&root).is_err());
+        assert_eq!(index.fills_quiet(), None, "the index may be missing notes");
+        assert!(index.reconcile_from_notes(&root).is_err());
+        assert_eq!(index.fills_quiet(), None, "the index may be missing notes");
+        index.owe_caught_up();
+
+        let interval = Duration::from_secs(2);
+        index.start_background_with_interval(interval);
+        let failed = index.fills_started.load(Ordering::SeqCst);
+        for _ in 0..20 {
+            index.wake_worker.get().unwrap().send(()).unwrap();
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while index.fills_started.load(Ordering::SeqCst) == failed
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Time for the worker to take the other wakes. A slow worker can only make this pass
+        // without proving anything, never fail.
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(
+            index.fills_started.load(Ordering::SeqCst),
+            failed + 1,
+            "one retry for twenty wakes"
+        );
+        assert!(shown(&cards).is_empty());
+
+        // The retry an interval later completes, and the pass after it reruns the check.
+        rename("notes_aside", "notes");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while shown(&cards).is_empty() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         assert_eq!(
             shown(&cards),
             [("Capture".to_string(), vec!["Kept".to_string()])]
