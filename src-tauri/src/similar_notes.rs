@@ -108,8 +108,9 @@ pub fn check(
 }
 
 /// [`check`] against the open vault, with every failure treated as "nothing found": no index,
-/// an unreachable embedding backend, or a note that vanished. A check that fails is kept, to
-/// run once the backend is back (#216).
+/// an unreachable embedding backend, or a note that vanished. When [`check`] itself fails, as
+/// it does while the backend is unreachable, the check is kept to run once the backend is back
+/// (#216).
 pub fn check_now(state: &AppState, path: &str) -> Option<SimilarityCheck> {
     let index = state.semantic_index.lock().ok()?.clone()?;
     let vault = state.config.lock().ok()?.active_vault.clone()?;
@@ -357,16 +358,19 @@ pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(Si
             Ok(Location::Unsure) | Err(_) => {}
         }
     }
+    // Nothing changed, so nothing to log: a check that cannot run yet would otherwise log after
+    // every pass.
+    if settled.is_empty() {
+        return;
+    }
     let ran = settled.len() - dropped;
     let still_waiting = waiting.len() - settled.len();
-    if !settled.is_empty() {
-        if let Ok(mut list) = state.deferred_checks.lock() {
-            // Unless the vault was switched meanwhile: its file then keeps every check for its
-            // next open, and those that ran run once more.
-            if list.vault.as_deref() == Some(vault.as_str()) {
-                list.checks.retain(|kept| !settled.contains(&kept));
-                list.save();
-            }
+    if let Ok(mut list) = state.deferred_checks.lock() {
+        // Unless the vault was switched meanwhile: its file then keeps every check for its next
+        // open, and those that ran run once more.
+        if list.vault.as_deref() == Some(vault.as_str()) {
+            list.checks.retain(|kept| !settled.contains(&kept));
+            list.save();
         }
     }
     // Counts only, never a note (docs/log-privacy.md).

@@ -1375,8 +1375,8 @@ impl SemanticIndex {
 
     /// Calls `hook` after a pass that leaves only unreadable notes queued, once notes have been
     /// embedded since the hook last ran: the embedding backend is back, and the notes saved
-    /// while it was away are indexed (#216). It runs on the worker's thread, so slow work belongs elsewhere. Set
-    /// it before the worker starts; only the first hook set is kept.
+    /// while it was away are indexed (#216). It runs on the worker's thread, so slow work belongs
+    /// elsewhere. Set it before the worker starts; only the first hook set is kept.
     pub fn on_caught_up(&self, hook: impl Fn() + Send + Sync + 'static) {
         let _ = self.caught_up_hook.set(Box::new(hook));
     }
@@ -2585,9 +2585,13 @@ mod tests {
         assert!(shown(&cards).is_empty(), "the pass left a note queued");
         assert_eq!(waiting(&app).len(), 1);
 
-        // The next pass finds that note gone and embeds nothing, but the queue is through, so
-        // the rerun the earlier pass owed runs now.
+        // The next pass finds that note gone and embeds nothing. Only an unreadable note stays
+        // queued, so the queue is through and the rerun the earlier pass owed runs now.
         std::fs::remove_file(&second).unwrap();
+        let broken = root.join("Broken.md");
+        write_note(&broken, "broken-id", "Broken", "Areas", "taxes");
+        index.note_changed(&broken).unwrap();
+        std::fs::write(&broken, [0xff, 0xfe, 0xfd]).unwrap();
         index.retry_pending().unwrap();
         assert_eq!(
             shown(&cards),

@@ -252,9 +252,11 @@ that say the same thing.
   the indexing queue is through: after the first pass that leaves nothing queued but
   unreadable notes, once notes have been embedded. By then the notes saved offline are
   indexed too, so two duplicates written in the same offline session can match each other.
+  A check kept while nothing is left to index, as when the backend comes back during the
+  check itself or drops again during a rerun, waits for the next pass that embeds a note.
   It runs on the note's current text, wherever the note was renamed or moved to. It never
-  expires: it leaves the list when it runs or when the note is deleted. A result shows as
-  the ordinary card, newest first, with no notification and no summary.
+  expires: it leaves the list when it runs or when the note is deleted. Each result shows as
+  its own ordinary card, newest first, with no cap, no notification and no summary.
 - **What it compares.** The new note is embedded as a document, the way notes are indexed,
   and compared with every indexed note in all four categories (§12); the note itself is
   excluded. Only its first chunk's worth of text is embedded, the length every stored vector

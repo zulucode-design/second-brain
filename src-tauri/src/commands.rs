@@ -510,8 +510,8 @@ fn open_vault_path(
     next.max_versions_per_note = shared_settings.max_versions_per_note;
     save_app_config(&next)?;
     *search_slot = Some(search);
-    // Before the worker starts, so its first pass that reaches the embedding backend reruns
-    // this vault's failed similarity checks (#216).
+    // Before the worker starts, so the first pass that embeds notes and gets the queue through
+    // reruns this vault's failed similarity checks (#216).
     if let Ok(mut deferred) = state.deferred_checks.lock() {
         *deferred = deferred_checks;
     }
