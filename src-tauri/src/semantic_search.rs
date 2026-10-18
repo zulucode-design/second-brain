@@ -212,6 +212,9 @@ pub struct SemanticIndex {
     fills_started: AtomicUsize,
     /// `fills_started` when the caught-up hook last ran, so a rerun can tell one started since.
     caught_up_at: AtomicUsize,
+    /// Notes queued so far, so a rerun can tell a note was saved during a check, even one
+    /// embedded before the check ended.
+    notes_queued: AtomicUsize,
     /// A rebuild or reconcile that stopped part way or overlapped another, by its vault and the
     /// last fill started when it ended, until a fill started after that completes alone: notes
     /// can be neither queued nor indexed meanwhile.
@@ -420,6 +423,7 @@ impl SemanticIndex {
             first_fill_owed: AtomicBool::new(false),
             fills_started: AtomicUsize::new(0),
             caught_up_at: AtomicUsize::new(0),
+            notes_queued: AtomicUsize::new(0),
             failed_fill: Mutex::new(None),
             profile: profile.to_string(),
         })
@@ -576,6 +580,7 @@ impl SemanticIndex {
 
     /// Queue a note from text already read, and wake the worker to embed it.
     fn queue_text(&self, path: &Path, raw: &str) -> Result<(), String> {
+        self.notes_queued.fetch_add(1, Ordering::SeqCst);
         self.refresh_pending_text(&PreparedNote::from_text(path, raw))?;
         if let Some(wake) = self.wake_worker.get() {
             let _ = wake.send(());
@@ -1444,11 +1449,13 @@ impl SemanticIndex {
     /// nothing queued could be embedded, so the index it found caught up still stands; `None`
     /// otherwise (#216). The hook's rerun runs later, on another thread, behind other checks, so
     /// it takes the mark before each check and requires the same one after: a later hook gives a
-    /// new mark, which hides no fill from it.
-    pub(crate) fn caught_up_mark(&self) -> Option<usize> {
+    /// new mark, which hides no fill from it, and a note queued meanwhile changes it.
+    pub(crate) fn caught_up_mark(&self) -> Option<(usize, usize)> {
+        let queued = self.notes_queued.load(Ordering::SeqCst);
         self.fills_quiet()
             .filter(|started| *started == self.caught_up_at.load(Ordering::SeqCst))
             .filter(|_| self.only_unreadable_queued())
+            .map(|started| (started, queued))
     }
 
     /// The rebuilds and reconciles started so far, while none is running and none stopped part
@@ -1962,7 +1969,9 @@ mod tests {
             if !self.available.load(Ordering::SeqCst) {
                 return Err("desktop is asleep".to_string());
             }
-            if let Some(during_embed) = self.during_embed.lock().unwrap().take() {
+            // Taken out first, so an embed it makes does not wait on this lock.
+            let during_embed = self.during_embed.lock().unwrap().take();
+            if let Some(during_embed) = during_embed {
                 during_embed();
             }
             MeaningBackend.embed(inputs)
@@ -3842,6 +3851,41 @@ mod tests {
             2,
             "the file keeps both"
         );
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_save_embedded_while_a_check_runs_stops_the_rerun() {
+        let backend = mid_pass_backend();
+        let (root, index, app) = deferred_capture("deferred-saved-during-check", backend.clone());
+        let cards = Mutex::new(Vec::new());
+        // While the capture's check embeds, the capture is saved again and the save embedded: the
+        // check judged text that is gone, and the queue is empty again when it ends.
+        let (saving, capture) = (Arc::downgrade(&index), root.join("Capture.md"));
+        *backend.during_embed.lock().unwrap() = Some(Box::new(move || {
+            let index = saving.upgrade().unwrap();
+            write_note(
+                &capture,
+                "capture-id",
+                "Capture",
+                "Areas",
+                "coffee beans tomorrow",
+            );
+            index.note_changed(&capture).unwrap();
+            index.retry_pending().unwrap();
+        }));
+        rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
+        assert!(shown(&cards).is_empty(), "the check judged replaced text");
+        assert_eq!(waiting(&app).len(), 1);
+
+        rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
+        assert_eq!(
+            shown(&cards),
+            [("Capture".to_string(), vec!["Kept".to_string()])]
+        );
+        assert!(waiting(&app).is_empty());
         drop(app);
         drop(index);
         cleanup(root);
