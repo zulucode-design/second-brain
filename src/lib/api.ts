@@ -662,9 +662,10 @@ export async function cancelAi(requestId: string): Promise<void> {
   return invoke("ai_cancel", { requestId });
 }
 
-/** Existing notes like the note at `path`, or null when none are or the check could not run. */
-export async function checkSimilarNotes(path: string): Promise<SimilarityCheck | null> {
-  return invoke("check_similar_notes", { path });
+/** Existing notes like the note at `path` in `vault`, the vault it was opened in, or null when
+ * none are or the check could not run. */
+export async function checkSimilarNotes(vault: string, path: string): Promise<SimilarityCheck | null> {
+  return invoke("check_similar_notes", { vault, path });
 }
 
 /**

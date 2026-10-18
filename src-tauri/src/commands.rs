@@ -1179,17 +1179,14 @@ pub fn quick_capture_note(
         capture.title,
     )?;
 
-    let current_revision = operations::read_vault_note(
-        &state
-            .config
-            .lock()
-            .map_err(|error| error.to_string())?
-            .active_vault
-            .clone()
-            .ok_or("No active vault")?,
-        &entry.path,
-    )?
-    .revision;
+    let vault_path = state
+        .config
+        .lock()
+        .map_err(|error| error.to_string())?
+        .active_vault
+        .clone()
+        .ok_or("No active vault")?;
+    let current_revision = operations::read_vault_note(&vault_path, &entry.path)?.revision;
     save_note(
         state,
         entry.path.clone(),
@@ -1198,7 +1195,7 @@ pub fn quick_capture_note(
         current_revision,
     )?;
     // Only now that the capture is on disk: the check can never cost the user their note.
-    crate::similar_notes::after_capture(app, entry.path.clone());
+    crate::similar_notes::after_capture(app, vault_path, entry.path.clone());
 
     Ok(NoteEntry {
         preview: capture.body,
@@ -1207,14 +1204,21 @@ pub fn quick_capture_note(
 }
 
 /// The capture-time similarity check (#9) for a note written in the app, run when the user
-/// first leaves it. `None` when nothing is similar or the check could not run.
+/// first leaves it. `vault` is the vault the note was opened in, since leaving it can be what
+/// switches vaults. `None` when nothing is similar or the check could not run.
 #[tauri::command]
 pub async fn check_similar_notes(
     app: tauri::AppHandle,
+    vault: String,
     path: String,
 ) -> Result<Option<crate::similar_notes::SimilarityCheck>, String> {
+    // Only a vault the note is in and the app has opened: keeping the check creates the vault's
+    // machine-local state, and nothing should appear in a folder that is not a vault.
+    if !Path::new(&path).starts_with(&vault) || !operations::helixnotes_dir(&vault).is_dir() {
+        return Ok(None);
+    }
     tauri::async_runtime::spawn_blocking(move || {
-        crate::similar_notes::check_now(&app.state::<AppState>(), &path)
+        crate::similar_notes::check_now(&app.state::<AppState>(), &vault, &path)
     })
     .await
     .map_err(|error| format!("Similarity check failed: {error}"))

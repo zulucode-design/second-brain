@@ -67,10 +67,15 @@ export function noteCreatedInApp(id: string) {
 // Quick captures are checked by the backend, which sends what it found.
 void listenAppEvent('similarNotesFound', ({ payload }) => show(payload));
 
+// The vault the open note was opened in: leaving a note can be what switches vaults.
+let openedIn: string | null = null;
+
 activeNote.subscribe((note) => {
+  const vault = openedIn;
+  openedIn = get(appConfig)?.active_vault ?? null;
   const left = watcher.opened(note ? { id: note.meta.id, path: note.path } : null);
-  if (!left) return;
-  checkSimilarNotes(left)
+  if (!left || !vault) return;
+  checkSimilarNotes(vault, left)
     .then((check) => check && show(check))
     .catch((error) => console.error('Similarity check failed:', error));
 });

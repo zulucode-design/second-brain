@@ -109,16 +109,19 @@ pub fn check(
     }))
 }
 
-/// [`check`] against the open vault, with every failure treated as "nothing found": no index,
-/// an unreachable embedding backend, or a note that vanished. The check is kept while it waits
-/// its turn or runs, and stays kept when [`check`] itself fails, as it does while the backend is
-/// unreachable, to run once the backend is back (#216).
-pub fn check_now(state: &AppState, path: &str) -> Option<SimilarityCheck> {
-    let index = state.semantic_index.lock().ok()?.clone()?;
-    let vault = state.config.lock().ok()?.active_vault.clone()?;
+/// [`check`] for the note at `path` in `vault`, the vault it was saved in, with every failure
+/// treated as "nothing found": no index, an unreachable embedding backend, or a note that
+/// vanished. The check is kept in that vault's list while it waits its turn or runs, and stays
+/// kept when [`check`] itself fails, as it does while the backend is unreachable, or when another
+/// vault is open by then, to run once that vault's index has caught up (#216).
+pub fn check_now(state: &AppState, vault: &str, path: &str) -> Option<SimilarityCheck> {
+    // Without a semantic index nothing could run it, now or later.
+    if state.semantic_index.lock().ok()?.is_none() {
+        return None;
+    }
     // Read before the check, while the note is surely at `path`: a failing check can wait out
     // the backend's timeout, and the id finds the note after a move.
-    let id = operations::read_note(&vault, path)
+    let id = operations::read_note(vault, path)
         .map(|note| note.meta.id)
         .unwrap_or_default();
     let kept = DeferredCheck {
@@ -127,17 +130,22 @@ pub fn check_now(state: &AppState, path: &str) -> Option<SimilarityCheck> {
     };
     // Kept before it waits its turn or runs, so quitting while it waits behind another check,
     // or on the backend's timeout, still leaves it to run later.
-    with_kept(state, &vault, |checks| checks.keep(kept.clone()));
+    with_kept(state, vault, |checks| checks.keep(kept.clone()));
     let _checking = CHECKING.lock().unwrap_or_else(PoisonError::into_inner);
     // A rerun that had the turn first may have run it, and shown its card.
     let mut waiting = false;
-    with_kept(state, &vault, |checks| waiting = checks.holds(&kept));
+    with_kept(state, vault, |checks| waiting = checks.holds(&kept));
     if !waiting {
         return None;
     }
-    match check(&index, &vault, path) {
+    // Another vault's index cannot judge the note; its own vault's list keeps the check.
+    let (index, open) = open_index(state)?;
+    if open != vault {
+        return None;
+    }
+    match check(&index, vault, path) {
         Ok(found) => {
-            with_kept(state, &vault, |checks| checks.forget(&[&kept]));
+            with_kept(state, vault, |checks| checks.forget(&[&kept]));
             found
         }
         Err(_) => {
@@ -486,6 +494,15 @@ fn notes_still_settled(state: &AppState, leases: usize) -> Option<MutexGuard<'_,
     notes_settled(state).filter(|_held| state.bulk_mutation.granted() == leases)
 }
 
+/// The open vault and its semantic index, one lock at a time: renaming a notebook holds `config`
+/// while it takes the index slot. The slot read again shows no vault switch came between the two.
+fn open_index(state: &AppState) -> Option<(Arc<SemanticIndex>, String)> {
+    let index = state.semantic_index.lock().ok()?.clone()?;
+    let vault = state.config.lock().ok()?.active_vault.clone()?;
+    let still = state.semantic_index.lock().ok()?.clone()?;
+    Arc::ptr_eq(&index, &still).then_some((index, vault))
+}
+
 /// One run of kept checks at a time, so two passes that finish close together never run a check
 /// twice, and a rerun never runs one that [`check_now`] is still running.
 static CHECKING: Mutex<()> = Mutex::new(());
@@ -498,15 +515,7 @@ static CHECKING: Mutex<()> = Mutex::new(());
 /// its note or ends.
 pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(SimilarityCheck)) {
     let _checking = CHECKING.lock().unwrap_or_else(PoisonError::into_inner);
-    // One lock at a time: renaming a notebook holds `config` while it takes the index slot. The
-    // slot read again shows no vault switch came between the two.
-    let open = || {
-        let index = state.semantic_index.lock().ok()?.clone()?;
-        let vault = state.config.lock().ok()?.active_vault.clone()?;
-        let still = state.semantic_index.lock().ok()?.clone()?;
-        Arc::ptr_eq(&index, &still).then_some((index, vault))
-    };
-    let Some((index, vault)) = open() else {
+    let Some((index, vault)) = open_index(state) else {
         return;
     };
     let waiting = match state.deferred_checks.lock() {
@@ -647,11 +656,11 @@ fn show_card(app: &AppHandle, found: &SimilarityCheck) -> bool {
 
 /// Run the check for a quick capture in the background, show what it found in the main
 /// window, and raise a notification when the user is looking elsewhere.
-pub fn after_capture(app: AppHandle, path: String) {
+pub fn after_capture(app: AppHandle, vault: String, path: String) {
     // Read now, while it still describes this capture: the next overlay overwrites it.
     let focused_at_capture = MAIN_FOCUSED_AT_CAPTURE.load(Ordering::SeqCst);
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(found) = check_now(&app.state::<AppState>(), &path) else {
+        let Some(found) = check_now(&app.state::<AppState>(), &vault, &path) else {
             return;
         };
         // Its nudge, like its card, belongs to the vault the check ran in.
