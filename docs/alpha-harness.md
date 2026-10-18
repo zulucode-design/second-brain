@@ -37,7 +37,8 @@ Windows worker and the existing fixture/interruption scripts to
 2. creates one fresh vault identity and disposable replicas under `~/sb88/runs/` and
    `D:\SecondBrainTest\sb88\runs\`;
 3. starts both installed apps, pairs their private Syncthing instances over their existing
-   loopback REST APIs, and relies on the product's five-minute scheduler for the batch trigger;
+   loopback REST APIs, and relies on the product's hourly scheduler for the batch trigger, so
+   each of its two batches can take up to an hour to start;
 4. proves the Windows receiver is partially transferred, stops the exact packaged sidecar
    with `scripts/windows/sync-interrupt.ps1`, and records its replacement PID;
 5. closes and relaunches both installed apps, then polls the deterministic fixture until both
@@ -220,7 +221,7 @@ Run `20260921T023725Z` failed when Windows slept seven minutes in (Kernel-Power 
   SSH. It appears in `powercfg /requests` as "Second Brain alpha harness run". The holder
   reports its PID and the controller stops exactly that process when the run ends. Windows
   OpenSSH does not end a session's processes when the client disconnects, so if the controller
-  dies the holder still expires by itself after three run timeouts plus 15 minutes (75 minutes
+  dies the holder still expires by itself after three run timeouts plus 15 minutes (225 minutes
   by default).
 
 The run refuses to start if either hold is not in place within 60 seconds, and fails if either
