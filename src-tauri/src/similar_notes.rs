@@ -361,13 +361,15 @@ type Scan = (Vec<(String, String)>, bool);
 
 /// Finds a deferred check's note: by its id through the index, then at its recorded path, while
 /// `settled_notes` holds the note lock, then by its id across the vault, scanned into `scanned`
-/// once for every check of a rerun after it lets the lock go.
+/// once for every check of a rerun after it lets the lock go. `leases` is the bulk leases granted,
+/// read under that lock.
 fn locate(
     state: &AppState,
     index: &SemanticIndex,
     vault: &str,
     deferred: &DeferredCheck,
     settled_notes: MutexGuard<'_, ()>,
+    leases: usize,
     scanned: &mut Option<Scan>,
 ) -> Result<Location, String> {
     let indexed = if deferred.id.is_empty() {
@@ -394,16 +396,14 @@ fn locate(
     // The index can miss a note moved while the app was closed, so the vault has the last word
     // before the check is dropped.
     if !deferred.id.is_empty() {
-        // Read while the lock shows no lease running. The scan runs without it, since a save
-        // waits for that lock on the main thread, and a bulk change that came or went meanwhile
-        // can have hidden a note from it.
-        let leases = state.bulk_mutation.granted();
+        // Without the lock, since a save waits for it on the main thread.
         drop(settled_notes);
         let (notes, complete) = scanned.get_or_insert_with(|| {
             let (notes, complete) = scan_ids(vault);
-            let settled =
-                notes_settled(state).is_some_and(|_held| state.bulk_mutation.granted() == leases);
-            (notes, complete && settled)
+            (
+                notes,
+                complete && notes_still_settled(state, leases).is_some(),
+            )
         });
         if let Some((_, path)) = notes.iter().find(|(id, _)| *id == deferred.id) {
             return Ok(Location::At(path.clone()));
@@ -480,6 +480,12 @@ fn notes_settled(state: &AppState) -> Option<MutexGuard<'_, ()>> {
     }
 }
 
+/// [`notes_settled`], unless a restore, import or sync batch has been granted a lease since
+/// `leases` was read under the note lock: one that came and went can have hidden notes meanwhile.
+fn notes_still_settled(state: &AppState, leases: usize) -> Option<MutexGuard<'_, ()>> {
+    notes_settled(state).filter(|_held| state.bulk_mutation.granted() == leases)
+}
+
 /// One run of kept checks at a time, so two passes that finish close together never run a check
 /// twice, and a rerun never runs one that [`check_now`] is still running.
 static CHECKING: Mutex<()> = Mutex::new(());
@@ -525,15 +531,29 @@ pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(Si
             break;
         };
         // A restore, an import or a sync batch holds the note lock while it moves notes, and can
-        // leave some missing until it ends: located only while it is free, checked only if it
-        // stayed free, and otherwise this check and the rest wait for the next pass.
+        // leave some missing until it ends: located only while it is free, settled only if none
+        // came or went meanwhile, and otherwise this check and the rest wait for the next pass.
         let Some(settled_notes) = notes_settled(state) else {
             index.owe_caught_up();
             break;
         };
-        match locate(state, &index, &vault, deferred, settled_notes, &mut scanned) {
+        let leases = state.bulk_mutation.granted();
+        match locate(
+            state,
+            &index,
+            &vault,
+            deferred,
+            settled_notes,
+            leases,
+            &mut scanned,
+        ) {
             Ok(Location::At(path)) => match check(&index, &vault, &path) {
-                Ok(_) if index.caught_up_mark() != Some(mark) || notes_settled(state).is_none() => {
+                // The mark is read under the lock, so a bulk change cannot reconcile between it
+                // and the lease count.
+                Ok(_)
+                    if !notes_still_settled(state, leases)
+                        .is_some_and(|_held| index.caught_up_mark() == Some(mark)) =>
+                {
                     index.owe_caught_up();
                     break;
                 }

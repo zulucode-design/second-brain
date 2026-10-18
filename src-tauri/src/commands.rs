@@ -3164,6 +3164,22 @@ mod import_outcome_tests {
 }
 
 pub(crate) fn reconcile_bulk_projections(state: &AppState, vault_path: &str) -> Result<(), String> {
+    let settings_and_search = reconcile_settings_and_search(state, vault_path);
+    // Even when a step above fails: until it is reconciled, the semantic index can miss notes the
+    // change wrote, and deferred similarity checks would run against it (#216).
+    let semantic = match state
+        .semantic_index
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+    {
+        Some(semantic) => semantic.reconcile_from_notes(Path::new(vault_path)),
+        None => Ok(()),
+    };
+    settings_and_search.and(semantic)
+}
+
+fn reconcile_settings_and_search(state: &AppState, vault_path: &str) -> Result<(), String> {
     let legacy_max_versions = state
         .config
         .lock()
@@ -3184,14 +3200,6 @@ pub(crate) fn reconcile_bulk_projections(state: &AppState, vault_path: &str) -> 
         .and_then(|guard| guard.clone())
     {
         search.reconcile(vault_path)?;
-    }
-    if let Some(semantic) = state
-        .semantic_index
-        .lock()
-        .ok()
-        .and_then(|guard| guard.clone())
-    {
-        semantic.reconcile_from_notes(Path::new(vault_path))?;
     }
     Ok(())
 }

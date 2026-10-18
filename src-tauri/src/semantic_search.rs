@@ -3589,6 +3589,65 @@ mod tests {
     }
 
     #[test]
+    fn a_bulk_change_that_comes_and_goes_during_a_check_stops_the_rerun() {
+        let backend = mid_pass_backend();
+        let (root, index, app) = deferred_capture("deferred-bulk-during-check", backend.clone());
+        let cards = Mutex::new(Vec::new());
+        // A restore that moves notes aside, reconciles and ends while the check runs: the check
+        // may have missed the notes it moved.
+        let state = Arc::downgrade(&app);
+        *backend.during_embed.lock().unwrap() = Some(Box::new(move || {
+            let state = state.upgrade().unwrap();
+            drop(
+                state
+                    .bulk_mutation
+                    .acquire(&state.note_mutation, &state.vault_activity)
+                    .unwrap(),
+            );
+        }));
+        rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
+        assert!(shown(&cards).is_empty(), "the check may have missed notes");
+        assert_eq!(waiting(&app).len(), 1);
+
+        rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
+        assert_eq!(
+            shown(&cards),
+            [("Capture".to_string(), vec!["Kept".to_string()])]
+        );
+        assert!(waiting(&app).is_empty());
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_bulk_change_reconciles_the_semantic_index_even_when_an_earlier_step_fails() {
+        let root = scratch("bulk-reconcile-semantic");
+        let vault = root.to_str().unwrap();
+        let index = Arc::new(
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
+                .unwrap(),
+        );
+        let app = open_app(vault, &index);
+        // As a restore leaves it: a note the index has not seen, and shared settings it cannot
+        // read.
+        write_note(
+            &root.join("Restored.md"),
+            "restored-id",
+            "Restored",
+            "Areas",
+            "coffee ratio",
+        );
+        std::fs::create_dir_all(root.join(".helixnotes")).unwrap();
+        std::fs::write(root.join(".helixnotes").join("settings.json"), "not json").unwrap();
+        assert!(crate::commands::reconcile_bulk_projections(&app, vault).is_err());
+        assert_eq!(index.paths_of_note("restored-id").unwrap().len(), 1);
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
     fn the_worker_retries_a_failed_fill_once_an_interval_until_it_completes() {
         let (root, index, app) =
             deferred_capture("deferred-worker-failed-fill", mid_pass_backend());
@@ -3631,8 +3690,11 @@ mod tests {
 
         // The retry an interval later completes, and the pass after it reruns the check.
         rename("notes_aside", "notes");
+        // The card is delivered before the check leaves the list.
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while shown(&cards).is_empty() && std::time::Instant::now() < deadline {
+        while (shown(&cards).is_empty() || !waiting(&app).is_empty())
+            && std::time::Instant::now() < deadline
+        {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(
