@@ -397,8 +397,8 @@ fn rerun_deferred(app: AppHandle) {
     });
 }
 
-/// Reruns the open vault's deferred checks after each pass of `index` that shows the embedding
-/// backend back (#216). For every new index, before its worker starts.
+/// Reruns the open vault's deferred checks when `index` has caught up, as
+/// `SemanticIndex::on_caught_up` defines it (#216). For every new index, before its worker starts.
 pub fn rerun_when_caught_up(app: &AppHandle, index: &SemanticIndex) {
     let app = app.clone();
     index.on_caught_up(move || rerun_deferred(app.clone()));
