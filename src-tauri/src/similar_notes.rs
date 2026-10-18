@@ -75,6 +75,8 @@ pub fn check(
     )?;
     let mut matches: Vec<SimilarMatch> = found
         .into_iter()
+        // A note without an id is indexed by its path, which `similar` cannot exclude.
+        .filter(|similar| similar.found.path != path)
         // Deleted or unreadable since it was indexed: nothing to append to. Changed since: the
         // passage may no longer be in it, and the card would vouch for text the user never saw.
         .filter_map(|similar| {

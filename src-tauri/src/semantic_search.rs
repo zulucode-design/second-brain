@@ -3275,6 +3275,39 @@ mod tests {
     }
 
     #[test]
+    fn a_note_without_an_id_never_matches_itself() {
+        let root = scratch("similar-no-id");
+        let vault = root.to_str().unwrap();
+        let kept = root.join("Kept.md");
+        let capture = root.join("Capture.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        // No id: the index keys it by its path.
+        std::fs::write(
+            &capture,
+            "---\ntitle: Capture\ncategory: Areas\n---\n\ncoffee beans today\n",
+        )
+        .unwrap();
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
+                .unwrap();
+        for note in [&kept, &capture] {
+            index.note_changed(note).unwrap();
+        }
+        index.retry_pending().unwrap();
+        let found = crate::similar_notes::check(&index, vault, capture.to_str().unwrap())
+            .unwrap()
+            .unwrap();
+        let titles: Vec<_> = found
+            .matches
+            .iter()
+            .map(|m| m.note.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Kept"]);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
     fn a_deferred_note_moved_with_a_long_frontmatter_is_still_found() {
         let root = scratch("deferred-long-frontmatter");
         let vault = root.to_str().unwrap();
