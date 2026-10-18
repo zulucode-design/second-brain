@@ -157,6 +157,17 @@ pub fn check_now(state: &AppState, vault: &str, path: &str) -> Option<Similarity
     }
 }
 
+/// Whether the note at `path` is in `vault`, compared as resolved paths, since a vault opened
+/// through a link keeps the link in its path while a note can carry the resolved one, and
+/// whether the app has opened that vault: keeping a check creates the vault's machine-local
+/// state, and nothing should appear in a folder that is not a vault.
+pub(crate) fn note_in_opened_vault(vault: &str, path: &str) -> bool {
+    let (Ok(root), Ok(note)) = (dunce::canonicalize(vault), dunce::canonicalize(path)) else {
+        return false;
+    };
+    note.starts_with(&root) && operations::helixnotes_dir(vault).is_dir()
+}
+
 /// The file in the vault's machine-local folder that keeps deferred checks across a restart.
 const DEFERRED_FILE: &str = "deferred_similarity.json";
 
@@ -958,6 +969,34 @@ mod tests {
         for vault in [first, second] {
             std::fs::remove_dir_all(vault).unwrap();
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_note_is_in_a_vault_opened_through_a_link_and_never_in_a_folder_that_is_not_one() {
+        let root = std::env::temp_dir().join(format!("sb-deferred-{}", uuid::Uuid::new_v4()));
+        let (vault, link, plain) = (root.join("Vault"), root.join("Link"), root.join("Plain"));
+        std::fs::create_dir_all(vault.join(".helixnotes")).unwrap();
+        std::fs::create_dir_all(&plain).unwrap();
+        std::os::unix::fs::symlink(&vault, &link).unwrap();
+        let (note, stray) = (vault.join("Note.md"), plain.join("Note.md"));
+        std::fs::write(&note, "note").unwrap();
+        std::fs::write(&stray, "note").unwrap();
+        let text = |path: &std::path::Path| path.to_str().unwrap().to_string();
+        assert!(
+            super::note_in_opened_vault(&text(&link), &text(&note)),
+            "opened through a link"
+        );
+        assert!(super::note_in_opened_vault(&text(&vault), &text(&note)));
+        assert!(
+            !super::note_in_opened_vault(&text(&plain), &text(&stray)),
+            "never opened as a vault"
+        );
+        assert!(
+            !super::note_in_opened_vault(&text(&link), &text(&stray)),
+            "outside the vault"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

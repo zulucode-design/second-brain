@@ -256,8 +256,8 @@ that say the same thing.
   runs at the end of the pass, reconcile or rebuild that makes all three true; a pass that a
   reconcile or rebuild overlapped leaves it to the next pass. A reconcile or rebuild that
   starts before the checks finish stops them, as does a restore, import or sync batch that
-  runs before they finish, or a save at the moment a check looks for its note or ends, and
-  those left run once the queue is through again.
+  runs before they finish, or a note saved before they finish, and those left run once the
+  queue is through again.
   By then the notes saved offline are indexed too, so two duplicates written in the same
   offline session can match each other.
   A check kept while nothing is left to index, as when the backend comes back during the

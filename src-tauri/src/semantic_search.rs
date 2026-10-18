@@ -1440,13 +1440,15 @@ impl SemanticIndex {
         true
     }
 
-    /// A mark while no rebuild or reconcile has started since the caught-up hook last ran, so
-    /// the index it found caught up still stands; `None` once one has (#216). The hook's rerun
-    /// runs later, on another thread, so it takes the mark before each check and requires the
-    /// same one after: a later hook gives a new mark, which hides no fill from it.
+    /// A mark while no rebuild or reconcile has started since the caught-up hook last ran and
+    /// nothing queued could be embedded, so the index it found caught up still stands; `None`
+    /// otherwise (#216). The hook's rerun runs later, on another thread, behind other checks, so
+    /// it takes the mark before each check and requires the same one after: a later hook gives a
+    /// new mark, which hides no fill from it.
     pub(crate) fn caught_up_mark(&self) -> Option<usize> {
         self.fills_quiet()
             .filter(|started| *started == self.caught_up_at.load(Ordering::SeqCst))
+            .filter(|_| self.only_unreadable_queued())
     }
 
     /// The rebuilds and reconciles started so far, while none is running and none stopped part
@@ -3742,6 +3744,38 @@ mod tests {
             listed(&DeferredChecks::load(saved_in)),
             [("capture-id".to_string(), path_text(&capture))]
         );
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_rerun_leaves_its_checks_to_the_pass_that_embeds_notes_saved_since_the_index_caught_up() {
+        let backend = mid_pass_backend();
+        let (root, index, app) = deferred_capture("deferred-saved-since", backend.clone());
+        let cards = cards_from_reruns(&index, &app);
+        // Two alike captures saved while the backend is away again.
+        backend.available.store(false, Ordering::SeqCst);
+        let (first, second) = (root.join("First.md"), root.join("Second.md"));
+        for (note, id, title) in [
+            (&first, "first-id", "First"),
+            (&second, "second-id", "Second"),
+        ] {
+            write_note(note, id, title, "Areas", "sourdough starter feeding");
+            index.note_changed(note).unwrap();
+            assert!(check_now(&app, &vault_of(&app), note.to_str().unwrap()).is_none());
+        }
+        backend.available.store(true, Ordering::SeqCst);
+
+        // A rerun that waited its turn runs now, before the pass that embeds them.
+        rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
+        assert!(shown(&cards).is_empty(), "neither capture is indexed yet");
+        assert_eq!(waiting(&app).len(), 3);
+        index.retry_pending().unwrap();
+        let delivered = shown(&cards);
+        assert!(delivered.contains(&("First".to_string(), vec!["Second".to_string()])));
+        assert!(delivered.contains(&("Second".to_string(), vec!["First".to_string()])));
+        assert!(waiting(&app).is_empty());
         drop(app);
         drop(index);
         cleanup(root);

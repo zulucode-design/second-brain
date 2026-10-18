@@ -1212,9 +1212,7 @@ pub async fn check_similar_notes(
     vault: String,
     path: String,
 ) -> Result<Option<crate::similar_notes::SimilarityCheck>, String> {
-    // Only a vault the note is in and the app has opened: keeping the check creates the vault's
-    // machine-local state, and nothing should appear in a folder that is not a vault.
-    if !Path::new(&path).starts_with(&vault) || !operations::helixnotes_dir(&vault).is_dir() {
+    if !crate::similar_notes::note_in_opened_vault(&vault, &path) {
         return Ok(None);
     }
     tauri::async_runtime::spawn_blocking(move || {
