@@ -1716,7 +1716,7 @@ fn chunks_for(title: &str, body: &str) -> Vec<NoteChunk> {
 
 /// Every note the semantic index covers, collected eagerly so no directory handle outlives
 /// the walk.
-pub(crate) fn note_paths(vault: &Path) -> Vec<std::path::PathBuf> {
+fn note_paths(vault: &Path) -> Vec<std::path::PathBuf> {
     WalkDir::new(vault)
         .into_iter()
         .filter_entry(|entry| !crate::search::is_ignored_by_index(entry.path(), vault))
@@ -3174,7 +3174,8 @@ mod tests {
         std::fs::set_permissions(&moved, mode(0o000)).unwrap();
         let cards = Mutex::new(Vec::new());
         // Root opens it anyway, and then there is nothing to prove.
-        if std::fs::File::open(&moved).is_err() {
+        let enforced = std::fs::File::open(&moved).is_err();
+        if enforced {
             rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
             assert!(shown(&cards).is_empty());
             assert_eq!(
@@ -3184,6 +3185,73 @@ mod tests {
             );
         }
         std::fs::set_permissions(&moved, mode(0o644)).unwrap();
+
+        // Then into a folder that cannot be listed.
+        let locked = root.join("Locked");
+        std::fs::create_dir(&locked).unwrap();
+        let hidden = locked.join("Moved.md");
+        std::fs::rename(&moved, &hidden).unwrap();
+        std::fs::set_permissions(&locked, mode(0o000)).unwrap();
+        if enforced {
+            rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
+            assert!(shown(&cards).is_empty());
+            assert_eq!(
+                waiting(&app),
+                recorded,
+                "the folder it cannot list may hold it"
+            );
+        }
+        std::fs::set_permissions(&locked, mode(0o755)).unwrap();
+        rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
+        assert_eq!(
+            shown(&cards),
+            [("Capture".to_string(), vec!["Kept".to_string()])]
+        );
+        assert!(waiting(&app).is_empty());
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_deferred_note_moved_with_a_long_frontmatter_is_still_found() {
+        let root = scratch("deferred-long-frontmatter");
+        let vault = root.to_str().unwrap();
+        let kept = root.join("Kept.md");
+        let capture = root.join("Capture.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        // Past the first 2 KiB, where the note list's scan stops reading.
+        let tags = (0..400)
+            .map(|number| format!("tag{number}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        std::fs::write(
+            &capture,
+            format!(
+                "---\nid: capture-id\ntitle: Capture\ntags: [{tags}]\ncategory: Areas\n---\n\ncoffee beans today\n"
+            ),
+        )
+        .unwrap();
+        let available = Arc::new(AtomicBool::new(true));
+        let index = Arc::new(
+            SemanticIndex::open_at(
+                &root.join("semantic.sqlite3"),
+                Arc::new(RecoveringBackend {
+                    available: available.clone(),
+                }),
+            )
+            .unwrap(),
+        );
+        let app = open_app(vault, &index);
+        index.note_changed(&kept).unwrap();
+        index.retry_pending().unwrap();
+        available.store(false, Ordering::SeqCst);
+        assert!(check_now(&app, capture.to_str().unwrap()).is_none());
+        available.store(true, Ordering::SeqCst);
+
+        // Moved while the app was closed, so only the vault scan can find it.
+        std::fs::rename(&capture, root.join("Moved.md")).unwrap();
+        let cards = Mutex::new(Vec::new());
         rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
         assert_eq!(
             shown(&cards),

@@ -262,7 +262,8 @@ that say the same thing.
   check itself or drops again during a rerun, waits for the next pass that embeds a note.
   It runs on the note's current text, wherever the note was renamed or moved to. It never
   expires: it leaves the list when it runs or when the note is deleted, which counts only
-  once every note in the vault can be opened, since one that cannot may be the note, moved.
+  once every folder and note in the vault can be read, since one that cannot may hold the
+  note, moved.
   Each result shows as its own ordinary card, newest first, with no cap, no notification
   and no summary.
 - **What it compares.** The new note is embedded as a document, the way notes are indexed,

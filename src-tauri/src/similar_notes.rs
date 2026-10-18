@@ -8,7 +8,6 @@ use crate::semantic_search::SemanticIndex;
 use crate::state::AppState;
 use crate::vault::operations;
 use serde::{Deserialize, Serialize};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -354,9 +353,9 @@ enum Location {
     Unsure,
 }
 
-/// The vault's notes, and whether every one could be opened: the scan skips a note it cannot
-/// open, which may be a deferred check's note, moved.
-type Scan = (Vec<crate::types::NoteEntry>, bool);
+/// Every note's frontmatter id and path, and whether the walk read every folder and note: one
+/// it could not may be a deferred check's note, moved.
+type Scan = (Vec<(String, String)>, bool);
 
 /// Finds a deferred check's note: by its id through the index, then at its recorded path, then
 /// by its id across the vault, scanned into `scanned` once for every check of a rerun.
@@ -390,15 +389,9 @@ fn locate(
     // The index can miss a note moved while the app was closed, so the vault has the last word
     // before the check is dropped.
     if !deferred.id.is_empty() {
-        let (notes, complete) = match scanned {
-            Some(scan) => scan,
-            None => scanned.insert((
-                operations::scan_notes(vault, None)?,
-                every_note_opens(vault),
-            )),
-        };
-        if let Some(note) = notes.iter().find(|note| note.meta.id == deferred.id) {
-            return Ok(Location::At(note.path.clone()));
+        let (notes, complete) = scanned.get_or_insert_with(|| scan_ids(vault));
+        if let Some((_, path)) = notes.iter().find(|(id, _)| *id == deferred.id) {
+            return Ok(Location::At(path.clone()));
         }
         if !*complete {
             return Ok(Location::Unsure);
@@ -407,14 +400,38 @@ fn locate(
     Ok(Location::Gone)
 }
 
-fn every_note_opens(vault: &str) -> bool {
-    crate::semantic_search::note_paths(Path::new(vault))
-        .iter()
-        .all(|path| {
-            std::fs::File::open(path)
-                .and_then(|mut file| file.read(&mut [0]))
-                .is_ok()
-        })
+/// Walks the vault's notes as the index sees them, each read in full: the note list's scan
+/// reads only the start of a note, which can cut a long frontmatter short of its id.
+fn scan_ids(vault: &str) -> Scan {
+    let root = Path::new(vault);
+    let (mut ids, mut complete) = (Vec::new(), true);
+    for entry in walkdir::WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| !crate::search::is_ignored_by_index(entry.path(), root))
+    {
+        let Ok(entry) = entry else {
+            complete = false;
+            continue;
+        };
+        let path = entry.path();
+        if !entry.file_type().is_file()
+            || path.extension().and_then(|value| value.to_str()) != Some("md")
+        {
+            continue;
+        }
+        match std::fs::read(path) {
+            Ok(raw) => {
+                let filename = entry.file_name().to_string_lossy();
+                let (meta, _) = crate::vault::frontmatter::parse_note(
+                    &String::from_utf8_lossy(&raw),
+                    &filename,
+                );
+                ids.push((meta.id, path.to_string_lossy().to_string()));
+            }
+            Err(_) => complete = false,
+        }
+    }
+    (ids, complete)
 }
 
 /// One run of kept checks at a time, so two passes that finish close together never run a check
