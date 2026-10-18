@@ -342,14 +342,13 @@ The passes rest on what Nicolas saw and on screenshots shared in the conversatio
 The first Fedora attempt showed nothing: the tunnel had stopped forwarding overnight while its
 process lived on, so the app logged `Skipped the similarity check for a new note` for each
 capture, as designed for an unreachable backend. After the tunnel was restarted, all three cases
-passed. At that build, a check skipped that way was never run later. **Partly settled
+passed. At that build, a check skipped that way was never run later. **Settled
 2026-10-17 by #216 at `19727aab6a2dcc0e1c5f1b7fc9db53b1110d6c37`:** failed checks now persist
-across a restart and rerun after the backend returns and indexing catches up; all seven named
-regression tests passed on both machines. The installed-package recovery check remains unverified.
-The first backend preflight returned an empty reply. A follow-up temporary server answered with
-the embedding model, but Sol's stability probes were only 40.112935 seconds apart, below the
-required minute. The timing assertion stopped that run before installation or app launch. See
-[the #216 verification report](ticket-216-deferred-similarity-2026-10-17.md).
+across a restart and rerun after the backend returns and indexing catches up. All seven named
+regression tests passed on both machines. The installed-package recovery check also passed:
+two offline captures survived a restart, a deleted capture's record was dropped, and the remaining
+capture showed its matching card after indexing resumed, with no OS notification and no deferred
+records left. See [the #216 verification report](ticket-216-deferred-similarity-2026-10-17.md).
 
 ## Not proven
 

@@ -1,0 +1,493 @@
+{
+  "candidate": "19727aab6a2dcc0e1c5f1b7fc9db53b1110d6c37",
+  "unit": "Logical file bytes, excluding directory metadata. Backup and child file totals are included in root totals.",
+  "aliases": {
+    "<Fedora second follow-up run>": "Private local gate directory named byhand2-19727aa-4ppeqwan.",
+    "<Windows second follow-up run>": "Windows test root, sb216/byhand2-19727aa-4ppeqwan."
+  },
+  "roots": {
+    "Fedora": [
+      {
+        "path": "<Fedora second follow-up run>",
+        "bytes": 2554673,
+        "kind": "Private scripts, backup, isolated app state, fixture vault, screenshots, and logs."
+      }
+    ],
+    "Windows": [
+      {
+        "path": "<Windows second follow-up run>",
+        "bytes": 6016,
+        "kind": "Bounded supervisor and companion source. No owned process left running."
+      }
+    ]
+  },
+  "privateBackupGroups": [
+    {
+      "path": "<Fedora second follow-up run>/preinstall-profile-backup",
+      "bytes": 4441,
+      "contents": "Production profile backup and manifest; private filenames and contents omitted."
+    },
+    {
+      "path": "<Fedora second follow-up run>/manual/profile-backup",
+      "bytes": 4417,
+      "contents": "Production profile backup and manifest; private filenames and contents omitted."
+    }
+  ],
+  "files": {
+    "Fedora": [
+      {
+        "path": "<Fedora second follow-up run>/fedora-cleanup.json",
+        "bytes": 607
+      },
+      {
+        "path": "<Fedora second follow-up run>/install.private.log",
+        "bytes": 36
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/1-offline-captures-deferred.json",
+        "bytes": 262
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/2-restart-and-delete-deferred.json",
+        "bytes": 262
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/3-restore-backend-deferred.json",
+        "bytes": 262
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/4-recovered-card-deferred.json",
+        "bytes": 19
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/cache/mesa_shader_cache/index",
+        "bytes": 2097160
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/cache/mesa_shader_cache/marker",
+        "bytes": 0
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/config/io.github.zulucodedesign.SecondBrain/.legacy-dirs-checked",
+        "bytes": 0
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/config/io.github.zulucodedesign.SecondBrain/.window-state.json",
+        "bytes": 415
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/config/io.github.zulucodedesign.SecondBrain/config.json",
+        "bytes": 1841
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/config/io.github.zulucodedesign.SecondBrain/webdav-retirement-v1.json",
+        "bytes": 137
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/gvfs-metadata/root",
+        "bytes": 64
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/gvfs-metadata/root-f95ecafb.log",
+        "bytes": 32768
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/CacheStorage/salt",
+        "bytes": 8
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/WebKitCache/Version 17/salt",
+        "bytes": 8
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/hsts-storage.sqlite",
+        "bytes": 12288
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/localstorage/tauri_localhost_0.localstorage",
+        "bytes": 12288
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/logs/Second Brain.log",
+        "bytes": 8826
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/mediakeys/v1/salt",
+        "bytes": 8
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/storage/pxlL_UNNwyGvXnTRdJ7SxLvllcjERx6JNqZAYAJyc2A/pxlL_UNNwyGvXnTRdJ7SxLvllcjERx6JNqZAYAJyc2A/origin",
+        "bytes": 50
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/storage/salt",
+        "bytes": 8
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/deferred_similarity.json",
+        "bytes": 18
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/.managed.json",
+        "bytes": 990
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/.tantivy-meta.lock",
+        "bytes": 0
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/.tantivy-writer.lock",
+        "bytes": 0
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/301c2ebfcf8d4815ac36cc3ece4d7322.fast",
+        "bytes": 145
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/301c2ebfcf8d4815ac36cc3ece4d7322.fieldnorm",
+        "bytes": 134
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/301c2ebfcf8d4815ac36cc3ece4d7322.idx",
+        "bytes": 205
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/301c2ebfcf8d4815ac36cc3ece4d7322.pos",
+        "bytes": 172
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/301c2ebfcf8d4815ac36cc3ece4d7322.store",
+        "bytes": 289
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/301c2ebfcf8d4815ac36cc3ece4d7322.term",
+        "bytes": 886
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/9f2a7a7836d64cca828f84f3239c0366.fast",
+        "bytes": 145
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/9f2a7a7836d64cca828f84f3239c0366.fieldnorm",
+        "bytes": 133
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/9f2a7a7836d64cca828f84f3239c0366.idx",
+        "bytes": 231
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/9f2a7a7836d64cca828f84f3239c0366.pos",
+        "bytes": 215
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/9f2a7a7836d64cca828f84f3239c0366.store",
+        "bytes": 296
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/9f2a7a7836d64cca828f84f3239c0366.term",
+        "bytes": 1011
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/bdb01a7658534f66a51657f70526d9d6.fast",
+        "bytes": 145
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/bdb01a7658534f66a51657f70526d9d6.fieldnorm",
+        "bytes": 132
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/bdb01a7658534f66a51657f70526d9d6.idx",
+        "bytes": 231
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/bdb01a7658534f66a51657f70526d9d6.pos",
+        "bytes": 206
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/bdb01a7658534f66a51657f70526d9d6.store",
+        "bytes": 298
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/bdb01a7658534f66a51657f70526d9d6.term",
+        "bytes": 1051
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/e775ec9eb5a04b16b5a0d3ae7e8fdc5c.fast",
+        "bytes": 145
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/e775ec9eb5a04b16b5a0d3ae7e8fdc5c.fieldnorm",
+        "bytes": 134
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/e775ec9eb5a04b16b5a0d3ae7e8fdc5c.idx",
+        "bytes": 229
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/e775ec9eb5a04b16b5a0d3ae7e8fdc5c.pos",
+        "bytes": 199
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/e775ec9eb5a04b16b5a0d3ae7e8fdc5c.store",
+        "bytes": 304
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/e775ec9eb5a04b16b5a0d3ae7e8fdc5c.term",
+        "bytes": 1064
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/index/meta.json",
+        "bytes": 1885
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/search/version",
+        "bytes": 28
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/semantic.sqlite3",
+        "bytes": 53248
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/state.json",
+        "bytes": 524
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/c3afa527-b6a5-4ffe-b8e4-3fc7426b5050/sync-control.json",
+        "bytes": 122
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/driver.private.log",
+        "bytes": 0
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/health-session-1.png",
+        "bytes": 54894
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/health-session-2.png",
+        "bytes": 68146
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/health-session-3.png",
+        "bytes": 61200
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/notifications.private.log",
+        "bytes": 394
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/observations.json",
+        "bytes": 3460
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/similarity-card.png",
+        "bytes": 90225
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/vault/.helixnotes/.gitignore",
+        "bytes": 29
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/vault/.helixnotes/history/424f8441-0c9d-47d2-88c4-a22ae8a338cf/2026-10-18T03-11-39.md",
+        "bytes": 205
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/vault/.helixnotes/history/d27d3c70-047a-416a-b180-29de4e5a4e67/2026-10-18T03-11-39.md",
+        "bytes": 206
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/vault/.helixnotes/settings.json",
+        "bytes": 46
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/vault/.helixnotes/trash/20261018031140648_Shed wall wood.md",
+        "bytes": 322
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/vault/.helixnotes/trash/20261018031140648_Shed wall wood.md.restore.json",
+        "bytes": 228
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/vault/.helixnotes/vault_id",
+        "bytes": 36
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/vault/Areas/Shed spending.md",
+        "bytes": 307
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/vault/Projects/Garden shed budget.md",
+        "bytes": 434
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/vault/Projects/Shed materials decision.md",
+        "bytes": 424
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual/vault/Projects/Shed permit check.md",
+        "bytes": 425
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual-check.mjs",
+        "bytes": 14411
+      },
+      {
+        "path": "<Fedora second follow-up run>/manual-controller.private.log",
+        "bytes": 102
+      },
+      {
+        "path": "<Fedora second follow-up run>/ollama-supervisor.private.log",
+        "bytes": 102
+      },
+      {
+        "path": "<Fedora second follow-up run>/package.json",
+        "bytes": 435
+      },
+      {
+        "path": "<Fedora second follow-up run>/remove.private.log",
+        "bytes": 0
+      },
+      {
+        "path": "<Fedora second follow-up run>/run-name.txt",
+        "bytes": 25
+      },
+      {
+        "path": "<Fedora second follow-up run>/server-pids.json",
+        "bytes": 118
+      },
+      {
+        "path": "<Fedora second follow-up run>/server-stability.json",
+        "bytes": 1009
+      },
+      {
+        "path": "<Fedora second follow-up run>/stable-not-before.private.json",
+        "bytes": 61
+      },
+      {
+        "path": "<Fedora second follow-up run>/usage.txt",
+        "bytes": 100
+      },
+      {
+        "path": "<Fedora second follow-up run>/win-cleanup.ps1",
+        "bytes": 3264
+      },
+      {
+        "path": "<Fedora second follow-up run>/win-cleanup.ps1.log",
+        "bytes": 2727
+      },
+      {
+        "path": "<Fedora second follow-up run>/win-prep.ps1",
+        "bytes": 930
+      },
+      {
+        "path": "<Fedora second follow-up run>/win-prep.ps1.log",
+        "bytes": 2246
+      },
+      {
+        "path": "<Fedora second follow-up run>/win-probe-first.ps1",
+        "bytes": 1254
+      },
+      {
+        "path": "<Fedora second follow-up run>/win-probe-first.ps1.log",
+        "bytes": 625
+      },
+      {
+        "path": "<Fedora second follow-up run>/win-probe-loaded.ps1",
+        "bytes": 1718
+      },
+      {
+        "path": "<Fedora second follow-up run>/win-probe-loaded.ps1.log",
+        "bytes": 1233
+      },
+      {
+        "path": "<Fedora second follow-up run>/win-probe-stable.ps1",
+        "bytes": 1254
+      },
+      {
+        "path": "<Fedora second follow-up run>/win-probe-stable.ps1.log",
+        "bytes": 625
+      },
+      {
+        "path": "<Fedora second follow-up run>/win-ssh.py",
+        "bytes": 463
+      }
+    ],
+    "Windows": [
+      {
+        "path": "<Windows second follow-up run>/ollama-gate.ps1",
+        "bytes": 1213
+      },
+      {
+        "path": "<Windows second follow-up run>/owned-process.cs",
+        "bytes": 4803
+      }
+    ]
+  },
+  "publishedEvidence": [
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/installed-recovery-after-delete-deferred.json",
+      "bytes": 262,
+      "sha256": "b6a77642ce20dd3af416da67bc45ae70d2433ebae3294970105848962d507512"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/installed-recovery-card.png",
+      "bytes": 90225,
+      "sha256": "d3add37f5218f3d00efb19baea00552b8fa30aabccbad3536b03ab4eaa666b8f"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/installed-recovery-controller.mjs",
+      "bytes": 14410,
+      "sha256": "efdbac2f238ad0876295da5f1fee7929777f3d234d8c596f17cc9411cb746c37"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/installed-recovery-empty-deferred.json",
+      "bytes": 19,
+      "sha256": "caff5752efd7abaac4289dfac6160ab254513e4c8a5476916398d755ab4949dc"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/installed-recovery-offline-deferred.json",
+      "bytes": 262,
+      "sha256": "b6a77642ce20dd3af416da67bc45ae70d2433ebae3294970105848962d507512"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/installed-recovery.json",
+      "bytes": 10649,
+      "sha256": "a8ac48e8af2596c4f8110601ba97a6a02d558cfdbd9abe9b72e2bbf0360d8ad7"
+    }
+  ],
+  "inventoryMethod": {
+    "Fedora": "Python Path.rglob over the new run root; sum stat().st_size for files; both private production-backup subtrees grouped.",
+    "Windows": "Cleanup Get-ChildItem -File -Recurse | Select-Object Name,Length.",
+    "published": "Path.glob(\"installed-recovery*\") under the report evidence directory, excluding this inventory itself; stat().st_size and SHA-256."
+  },
+  "counts": {
+    "population": "Retained files under the new Fedora and Windows run roots, including grouped backups. Published copies are listed separately.",
+    "command": "Fedora: sum(1 for f in run_root.rglob(\"*\") if f.is_file()); Windows: @(Get-ChildItem -LiteralPath $runDir -File -Recurse).Count",
+    "Fedora": 98,
+    "Windows": 2
+  },
+  "previousRunInventories": [
+    "retained-paths.json",
+    "installed-retry-retained-paths.json"
+  ],
+  "previousArtifacts": "Retained without a new measurement; previous root sizes remain in the linked inventories.",
+  "existingCandidateRpm": {
+    "candidate": "19727aab6a2dcc0e1c5f1b7fc9db53b1110d6c37",
+    "rpm": "src-tauri/target/release/bundle/rpm/Second Brain-0.1.0-alpha.1-1.x86_64.rpm",
+    "bytes": 30178896,
+    "sha256": "15038b41e9e898541374af84c9176678748ecd10eda859b3d323df304de599e1",
+    "installHelperExit": 0,
+    "installedShaConfirmed": true,
+    "installedBinarySha256": "90f4fba4a3f6a3f18e93806803f5515f7d6d205db649becac89ebc5016d5df7f",
+    "installedBytes": 52189440
+  },
+  "deleted": false,
+  "cleanupCandidates": "New private run roots only after item-specific approval. No artifacts deleted.",
+  "retainedControlFiles": [
+    {
+      "path": "<private gate base>/byhand2-current.private.txt",
+      "bytes": 62,
+      "kind": "Private pointer to the new run root."
+    }
+  ]
+}

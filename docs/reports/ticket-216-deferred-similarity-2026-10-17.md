@@ -2,13 +2,12 @@
 
 Date: 2026-10-17 (local date). Run by Sol for Kiro attempt 1, workflow section 7, steps 4–6.
 
-**VERIFY: FAIL.** The command gates completed, with only the allowed Windows #221 lint failure.
-The first installed-package attempt stopped at an empty backend reply; its RPM was removed.
-On the follow-up attempt, the temporary Windows server answered with `embeddinggemma`, but Sol
-scheduled the second stability probe only 40.112935 seconds after the first, below the required
-60 seconds. The timing assertion failed. Following the instruction to stop on any failure, Sol
-stopped before installing the RPM or launching the app. All four recovery steps remain unverified.
-This follow-up failed because of the controller's probe timing; it establishes no product failure.
+**VERIFY: PASS**, with only the previously allowed Windows #221 lint failure. The second
+follow-up completed all four installed-package recovery steps on candidate `19727aa`: two offline
+captures survived a restart, the deleted capture was dropped, and the remaining capture showed
+its similarity card after indexing resumed. No OS notification was sent, and no deferred records
+remained. The RPM was removed and the temporary server and all observed descendants were stopped.
+The earlier incomplete attempts remain recorded below; neither established a product failure.
 
 ## Candidate and merge
 
@@ -146,7 +145,7 @@ was downloaded. The user's service and its configuration were left alone.
 | Server | PID `49888`, created `2026-10-18T02:17:13.1832930Z`. |
 | First `/api/tags` answer | `2026-10-18T02:17:27.1012416Z`; port owner `49888`; `embeddinggemma:latest` present. |
 | Second `/api/tags` answer | `2026-10-18T02:18:07.2141760Z`; same server PID and creation time; model still present. |
-| Required stability interval | **FAIL:** 40.112935 seconds, below the 60-second minimum. The controller's interval assertion failed; no later probe was attempted. |
+| Required stability interval | **INCONCLUSIVE:** 40.112935 seconds, below the 60-second minimum. The controller rejected the early probe instead of waiting and probing again. The server answered with the same identity; an early probe is not a backend failure. |
 
 The model digest was
 `85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1`.
@@ -163,10 +162,9 @@ its installed SHA was not checked again.
 | 4. Matching card after indexing, no notification, one ran/one dropped, and no records left. | FAIL: not run | No indexing, card, notification monitor, deferred summary, or screenshot was produced. |
 
 The FAIL labels mean the requested acceptance proof was not completed; none claims that the
-app's behavior failed. No screen-only obstacle was reached. A future run must first obtain two
-successful `/api/tags` replies at least 60 seconds apart from the same server PID, then forward
-11436 and perform all four steps above on the installed candidate. Unit tests do not replace
-those observations.
+app's behavior failed. No screen-only obstacle was reached. The second follow-up below obtained
+two successful replies more than 70 seconds apart, then completed all four steps on the installed
+candidate. Unit tests were not substituted for these observations.
 
 Cleanup stopped only the exact supervisor PID after checking its creation time. Closing its Job
 Object terminated the server and observed descendant `conhost.exe` PID `1784`, created
@@ -181,6 +179,68 @@ installed the package. Original production profile contents and existence states
 pre-run hashes, and no installed app process remained. No artifact was deleted.
 
 [Follow-up observations, timing assertion, and cleanup](evidence/ticket-216-2026-10-17/installed-retry.json).
+
+### Second follow-up: installed recovery passed
+
+Starting report HEAD was `82193338e95255ecffbc211192e0121eb1b698f6` on the requested branch;
+the tree was clean. It contains the same product code as candidate
+`19727aab6a2dcc0e1c5f1b7fc9db53b1110d6c37`, so the earlier command-gate results still apply.
+The required Sol usage probe returned `OK`. No build or test suite was repeated.
+
+The unchanged bounded supervisor and its companion were copied into a fresh Windows test run.
+One dedicated SSH session held it open on port 11436 with a 7,200-second lease, using the installed
+Ollama and its existing model store. No download was requested; the user's service, processes,
+and configuration were left alone.
+
+| Observation | Evidence |
+| --- | --- |
+| Supervisor | PID `14528`, created `2026-10-18T03:09:21.6921760Z`. |
+| Server | PID `42716`, created `2026-10-18T03:09:22.8510270Z`. |
+| First `/api/tags` answer | `2026-10-18T03:09:32.6092032Z`; listener owner `42716`; `embeddinggemma:latest` present. |
+| Stability answer | `2026-10-18T03:11:18.6225122Z`; **106.013309 seconds later**, with the same server PID and creation time; model still present. |
+| Final Windows endpoint check | `2026-10-18T03:12:01.1204209Z`; same server identity and model, after the installed check. |
+
+Before installation, all eight current/legacy production profile roots were inventoried and the
+two present roots backed up. The helper installed the existing 30,178,896-byte RPM; the installed
+binary contained the exact candidate SHA. Its SHA-256 was
+`90f4fba4a3f6a3f18e93806803f5515f7d6d205db649becac89ebc5016d5df7f`.
+A fresh disposable vault held the first three fixture notes. Configuration, data, state, and cache
+used isolated XDG roots. Only the app's isolated URL changed: closed port 11447 while offline,
+then forwarded port 11436 when reachable. All three app sessions passed DOM, IPC, configuration,
+and screenshot health checks before being driven.
+
+The installed check ran from `2026-10-18T03:11:36.472Z` to `2026-10-18T03:11:52.321Z`
+(2026-10-17 locally), through WebDriver and the app's actual capture/deletion commands.
+
+| Required step | Result | Observation and evidence |
+| --- | --- | --- |
+| 1. Two offline captures, two skip lines, two durable records. | PASS | `Shed spending` and `Shed wall wood` were saved. Two `Skipped the similarity check for a new note` lines were captured at 03:11:39Z. Two generated note IDs were present in the machine-local file; no card appeared. [Offline records](evidence/ticket-216-2026-10-17/installed-recovery-offline-deferred.json). |
+| 2. Restart, then delete the second capture in the app. | PASS | The first process exited and a new app session still read two records. `delete_note` removed `Shed wall wood` from its live path; both records remained pending for the rerun. [Records after deletion](evidence/ticket-216-2026-10-17/installed-recovery-after-delete-deferred.json). |
+| 3. Restore the app's backend URL. | PASS | The app was stopped, the isolated configuration was set to `http://127.0.0.1:11436`, and the next session's `get_app_config` confirmed that URL. Both the forwarded and Windows endpoints answered. |
+| 4. Card after indexing, no notification, one ran/one dropped, no records. | PASS | Four notes indexed, zero queued. One card said `“Shed spending” is similar to` and named `Garden shed budget`. The controller observed `Deferred similarity checks: ran=1 found=1 dropped=1 waiting=0` and an empty record list. The live session-bus monitor counted zero app `Notify` calls across all sessions. [Empty records](evidence/ticket-216-2026-10-17/installed-recovery-empty-deferred.json); [card screenshot](evidence/ticket-216-2026-10-17/installed-recovery-card.png). |
+
+[Complete scrubbed observations](evidence/ticket-216-2026-10-17/installed-recovery.json) include
+session PIDs, health results, the actual skip lines, the indexing status, and cleanup facts.
+The [controller](evidence/ticket-216-2026-10-17/installed-recovery-controller.mjs) records how the
+observations were made; it asserts the deferred summary against the app log before recording it.
+The screenshot was inspected and contains only fixture text. No step needed a person at the screen.
+An optional post-run raw-log display encountered a binary database `.log` and stopped with a
+UTF-8 decode error. No verification continued or reran after that display error; the completed
+controller's saved evidence supplies the results above.
+
+While the model was loaded, the server's process tree contained `llama-server.exe` PID `59648`
+and console hosts `47992` and `28772`; their creation times are in the evidence. Cleanup checked
+the supervisor's and server's creation times, then stopped only supervisor `14528`. The Job Object
+terminated the server and descendants. All five exact PIDs and the gate listener were confirmed
+absent. The held SSH session exited after that deliberate stop. The user's port 11434 had no
+listener before or after the run; no user-owned process was stopped or adopted.
+
+On Fedora, the app exited normally, and all recorded app, tunnel, and notification-monitor PIDs
+were absent. Driver and forwarding ports had no listeners. The helper removed the RPM with exit 0;
+`rpm -q second-brain` returned exit 1, and the app binary and both desktop entries were absent.
+The original production profiles matched their pre-install contents and existence states, so no
+restoration was needed. No artifact was deleted. The only fixture-note deletion was the second
+capture through the app, as required by step 2.
 
 ## Review rounds and ownership
 
@@ -197,13 +257,13 @@ artifacts, not new reviews performed during this verification run.
    with P3 observations. Claude settled the accepted changes in
    `19727aab6a2dcc0e1c5f1b7fc9db53b1110d6c37`: quieter logs, the unreadable-note test, explicit
    SPEC limits, and corrected comments. Updating the historical #9 report belongs to this
-   report commit; its status is qualified because the installed check did not run.
+   report commit; it is now labelled settled after the second follow-up passed.
 
 The judged P3s left in the code were a card lost if the main window is destroyed (ordinary close
 is prevented), two file races requiring a window of a few milliseconds, and one full vault scan
 per deleted note's deferred check. Earlier notes about the Tauri delivery wrapper and removal
-of value-equal records were judged without a code change. The wrapper remains unverified in an
-installed recovery run because this attempt stopped before app launch.
+of value-equal records were judged without a code change. The wrapper delivered the card in the
+second follow-up's installed recovery run.
 
 Kiro's imported commits:
 
@@ -224,8 +284,17 @@ roots from the first run, their byte sizes, and the individual gate-evidence fil
 profile backups grouped. The follow-up's additional private scripts, logs, profile backup, and two
 Windows supervisor source files are listed separately in
 [installed-retry-retained-paths.json](evidence/ticket-216-2026-10-17/installed-retry-retained-paths.json).
-Paths use
-logical machine/run/temp roots so the evidence contains no private machine paths. Build-cache
+The second follow-up's inventory is
+[installed-recovery-retained-paths.json](evidence/ticket-216-2026-10-17/installed-recovery-retained-paths.json).
+
+| Additional retained path | Logical file bytes |
+| --- | ---: |
+| Fedora private run `byhand2-19727aa-4ppeqwan` | 2,554,673 |
+| Windows test root `sb216/byhand2-19727aa-4ppeqwan` | 6,016 |
+| Private run pointer `byhand2-current.private.txt` | 62 |
+| Existing candidate RPM (included in the earlier Rust-target total) | 30,178,896 |
+
+Paths use logical machine/run/temp roots so the evidence contains no private machine paths. Build-cache
 totals include pre-existing contents and must not be read as bytes created by this run. Nested
 installer/RPM entries are included in their parent totals.
 
@@ -238,4 +307,5 @@ Disposable run directories, copied bundles, retained package extraction, and the
 test-created temporary state are cleanup candidates only after item-specific approval. Build
 caches are retained for reuse. No deletion is requested or performed by this report.
 
-The remaining acceptance proof is the installed recovery sequence. **VERIFY: FAIL.**
+All four installed recovery steps and cleanup passed. The final review of the new report head is
+still required before any push or pull request. **VERIFY: PASS.**
