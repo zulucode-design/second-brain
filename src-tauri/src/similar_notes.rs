@@ -10,7 +10,7 @@ use crate::vault::operations;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// The score a note must reach to count as saying the same thing. Calibrated against live
@@ -387,16 +387,17 @@ static CHECKING: Mutex<()> = Mutex::new(());
 
 /// Runs each of the open vault's deferred checks once, oldest first, on the note's current
 /// text, and hands every result with matches to `deliver` (#216). A check that runs leaves the
-/// list, matches or not; one that fails again stays; a deleted note's is dropped.
+/// list, matches or not; one that fails again stays; a deleted note's is dropped. A rebuild or
+/// reconcile that starts before they finish stops them, and the rest wait for the next rerun.
 pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(SimilarityCheck)) {
     let _checking = CHECKING.lock().unwrap_or_else(PoisonError::into_inner);
-    // Read together, in the order opening a vault takes them, so they never straddle a switch.
+    // One lock at a time: renaming a notebook holds `config` while it takes the index slot. The
+    // slot read again shows no vault switch came between the two.
     let open = || {
-        let slot = state.semantic_index.lock().ok()?;
-        let config = state.config.lock().ok()?;
-        let index = slot.clone()?;
-        let vault = config.active_vault.clone()?;
-        Some((index, vault))
+        let index = state.semantic_index.lock().ok()?.clone()?;
+        let vault = state.config.lock().ok()?.active_vault.clone()?;
+        let still = state.semantic_index.lock().ok()?.clone()?;
+        Arc::ptr_eq(&index, &still).then_some((index, vault))
     };
     let Some((index, vault)) = open() else {
         return;
@@ -416,8 +417,18 @@ pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(Si
     let (mut found, mut dropped) = (0, 0);
     let mut scanned = None;
     for deferred in &waiting {
+        // A rebuild or reconcile started since the index caught up can leave it short of notes,
+        // so this check and the rest wait until the queue is through again.
+        if !index.still_caught_up() {
+            index.owe_caught_up();
+            break;
+        }
         match locate(&index, &vault, deferred, &mut scanned) {
             Ok(Location::At(path)) => match check(&index, &vault, &path) {
+                Ok(_) if !index.still_caught_up() => {
+                    index.owe_caught_up();
+                    break;
+                }
                 Ok(result) => {
                     settled.push(deferred);
                     if let Some(result) = result {
@@ -493,8 +504,6 @@ pub fn with_capture_appended(
     )
 }
 
-/// Run the check for a quick capture in the background, show what it found in the main
-/// window, and raise a notification when the user is looking elsewhere.
 /// Shows `found` as the ordinary card in the main window. False when it is not shown: a check
 /// can outlast a vault switch, and its card belongs to the vault it ran in.
 fn show_card(app: &AppHandle, found: &SimilarityCheck) -> bool {
@@ -508,6 +517,8 @@ fn show_card(app: &AppHandle, found: &SimilarityCheck) -> bool {
     true
 }
 
+/// Run the check for a quick capture in the background, show what it found in the main
+/// window, and raise a notification when the user is looking elsewhere.
 pub fn after_capture(app: AppHandle, path: String) {
     // Read now, while it still describes this capture: the next overlay overwrites it.
     let focused_at_capture = MAIN_FOCUSED_AT_CAPTURE.load(Ordering::SeqCst);
