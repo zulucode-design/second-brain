@@ -3,9 +3,12 @@
 Date: 2026-10-17 (local date). Run by Sol for Kiro attempt 1, workflow section 7, steps 4–6.
 
 **VERIFY: FAIL.** The command gates completed, with only the allowed Windows #221 lint failure.
-The installed-package recovery check stopped at embedding-backend preflight, before the app
-launched: the gate-owned loopback forwarding endpoint returned an empty reply to
-`/api/tags` (`curl` exit 52). No product fix was attempted. The candidate RPM was removed.
+The first installed-package attempt stopped at an empty backend reply; its RPM was removed.
+On the follow-up attempt, the temporary Windows server answered with `embeddinggemma`, but Sol
+scheduled the second stability probe only 40.112935 seconds after the first, below the required
+60 seconds. The timing assertion failed. Following the instruction to stop on any failure, Sol
+stopped before installing the RPM or launching the app. All four recovery steps remain unverified.
+This follow-up failed because of the controller's probe timing; it establishes no product failure.
 
 ## Candidate and merge
 
@@ -91,7 +94,7 @@ The population is the exact seven fully qualified names below, matched against e
 The 10 Fedora and 9 Windows ignored tests are outside this seven-test population. No ignored live
 or hardware test is claimed as passed.
 
-## Installed-package check: stopped before step 1
+## First installed-package attempt: stopped before step 1
 
 The candidate RPM was installed through the helper, and its installed binary contained the exact
 candidate SHA. Before installation, configuration and state were backed up: eight current and
@@ -124,12 +127,60 @@ with zero installed app processes left. The gate-owned tunnel was absent. The te
 removed the RPM; `rpm -q second-brain` reported no package, and the app binary and both desktop
 entries were absent. Backups and other evidence remain; no artifact cleanup was attempted.
 
-Before a retry, Nicolas must confirm that the existing embedding endpoint answers `/api/tags`
-with a model list containing `embeddinggemma`. Sol can then repeat the installed-package sequence
-without changing the desktop service. The observations still required are exactly steps 1–4 in
-the table: two durable records before restart, the second capture deleted through the app, then
-one matching card and the `ran=1 found=1 dropped=1 waiting=0` outcome with no notification.
-The passing unit tests do not replace these observations.
+### Follow-up with a temporary Windows server
+
+The follow-up used the same candidate, with starting report HEAD
+`8da341274cfee8ffbe0adf4610da20bcebe68777` on the requested branch and a clean tree. The required
+usage probe returned `OK`. Earlier command-gate results above still apply: the report commit
+changed no product code, and no build or test suite was repeated.
+
+Sol followed the temporary-server launch procedure in `docs/alpha-harness.md`: copied
+`scripts/windows/ollama-gate.ps1` and its unchanged `owned-process.cs` companion into a fresh
+Windows run directory, then held the supervisor open in one SSH session from Fedora. The lease
+was 7,200 seconds, on port 11436, using the installed Ollama and existing model store. Nothing
+was downloaded. The user's service and its configuration were left alone.
+
+| Observation | Evidence |
+| --- | --- |
+| Supervisor | PID `45132`, created `2026-10-18T02:17:11.9355940Z`. |
+| Server | PID `49888`, created `2026-10-18T02:17:13.1832930Z`. |
+| First `/api/tags` answer | `2026-10-18T02:17:27.1012416Z`; port owner `49888`; `embeddinggemma:latest` present. |
+| Second `/api/tags` answer | `2026-10-18T02:18:07.2141760Z`; same server PID and creation time; model still present. |
+| Required stability interval | **FAIL:** 40.112935 seconds, below the 60-second minimum. The controller's interval assertion failed; no later probe was attempted. |
+
+The model digest was
+`85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1`.
+Eight production profile roots were inventoried before any possible installation, with two
+present; both were backed up. No forwarding tunnel, fixture vault, installed app process, or
+WebDriver session was started. The candidate RPM was not installed during this follow-up, so
+its installed SHA was not checked again.
+
+| Required step | Follow-up result | Evidence |
+| --- | --- | --- |
+| 1. Two offline captures, two skip log lines, and two durable records. | FAIL: not run | Stability assertion stopped the run before installation; no captures, skip logs, or record file were produced. |
+| 2. Restart, then delete the second capture in the app. | FAIL: not run | No app session or fixture existed. Nothing was deleted. |
+| 3. Restore the app's backend URL to forwarded port 11436. | FAIL: not run | No tunnel or isolated app configuration was created; no URL changed. |
+| 4. Matching card after indexing, no notification, one ran/one dropped, and no records left. | FAIL: not run | No indexing, card, notification monitor, deferred summary, or screenshot was produced. |
+
+The FAIL labels mean the requested acceptance proof was not completed; none claims that the
+app's behavior failed. No screen-only obstacle was reached. A future run must first obtain two
+successful `/api/tags` replies at least 60 seconds apart from the same server PID, then forward
+11436 and perform all four steps above on the installed candidate. Unit tests do not replace
+those observations.
+
+Cleanup stopped only the exact supervisor PID after checking its creation time. Closing its Job
+Object terminated the server and observed descendant `conhost.exe` PID `1784`, created
+`2026-10-18T02:17:14.6861840Z`. All three PIDs and the gate listener were confirmed absent;
+the held SSH session ended after the deliberate supervisor stop. Only `/api/tags` requests had
+been sent, so no embedding model was loaded and no model worker was observed. No process-name
+sweep was used.
+
+On Fedora, `rpm -q second-brain` returned exit 1 with no installed package; the app binary and
+both possible desktop entries were absent. No removal was needed because this follow-up never
+installed the package. Original production profile contents and existence states matched their
+pre-run hashes, and no installed app process remained. No artifact was deleted.
+
+[Follow-up observations, timing assertion, and cleanup](evidence/ticket-216-2026-10-17/installed-retry.json).
 
 ## Review rounds and ownership
 
@@ -169,7 +220,10 @@ Claude's three fix commits:
 ## Retained paths
 
 [retained-paths.json](evidence/ticket-216-2026-10-17/retained-paths.json) lists retained artifact
-roots, their byte sizes, and the individual gate-evidence files, with private profile backups grouped.
+roots from the first run, their byte sizes, and the individual gate-evidence files, with private
+profile backups grouped. The follow-up's additional private scripts, logs, profile backup, and two
+Windows supervisor source files are listed separately in
+[installed-retry-retained-paths.json](evidence/ticket-216-2026-10-17/installed-retry-retained-paths.json).
 Paths use
 logical machine/run/temp roots so the evidence contains no private machine paths. Build-cache
 totals include pre-existing contents and must not be read as bytes created by this run. Nested
