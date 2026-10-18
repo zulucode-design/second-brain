@@ -212,8 +212,9 @@ pub struct SemanticIndex {
     fills_started: AtomicUsize,
     /// `fills_started` when the caught-up hook last ran, so a rerun can tell one started since.
     caught_up_at: AtomicUsize,
-    /// A rebuild or reconcile that stopped part way, by its vault and start, until a fill started
-    /// after it completes: notes can be neither queued nor indexed meanwhile.
+    /// A rebuild or reconcile that stopped part way or overlapped another, by its vault and the
+    /// last fill started when it ended, until a fill started after that completes alone: notes
+    /// can be neither queued nor indexed meanwhile.
     failed_fill: Mutex<Option<(std::path::PathBuf, usize)>>,
     profile: String,
 }
@@ -238,8 +239,11 @@ impl Drop for Filling<'_> {
     fn drop(&mut self) {
         let index = self.index;
         if let Ok(mut failed) = index.failed_fill.lock() {
-            if !self.finished {
-                *failed = Some((self.vault.to_path_buf(), self.started));
+            let latest = index.fills_started.load(Ordering::SeqCst);
+            // One started meanwhile may have read the index before this one wrote to it, while
+            // this one walked the vault before it: neither result stands.
+            if !self.finished || latest != self.started {
+                *failed = Some((self.vault.to_path_buf(), latest));
             } else if failed.as_ref().is_some_and(|(_, at)| *at < self.started) {
                 *failed = None;
             }
@@ -1418,8 +1422,8 @@ impl SemanticIndex {
         }
     }
 
-    /// Reconciles again after a rebuild or reconcile that stopped part way, until one
-    /// completes. The worker calls it before a pass, once an interval at most. False when no
+    /// Reconciles again after a rebuild or reconcile that stopped part way or overlapped another,
+    /// until one completes alone. The worker calls it before a pass, once an interval at most. False when no
     /// fill had stopped.
     fn retry_failed_fill(&self) -> bool {
         let failed = self
@@ -3642,6 +3646,60 @@ mod tests {
         std::fs::write(root.join(".helixnotes").join("settings.json"), "not json").unwrap();
         assert!(crate::commands::reconcile_bulk_projections(&app, vault).is_err());
         assert_eq!(index.paths_of_note("restored-id").unwrap().len(), 1);
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn overlapping_fills_hold_the_rerun_until_one_completes_alone() {
+        let root = scratch("caught-up-overlapping-fills");
+        let index =
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), Arc::new(MeaningBackend))
+                .unwrap();
+        for first_ends_first in [false, true] {
+            let first = index.begin_fill(&root);
+            let second = index.begin_fill(&root);
+            if first_ends_first {
+                first.finish();
+                second.finish();
+            } else {
+                second.finish();
+                first.finish();
+            }
+            assert_eq!(
+                index.fills_quiet(),
+                None,
+                "the second may have read the index before the first wrote to it"
+            );
+            assert!(index.retry_failed_fill());
+            assert!(index.fills_quiet().is_some());
+        }
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_restore_that_rolls_back_reconciles_what_a_reconcile_meanwhile_dropped() {
+        let (root, index, app) =
+            deferred_capture("deferred-rolled-back-restore", mid_pass_backend());
+        let cards = cards_from_reruns(&index, &app);
+        let terminal = crate::commands::restore_and_reconcile(&app, root.to_str().unwrap(), || {
+            // The restore moves the matching note aside, and the worker's retry reconciles
+            // meanwhile, without the note lock.
+            let (kept, aside) = (root.join("Kept.md"), root.join("Kept.restoring"));
+            std::fs::rename(&kept, &aside).unwrap();
+            index.reconcile_from_notes(&root).unwrap();
+            std::fs::rename(&aside, &kept).unwrap();
+            Err("Restore failed and was rolled back".into())
+        });
+        assert!(!terminal.success);
+        index.retry_pending().unwrap();
+        assert_eq!(
+            shown(&cards),
+            [("Capture".to_string(), vec!["Kept".to_string()])]
+        );
+        assert!(waiting(&app).is_empty());
         drop(app);
         drop(index);
         cleanup(root);

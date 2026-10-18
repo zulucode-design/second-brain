@@ -3163,6 +3163,46 @@ mod import_outcome_tests {
     }
 }
 
+/// Runs `restore` under the bulk lease, then reconciles the derived views whatever it did: even a
+/// restore that rolled back had folders moved aside for a while, and a reconcile that ran then
+/// without the note lock, such as the semantic worker's retry, indexed that layout (#216).
+pub(crate) fn restore_and_reconcile(
+    state: &AppState,
+    vault_path: &str,
+    restore: impl FnOnce() -> Result<(), crate::backup::RestoreError>,
+) -> BulkMutationTerminal {
+    let _lease = match state
+        .bulk_mutation
+        .acquire(&state.note_mutation, &state.vault_activity)
+    {
+        Ok(lease) => lease,
+        Err(error) => return BulkMutationTerminal::failure(error),
+    };
+    let restored = restore();
+    let reconciliation = reconcile_bulk_projections(state, vault_path);
+    match (restored, reconciliation) {
+        (Ok(()), Ok(())) => BulkMutationTerminal::success(),
+        (Ok(()), Err(error)) => BulkMutationTerminal::changed_incomplete(format!(
+            "Vault restored, but derived views could not be reconciled: {error}"
+        )),
+        (Err(error), reconciliation) => {
+            let message = reconciliation
+                .err()
+                .map_or(error.message.clone(), |reconcile| {
+                    format!(
+                        "{} Derived views also could not be reconciled: {reconcile}",
+                        error.message
+                    )
+                });
+            if error.changed {
+                BulkMutationTerminal::changed_incomplete(message)
+            } else {
+                BulkMutationTerminal::failure(message)
+            }
+        }
+    }
+}
+
 pub(crate) fn reconcile_bulk_projections(state: &AppState, vault_path: &str) -> Result<(), String> {
     let settings_and_search = reconcile_settings_and_search(state, vault_path);
     // Even when a step above fails: until it is reconciled, the semantic index can miss notes the
@@ -3672,33 +3712,9 @@ pub fn restore_backup(app: AppHandle, backup_path: String) -> Result<(), String>
     std::thread::spawn(move || {
         use tauri::Emitter;
         let state = app.state::<AppState>();
-        let terminal = match state
-            .bulk_mutation
-            .acquire(&state.note_mutation, &state.vault_activity)
-        {
-            Err(error) => BulkMutationTerminal::failure(error),
-            Ok(_lease) => {
-                match crate::backup::restore_backup(&vault_path, &backup_dir, &backup_path) {
-                    Ok(()) => match reconcile_bulk_projections(&state, &vault_path) {
-                        Ok(()) => crate::bulk_mutation::BulkMutationTerminal::success(),
-                        Err(error) => BulkMutationTerminal::changed_incomplete(format!(
-                            "Vault restored, but derived views could not be reconciled: {error}"
-                        )),
-                    },
-                    Err(error) if error.changed => {
-                        let reconciliation = reconcile_bulk_projections(&state, &vault_path).err();
-                        let message = reconciliation.map_or(error.message.clone(), |reconcile| {
-                            format!(
-                                "{} Derived views also could not be reconciled: {reconcile}",
-                                error.message
-                            )
-                        });
-                        crate::bulk_mutation::BulkMutationTerminal::changed_incomplete(message)
-                    }
-                    Err(error) => BulkMutationTerminal::failure(error.message),
-                }
-            }
-        };
+        let terminal = restore_and_reconcile(&state, &vault_path, || {
+            crate::backup::restore_backup(&vault_path, &backup_dir, &backup_path)
+        });
         let _ = app.emit(
             crate::events::RESTORE_DONE,
             serde_json::json!({
