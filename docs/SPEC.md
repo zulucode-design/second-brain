@@ -253,15 +253,18 @@ that say the same thing.
   through: notes have been embedded, nothing is queued but unreadable notes, and no
   reconcile or rebuild is still filling the queue, including the one that follows opening
   the vault. It runs at the end of the pass that makes all three true, or of the reconcile
-  or rebuild that does so with nothing left queued. A reconcile or rebuild that starts
-  before the checks finish stops them, and those left run once the queue is through again.
+  or rebuild that does so with nothing left queued; a pass that a reconcile or rebuild
+  overlapped leaves it to the next pass. A reconcile or rebuild that starts before the
+  checks finish stops them, and those left run once the queue is through again.
   By then the notes saved offline are indexed too, so two duplicates written in the same
   offline session can match each other.
   A check kept while nothing is left to index, as when the backend comes back during the
   check itself or drops again during a rerun, waits for the next pass that embeds a note.
   It runs on the note's current text, wherever the note was renamed or moved to. It never
-  expires: it leaves the list when it runs or when the note is deleted. Each result shows as
-  its own ordinary card, newest first, with no cap, no notification and no summary.
+  expires: it leaves the list when it runs or when the note is deleted, which counts only
+  once every note in the vault can be opened, since one that cannot may be the note, moved.
+  Each result shows as its own ordinary card, newest first, with no cap, no notification
+  and no summary.
 - **What it compares.** The new note is embedded as a document, the way notes are indexed,
   and compared with every indexed note in all four categories (§12); the note itself is
   excluded. Only its first chunk's worth of text is embedded, the length every stored vector

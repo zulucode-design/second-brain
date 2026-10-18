@@ -228,7 +228,7 @@ impl Drop for Filling<'_> {
         // Only with the queue empty: the last pass's unreadable count says nothing about what
         // this fill queued, so anything queued waits for the next pass to count it.
         if index.fills_running.fetch_sub(ended, Ordering::SeqCst) == ended {
-            index.run_caught_up_hook_if_due(0);
+            index.run_caught_up_hook_if_due(0, index.fills_quiet());
         }
     }
 }
@@ -1286,6 +1286,8 @@ impl SemanticIndex {
         let started = Instant::now();
         let mut timing = PassTiming::default();
         let outage_already_reported = self.embedding_outage_reported.load(Ordering::SeqCst);
+        // Before the queue is read: a fill during the pass makes its unreadable count stale.
+        let quiet_since = self.fills_quiet();
         let paths = {
             let database = self.database.lock().map_err(|error| error.to_string())?;
             let mut statement = database
@@ -1348,23 +1350,26 @@ impl SemanticIndex {
         // The backend answered. A pass embeds only the queue it started with, so notes queued
         // since, by a save or a rebuild, keep the hook owed to the pass that embeds them. A pass
         // that stopped returned above.
-        self.run_caught_up_hook_if_due(unreadable);
+        self.run_caught_up_hook_if_due(unreadable, quiet_since);
         Ok(RetryOutcome::QueueProcessed)
     }
 
     /// Runs the caught-up hook when it is owed, the queue holds nothing that could still be
     /// embedded, and no rebuild or reconcile is still filling it: notes saved without the
     /// backend are indexed (#216). A retired index's commits were refused, so its queue says
-    /// nothing about the index that replaced it.
-    fn run_caught_up_hook_if_due(&self, unreadable: usize) {
-        // Read before the fills running, so a fill that starts meanwhile shows in one or the other.
-        let started = self.fills_started.load(Ordering::SeqCst);
+    /// nothing about the index that replaced it. `quiet_since` is [`Self::fills_quiet`] from
+    /// before the caller counted the unreadable notes: a fill since then can make that count
+    /// stale, so the hook stays owed to a later pass.
+    fn run_caught_up_hook_if_due(&self, unreadable: usize, quiet_since: Option<usize>) {
+        let Some(since) = quiet_since else {
+            return;
+        };
         if !self.retired.load(Ordering::SeqCst)
-            && self.fills_running.load(Ordering::SeqCst) == 0
+            && self.fills_quiet() == Some(since)
             && self.queued_notes() <= unreadable
             && self.caught_up_owed.swap(false, Ordering::SeqCst)
         {
-            self.caught_up_at.store(started, Ordering::SeqCst);
+            self.caught_up_at.store(since, Ordering::SeqCst);
             if let Some(hook) = self.caught_up_hook.get() {
                 hook();
             }
@@ -1380,7 +1385,6 @@ impl SemanticIndex {
     }
 
     fn begin_fill(&self) -> Filling<'_> {
-        // Running before started: read in the opposite order, a fill always shows in one.
         self.fills_running.fetch_add(1, Ordering::SeqCst);
         self.fills_started.fetch_add(1, Ordering::SeqCst);
         Filling(self)
@@ -1391,10 +1395,16 @@ impl SemanticIndex {
     /// runs later, on another thread, so it takes the mark before each check and requires the
     /// same one after: a later hook gives a new mark, which hides no fill from it.
     pub(crate) fn caught_up_mark(&self) -> Option<usize> {
+        self.fills_quiet()
+            .filter(|started| *started == self.caught_up_at.load(Ordering::SeqCst))
+    }
+
+    /// The rebuilds and reconciles started so far, while none is running; `None` while one is.
+    fn fills_quiet(&self) -> Option<usize> {
+        // Started before running: `begin_fill` counts them the other way round, so a fill that
+        // starts meanwhile shows in one or the other.
         let started = self.fills_started.load(Ordering::SeqCst);
-        (started == self.caught_up_at.load(Ordering::SeqCst)
-            && self.fills_running.load(Ordering::SeqCst) == 0)
-            .then_some(started)
+        (self.fills_running.load(Ordering::SeqCst) == 0).then_some(started)
     }
 
     /// Owes the caught-up hook again, to the next pass or fill that leaves the queue through.
@@ -1450,8 +1460,9 @@ impl SemanticIndex {
     }
 
     /// Calls `hook` after a pass that leaves only unreadable notes queued, once notes have been
-    /// embedded since the hook last ran and no rebuild or reconcile is still filling the queue:
-    /// the embedding backend is back, and the notes saved while it was away are indexed (#216).
+    /// embedded since the hook last ran and no rebuild or reconcile has filled the queue since
+    /// the pass began: the embedding backend is back, and the notes saved while it was away are
+    /// indexed (#216).
     /// It runs on the worker's thread, or on the one whose rebuild or reconcile ended, so slow
     /// work belongs elsewhere. Set it before the worker starts; only the first hook set is kept.
     pub fn on_caught_up(&self, hook: impl Fn() + Send + Sync + 'static) {
@@ -1705,7 +1716,7 @@ fn chunks_for(title: &str, body: &str) -> Vec<NoteChunk> {
 
 /// Every note the semantic index covers, collected eagerly so no directory handle outlives
 /// the walk.
-fn note_paths(vault: &Path) -> Vec<std::path::PathBuf> {
+pub(crate) fn note_paths(vault: &Path) -> Vec<std::path::PathBuf> {
     WalkDir::new(vault)
         .into_iter()
         .filter_entry(|entry| !crate::search::is_ignored_by_index(entry.path(), vault))
@@ -3053,6 +3064,127 @@ mod tests {
 
         // The next pass reruns it.
         index.retry_pending().unwrap();
+        assert_eq!(
+            shown(&cards),
+            [("Capture".to_string(), vec!["Kept".to_string()])]
+        );
+        assert!(waiting(&app).is_empty());
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_rebuild_during_a_pass_leaves_the_rerun_to_a_pass_that_counts_the_queue_again() {
+        let root = scratch("deferred-rebuild-mid-pass");
+        let vault = root.to_str().unwrap();
+        let capture = root.join("Capture.md");
+        let broken = root.join("Broken.md");
+        write_note(
+            &capture,
+            "capture-id",
+            "Capture",
+            "Areas",
+            "coffee beans today",
+        );
+        write_note(&broken, "broken-id", "Broken", "Areas", "taxes");
+        let backend = Arc::new(MidPassBackend {
+            available: AtomicBool::new(false),
+            during_embed: Mutex::new(None),
+        });
+        let index = Arc::new(
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), backend.clone()).unwrap(),
+        );
+        let app = open_app(vault, &index);
+        let cards = cards_from_reruns(&index, &app);
+        for note in [&capture, &broken] {
+            index.note_changed(note).unwrap();
+        }
+        std::fs::write(&broken, [0xff, 0xfe, 0xfd]).unwrap();
+        assert!(check_now(&app, capture.to_str().unwrap()).is_none());
+        backend.available.store(true, Ordering::SeqCst);
+
+        // While the pass embeds the capture, a matching note arrives and a rebuild runs. The
+        // rebuild skips the unreadable note and queues the new one, so the one unreadable note
+        // the pass counts no longer says what is left in the queue.
+        let (rebuilding, vault_dir) = (Arc::downgrade(&index), root.clone());
+        *backend.during_embed.lock().unwrap() = Some(Box::new(move || {
+            write_note(
+                &vault_dir.join("Match.md"),
+                "match-id",
+                "Match",
+                "Areas",
+                "coffee ratio",
+            );
+            let index = rebuilding.upgrade().unwrap();
+            index.rebuild_from_notes(&vault_dir).unwrap();
+        }));
+        index.retry_pending().unwrap();
+        assert!(shown(&cards).is_empty(), "the new note is not embedded yet");
+        assert_eq!(waiting(&app).len(), 1);
+        index.retry_pending().unwrap();
+        assert_eq!(
+            shown(&cards),
+            [("Capture".to_string(), vec!["Match".to_string()])]
+        );
+        assert!(waiting(&app).is_empty());
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_deferred_note_moved_where_it_cannot_be_opened_is_not_taken_for_deleted() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = scratch("deferred-unopenable-move");
+        let vault = root.to_str().unwrap();
+        let kept = root.join("Kept.md");
+        let capture = root.join("Capture.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        write_note(
+            &capture,
+            "capture-id",
+            "Capture",
+            "Areas",
+            "coffee beans today",
+        );
+        let available = Arc::new(AtomicBool::new(true));
+        let index = Arc::new(
+            SemanticIndex::open_at(
+                &root.join("semantic.sqlite3"),
+                Arc::new(RecoveringBackend {
+                    available: available.clone(),
+                }),
+            )
+            .unwrap(),
+        );
+        let app = open_app(vault, &index);
+        index.note_changed(&kept).unwrap();
+        index.retry_pending().unwrap();
+        available.store(false, Ordering::SeqCst);
+        assert!(check_now(&app, capture.to_str().unwrap()).is_none());
+        available.store(true, Ordering::SeqCst);
+        let recorded = vec![("capture-id".to_string(), path_text(&capture))];
+
+        // Moved while the app was closed, to where it cannot be opened just now.
+        let moved = root.join("Moved.md");
+        std::fs::rename(&capture, &moved).unwrap();
+        let mode = |bits| std::fs::Permissions::from_mode(bits);
+        std::fs::set_permissions(&moved, mode(0o000)).unwrap();
+        let cards = Mutex::new(Vec::new());
+        // Root opens it anyway, and then there is nothing to prove.
+        if std::fs::File::open(&moved).is_err() {
+            rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
+            assert!(shown(&cards).is_empty());
+            assert_eq!(
+                waiting(&app),
+                recorded,
+                "the note it cannot open may be this one"
+            );
+        }
+        std::fs::set_permissions(&moved, mode(0o644)).unwrap();
+        rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
         assert_eq!(
             shown(&cards),
             [("Capture".to_string(), vec!["Kept".to_string()])]

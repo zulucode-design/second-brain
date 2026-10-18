@@ -8,6 +8,7 @@ use crate::semantic_search::SemanticIndex;
 use crate::state::AppState;
 use crate::vault::operations;
 use serde::{Deserialize, Serialize};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -232,6 +233,14 @@ impl DeferredChecks {
         }
     }
 
+    /// Makes `vault`'s checks the open ones, read from its file. Reopening the open vault keeps
+    /// the list it has: a check kept since the file was read is only there.
+    pub fn open(&mut self, vault: &str) {
+        if self.vault.as_deref() != Some(vault) {
+            *self = Self::load(vault);
+        }
+    }
+
     /// Reads the file again when it could not be read before, its checks ahead of any made
     /// since, which replace their note's, and without those that ran or were dropped since.
     /// False while it still cannot be read.
@@ -323,11 +332,9 @@ fn with_kept(state: &AppState, vault: &str, with: impl FnOnce(&mut DeferredCheck
     match open.vault.as_deref().map(|open_vault| open_vault == vault) {
         Some(true) => with(&mut open),
         // The vault was switched while the check ran. The check belongs to the vault it ran in,
-        // whose file keeps it for that vault's next open.
-        Some(false) => {
-            drop(open);
-            with(&mut DeferredChecks::load(vault));
-        }
+        // whose file keeps it for that vault's next open. The open list stays locked meanwhile,
+        // so reopening that vault cannot read the file between this read and write.
+        Some(false) => with(&mut DeferredChecks::load(vault)),
         None => {
             *open = DeferredChecks::load(vault);
             with(&mut open);
@@ -341,10 +348,15 @@ enum Location {
     /// Deleted: neither the index nor the vault has it any more.
     Gone,
     /// Not readable where the index or the record puts it, and not shown gone either: the file
-    /// is there but cannot be read just now, or the index has not caught up yet with a move
-    /// made while the app was closed. It is looked for again after the next pass.
+    /// is there but cannot be read just now, the index has not caught up yet with a move made
+    /// while the app was closed, or a note the vault scan could not open may be it. It is
+    /// looked for again after the next pass.
     Unsure,
 }
+
+/// The vault's notes, and whether every one could be opened: the scan skips a note it cannot
+/// open, which may be a deferred check's note, moved.
+type Scan = (Vec<crate::types::NoteEntry>, bool);
 
 /// Finds a deferred check's note: by its id through the index, then at its recorded path, then
 /// by its id across the vault, scanned into `scanned` once for every check of a rerun.
@@ -352,7 +364,7 @@ fn locate(
     index: &SemanticIndex,
     vault: &str,
     deferred: &DeferredCheck,
-    scanned: &mut Option<Vec<crate::types::NoteEntry>>,
+    scanned: &mut Option<Scan>,
 ) -> Result<Location, String> {
     let indexed = if deferred.id.is_empty() {
         Vec::new()
@@ -378,15 +390,31 @@ fn locate(
     // The index can miss a note moved while the app was closed, so the vault has the last word
     // before the check is dropped.
     if !deferred.id.is_empty() {
-        let notes = match scanned {
-            Some(notes) => notes,
-            None => scanned.insert(operations::scan_notes(vault, None)?),
+        let (notes, complete) = match scanned {
+            Some(scan) => scan,
+            None => scanned.insert((
+                operations::scan_notes(vault, None)?,
+                every_note_opens(vault),
+            )),
         };
         if let Some(note) = notes.iter().find(|note| note.meta.id == deferred.id) {
             return Ok(Location::At(note.path.clone()));
         }
+        if !*complete {
+            return Ok(Location::Unsure);
+        }
     }
     Ok(Location::Gone)
+}
+
+fn every_note_opens(vault: &str) -> bool {
+    crate::semantic_search::note_paths(Path::new(vault))
+        .iter()
+        .all(|path| {
+            std::fs::File::open(path)
+                .and_then(|mut file| file.read(&mut [0]))
+                .is_ok()
+        })
 }
 
 /// One run of kept checks at a time, so two passes that finish close together never run a check
@@ -802,6 +830,34 @@ mod tests {
         deferred_file, notification_title, with_capture_appended, DeferredCheck, DeferredChecks,
         DeferredFile,
     };
+
+    #[test]
+    fn opening_a_vault_reads_its_checks_and_reopening_it_keeps_the_open_list() {
+        let first = std::env::temp_dir().join(format!("sb-deferred-{}", uuid::Uuid::new_v4()));
+        let second = std::env::temp_dir().join(format!("sb-deferred-{}", uuid::Uuid::new_v4()));
+        let (first_text, second_text) = (first.to_str().unwrap(), second.to_str().unwrap());
+        for vault in [&first, &second] {
+            std::fs::create_dir_all(vault).unwrap();
+        }
+        let kept = DeferredCheck {
+            id: "note-id".to_string(),
+            path: "Areas/Note.md".to_string(),
+        };
+        let mut open = DeferredChecks::default();
+        open.open(first_text);
+        open.keep(kept.clone());
+        // As the file read when the vault began opening again, before that check was kept.
+        let none: DeferredFile<Vec<DeferredCheck>> = DeferredFile { checks: Vec::new() };
+        let file = deferred_file(first_text).unwrap();
+        std::fs::write(&file, serde_json::to_vec(&none).unwrap()).unwrap();
+        open.open(first_text);
+        assert_eq!(open.checks(), [kept], "the open list has the newer check");
+        open.open(second_text);
+        assert!(open.checks().is_empty(), "another vault's file");
+        for vault in [first, second] {
+            std::fs::remove_dir_all(vault).unwrap();
+        }
+    }
 
     #[test]
     fn an_unreadable_deferred_file_gives_an_empty_list_and_the_vault_still_opens() {
