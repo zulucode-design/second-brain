@@ -255,6 +255,14 @@ impl DeferredChecks {
         true
     }
 
+    /// Reads a file that could not be read before and writes it back at once, without the checks
+    /// that ran or were dropped since, so a restart does not bring them back.
+    fn recover(&mut self) {
+        if self.unread && self.reread() {
+            self.save();
+        }
+    }
+
     /// Rewrites the file. When that fails, the checks still wait in memory until the app quits.
     fn save(&mut self) {
         let Some(vault) = self.vault.clone() else {
@@ -405,7 +413,7 @@ pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(Si
     let waiting = match state.deferred_checks.lock() {
         Ok(mut list) if list.vault.as_deref() == Some(vault.as_str()) => {
             // A file that could not be read when the vault opened gives up its checks once it can.
-            list.reread();
+            list.recover();
             list.checks.clone()
         }
         _ => return,
@@ -419,13 +427,13 @@ pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(Si
     for deferred in &waiting {
         // A rebuild or reconcile started since the index caught up can leave it short of notes,
         // so this check and the rest wait until the queue is through again.
-        if !index.still_caught_up() {
+        let Some(mark) = index.caught_up_mark() else {
             index.owe_caught_up();
             break;
-        }
+        };
         match locate(&index, &vault, deferred, &mut scanned) {
             Ok(Location::At(path)) => match check(&index, &vault, &path) {
-                Ok(_) if !index.still_caught_up() => {
+                Ok(_) if index.caught_up_mark() != Some(mark) => {
                     index.owe_caught_up();
                     break;
                 }
@@ -847,13 +855,16 @@ mod tests {
             ],
         };
         std::fs::write(&file, serde_json::to_vec(&older).unwrap()).unwrap();
-        assert!(unread.reread(), "as a rerun reads it");
+        unread.recover();
+        let recovered = [
+            check("older-id", "Areas/Older.md"),
+            check("newer-id", "Areas/Newer.md"),
+        ];
+        assert_eq!(unread.checks(), recovered);
         assert_eq!(
-            unread.checks(),
-            [
-                check("older-id", "Areas/Older.md"),
-                check("newer-id", "Areas/Newer.md"),
-            ]
+            DeferredChecks::load(vault_text).checks(),
+            recovered,
+            "written back at once, so a restart does not bring back the check that ran"
         );
         unread.keep(check("another-id", "Areas/Another.md"));
         let expected = [

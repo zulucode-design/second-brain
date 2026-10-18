@@ -1386,12 +1386,15 @@ impl SemanticIndex {
         Filling(self)
     }
 
-    /// No rebuild or reconcile has started since the caught-up hook last ran, so the index it
-    /// found caught up still stands (#216). The hook runs later, on another thread, so a rerun
-    /// asks again around each check.
-    pub(crate) fn still_caught_up(&self) -> bool {
-        self.fills_started.load(Ordering::SeqCst) == self.caught_up_at.load(Ordering::SeqCst)
-            && self.fills_running.load(Ordering::SeqCst) == 0
+    /// A mark while no rebuild or reconcile has started since the caught-up hook last ran, so
+    /// the index it found caught up still stands; `None` once one has (#216). The hook's rerun
+    /// runs later, on another thread, so it takes the mark before each check and requires the
+    /// same one after: a later hook gives a new mark, which hides no fill from it.
+    pub(crate) fn caught_up_mark(&self) -> Option<usize> {
+        let started = self.fills_started.load(Ordering::SeqCst);
+        (started == self.caught_up_at.load(Ordering::SeqCst)
+            && self.fills_running.load(Ordering::SeqCst) == 0)
+            .then_some(started)
     }
 
     /// Owes the caught-up hook again, to the next pass or fill that leaves the queue through.
@@ -2991,9 +2994,11 @@ mod tests {
         let app = open_app(vault, &index);
         // Weak both: the index holds the hook, and a cycle would keep the database open.
         let fill_first = Arc::new(AtomicBool::new(false));
+        let hold_next = Arc::new(AtomicBool::new(false));
         let cards = Arc::new(Mutex::new(Vec::new()));
-        let (filling, app_ref, index_ref, delivered) = (
+        let (filling, holding, app_ref, index_ref, delivered) = (
             fill_first.clone(),
+            hold_next.clone(),
             Arc::downgrade(&app),
             Arc::downgrade(&index),
             cards.clone(),
@@ -3002,6 +3007,10 @@ mod tests {
             let (Some(app), Some(index)) = (app_ref.upgrade(), index_ref.upgrade()) else {
                 return;
             };
+            // As a later hook's rerun, which waits its turn behind the one running.
+            if holding.swap(false, Ordering::SeqCst) {
+                return;
+            }
             if filling.swap(false, Ordering::SeqCst) {
                 drop(index.begin_fill());
             }
@@ -3027,10 +3036,16 @@ mod tests {
             "a rebuild may have emptied the index"
         );
 
-        // A fill starts while the rerun's check runs.
-        let started = Arc::downgrade(&index);
+        // A fill starts while the rerun's check runs, and a pass after it finds the index caught
+        // up again before the check returns.
+        let (started, hold) = (Arc::downgrade(&index), hold_next.clone());
         *backend.during_embed.lock().unwrap() = Some(Box::new(move || {
-            drop(started.upgrade().unwrap().begin_fill());
+            let index = started.upgrade().unwrap();
+            drop(index.begin_fill());
+            hold.store(true, Ordering::SeqCst);
+            index.owe_caught_up();
+            index.retry_pending().unwrap();
+            assert!(!hold.load(Ordering::SeqCst), "the pass ran the hook");
         }));
         index.retry_pending().unwrap();
         assert!(shown(&cards).is_empty());
