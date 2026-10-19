@@ -12,9 +12,10 @@
 // On Linux, two more duplicates are captured with the main window minimized, and the
 // notifications the app sends are read off the session bus with dbus-monitor. A click on one
 // cannot be scripted, so that stays a hand check.
-// Last, a relay holds the backend's requests so a check waits across a vault switch: one held
-// check with no switch shows its card, then one held while the vault switches must leave no card
-// and no notification once released.
+// Last, the backend comes back behind a relay, and the capture made without it gets its card
+// (#216). The relay then holds the backend's requests so a check waits across a vault switch: one
+// held check with no switch shows its card, then one held while the vault switches must leave no
+// card and no notification once released.
 
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -258,22 +259,16 @@ async function main() {
         const entry = await capture(browser, item.title, item.body);
         // The overlay closes once this command returns, so this is what the user waits for.
         const captureMs = Date.now() - started;
-        // The backend's own check sends the card; this asks the same question directly, so the
-        // run knows whether a card is due rather than waiting out a timeout. It answers null too
-        // when the backend's check ran first (#216), whose card is then on its way.
-        const expected = await invoke(browser, 'check_similar_notes', { vault, path: entry.path });
-        if (expected?.failed) throw new Error(`check failed: ${expected.failed}`);
+        // The backend's own check sends the card: a duplicate's is awaited, and any other capture
+        // gets five seconds for a card it should not get. Asking the backend directly would take
+        // the check's turn, and its card with it (#216).
         let card = null;
-        if (expected) {
-          card = await waitForCard(browser, entry.meta.title);
-        } else {
-          await browser
-            .waitUntil(async () => (card = await readCard(browser, entry.meta.title)) !== null, {
-              timeout: 5_000,
-              interval: 500,
-            })
-            .catch(() => {});
-        }
+        await browser
+          .waitUntil(async () => (card = await readCard(browser, entry.meta.title)) !== null, {
+            timeout: item.duplicateOf ? CARD_TIMEOUT : 5_000,
+            interval: 500,
+          })
+          .catch(() => {});
         const shown = card?.matches.map((match) => match.title) ?? [];
         results.push({
           capture: item.title,
@@ -282,7 +277,7 @@ async function main() {
           path: entry.path,
           title: entry.meta.title,
           captureMs,
-          // From the capture to the card, or to the end of the 5-second wait when none is due.
+          // From the capture to the card, or to the end of the wait when none came.
           seconds: Math.round((Date.now() - started) / 1000),
           shown,
           coverage: card?.coverage ?? null,
