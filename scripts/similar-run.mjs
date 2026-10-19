@@ -259,15 +259,20 @@ async function main() {
         // The overlay closes once this command returns, so this is what the user waits for.
         const captureMs = Date.now() - started;
         // The backend's own check sends the card; this asks the same question directly, so the
-        // run knows whether a card is due rather than waiting out a timeout.
-        const expected = await invoke(browser, 'check_similar_notes', { path: entry.path });
+        // run knows whether a card is due rather than waiting out a timeout. It answers null too
+        // when the backend's check ran first (#216), whose card is then on its way.
+        const expected = await invoke(browser, 'check_similar_notes', { vault, path: entry.path });
         if (expected?.failed) throw new Error(`check failed: ${expected.failed}`);
         let card = null;
         if (expected) {
           card = await waitForCard(browser, entry.meta.title);
         } else {
-          await sleep(5_000);
-          card = await readCard(browser, entry.meta.title);
+          await browser
+            .waitUntil(async () => (card = await readCard(browser, entry.meta.title)) !== null, {
+              timeout: 5_000,
+              interval: 500,
+            })
+            .catch(() => {});
         }
         const shown = card?.matches.map((match) => match.title) ?? [];
         results.push({
@@ -460,6 +465,12 @@ async function main() {
         const backend = heldBackend(OLLAMA_PORT + 1);
         try {
           await backend.listen();
+          // The offline capture's check was kept, and runs once the index has caught up with the
+          // backend back (#216): its card comes now, before anything below counts cards.
+          actions.offline.cardOnceBack = await waitForCard(browser, offline.meta.title).then(
+            () => true,
+            () => false,
+          );
           const other = join(settings.root, 'other-vault');
           mkdirSync(join(other, '.helixnotes'), { recursive: true });
           writeFileSync(join(other, '.helixnotes', 'vault_id'), randomUUID(), { flag: 'wx' });

@@ -2,7 +2,8 @@
 //! the same thing, so the user can fold the new one in instead of keeping a near-duplicate.
 //!
 //! The check only ever runs after the note is safely on disk, and every failure ends it quietly:
-//! a capture must never wait on it or be lost to it.
+//! a capture must never wait on it or be lost to it. A check that could not run is kept, and
+//! runs again once the semantic index has caught up (#216).
 
 use crate::semantic_search::SemanticIndex;
 use crate::state::AppState;
@@ -73,6 +74,8 @@ pub fn check(
         &note.meta.id,
         SIMILAR_SCORE,
     )?;
+    #[cfg(test)]
+    AFTER_SCORING.with_borrow_mut(|after| after.as_mut().map(|after| after()));
     let mut matches: Vec<SimilarMatch> = found
         .into_iter()
         // A note without an id is indexed by its path, which `similar` cannot exclude.
@@ -470,6 +473,9 @@ thread_local! {
     /// Runs as a vault scan starts on this thread, so a test can act while it runs.
     pub(crate) static DURING_SCAN: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
         const { std::cell::RefCell::new(None) };
+    /// Runs once a check on this thread has scored its note, so a test can act before it ends.
+    pub(crate) static AFTER_SCORING: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Walks the vault's notes as the index sees them, each read in full: the note list's scan
@@ -540,9 +546,10 @@ static CHECKING: Mutex<()> = Mutex::new(());
 /// Runs each of the open vault's deferred checks once, oldest first, on the note's current
 /// text, and hands every result with matches to `deliver` (#216). A check that runs leaves the
 /// list, matches or not; one that fails again stays; a deleted note's is dropped. They stop, and
-/// the rest wait for the next rerun, once a rebuild or reconcile has started since the index
-/// caught up or stopped part way, or when something holds the note lock as a check looks for
-/// its note or ends.
+/// the rest wait for the next rerun, once the index may no longer be caught up: a rebuild or
+/// reconcile started since it caught up or stopped part way, a note was queued or saved since,
+/// or settings replaced it. They stop too when something holds the note lock as a check looks
+/// for its note or ends, or a bulk change came and went while a check ran.
 pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(SimilarityCheck)) {
     let _checking = CHECKING.lock().unwrap_or_else(PoisonError::into_inner);
     let Some((index, vault)) = open_index(state) else {

@@ -1428,8 +1428,8 @@ impl SemanticIndex {
     }
 
     /// Reconciles again after a rebuild or reconcile that stopped part way or overlapped another,
-    /// until one completes alone. The worker calls it before a pass, once an interval at most. False when no
-    /// fill had stopped.
+    /// until one completes alone. The worker calls it before a pass, once an interval at most.
+    /// False when no fill had stopped.
     fn retry_failed_fill(&self) -> bool {
         let failed = self
             .failed_fill
@@ -1449,12 +1449,14 @@ impl SemanticIndex {
     /// nothing queued could be embedded, so the index it found caught up still stands; `None`
     /// otherwise (#216). The hook's rerun runs later, on another thread, behind other checks, so
     /// it takes the mark before each check and requires the same one after: a later hook gives a
-    /// new mark, which hides no fill from it, and a note queued meanwhile changes it.
+    /// new mark, which hides no fill from it, and a note queued meanwhile changes it. Always
+    /// `None` once retired: notes saved since queue through the replacement, uncounted here.
     pub(crate) fn caught_up_mark(&self) -> Option<(usize, usize)> {
         let queued = self.notes_queued.load(Ordering::SeqCst);
         self.fills_quiet()
             .filter(|started| *started == self.caught_up_at.load(Ordering::SeqCst))
             .filter(|_| self.only_unreadable_queued())
+            .filter(|_| !self.retired.load(Ordering::SeqCst))
             .map(|started| (started, queued))
     }
 
@@ -2342,6 +2344,51 @@ mod tests {
             .collect()
     }
 
+    /// An index at `root` whose backend answers while `available` holds.
+    fn recovering_index(root: &Path) -> (Arc<AtomicBool>, Arc<SemanticIndex>) {
+        let available = Arc::new(AtomicBool::new(true));
+        let backend = Arc::new(RecoveringBackend {
+            available: available.clone(),
+        });
+        let index = SemanticIndex::open_at(&root.join("semantic.sqlite3"), backend).unwrap();
+        (available, Arc::new(index))
+    }
+
+    /// The capture's check fails while the backend is away, with `Kept` already indexed.
+    fn deferred_capture(
+        name: &str,
+        backend: Arc<MidPassBackend>,
+    ) -> (std::path::PathBuf, Arc<SemanticIndex>, Arc<AppState>) {
+        let root = scratch(name);
+        let kept = root.join("Kept.md");
+        let capture = root.join("Capture.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        write_note(
+            &capture,
+            "capture-id",
+            "Capture",
+            "Areas",
+            "coffee beans today",
+        );
+        let index = Arc::new(
+            SemanticIndex::open_at(&root.join("semantic.sqlite3"), backend.clone()).unwrap(),
+        );
+        let app = open_app(root.to_str().unwrap(), &index);
+        index.note_changed(&kept).unwrap();
+        index.retry_pending().unwrap();
+        backend.available.store(false, Ordering::SeqCst);
+        assert!(check_now(&app, &vault_of(&app), capture.to_str().unwrap()).is_none());
+        backend.available.store(true, Ordering::SeqCst);
+        (root, index, app)
+    }
+
+    fn mid_pass_backend() -> Arc<MidPassBackend> {
+        Arc::new(MidPassBackend {
+            available: AtomicBool::new(true),
+            during_embed: Mutex::new(None),
+        })
+    }
+
     #[test]
     fn a_failed_similarity_check_is_recorded_and_survives_reloading_its_file() {
         let root = scratch("deferred-recorded");
@@ -2364,16 +2411,7 @@ mod tests {
             "Areas",
             "quantum mechanics lecture notes",
         );
-        let available = Arc::new(AtomicBool::new(true));
-        let index = Arc::new(
-            SemanticIndex::open_at(
-                &root.join("semantic.sqlite3"),
-                Arc::new(RecoveringBackend {
-                    available: available.clone(),
-                }),
-            )
-            .unwrap(),
-        );
+        let (available, index) = recovering_index(&root);
         let app = open_app(vault, &index);
 
         assert!(check_now(&app, &vault_of(&app), unrelated.to_str().unwrap()).is_none());
@@ -2401,16 +2439,7 @@ mod tests {
         let vault = root.to_str().unwrap();
         let kept = root.join("Kept.md");
         write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
-        let available = Arc::new(AtomicBool::new(true));
-        let index = Arc::new(
-            SemanticIndex::open_at(
-                &root.join("semantic.sqlite3"),
-                Arc::new(RecoveringBackend {
-                    available: available.clone(),
-                }),
-            )
-            .unwrap(),
-        );
+        let (available, index) = recovering_index(&root);
         let app = open_app(vault, &index);
         let cards = cards_from_reruns(&index, &app);
         index.note_changed(&kept).unwrap();
@@ -2487,16 +2516,7 @@ mod tests {
         std::fs::create_dir_all(root.join("Projects")).unwrap();
         let kept = root.join("Kept.md");
         write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
-        let available = Arc::new(AtomicBool::new(true));
-        let index = Arc::new(
-            SemanticIndex::open_at(
-                &root.join("semantic.sqlite3"),
-                Arc::new(RecoveringBackend {
-                    available: available.clone(),
-                }),
-            )
-            .unwrap(),
-        );
+        let (available, index) = recovering_index(&root);
         let app = open_app(vault, &index);
         let cards = cards_from_reruns(&index, &app);
         index.note_changed(&kept).unwrap();
@@ -2588,16 +2608,7 @@ mod tests {
             "Areas",
             "coffee beans today",
         );
-        let available = Arc::new(AtomicBool::new(true));
-        let index = Arc::new(
-            SemanticIndex::open_at(
-                &root.join("semantic.sqlite3"),
-                Arc::new(RecoveringBackend {
-                    available: available.clone(),
-                }),
-            )
-            .unwrap(),
-        );
+        let (available, index) = recovering_index(&root);
         let app = open_app(vault, &index);
         index.note_changed(&kept).unwrap();
         index.retry_pending().unwrap();
@@ -2656,16 +2667,7 @@ mod tests {
             "Areas",
             "coffee beans today",
         );
-        let available = Arc::new(AtomicBool::new(true));
-        let index = Arc::new(
-            SemanticIndex::open_at(
-                &root.join("semantic.sqlite3"),
-                Arc::new(RecoveringBackend {
-                    available: available.clone(),
-                }),
-            )
-            .unwrap(),
-        );
+        let (available, index) = recovering_index(&root);
         let app = open_app(vault, &index);
         let cards = cards_from_reruns(&index, &app);
         for note in [&kept, &capture] {
@@ -2902,16 +2904,7 @@ mod tests {
             "coffee beans today",
         );
         write_note(&first, "first-id", "First", "Areas", "quantum mechanics");
-        let available = Arc::new(AtomicBool::new(true));
-        let index = Arc::new(
-            SemanticIndex::open_at(
-                &root.join("semantic.sqlite3"),
-                Arc::new(RecoveringBackend {
-                    available: available.clone(),
-                }),
-            )
-            .unwrap(),
-        );
+        let (available, index) = recovering_index(&root);
         let app = open_app(vault, &index);
         let cards = cards_from_reruns(&index, &app);
         for note in [&kept, &capture] {
@@ -2954,16 +2947,7 @@ mod tests {
             "Areas",
             "coffee beans today",
         );
-        let available = Arc::new(AtomicBool::new(true));
-        let index = Arc::new(
-            SemanticIndex::open_at(
-                &root.join("semantic.sqlite3"),
-                Arc::new(RecoveringBackend {
-                    available: available.clone(),
-                }),
-            )
-            .unwrap(),
-        );
+        let (available, index) = recovering_index(&root);
         let app = open_app(vault, &index);
         let cards = cards_from_reruns(&index, &app);
         for note in [&kept, &capture] {
@@ -3208,34 +3192,8 @@ mod tests {
     #[test]
     fn a_deferred_note_moved_where_it_cannot_be_opened_is_not_taken_for_deleted() {
         use std::os::unix::fs::PermissionsExt;
-        let root = scratch("deferred-unopenable-move");
-        let vault = root.to_str().unwrap();
-        let kept = root.join("Kept.md");
+        let (root, index, app) = deferred_capture("deferred-unopenable-move", mid_pass_backend());
         let capture = root.join("Capture.md");
-        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
-        write_note(
-            &capture,
-            "capture-id",
-            "Capture",
-            "Areas",
-            "coffee beans today",
-        );
-        let available = Arc::new(AtomicBool::new(true));
-        let index = Arc::new(
-            SemanticIndex::open_at(
-                &root.join("semantic.sqlite3"),
-                Arc::new(RecoveringBackend {
-                    available: available.clone(),
-                }),
-            )
-            .unwrap(),
-        );
-        let app = open_app(vault, &index);
-        index.note_changed(&kept).unwrap();
-        index.retry_pending().unwrap();
-        available.store(false, Ordering::SeqCst);
-        assert!(check_now(&app, &vault_of(&app), capture.to_str().unwrap()).is_none());
-        available.store(true, Ordering::SeqCst);
         let recorded = vec![("capture-id".to_string(), path_text(&capture))];
 
         // Moved while the app was closed, to where it cannot be opened just now.
@@ -3302,16 +3260,7 @@ mod tests {
             "---\ntitle: Capture\ncategory: Areas\n---\n\ncoffee beans today\n",
         )
         .unwrap();
-        let available = Arc::new(AtomicBool::new(true));
-        let index = Arc::new(
-            SemanticIndex::open_at(
-                &root.join("semantic.sqlite3"),
-                Arc::new(RecoveringBackend {
-                    available: available.clone(),
-                }),
-            )
-            .unwrap(),
-        );
+        let (available, index) = recovering_index(&root);
         let app = open_app(vault, &index);
         index.note_changed(&kept).unwrap();
         index.retry_pending().unwrap();
@@ -3397,16 +3346,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let available = Arc::new(AtomicBool::new(true));
-        let index = Arc::new(
-            SemanticIndex::open_at(
-                &root.join("semantic.sqlite3"),
-                Arc::new(RecoveringBackend {
-                    available: available.clone(),
-                }),
-            )
-            .unwrap(),
-        );
+        let (available, index) = recovering_index(&root);
         let app = open_app(vault, &index);
         index.note_changed(&kept).unwrap();
         index.retry_pending().unwrap();
@@ -3426,41 +3366,6 @@ mod tests {
         drop(app);
         drop(index);
         cleanup(root);
-    }
-
-    /// The capture's check fails while the backend is away, with `Kept` already indexed.
-    fn deferred_capture(
-        name: &str,
-        backend: Arc<MidPassBackend>,
-    ) -> (std::path::PathBuf, Arc<SemanticIndex>, Arc<AppState>) {
-        let root = scratch(name);
-        let kept = root.join("Kept.md");
-        let capture = root.join("Capture.md");
-        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
-        write_note(
-            &capture,
-            "capture-id",
-            "Capture",
-            "Areas",
-            "coffee beans today",
-        );
-        let index = Arc::new(
-            SemanticIndex::open_at(&root.join("semantic.sqlite3"), backend.clone()).unwrap(),
-        );
-        let app = open_app(root.to_str().unwrap(), &index);
-        index.note_changed(&kept).unwrap();
-        index.retry_pending().unwrap();
-        backend.available.store(false, Ordering::SeqCst);
-        assert!(check_now(&app, &vault_of(&app), capture.to_str().unwrap()).is_none());
-        backend.available.store(true, Ordering::SeqCst);
-        (root, index, app)
-    }
-
-    fn mid_pass_backend() -> Arc<MidPassBackend> {
-        Arc::new(MidPassBackend {
-            available: AtomicBool::new(true),
-            during_embed: Mutex::new(None),
-        })
     }
 
     #[test]
@@ -3886,6 +3791,43 @@ mod tests {
             [("Capture".to_string(), vec!["Kept".to_string()])]
         );
         assert!(waiting(&app).is_empty());
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn an_index_replaced_after_a_check_scored_stops_the_rerun() {
+        let backend = mid_pass_backend();
+        let (root, index, app) = deferred_capture("deferred-replaced-index", backend.clone());
+        let cards = Mutex::new(Vec::new());
+        // Once the check has scored, settings replace the index, and the capture is saved again
+        // and embedded through the replacement: the queue is empty again, and the replaced index
+        // never counted the save.
+        let (replacing, capture) = (Arc::downgrade(&app), root.join("Capture.md"));
+        let database = root.join("semantic.sqlite3");
+        crate::similar_notes::AFTER_SCORING.set(Some(Box::new(move || {
+            let app = replacing.upgrade().unwrap();
+            let next = Arc::new(SemanticIndex::open_at(&database, backend.clone()).unwrap());
+            {
+                let mut slot = app.semantic_index.lock().unwrap();
+                slot.take().unwrap().retire();
+                *slot = Some(next.clone());
+            }
+            write_note(
+                &capture,
+                "capture-id",
+                "Capture",
+                "Areas",
+                "coffee beans tomorrow",
+            );
+            next.note_changed(&capture).unwrap();
+            next.retry_pending().unwrap();
+        })));
+        rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
+        crate::similar_notes::AFTER_SCORING.set(None);
+        assert!(shown(&cards).is_empty(), "the check judged replaced text");
+        assert_eq!(waiting(&app).len(), 1);
         drop(app);
         drop(index);
         cleanup(root);

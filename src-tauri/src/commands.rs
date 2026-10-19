@@ -1212,10 +1212,10 @@ pub async fn check_similar_notes(
     vault: String,
     path: String,
 ) -> Result<Option<crate::similar_notes::SimilarityCheck>, String> {
-    if !crate::similar_notes::note_in_opened_vault(&vault, &path) {
-        return Ok(None);
-    }
     tauri::async_runtime::spawn_blocking(move || {
+        if !crate::similar_notes::note_in_opened_vault(&vault, &path) {
+            return None;
+        }
         crate::similar_notes::check_now(&app.state::<AppState>(), &vault, &path)
     })
     .await
@@ -3162,6 +3162,93 @@ mod import_outcome_tests {
         assert_eq!(payload["outcome"], "failure");
         assert_eq!(payload["error"], "already running");
         assert!(payload.get("files_converted").is_none());
+    }
+}
+
+#[cfg(test)]
+mod restore_outcome_tests {
+    use super::restore_and_reconcile;
+    use crate::backup::RestoreError;
+    use crate::bulk_mutation::{BulkMutationOutcome, BulkMutationTerminal};
+    use crate::state::AppState;
+    use crate::types::AppConfig;
+
+    /// The terminal for a restore that ends as `restored`, in a vault whose shared settings are
+    /// damaged unless `reconciles`, so reconciling it fails.
+    fn restore(restored: Result<(), RestoreError>, reconciles: bool) -> BulkMutationTerminal {
+        let vault =
+            std::env::temp_dir().join(format!("sb-restore-outcome-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(vault.join(".helixnotes")).unwrap();
+        if !reconciles {
+            std::fs::write(vault.join(".helixnotes").join("settings.json"), "damaged").unwrap();
+        }
+        let state = AppState::new(AppConfig::default());
+        let terminal = restore_and_reconcile(&state, vault.to_str().unwrap(), || restored);
+        std::fs::remove_dir_all(&vault).unwrap();
+        terminal
+    }
+
+    fn failed(changed: bool) -> Result<(), RestoreError> {
+        Err(RestoreError {
+            message: "Restore failed.".into(),
+            changed,
+        })
+    }
+
+    #[test]
+    fn a_restore_and_its_reconcile_that_both_succeed_are_a_success() {
+        let terminal = restore(Ok(()), true);
+        assert!(terminal.success);
+        assert_eq!(terminal.outcome, BulkMutationOutcome::Success);
+        assert_eq!(terminal.error, None);
+    }
+
+    #[test]
+    fn a_restore_whose_reconcile_fails_changed_the_vault_and_says_so() {
+        let terminal = restore(Ok(()), false);
+        assert_eq!(terminal.outcome, BulkMutationOutcome::ChangedIncomplete);
+        assert!(terminal.error.unwrap().starts_with(
+            "Vault restored, but derived views could not be reconciled: \
+             Shared vault settings are invalid"
+        ));
+    }
+
+    #[test]
+    fn a_failed_restore_changed_the_vault_only_when_it_says_so() {
+        let terminal = restore(failed(true), true);
+        assert_eq!(terminal.outcome, BulkMutationOutcome::ChangedIncomplete);
+        assert_eq!(terminal.error.as_deref(), Some("Restore failed."));
+
+        let terminal = restore(failed(false), true);
+        assert_eq!(terminal.outcome, BulkMutationOutcome::Failure);
+        assert_eq!(terminal.error.as_deref(), Some("Restore failed."));
+    }
+
+    #[test]
+    fn a_failed_restore_whose_reconcile_also_fails_reports_both() {
+        let terminal = restore(failed(false), false);
+        assert_eq!(terminal.outcome, BulkMutationOutcome::Failure);
+        assert!(terminal.error.unwrap().starts_with(
+            "Restore failed. Derived views also could not be reconciled: \
+             Shared vault settings are invalid"
+        ));
+    }
+
+    #[test]
+    fn a_restore_refused_the_lease_never_runs() {
+        let state = AppState::new(AppConfig::default());
+        let _held = state
+            .bulk_mutation
+            .acquire(&state.note_mutation, &state.vault_activity)
+            .unwrap();
+        let terminal = restore_and_reconcile(&state, "unused", || {
+            panic!("the restore ran without the lease")
+        });
+        assert_eq!(terminal.outcome, BulkMutationOutcome::Failure);
+        assert_eq!(
+            terminal.error.as_deref(),
+            Some("Another bulk vault operation is already running")
+        );
     }
 }
 

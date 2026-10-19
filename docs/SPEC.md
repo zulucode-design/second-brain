@@ -263,9 +263,10 @@ that say the same thing.
   A check kept while nothing is left to index, as when the backend comes back during the
   check itself or drops again during a rerun, waits for the next pass that embeds a note.
   It runs on the note's current text, wherever the note was renamed or moved to. It never
-  expires: it leaves the list when it runs or when the note is deleted, which counts only
-  once every folder and note in the vault can be read, since one that cannot may hold the
-  note, moved, and no restore, import or sync batch ran while the vault was searched.
+  expires: it leaves the list when it runs or when its note is deleted. A note counts as
+  deleted only when it is found nowhere, which needs two things: every folder and note in
+  the vault could be read (one that cannot may hold the note, moved), and no restore, import
+  or sync batch ran while the vault was searched.
   Each result shows as its own ordinary card, newest first, with no cap, no notification
   and no summary.
 - **What it compares.** The new note is embedded as a document, the way notes are indexed,
