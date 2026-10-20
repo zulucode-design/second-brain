@@ -1,0 +1,702 @@
+$ pnpm sidecar:prepare && tauri build --config src-tauri/tauri.sidecar.conf.json
+$ node scripts/prepare-syncthing.mjs
+Prepared Syncthing 2.1.5: syncthing-x86_64-pc-windows-msvc.exe
+        Info Looking up installed tauri packages to check mismatched versions...
+     Running beforeBuildCommand `pnpm build`
+$ vite build
+vite v7.3.6 building ssr environment for production...
+transforming...
+✓ 263 modules transformed.
+rendering chunks...
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 2691 modules transformed.
+rendering chunks...
+computing gzip size...
+.svelte-kit/output/client/_app/version.json                                                   0.03 kB │ gzip:   0.05 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size3-Regular.CTq5MqoE.woff             4.42 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size4-Regular.Dl5lxZxV.woff2            4.93 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size2-Regular.Dy4dx90m.woff2            5.21 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size1-Regular.mCD8mA8B.woff2            5.47 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size4-Regular.BF-4gkZK.woff             5.98 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size2-Regular.oD1tc_U0.woff             6.19 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size1-Regular.C195tn64.woff             6.50 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Caligraphic-Regular.Di6jR-x-.woff2      6.91 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Caligraphic-Bold.Dq_IR9rO.woff2         6.91 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size3-Regular.DgpXs0kz.ttf              7.59 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Caligraphic-Regular.CTRA-rTL.woff       7.66 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Caligraphic-Bold.BEiXGLvX.woff          7.72 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Script-Regular.D3wIWfF6.woff2           9.64 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_SansSerif-Regular.DDBCnlJ7.woff2       10.34 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size4-Regular.DWFBv043.ttf             10.36 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Script-Regular.D5yQViql.woff           10.59 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Fraktur-Regular.CTYiF6lA.woff2         11.32 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Fraktur-Bold.CL6g_b3V.woff2            11.35 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size2-Regular.B7gKUWhC.ttf             11.51 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_SansSerif-Italic.C3H0VqGB.woff2        12.03 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_SansSerif-Bold.D1sUS0GD.woff2          12.22 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size1-Regular.Dbsnue_I.ttf             12.23 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_SansSerif-Regular.CS6fqUqJ.woff        12.32 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Caligraphic-Regular.wX97UBjC.ttf       12.34 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Caligraphic-Bold.ATXxdsX0.ttf          12.37 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Fraktur-Regular.Dxdc4cR9.woff          13.21 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Fraktur-Bold.BsDP51OF.woff             13.30 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Typewriter-Regular.CO6r4hn1.woff2      13.57 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_SansSerif-Italic.DN2j7dab.woff         14.11 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_SansSerif-Bold.DbIhKOiC.woff           14.41 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Typewriter-Regular.C0xS9mPB.woff       16.03 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Math-BoldItalic.CZnvNsCZ.woff2         16.40 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Math-Italic.t53AETM-.woff2             16.44 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Script-Regular.C5JkGWo-.ttf            16.65 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-BoldItalic.DxDJ3AOS.woff2         16.78 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-Italic.NWA7e6Wa.woff2             16.99 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Math-BoldItalic.iY-2wyZ7.woff          18.67 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Math-Italic.DA0__PXp.woff              18.75 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-BoldItalic.SpSLRI95.woff          19.41 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_SansSerif-Regular.BNo7hRIc.ttf         19.44 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Fraktur-Regular.CB_wures.ttf           19.57 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Fraktur-Bold.BdnERNNW.ttf              19.58 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-Italic.BMLOBm91.woff              19.68 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_SansSerif-Italic.YYjJ1zSn.ttf          22.36 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_SansSerif-Bold.CFMepnvq.ttf            24.50 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-Bold.Cx986IdX.woff2               25.32 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-Regular.B22Nviop.woff2            26.27 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Typewriter-Regular.D3Ib7_Hf.ttf        27.56 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_AMS-Regular.BQhdFMY1.woff2             28.08 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-Bold.Jm3AIy58.woff                29.91 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-Regular.Dr94JaBh.woff             30.77 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Math-BoldItalic.B3XSjfu4.ttf           31.20 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Math-Italic.flOr_0UB.ttf               31.31 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-BoldItalic.DzxPMmG6.ttf           32.97 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_AMS-Regular.DMm9YOAa.woff              33.52 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-Italic.3WenGoN9.ttf               33.58 kB
+.svelte-kit/output/client/.vite/manifest.json                                                50.69 kB │ gzip:   4.92 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-Bold.waoOVXN0.ttf                 51.34 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-Regular.ypZvNtVU.ttf              53.58 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_AMS-Regular.DRggAlZN.ttf               63.63 kB
+.svelte-kit/output/client/_app/immutable/assets/3.Bm8FD4mg.css                                1.36 kB │ gzip:   0.48 kB
+.svelte-kit/output/client/_app/immutable/assets/0.CFH1h_I4.css                               37.77 kB │ gzip:   8.33 kB
+.svelte-kit/output/client/_app/immutable/assets/2.B4EL6lu3.css                              201.88 kB │ gzip:  33.40 kB
+.svelte-kit/output/client/_app/immutable/nodes/2.t9_Ilr8z.js                                  0.07 kB │ gzip:   0.08 kB
+.svelte-kit/output/client/_app/immutable/entry/start.CI2diMjm.js                              0.08 kB │ gzip:   0.09 kB
+.svelte-kit/output/client/_app/immutable/chunks/w_zYXWk6.js                                   0.10 kB │ gzip:   0.12 kB
+.svelte-kit/output/client/_app/immutable/chunks/Gi6I4Gst.js                                   0.15 kB │ gzip:   0.13 kB
+.svelte-kit/output/client/_app/immutable/chunks/CqWnF1K6.js                                   0.18 kB │ gzip:   0.15 kB
+.svelte-kit/output/client/_app/immutable/chunks/MgWXwHq7.js                                   0.21 kB │ gzip:   0.16 kB
+.svelte-kit/output/client/_app/immutable/chunks/4FX-V63W.js                                   0.22 kB │ gzip:   0.20 kB
+.svelte-kit/output/client/_app/immutable/chunks/b6rWyUgT.js                                   0.26 kB │ gzip:   0.21 kB
+.svelte-kit/output/client/_app/immutable/chunks/CiyWaMTI.js                                   0.26 kB │ gzip:   0.21 kB
+.svelte-kit/output/client/_app/immutable/chunks/RB4PS32h.js                                   0.27 kB │ gzip:   0.21 kB
+.svelte-kit/output/client/_app/immutable/chunks/Bm975o1g.js                                   0.31 kB │ gzip:   0.24 kB
+.svelte-kit/output/client/_app/immutable/chunks/BJ_eQqDS.js                                   0.35 kB │ gzip:   0.26 kB
+.svelte-kit/output/client/_app/immutable/chunks/Bx2n0PJO.js                                   0.44 kB │ gzip:   0.28 kB
+.svelte-kit/output/client/_app/immutable/chunks/DYqcurH1.js                                   0.49 kB │ gzip:   0.35 kB
+.svelte-kit/output/client/_app/immutable/nodes/1.VfyEy8U5.js                                  0.51 kB │ gzip:   0.33 kB
+.svelte-kit/output/client/_app/immutable/chunks/COxby6Rn.js                                   0.53 kB │ gzip:   0.36 kB
+.svelte-kit/output/client/_app/immutable/chunks/V-xqH3zv.js                                   0.90 kB │ gzip:   0.50 kB
+.svelte-kit/output/client/_app/immutable/chunks/CmKTTxBW.js                                   1.18 kB │ gzip:   0.57 kB
+.svelte-kit/output/client/_app/immutable/chunks/wbPk3Yxo.js                                   1.37 kB │ gzip:   0.66 kB
+.svelte-kit/output/client/_app/immutable/chunks/BYd5_ZMs.js                                   1.52 kB │ gzip:   0.69 kB
+.svelte-kit/output/client/_app/immutable/chunks/DasuDUFm.js                                   1.72 kB │ gzip:   0.83 kB
+.svelte-kit/output/client/_app/immutable/chunks/DjKaNszM.js                                   1.81 kB │ gzip:   0.84 kB
+.svelte-kit/output/client/_app/immutable/chunks/Cw49fAG-.js                                   1.87 kB │ gzip:   0.86 kB
+.svelte-kit/output/client/_app/immutable/chunks/lzowPYqd.js                                   1.87 kB │ gzip:   0.82 kB
+.svelte-kit/output/client/_app/immutable/chunks/B8hjpw9r.js                                   1.92 kB │ gzip:   0.82 kB
+.svelte-kit/output/client/_app/immutable/chunks/ChmPeit8.js                                   2.06 kB │ gzip:   1.16 kB
+.svelte-kit/output/client/_app/immutable/chunks/CurBSdOX.js                                   3.13 kB │ gzip:   1.58 kB
+.svelte-kit/output/client/_app/immutable/chunks/oKRfUNoR.js                                   3.43 kB │ gzip:   1.47 kB
+.svelte-kit/output/client/_app/immutable/chunks/Dp2MtZh1.js                                   4.14 kB │ gzip:   1.78 kB
+.svelte-kit/output/client/_app/immutable/nodes/3.RTidmUNa.js                                  4.50 kB │ gzip:   1.94 kB
+.svelte-kit/output/client/_app/immutable/nodes/0.BkoIMbaA.js                                  4.65 kB │ gzip:   2.02 kB
+.svelte-kit/output/client/_app/immutable/chunks/DX6XiGOO.js                                   4.69 kB │ gzip:   2.18 kB
+.svelte-kit/output/client/_app/immutable/entry/app.D7yO7bJ9.js                                4.84 kB │ gzip:   2.18 kB
+.svelte-kit/output/client/_app/immutable/chunks/dg22_G4G.js                                   5.06 kB │ gzip:   2.07 kB
+.svelte-kit/output/client/_app/immutable/chunks/fqaD1CF1.js                                   5.41 kB │ gzip:   2.43 kB
+.svelte-kit/output/client/_app/immutable/chunks/bJvR67Zn.js                                   5.63 kB │ gzip:   2.29 kB
+.svelte-kit/output/client/_app/immutable/chunks/BQzAiE1p.js                                   6.01 kB │ gzip:   2.57 kB
+.svelte-kit/output/client/_app/immutable/chunks/QzIRUpUD.js                                   6.18 kB │ gzip:   2.55 kB
+.svelte-kit/output/client/_app/immutable/chunks/CgqBymld.js                                   6.93 kB │ gzip:   2.80 kB
+.svelte-kit/output/client/_app/immutable/chunks/Bn9nP3-t.js                                   7.06 kB │ gzip:   2.71 kB
+.svelte-kit/output/client/_app/immutable/chunks/NJAGJByG.js                                   8.24 kB │ gzip:   3.66 kB
+.svelte-kit/output/client/_app/immutable/chunks/B0pSedMI.js                                   8.47 kB │ gzip:   3.25 kB
+.svelte-kit/output/client/_app/immutable/chunks/BfV7u03w.js                                   9.17 kB │ gzip:   4.16 kB
+.svelte-kit/output/client/_app/immutable/chunks/BHFgTQLH.js                                  10.02 kB │ gzip:   3.58 kB
+.svelte-kit/output/client/_app/immutable/chunks/Bbkx1OqD.js                                  10.21 kB │ gzip:   3.53 kB
+.svelte-kit/output/client/_app/immutable/chunks/C2-VL2WP.js                                  10.64 kB │ gzip:   4.08 kB
+.svelte-kit/output/client/_app/immutable/chunks/C3kSaby-.js                                  15.72 kB │ gzip:   4.40 kB
+.svelte-kit/output/client/_app/immutable/chunks/D0puQGHK.js                                  15.82 kB │ gzip:   5.60 kB
+.svelte-kit/output/client/_app/immutable/chunks/DRiJuHuE.js                                  17.43 kB │ gzip:   6.61 kB
+.svelte-kit/output/client/_app/immutable/chunks/Jh2D98k-.js                                  20.24 kB │ gzip:   7.16 kB
+.svelte-kit/output/client/_app/immutable/chunks/CqT2by9e.js                                  23.10 kB │ gzip:   7.77 kB
+.svelte-kit/output/client/_app/immutable/chunks/CIBm4fHj.js                                  23.12 kB │ gzip:   8.52 kB
+.svelte-kit/output/client/_app/immutable/chunks/CqW82mDi.js                                  23.50 kB │ gzip:   8.30 kB
+.svelte-kit/output/client/_app/immutable/chunks/DOmOIIwC.js                                  23.92 kB │ gzip:   8.32 kB
+.svelte-kit/output/client/_app/immutable/chunks/BmOvQdaJ.js                                  25.43 kB │ gzip:   6.74 kB
+.svelte-kit/output/client/_app/immutable/chunks/BRfQZYCu.js                                  26.36 kB │ gzip:   7.38 kB
+.svelte-kit/output/client/_app/immutable/chunks/CtTu8l_l.js                                  27.02 kB │ gzip:   9.36 kB
+.svelte-kit/output/client/_app/immutable/chunks/Dq5oL5Cb.js                                  27.10 kB │ gzip:  10.52 kB
+.svelte-kit/output/client/_app/immutable/chunks/C-mdbDht.js                                  28.30 kB │ gzip:  10.97 kB
+.svelte-kit/output/client/_app/immutable/chunks/C_VuFN_Z.js                                  29.33 kB │ gzip:   8.64 kB
+.svelte-kit/output/client/_app/immutable/chunks/BzfG0Ddq.js                                  30.78 kB │ gzip:  10.12 kB
+.svelte-kit/output/client/_app/immutable/chunks/Czvr6Qom.js                                  30.93 kB │ gzip:   9.68 kB
+.svelte-kit/output/client/_app/immutable/chunks/NgWxQlFI.js                                  30.99 kB │ gzip:  11.18 kB
+.svelte-kit/output/client/_app/immutable/chunks/DrWCJ3mW.js                                  33.90 kB │ gzip:   9.91 kB
+.svelte-kit/output/client/_app/immutable/chunks/CRJ-g1BY.js                                  38.06 kB │ gzip:  12.49 kB
+.svelte-kit/output/client/_app/immutable/chunks/WKONjj2b.js                                  41.85 kB │ gzip:  11.99 kB
+.svelte-kit/output/client/_app/immutable/chunks/qisGUBYD.js                                  41.92 kB │ gzip:  15.67 kB
+.svelte-kit/output/client/_app/immutable/chunks/p9ZBYIyv.js                                  49.11 kB │ gzip:  15.69 kB
+.svelte-kit/output/client/_app/immutable/chunks/C4xuQ6LR.js                                  60.64 kB │ gzip:  19.46 kB
+.svelte-kit/output/client/_app/immutable/chunks/Bdvib6Wu.js                                  69.63 kB │ gzip:  23.51 kB
+.svelte-kit/output/client/_app/immutable/chunks/grgVv3bA.js                                  69.89 kB │ gzip:  19.59 kB
+.svelte-kit/output/client/_app/immutable/chunks/CrD1KWNx.js                                  73.67 kB │ gzip:  21.21 kB
+.svelte-kit/output/client/_app/immutable/chunks/UM-7hkHK.js                                  81.67 kB │ gzip:  22.45 kB
+.svelte-kit/output/client/_app/immutable/chunks/DzIkSGdg.js                                 116.89 kB │ gzip:  31.09 kB
+.svelte-kit/output/client/_app/immutable/chunks/l7pfW3Qo.js                                 118.86 kB │ gzip:  43.70 kB
+.svelte-kit/output/client/_app/immutable/chunks/CyYgycZT.js                                 151.76 kB │ gzip:  43.09 kB
+.svelte-kit/output/client/_app/immutable/chunks/yzknjiTM.js                                 443.04 kB │ gzip: 141.98 kB
+.svelte-kit/output/client/_app/immutable/chunks/DK5yMwge.js                                 621.29 kB │ gzip: 148.33 kB
+.svelte-kit/output/client/_app/immutable/chunks/B3Y1XOAV.js                                 688.12 kB │ gzip: 154.15 kB
+.svelte-kit/output/client/_app/immutable/chunks/BpZC9VSe.js                               1,642.56 kB │ gzip: 499.89 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 20.63s
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size3-Regular.CTq5MqoE.woff           4.42 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size4-Regular.Dl5lxZxV.woff2          4.93 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size2-Regular.Dy4dx90m.woff2          5.21 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size1-Regular.mCD8mA8B.woff2          5.47 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size4-Regular.BF-4gkZK.woff           5.98 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size2-Regular.oD1tc_U0.woff           6.19 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size1-Regular.C195tn64.woff           6.50 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Caligraphic-Regular.Di6jR-x-.woff2    6.91 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Caligraphic-Bold.Dq_IR9rO.woff2       6.91 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size3-Regular.DgpXs0kz.ttf            7.59 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Caligraphic-Regular.CTRA-rTL.woff     7.66 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Caligraphic-Bold.BEiXGLvX.woff        7.72 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Script-Regular.D3wIWfF6.woff2         9.64 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_SansSerif-Regular.DDBCnlJ7.woff2     10.34 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size4-Regular.DWFBv043.ttf           10.36 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Script-Regular.D5yQViql.woff         10.59 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Fraktur-Regular.CTYiF6lA.woff2       11.32 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Fraktur-Bold.CL6g_b3V.woff2          11.35 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size2-Regular.B7gKUWhC.ttf           11.51 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_SansSerif-Italic.C3H0VqGB.woff2      12.03 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_SansSerif-Bold.D1sUS0GD.woff2        12.22 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size1-Regular.Dbsnue_I.ttf           12.23 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_SansSerif-Regular.CS6fqUqJ.woff      12.32 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Caligraphic-Regular.wX97UBjC.ttf     12.34 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Caligraphic-Bold.ATXxdsX0.ttf        12.37 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Fraktur-Regular.Dxdc4cR9.woff        13.21 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Fraktur-Bold.BsDP51OF.woff           13.30 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Typewriter-Regular.CO6r4hn1.woff2    13.57 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_SansSerif-Italic.DN2j7dab.woff       14.11 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_SansSerif-Bold.DbIhKOiC.woff         14.41 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Typewriter-Regular.C0xS9mPB.woff     16.03 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Math-BoldItalic.CZnvNsCZ.woff2       16.40 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Math-Italic.t53AETM-.woff2           16.44 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Script-Regular.C5JkGWo-.ttf          16.65 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-BoldItalic.DxDJ3AOS.woff2       16.78 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-Italic.NWA7e6Wa.woff2           16.99 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Math-BoldItalic.iY-2wyZ7.woff        18.67 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Math-Italic.DA0__PXp.woff            18.75 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-BoldItalic.SpSLRI95.woff        19.41 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_SansSerif-Regular.BNo7hRIc.ttf       19.44 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Fraktur-Regular.CB_wures.ttf         19.57 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Fraktur-Bold.BdnERNNW.ttf            19.58 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-Italic.BMLOBm91.woff            19.68 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_SansSerif-Italic.YYjJ1zSn.ttf        22.36 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_SansSerif-Bold.CFMepnvq.ttf          24.50 kB
+.svelte-kit/output/server/.vite/manifest.json                                              24.77 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-Bold.Cx986IdX.woff2             25.32 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-Regular.B22Nviop.woff2          26.27 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Typewriter-Regular.D3Ib7_Hf.ttf      27.56 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_AMS-Regular.BQhdFMY1.woff2           28.08 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-Bold.Jm3AIy58.woff              29.91 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-Regular.Dr94JaBh.woff           30.77 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Math-BoldItalic.B3XSjfu4.ttf         31.20 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Math-Italic.flOr_0UB.ttf             31.31 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-BoldItalic.DzxPMmG6.ttf         32.97 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_AMS-Regular.DMm9YOAa.woff            33.52 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-Italic.3WenGoN9.ttf             33.58 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-Bold.waoOVXN0.ttf               51.34 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-Regular.ypZvNtVU.ttf            53.58 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_AMS-Regular.DRggAlZN.ttf             63.63 kB
+.svelte-kit/output/server/_app/immutable/assets/_page.Bm8FD4mg.css                          1.36 kB
+.svelte-kit/output/server/_app/immutable/assets/_layout.CFH1h_I4.css                       37.77 kB
+.svelte-kit/output/server/_app/immutable/assets/_page.DymMx6wf.css                        102.28 kB
+.svelte-kit/output/server/entries/pages/_layout.ts.js                                       0.08 kB
+.svelte-kit/output/server/env.js                                                            0.23 kB
+.svelte-kit/output/server/internal.js                                                       0.35 kB
+.svelte-kit/output/server/chunks/server.js                                                  0.62 kB
+.svelte-kit/output/server/entries/pages/_layout.svelte.js                                   1.01 kB
+.svelte-kit/output/server/chunks/utils2.js                                                  1.05 kB
+.svelte-kit/output/server/chunks/utils3.js                                                  1.09 kB
+.svelte-kit/output/server/entries/pages/capture/_page.svelte.js                             1.22 kB
+.svelte-kit/output/server/entries/fallbacks/error.svelte.js                                 1.48 kB
+.svelte-kit/output/server/chunks/index.js                                                   3.12 kB
+.svelte-kit/output/server/chunks/internal.js                                                3.36 kB
+.svelte-kit/output/server/chunks/app.js                                                     3.59 kB
+.svelte-kit/output/server/chunks/attributes.js                                              5.45 kB
+.svelte-kit/output/server/chunks/exports.js                                                 5.59 kB
+.svelte-kit/output/server/entries/pages/_page.svelte.js                                    14.24 kB
+.svelte-kit/output/server/chunks/uneval.js                                                 17.62 kB
+.svelte-kit/output/server/chunks/root.js                                                   28.72 kB
+.svelte-kit/output/server/chunks/index2.js                                                 29.12 kB
+.svelte-kit/output/server/remote-entry.js                                                  36.79 kB
+.svelte-kit/output/server/chunks/utils.js                                                  58.82 kB
+.svelte-kit/output/server/chunks/context.js                                                62.96 kB
+.svelte-kit/output/server/index.js                                                        135.95 kB
+✓ built in 29.49s
+
+Run npm run preview to preview your production build locally.
+
+> Using @sveltejs/adapter-static
+  Wrote site to "build"
+  ✔ done
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.44
+   Compiling unicode-ident v1.0.24
+   Compiling cfg-if v1.0.4
+   Compiling zerocopy v0.8.39
+   Compiling serde_core v1.0.228
+   Compiling siphasher v1.0.2
+   Compiling parking_lot_core v0.9.12
+   Compiling icu_normalizer_data v2.1.1
+   Compiling getrandom v0.3.4
+   Compiling icu_properties_data v2.1.2
+   Compiling zmij v1.0.21
+   Compiling stable_deref_trait v1.2.1
+   Compiling thiserror v2.0.18
+   Compiling getrandom v0.2.17
+   Compiling shlex v1.3.0
+   Compiling find-msvc-tools v0.1.9
+   Compiling rand_core v0.6.4
+   Compiling getrandom v0.4.1
+   Compiling windows-link v0.2.1
+   Compiling autocfg v1.5.0
+   Compiling phf_shared v0.11.3
+   Compiling serde v1.0.228
+   Compiling smallvec v1.15.1
+   Compiling siphasher v0.3.11
+   Compiling getrandom v0.1.16
+   Compiling typeid v1.0.3
+   Compiling fnv v1.0.7
+   Compiling thiserror v1.0.69
+   Compiling erased-serde v0.4.9
+   Compiling memchr v2.8.0
+   Compiling writeable v0.6.2
+   Compiling syn v1.0.109
+   Compiling itoa v1.0.17
+   Compiling litemap v0.8.1
+   Compiling ident_case v1.0.1
+   Compiling strsim v0.11.1
+   Compiling jobserver v0.1.34
+   Compiling phf_shared v0.8.0
+   Compiling version_check v0.9.5
+   Compiling proc-macro-hack v0.5.20+deprecated
+   Compiling cc v1.2.56
+   Compiling rand_core v0.5.1
+   Compiling anyhow v1.0.104
+   Compiling phf_shared v0.10.0
+   Compiling serde_json v1.0.149
+   Compiling rand_pcg v0.2.1
+   Compiling scopeguard v1.2.0
+   Compiling new_debug_unreachable v1.0.6
+   Compiling byteorder v1.5.0
+   Compiling lock_api v0.4.14
+   Compiling windows-sys v0.61.2
+   Compiling syn v2.0.117
+   Compiling windows_x86_64_msvc v0.52.6
+   Compiling winnow v0.7.14
+   Compiling precomputed-hash v0.1.1
+   Compiling mac v0.1.1
+   Compiling parking_lot v0.12.5
+   Compiling bitflags v1.3.2
+   Compiling futf v0.1.5
+   Compiling log v0.4.29
+   Compiling dtoa v1.0.11
+   Compiling toml_writer v1.0.6+spec-1.1.0
+   Compiling percent-encoding v2.3.2
+   Compiling utf8_iter v1.0.4
+   Compiling utf-8 v0.7.6
+   Compiling form_urlencoded v1.2.2
+   Compiling tendril v0.4.3
+   Compiling dtoa-short v0.3.5
+   Compiling aho-corasick v1.1.4
+   Compiling indexmap v1.9.3
+   Compiling nodrop v0.1.14
+   Compiling camino v1.2.2
+   Compiling convert_case v0.4.0
+   Compiling unic-common v0.9.0
+   Compiling unic-char-range v0.9.0
+   Compiling alloc-no-stdlib v2.0.4
+   Compiling regex-syntax v0.8.11
+   Compiling matches v0.1.10
+   Compiling libc v0.2.182
+   Compiling alloc-stdlib v0.2.2
+   Compiling unic-char-property v0.9.0
+   Compiling toml_datetime v0.7.5+spec-1.1.0
+   Compiling serde_spanned v1.0.4
+   Compiling semver v1.0.27
+   Compiling toml_parser v1.0.9+spec-1.1.0
+   Compiling uuid v1.21.0
+   Compiling unic-ucd-version v0.9.0
+   Compiling servo_arc v0.2.0
+   Compiling winapi-util v0.1.11
+   Compiling fxhash v0.2.1
+   Compiling phf v0.8.0
+   Compiling toml v0.9.12+spec-1.1.0
+   Compiling hashbrown v0.12.3
+   Compiling equivalent v1.0.2
+   Compiling schemars v0.8.22
+   Compiling hashbrown v0.16.1
+   Compiling same-file v1.0.6
+   Compiling cfb v0.7.3
+   Compiling unic-ucd-ident v0.9.0
+   Compiling brotli-decompressor v5.0.0
+   Compiling ppv-lite86 v0.2.21
+   Compiling bytes v1.11.1
+   Compiling dyn-clone v1.0.20
+   Compiling indexmap v2.13.0
+   Compiling dunce v1.0.5
+   Compiling infer v0.19.0
+   Compiling serde-untagged v0.1.9
+   Compiling walkdir v2.5.0
+   Compiling rand_chacha v0.3.1
+   Compiling rand_chacha v0.2.2
+   Compiling once_cell v1.21.3
+   Compiling glob v0.3.3
+   Compiling rand v0.7.3
+   Compiling rand v0.8.6
+   Compiling synstructure v0.13.2
+   Compiling darling_core v0.21.3
+   Compiling serde_derive_internals v0.29.1
+   Compiling regex-automata v0.4.18
+   Compiling brotli v8.0.2
+   Compiling http v1.4.0
+   Compiling windows_x86_64_msvc v0.53.1
+   Compiling phf_generator v0.8.0
+   Compiling phf_generator v0.11.3
+   Compiling phf_generator v0.10.0
+   Compiling phf_codegen v0.8.0
+   Compiling phf_codegen v0.11.3
+   Compiling string_cache_codegen v0.5.4
+   Compiling vswhom-sys v0.1.3
+   Compiling crc32fast v1.5.0
+   Compiling selectors v0.24.0
+   Compiling windows-targets v0.53.5
+   Compiling windows-targets v0.52.6
+   Compiling typenum v1.19.0
+   Compiling pin-project-lite v0.2.16
+   Compiling windows-sys v0.59.0
+   Compiling windows-sys v0.60.2
+   Compiling bitflags v2.11.0
+   Compiling rustc_version v0.4.1
+   Compiling markup5ever v0.14.1
+   Compiling generic-array v0.14.7
+   Compiling option-ext v0.2.0
+   Compiling cssparser v0.29.6
+   Compiling phf_macros v0.10.0
+   Compiling windows-link v0.1.3
+   Compiling regex v1.13.1
+   Compiling dirs-sys v0.5.0
+   Compiling heck v0.5.0
+   Compiling serde_derive v1.0.228
+   Compiling zerofrom-derive v0.1.6
+   Compiling yoke-derive v0.8.1
+   Compiling zerovec-derive v0.11.2
+   Compiling displaydoc v0.2.5
+   Compiling thiserror-impl v2.0.18
+   Compiling phf_macros v0.11.3
+   Compiling thiserror-impl v1.0.69
+   Compiling phf v0.10.1
+   Compiling cssparser-macros v0.6.1
+   Compiling ctor v0.2.9
+   Compiling match_token v0.1.0
+   Compiling phf v0.11.3
+   Compiling darling_macro v0.21.3
+   Compiling derive_more v0.99.20
+   Compiling schemars_derive v0.8.22
+   Compiling crossbeam-utils v0.8.21
+   Compiling vswhom v0.1.0
+   Compiling dirs v6.0.0
+   Compiling darling v0.21.3
+   Compiling zerofrom v0.1.6
+   Compiling yoke v0.8.1
+   Compiling serde_with_macros v3.16.1
+   Compiling libm v0.2.16
+   Compiling winreg v0.55.0
+   Compiling zerovec v0.11.5
+   Compiling zerotrie v0.2.3
+   Compiling embed-resource v3.0.6
+   Compiling windows-implement v0.60.2
+   Compiling tauri-winres v0.3.5
+   Compiling windows-interface v0.59.3
+   Compiling windows-strings v0.4.2
+   Compiling windows-result v0.3.4
+   Compiling tinystr v0.8.2
+   Compiling potential_utf v0.1.4
+   Compiling num-traits v0.2.19
+   Compiling powerfmt v0.2.0
+   Compiling icu_locale_core v2.1.1
+   Compiling icu_collections v2.1.1
+   Compiling serde_with v3.16.1
+   Compiling time-core v0.1.8
+   Compiling num-conv v0.2.0
+   Compiling deranged v0.5.8
+   Compiling time-macros v0.2.27
+   Compiling windows-core v0.61.2
+   Compiling icu_provider v2.1.1
+   Compiling icu_properties v2.1.2
+   Compiling icu_normalizer v2.1.1
+   Compiling string_cache v0.8.9
+   Compiling cargo-platform v0.1.9
+   Compiling jsonptr v0.6.3
+   Compiling cargo_metadata v0.19.2
+   Compiling cargo_toml v0.22.3
+   Compiling idna_adapter v1.2.1
+   Compiling json-patch v3.0.1
+   Compiling idna v1.1.0
+   Compiling time v0.3.47
+   Compiling url v2.5.8
+   Compiling html5ever v0.29.1
+   Compiling socket2 v0.6.2
+   Compiling tokio-macros v2.6.0
+   Compiling mio v1.1.1
+   Compiling urlpattern v0.3.0
+   Compiling kuchikiki v0.8.8-speedreader
+   Compiling simd-adler32 v0.3.8
+   Compiling tokio v1.49.0
+   Compiling windows-threading v0.1.0
+   Compiling windows-future v0.2.1
+   Compiling windows-collections v0.2.0
+   Compiling windows-numerics v0.2.0
+   Compiling tauri-utils v2.8.2
+   Compiling adler2 v2.0.1
+   Compiling raw-window-handle v0.6.2
+   Compiling miniz_oxide v0.8.9
+   Compiling windows v0.61.3
+   Compiling dpi v0.1.2
+   Compiling crossbeam-channel v0.5.15
+   Compiling webview2-com-sys v0.38.2
+   Compiling tracing-attributes v0.1.31
+   Compiling tracing-core v0.1.36
+   Compiling unicode-segmentation v1.12.0
+   Compiling flate2 v1.1.9
+   Compiling cookie v0.18.1
+   Compiling tracing v0.1.44
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling fdeflate v0.3.7
+   Compiling webview2-com-macros v0.8.1
+   Compiling windows-version v0.1.7
+   Compiling pkg-config v0.3.32
+   Compiling futures-core v0.3.32
+   Compiling png v0.17.16
+   Compiling digest v0.10.7
+   Compiling keyboard-types v0.7.0
+   Compiling pxfm v0.1.27
+   Compiling byteorder-lite v0.1.0
+   Compiling color_quant v1.1.0
+   Compiling wry v0.54.2
+   Compiling zune-core v0.5.1
+   Compiling cpufeatures v0.2.17
+   Compiling quick-error v2.0.1
+   Compiling weezl v0.1.12
+   Compiling tauri-runtime v2.10.0
+   Compiling image-webp v0.2.4
+   Compiling tauri-plugin v2.5.3
+   Compiling tauri-build v2.5.5
+   Compiling moxcms v0.7.11
+   Compiling gif v0.14.1
+   Compiling zune-jpeg v0.5.12
+   Compiling sha2 v0.10.9
+   Compiling ico v0.5.0
+   Compiling png v0.18.1
+   Compiling bytemuck v1.25.0
+   Compiling base64 v0.22.1
+   Compiling lazy_static v1.5.0
+   Compiling futures-sink v0.3.32
+   Compiling tauri-runtime-wry v2.10.0
+   Compiling tauri-codegen v2.5.4
+   Compiling muda v0.17.1
+   Compiling softbuffer v0.4.8
+   Compiling serialize-to-javascript-impl v0.1.2
+   Compiling futures-channel v0.3.32
+   Compiling serde_repr v0.1.20
+   Compiling phf_shared v0.13.1
+   Compiling window-vibrancy v0.6.0
+   Compiling serialize-to-javascript v0.1.2
+   Compiling zeroize v1.8.2
+   Compiling tray-icon v0.21.3
+   Compiling fastrand v2.3.0
+   Compiling allocator-api2 v0.2.21
+   Compiling mime v0.3.17
+   Compiling http-range v0.1.5
+   Compiling image v0.25.9
+   Compiling phf_generator v0.13.1
+   Compiling zstd-sys v2.0.16+zstd.1.5.7
+   Compiling futures-macro v0.3.32
+   Compiling ring v0.17.14
+   Compiling ahash v0.8.12
+   Compiling slab v0.4.12
+   Compiling futures-io v0.3.32
+   Compiling futures-task v0.3.32
+   Compiling crunchy v0.2.4
+   Compiling phf_codegen v0.13.1
+   Compiling string_cache_codegen v0.6.1
+   Compiling rustls-pki-types v1.14.0
+   Compiling futures-util v0.3.32
+   Compiling http-body v1.0.1
+   Compiling crossbeam-epoch v0.9.20
+   Compiling zstd-safe v7.2.4
+   Compiling untrusted v0.9.0
+   Compiling httparse v1.10.1
+   Compiling web_atoms v0.2.6
+   Compiling hashbrown v0.14.5
+   Compiling async-trait v0.1.89
+   Compiling ownedbytes v0.7.0
+   Compiling windows_x86_64_msvc v0.48.5
+   Compiling try-lock v0.2.5
+   Compiling rustls v0.23.45
+   Compiling tower-service v0.3.3
+   Compiling want v0.3.1
+   Compiling string_cache v0.9.0
+   Compiling tantivy-common v0.7.0
+   Compiling bitpacking v0.9.3
+   Compiling phf v0.13.1
+   Compiling tauri v2.10.2
+   Compiling tauri-macros v2.5.4
+   Compiling tauri-plugin-fs v2.4.5
+   Compiling either v1.15.0
+   Compiling rustversion v1.0.22
+   Compiling pin-utils v0.1.0
+   Compiling atomic-waker v1.1.2
+   Compiling rayon-core v1.13.0
+   Compiling subtle v2.6.1
+   Compiling utf8-ranges v1.0.5
+   Compiling vcpkg v0.2.15
+   Compiling tantivy-fst v0.5.0
+   Compiling hyper v1.8.1
+   Compiling rand_distr v0.4.3
+   Compiling libsqlite3-sys v0.30.1
+   Compiling tauri-plugin-global-shortcut v2.3.2
+   Compiling tauri-plugin-log v2.9.0
+   Compiling tauri-plugin-shell v2.3.6
+   Compiling tauri-plugin-dialog v2.6.0
+   Compiling tauri-plugin-window-state v2.4.1
+   Compiling rustls-webpki v0.103.14
+   Compiling tauri-plugin-opener v2.5.3
+   Compiling crossbeam-deque v0.8.6
+   Compiling tendril v0.5.1
+   Compiling sync_wrapper v1.0.2
+   Compiling encoding_rs v0.8.35
+   Compiling ryu v1.0.23
+   Compiling murmurhash32 v0.3.1
+   Compiling minimal-lexical v0.2.1
+   Compiling foldhash v0.1.5
+   Compiling winapi v0.3.9
+   Compiling tower-layer v0.3.3
+   Compiling ipnet v2.11.0
+   Compiling rfd v0.16.0
+   Compiling hyper-util v0.1.20
+   Compiling tower v0.5.3
+   Compiling nom v7.1.3
+   Compiling hashbrown v0.15.5
+   Compiling tantivy-stacker v0.3.0
+   Compiling markup5ever v0.39.0
+   Compiling windows-targets v0.48.5
+   Compiling itertools v0.12.1
+   Compiling hashlink v0.8.4
+   Compiling webpki-roots v1.0.6
+   Compiling tokio-rustls v0.26.4
+   Compiling open v5.3.3
+   Compiling windows-sys v0.52.0
+   Compiling keyring-core v1.0.0
+   Compiling instant v0.1.13
+   Compiling bumpalo v3.20.2
+   Compiling zip v2.4.2
+   Compiling pulldown-cmark v0.13.4
+   Compiling fastdivide v0.4.2
+   Compiling downcast-rs v1.2.1
+   Compiling iri-string v0.7.10
+   Compiling arraydeque v0.5.1
+   Compiling error-code v3.3.2
+   Compiling tantivy-bitpacker v0.6.0
+   Compiling yaml-rust2 v0.8.1
+   Compiling tempfile v3.26.0
+   Compiling clipboard-win v5.4.1
+   Compiling arc-swap v1.8.2
+   Compiling zopfli v0.8.3
+   Compiling fs4 v0.8.4
+   Compiling windows-native-keyring-store v1.1.0
+   Compiling measure_time v0.8.3
+   Compiling hyper-rustls v0.27.7
+   Compiling rayon v1.11.0
+   Compiling tantivy-query-grammar v0.22.0
+   Compiling tower-http v0.6.8
+   Compiling windows-sys v0.48.0
+   Compiling lru v0.12.5
+   Compiling html5ever v0.39.0
+   Compiling serde_urlencoded v0.7.1
+   Compiling second-brain v0.1.0-alpha.1 (<Windows candidate>\src-tauri)
+   Compiling futures-executor v0.3.32
+   Compiling hashlink v0.9.1
+   Compiling http-body-util v0.1.3
+   Compiling global-hotkey v0.8.0
+   Compiling tokio-util v0.7.18
+   Compiling toml v0.5.11
+   Compiling sketches-ddsketch v0.2.2
+   Compiling tantivy-tokenizer-api v0.3.0
+   Compiling rust-stemmers v1.2.0
+   Compiling notify-types v2.1.0
+   Compiling os_pipe v1.2.3
+   Compiling shared_child v1.1.2
+   Compiling fern v0.7.1
+   Compiling oneshot v0.1.13
+   Compiling zstd v0.13.3
+   Compiling num_cpus v1.17.0
+   Compiling fallible-iterator v0.3.0
+   Compiling lz4_flex v0.11.6
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling rustc-hash v1.1.0
+   Compiling tantivy-sstable v0.3.0
+   Compiling pure-rust-locales v0.8.2
+   Compiling memmap2 v0.9.11
+   Compiling unicase v2.9.0
+   Compiling census v0.4.2
+   Compiling unsafe-libyaml v0.2.11
+   Compiling levenshtein_automata v0.2.1
+   Compiling tantivy-columnar v0.3.0
+   Compiling htmlescape v0.3.1
+   Compiling serde_yaml v0.9.34+deprecated
+   Compiling tao v0.34.5
+   Compiling chrono v0.4.44
+   Compiling tantivy v0.22.1
+   Compiling notify v8.2.0
+   Compiling rusqlite v0.32.1
+   Compiling webview2-com v0.38.2
+   Compiling gray_matter v0.2.9
+   Compiling reqwest v0.12.28
+   Compiling winreg v0.52.0
+   Compiling legible v0.5.1
+   Compiling futures v0.3.32
+   Compiling keyring v4.2.0
+   Compiling arboard v3.6.1
+   Compiling quick-xml v0.41.0
+   Compiling sys-locale v0.3.2
+   Compiling urlencoding v2.1.3
+   Compiling tauri-plugin-single-instance v2.4.0
+warning: linker stdout: Creando biblioteca <Windows shared Rust target>\release\deps\app_lib.dll.lib y objeto <Windows shared Rust target>\release\deps\app_lib.dll.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `second-brain` (lib) generated 1 warning
+    Finished `release` profile [optimized] target(s) in 5m 34s
+       Built application at: <Windows shared Rust target>\release\second-brain.exe
+        Info Target: x64
+     Running makensis to produce <Windows shared Rust target>\release\bundle\nsis\Second Brain_0.1.0-alpha.1_x64-setup.exe
+    Finished 1 bundle at:
+        <Windows shared Rust target>\release\bundle\nsis\Second Brain_0.1.0-alpha.1_x64-setup.exe

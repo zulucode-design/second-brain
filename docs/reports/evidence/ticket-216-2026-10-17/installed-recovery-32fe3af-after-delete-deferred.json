@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "id": "a5996a4d-7eb1-4c00-b3c0-fd2602601f6f",
+      "path": "<fixture-vault>/Areas/Shed spending.md"
+    },
+    {
+      "id": "0b732a91-36b5-4398-81e4-07cc5b1c531e",
+      "path": "<fixture-vault>/Areas/Shed wall wood.md"
+    }
+  ]
+}

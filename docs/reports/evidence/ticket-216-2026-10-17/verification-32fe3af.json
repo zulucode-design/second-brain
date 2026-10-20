@@ -1,0 +1,165 @@
+{
+  "candidate": "32fe3afdc3092e42e937fd2f6edbd09453680f7b",
+  "originMain": "1e99ab122dcdb873c17b7055e1cb8e148b592de2",
+  "branch": "fix/216-deferred-similarity",
+  "startingTreeClean": true,
+  "merge": "7763c73 merged origin/main 1e99ab122dcdb873c17b7055e1cb8e148b592de2 before this run; fetch confirmed no movement",
+  "started": "2026-10-20T22:29:07.853967+00:00",
+  "windowsDiskBeforePreparation": [
+    {
+      "Name": "C",
+      "Free": 72486268928,
+      "Used": 182346006528
+    },
+    {
+      "Name": "D",
+      "Free": 146170503168,
+      "Used": 763997655040
+    }
+  ],
+  "reviewRound26": "Sol: both axes clean, no findings; source review only, supplied prior result",
+  "commands": {
+    "Fedora": {
+      "pnpm verify": {
+        "result": "PASS",
+        "exit": 0,
+        "svelteErrors": 0,
+        "svelteWarnings": 0,
+        "jsPassed": 254,
+        "jsFailed": 0,
+        "rustPassed": 737,
+        "rustFailed": 0,
+        "rustIgnored": 10,
+        "rustListed": 747,
+        "formatAndClippy": "PASS",
+        "staticSites": 1
+      },
+      "pnpm tauri:build": {
+        "result": "PASS",
+        "exit": 0,
+        "rpms": 1
+      },
+      "scripts/verify-linux-package.sh": {
+        "result": "PASS",
+        "exit": 0,
+        "matchedDesktopEntries": 1,
+        "cleanupInterceptedToRetainExtraction": true
+      },
+      "pnpm tauri build --debug --no-bundle": {
+        "result": "PASS",
+        "exit": 0,
+        "binaries": 1
+      },
+      "node scripts/similar-run.mjs --app src-tauri/target/debug/second-brain": {
+        "result": "PASS",
+        "exit": 0,
+        "summary": {
+          "captures": 17,
+          "duplicatesFound": 8,
+          "duplicates": 8,
+          "wrongCards": 0,
+          "inconclusive": 0
+        }
+      }
+    },
+    "Windows": {
+      "pnpm test:rust": {
+        "result": "PASS",
+        "exit": 0,
+        "listed": 716,
+        "passed": 707,
+        "failed": 0,
+        "ignored": 9
+      },
+      "pnpm lint:rust": {
+        "result": "FAIL (allowed #221 only)",
+        "exit": 101,
+        "format": "PASS",
+        "distinctLintErrors": 1,
+        "lint": "bind_instead_of_map",
+        "candidateLocation": "src-tauri/src/commands.rs:4420",
+        "originMainLocation": "src-tauri/src/commands.rs:4295"
+      },
+      "pnpm build": {
+        "result": "PASS",
+        "exit": 0,
+        "staticSites": 1
+      },
+      "pnpm tauri:build": {
+        "result": "PASS",
+        "exit": 0,
+        "installers": 1,
+        "installedNothing": true
+      }
+    }
+  },
+  "namedTests": {
+    "fedora": 50,
+    "windows": 45,
+    "unixOnlyNotCompiledOnWindows": 5,
+    "restoreOutcomeTests": 5,
+    "newNoteLeftByVaultSwitchJs": "PASS"
+  },
+  "usageProbes": "Required gpt-6.1-sol low read-only probe returned OK before each run. Sol ran all verification; no stand-in.",
+  "windowsPreparation": "Earlier checkout absent; fresh disposable checkout cloned from candidate bundle. Shared Rust cache reused; source checkout and existing install left alone. Frozen lockfile installation reused 477 local packages, downloaded 0.",
+  "packageCleanup": {
+    "rpmQueryExit": 1,
+    "rpmQuery": "package second-brain is not installed",
+    "helperRemoveExit": 0,
+    "absent": {
+      "/usr/bin/second-brain": true,
+      "/usr/share/applications/Second Brain.desktop": true,
+      "/usr/share/applications/io.github.zulucodedesign.SecondBrain.desktop": true
+    }
+  },
+  "finalFedoraState": {
+    "productionProfilesUnchangedAgainstPreinstall": true,
+    "profileRoots": 8,
+    "presentRoots": 2,
+    "driverAndForwardingPortsAbsent": [
+      4444,
+      4447,
+      4456,
+      4457,
+      11435,
+      11436
+    ],
+    "debugAppAbsent": true,
+    "installedPackageAbsent": true
+  },
+  "installedRecoveryEvidence": "installed-recovery-32fe3af.json",
+  "similarRunEvidence": "similar-run-32fe3af.json",
+  "priorEvidence": "19727aa runs remain historical; no old build, suite or installed recovery result substitutes for the current candidate.",
+  "result": "VERIFY: PASS",
+  "pushPerformed": false,
+  "codeEdited": false,
+  "artifactCleanupPerformed": false,
+  "reportHeadStillNeedsFinalReview": true,
+  "windowsPostBuildState": {
+    "status": " M src-tauri/Cargo.toml",
+    "treeClean": false,
+    "normalizedTrackedContentUnchanged": true,
+    "normalizedDiffExit": 0,
+    "indexDiffExit": 0,
+    "evidence": "windows-post-build-state-32fe3af.json"
+  },
+  "windowsFinalDisk": [
+    {
+      "Name": "C",
+      "Free": 63751217152,
+      "Used": 191081058304
+    },
+    {
+      "Name": "D",
+      "Free": 137665474560,
+      "Used": 772502683648
+    }
+  ],
+  "windowsInstaller": [
+    {
+      "file": "Second Brain_0.1.0-alpha.1_x64-setup.exe",
+      "bytes": 20333836,
+      "sha256": "01de77d0878deda5d9c43a100fdb505822c7927cfbecbdba9f9e2f1ddf3ec9ab"
+    }
+  ]
+}
