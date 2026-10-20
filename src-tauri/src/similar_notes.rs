@@ -274,6 +274,9 @@ pub struct DeferredChecks {
     /// The vault they belong to. `None` until a vault opens.
     vault: Option<String>,
     checks: Vec<DeferredCheck>,
+    /// The checks the file held when it was last read or written, and none while it cannot be
+    /// read: any others in `checks` wait only in memory.
+    in_file: Vec<DeferredCheck>,
     /// The file was there but could not be read: it is read again before anything is written
     /// over it, so an error that passes never costs the checks it holds.
     unread: bool,
@@ -322,19 +325,26 @@ impl DeferredChecks {
         Self {
             vault: Some(vault.to_string()),
             unread: read.is_none(),
+            in_file: read.clone().unwrap_or_default(),
             checks: read.unwrap_or_default(),
             forgotten: Vec::new(),
         }
     }
 
     /// Makes `vault`'s checks the open ones, read from its file. Reopening the open vault keeps
-    /// the list it has: a check kept since the file was read is only there.
+    /// the list it has: a check kept since the file was read is only there. Opening another
+    /// first saves once more the checks that wait only in memory, since the file may take them
+    /// now. Those it still cannot save are lost, and the log counts them.
     pub fn open(&mut self, vault: &str) {
         if !self
             .vault
             .as_deref()
             .is_some_and(|open| same_path(open, vault))
         {
+            if self.unsaved() > 0 {
+                self.save();
+                self.log_lost();
+            }
             *self = Self::load(vault);
         }
     }
@@ -350,13 +360,15 @@ impl DeferredChecks {
             return false;
         };
         let mut checks: Vec<DeferredCheck> = older
-            .into_iter()
+            .iter()
             .filter(|old| {
                 !self.holds(old) && !self.forgotten.iter().any(|gone| gone.same_note(old))
             })
+            .cloned()
             .collect();
         checks.append(&mut self.checks);
         self.checks = checks;
+        self.in_file = older;
         self.unread = false;
         self.forgotten.clear();
         true
@@ -370,7 +382,9 @@ impl DeferredChecks {
         }
     }
 
-    /// Rewrites the file. When that fails, the checks still wait in memory until the app quits.
+    /// Rewrites the file. When that fails, the checks kept since it was last read or written wait
+    /// only in memory, and are lost when the app quits or another vault opens without a save
+    /// that succeeds.
     fn save(&mut self) {
         let Some(vault) = self.vault.clone() else {
             return;
@@ -387,9 +401,27 @@ impl DeferredChecks {
             .map_err(|error| error.to_string())?;
             crate::durable::replace(&file, &bytes, crate::durable::Mode::Private)
         });
-        if saved.is_err() {
+        match saved {
+            Ok(()) => self.in_file = self.checks.clone(),
             // Without the error, which can name the file.
-            log::warn!("Could not save the deferred similarity checks");
+            Err(_) => log::warn!("Could not save the deferred similarity checks"),
+        }
+    }
+
+    /// How many checks wait only in memory: kept since the file was last read or written.
+    fn unsaved(&self) -> usize {
+        self.checks
+            .iter()
+            .filter(|check| !self.in_file.contains(check))
+            .count()
+    }
+
+    /// Logs how many checks are lost as this list is let go, unsaved.
+    fn log_lost(&self) {
+        let lost = self.unsaved();
+        if lost > 0 {
+            // A count only (docs/log-privacy.md).
+            log::warn!("Lost deferred similarity checks that could not be saved: lost={lost}");
         }
     }
 
@@ -435,8 +467,14 @@ fn with_kept(state: &AppState, vault: &str, with: impl FnOnce(&mut DeferredCheck
         Some(true) => with(&mut open),
         // The vault was switched while the check ran. The check belongs to the vault it ran in,
         // whose file keeps it for that vault's next open. The open list stays locked meanwhile,
-        // so reopening that vault cannot read the file between this read and write.
-        Some(false) => with(&mut DeferredChecks::load(vault)),
+        // so reopening that vault cannot read the file between this read and write. Unlike the
+        // open list, this one is let go at once: a check it cannot save to that file is lost
+        // then, and the log counts it.
+        Some(false) => {
+            let mut other = DeferredChecks::load(vault);
+            with(&mut other);
+            other.log_lost();
+        }
         None => {
             *open = DeferredChecks::load(vault);
             with(&mut open);
@@ -1273,6 +1311,41 @@ mod tests {
         assert_eq!(DeferredChecks::load(vault_text).checks(), expected);
         std::fs::remove_file(&file).unwrap();
         std::fs::remove_dir_all(&vault).unwrap();
+    }
+
+    #[test]
+    fn a_check_kept_while_the_file_cannot_be_read_is_saved_when_another_vault_opens() {
+        let first = std::env::temp_dir().join(format!("sb-deferred-{}", uuid::Uuid::new_v4()));
+        let second = std::env::temp_dir().join(format!("sb-deferred-{}", uuid::Uuid::new_v4()));
+        let (first_text, second_text) = (first.to_str().unwrap(), second.to_str().unwrap());
+        for vault in [&first, &second] {
+            std::fs::create_dir_all(vault).unwrap();
+        }
+        let file = deferred_file(first_text).unwrap();
+        std::fs::create_dir(&file).unwrap();
+        let mut open = DeferredChecks::default();
+        open.open(first_text);
+        let kept = DeferredCheck {
+            id: "note-id".to_string(),
+            path: "Areas/Note.md".to_string(),
+        };
+        // Kept only in memory: nothing is written over what could not be read.
+        open.keep(kept.clone());
+
+        // Readable again by the time another vault opens.
+        std::fs::remove_dir(&file).unwrap();
+        let none: DeferredFile<Vec<DeferredCheck>> = DeferredFile { checks: Vec::new() };
+        std::fs::write(&file, serde_json::to_vec(&none).unwrap()).unwrap();
+        open.open(second_text);
+        assert_eq!(
+            DeferredChecks::load(first_text).checks(),
+            [kept],
+            "saved before the list was let go"
+        );
+        std::fs::remove_file(&file).unwrap();
+        for vault in [first, second] {
+            std::fs::remove_dir_all(vault).unwrap();
+        }
     }
 
     #[test]
