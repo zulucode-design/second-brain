@@ -881,23 +881,24 @@ fn take_writers(runtime: &mut Runtime) -> (Option<CommandChild>, Vec<u32>) {
 /// What a batch whose pause Syncthing did not acknowledge stops, and what it waits for (#224).
 #[derive(Debug, Default, PartialEq, Eq)]
 struct BatchWriters {
-    /// The current Syncthing is the one the batch paused, so the batch takes and stops it.
+    /// The current Syncthing is one the batch resumed, so the batch takes and stops it.
     stop_current: bool,
-    /// A current Syncthing other than the one the batch paused, left running. The supervisor
-    /// started it after the paused one died, and every start is paused, so it is not writing
-    /// what the batch received.
+    /// A current Syncthing the batch did not resume, left running. The supervisor started it after
+    /// the batch's own one died, and every start is paused, so it is not writing what the batch
+    /// received.
     spared: Option<u32>,
     /// Every process the batch waits for before the lease goes: those a disable already stopped,
     /// which may still be writing, and the current one when the batch stops it.
     wait_for: Vec<u32>,
 }
 
-/// The batch path's decision, from the process id the batch recorded before it resumed the folder,
-/// the current Syncthing's, and the processes already exiting. With nothing recorded, the batch
-/// stops nothing. A process id, unlike `Runtime::generation`, does not move before `stop` takes
-/// the child, so a Syncthing a disable has not taken yet is still the batch's to stop.
-fn batch_writers(paused: Option<u32>, current: Option<u32>, exiting: &[u32]) -> BatchWriters {
-    let stop_current = paused.is_some() && current == paused;
+/// The batch path's decision, from the process ids the batch recorded before and after it resumed
+/// the folder, the current Syncthing's, and the processes already exiting. With nothing recorded,
+/// the batch stops nothing. A process id, unlike `Runtime::generation`, does not move before `stop`
+/// takes the child, so a Syncthing a disable has not taken yet is still the batch's to stop. A
+/// replacement that reuses a recorded id is stopped, as every replacement was before #224.
+fn batch_writers(resumed: &[u32], current: Option<u32>, exiting: &[u32]) -> BatchWriters {
+    let stop_current = current.is_some_and(|pid| resumed.contains(&pid));
     let mut wait_for = exiting.to_vec();
     if stop_current {
         wait_for.extend(current);
@@ -909,14 +910,15 @@ fn batch_writers(paused: Option<u32>, current: Option<u32>, exiting: &[u32]) -> 
     }
 }
 
-/// `take_writers` for the batch path: the running Syncthing only if it is `paused`, the one the
-/// batch paused, and the processes to wait for. A taken child is recorded as exiting, as there.
+/// `take_writers` for the batch path: the running Syncthing only if it is one of `resumed`, those
+/// the batch may have resumed, and the processes to wait for. A taken child is recorded as exiting,
+/// as there.
 fn take_batch_writers(
     runtime: &mut Runtime,
-    paused: Option<u32>,
+    resumed: &[u32],
 ) -> (Option<CommandChild>, BatchWriters) {
     let current = runtime.child.as_ref().map(CommandChild::pid);
-    let writers = batch_writers(paused, current, &runtime.exiting);
+    let writers = batch_writers(resumed, current, &runtime.exiting);
     let child = if writers.stop_current {
         take_writers(runtime).0
     } else {
@@ -1424,13 +1426,15 @@ fn has_incoming(local_status: &serde_json::Value) -> bool {
 /// anything is incoming, `before_receiving` takes the safety backup and only then may Syncthing
 /// write to the vault. A batch with nothing incoming takes no backup (#14). Folder and device are
 /// paused again on every path; the flag says Syncthing acknowledged that pause, so it can no
-/// longer write (#189).
+/// longer write (#189). `resumed` runs once folder and device are resumed, so the caller can
+/// record which Syncthing took those calls (#224).
 fn sync_batch(
     client: &reqwest::blocking::Client,
     control: &ControlState,
     folder_id: &str,
     peer_id: &str,
     stopped: &dyn Fn() -> bool,
+    resumed: impl FnOnce(),
     before_receiving: impl FnMut() -> Result<(), String>,
 ) -> (Result<(), String>, bool) {
     let api = SyncthingApi { client, control };
@@ -1438,6 +1442,7 @@ fn sync_batch(
     if let Err(error) = start_batch(api, folder_id, peer_id, stopped) {
         return (Err(error), true);
     }
+    resumed();
     let pause = FolderPauseGuard {
         api,
         folder_id,
@@ -1601,17 +1606,18 @@ fn hold_for_peer_handoff(
 /// process to be gone; its supervisor starts it again paused, as every start is. If it will not go,
 /// the lease stays, the close times out, and the page says so (#189).
 ///
-/// `paused` is the Syncthing the run recorded before it resumed the folder, and only that process
-/// is stopped (#224). If it died during the run and the supervisor has already started another,
-/// the new one began paused and this run never resumed it, so it is left running: stopping it
-/// made the supervisor's next start fail silently and left sync stopped until the next batch.
-fn stop_writer(app: &AppHandle, paused: Option<u32>) {
+/// `resumed` holds the Syncthing processes the run recorded before and after it resumed the folder,
+/// and only those are stopped (#224). If the run's Syncthing died and the supervisor has already
+/// started another, the new one began paused and this run never resumed it, so it is left running:
+/// stopping it made the supervisor's next start fail silently and left sync stopped until the next
+/// batch.
+fn stop_writer(app: &AppHandle, resumed: &[u32]) {
     let (child, writers) = app
         .state::<AppState>()
         .sync_sidecar
         .runtime
         .lock()
-        .map(|mut runtime| take_batch_writers(&mut runtime, paused))
+        .map(|mut runtime| take_batch_writers(&mut runtime, resumed))
         .unwrap_or_default();
     if let Some(child) = child {
         log::warn!("Sync folder did not acknowledge its pause for the close; stopping Syncthing");
@@ -1620,7 +1626,7 @@ fn stop_writer(app: &AppHandle, paused: Option<u32>) {
         }
     } else if let Some(spared) = writers.spared {
         log::warn!(
-            "Sync folder did not acknowledge its pause; leaving Syncthing {spared} running, since it started after the one this run paused"
+            "Sync folder did not acknowledge its pause; leaving Syncthing {spared} running, since it started after this run resumed the folder"
         );
     } else {
         log::warn!("Sync folder did not acknowledge its pause; its Syncthing had already stopped");
@@ -1637,7 +1643,7 @@ fn stop_writer(app: &AppHandle, paused: Option<u32>) {
 
 /// Called before reconciliation and before the lease goes, closing or not: a pause Syncthing did not
 /// acknowledge, even after the guard's retry, may leave it writing received files, so it is
-/// stopped first (#189). `stop_writer` stops only the Syncthing the run paused (#224).
+/// stopped first (#189). `stop_writer` stops only a Syncthing the run resumed (#224).
 fn settle_writer(pause_acknowledged: bool, stop_writer: impl FnOnce()) {
     if !pause_acknowledged {
         stop_writer();
@@ -1777,14 +1783,18 @@ fn run_sync(
                     return;
                 }
             };
-            // #224: the Syncthing this batch resumes and pauses, recorded before it resumes the
-            // folder. If the pause goes unanswered, the batch stops this process and no other.
-            let batch_syncthing = state
-                .sync_sidecar
-                .runtime
-                .lock()
-                .ok()
-                .and_then(|runtime| runtime.child.as_ref().map(CommandChild::pid));
+            // #224: the Syncthing processes this batch may resume, the only ones it stops if its
+            // pause goes unanswered. Recorded before it resumes folder and device, and again once
+            // it has, since a replacement that came up in between took those calls.
+            let current_syncthing = || {
+                state
+                    .sync_sidecar
+                    .runtime
+                    .lock()
+                    .ok()
+                    .and_then(|runtime| runtime.child.as_ref().map(CommandChild::pid))
+            };
+            let mut batch_syncthing: Vec<u32> = current_syncthing().into_iter().collect();
             let mut backed_up = false;
             let (batch, pause_acknowledged) = sync_batch(
                 &client,
@@ -1792,6 +1802,7 @@ fn run_sync(
                 &folder_id,
                 &peer.device_id,
                 &stopped,
+                || batch_syncthing.extend(current_syncthing()),
                 || {
                     crate::backup::create_pre_sync_backup(&vault.to_string_lossy(), &backup_dir)
                         .map_err(|error| {
@@ -1802,7 +1813,7 @@ fn run_sync(
                     Ok(())
                 },
             );
-            settle_writer(pause_acknowledged, || stop_writer(&app, batch_syncthing));
+            settle_writer(pause_acknowledged, || stop_writer(&app, &batch_syncthing));
             if backed_up {
                 let reconciliation =
                     crate::commands::reconcile_bulk_projections(&state, &vault.to_string_lossy());
@@ -2065,16 +2076,16 @@ mod tests {
         );
     }
 
-    // #224: process ids for the tests below. The batch paused PAUSED; REPLACEMENT is the paused
-    // Syncthing the supervisor started after PAUSED died; EXITING is one a disable already stopped
+    // #224: process ids for the tests below. The batch resumed RESUMED; REPLACEMENT is the paused
+    // Syncthing the supervisor started after RESUMED died; EXITING is one a disable already stopped
     // that has not exited yet.
-    const PAUSED: u32 = 100;
+    const RESUMED: u32 = 100;
     const REPLACEMENT: u32 = 200;
     const EXITING: u32 = 4242;
 
     #[test]
     fn a_batch_whose_syncthing_was_replaced_leaves_the_new_one_running() {
-        let writers = batch_writers(Some(PAUSED), Some(REPLACEMENT), &[EXITING]);
+        let writers = batch_writers(&[RESUMED], Some(REPLACEMENT), &[EXITING]);
         assert!(
             !writers.stop_current,
             "the replacement is not the batch's to stop"
@@ -2089,23 +2100,32 @@ mod tests {
 
     #[test]
     fn a_batch_whose_syncthing_was_not_replaced_stops_it() {
-        let writers = batch_writers(Some(PAUSED), Some(PAUSED), &[EXITING]);
+        let writers = batch_writers(&[RESUMED, RESUMED], Some(RESUMED), &[EXITING]);
         assert!(writers.stop_current);
         assert_eq!(writers.spared, None);
         assert_eq!(
             writers.wait_for,
-            vec![EXITING, PAUSED],
+            vec![EXITING, RESUMED],
             "the stopped one is waited for too"
         );
     }
 
     #[test]
+    fn a_replacement_that_took_the_batchs_resume_is_stopped() {
+        // RESUMED died while the batch resumed the folder, and REPLACEMENT answered those calls.
+        let writers = batch_writers(&[RESUMED, REPLACEMENT], Some(REPLACEMENT), &[EXITING]);
+        assert!(writers.stop_current, "the batch may have made it a writer");
+        assert_eq!(writers.spared, None);
+        assert_eq!(writers.wait_for, vec![EXITING, REPLACEMENT]);
+    }
+
+    #[test]
     fn a_batch_that_recorded_no_syncthing_stops_none() {
-        let writers = batch_writers(None, Some(REPLACEMENT), &[EXITING]);
+        let writers = batch_writers(&[], Some(REPLACEMENT), &[EXITING]);
         assert!(!writers.stop_current);
         assert_eq!(writers.spared, Some(REPLACEMENT));
         assert_eq!(writers.wait_for, vec![EXITING]);
-        assert_eq!(batch_writers(None, None, &[]), BatchWriters::default());
+        assert_eq!(batch_writers(&[], None, &[]), BatchWriters::default());
     }
 
     #[test]
@@ -2122,7 +2142,7 @@ mod tests {
             last_terminal: None,
             exiting: vec![EXITING],
         };
-        let (child, writers) = take_batch_writers(&mut runtime, Some(PAUSED));
+        let (child, writers) = take_batch_writers(&mut runtime, &[RESUMED]);
         assert!(child.is_none());
         assert_eq!(
             writers,
