@@ -218,11 +218,7 @@ fn resolve_what_is_there(path: &Path) -> Option<PathBuf> {
         }
         match std::fs::symlink_metadata(at) {
             // Gone: the folder above it places it.
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-                ) => {}
+            Err(error) if is_gone(&error) => {}
             // There, yet it does not resolve: a link to nothing, which could point anywhere once
             // its target appears, or an entry that cannot be read, which could be one.
             _ => return None,
@@ -512,11 +508,18 @@ fn locate(
 fn absent(path: &str) -> bool {
     match std::fs::metadata(path) {
         Ok(metadata) => !metadata.is_file(),
-        Err(error) => matches!(
-            error.kind(),
-            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-        ),
+        Err(error) => is_gone(&error),
     }
+}
+
+/// Whether `error`, from reaching a path, says nothing is there: the entry is missing, or what
+/// is above it is no longer a folder. One test, so placing a check and dropping one agree on
+/// what is gone.
+fn is_gone(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+    )
 }
 
 #[cfg(test)]
