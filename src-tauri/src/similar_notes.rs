@@ -116,7 +116,8 @@ pub fn check(
 /// treated as "nothing found": no index, an unreachable embedding backend, or a note that
 /// vanished. The check is kept in that vault's list while it waits its turn or runs, and stays
 /// kept when [`check`] itself fails, as it does while the backend is unreachable, or when another
-/// vault is open by then, to run once that vault's index has caught up (#216).
+/// vault is open by then, to run once that vault's index has caught up (#216). Reruns leave it to
+/// this first attempt, whose card a quick capture's notification follows, until the attempt ends.
 pub fn check_now(state: &AppState, vault: &str, path: &str) -> Option<SimilarityCheck> {
     // Without a semantic index nothing could run it, now or later.
     if state.semantic_index.lock().ok()?.is_none() {
@@ -131,11 +132,20 @@ pub fn check_now(state: &AppState, vault: &str, path: &str) -> Option<Similarity
         id,
         path: path.to_string(),
     };
+    // Marked before it is kept, so no rerun takes it from this attempt.
+    let first = FirstAttempt::start(vault, &kept);
     // Kept before it waits its turn or runs, so quitting while it waits behind another check,
     // or on the backend's timeout, still leaves it to run later.
     with_kept(state, vault, |checks| checks.keep(kept.clone()));
-    let _checking = CHECKING.lock().unwrap_or_else(PoisonError::into_inner);
-    // A rerun that had the turn first may have run it, and shown its card.
+    #[cfg(test)]
+    BEFORE_TURN.with_borrow_mut(|before| before.as_mut().map(|before| before()));
+    // Dropped in this order: a check left kept is the reruns' before the next turn starts.
+    let _turn = (
+        first,
+        CHECKING.lock().unwrap_or_else(PoisonError::into_inner),
+    );
+    // A rerun already checking the note when this was kept, for an earlier check of it, ran it
+    // and showed its card.
     let mut waiting = false;
     with_kept(state, vault, |checks| waiting = checks.holds(&kept));
     if !waiting {
@@ -476,6 +486,9 @@ thread_local! {
     /// Runs once a check on this thread has scored its note, so a test can act before it ends.
     pub(crate) static AFTER_SCORING: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
         const { std::cell::RefCell::new(None) };
+    /// Runs once [`check_now`] on this thread has kept its check, before it takes its turn.
+    pub(crate) static BEFORE_TURN: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Walks the vault's notes as the index sees them, each read in full: the note list's scan
@@ -543,13 +556,52 @@ fn open_index(state: &AppState) -> Option<(Arc<SemanticIndex>, String)> {
 /// twice, and a rerun never runs one that [`check_now`] is still running.
 static CHECKING: Mutex<()> = Mutex::new(());
 
+/// The checks [`check_now`] has kept and not yet ended, each with its vault: reruns leave them to
+/// it, since a rerun's card never notifies (#216). Never saved, so after a restart every kept
+/// check is the reruns'.
+static FIRST_ATTEMPTS: Mutex<Vec<(String, DeferredCheck)>> = Mutex::new(Vec::new());
+
+/// A check in [`FIRST_ATTEMPTS`] until dropped.
+struct FirstAttempt((String, DeferredCheck));
+
+impl FirstAttempt {
+    fn start(vault: &str, check: &DeferredCheck) -> Self {
+        let attempt = (vault.to_string(), check.clone());
+        first_attempts().push(attempt.clone());
+        Self(attempt)
+    }
+}
+
+impl Drop for FirstAttempt {
+    fn drop(&mut self) {
+        let mut attempts = first_attempts();
+        if let Some(at) = attempts.iter().position(|attempt| *attempt == self.0) {
+            attempts.remove(at);
+        }
+    }
+}
+
+fn first_attempts() -> MutexGuard<'static, Vec<(String, DeferredCheck)>> {
+    FIRST_ATTEMPTS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Whether `check`, kept for `vault`, waits on its first attempt.
+fn in_first_attempt(vault: &str, check: &DeferredCheck) -> bool {
+    first_attempts()
+        .iter()
+        .any(|(kept_in, attempt)| attempt.same_note(check) && same_path(kept_in, vault))
+}
+
 /// Runs each of the open vault's deferred checks once, oldest first, on the note's current
 /// text, and hands every result with matches to `deliver` (#216). A check that runs leaves the
-/// list, matches or not; one that fails again stays; a deleted note's is dropped. They stop, and
-/// the rest wait for the next rerun, once the index may no longer be caught up: a rebuild or
-/// reconcile started since it caught up or stopped part way, a note was queued or saved since,
-/// or settings replaced it. They stop too when something holds the note lock as a check looks
-/// for its note or ends, or a bulk change came and went while a check ran.
+/// list, matches or not; one that fails again stays; a deleted note's is dropped; one whose first
+/// attempt in [`check_now`] has not ended is left to it. They stop, and the rest wait for the
+/// next rerun, once the index may no longer be caught up: a rebuild or reconcile started since it
+/// caught up or stopped part way, a note was queued or saved since, or settings replaced it. They
+/// stop too when something holds the note lock as a check looks for its note or ends, or a bulk
+/// change came and went while a check ran.
 pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(SimilarityCheck)) {
     let _checking = CHECKING.lock().unwrap_or_else(PoisonError::into_inner);
     let Some((index, vault)) = open_index(state) else {
@@ -575,6 +627,10 @@ pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(Si
     let (mut found, mut dropped) = (0, 0);
     let mut scanned = None;
     for deferred in &waiting {
+        // Its first attempt runs it, and can notify for a quick capture.
+        if in_first_attempt(&vault, deferred) {
+            continue;
+        }
         // A rebuild or reconcile started since the index caught up can leave it short of notes,
         // so this check and the rest wait until the queue is through again.
         let Some(mark) = index.caught_up_mark() else {

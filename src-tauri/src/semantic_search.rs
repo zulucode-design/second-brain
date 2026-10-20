@@ -2889,6 +2889,44 @@ mod tests {
     }
 
     #[test]
+    fn a_rerun_leaves_a_kept_check_to_its_first_attempt() {
+        let root = scratch("deferred-first-attempt");
+        let vault = root.to_str().unwrap();
+        let kept = root.join("Kept.md");
+        let capture = root.join("Capture.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        write_note(
+            &capture,
+            "capture-id",
+            "Capture",
+            "Areas",
+            "coffee beans today",
+        );
+        let (_available, index) = recovering_index(&root);
+        let app = open_app(vault, &index);
+        let cards = cards_from_reruns(&index, &app);
+        index.note_changed(&kept).unwrap();
+        index.retry_pending().unwrap();
+
+        // Kept, the capture's check waits its turn while the capture's own embedding catches the
+        // index up, and the rerun that follows has the turn first.
+        let (embedding, saved) = (Arc::downgrade(&index), capture.clone());
+        crate::similar_notes::BEFORE_TURN.set(Some(Box::new(move || {
+            let index = embedding.upgrade().unwrap();
+            index.note_changed(&saved).unwrap();
+            index.retry_pending().unwrap();
+        })));
+        let found = check_now(&app, &vault_of(&app), capture.to_str().unwrap());
+        crate::similar_notes::BEFORE_TURN.set(None);
+        assert!(shown(&cards).is_empty(), "a rerun's card never notifies");
+        assert_eq!(found.unwrap().matches[0].note.title, "Kept");
+        assert!(waiting(&app).is_empty());
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
     fn a_started_index_reruns_nothing_before_its_first_reconcile() {
         let root = scratch("deferred-first-reconcile");
         let vault = root.to_str().unwrap();

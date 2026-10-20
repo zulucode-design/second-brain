@@ -257,7 +257,8 @@ that say the same thing.
   reconcile or rebuild overlapped leaves it to the next pass. A reconcile or rebuild that
   starts before the checks finish stops them, as does a restore, import or sync batch that
   runs before they finish, or a note saved before they finish, and those left run once the
-  queue is through again.
+  queue is through again. A check still waiting for its first run is left to that run, so a
+  quick capture's notification is never lost to a rerun.
   By then the notes saved offline are indexed too, so two duplicates written in the same
   offline session can match each other.
   A check kept while nothing is left to index, as when the backend comes back during the
