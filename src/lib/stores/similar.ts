@@ -71,7 +71,7 @@ activeNote.subscribe((note) => {
   const vault = get(appConfig)?.active_vault ?? null;
   const left = watcher.opened(note ? { id: note.meta.id, path: note.path, vault } : null);
   if (!left?.vault) return;
-  checkSimilarNotes(left.vault, left.path)
+  checkSimilarNotes(left.vault, left.path, left.id)
     .then((check) => check && show(check))
     .catch((error) => console.error('Similarity check failed:', error));
 });

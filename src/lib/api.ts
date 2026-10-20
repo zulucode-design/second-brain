@@ -663,9 +663,9 @@ export async function cancelAi(requestId: string): Promise<void> {
 }
 
 /** Existing notes like the note at `path` in `vault`, the vault it was opened in, or null when
- * none are or the check could not run. */
-export async function checkSimilarNotes(vault: string, path: string): Promise<SimilarityCheck | null> {
-  return invoke("check_similar_notes", { vault, path });
+ * none are or the check could not run. `id`, its frontmatter id, finds it if it has moved since. */
+export async function checkSimilarNotes(vault: string, path: string, id: string): Promise<SimilarityCheck | null> {
+  return invoke("check_similar_notes", { vault, path, id });
 }
 
 /**

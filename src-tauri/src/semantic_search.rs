@@ -2292,6 +2292,11 @@ mod tests {
         app.config.lock().unwrap().active_vault.clone().unwrap()
     }
 
+    /// [`check_now`] for `note`, saved in the app's open vault with the id `id`.
+    fn check_saved(app: &AppState, note: &Path, id: &str) -> Option<SimilarityCheck> {
+        check_now(app, &vault_of(app), note.to_str().unwrap(), id)
+    }
+
     /// Reruns the deferred checks after each pass that shows the backend back, as the app does,
     /// and collects the cards they deliver. Holds the app weakly: the app holds the index, and a
     /// cycle would keep the database open past cleanup.
@@ -2377,7 +2382,7 @@ mod tests {
         index.note_changed(&kept).unwrap();
         index.retry_pending().unwrap();
         backend.available.store(false, Ordering::SeqCst);
-        assert!(check_now(&app, &vault_of(&app), capture.to_str().unwrap()).is_none());
+        assert!(check_saved(&app, &capture, "capture-id").is_none());
         backend.available.store(true, Ordering::SeqCst);
         (root, index, app)
     }
@@ -2414,15 +2419,15 @@ mod tests {
         let (available, index) = recovering_index(&root);
         let app = open_app(vault, &index);
 
-        assert!(check_now(&app, &vault_of(&app), unrelated.to_str().unwrap()).is_none());
+        assert!(check_saved(&app, &unrelated, "unrelated-id").is_none());
         available.store(false, Ordering::SeqCst);
-        assert!(check_now(&app, &vault_of(&app), short.to_str().unwrap()).is_none());
+        assert!(check_saved(&app, &short, "short-id").is_none());
         assert!(
             waiting(&app).is_empty(),
             "nothing similar, or too short to judge, is a check that ran"
         );
 
-        assert!(check_now(&app, &vault_of(&app), capture.to_str().unwrap()).is_none());
+        assert!(check_saved(&app, &capture, "capture-id").is_none());
         let recorded = vec![("capture-id".to_string(), path_text(&capture))];
         assert_eq!(waiting(&app), recorded, "recorded by its id, with its path");
 
@@ -2472,9 +2477,13 @@ mod tests {
             "Areas",
             "quantum mechanics lecture notes",
         );
-        for note in [&first, &second, &unrelated] {
+        for (note, id) in [
+            (&first, "first-id"),
+            (&second, "second-id"),
+            (&unrelated, "unrelated-id"),
+        ] {
             index.note_changed(note).unwrap();
-            assert!(check_now(&app, &vault_of(&app), note.to_str().unwrap()).is_none());
+            assert!(check_saved(&app, note, id).is_none());
         }
         assert_eq!(waiting(&app).len(), 3);
         assert!(shown(&cards).is_empty());
@@ -2547,9 +2556,13 @@ mod tests {
             "Areas",
             "coffee mornings again",
         );
-        for note in [&moving, &deleted, &wandering] {
+        for (note, id) in [
+            (&moving, "moving-id"),
+            (&deleted, "deleted-id"),
+            (&wandering, "wandering-id"),
+        ] {
             index.note_changed(note).unwrap();
-            assert!(check_now(&app, &vault_of(&app), note.to_str().unwrap()).is_none());
+            assert!(check_saved(&app, note, id).is_none());
         }
         // Renamed and moved the way the app moves a note: the old path leaves the index and the
         // new one is queued. The other is deleted.
@@ -2628,7 +2641,7 @@ mod tests {
 
         available.store(false, Ordering::SeqCst);
         index.note_changed(&capture).unwrap();
-        assert!(check_now(&app, &vault_of(&app), capture.to_str().unwrap()).is_none());
+        assert!(check_saved(&app, &capture, "capture-id").is_none());
         available.store(true, Ordering::SeqCst);
         index.retry_pending().unwrap();
 
@@ -2676,7 +2689,7 @@ mod tests {
         index.retry_pending().unwrap();
         // Both notes are indexed; the capture's check fails all the same.
         available.store(false, Ordering::SeqCst);
-        assert!(check_now(&app, &vault_of(&app), capture.to_str().unwrap()).is_none());
+        assert!(check_saved(&app, &capture, "capture-id").is_none());
         assert_eq!(waiting(&app).len(), 1);
 
         available.store(true, Ordering::SeqCst);
@@ -2739,7 +2752,7 @@ mod tests {
         }
         index.retry_pending().unwrap();
         backend.available.store(false, Ordering::SeqCst);
-        assert!(check_now(&app, &vault_of(&app), capture.to_str().unwrap()).is_none());
+        assert!(check_saved(&app, &capture, "capture-id").is_none());
         assert_eq!(waiting(&app).len(), 1);
 
         // Back: one note is queued, and another is saved while the pass embeds the first.
@@ -2805,7 +2818,7 @@ mod tests {
         *backend.during_embed.lock().unwrap() = Some(Box::new(move || {
             *seen.lock().unwrap() = listed(&DeferredChecks::load(&reading));
         }));
-        let found = check_now(&app, &vault_of(&app), capture.to_str().unwrap()).unwrap();
+        let found = check_saved(&app, &capture, "capture-id").unwrap();
         assert_eq!(found.matches[0].note.title, "Kept");
         assert_eq!(
             *during.lock().unwrap(),
@@ -2856,7 +2869,7 @@ mod tests {
         *backend.during_embed.lock().unwrap() = Some(Box::new(move || {
             let checking = waiter.clone();
             *handle.lock().unwrap() = Some(std::thread::spawn(move || {
-                check_now(&checking, &vault_of(&checking), &queued)
+                check_now(&checking, &vault_of(&checking), &queued, "second-id")
             }));
             let deadline = std::time::Instant::now() + Duration::from_secs(5);
             while std::time::Instant::now() < deadline {
@@ -2867,7 +2880,7 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
         }));
-        let found = check_now(&app, &vault_of(&app), first.to_str().unwrap()).unwrap();
+        let found = check_saved(&app, &first, "first-id").unwrap();
         let queued_found = second_check
             .lock()
             .unwrap()
@@ -2916,10 +2929,53 @@ mod tests {
             index.note_changed(&saved).unwrap();
             index.retry_pending().unwrap();
         })));
-        let found = check_now(&app, &vault_of(&app), capture.to_str().unwrap());
+        let found = check_saved(&app, &capture, "capture-id");
         crate::similar_notes::BEFORE_TURN.set(None);
         assert!(shown(&cards).is_empty(), "a rerun's card never notifies");
         assert_eq!(found.unwrap().matches[0].note.title, "Kept");
+        assert!(waiting(&app).is_empty());
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
+    fn a_capture_renamed_before_its_check_starts_is_kept_by_its_id() {
+        let root = scratch("deferred-renamed-first");
+        let vault = root.to_str().unwrap();
+        let kept = root.join("Kept.md");
+        let capture = root.join("Capture.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        write_note(
+            &capture,
+            "capture-id",
+            "Capture",
+            "Areas",
+            "coffee beans today",
+        );
+        let (_available, index) = recovering_index(&root);
+        let app = open_app(vault, &index);
+        let cards = cards_from_reruns(&index, &app);
+        index.note_changed(&kept).unwrap();
+        index.retry_pending().unwrap();
+
+        // Renamed before its check reads it: the check fails, and is kept by the id it was saved
+        // with.
+        let renamed = root.join("Renamed.md");
+        std::fs::rename(&capture, &renamed).unwrap();
+        assert!(check_saved(&app, &capture, "capture-id").is_none());
+        assert_eq!(
+            waiting(&app),
+            [("capture-id".to_string(), path_text(&capture))]
+        );
+
+        // The rename is indexed, and the rerun finds the note by its id.
+        index.note_changed(&renamed).unwrap();
+        index.retry_pending().unwrap();
+        assert_eq!(
+            shown(&cards),
+            [("Capture".to_string(), vec!["Kept".to_string()])]
+        );
         assert!(waiting(&app).is_empty());
         drop(app);
         drop(index);
@@ -2950,7 +3006,7 @@ mod tests {
         }
         index.retry_pending().unwrap();
         available.store(false, Ordering::SeqCst);
-        assert!(check_now(&app, &vault_of(&app), capture.to_str().unwrap()).is_none());
+        assert!(check_saved(&app, &capture, "capture-id").is_none());
         available.store(true, Ordering::SeqCst);
         // Queued before the worker starts, so nothing wakes it: its first tick is 20 s away.
         index.note_changed(&first).unwrap();
@@ -2993,7 +3049,7 @@ mod tests {
         }
         index.retry_pending().unwrap();
         available.store(false, Ordering::SeqCst);
-        assert!(check_now(&app, &vault_of(&app), capture.to_str().unwrap()).is_none());
+        assert!(check_saved(&app, &capture, "capture-id").is_none());
         available.store(true, Ordering::SeqCst);
 
         // A fill still running when a pass ends holds the rerun, and the notes it queued hold it
@@ -3126,7 +3182,7 @@ mod tests {
         }
         index.retry_pending().unwrap();
         backend.available.store(false, Ordering::SeqCst);
-        assert!(check_now(&app, &vault_of(&app), capture.to_str().unwrap()).is_none());
+        assert!(check_saved(&app, &capture, "capture-id").is_none());
         backend.available.store(true, Ordering::SeqCst);
         let recorded = vec![("capture-id".to_string(), path_text(&capture))];
 
@@ -3195,7 +3251,7 @@ mod tests {
             index.note_changed(note).unwrap();
         }
         std::fs::write(&broken, [0xff, 0xfe, 0xfd]).unwrap();
-        assert!(check_now(&app, &vault_of(&app), capture.to_str().unwrap()).is_none());
+        assert!(check_saved(&app, &capture, "capture-id").is_none());
         backend.available.store(true, Ordering::SeqCst);
 
         // While the pass embeds the capture, a matching note arrives and a rebuild runs. The
@@ -3303,7 +3359,7 @@ mod tests {
         index.note_changed(&kept).unwrap();
         index.retry_pending().unwrap();
         available.store(false, Ordering::SeqCst);
-        assert!(check_now(&app, &vault_of(&app), capture.to_str().unwrap()).is_none());
+        assert!(check_saved(&app, &capture, "").is_none());
         available.store(true, Ordering::SeqCst);
         assert_eq!(waiting(&app), [(String::new(), path_text(&capture))]);
 
@@ -3389,7 +3445,7 @@ mod tests {
         index.note_changed(&kept).unwrap();
         index.retry_pending().unwrap();
         available.store(false, Ordering::SeqCst);
-        assert!(check_now(&app, &vault_of(&app), capture.to_str().unwrap()).is_none());
+        assert!(check_saved(&app, &capture, "capture-id").is_none());
         available.store(true, Ordering::SeqCst);
 
         // Moved while the app was closed, so only the vault scan can find it.
@@ -3687,7 +3743,7 @@ mod tests {
         // Another vault opened before the capture's check started.
         let app = open_app(opened.to_str().unwrap(), &index);
         let saved_in = saved_in.to_str().unwrap();
-        assert!(check_now(&app, saved_in, capture.to_str().unwrap()).is_none());
+        assert!(check_now(&app, saved_in, capture.to_str().unwrap(), "capture-id").is_none());
         assert!(
             waiting(&app).is_empty(),
             "nothing is kept for the open vault"
@@ -3715,7 +3771,7 @@ mod tests {
         ] {
             write_note(note, id, title, "Areas", "sourdough starter feeding");
             index.note_changed(note).unwrap();
-            assert!(check_now(&app, &vault_of(&app), note.to_str().unwrap()).is_none());
+            assert!(check_saved(&app, note, id).is_none());
         }
         backend.available.store(true, Ordering::SeqCst);
 
@@ -3786,9 +3842,9 @@ mod tests {
         // Saved in the vault at its target, then reopened through the link before the check ran.
         let (vault_text, link_text) = (vault.to_str().unwrap(), link.to_str().unwrap());
         let app = open_app(link_text, &index);
-        assert!(check_now(&app, vault_text, first.to_str().unwrap()).is_none());
+        assert!(check_now(&app, vault_text, first.to_str().unwrap(), "first-id").is_none());
         assert_eq!(waiting(&app).len(), 1, "kept in the open list");
-        assert!(check_now(&app, link_text, second.to_str().unwrap()).is_none());
+        assert!(check_now(&app, link_text, second.to_str().unwrap(), "second-id").is_none());
         assert_eq!(
             listed(&DeferredChecks::load(vault_text)).len(),
             2,

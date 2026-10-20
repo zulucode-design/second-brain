@@ -112,24 +112,21 @@ pub fn check(
     }))
 }
 
-/// [`check`] for the note at `path` in `vault`, the vault it was saved in, with every failure
-/// treated as "nothing found": no index, an unreachable embedding backend, or a note that
-/// vanished. The check is kept in that vault's list while it waits its turn or runs, and stays
+/// [`check`] for the note at `path` in `vault`, the vault it was saved in, whose frontmatter id
+/// is `id` (empty when it has none), with every failure treated as "nothing found": no index, an
+/// unreachable embedding backend, or a note that vanished. The check is kept in that vault's list while it waits its turn or runs, and stays
 /// kept when [`check`] itself fails, as it does while the backend is unreachable, or when another
 /// vault is open by then, to run once that vault's index has caught up (#216). Reruns leave it to
 /// this first attempt, whose card a quick capture's notification follows, until the attempt ends.
-pub fn check_now(state: &AppState, vault: &str, path: &str) -> Option<SimilarityCheck> {
+pub fn check_now(state: &AppState, vault: &str, path: &str, id: &str) -> Option<SimilarityCheck> {
     // Without a semantic index nothing could run it, now or later.
     if state.semantic_index.lock().ok()?.is_none() {
         return None;
     }
-    // Read before the check, while the note is surely at `path`: a failing check can wait out
-    // the backend's timeout, and the id finds the note after a move.
-    let id = operations::read_note(vault, path)
-        .map(|note| note.meta.id)
-        .unwrap_or_default();
+    // The id the caller had when the note was saved or opened, not one read now: the note may
+    // have been renamed or moved since, and the id still finds it.
     let kept = DeferredCheck {
-        id,
+        id: id.to_string(),
         path: path.to_string(),
     };
     // Marked before it is kept, so no rerun takes it from this attempt.
@@ -184,9 +181,15 @@ fn same_path(one: &str, other: &str) -> bool {
 /// Whether the note at `path` is in `vault`, compared as resolved paths, since a vault opened
 /// through a link keeps the link in its path while a note can carry the resolved one, and
 /// whether the app has opened that vault: keeping a check creates the vault's machine-local
-/// state, and nothing should appear in a folder that is not a vault.
+/// state, and nothing should appear in a folder that is not a vault. A note no longer at `path`,
+/// renamed or moved since, is placed by its folder: its check is kept by its id.
 pub(crate) fn note_in_opened_vault(vault: &str, path: &str) -> bool {
-    let (Ok(root), Ok(note)) = (dunce::canonicalize(vault), dunce::canonicalize(path)) else {
+    let path = Path::new(path);
+    let note = dunce::canonicalize(path).or_else(|error| match (path.parent(), path.file_name()) {
+        (Some(folder), Some(name)) => dunce::canonicalize(folder).map(|folder| folder.join(name)),
+        _ => Err(error),
+    });
+    let (Ok(root), Ok(note)) = (dunce::canonicalize(vault), note) else {
         return false;
     };
     note.starts_with(&root) && operations::helixnotes_dir(vault).is_dir()
@@ -758,20 +761,18 @@ fn show_card(app: &AppHandle, found: &SimilarityCheck) -> bool {
 
 /// Run the check for a quick capture in the background, show what it found in the main
 /// window, and raise a notification when the user is looking elsewhere.
-pub fn after_capture(app: AppHandle, vault: String, path: String) {
+pub fn after_capture(app: AppHandle, vault: String, path: String, id: String) {
     // Read now, while it still describes this capture: the next overlay overwrites it.
     let focused_at_capture = MAIN_FOCUSED_AT_CAPTURE.load(Ordering::SeqCst);
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(found) = check_now(&app.state::<AppState>(), &vault, &path) else {
-            return;
-        };
-        // Its nudge, like its card, belongs to the vault the check ran in.
-        if !show_card(&app, &found) {
-            return;
+        if let Some(found) = check_now(&app.state::<AppState>(), &vault, &path, &id) {
+            // Its nudge, like its card, belongs to the vault the check ran in.
+            if show_card(&app, &found) && !focused_at_capture && !main_window_focused(&app) {
+                notify(&app, found.vault);
+            }
         }
-        if !focused_at_capture && !main_window_focused(&app) {
-            notify(&app, found.vault);
-        }
+        // Once any card is sent: scripts/similar-run.mjs reads this as the check's end.
+        log::info!("Finished the similarity check for a capture");
     });
 }
 
@@ -1086,6 +1087,15 @@ mod tests {
         assert!(
             !super::note_in_opened_vault(&text(&link), &text(&stray)),
             "outside the vault"
+        );
+        let (renamed, escaped) = (vault.join("Gone.md"), vault.join("../Plain/Gone.md"));
+        assert!(
+            super::note_in_opened_vault(&text(&link), &text(&renamed)),
+            "renamed since: placed by its folder"
+        );
+        assert!(
+            !super::note_in_opened_vault(&text(&vault), &text(&escaped)),
+            "a folder outside the vault"
         );
         std::fs::remove_dir_all(root).unwrap();
     }

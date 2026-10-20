@@ -1195,7 +1195,7 @@ pub fn quick_capture_note(
         current_revision,
     )?;
     // Only now that the capture is on disk: the check can never cost the user their note.
-    crate::similar_notes::after_capture(app, vault_path, entry.path.clone());
+    crate::similar_notes::after_capture(app, vault_path, entry.path.clone(), entry.meta.id.clone());
 
     Ok(NoteEntry {
         preview: capture.body,
@@ -1205,18 +1205,20 @@ pub fn quick_capture_note(
 
 /// The capture-time similarity check (#9) for a note written in the app, run when the user
 /// first leaves it. `vault` is the vault the note was opened in, since leaving it can be what
-/// switches vaults. `None` when nothing is similar or the check could not run.
+/// switches vaults, and `id` its frontmatter id, which finds it if it has moved since. `None` when
+/// nothing is similar or the check could not run.
 #[tauri::command]
 pub async fn check_similar_notes(
     app: tauri::AppHandle,
     vault: String,
     path: String,
+    id: String,
 ) -> Result<Option<crate::similar_notes::SimilarityCheck>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if !crate::similar_notes::note_in_opened_vault(&vault, &path) {
             return None;
         }
-        crate::similar_notes::check_now(&app.state::<AppState>(), &vault, &path)
+        crate::similar_notes::check_now(&app.state::<AppState>(), &vault, &path, &id)
     })
     .await
     .map_err(|error| format!("Similarity check failed: {error}"))

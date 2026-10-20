@@ -6,9 +6,9 @@
 // Same setup as ask-run.mjs: a fresh run root, tauri-driver, and the desktop's Ollama tunnelled
 // in. The vault holds scripts/similarity-fixture.json's notes. Each fixture capture is filed
 // through the command the overlay uses (WebDriver cannot press a global hotkey), and the card
-// it raises in the main window is read back, and read again once every capture's check has ended,
-// so a late card still counts. Then Append, Dismiss, refused Appends on a note
-// edited and a note moved since the check, Open, Append with the capture open in the editor, Append with the similar note open, and a capture with the
+// it raises in the main window is read back once the app logs that its check has ended. Then
+// Append, Dismiss, refused Appends on a note edited and a note moved since the check, Open, Append
+// with the capture open in the editor, Append with the similar note open, and a capture with the
 // backend gone are each tried once.
 // On Linux, two more duplicates are captured with the main window minimized, and the
 // notifications the app sends are read off the session bus with dbus-monitor. A click on one
@@ -66,25 +66,6 @@ function readCard(browser, title) {
       failure: card.querySelector('.similar-error')?.innerText.trim() ?? null,
     };
   }, title);
-}
-
-// What a capture's card shows, judged against the duplicate it should name, if any.
-function judged(duplicateOf, card) {
-  const shown = card?.matches.map((match) => match.title) ?? [];
-  return {
-    shown,
-    coverage: card?.coverage ?? null,
-    excerpts: card?.matches.map((match) => match.excerpt) ?? [],
-    missed: Boolean(duplicateOf) && !shown.includes(duplicateOf),
-    wrong: shown.filter((title) => title !== duplicateOf),
-  };
-}
-
-// The notes whose checks the app still keeps: a check is kept from just after its capture is
-// saved until it ends (#216). The file is in the app's machine-local state under the run root.
-function stillKept(root) {
-  const file = readdirSync(root, { recursive: true }).find((name) => basename(name) === 'deferred_similarity.json');
-  return new Set(file ? JSON.parse(readFileSync(join(root, file), 'utf8')).checks.map((check) => check.path) : []);
 }
 
 async function waitForCard(browser, title, wanted = (card) => card !== null) {
@@ -223,12 +204,16 @@ function heldBackend(upstreamPort) {
   };
 }
 
-// How many times the app has logged skipping a check for a note: its check failed, which an
-// unreachable backend or a retired index both cause.
-function skippedChecks(root) {
+// Logged when a check for a note fails, which an unreachable backend or a retired index both
+// cause, and when a quick capture's check has ended, once any card it found is sent (#216).
+const SKIPPED = 'Skipped the similarity check for a new note';
+const FINISHED = 'Finished the similarity check for a capture';
+
+// How many times the app has logged `line`; null before it has a log.
+function logged(root, line) {
   const log = readdirSync(join(root, 'data'), { recursive: true }).find((name) => String(name).endsWith('Second Brain.log'));
   if (!log) return null;
-  return readFileSync(join(root, 'data', String(log)), 'utf8').split('Skipped the similarity check for a new note').length - 1;
+  return readFileSync(join(root, 'data', String(log)), 'utf8').split(line).length - 1;
 }
 
 const trashed = (vault, path) =>
@@ -274,26 +259,31 @@ async function main() {
       writeFileSync(join(settings.root, 'similar-run.json'), JSON.stringify(trace, null, 2));
       return trace;
     };
-    // The captures whose cards came within their wait.
-    const inTime = new Set();
     try {
       for (const item of fixture.captures) {
+        const finishedBefore = logged(settings.root, FINISHED) ?? 0;
+        const skippedBefore = logged(settings.root, SKIPPED) ?? 0;
         const started = Date.now();
         const entry = await capture(browser, item.title, item.body);
         // The overlay closes once this command returns, so this is what the user waits for.
         const captureMs = Date.now() - started;
-        // The backend's own check sends the card: a duplicate's is awaited, and any other capture
-        // gets five seconds for a card it should not get. Asking the backend directly would take
-        // the check's turn, and its card with it (#216).
+        // The backend's own check sends the card, and logs its end once it has. Asking the backend
+        // directly would take the check's turn, and its card with it (#216).
+        const finished = await browser
+          .waitUntil(async () => (logged(settings.root, FINISHED) ?? 0) > finishedBefore, {
+            timeout: CARD_TIMEOUT,
+            interval: 500,
+          })
+          .then(() => true, () => false);
+        // A card sent before that line reaches the page a moment later.
         let card = null;
         await browser
           .waitUntil(async () => (card = await readCard(browser, entry.meta.title)) !== null, {
-            timeout: item.duplicateOf ? CARD_TIMEOUT : 5_000,
-            interval: 500,
+            timeout: 2_000,
+            interval: 250,
           })
           .catch(() => {});
-        const verdict = judged(item.duplicateOf ?? null, card);
-        if (card) inTime.add(entry.path);
+        const shown = card?.matches.map((match) => match.title) ?? [];
         results.push({
           capture: item.title,
           kind: item.duplicateOf ? 'duplicate' : item.sameTopic?.length ? 'same topic' : 'unrelated',
@@ -301,29 +291,17 @@ async function main() {
           path: entry.path,
           title: entry.meta.title,
           captureMs,
-          // From the capture to the card, or to the end of the wait when none came in time.
+          // From the capture to the card, or to the end of the wait when none came.
           seconds: Math.round((Date.now() - started) / 1000),
-          ...verdict,
+          shown,
+          coverage: card?.coverage ?? null,
+          excerpts: card?.matches.map((match) => match.excerpt) ?? [],
+          missed: Boolean(item.duplicateOf) && !shown.includes(item.duplicateOf),
+          wrong: shown.filter((title) => title !== item.duplicateOf),
+          // The check never ended, or failed and was kept: what the capture shows proves nothing.
+          inconclusive: !finished || (logged(settings.root, SKIPPED) ?? 0) > skippedBefore,
         });
-        console.log(`${verdict.shown.length ? verdict.shown.join(', ') : '(no card)'}  <-  ${item.title}`);
-      }
-
-      // A check can end after its capture's wait, and its card counts all the same: each card is
-      // read again once every capture's check has ended. A check still kept by then failed or is
-      // still running, so what its capture shows proves nothing.
-      const unfinished = () => {
-        const kept = stillKept(settings.root);
-        return new Set(results.map((result) => result.path).filter((path) => kept.has(path)));
-      };
-      let pending = unfinished();
-      for (const deadline = Date.now() + CARD_TIMEOUT; pending.size && Date.now() < deadline; pending = unfinished()) {
-        await sleep(500);
-      }
-      for (const result of results) {
-        const card = await readCard(browser, result.title);
-        const late = card !== null && !inTime.has(result.path);
-        Object.assign(result, judged(result.duplicateOf, card), { late, inconclusive: pending.has(result.path) });
-        if (late) console.log(`late card: ${result.shown.join(', ')}  <-  ${result.capture}`);
+        console.log(`${shown.length ? shown.join(', ') : '(no card)'}  <-  ${item.title}`);
       }
 
       const carded = results.filter((result) => result.duplicateOf && result.shown.includes(result.duplicateOf));
@@ -536,7 +514,7 @@ async function main() {
           // The late check: its embedding is held while the vault switches, then released.
           const notifiedBeforeLate = notifyCalls(busOutput).length;
           const cardsBeforeLate = await cardCount(browser);
-          const skippedBeforeLate = skippedChecks(settings.root);
+          const skippedBeforeLate = logged(settings.root, SKIPPED);
           backend.hold();
           since = Date.now();
           const late = await capture(browser, `${duplicates[3].title} (late)`, duplicates[3].body);
@@ -568,7 +546,7 @@ async function main() {
             answersAfterRelease: backend.answers.filter((at) => at >= releasedAt).length,
             // 1 when the late check failed (a retired index, or the capture read under the new
             // vault); 0 when it finished and the vault check dropped it.
-            lateCheckSkipped: skippedBeforeLate === null ? null : skippedChecks(settings.root) - skippedBeforeLate,
+            lateCheckSkipped: skippedBeforeLate === null ? null : logged(settings.root, SKIPPED) - skippedBeforeLate,
             // The control's card stays (the page was not switched); any more is the late one.
             cardsAfterSwitch: (await cardCount(browser)) - cardsBeforeLate,
             notificationsAfterSwitch: notifyCalls(busOutput).length - notifiedBeforeLate,
