@@ -3035,6 +3035,72 @@ mod tests {
     }
 
     #[test]
+    fn a_note_written_at_a_captures_path_after_a_rerun_found_it_there_never_takes_its_check() {
+        let root = scratch("deferred-path-taken-mid-rerun");
+        let vault = root.to_str().unwrap();
+        let kept = root.join("Kept.md");
+        let (first, second) = (root.join("First.md"), root.join("Second.md"));
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        write_note(&first, "first-id", "First", "Areas", "coffee beans today");
+        write_note(
+            &second,
+            "second-id",
+            "Second",
+            "Areas",
+            "coffee grinder setting",
+        );
+        let (available, index) = recovering_index(&root);
+        let app = open_app(vault, &index);
+        index.note_changed(&kept).unwrap();
+        index.retry_pending().unwrap();
+        available.store(false, Ordering::SeqCst);
+        for (note, id) in [(&first, "first-id"), (&second, "second-id")] {
+            assert!(check_saved(&app, note, id).is_none());
+        }
+        available.store(true, Ordering::SeqCst);
+
+        // Once the rerun has found the first capture at its path, and before its check reads it,
+        // it is renamed from outside the app, and another note, one the check would find
+        // similar, is written at that path.
+        let renamed = root.join("Renamed.md");
+        let mut taking = Some((first.clone(), renamed.clone()));
+        crate::similar_notes::AFTER_LOCATING.set(Some(Box::new(move || {
+            if let Some((path, renamed)) = taking.take() {
+                std::fs::rename(&path, &renamed).unwrap();
+                write_note(&path, "other-id", "Other", "Areas", "coffee filter");
+            }
+        })));
+        let cards = Mutex::new(Vec::new());
+        rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
+        crate::similar_notes::AFTER_LOCATING.set(None);
+        assert_eq!(
+            shown(&cards),
+            [("Second".to_string(), vec!["Kept".to_string()])],
+            "no card for the note now at its path, and the next check still runs"
+        );
+        assert_eq!(
+            waiting(&app),
+            [("first-id".to_string(), path_text(&first))],
+            "the first capture's check stays kept"
+        );
+
+        // The rename is indexed, and a rerun finds the first capture by its id.
+        index.note_changed(&renamed).unwrap();
+        index.retry_pending().unwrap();
+        rerun_deferred_checks(&app, |card| cards.lock().unwrap().push(card));
+        assert_eq!(
+            shown(&cards),
+            [
+                ("Second".to_string(), vec!["Kept".to_string()]),
+                ("First".to_string(), vec!["Kept".to_string()]),
+            ]
+        );
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
     fn a_started_index_reruns_nothing_before_its_first_reconcile() {
         let root = scratch("deferred-first-reconcile");
         let vault = root.to_str().unwrap();

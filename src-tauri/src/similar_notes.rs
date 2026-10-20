@@ -55,32 +55,45 @@ pub struct SimilarMatch {
     pub excerpt: String,
 }
 
+/// Why [`check`] judged nothing.
+#[derive(Debug)]
+pub enum CheckError {
+    /// The note at the path has another id, or none: the note checked for is elsewhere, and
+    /// nothing says the backend is away.
+    AnotherNote,
+    /// The note could not be read, or the index or the embedding backend failed. Without the
+    /// cause, which nothing logs: an embedding failure carries the backend's response body.
+    Failed,
+}
+
 /// The existing notes most like the note at `path`, or `None` when there are none or the note
 /// is too short to judge. With `id` not empty, the note at `path` must have that frontmatter id:
-/// another note there is an error, never a note judged in its place.
+/// another note there is [`CheckError::AnotherNote`], never a note judged in its place.
 pub fn check(
     index: &SemanticIndex,
     vault: &str,
     path: &str,
     id: &str,
-) -> Result<Option<SimilarityCheck>, String> {
-    let note = operations::read_note(vault, path)?;
+) -> Result<Option<SimilarityCheck>, CheckError> {
+    let note = operations::read_note(vault, path).map_err(|_| CheckError::Failed)?;
     // Compared on the read that is judged, so a note that takes `path` after this one is renamed
     // never stands in for it.
     if !id.is_empty() && note.meta.id != id {
-        return Err("Another note is at that path".to_string());
+        return Err(CheckError::AnotherNote);
     }
     let words =
         note.meta.title.split_whitespace().count() + note.content.split_whitespace().count();
     if words < MIN_WORDS {
         return Ok(None);
     }
-    let found = index.similar(
-        &note.meta.title,
-        &note.content,
-        &note.meta.id,
-        SIMILAR_SCORE,
-    )?;
+    let found = index
+        .similar(
+            &note.meta.title,
+            &note.content,
+            &note.meta.id,
+            SIMILAR_SCORE,
+        )
+        .map_err(|_| CheckError::Failed)?;
     #[cfg(test)]
     AFTER_SCORING.with_borrow_mut(|after| after.as_mut().map(|after| after()));
     let mut matches: Vec<SimilarMatch> = found
@@ -533,6 +546,9 @@ thread_local! {
     /// Runs once [`check_now`] on this thread has kept its check, before it takes its turn.
     pub(crate) static BEFORE_TURN: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
         const { std::cell::RefCell::new(None) };
+    /// Runs once a rerun on this thread has found a kept check's note, before it checks it.
+    pub(crate) static AFTER_LOCATING: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Walks the vault's notes as the index sees them, each read in full: the note list's scan
@@ -640,7 +656,8 @@ fn in_first_attempt(vault: &str, check: &DeferredCheck) -> bool {
 
 /// Runs each of the open vault's deferred checks once, oldest first, on the note's current
 /// text, and hands every result with matches to `deliver` (#216). A check that runs leaves the
-/// list, matches or not; one that fails again stays; a deleted note's is dropped; one whose first
+/// list, matches or not; one that fails again stays; one whose path another note took once it
+/// was found stays, and the rest still run; a deleted note's is dropped; one whose first
 /// attempt in [`check_now`] has not ended is left to it. They stop, and the rest wait for the
 /// next rerun, once the index may no longer be caught up: a rebuild or reconcile started since it
 /// caught up or stopped part way, a note was queued or saved since, or settings replaced it. They
@@ -698,28 +715,37 @@ pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(Si
             leases,
             &mut scanned,
         ) {
-            // `locate` has matched its id.
-            Ok(Location::At(path)) => match check(&index, &vault, &path, "") {
-                // The mark is read under the lock, so a bulk change cannot reconcile between it
-                // and the lease count.
-                Ok(_)
-                    if !notes_still_settled(state, leases)
-                        .is_some_and(|_held| index.caught_up_mark() == Some(mark)) =>
-                {
-                    index.owe_caught_up();
-                    break;
-                }
-                Ok(result) => {
-                    settled.push(deferred);
-                    if let Some(result) = result {
-                        found += 1;
-                        deliver(result);
+            Ok(Location::At(path)) => {
+                #[cfg(test)]
+                AFTER_LOCATING.with_borrow_mut(|after| after.as_mut().map(|after| after()));
+                // Its id compared again on the read that is judged: `locate` has let the note
+                // lock go, and a note written at `path` from outside the app since would
+                // otherwise be judged in its place.
+                match check(&index, &vault, &path, &deferred.id) {
+                    // The mark is read under the lock, so a bulk change cannot reconcile between
+                    // it and the lease count.
+                    Ok(_)
+                        if !notes_still_settled(state, leases)
+                            .is_some_and(|_held| index.caught_up_mark() == Some(mark)) =>
+                    {
+                        index.owe_caught_up();
+                        break;
                     }
+                    Ok(result) => {
+                        settled.push(deferred);
+                        if let Some(result) = result {
+                            found += 1;
+                            deliver(result);
+                        }
+                    }
+                    // Another note took its path once it was found, which says nothing about the
+                    // backend: kept, and looked for by its id again after the next pass.
+                    Err(CheckError::AnotherNote) => {}
+                    // Most likely the backend is away again: the rest wait for the next pass
+                    // rather than each waiting out its timeout.
+                    Err(CheckError::Failed) => break,
                 }
-                // Most likely the backend is away again: the rest wait for the next pass rather
-                // than each waiting out its timeout.
-                Err(_) => break,
-            },
+            }
             Ok(Location::Gone) => {
                 dropped += 1;
                 settled.push(deferred);
