@@ -6,7 +6,8 @@
 // Same setup as ask-run.mjs: a fresh run root, tauri-driver, and the desktop's Ollama tunnelled
 // in. The vault holds scripts/similarity-fixture.json's notes. Each fixture capture is filed
 // through the command the overlay uses (WebDriver cannot press a global hotkey), and the card
-// it raises in the main window is read back. Then Append, Dismiss, refused Appends on a note
+// it raises in the main window is read back, and read again once every capture's check has ended,
+// so a late card still counts. Then Append, Dismiss, refused Appends on a note
 // edited and a note moved since the check, Open, Append with the capture open in the editor, Append with the similar note open, and a capture with the
 // backend gone are each tried once.
 // On Linux, two more duplicates are captured with the main window minimized, and the
@@ -65,6 +66,25 @@ function readCard(browser, title) {
       failure: card.querySelector('.similar-error')?.innerText.trim() ?? null,
     };
   }, title);
+}
+
+// What a capture's card shows, judged against the duplicate it should name, if any.
+function judged(duplicateOf, card) {
+  const shown = card?.matches.map((match) => match.title) ?? [];
+  return {
+    shown,
+    coverage: card?.coverage ?? null,
+    excerpts: card?.matches.map((match) => match.excerpt) ?? [],
+    missed: Boolean(duplicateOf) && !shown.includes(duplicateOf),
+    wrong: shown.filter((title) => title !== duplicateOf),
+  };
+}
+
+// The notes whose checks the app still keeps: a check is kept from just after its capture is
+// saved until it ends (#216). The file is in the app's machine-local state under the run root.
+function stillKept(root) {
+  const file = readdirSync(root, { recursive: true }).find((name) => basename(name) === 'deferred_similarity.json');
+  return new Set(file ? JSON.parse(readFileSync(join(root, file), 'utf8')).checks.map((check) => check.path) : []);
 }
 
 async function waitForCard(browser, title, wanted = (card) => card !== null) {
@@ -243,6 +263,7 @@ async function main() {
           duplicatesFound: results.filter((result) => result.duplicateOf && !result.missed).length,
           duplicates: results.filter((result) => result.duplicateOf).length,
           wrongCards: results.filter((result) => result.wrong.length > 0).length,
+          inconclusive: results.filter((result) => result.inconclusive).length,
         },
         // Vault-relative, so the trace names no home directory when it is committed as evidence.
         results: results.map((result) => ({ ...result, path: relative(vault, result.path) })),
@@ -253,6 +274,8 @@ async function main() {
       writeFileSync(join(settings.root, 'similar-run.json'), JSON.stringify(trace, null, 2));
       return trace;
     };
+    // The captures whose cards came within their wait.
+    const inTime = new Set();
     try {
       for (const item of fixture.captures) {
         const started = Date.now();
@@ -269,7 +292,8 @@ async function main() {
             interval: 500,
           })
           .catch(() => {});
-        const shown = card?.matches.map((match) => match.title) ?? [];
+        const verdict = judged(item.duplicateOf ?? null, card);
+        if (card) inTime.add(entry.path);
         results.push({
           capture: item.title,
           kind: item.duplicateOf ? 'duplicate' : item.sameTopic?.length ? 'same topic' : 'unrelated',
@@ -277,15 +301,29 @@ async function main() {
           path: entry.path,
           title: entry.meta.title,
           captureMs,
-          // From the capture to the card, or to the end of the wait when none came.
+          // From the capture to the card, or to the end of the wait when none came in time.
           seconds: Math.round((Date.now() - started) / 1000),
-          shown,
-          coverage: card?.coverage ?? null,
-          excerpts: card?.matches.map((match) => match.excerpt) ?? [],
-          missed: Boolean(item.duplicateOf) && !shown.includes(item.duplicateOf),
-          wrong: shown.filter((title) => title !== item.duplicateOf),
+          ...verdict,
         });
-        console.log(`${shown.length ? shown.join(', ') : '(no card)'}  <-  ${item.title}`);
+        console.log(`${verdict.shown.length ? verdict.shown.join(', ') : '(no card)'}  <-  ${item.title}`);
+      }
+
+      // A check can end after its capture's wait, and its card counts all the same: each card is
+      // read again once every capture's check has ended. A check still kept by then failed or is
+      // still running, so what its capture shows proves nothing.
+      const unfinished = () => {
+        const kept = stillKept(settings.root);
+        return new Set(results.map((result) => result.path).filter((path) => kept.has(path)));
+      };
+      let pending = unfinished();
+      for (const deadline = Date.now() + CARD_TIMEOUT; pending.size && Date.now() < deadline; pending = unfinished()) {
+        await sleep(500);
+      }
+      for (const result of results) {
+        const card = await readCard(browser, result.title);
+        const late = card !== null && !inTime.has(result.path);
+        Object.assign(result, judged(result.duplicateOf, card), { late, inconclusive: pending.has(result.path) });
+        if (late) console.log(`late card: ${result.shown.join(', ')}  <-  ${result.capture}`);
       }
 
       const carded = results.filter((result) => result.duplicateOf && result.shown.includes(result.duplicateOf));
