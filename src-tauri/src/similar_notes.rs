@@ -192,17 +192,45 @@ fn same_path(one: &str, other: &str) -> bool {
 /// through a link keeps the link in its path while a note can carry the resolved one, and
 /// whether the app has opened that vault: keeping a check creates the vault's machine-local
 /// state, and nothing should appear in a folder that is not a vault. A note no longer at `path`,
-/// renamed or moved since, is placed by its folder: its check is kept by its id.
+/// renamed or moved since, alone or with the folders above it, is placed by the nearest folder
+/// above it that is still there: its check is kept by its id.
 pub(crate) fn note_in_opened_vault(vault: &str, path: &str) -> bool {
-    let path = Path::new(path);
-    let note = dunce::canonicalize(path).or_else(|error| match (path.parent(), path.file_name()) {
-        (Some(folder), Some(name)) => dunce::canonicalize(folder).map(|folder| folder.join(name)),
-        _ => Err(error),
-    });
-    let (Ok(root), Ok(note)) = (dunce::canonicalize(vault), note) else {
+    let (Ok(root), Some(note)) = (
+        dunce::canonicalize(vault),
+        resolve_what_is_there(Path::new(path)),
+    ) else {
         return false;
     };
     note.starts_with(&root) && operations::helixnotes_dir(vault).is_dir()
+}
+
+/// `path` with the nearest of it and the folders above it that is still there resolved, and the
+/// names below that one, which are gone, after it. `None` when what is gone could lead anywhere
+/// once resolved: a `..` below a folder that is gone, which nothing can resolve yet, or something
+/// there that does not resolve, such as a link to nothing.
+fn resolve_what_is_there(path: &Path) -> Option<PathBuf> {
+    let mut gone = Vec::new();
+    let mut at = path;
+    loop {
+        if let Ok(mut resolved) = dunce::canonicalize(at) {
+            resolved.extend(gone.iter().rev());
+            return Some(resolved);
+        }
+        match std::fs::symlink_metadata(at) {
+            // Gone: the folder above it places it.
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) => {}
+            // There, yet it does not resolve: a link to nothing, which could point anywhere once
+            // its target appears, or an entry that cannot be read, which could be one.
+            _ => return None,
+        }
+        // A `..` has no name: below a folder that is gone, it could climb anywhere.
+        gone.push(at.file_name()?);
+        at = at.parent()?;
+    }
 }
 
 /// The file in the vault's machine-local folder that keeps deferred checks across a restart.
@@ -1107,6 +1135,25 @@ mod tests {
         assert!(
             !super::note_in_opened_vault(&text(&vault), &text(&escaped)),
             "a folder outside the vault"
+        );
+        // Its folder renamed since, so neither the note nor its folder is there.
+        let (in_gone, climbing) = (
+            vault.join("Gone/Note.md"),
+            vault.join("Gone/../../Plain/Note.md"),
+        );
+        assert!(
+            super::note_in_opened_vault(&text(&link), &text(&in_gone)),
+            "its folder renamed since: placed by the vault"
+        );
+        assert!(
+            !super::note_in_opened_vault(&text(&vault), &text(&climbing)),
+            "climbing out below a folder that is gone"
+        );
+        let dangling = vault.join("Dangling");
+        std::os::unix::fs::symlink(root.join("Missing"), &dangling).unwrap();
+        assert!(
+            !super::note_in_opened_vault(&text(&vault), &text(&dangling.join("Note.md"))),
+            "through a link to nothing, which could point outside the vault"
         );
         std::fs::remove_dir_all(root).unwrap();
     }
