@@ -740,9 +740,7 @@ fn start(
                             if let Err(error) =
                                 start(monitor_app.clone(), vault.clone(), attempt).await
                             {
-                                log::warn!(
-                                    "Syncthing restart attempt {attempt} failed; the supervisor will not retry it"
-                                );
+                                log::warn!("Syncthing restart attempt {attempt} failed");
                                 if let Ok(mut runtime) =
                                     monitor_app.state::<AppState>().sync_sidecar.runtime.lock()
                                 {
@@ -1866,7 +1864,7 @@ mod tests {
     use super::{
         append_durable_temp_ignore_if_missing, batch_writers, convergence_observation_is_complete,
         harden_generated_config_xml, hold_for_peer_handoff, read_control, refused_sync_terminal,
-        settle_writer, stop_check, tailscale_ipv4, take_batch_writers, take_writers,
+        settle_writer, stop_check, sync_batch, tailscale_ipv4, take_batch_writers, take_writers,
         until_next_sync_window, valid_device_id, wait_for_exit, write_control, BatchWriters,
         CompletionLatch, ControlState, FolderPauseGuard, Runtime, SyncProgress, SyncTrigger,
         SyncthingApi, DURABLE_TEMP_IGNORE, PEER_HANDOFF_GRACE, PULL_ERROR_EXPLAINS_FAILURE,
@@ -1874,8 +1872,11 @@ mod tests {
         SYNC_POLL_INTERVAL,
     };
     use crate::bulk_mutation::{BulkMutationCoordinator, BulkMutationOutcome, LeaseRefused};
+    use std::cell::Cell;
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::TcpListener;
     use std::sync::atomic::AtomicBool;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
     /// The refusal a batch gets while another bulk operation holds the lease.
@@ -2210,6 +2211,115 @@ mod tests {
         // Windows retries a refused loopback connect until the call's timeout, so each call can
         // run its full share; the slack is the cost of making them, not a third call.
         assert!(started.elapsed() < STOP_PAUSE_BUDGET + Duration::from_millis(500));
+    }
+
+    /// A stand-in Syncthing REST API on loopback. It answers every call with 200 and an empty
+    /// ignore list, and records each call as "METHOD /path" before answering.
+    fn recording_syncthing(calls: Arc<Mutex<Vec<String>>>) -> ControlState {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let port = listener
+            .local_addr()
+            .expect("read test server address")
+            .port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut reader = BufReader::new(stream.expect("accept request"));
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("read request line");
+                let mut parts = line.split(' ');
+                let method = parts.next().unwrap_or_default();
+                let path = parts
+                    .next()
+                    .unwrap_or_default()
+                    .split('?')
+                    .next()
+                    .unwrap_or_default();
+                let mut length = 0;
+                loop {
+                    let mut header = String::new();
+                    reader.read_line(&mut header).expect("read header");
+                    if header.trim().is_empty() {
+                        break;
+                    }
+                    if let Some((name, value)) = header.split_once(':') {
+                        if name.eq_ignore_ascii_case("content-length") {
+                            length = value.trim().parse().expect("content length");
+                        }
+                    }
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).expect("read body");
+                calls.lock().unwrap().push(format!("{method} {path}"));
+                let reply = r#"{"ignore":null}"#;
+                let _ = reader.into_inner().write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                        reply.len()
+                    )
+                    .as_bytes(),
+                );
+            }
+        });
+        serde_json::from_value(serde_json::json!({
+            "version": 1, "enabled": true, "apiKey": "key", "guiPort": port
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_batch_reports_its_resume_after_resuming_and_before_pausing() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let control = recording_syncthing(calls.clone());
+        // The close begins once the batch has resumed, so it pauses without waiting for the peer.
+        let checks = Cell::new(0);
+        let stopped = || {
+            checks.set(checks.get() + 1);
+            checks.get() > 1
+        };
+        let (result, acknowledged) = sync_batch(
+            &reqwest::blocking::Client::new(),
+            &control,
+            "folder",
+            "device",
+            &stopped,
+            || calls.lock().unwrap().push("resumed".to_string()),
+            || Ok(()),
+        );
+        assert_eq!(result, Err(SHUTDOWN_STOPPED.to_string()));
+        assert!(acknowledged);
+        assert_eq!(
+            *calls.lock().unwrap(),
+            [
+                "GET /rest/db/ignores",
+                "POST /rest/db/ignores",
+                "PATCH /rest/config/folders/folder",
+                "PATCH /rest/config/devices/device",
+                "resumed",
+                "PATCH /rest/config/folders/folder",
+                "PATCH /rest/config/devices/device",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_batch_that_never_resumes_does_not_report_a_resume() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let control = recording_syncthing(calls.clone());
+        let (result, acknowledged) = sync_batch(
+            &reqwest::blocking::Client::new(),
+            &control,
+            "folder",
+            "device",
+            &|| true,
+            || calls.lock().unwrap().push("resumed".to_string()),
+            || Ok(()),
+        );
+        assert_eq!(result, Err(SHUTDOWN_STOPPED.to_string()));
+        assert!(
+            acknowledged,
+            "nothing was resumed, so nothing needs a pause"
+        );
+        assert!(calls.lock().unwrap().is_empty());
     }
 
     #[test]
