@@ -1165,24 +1165,37 @@ mod tests {
             !super::note_in_opened_vault(&text(&vault), &text(&escaped)),
             "a folder outside the vault"
         );
+        let dangling = vault.join("Dangling");
+        std::os::unix::fs::symlink(root.join("Missing"), &dangling).unwrap();
+        assert!(
+            !super::note_in_opened_vault(&text(&vault), &text(&dangling.join("Note.md"))),
+            "through a link to nothing, which could point outside the vault"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_note_whose_folder_is_gone_is_placed_by_the_vault_unless_it_climbs_out() {
+        let root = std::env::temp_dir().join(format!("sb-deferred-{}", uuid::Uuid::new_v4()));
+        let (vault, plain) = (root.join("Vault"), root.join("Plain"));
+        std::fs::create_dir_all(vault.join(".helixnotes")).unwrap();
+        std::fs::create_dir_all(&plain).unwrap();
+        // Beside the vault, so a `..` that Windows resolves before it reaches the disk finds a
+        // note there, outside the vault.
+        std::fs::write(plain.join("Note.md"), "note").unwrap();
+        let text = |path: &std::path::Path| path.to_str().unwrap().to_string();
         // Its folder renamed since, so neither the note nor its folder is there.
         let (in_gone, climbing) = (
             vault.join("Gone/Note.md"),
             vault.join("Gone/../../Plain/Note.md"),
         );
         assert!(
-            super::note_in_opened_vault(&text(&link), &text(&in_gone)),
+            super::note_in_opened_vault(&text(&vault), &text(&in_gone)),
             "its folder renamed since: placed by the vault"
         );
         assert!(
             !super::note_in_opened_vault(&text(&vault), &text(&climbing)),
             "climbing out below a folder that is gone"
-        );
-        let dangling = vault.join("Dangling");
-        std::os::unix::fs::symlink(root.join("Missing"), &dangling).unwrap();
-        assert!(
-            !super::note_in_opened_vault(&text(&vault), &text(&dangling.join("Note.md"))),
-            "through a link to nothing, which could point outside the vault"
         );
         std::fs::remove_dir_all(root).unwrap();
     }
