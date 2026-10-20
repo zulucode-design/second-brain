@@ -866,6 +866,53 @@ fn take_writers(runtime: &mut Runtime) -> (Option<CommandChild>, Vec<u32>) {
     (child, runtime.exiting.clone())
 }
 
+/// What a batch whose pause Syncthing did not acknowledge stops, and what it waits for (#224).
+#[derive(Debug, Default, PartialEq, Eq)]
+struct BatchWriters {
+    /// The current Syncthing is the one the batch paused, so the batch takes and stops it.
+    stop_current: bool,
+    /// A current Syncthing other than the one the batch paused, left running. The supervisor
+    /// started it after the paused one died, and every start is paused, so it is not writing
+    /// what the batch received.
+    spared: Option<u32>,
+    /// Every process the batch waits for before the lease goes: those a disable already stopped,
+    /// which may still be writing, and the current one when the batch stops it.
+    wait_for: Vec<u32>,
+}
+
+/// The batch path's decision, from the process id the batch recorded before it resumed the folder,
+/// the current Syncthing's, and the processes already exiting. With nothing recorded, the batch
+/// stops nothing. A process id, unlike `Runtime::generation`, does not move before `stop` takes
+/// the child, so a Syncthing a disable has not taken yet is still the batch's to stop.
+fn batch_writers(paused: Option<u32>, current: Option<u32>, exiting: &[u32]) -> BatchWriters {
+    let stop_current = paused.is_some() && current == paused;
+    let mut wait_for = exiting.to_vec();
+    if stop_current {
+        wait_for.extend(current);
+    }
+    BatchWriters {
+        stop_current,
+        spared: current.filter(|_| !stop_current),
+        wait_for,
+    }
+}
+
+/// `take_writers` for the batch path: the running Syncthing only if it is `paused`, the one the
+/// batch paused, and the processes to wait for. A taken child is recorded as exiting, as there.
+fn take_batch_writers(
+    runtime: &mut Runtime,
+    paused: Option<u32>,
+) -> (Option<CommandChild>, BatchWriters) {
+    let current = runtime.child.as_ref().map(CommandChild::pid);
+    let writers = batch_writers(paused, current, &runtime.exiting);
+    let child = if writers.stop_current {
+        take_writers(runtime).0
+    } else {
+        None
+    };
+    (child, writers)
+}
+
 /// Build the status payload at the command boundary, where machine-local and peer state belong.
 async fn enriched_status(
     app: &AppHandle,
@@ -1541,22 +1588,33 @@ fn hold_for_peer_handoff(
 /// still being written, so Syncthing is stopped before the lease goes, and the run waits for the
 /// process to be gone; its supervisor starts it again paused, as every start is. If it will not go,
 /// the lease stays, the close times out, and the page says so (#189).
-fn stop_writer(app: &AppHandle) {
-    log::warn!("Sync folder did not acknowledge its pause for the close; stopping Syncthing");
-    let (child, pids) = app
+///
+/// `paused` is the Syncthing the run recorded before it resumed the folder, and only that process
+/// is stopped (#224). If it died during the run and the supervisor has already started another,
+/// the new one began paused and this run never resumed it, so it is left running: stopping it
+/// made the supervisor's next start fail silently and left sync stopped until the next batch.
+fn stop_writer(app: &AppHandle, paused: Option<u32>) {
+    let (child, writers) = app
         .state::<AppState>()
         .sync_sidecar
         .runtime
         .lock()
-        .map(|mut runtime| take_writers(&mut runtime))
+        .map(|mut runtime| take_batch_writers(&mut runtime, paused))
         .unwrap_or_default();
     if let Some(child) = child {
+        log::warn!("Sync folder did not acknowledge its pause for the close; stopping Syncthing");
         if let Err(error) = child.kill() {
             log::warn!("Could not stop Syncthing for the close: {error}");
         }
+    } else if let Some(spared) = writers.spared {
+        log::warn!(
+            "Sync folder did not acknowledge its pause; leaving Syncthing {spared} running, since it started after the one this run paused"
+        );
+    } else {
+        log::warn!("Sync folder did not acknowledge its pause; its Syncthing had already stopped");
     }
     // A process a disable already stopped counts too: it may not have exited yet.
-    for pid in pids {
+    for pid in writers.wait_for {
         wait_for_exit(
             || crate::sync_watchdog::process_is_alive(pid),
             Duration::from_millis(100),
@@ -1567,7 +1625,7 @@ fn stop_writer(app: &AppHandle) {
 
 /// Called before reconciliation and before the lease goes, closing or not: a pause Syncthing did not
 /// acknowledge, even after the guard's retry, may leave it writing received files, so it is
-/// stopped first (#189).
+/// stopped first (#189). `stop_writer` stops only the Syncthing the run paused (#224).
 fn settle_writer(pause_acknowledged: bool, stop_writer: impl FnOnce()) {
     if !pause_acknowledged {
         stop_writer();
@@ -1707,6 +1765,14 @@ fn run_sync(
                     return;
                 }
             };
+            // #224: the Syncthing this batch resumes and pauses, recorded before it resumes the
+            // folder. If the pause goes unanswered, the batch stops this process and no other.
+            let batch_syncthing = state
+                .sync_sidecar
+                .runtime
+                .lock()
+                .ok()
+                .and_then(|runtime| runtime.child.as_ref().map(CommandChild::pid));
             let mut backed_up = false;
             let (batch, pause_acknowledged) = sync_batch(
                 &client,
@@ -1724,7 +1790,7 @@ fn run_sync(
                     Ok(())
                 },
             );
-            settle_writer(pause_acknowledged, || stop_writer(&app));
+            settle_writer(pause_acknowledged, || stop_writer(&app, batch_syncthing));
             if backed_up {
                 let reconciliation =
                     crate::commands::reconcile_bulk_projections(&state, &vault.to_string_lossy());
@@ -1775,13 +1841,14 @@ mod live_tests;
 #[cfg(test)]
 mod tests {
     use super::{
-        append_durable_temp_ignore_if_missing, convergence_observation_is_complete,
+        append_durable_temp_ignore_if_missing, batch_writers, convergence_observation_is_complete,
         harden_generated_config_xml, hold_for_peer_handoff, read_control, refused_sync_terminal,
-        settle_writer, stop_check, tailscale_ipv4, take_writers, until_next_sync_window,
-        valid_device_id, wait_for_exit, write_control, CompletionLatch, ControlState,
-        FolderPauseGuard, Runtime, SyncProgress, SyncTrigger, SyncthingApi, DURABLE_TEMP_IGNORE,
-        PEER_HANDOFF_GRACE, PULL_ERROR_EXPLAINS_FAILURE, SHUTDOWN_STOPPED, STOP_PAUSE_BUDGET,
-        SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL, SYNC_POLL_INTERVAL,
+        settle_writer, stop_check, tailscale_ipv4, take_batch_writers, take_writers,
+        until_next_sync_window, valid_device_id, wait_for_exit, write_control, BatchWriters,
+        CompletionLatch, ControlState, FolderPauseGuard, Runtime, SyncProgress, SyncTrigger,
+        SyncthingApi, DURABLE_TEMP_IGNORE, PEER_HANDOFF_GRACE, PULL_ERROR_EXPLAINS_FAILURE,
+        SHUTDOWN_STOPPED, STOP_PAUSE_BUDGET, SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL,
+        SYNC_POLL_INTERVAL,
     };
     use crate::bulk_mutation::{BulkMutationCoordinator, BulkMutationOutcome, LeaseRefused};
     use std::sync::atomic::AtomicBool;
@@ -1982,6 +2049,80 @@ mod tests {
         assert_eq!(
             runtime.exiting,
             vec![4242],
+            "it stays recorded until seen gone"
+        );
+    }
+
+    // #224: process ids for the tests below. The batch paused PAUSED; REPLACEMENT is the paused
+    // Syncthing the supervisor started after PAUSED died; EXITING is one a disable already stopped
+    // that has not exited yet.
+    const PAUSED: u32 = 100;
+    const REPLACEMENT: u32 = 200;
+    const EXITING: u32 = 4242;
+
+    #[test]
+    fn a_batch_whose_syncthing_was_replaced_leaves_the_new_one_running() {
+        let writers = batch_writers(Some(PAUSED), Some(REPLACEMENT), &[EXITING]);
+        assert!(
+            !writers.stop_current,
+            "the replacement is not the batch's to stop"
+        );
+        assert_eq!(writers.spared, Some(REPLACEMENT));
+        assert_eq!(
+            writers.wait_for,
+            vec![EXITING],
+            "a Syncthing a disable stopped is still waited for"
+        );
+    }
+
+    #[test]
+    fn a_batch_whose_syncthing_was_not_replaced_stops_it() {
+        let writers = batch_writers(Some(PAUSED), Some(PAUSED), &[EXITING]);
+        assert!(writers.stop_current);
+        assert_eq!(writers.spared, None);
+        assert_eq!(
+            writers.wait_for,
+            vec![EXITING, PAUSED],
+            "the stopped one is waited for too"
+        );
+    }
+
+    #[test]
+    fn a_batch_that_recorded_no_syncthing_stops_none() {
+        let writers = batch_writers(None, Some(REPLACEMENT), &[EXITING]);
+        assert!(!writers.stop_current);
+        assert_eq!(writers.spared, Some(REPLACEMENT));
+        assert_eq!(writers.wait_for, vec![EXITING]);
+        assert_eq!(batch_writers(None, None, &[]), BatchWriters::default());
+    }
+
+    #[test]
+    fn a_batch_whose_syncthing_is_gone_still_waits_for_those_exiting() {
+        let mut runtime = Runtime {
+            desired_running: true,
+            generation: 0,
+            child: None,
+            vault_path: None,
+            device_id: None,
+            last_error: None,
+            restart_count: 0,
+            scheduler_generation: 0,
+            last_terminal: None,
+            exiting: vec![EXITING],
+        };
+        let (child, writers) = take_batch_writers(&mut runtime, Some(PAUSED));
+        assert!(child.is_none());
+        assert_eq!(
+            writers,
+            BatchWriters {
+                stop_current: false,
+                spared: None,
+                wait_for: vec![EXITING],
+            }
+        );
+        assert_eq!(
+            runtime.exiting,
+            vec![EXITING],
             "it stays recorded until seen gone"
         );
     }

@@ -137,10 +137,14 @@ during the handoff hold. Each of those checks is at most two seconds apart, beca
 Syncthing call between them is bounded at two seconds. The stopped run pauses folder and device
 within a shared four-second budget, with no retry, and ends like any interrupted run: `failure`,
 or `changed-incomplete` if its backup was taken. Whenever Syncthing does not acknowledge a
-batch's pause, closing or not, the app stops the Syncthing process and waits until it has exited,
-before it reconciles and before it lets go of the lease. Nothing then writes to the vault once a
-save goes ahead, and the supervisor starts Syncthing again paused. A process that will not exit
-keeps the lease, and a close times out with its message.
+batch's pause, closing or not, the app stops the Syncthing process that batch resumed, recorded by
+its process ID when the batch started, and waits until it has exited, before it reconciles and
+before it lets go of the lease. It also waits for any Syncthing a disable already stopped. Nothing
+then writes to the vault once a save goes ahead, and the supervisor starts Syncthing again paused.
+If the batch's Syncthing died during the batch and the supervisor has already started another, the
+batch leaves the new one running and logs that it did: it started paused and no batch resumed it.
+Stopping it instead could leave sync stopped until the next batch (#224). A process that will not
+exit keeps the lease, and a close times out with its message.
 The scan, the ignore update, the safety backup, and the projection reconcile are not cut short;
 a close during one of them can still run out of time. The window then stays open and says so:
 "Closing timed out. Second Brain is still open. Try closing again."
