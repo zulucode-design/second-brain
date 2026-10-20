@@ -45,10 +45,12 @@ the folder stays paused. The app never overwrites patterns it couldn't read.
 
 Enable restores the sidecar for the active vault. Disable and vault switching request an
 authenticated shutdown and kill a process that does not exit promptly. Unexpected exits are
-restarted at most three times. A minimal watchdog process receives the API key through its
-environment and requests authenticated sidecar shutdown if the app process disappears; this
-also bounds cleanup after a forced app termination that cannot run normal Tauri teardown. An
-hourly scheduler requests guarded sync runs on shared UTC boundaries
+restarted at most three times. A restart that fails, and an exit after which the supervisor gives
+up, each leave one warning in the app log with the restart count; the error itself goes only to
+the status shown in Settings, since it can name paths (#224). A minimal watchdog process receives
+the API key through its environment and requests authenticated sidecar shutdown if the app
+process disappears; this also bounds cleanup after a forced app termination that cannot run
+normal Tauri teardown. An hourly scheduler requests guarded sync runs on shared UTC boundaries
 so independently launched machines overlap; it does not leave the folder or paired device
 continuously resumed. An immediate manual transfer requires pressing Sync now on both
 machines within the 30-second reachability window.

@@ -701,7 +701,7 @@ fn start(
                     }
                     CommandEvent::Error(error) => log::error!("Syncthing process error: {error}"),
                     CommandEvent::Terminated(status) => {
-                        let should_restart = {
+                        let (should_restart, gave_up_after) = {
                             let state = monitor_app.state::<AppState>();
                             let Ok(mut runtime) = state.sync_sidecar.runtime.lock() else {
                                 return;
@@ -721,16 +721,28 @@ fn start(
                                 runtime.last_error = Some(format!(
                                     "Syncthing stopped after {MAX_RESTARTS} restart attempts"
                                 ));
-                                false
+                                (false, Some(runtime.restart_count))
                             } else {
-                                runtime.desired_running
+                                (runtime.desired_running, None)
                             }
                         };
+                        // #224: a give-up or a failed restart used to leave nothing in the log.
+                        // Counts and outcomes only (docs/log-privacy.md): the error can name
+                        // paths, so it goes to `last_error` alone.
+                        if let Some(restarts) = gave_up_after {
+                            log::warn!(
+                                "Syncthing stopped again after {restarts} restart attempts; the supervisor will not restart it"
+                            );
+                        }
                         if should_restart {
                             tokio::time::sleep(Duration::from_secs(1)).await;
+                            let attempt = restart_count + 1;
                             if let Err(error) =
-                                start(monitor_app.clone(), vault.clone(), restart_count + 1).await
+                                start(monitor_app.clone(), vault.clone(), attempt).await
                             {
+                                log::warn!(
+                                    "Syncthing restart attempt {attempt} failed; the supervisor will not retry it"
+                                );
                                 if let Ok(mut runtime) =
                                     monitor_app.state::<AppState>().sync_sidecar.runtime.lock()
                                 {
