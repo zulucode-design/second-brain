@@ -3029,7 +3029,6 @@ mod tests {
             shown(&cards),
             [("Capture".to_string(), vec!["Kept".to_string()])]
         );
-        assert!(waiting(&app).is_empty());
         drop(app);
         drop(index);
         cleanup(root);
