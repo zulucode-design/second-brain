@@ -2252,7 +2252,7 @@ mod tests {
         );
 
         let check = |note: &Path| {
-            crate::similar_notes::check(&index, vault, note.to_str().unwrap()).unwrap()
+            crate::similar_notes::check(&index, vault, note.to_str().unwrap(), "").unwrap()
         };
         assert!(check(&short).is_none(), "two words are too few to judge");
         let found = check(&capture).expect("the coffee notes are similar");
@@ -2983,6 +2983,59 @@ mod tests {
     }
 
     #[test]
+    fn a_note_written_at_a_renamed_captures_old_path_never_takes_its_check() {
+        let root = scratch("deferred-renamed-path-reused");
+        let vault = root.to_str().unwrap();
+        let kept = root.join("Kept.md");
+        let capture = root.join("Capture.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        write_note(
+            &capture,
+            "capture-id",
+            "Capture",
+            "Areas",
+            "coffee beans today",
+        );
+        let (_available, index) = recovering_index(&root);
+        let app = open_app(vault, &index);
+        let cards = cards_from_reruns(&index, &app);
+        index.note_changed(&kept).unwrap();
+        index.retry_pending().unwrap();
+
+        // Renamed before its check reads it, and another note, one the check would find similar,
+        // written at its old path: the check judges neither, and stays kept by the capture's id.
+        let renamed = root.join("Renamed.md");
+        std::fs::rename(&capture, &renamed).unwrap();
+        write_note(
+            &capture,
+            "other-id",
+            "Other",
+            "Areas",
+            "coffee grinder setting",
+        );
+        assert!(
+            check_saved(&app, &capture, "capture-id").is_none(),
+            "no card for the note now at its path"
+        );
+        assert_eq!(
+            waiting(&app),
+            [("capture-id".to_string(), path_text(&capture))]
+        );
+
+        // The rename is indexed, and the rerun finds the capture by its id.
+        index.note_changed(&renamed).unwrap();
+        index.retry_pending().unwrap();
+        assert_eq!(
+            shown(&cards),
+            [("Capture".to_string(), vec!["Kept".to_string()])]
+        );
+        assert!(waiting(&app).is_empty());
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
+    #[test]
     fn a_started_index_reruns_nothing_before_its_first_reconcile() {
         let root = scratch("deferred-first-reconcile");
         let vault = root.to_str().unwrap();
@@ -3408,7 +3461,7 @@ mod tests {
             index.note_changed(note).unwrap();
         }
         index.retry_pending().unwrap();
-        let found = crate::similar_notes::check(&index, vault, capture.to_str().unwrap())
+        let found = crate::similar_notes::check(&index, vault, capture.to_str().unwrap(), "")
             .unwrap()
             .unwrap();
         let titles: Vec<_> = found
@@ -3812,6 +3865,7 @@ mod tests {
             &index,
             vault.to_str().unwrap(),
             vault.join("Capture.md").to_str().unwrap(),
+            "",
         )
         .unwrap();
         assert!(found.is_none(), "the note is its own only match");

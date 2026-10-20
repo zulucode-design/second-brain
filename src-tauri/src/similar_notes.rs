@@ -56,13 +56,20 @@ pub struct SimilarMatch {
 }
 
 /// The existing notes most like the note at `path`, or `None` when there are none or the note
-/// is too short to judge.
+/// is too short to judge. With `id` not empty, the note at `path` must have that frontmatter id:
+/// another note there is an error, never a note judged in its place.
 pub fn check(
     index: &SemanticIndex,
     vault: &str,
     path: &str,
+    id: &str,
 ) -> Result<Option<SimilarityCheck>, String> {
     let note = operations::read_note(vault, path)?;
+    // Compared on the read that is judged, so a note that takes `path` after this one is renamed
+    // never stands in for it.
+    if !id.is_empty() && note.meta.id != id {
+        return Err("Another note is at that path".to_string());
+    }
     let words =
         note.meta.title.split_whitespace().count() + note.content.split_whitespace().count();
     if words < MIN_WORDS {
@@ -114,10 +121,11 @@ pub fn check(
 
 /// [`check`] for the note at `path` in `vault`, the vault it was saved in, whose frontmatter id
 /// is `id` (empty when it has none), with every failure treated as "nothing found": no index, an
-/// unreachable embedding backend, or a note that vanished. The check is kept in that vault's list while it waits its turn or runs, and stays
-/// kept when [`check`] itself fails, as it does while the backend is unreachable, or when another
-/// vault is open by then, to run once that vault's index has caught up (#216). Reruns leave it to
-/// this first attempt, whose card a quick capture's notification follows, until the attempt ends.
+/// unreachable embedding backend, or a note that vanished. The check is kept in that vault's list
+/// while it waits its turn or runs, and stays kept when [`check`] itself fails, as it does while
+/// the backend is unreachable or another note has taken the note's path, or when another vault
+/// is open by then, to run once that vault's index has caught up (#216). Reruns leave it to this
+/// first attempt, whose card a quick capture's notification follows, until the attempt ends.
 pub fn check_now(state: &AppState, vault: &str, path: &str, id: &str) -> Option<SimilarityCheck> {
     // Without a semantic index nothing could run it, now or later.
     if state.semantic_index.lock().ok()?.is_none() {
@@ -154,7 +162,9 @@ pub fn check_now(state: &AppState, vault: &str, path: &str, id: &str) -> Option<
     if !same_path(&open, vault) {
         return None;
     }
-    match check(&index, &open, path) {
+    // Judged only while it is still the note at `path`: another note there leaves the check kept,
+    // for a rerun to find this one by its id.
+    match check(&index, &open, path, id) {
         Ok(found) => {
             with_kept(state, vault, |checks| checks.forget(&[&kept]));
             found
@@ -657,7 +667,8 @@ pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(Si
             leases,
             &mut scanned,
         ) {
-            Ok(Location::At(path)) => match check(&index, &vault, &path) {
+            // `locate` has matched its id.
+            Ok(Location::At(path)) => match check(&index, &vault, &path, "") {
                 // The mark is read under the lock, so a bulk change cannot reconcile between it
                 // and the lease count.
                 Ok(_)
