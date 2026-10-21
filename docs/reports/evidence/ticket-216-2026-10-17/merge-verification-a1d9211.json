@@ -1,0 +1,102 @@
+{
+  "candidate": "a1d921143c73a2fb255ab5f9a3d2068883f10181",
+  "parents": [
+    "0823262f21bbfdb5787fc7c0835c450a5155d01c",
+    "169b0f2d48c5ab6d7c3c23df7fc0c1da0321e1c8"
+  ],
+  "filesFromMain": [
+    "docs/reports/evidence/alpha-harness-sync-20261020T230234Z.jsonl",
+    "docs/reports/evidence/alpha-harness-sync-20261021T164504Z.jsonl",
+    "docs/reports/evidence/alpha-harness-sync-20261021T174531Z.jsonl",
+    "docs/reports/ticket-224-batch-syncthing-restart-2026-10-21.md",
+    "docs/syncthing-sidecar.md",
+    "src-tauri/src/sync_sidecar.rs",
+    "src-tauri/src/sync_sidecar/live_tests.rs"
+  ],
+  "branchDiffByteIdentical": true,
+  "cleanAfterMerge": true,
+  "publishedHeadBeforeMerge": "0823262f21bbfdb5787fc7c0835c450a5155d01c",
+  "previousMain": "1e99ab122dcdb873c17b7055e1cb8e148b592de2",
+  "mergeProofCommands": [
+    "git show -s --format=%P a1d9211",
+    "git diff --name-only 0823262 a1d9211",
+    "Compare bytes of git diff 169b0f2 a1d9211 with git diff 1e99ab1 0823262"
+  ],
+  "windowsDiskBefore": [
+    {
+      "Name": "C",
+      "Free": 68693217280,
+      "Used": 186139058176
+    },
+    {
+      "Name": "D",
+      "Free": 131572883456,
+      "Used": 778595274752
+    }
+  ],
+  "usageProbeBeforeEachGate": "OK; Sol ran all checks",
+  "fedora": {
+    "verifyExit": 0,
+    "check": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "javascript": {
+      "passed": 254,
+      "failed": 0,
+      "skipped": 0
+    },
+    "rust": {
+      "listed": 755,
+      "passed": 745,
+      "failed": 0,
+      "ignored": 10,
+      "filtered": 0,
+      "mainTests": 0,
+      "docTests": 0
+    },
+    "lint": "PASS",
+    "build": "PASS; one static site"
+  },
+  "windows": {
+    "rust": {
+      "exit": 0,
+      "listed": 724,
+      "passed": 715,
+      "failed": 0,
+      "ignored": 9,
+      "filtered": 0
+    },
+    "lint": {
+      "exit": 101,
+      "result": "FAIL, allowed #221 only",
+      "distinctErrors": 1,
+      "lint": "bind_instead_of_map",
+      "location": "src-tauri/src/commands.rs:4420",
+      "sameExpressionOnMain": "src-tauri/src/commands.rs:4295"
+    },
+    "trackedDiffEmpty": true,
+    "status": [
+      " M src-tauri/Cargo.toml"
+    ],
+    "cargoHeadAndNormalizedWorkingBlob": "2195ed7bfdbb622667dd0bf5cdd303153b8c23de",
+    "existingInstallPreserved": true
+  },
+  "carriedEvidence": {
+    "candidate": "eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9",
+    "results": [
+      "Fedora RPM build",
+      "Fedora package check",
+      "Fedora installed-package recovery steps",
+      "Fedora debug build and end-to-end similarity run",
+      "Windows pnpm build",
+      "Windows pnpm tauri:build"
+    ],
+    "reason": "The merge changes no file of this branch and no similarity, capture, index or vault code. Neither the installed-package steps nor the end-to-end run starts Syncthing. The report for #224 records its Windows build and live Gate 1 on its own candidate."
+  },
+  "installedNothing": true,
+  "artifactCleanupPerformed": false,
+  "pushPerformed": false,
+  "finalReview": "Separate run; pending for the report commit",
+  "result": "MERGE-VERIFY: PASS"
+}

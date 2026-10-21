@@ -1,5 +1,10 @@
 # Deferred capture-time similarity (#216): verification
 
+Merge head to be carried by the pull request: `a1d921143c73a2fb255ab5f9a3d2068883f10181`,
+beside verified product candidate `eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9`. This run verifies
+the merge and adds a report-only commit afterward. Final review of the resulting report head is a
+separate run. Nothing was pushed in this run. The eb59fe3 sections below remain its historical record.
+
 Date: 2026-10-21 (local date). Sol ran Kiro workflow section 7, steps 5 and 6, on candidate
 `eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9`.
 
@@ -37,6 +42,95 @@ request was made. The resulting report commit still needs its own final review b
   uses the same strict note read as the check. Every gate below ran again on `eb59fe3`.
 
 [Current verification summary and preflight](evidence/ticket-216-2026-10-17/verification-eb59fe3.json).
+
+## Merge of main 169b0f2 after publication stopped
+
+On 2026-10-21, Sol followed Kiro workflow section 7 after main moved before a pull request opened.
+The initial local HEAD and published `fix/216-deferred-similarity` ref both matched
+`0823262f21bbfdb5787fc7c0835c450a5155d01c`; the local tree was clean. A fetch confirmed the pinned
+main `169b0f2d48c5ab6d7c3c23df7fc0c1da0321e1c8`, the merge of PR #231 for #224, the Syncthing
+batch restart. No pull request existed. The final reviews of `0823262` had been CLEAN on both axes;
+those reviews do not cover the new head.
+
+`git merge --no-ff origin/main -m "Merge origin/main into fix/216-deferred-similarity"` produced
+`a1d921143c73a2fb255ab5f9a3d2068883f10181`. Its first parent is `0823262` and its second is
+`169b0f2`. The merge changed exactly these seven paths relative to its first parent:
+
+- `src-tauri/src/sync_sidecar.rs`
+- `src-tauri/src/sync_sidecar/live_tests.rs`
+- `docs/syncthing-sidecar.md`
+- `docs/reports/ticket-224-batch-syncthing-restart-2026-10-21.md`
+- `docs/reports/evidence/alpha-harness-sync-20261020T230234Z.jsonl`
+- `docs/reports/evidence/alpha-harness-sync-20261021T164504Z.jsonl`
+- `docs/reports/evidence/alpha-harness-sync-20261021T174531Z.jsonl`
+
+The output bytes of `git diff 169b0f2 a1d9211` and `git diff 1e99ab1 0823262` matched exactly.
+The branch's existing changes were preserved; the merge added nothing of its own. The tree was clean
+after merging. [Merge proof, preflight and gate summary](evidence/ticket-216-2026-10-17/merge-verification-a1d9211.json).
+
+Sol's usage probe returned `OK` before each gate and the report validation. Sol ran all checks below
+on `a1d9211`. Neither machine had a leftover Rust build or dev server. Windows disk preflight found
+C: 68,693,217,280 free bytes (63.98 GiB) and D: 131,572,883,456 (122.54 GiB), above the 15 GB floor
+and the conservative 15 GiB check. No space was freed. Windows reused the same disposable candidate
+checkout through a full-history bundle and the shared Rust cache through `CARGO_TARGET_DIR`.
+Existing dependencies were reused; nothing was installed on either machine. Windows again reported
+`M src-tauri/Cargo.toml`, but both tracked diffs were empty and its normalized working blob equaled
+HEAD (`2195ed7bfdbb622667dd0bf5cdd303153b8c23de`). It was left untouched.
+
+| Machine | Check rerun on a1d9211 | Result and counts |
+| --- | --- | --- |
+| Fedora | `pnpm verify` | PASS, exit 0; all five constituent commands below passed. |
+| Fedora | `pnpm check` | PASS; 0 errors, 0 warnings. |
+| Fedora | `pnpm test` | PASS; 254 passed, 0 failed, 0 skipped. |
+| Fedora | `pnpm test:rust` | PASS; 755 listed, 745 passed, 0 failed, 10 ignored, 0 filtered. Main and doc suites each ran 0 tests. |
+| Fedora | `pnpm lint:rust` | PASS; formatting and Clippy clean. |
+| Fedora | `pnpm build` | PASS; one static site. |
+| Windows | `pnpm test:rust` | PASS, exit 0; 724 listed, 715 passed, 0 failed, 9 ignored, 0 filtered. |
+| Windows | `pnpm lint:rust` | FAIL, allowed #221 only, exit 101; formatting passed. One distinct `bind_instead_of_map` error at `src-tauri/src/commands.rs:4420`, reported for lib and lib test. It is the unchanged expression at main's line 4295. |
+
+Full logs: [Fedora verify](evidence/ticket-216-2026-10-17/fedora-verify-a1d9211.txt),
+[Windows Rust tests](evidence/ticket-216-2026-10-17/windows-test-rust-a1d9211.txt), and
+[Windows lint](evidence/ticket-216-2026-10-17/windows-lint-rust-a1d9211.txt).
+Ignored tests are not counted as passed; this run did not repeat live Syncthing gates.
+
+The branch still adds exactly 51 Rust test functions relative to main `169b0f2`. Each has one
+successful full-name log line on Fedora: **51/51 PASS**. All applicable names have one successful
+line on Windows: **46/46 PASS**; the five Unix-only names are absent there. This includes the
+non-UTF-8 regression and all five restore-outcome tests. The named JavaScript test, "a new note left
+by a vault switch is checked in the vault it was opened in", also passed on Fedora.
+
+The seven Rust tests added by #224 ran and passed on both machines. Relative to eb59fe3, Fedora's
+passed count rose from 738 to 745 (748 to 755 listed), and Windows' from 708 to 715 (717 to 724
+listed): **seven additional passes on each machine**, with unchanged ignored counts.
+[Named-test match, added-function comparison and seven merge additions](evidence/ticket-216-2026-10-17/named-tests-a1d9211.json)
+records every name. Regenerate that JSON from the repository root with
+`python3 docs/reports/evidence/ticket-216-2026-10-17/match-tests-a1d9211.py`; it compares the added
+Rust test functions against the existing explicit manifest and matches exact successful lines in
+this run's complete logs.
+
+These results are carried from **eb59fe3**, without rerunning them:
+
+| Carried result | Evidence from eb59fe3 |
+| --- | --- |
+| Fedora RPM build | [Build log](evidence/ticket-216-2026-10-17/fedora-tauri-build-eb59fe3.txt): PASS; one RPM. |
+| Fedora package check | [Package log](evidence/ticket-216-2026-10-17/fedora-package-eb59fe3.txt): PASS; desktop entry matched. |
+| Fedora installed-package by-hand recovery | [Installed observations](evidence/ticket-216-2026-10-17/installed-recovery-eb59fe3.json): all four steps PASS, with the proof limits recorded below. |
+| Fedora debug build and end-to-end similarity run | [Debug build](evidence/ticket-216-2026-10-17/fedora-debug-build-eb59fe3.txt) and [trace](evidence/ticket-216-2026-10-17/similar-run-eb59fe3.json): PASS; 17 captures, 8/8 duplicates, 0 wrong cards, 0 inconclusive. |
+| Windows `pnpm build` | [Frontend build log](evidence/ticket-216-2026-10-17/windows-build-eb59fe3.txt): PASS; one static site. |
+| Windows `pnpm tauri:build` | [NSIS build log](evidence/ticket-216-2026-10-17/windows-tauri-build-eb59fe3.txt): PASS; one installer, nothing installed. |
+
+They still apply because the merge changes no file of this branch and no similarity, capture,
+index or vault code. Neither the installed-package by-hand steps nor the end-to-end run starts
+Syncthing. [#224's verification report](ticket-224-batch-syncthing-restart-2026-10-21.md) records its
+Windows build and a passing live Gate 1 on its own candidate `31d01e5`; this run does not claim those
+as new runs on `a1d9211`. No reason was found to invalidate the carried results. The #9 report still
+names eb59fe3, the product code that settled it, and was left unchanged.
+
+[Retained paths and sizes](evidence/ticket-216-2026-10-17/retained-paths-a1d9211.json) inventories this
+run's files, reused caches and test temporary roots. Both disposable run roots, their copied bundles
+and the listed test temporary roots are cleanup candidates; nothing was deleted. The existing
+Windows install was preserved. No product code was edited, no push was made, and no pull request was
+opened. **MERGE-VERIFY: PASS**; final review of the report commit remains a separate run.
 
 ## Current command results
 

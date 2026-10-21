@@ -1,0 +1,27 @@
+Candidate: a1d921143c73a2fb255ab5f9a3d2068883f10181
+Command: pnpm lint:rust
+Exit: 101
+
+$ cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+   Compiling second-brain v0.1.0-alpha.1 (<Windows candidate>\src-tauri)
+error: using `Result.and_then(|x| Ok(y))`, which is more succinctly expressed as `map(|x| y)`
+    --> src\commands.rs:4420:18
+     |
+4420 |       let copied = std::fs::copy(path, &preserved).and_then(|_| {
+     |  __________________^
+4421 | |         #[cfg(unix)]
+4422 | |         {
+4423 | |             use std::os::unix::fs::PermissionsExt;
+...    |
+4426 | |         Ok(())
+4427 | |     });
+     | |______^ help: try: `std::fs::copy(path, &preserved).map(|_| ())`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#bind_instead_of_map
+     = note: `-D clippy::bind-instead-of-map` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::bind_instead_of_map)]`
+
+error: could not compile `second-brain` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `second-brain` (lib test) due to 1 previous error
+[ELIFECYCLE] Command failed with exit code 101.
