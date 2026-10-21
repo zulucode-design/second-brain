@@ -237,6 +237,7 @@ fn batch(node: &Node, peer: &Node, fail_backup: bool) -> Run {
         FOLDER,
         &peer.device_id,
         &|| false,
+        || Ok(()),
         || {
             // A real backup takes time. Any transfer that could land before it finishes has time to
             // land here, so the recorded vault proves nothing arrived ahead of the backup.
@@ -424,6 +425,7 @@ fn a_close_once_the_peer_connects_starts_neither_scan_nor_backup() {
         FOLDER,
         &a.device_id,
         &connected,
+        || Ok(()),
         || {
             backups += 1;
             Ok(())

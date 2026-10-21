@@ -108,6 +108,10 @@ impl ControlState {
 struct Runtime {
     desired_running: bool,
     generation: u64,
+    // How many Syncthing processes `start` has published; the current child is the last of them.
+    // A batch tells its Syncthing from a later one by this, since a process id can be reused and
+    // `generation` moves before `stop` takes the child (#224).
+    launches: u64,
     child: Option<CommandChild>,
     vault_path: Option<PathBuf>,
     device_id: Option<String>,
@@ -146,6 +150,7 @@ impl SyncSidecar {
             runtime: Mutex::new(Runtime {
                 desired_running: false,
                 generation: 0,
+                launches: 0,
                 child: None,
                 vault_path: None,
                 device_id: None,
@@ -685,6 +690,7 @@ fn start(
                 .map_err(|error| error.to_string())?;
             runtime.generation = runtime.generation.wrapping_add(1);
             runtime.desired_running = true;
+            runtime.launches += 1;
             runtime.child = Some(child);
             runtime.vault_path = Some(vault.clone());
             runtime.last_error = None;
@@ -701,7 +707,7 @@ fn start(
                     }
                     CommandEvent::Error(error) => log::error!("Syncthing process error: {error}"),
                     CommandEvent::Terminated(status) => {
-                        let should_restart = {
+                        let (should_restart, gave_up_after) = {
                             let state = monitor_app.state::<AppState>();
                             let Ok(mut runtime) = state.sync_sidecar.runtime.lock() else {
                                 return;
@@ -721,16 +727,26 @@ fn start(
                                 runtime.last_error = Some(format!(
                                     "Syncthing stopped after {MAX_RESTARTS} restart attempts"
                                 ));
-                                false
+                                (false, Some(runtime.restart_count))
                             } else {
-                                runtime.desired_running
+                                (runtime.desired_running, None)
                             }
                         };
+                        // #224: a give-up or a failed restart used to leave nothing in the log.
+                        // Counts and outcomes only (docs/log-privacy.md): the error can name
+                        // paths, so it goes to `last_error` alone.
+                        if let Some(restarts) = gave_up_after {
+                            log::warn!(
+                                "Syncthing stopped again after {restarts} restart attempts; the supervisor will not restart it"
+                            );
+                        }
                         if should_restart {
                             tokio::time::sleep(Duration::from_secs(1)).await;
+                            let attempt = restart_count + 1;
                             if let Err(error) =
-                                start(monitor_app.clone(), vault.clone(), restart_count + 1).await
+                                start(monitor_app.clone(), vault.clone(), attempt).await
                             {
+                                log::warn!("Syncthing restart attempt {attempt} failed");
                                 if let Ok(mut runtime) =
                                     monitor_app.state::<AppState>().sync_sidecar.runtime.lock()
                                 {
@@ -864,6 +880,62 @@ fn take_writers(runtime: &mut Runtime) -> (Option<CommandChild>, Vec<u32>) {
         runtime.exiting.push(child.pid());
     }
     (child, runtime.exiting.clone())
+}
+
+/// What a batch whose pause Syncthing did not acknowledge stops, and what it waits for (#224).
+#[derive(Debug, Default, PartialEq, Eq)]
+struct BatchWriters {
+    /// The current Syncthing is one the batch resumed, so the batch takes and stops it.
+    stop_current: bool,
+    /// A current Syncthing the batch did not resume, left running. The supervisor started it after
+    /// the batch's own one died, and every start is paused, so it is not writing what the batch
+    /// received.
+    spared: Option<u32>,
+    /// Every process the batch waits for before the lease goes: those a disable already stopped,
+    /// which may still be writing, and the current one when the batch stops it.
+    wait_for: Vec<u32>,
+}
+
+/// The batch path's decision, from the launch the batch recorded as it resumed the folder, the
+/// current Syncthing's launch and process id, and the processes already exiting. With nothing
+/// recorded, the batch stops nothing. A launch, unlike a process id, is never reused, and unlike
+/// `Runtime::generation` it does not move before `stop` takes the child, so a Syncthing a disable
+/// has not taken yet is still the batch's to stop.
+fn batch_writers(
+    resumed: Option<u64>,
+    current: Option<(u64, u32)>,
+    exiting: &[u32],
+) -> BatchWriters {
+    let stop_current = current.is_some_and(|(launch, _)| resumed == Some(launch));
+    let current = current.map(|(_, pid)| pid);
+    let mut wait_for = exiting.to_vec();
+    if stop_current {
+        wait_for.extend(current);
+    }
+    BatchWriters {
+        stop_current,
+        spared: current.filter(|_| !stop_current),
+        wait_for,
+    }
+}
+
+/// `take_writers` for the batch path: the running Syncthing only if it is the launch the batch
+/// resumed, and the processes to wait for. A taken child is recorded as exiting, as there.
+fn take_batch_writers(
+    runtime: &mut Runtime,
+    resumed: Option<u64>,
+) -> (Option<CommandChild>, BatchWriters) {
+    let current = runtime
+        .child
+        .as_ref()
+        .map(|child| (runtime.launches, child.pid()));
+    let writers = batch_writers(resumed, current, &runtime.exiting);
+    let child = if writers.stop_current {
+        take_writers(runtime).0
+    } else {
+        None
+    };
+    (child, writers)
 }
 
 /// Build the status payload at the command boundary, where machine-local and peer state belong.
@@ -1365,18 +1437,21 @@ fn has_incoming(local_status: &serde_json::Value) -> bool {
 /// anything is incoming, `before_receiving` takes the safety backup and only then may Syncthing
 /// write to the vault. A batch with nothing incoming takes no backup (#14). Folder and device are
 /// paused again on every path; the flag says Syncthing acknowledged that pause, so it can no
-/// longer write (#189).
-fn sync_batch(
+/// longer write (#189). `exclusive` runs just before folder and device resume, and what it returns
+/// is held until they have: the caller records which Syncthing takes those calls while no other
+/// can start, or refuses the resume with an error (#224).
+fn sync_batch<G>(
     client: &reqwest::blocking::Client,
     control: &ControlState,
     folder_id: &str,
     peer_id: &str,
     stopped: &dyn Fn() -> bool,
+    exclusive: impl FnOnce() -> Result<G, String>,
     before_receiving: impl FnMut() -> Result<(), String>,
 ) -> (Result<(), String>, bool) {
     let api = SyncthingApi { client, control };
     // Until the guard below exists the folder never leaves send-only, so Syncthing cannot write.
-    if let Err(error) = start_batch(api, folder_id, peer_id, stopped) {
+    if let Err(error) = start_batch(api, folder_id, peer_id, stopped, exclusive) {
         return (Err(error), true);
     }
     let pause = FolderPauseGuard {
@@ -1399,14 +1474,18 @@ fn sync_batch(
     (outcome, acknowledged)
 }
 
-fn start_batch(
+fn start_batch<G>(
     api: SyncthingApi,
     folder_id: &str,
     peer_id: &str,
     stopped: &dyn Fn() -> bool,
+    exclusive: impl FnOnce() -> Result<G, String>,
 ) -> Result<(), String> {
     stop_check(stopped)?;
     api.ensure_durable_temp_ignored(folder_id)?;
+    let _exclusive = exclusive()?;
+    // Waiting for `exclusive` can outlast the start of a close.
+    stop_check(stopped)?;
     api.resume_folder_send_only(folder_id)?;
     if let Err(error) = api.set_device_paused(peer_id, false, STOPPABLE_REQUEST_TIMEOUT) {
         let _ = api.pause_folder(folder_id, STOPPABLE_REQUEST_TIMEOUT);
@@ -1541,22 +1620,34 @@ fn hold_for_peer_handoff(
 /// still being written, so Syncthing is stopped before the lease goes, and the run waits for the
 /// process to be gone; its supervisor starts it again paused, as every start is. If it will not go,
 /// the lease stays, the close times out, and the page says so (#189).
-fn stop_writer(app: &AppHandle) {
-    log::warn!("Sync folder did not acknowledge its pause for the close; stopping Syncthing");
-    let (child, pids) = app
+///
+/// `resumed` is the launch of the Syncthing the run resumed the folder on, and only that one is
+/// stopped (#224). If the run's Syncthing died and the supervisor has already
+/// started another, the new one began paused and this run never resumed it, so it is left running:
+/// stopping it made the supervisor's next start fail silently and left sync stopped until the next
+/// batch.
+fn stop_writer(app: &AppHandle, resumed: Option<u64>) {
+    let (child, writers) = app
         .state::<AppState>()
         .sync_sidecar
         .runtime
         .lock()
-        .map(|mut runtime| take_writers(&mut runtime))
+        .map(|mut runtime| take_batch_writers(&mut runtime, resumed))
         .unwrap_or_default();
     if let Some(child) = child {
+        log::warn!("Sync folder did not acknowledge its pause for the close; stopping Syncthing");
         if let Err(error) = child.kill() {
             log::warn!("Could not stop Syncthing for the close: {error}");
         }
+    } else if let Some(spared) = writers.spared {
+        log::warn!(
+            "Sync folder did not acknowledge its pause; leaving Syncthing {spared} running, since it started after this run resumed the folder"
+        );
+    } else {
+        log::warn!("Sync folder did not acknowledge its pause; its Syncthing had already stopped");
     }
     // A process a disable already stopped counts too: it may not have exited yet.
-    for pid in pids {
+    for pid in writers.wait_for {
         wait_for_exit(
             || crate::sync_watchdog::process_is_alive(pid),
             Duration::from_millis(100),
@@ -1567,7 +1658,7 @@ fn stop_writer(app: &AppHandle) {
 
 /// Called before reconciliation and before the lease goes, closing or not: a pause Syncthing did not
 /// acknowledge, even after the guard's retry, may leave it writing received files, so it is
-/// stopped first (#189).
+/// stopped first (#189). `stop_writer` stops only a Syncthing the run resumed (#224).
 fn settle_writer(pause_acknowledged: bool, stop_writer: impl FnOnce()) {
     if !pause_acknowledged {
         stop_writer();
@@ -1707,6 +1798,10 @@ fn run_sync(
                     return;
                 }
             };
+            // #224: the Syncthing this batch resumes, the only one it stops if its pause goes
+            // unanswered. The lifecycle lock is held from this record until folder and device have
+            // resumed, so no other Syncthing can start in between and take those calls.
+            let mut batch_syncthing = None;
             let mut backed_up = false;
             let (batch, pause_acknowledged) = sync_batch(
                 &client,
@@ -1714,6 +1809,23 @@ fn run_sync(
                 &folder_id,
                 &peer.device_id,
                 &stopped,
+                || {
+                    // A start or stop holds it for seconds; a close cuts the wait short.
+                    let lifecycle = loop {
+                        if let Ok(lifecycle) = state.sync_sidecar.lifecycle.try_lock() {
+                            break lifecycle;
+                        }
+                        stop_check(&stopped)?;
+                        std::thread::sleep(SYNC_POLL_INTERVAL);
+                    };
+                    batch_syncthing =
+                        state.sync_sidecar.runtime.lock().ok().and_then(|runtime| {
+                            runtime.child.is_some().then_some(runtime.launches)
+                        });
+                    batch_syncthing
+                        .map(|_| lifecycle)
+                        .ok_or_else(|| "Syncthing is not running".to_string())
+                },
                 || {
                     crate::backup::create_pre_sync_backup(&vault.to_string_lossy(), &backup_dir)
                         .map_err(|error| {
@@ -1724,7 +1836,7 @@ fn run_sync(
                     Ok(())
                 },
             );
-            settle_writer(pause_acknowledged, || stop_writer(&app));
+            settle_writer(pause_acknowledged, || stop_writer(&app, batch_syncthing));
             if backed_up {
                 let reconciliation =
                     crate::commands::reconcile_bulk_projections(&state, &vault.to_string_lossy());
@@ -1775,17 +1887,21 @@ mod live_tests;
 #[cfg(test)]
 mod tests {
     use super::{
-        append_durable_temp_ignore_if_missing, convergence_observation_is_complete,
+        append_durable_temp_ignore_if_missing, batch_writers, convergence_observation_is_complete,
         harden_generated_config_xml, hold_for_peer_handoff, read_control, refused_sync_terminal,
-        settle_writer, stop_check, tailscale_ipv4, take_writers, until_next_sync_window,
-        valid_device_id, wait_for_exit, write_control, CompletionLatch, ControlState,
-        FolderPauseGuard, Runtime, SyncProgress, SyncTrigger, SyncthingApi, DURABLE_TEMP_IGNORE,
-        PEER_HANDOFF_GRACE, PULL_ERROR_EXPLAINS_FAILURE, SHUTDOWN_STOPPED, STOP_PAUSE_BUDGET,
-        SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL, SYNC_POLL_INTERVAL,
+        settle_writer, stop_check, sync_batch, tailscale_ipv4, take_batch_writers, take_writers,
+        until_next_sync_window, valid_device_id, wait_for_exit, write_control, BatchWriters,
+        CompletionLatch, ControlState, FolderPauseGuard, Runtime, SyncProgress, SyncTrigger,
+        SyncthingApi, DURABLE_TEMP_IGNORE, PEER_HANDOFF_GRACE, PULL_ERROR_EXPLAINS_FAILURE,
+        SHUTDOWN_STOPPED, STOP_PAUSE_BUDGET, SYNC_COMPLETION_STABLE_OBSERVATIONS, SYNC_INTERVAL,
+        SYNC_POLL_INTERVAL,
     };
     use crate::bulk_mutation::{BulkMutationCoordinator, BulkMutationOutcome, LeaseRefused};
+    use std::cell::Cell;
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::TcpListener;
     use std::sync::atomic::AtomicBool;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
     /// The refusal a batch gets while another bulk operation holds the lease.
@@ -1967,6 +2083,7 @@ mod tests {
         let mut runtime = Runtime {
             desired_running: false,
             generation: 0,
+            launches: 0,
             child: None,
             vault_path: None,
             device_id: None,
@@ -1982,6 +2099,93 @@ mod tests {
         assert_eq!(
             runtime.exiting,
             vec![4242],
+            "it stays recorded until seen gone"
+        );
+    }
+
+    // #224: launches and process ids for the tests below. The batch resumed RESUMED; REPLACEMENT
+    // is the paused Syncthing the supervisor started after RESUMED died; EXITING is a process a
+    // disable already stopped that has not exited yet.
+    const RESUMED: (u64, u32) = (1, 100);
+    const REPLACEMENT: (u64, u32) = (2, 200);
+    const EXITING: u32 = 4242;
+
+    #[test]
+    fn a_batch_whose_syncthing_was_replaced_leaves_the_new_one_running() {
+        let writers = batch_writers(Some(RESUMED.0), Some(REPLACEMENT), &[EXITING]);
+        assert!(
+            !writers.stop_current,
+            "the replacement is not the batch's to stop"
+        );
+        assert_eq!(writers.spared, Some(REPLACEMENT.1));
+        assert_eq!(
+            writers.wait_for,
+            vec![EXITING],
+            "a Syncthing a disable stopped is still waited for"
+        );
+    }
+
+    #[test]
+    fn a_batch_whose_syncthing_was_not_replaced_stops_it() {
+        let writers = batch_writers(Some(RESUMED.0), Some(RESUMED), &[EXITING]);
+        assert!(writers.stop_current);
+        assert_eq!(writers.spared, None);
+        assert_eq!(
+            writers.wait_for,
+            vec![EXITING, RESUMED.1],
+            "the stopped one is waited for too"
+        );
+    }
+
+    #[test]
+    fn a_replacement_that_reuses_the_process_id_is_left_running() {
+        let writers = batch_writers(
+            Some(RESUMED.0),
+            Some((REPLACEMENT.0, RESUMED.1)),
+            &[EXITING],
+        );
+        assert!(!writers.stop_current, "a later launch is not the batch's");
+        assert_eq!(writers.spared, Some(RESUMED.1));
+        assert_eq!(writers.wait_for, vec![EXITING]);
+    }
+
+    #[test]
+    fn a_batch_that_recorded_no_syncthing_stops_none() {
+        let writers = batch_writers(None, Some(REPLACEMENT), &[EXITING]);
+        assert!(!writers.stop_current);
+        assert_eq!(writers.spared, Some(REPLACEMENT.1));
+        assert_eq!(writers.wait_for, vec![EXITING]);
+        assert_eq!(batch_writers(None, None, &[]), BatchWriters::default());
+    }
+
+    #[test]
+    fn a_batch_whose_syncthing_is_gone_still_waits_for_those_exiting() {
+        let mut runtime = Runtime {
+            desired_running: true,
+            generation: 0,
+            launches: 1,
+            child: None,
+            vault_path: None,
+            device_id: None,
+            last_error: None,
+            restart_count: 0,
+            scheduler_generation: 0,
+            last_terminal: None,
+            exiting: vec![EXITING],
+        };
+        let (child, writers) = take_batch_writers(&mut runtime, Some(RESUMED.0));
+        assert!(child.is_none());
+        assert_eq!(
+            writers,
+            BatchWriters {
+                stop_current: false,
+                spared: None,
+                wait_for: vec![EXITING],
+            }
+        );
+        assert_eq!(
+            runtime.exiting,
+            vec![EXITING],
             "it stays recorded until seen gone"
         );
     }
@@ -2037,6 +2241,132 @@ mod tests {
         // Windows retries a refused loopback connect until the call's timeout, so each call can
         // run its full share; the slack is the cost of making them, not a third call.
         assert!(started.elapsed() < STOP_PAUSE_BUDGET + Duration::from_millis(500));
+    }
+
+    /// A stand-in Syncthing REST API on loopback. It answers every call with 200 and an empty
+    /// ignore list, and records each call as "METHOD /path" before answering.
+    fn recording_syncthing(calls: Arc<Mutex<Vec<String>>>) -> ControlState {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let port = listener
+            .local_addr()
+            .expect("read test server address")
+            .port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut reader = BufReader::new(stream.expect("accept request"));
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("read request line");
+                let mut parts = line.split(' ');
+                let method = parts.next().unwrap_or_default();
+                let path = parts
+                    .next()
+                    .unwrap_or_default()
+                    .split('?')
+                    .next()
+                    .unwrap_or_default();
+                let mut length = 0;
+                loop {
+                    let mut header = String::new();
+                    reader.read_line(&mut header).expect("read header");
+                    if header.trim().is_empty() {
+                        break;
+                    }
+                    if let Some((name, value)) = header.split_once(':') {
+                        if name.eq_ignore_ascii_case("content-length") {
+                            length = value.trim().parse().expect("content length");
+                        }
+                    }
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).expect("read body");
+                calls.lock().unwrap().push(format!("{method} {path}"));
+                let reply = r#"{"ignore":null}"#;
+                let _ = reader.into_inner().write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                        reply.len()
+                    )
+                    .as_bytes(),
+                );
+            }
+        });
+        serde_json::from_value(serde_json::json!({
+            "version": 1, "enabled": true, "apiKey": "key", "guiPort": port
+        }))
+        .unwrap()
+    }
+
+    /// Records "released" when dropped: the stand-in for the lifecycle lock a batch holds while it
+    /// resumes.
+    struct Held<'a>(&'a Mutex<Vec<String>>);
+
+    impl Drop for Held<'_> {
+        fn drop(&mut self) {
+            self.0.lock().unwrap().push("released".to_string());
+        }
+    }
+
+    #[test]
+    fn a_batch_holds_its_lock_just_while_it_resumes() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let control = recording_syncthing(calls.clone());
+        // The close begins once the batch has resumed, so it pauses without waiting for the peer.
+        let checks = Cell::new(0);
+        let stopped = || {
+            checks.set(checks.get() + 1);
+            checks.get() > 2
+        };
+        let (result, acknowledged) = sync_batch(
+            &reqwest::blocking::Client::new(),
+            &control,
+            "folder",
+            "device",
+            &stopped,
+            || {
+                calls.lock().unwrap().push("held".to_string());
+                Ok(Held(&calls))
+            },
+            || Ok(()),
+        );
+        assert_eq!(result, Err(SHUTDOWN_STOPPED.to_string()));
+        assert!(acknowledged);
+        assert_eq!(
+            *calls.lock().unwrap(),
+            [
+                "GET /rest/db/ignores",
+                "POST /rest/db/ignores",
+                "held",
+                "PATCH /rest/config/folders/folder",
+                "PATCH /rest/config/devices/device",
+                "released",
+                "PATCH /rest/config/folders/folder",
+                "PATCH /rest/config/devices/device",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_batch_with_no_syncthing_to_record_does_not_resume() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let control = recording_syncthing(calls.clone());
+        let (result, acknowledged) = sync_batch(
+            &reqwest::blocking::Client::new(),
+            &control,
+            "folder",
+            "device",
+            &|| false,
+            || Err::<(), _>("Syncthing is not running".to_string()),
+            || Ok(()),
+        );
+        assert_eq!(result, Err("Syncthing is not running".to_string()));
+        assert!(
+            acknowledged,
+            "nothing was resumed, so nothing needs a pause"
+        );
+        assert_eq!(
+            *calls.lock().unwrap(),
+            ["GET /rest/db/ignores", "POST /rest/db/ignores"]
+        );
     }
 
     #[test]
