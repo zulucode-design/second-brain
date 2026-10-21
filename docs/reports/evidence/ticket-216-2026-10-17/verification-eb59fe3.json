@@ -1,0 +1,116 @@
+{
+  "candidate": "eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9",
+  "branch": "fix/216-deferred-similarity",
+  "fedoraHeadConfirmed": true,
+  "fedoraTreeInitiallyClean": true,
+  "fetchExit": 0,
+  "originMain": "1e99ab122dcdb873c17b7055e1cb8e148b592de2",
+  "mergeAlreadyIn": "7763c73",
+  "priorAttemptEvidenceUsed": false,
+  "noPriorRustBuildOrDevServer": {
+    "fedora": true,
+    "windows": true
+  },
+  "port11436InitiallyFree": {
+    "fedora": true,
+    "windows": true
+  },
+  "fedoraPackageInitiallyAbsent": true,
+  "windowsOnlyExistingInstallWasPreserved169": true,
+  "windowsDiskBefore": {
+    "C": {
+      "freeBytes": 68695728128
+    },
+    "D": {
+      "freeBytes": 131847106560
+    }
+  },
+  "windowsCandidateReusedByBundle": true,
+  "windowsCargoStatus": "M src-tauri/Cargo.toml",
+  "windowsTrackedDiffEmpty": true,
+  "windowsCargoHeadAndNormalizedWorkingBlob": "2195ed7bfdbb622667dd0bf5cdd303153b8c23de",
+  "verifier": "Sol",
+  "fedora": {
+    "verify": {
+      "exit": 0,
+      "svelteErrors": 0,
+      "svelteWarnings": 0,
+      "javascript": {
+        "passed": 254,
+        "failed": 0,
+        "skipped": 0
+      },
+      "rust": {
+        "listed": 748,
+        "passed": 738,
+        "failed": 0,
+        "ignored": 10,
+        "mainTests": 0,
+        "docTests": 0
+      },
+      "lint": "PASS",
+      "build": "PASS"
+    },
+    "tauriBuild": {
+      "exit": 0,
+      "rpmBytes": 30178934
+    },
+    "packageVerification": {
+      "exit": 0,
+      "cleanupIntercepted": "Extraction retained; no delete performed"
+    },
+    "debugBuild": {
+      "exit": 0
+    },
+    "similarRun": {
+      "exit": 0,
+      "captures": 17,
+      "duplicatesFound": 8,
+      "duplicates": 8,
+      "wrongCards": 0,
+      "inconclusive": 0
+    },
+    "namedRustTests": 51,
+    "namedJavascriptTest": "a new note left by a vault switch is checked in the vault it was opened in"
+  },
+  "windows": {
+    "testRust": {
+      "exit": 0,
+      "listed": 717,
+      "passed": 708,
+      "failed": 0,
+      "ignored": 9
+    },
+    "lintRust": {
+      "exit": 101,
+      "result": "FAIL, allowed #221 only",
+      "distinctErrors": 1,
+      "lint": "bind_instead_of_map",
+      "location": "src-tauri/src/commands.rs:4420",
+      "mainLocation": "src-tauri/src/commands.rs:4295"
+    },
+    "build": {
+      "exit": 0
+    },
+    "tauriBuild": {
+      "exit": 0,
+      "nsisBytes": 20332261
+    },
+    "namedRustTests": 46,
+    "unixOnlyNotCompiled": 5,
+    "installedNothing": true
+  },
+  "installedRecovery": {
+    "steps": [
+      "PASS",
+      "PASS",
+      "PASS",
+      "PASS"
+    ],
+    "stabilitySeconds": 90.309605,
+    "profilesUnchanged": true,
+    "packageRemoved": true,
+    "serverAndWorkersStopped": true
+  },
+  "result": "VERIFY: PASS"
+}

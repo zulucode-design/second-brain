@@ -1,85 +1,91 @@
 # Deferred capture-time similarity (#216): verification
 
-Date: 2026-10-20 (local date). Sol ran Kiro workflow section 7, steps 5 and 6, on candidate
-`32fe3afdc3092e42e937fd2f6edbd09453680f7b`.
+Date: 2026-10-21 (local date). Sol ran Kiro workflow section 7, steps 5 and 6, on candidate
+`eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9`.
 
 **VERIFY: PASS**, with only the allowed Windows #221 Clippy failure. Both machines passed their
-requested tests and builds. All four installed-package recovery steps passed again; the debug
-end-to-end similarity run also passed. The Fedora RPM was removed, the temporary Ollama job and
-all observed descendants were stopped, and production profiles remained unchanged. No push or
-pull request was made. The new report commit still needs its own final review before publication.
+requested tests and builds. All four installed-package recovery steps passed again, and the debug
+end-to-end similarity run passed. The Fedora RPM was removed, the temporary Ollama job and all
+observed descendants were stopped, and production profiles remained unchanged. No push or pull
+request was made. The resulting report commit still needs its own final review before publication.
 
 ## Current candidate and method
 
-- Branch: `fix/216-deferred-similarity`. Fedora HEAD was the exact candidate and the tree was clean
+- Branch: `fix/216-deferred-similarity`. Fedora HEAD matched the candidate and the tree was clean
   before verification. `git fetch origin` confirmed `origin/main` remained
   `1e99ab122dcdb873c17b7055e1cb8e148b592de2`. Commit `7763c73` had already merged that main head
-  (PR #225, #169 hourly sync); no further merge was needed. Its changes were disjoint from this work.
-- The old Windows candidate checkout no longer existed. A fresh disposable checkout was cloned
-  from a full-history candidate bundle; HEAD and a clean tree were confirmed before the gates.
-  `CARGO_TARGET_DIR` reused the shared Rust cache. The existing source checkout and #169 install
-  were left alone. `pnpm install --frozen-lockfile` reused 477 packages and downloaded none.
-  No app was installed on Windows.
-- The required Sol usage probe returned `OK` before each run. Sol ran every verification here;
+  (PR #225, #169 hourly sync); no further merge was needed. Its files were disjoint from this work.
+- A new private run root was used. Before starting, both machines had no Rust build, dev server or
+  listener on 11436. Fedora had no installed test package, and the prior gate unit was inactive.
+  Windows had only the expected #169 install. No logs or results from either unfinished verification
+  attempt were used as evidence.
+- Windows reused the earlier disposable candidate checkout, fetched this run's full-history bundle,
+  checked out the exact candidate detached, and used the shared Rust cache through `CARGO_TARGET_DIR`.
+  `pnpm install --frozen-lockfile` reported already up to date. The existing source checkout and #169
+  install were left alone. Nothing was installed on Windows.
+- The Sol usage probe returned `OK` before each gate. Sol ran every verification recorded here;
   no stand-in was needed. No product code was edited or fixed.
-- Windows disk preflight: C: 72,486,268,928 free bytes (67.51 GiB), D: 146,170,503,168 (136.13 GiB),
-  above the 15 GB requirement and the script's conservative 15 GiB check. No space was freed.
-- Post-build Windows porcelain reported `M src-tauri/Cargo.toml`, but `git diff --exit-code`
-  returned 0 and its normalized working blob exactly matched HEAD:
-  `2195ed7bfdbb622667dd0bf5cdd303153b8c23de`. The first inventory assertion required empty
-  porcelain and stopped on that status. Its corrected read-only inventory records both facts
-  and also requires unchanged index and tracked content. The file was left as it was; no
-  restore or product fix was made. [Status and identity evidence](evidence/ticket-216-2026-10-17/windows-post-build-state-32fe3af.json).
+- Windows disk preflight: C: 68,695,728,128 free bytes (63.98 GiB); D: 131,847,106,560
+  (122.79 GiB), above both the 15 GB requirement and the conservative 15 GiB check. No space was freed.
+- Windows porcelain showed `M src-tauri/Cargo.toml` before and after the gates. Both working and index
+  diffs were empty; the normalized working blob matched HEAD exactly:
+  `2195ed7bfdbb622667dd0bf5cdd303153b8c23de`. The file was left untouched. The verification uses that
+  content identity, rather than claiming empty Windows porcelain.
+  [Windows status, command exits, package hash and inventory](evidence/ticket-216-2026-10-17/windows-inventory-eb59fe3.json).
+- Since the verified product head `32fe3af`, product changes are confined to the vault scan in
+  `src-tauri/src/similar_notes.rs` and the tests in `src-tauri/src/semantic_search.rs`. The scan now
+  uses the same strict note read as the check. Every gate below ran again on `eb59fe3`.
 
-[Current verification summary](evidence/ticket-216-2026-10-17/verification-32fe3af.json).
+[Current verification summary and preflight](evidence/ticket-216-2026-10-17/verification-eb59fe3.json).
 
 ## Current command results
 
-Every result in this section is from `32fe3af`, not carried from an earlier build.
+Every result in this section is from `eb59fe3`; no earlier candidate supplies a current gate result.
 
 | Machine | Command | Result and counts |
 | --- | --- | --- |
 | Fedora | `pnpm verify` | PASS, exit 0; all five constituent commands below passed. |
 | Fedora | `pnpm check` (inside verify) | PASS; 0 errors, 0 warnings. |
 | Fedora | `pnpm test` (inside verify) | PASS; 254 passed, 0 failed, 0 skipped. |
-| Fedora | `pnpm test:rust` (inside verify) | PASS; 747 listed, 737 passed, 0 failed, 10 ignored. Main and doc tests each ran 0. |
+| Fedora | `pnpm test:rust` (inside verify) | PASS; 748 listed, 738 passed, 0 failed, 10 ignored. Main and doc tests each ran 0. |
 | Fedora | `pnpm lint:rust` (inside verify) | PASS; formatting and Clippy clean. |
 | Fedora | `pnpm build` (inside verify) | PASS; one static site. |
-| Fedora | `pnpm tauri:build` | PASS, exit 0; one RPM, 30,175,462 bytes. |
-| Fedora | `scripts/verify-linux-package.sh <RPM>` | PASS, exit 0; one packaged desktop entry matched its source. Only its cleanup command was intercepted, retaining the extraction. |
+| Fedora | `pnpm tauri:build` | PASS, exit 0; one RPM, 30,178,934 bytes. |
+| Fedora | `scripts/verify-linux-package.sh <RPM>` | PASS, exit 0; one packaged desktop entry matched its source. Its cleanup command was intercepted so the extraction remained. |
 | Fedora | Package helper install/remove | PASS, exits 0; installed binary contained the full candidate SHA; removal confirmed package, binary and desktop entries absent. |
 | Fedora | `pnpm tauri build --debug --no-bundle` | PASS, exit 0; one debug app. |
 | Fedora | `node scripts/similar-run.mjs --app src-tauri/target/debug/second-brain` | PASS, exit 0; 17 captures, 8/8 duplicates, 0 wrong cards, 0 inconclusive. |
-| Windows | `pnpm test:rust` | PASS, exit 0; 716 listed, 707 passed, 0 failed, 9 ignored. |
-| Windows | `pnpm lint:rust` | FAIL, allowed #221 only, exit 101; formatting passed. One distinct `bind_instead_of_map` error, reported for lib and lib test, at `src-tauri/src/commands.rs:4420`. It is the unchanged expression at main's line 4295. |
+| Windows | `pnpm test:rust` | PASS, exit 0; 717 listed, 708 passed, 0 failed, 9 ignored. |
+| Windows | `pnpm lint:rust` | FAIL, allowed #221 only, exit 101; formatting passed. One distinct `bind_instead_of_map` error, reported for lib and lib test, at `src-tauri/src/commands.rs:4420`; the unchanged expression at main's line 4295. |
 | Windows | `pnpm build` | PASS, exit 0; one static site. |
-| Windows | `pnpm tauri:build` | PASS, exit 0; one x64 NSIS installer. One informational linker warning reported creation of import-library files. Nothing installed. |
+| Windows | `pnpm tauri:build` | PASS, exit 0; one x64 NSIS installer, 20,332,261 bytes. One informational linker warning reported creation of import-library files. Nothing installed. |
 
-Full logs: [Fedora verify](evidence/ticket-216-2026-10-17/fedora-verify-32fe3af.txt),
-[Fedora RPM build](evidence/ticket-216-2026-10-17/fedora-tauri-build-32fe3af.txt),
-[package check](evidence/ticket-216-2026-10-17/fedora-package-32fe3af.txt),
-[debug build](evidence/ticket-216-2026-10-17/fedora-debug-build-32fe3af.txt),
-[Windows Rust tests](evidence/ticket-216-2026-10-17/windows-test-rust-32fe3af.txt),
-[Windows lint](evidence/ticket-216-2026-10-17/windows-lint-rust-32fe3af.txt),
-[Windows frontend build](evidence/ticket-216-2026-10-17/windows-build-32fe3af.txt), and
-[Windows NSIS build](evidence/ticket-216-2026-10-17/windows-tauri-build-32fe3af.txt).
-Windows `pnpm test` was outside the requested Windows list and was not run; #221's three known
-JavaScript failures were not exercised. Ignored live/hardware/network tests are not claimed as passed.
+Full logs: [Fedora verify](evidence/ticket-216-2026-10-17/fedora-verify-eb59fe3.txt),
+[RPM build](evidence/ticket-216-2026-10-17/fedora-tauri-build-eb59fe3.txt),
+[package check](evidence/ticket-216-2026-10-17/fedora-package-eb59fe3.txt),
+[debug build](evidence/ticket-216-2026-10-17/fedora-debug-build-eb59fe3.txt),
+[Windows Rust tests](evidence/ticket-216-2026-10-17/windows-test-rust-eb59fe3.txt),
+[Windows lint](evidence/ticket-216-2026-10-17/windows-lint-rust-eb59fe3.txt),
+[Windows frontend build](evidence/ticket-216-2026-10-17/windows-build-eb59fe3.txt), and
+[Windows NSIS build](evidence/ticket-216-2026-10-17/windows-tauri-build-eb59fe3.txt).
+Windows `pnpm test` was outside the requested command list and was not run; #221's three known
+JavaScript failures were not exercised. Ignored live, hardware and network tests are not claimed as passed.
 
 ## Current named tests
 
-All 50 requested Rust tests ran and passed on Fedora; all 45 applicable tests ran and passed on
-Windows. The five Unix-only tests did not compile on Windows. None of these results is ignored or
-filtered. The population below also exactly matches the 50 Rust test functions added by this branch
-relative to `origin/main`, including all five `commands::restore_outcome_tests` tests.
+All 51 requested Rust tests ran and passed on Fedora; all 46 applicable tests ran and passed on
+Windows. Five Unix-only tests did not compile on Windows. None of these results is ignored or
+filtered. This population exactly matches the 51 Rust test functions added by the branch relative
+to `origin/main`, including all five `commands::restore_outcome_tests` tests and the new non-UTF-8
+regression that prompted this verification.
 
 Regenerate the name-to-log check from the repository root:
-`python3 docs/reports/evidence/ticket-216-2026-10-17/match-tests-32fe3af.py`.
-The script reads the explicit [50-name manifest](evidence/ticket-216-2026-10-17/named-tests-32fe3af.json)
+`python3 docs/reports/evidence/ticket-216-2026-10-17/match-tests-eb59fe3.py`.
+It reads the explicit [51-name manifest](evidence/ticket-216-2026-10-17/named-tests-eb59fe3.json)
 and matches each full `test <name> ... ok` line against the two complete logs.
-[Added-function comparison](evidence/ticket-216-2026-10-17/added-tests-matched-32fe3af.json) records
-test functions present at this candidate and absent from `origin/main`. Regenerate that comparison with
-`python3 docs/reports/evidence/ticket-216-2026-10-17/match-added-tests-32fe3af.py`; it pins both commits.
+[Added-function comparison](evidence/ticket-216-2026-10-17/added-tests-matched-eb59fe3.json) pins both
+commits and records that the populations agree. Regenerate it with
+`python3 docs/reports/evidence/ticket-216-2026-10-17/match-added-tests-eb59fe3.py`.
 
 | Test | Fedora | Windows |
 | --- | --- | --- |
@@ -133,83 +139,81 @@ test functions present at this candidate and absent from `origin/main`. Regenera
 | `commands::restore_outcome_tests::a_restore_refused_the_lease_never_runs` | PASS | PASS |
 | `commands::restore_outcome_tests::a_failed_restore_changed_the_vault_only_when_it_says_so` | PASS | PASS |
 | `commands::restore_outcome_tests::a_restore_whose_reconcile_fails_changed_the_vault_and_says_so` | PASS | PASS |
+| `semantic_search::tests::a_deferred_note_moved_with_bytes_that_are_not_utf8_stays_kept_and_the_next_check_runs` | PASS | PASS |
 
 Fedora `pnpm verify` also ran and passed `tests/similar.test.mjs`'s
 "a new note left by a vault switch is checked in the vault it was opened in".
 
 ## Current installed-package recovery
 
-The unchanged bounded Windows supervisor and its `owned-process.cs` companion ran on port 11436
-in one held SSH session, with a 7,200-second lease. It used the installed Ollama and existing
-`embeddinggemma` model store, downloading nothing. Supervisor PID `4128` and server PID `21604`
-kept the same creation times across the first answer at 22:35:10.609009Z and the stability answer
-at 22:36:23.3233857Z, **72.714376 seconds apart**. The final Windows endpoint answered again
-after both behavior runs.
+The unchanged bounded Windows supervisor and `owned-process.cs` ran on port 11436 in one held
+SSH session, with a 7,200-second lease. They used the installed Ollama and existing `embeddinggemma`
+store, downloading no model. Supervisor `19912` and server `14272` retained the same creation times
+across the first answer at 22:15:02.2387826Z and stability answer at 22:16:32.5483870Z,
+**90.309605 seconds apart**. The same Windows endpoint answered again after both behavior runs.
 
 Before installation, eight production profile roots were inventoried and the two present roots
-backed up. The population is the Cartesian product of four default XDG folders (`.config`,
-`.local/share`, `.local/state`, `.cache`) and the two identifiers (`io.github.zulucodedesign.SecondBrain`,
-`helixnotes`), as `profilePaths` in the reused controller generates it. Counts and source are
-published in the current recovery evidence's `preinstall`; its `safety` step independently records
-the same counts. Private manifests and backups remain outside the repository.
+backed up. This is the Cartesian product of four default XDG folders (`.config`, `.local/share`,
+`.local/state`, `.cache`) and two identifiers (`io.github.zulucodedesign.SecondBrain`, `helixnotes`),
+as `profilePaths` in the reused controller generates it. The current evidence publishes the count
+and source in `preinstall`; the controller's `safety` observation independently records both counts.
+Private manifests and backups remain outside the repository.
 
-The helper installed this run's RPM (SHA-256
-`a7e5831b4dde1f01d6c37d2fb521d2facbf766dd350f74a1bdb4a4d919eca0b2`).
-The installed binary contained the exact candidate SHA; its SHA-256 was
-`e87bdbb4d9e1b9daf2347ba8fa50ab290151c43194bbd26be42ddc0fb54a318d`.
-The reused controller ran from the repository root through stdin, with only its candidate metadata
-changed. It used the first three fixture notes, a fresh vault ID, and isolated XDG roots.
+The helper installed this run's RPM, SHA-256 `7875a1072952750dc9e57024ef2fca32eb9d0f22d61d36fd32ef64d8610fd42d`. The installed binary contained the
+exact candidate SHA and had SHA-256 `a745faccb74861488456964e3997c6d2ca1ca3f0c2eaa07c0b96a5ec5bfbf936`.
+The controller ran from the repository root through stdin, with only candidate metadata changed.
+It used the first three fixture notes, a fresh vault ID, and isolated XDG configuration, data,
+state and cache roots. All three app sessions passed health checks.
 
 | Step | Result | Observation |
 | --- | --- | --- |
-| 1. Two offline captures | PASS | `Shed spending` and `Shed wall wood` saved; two skip lines, two durable records, no card. [Records](evidence/ticket-216-2026-10-17/installed-recovery-32fe3af-offline-deferred.json). |
-| 2. Restart and delete second capture | PASS | Both records survived restart; the app's `delete_note` removed the second capture. [Records after deletion](evidence/ticket-216-2026-10-17/installed-recovery-32fe3af-after-delete-deferred.json). |
+| 1. Two offline captures | PASS | `Shed spending` and `Shed wall wood` saved; two skip log lines, two durable records, no card. [Records](evidence/ticket-216-2026-10-17/installed-recovery-offline-deferred-eb59fe3.json). |
+| 2. Restart and delete second capture | PASS | Both records survived restart; the app's `delete_note` removed the second capture. [After deletion](evidence/ticket-216-2026-10-17/installed-recovery-after-delete-deferred-eb59fe3.json). |
 | 3. Restore app backend URL | PASS | App stopped; isolated config changed from closed port 11447 to forwarded 11436; third session confirmed it. |
-| 4. Card and drain | PASS | After startup reconcile/indexing, four notes indexed and zero queued. `Shed spending` matched `Garden shed budget`; `ran=1 found=1 dropped=1 waiting=0`; zero records remained; zero observed app `Notify` calls. [Empty file](evidence/ticket-216-2026-10-17/installed-recovery-32fe3af-empty-deferred.json); [card](evidence/ticket-216-2026-10-17/installed-recovery-32fe3af-card.png). |
+| 4. Card and drain | PASS | After startup reconcile/indexing, four notes indexed and zero queued. `Shed spending` matched `Garden shed budget`; `ran=1 found=1 dropped=1 waiting=0`; records empty; zero observed app `Notify` calls. [Empty file](evidence/ticket-216-2026-10-17/installed-recovery-empty-deferred-eb59fe3.json); [card](evidence/ticket-216-2026-10-17/installed-recovery-card-eb59fe3.png). |
 
-[Recovery observations, PIDs, timing, hashes and cleanup](evidence/ticket-216-2026-10-17/installed-recovery-32fe3af.json).
-[Reused controller with current candidate metadata](evidence/ticket-216-2026-10-17/installed-recovery-controller-32fe3af.mjs).
+[Recovery observations, PIDs, timing, hashes and cleanup](evidence/ticket-216-2026-10-17/installed-recovery-eb59fe3.json).
+[Controller with current candidate metadata](evidence/ticket-216-2026-10-17/installed-recovery-controller-eb59fe3.mjs).
 The screenshot was inspected and contains only fixture text. No step needed a person at the screen.
 
 Step 3 proves installed recovery after a restart with a reachable backend. A running installed app
 recovering from an outage is covered only by the unit tests
 `semantic_search::tests::a_deferred_check_runs_after_the_backend_returns_and_its_card_is_delivered`
-and `semantic_search::tests::a_deferred_check_that_fails_again_stays_recorded`; these four installed
-steps did not exercise that transition. The separate debug end-to-end run below also exercises
-live outage recovery. The installed run's zero `Notify` count has no positive control in that run.
-Source reading backs it: `rerun_deferred` calls `show_card` and does not call `notify`
-(`src-tauri/src/similar_notes.rs`). The debug run's notification controls are separate evidence.
+and `semantic_search::tests::a_deferred_check_that_fails_again_stays_recorded`; these installed steps
+did not exercise that transition. The separate debug run below also exercises live outage recovery.
+The installed run's zero `Notify` count has no positive control in that run. Source reading backs
+it: `rerun_deferred` calls `show_card` and does not call `notify` in `src-tauri/src/similar_notes.rs`.
+The debug run's notification controls are separate evidence.
 
-The helper removed the RPM (exit 0); the package query returned exit 1 and the binary and both
+The helper removed the RPM, exit 0. The package query returned exit 1, and the binary and both
 possible desktop entries were absent. The app, driver and forwarding ports were absent after the
-run. Original profile existence and file hashes matched the preinstall baseline again after the
-debug run; no restoration was needed.
+run. Production profile existence and file hashes matched the preinstall baseline again after the
+debug run, so no restoration was needed.
 
 ## Current end-to-end similarity run
 
 After the debug build, Sol ran the candidate's `scripts/similar-run.mjs` against
-`src-tauri/target/debug/second-brain`, with a fresh disposable root. A private `ssh` PATH wrapper
-changed only each `-L` destination from upstream port 11434 to the gate-owned Windows port 11436;
-the initial tunnel and recovery relay reached that same server. Candidate scripts were unchanged.
-[Routing method and wrapper source](evidence/ticket-216-2026-10-17/similar-run-routing-32fe3af.json).
+`src-tauri/target/debug/second-brain`, with a new disposable `--root`. A private `ssh` PATH wrapper
+changed only each `-L` upstream destination from port 11434 to the gate-owned Windows port 11436.
+Both the initial tunnel and recovery relay reached the same server; candidate scripts were unchanged.
+[Routing method and wrapper source](evidence/ticket-216-2026-10-17/similar-run-routing-eb59fe3.json).
 
-[Complete scrubbed trace](evidence/ticket-216-2026-10-17/similar-run-32fe3af.json):
+[Complete scrubbed trace](evidence/ticket-216-2026-10-17/similar-run-eb59fe3.json):
 
 - Summary: `captures=17`, `duplicatesFound=8`, `duplicates=8`, `wrongCards=0`, `inconclusive=0`.
 - `actions.offline`: `saved=true`, `card=null`, `cardOnceBack=true`.
-- `actions.vaultSwitch`: switched while a request was held; `cardsAfterSwitch=0`,
+- `actions.vaultSwitch`: `switchedWhileHeld=true`, `cardsAfterSwitch=0`,
   `notificationsAfterSwitch=0`, `activeVaultIsOther=true`. Its no-switch control raised one
-  notification, so the late-notification check had a positive control.
+  notification, providing a positive control for the late-notification check.
 - Append, dismiss, changed-note and moved-note refusals, open, append with either note open, and
-  the replaced notification pair all produced the expected trace values. The two notification
-  calls shared the returned ID; the second used it as `replacesId`.
+  notification replacement produced their expected trace values. The two notification calls shared
+  the returned ID; the second used it as `replacesId`.
 
-After the final endpoint/process-tree observation, cleanup checked supervisor and server creation
-times and stopped only supervisor PID `4128`. The Job Object removed server `21604`, model worker
-`7404`, and console descendants `20684` and `10308`; all five unique PIDs and the listener were
-confirmed absent. The deliberate stop ended the held SSH session. The user's port 11434 had no
-listener at the recorded preflight or after cleanup, and no user-owned process was stopped or adopted.
-No model was downloaded. The debug app was absent and all driver/forwarding ports were closed.
+Cleanup checked creation times and stopped only supervisor `19912`. Its Job Object removed server
+`14272`, model worker `21932`, and console descendants `2712` and `15380`. All five unique PIDs and
+the 11436 listener were confirmed absent. The held SSH session ended after that deliberate stop.
+The user's port 11434 had no listener after cleanup; no user-owned process was stopped or adopted.
+The debug app, drivers and forwarding ports were absent, and production profiles were unchanged.
 
 ## Review history through the candidate
 
@@ -244,177 +248,66 @@ required, not new reviews performed during this verification. Every round identi
 | 23 / `cbf28c5` | Sol | One Spec P2 and one adversarial P2; Standards CLEAN | Kiro attempt 2: `9e83632`, `5c7d847`, `dee93d6`, imported by Claude |
 | 24 / `dee93d6` | Claude Sonnet stand-ins, both axes | CLEAN with four P3s | Kiro attempt 3: `4bf1bb2`, `c5dd3c3`, `bfb12a7`, `9f694aa`, imported by Claude |
 | 25 / `9f694aa` | Sol | CLEAN on both axes, one adversarial P3 | Kiro attempt 4: `32fe3af`, imported by Claude |
-| 26 / `32fe3af` | Sol | CLEAN on both axes, no findings | Full verification recorded here; report head still needs final review |
+| 26 / `32fe3af` | Sol | CLEAN on both axes, no findings | Full verification passed on both machines; report commit `5e5c1f9` |
+| Final / `5e5c1f9` | Sol | Standards CLEAN; Spec/Adversarial CHANGES REQUIRED, one adversarial P2: a lossy vault scan could stop checks behind a moved non-UTF-8 note | Kiro attempt 5: `eb59fe3`, imported by Claude |
+| 27 / `eb59fe3` | Sol | CLEAN on both axes, no findings | Full verification rerun in this report |
 
 Main's lock-order issue #227 and semantic-index overlap issue #228 remain open follow-ups. This
 verification does not claim to fix them. The report head still needs the final review required by
-AGENTS.md; round 26 covered the product candidate, not the resulting report commit.
+AGENTS.md; round 27 covered the product candidate, not the resulting report commit.
 
-## Earlier evidence carried forward
+## Earlier verification and evidence
 
-The `19727aa` evidence below remains the historical record of the initial gates, two incomplete
-preflights and the successful installed recovery. The controller and bounded-supervisor method
-were reused because their behavior and harness ownership still fit this check. Their historical
-results do not stand in for current-candidate tests, builds or recovery: all requested gates were
-rerun on `32fe3af`. Old failure verdicts, timings, screenshots and inventories remain unchanged;
-the report now explains their scope and the six report findings from the first final review.
+Sol's full verification of product head `32fe3afdc3092e42e937fd2f6edbd09453680f7b` passed on
+both machines and was committed as report head `5e5c1f9`. Fedora then had 254 JavaScript passes,
+737 Rust passes and 10 ignored; Windows had 707 Rust passes and 9 ignored, with only allowed #221
+lint. All four installed steps and the 17-capture end-to-end run passed. Its
+[summary](evidence/ticket-216-2026-10-17/verification-32fe3af.json),
+[recovery](evidence/ticket-216-2026-10-17/installed-recovery-32fe3af.json),
+[trace](evidence/ticket-216-2026-10-17/similar-run-32fe3af.json) and
+[inventory](evidence/ticket-216-2026-10-17/retained-paths-32fe3af.json) remain unchanged.
+The final review of that report head found the non-UTF-8 scan problem; Kiro's attempt 5 fixed it
+in `eb59fe3`, whose round 27 review was clean. Those earlier passes do not verify this candidate.
+
+The `19727aa` evidence below remains the historical record of the initial gates, incomplete
+preflights and successful installed recovery. The controller and bounded-supervisor method were
+reused because their behavior and ownership fit this check. Their results, timings, screenshots
+and inventories remain unchanged. They supply historical context and method only; all current
+acceptance results were rerun. The six report findings from the first final review remain settled:
+the historical FAIL and INCONCLUSIVE labels are explained beside their links, the unsupported
+pre-run listener claim is removed, installed recovery and notification limits are stated, the old
+controller's correct invocation is given without editing it, and profile counts have an explicit
+source where published. The detailed historical sections below retain those explanations.
 
 ## Current retained paths
 
-[Complete retained-path inventory](evidence/ticket-216-2026-10-17/retained-paths-32fe3af.json) lists every run file, private backup group, build root and surviving test temporary root with its size. Paths use logical aliases. Counts are regenerated by summing regular file lengths recursively, without following directory links; the inventory records the population and commands. Cache totals include pre-existing files and nested packages are included in their parents.
+[Complete retained-path inventory](evidence/ticket-216-2026-10-17/retained-paths-eb59fe3.json)
+lists every run file, private backup group, build root, package extraction and surviving test
+temporary root with its size. Paths use logical aliases. Totals sum regular file lengths
+recursively without following directory links; the inventory states the population and regeneration
+method. Shared caches and the reused checkout include pre-existing bytes. Nested packages are
+included in their parent totals.
 
 | Machine | Retained path | Logical file bytes |
 | --- | --- | ---: |
-| Fedora | `<Fedora run>` | 9,338,097 |
-| Fedora | `<private pointers>/verify-current.private.txt` | 61 |
-| Fedora | `.svelte-kit` | 8,532,312 |
-| Fedora | `build` | 6,787,344 |
+| Fedora | `<Fedora run>` | 9,589,341 |
+| Fedora | `.svelte-kit` | 8,532,399 |
+| Fedora | `build` | 6,787,349 |
 | Fedora | `src-tauri/binaries` | 26,818,686 |
-| Fedora | `src-tauri/target` | 20,606,459,090 |
-| Windows | `<Windows run>` | 349,095,767 |
-| Windows | `<Windows shared Rust target>` | 8,320,788,222 |
+| Fedora | `src-tauri/target` | 21,220,903,074 |
+| Windows | `<Windows run>` | 5,778,540 |
+| Windows | `<Windows candidate>` | 343,945,953 |
+| Windows | `<Windows shared Rust target>` | 8,999,643,198 |
 
-<details>
-<summary>Every retained test temporary root and package extraction</summary>
+The inventory also lists 66 Fedora temporary roots (including the package extraction)
+and 64 Windows temporary roots, each with its own byte count. RPM: 30,178,934 bytes;
+NSIS installer: 20,332,261 bytes, both included in target totals. The abandoned earlier verification
+roots were left as they were and supplied no evidence for this run.
 
-| Machine | Path | Logical file bytes |
-| --- | --- | ---: |
-| Fedora | `<Fedora temp>/helixnotes-machine-state-87d56f1f-4838-4e94-b528-8e2ac974c2ec` | 78,798 |
-| Fedora | `<Fedora temp>/machine-local-abandoned-claim-b0aca440-65de-4df5-830c-ea92f273ab7e` | 36 |
-| Fedora | `<Fedora temp>/machine-local-concurrent-f231caa8-74a3-4f03-9419-4f6950bca400` | 36 |
-| Fedora | `<Fedora temp>/machine-local-damaged-id-d0b21258-6748-4217-885b-9d811373755d` | 36 |
-| Fedora | `<Fedora temp>/machine-local-existing-id-4ce2a3e4-da69-409e-9f5b-d7a42225ae93` | 37 |
-| Fedora | `<Fedora temp>/machine-local-first-open-6393fcfa-e12d-4b4b-a327-42abbb7ede68` | 36 |
-| Fedora | `<Fedora temp>/machine-local-read-only-id-b95c7b3c-e52a-47e2-93af-f54607a15db7` | 36 |
-| Fedora | `<Fedora temp>/machine-local-truncation-9743d411-2292-471d-b56e-f66d9425c823` | 36 |
-| Fedora | `<Fedora temp>/machine-local-unlocked-fallback-fa96bcaa-2973-42ae-a809-86fbd3312fe0` | 0 |
-| Fedora | `<Fedora temp>/notion-config-140c6c5d-ea66-4daf-9533-66a5195650fc` | 139 |
-| Fedora | `<Fedora temp>/notion-config-6bccc2ab-3410-4050-872d-e4c047a78fcb` | 0 |
-| Fedora | `<Fedora temp>/notion-config-c9ce85f1-bf58-421e-968f-1832cdbd3c85` | 135 |
-| Fedora | `<Fedora temp>/notion-config-f6943dda-5d2a-4dff-a858-5168bdcb5eac` | 18 |
-| Fedora | `<Fedora temp>/notion-enumerate-06a26cb6-5c9c-4cc5-a9fd-f6c7dae4c416` | 234 |
-| Fedora | `<Fedora temp>/notion-enumerate-11efe943-46e3-417a-9c86-646a464b5893` | 29 |
-| Fedora | `<Fedora temp>/notion-enumerate-175e7e5c-d659-4e4f-bcac-7499be362e86` | 28 |
-| Fedora | `<Fedora temp>/notion-enumerate-3ec25ef7-ffd8-4b08-8537-07cf94aa0aa9` | 109 |
-| Fedora | `<Fedora temp>/notion-enumerate-4084d239-4b53-4b73-8c8f-828c4f198471` | 18 |
-| Fedora | `<Fedora temp>/notion-enumerate-4453808e-e1c0-49b5-af06-52dc8259cb3c` | 56 |
-| Fedora | `<Fedora temp>/notion-enumerate-48c693df-26c2-40bf-8e16-70563b59a2f0` | 432 |
-| Fedora | `<Fedora temp>/notion-enumerate-4affe9c0-6058-4e83-a3b6-6042eb2028b9` | 218 |
-| Fedora | `<Fedora temp>/notion-enumerate-506b0ca8-6279-4cfe-a600-41620b936ddd` | 216 |
-| Fedora | `<Fedora temp>/notion-enumerate-51f91be7-0845-42b6-80a7-1728aeca2fe1` | 428 |
-| Fedora | `<Fedora temp>/notion-enumerate-8cff271b-19e2-4a2e-90c0-3ad2b6cb2e59` | 214 |
-| Fedora | `<Fedora temp>/notion-enumerate-d3209f14-8b6f-4b36-8a47-d35f3549605b` | 58 |
-| Fedora | `<Fedora temp>/notion-enumerate-de4a2013-47fc-4f72-b911-857118687ec7` | 234 |
-| Fedora | `<Fedora temp>/notion-map-1018ba04-c938-439b-884c-178f57824682` | 175 |
-| Fedora | `<Fedora temp>/notion-map-225d1dae-aa28-46b0-8bc7-bdef89ae22a8` | 175 |
-| Fedora | `<Fedora temp>/notion-map-4a9462b8-bedc-4a16-a3be-a45679925750` | 0 |
-| Fedora | `<Fedora temp>/notion-map-580df563-fcce-4a1e-8476-76eeae59ce5d` | 208 |
-| Fedora | `<Fedora temp>/notion-map-77f07e9b-8173-4175-8bb3-4e956bf087c2` | 0 |
-| Fedora | `<Fedora temp>/notion-map-893f1489-0f82-4718-8583-2e4e5a4cdf92` | 0 |
-| Fedora | `<Fedora temp>/notion-map-9b4b6dbf-1970-40c9-ac71-2b18d225b0df` | 173 |
-| Fedora | `<Fedora temp>/notion-map-d6682342-672e-4003-b7a9-2b8dfe99af12` | 175 |
-| Fedora | `<Fedora temp>/notion-map-e3ab0b14-a3c4-4a58-a0f4-21777a80de64` | 17 |
-| Fedora | `<Fedora temp>/notion-map-e41b091b-1a94-427c-98fc-21ef1fb7210f` | 0 |
-| Fedora | `<Fedora temp>/notion-publish-00bc0eb1-9ef1-4283-b0a3-96266d938ecd` | 237 |
-| Fedora | `<Fedora temp>/notion-publish-02f08af9-3d8d-4ee3-99c6-ed7152864bc4` | 239 |
-| Fedora | `<Fedora temp>/notion-publish-07ed03a5-c696-4bd3-8d53-7f4537fbe019` | 0 |
-| Fedora | `<Fedora temp>/notion-publish-0d9e58fc-95a4-415f-bb6f-b9eaedae2eb1` | 232 |
-| Fedora | `<Fedora temp>/notion-publish-12680f77-7cd4-4359-8d1f-bea95290a192` | 448 |
-| Fedora | `<Fedora temp>/notion-publish-1e0fd8df-3280-42f2-a4b6-3e8429672a2a` | 329 |
-| Fedora | `<Fedora temp>/notion-publish-2c148b12-38ca-4f53-bc8e-c849c756d518` | 0 |
-| Fedora | `<Fedora temp>/notion-publish-37a29971-b702-4101-b648-c8af25beed96` | 232 |
-| Fedora | `<Fedora temp>/notion-publish-3c0838bf-802c-435b-a3db-b5d498e99aab` | 239 |
-| Fedora | `<Fedora temp>/notion-publish-492aadc4-6429-4757-8bcb-ee319bc3105b` | 26 |
-| Fedora | `<Fedora temp>/notion-publish-4a68edda-5690-4ada-a54c-d96722fd2d1d` | 0 |
-| Fedora | `<Fedora temp>/notion-publish-4afc1135-e02c-45b3-baa1-1f76c2082a75` | 234 |
-| Fedora | `<Fedora temp>/notion-publish-5229a64c-a849-4605-8ce3-3b7c309bb1d8` | 0 |
-| Fedora | `<Fedora temp>/notion-publish-65596c1c-d342-4f57-aecb-db74d487b3ed` | 234 |
-| Fedora | `<Fedora temp>/notion-publish-8085a2ff-717d-488b-95bc-a557cf8afeb8` | 234 |
-| Fedora | `<Fedora temp>/notion-publish-90336b22-a0b5-4ed9-8abf-c6490a7ba6ee` | 239 |
-| Fedora | `<Fedora temp>/notion-publish-9306d9b0-82d3-4833-bd8a-2573ef0c9d85` | 239 |
-| Fedora | `<Fedora temp>/notion-publish-956e94b7-188c-4cff-a484-d629f5bd0455` | 167 |
-| Fedora | `<Fedora temp>/notion-publish-b872b1f5-f932-46e7-aab9-d28c48e2164c` | 228 |
-| Fedora | `<Fedora temp>/notion-publish-bac7d397-d11d-4653-ad29-d3ec54a3649f` | 234 |
-| Fedora | `<Fedora temp>/notion-publish-cef73ba6-13a2-4dfe-9a79-6ab1a89aede6` | 0 |
-| Fedora | `<Fedora temp>/notion-publish-d7aca02f-9dd2-437f-be17-9c4825195163` | 236 |
-| Fedora | `<Fedora temp>/notion-publish-e1c73292-2c8c-4130-9056-c119856ff065` | 0 |
-| Fedora | `<Fedora temp>/notion-publish-e4e6d119-18d5-4a08-abde-b5f3862b3e39` | 226 |
-| Fedora | `<Fedora temp>/notion-publish-f902973c-2e8c-45c8-abd8-d8d27935f215` | 178 |
-| Fedora | `<Fedora temp>/notion-setup-76d24448-6168-4fa5-b96e-4f4ebc25dab7` | 439 |
-| Fedora | `<Fedora temp>/notion-setup-820c9323-44c8-4429-ba53-9d018f90fd87` | 433 |
-| Fedora | `<Fedora temp>/notion-setup-e65d49e1-7bda-4015-91c8-66850c16355a` | 439 |
-| Fedora | `<Fedora temp>/semantic-async-2e208f27-25b3-42c3-89c5-c8c79d795d70` | 36 |
-| Fedora | `<Fedora temp>/tmp.xt7xvywyBA` | 78,966,359 |
-| Windows | `<Windows temp>/helixnotes-machine-state-98e03df2-3f2e-4493-aa62-cd4f6d0b7d1e` | 80,082 |
-| Windows | `<Windows temp>/machine-local-abandoned-claim-b35d4a89-3948-4f76-a6e5-468d38ffe772` | 36 |
-| Windows | `<Windows temp>/machine-local-concurrent-2871f045-f7ea-4e9d-875e-303c8dec3e26` | 36 |
-| Windows | `<Windows temp>/machine-local-damaged-id-6cdd0761-373e-47ed-8014-62356fcc5eb8` | 36 |
-| Windows | `<Windows temp>/machine-local-existing-id-87efc4bb-2728-4f54-81cb-4c6bc1157d7c` | 37 |
-| Windows | `<Windows temp>/machine-local-first-open-92b22626-a51b-4e2a-b777-ffaa59adb260` | 36 |
-| Windows | `<Windows temp>/machine-local-truncation-cacdfb4c-e3ed-4b51-8561-82e8d6b8ab33` | 36 |
-| Windows | `<Windows temp>/machine-local-unlocked-fallback-cd324580-661d-4577-8374-c43028081f03` | 0 |
-| Windows | `<Windows temp>/notion-config-3a3e0a61-5a1d-4619-a2fe-16d5ec4eabb9` | 139 |
-| Windows | `<Windows temp>/notion-config-7096f7a3-185a-4e45-b363-f91837fca980` | 135 |
-| Windows | `<Windows temp>/notion-config-8af3643b-52b3-4732-9195-de43fd69abb8` | 18 |
-| Windows | `<Windows temp>/notion-config-dc67008a-f530-4142-a64c-4493b5b4cbcb` | 0 |
-| Windows | `<Windows temp>/notion-enumerate-13e013ce-674b-4a26-8c07-61eaa5de0016` | 29 |
-| Windows | `<Windows temp>/notion-enumerate-1851f2f3-0cb4-45cb-991e-b87517be901e` | 58 |
-| Windows | `<Windows temp>/notion-enumerate-18b638a2-2129-461a-a369-20632b314d59` | 218 |
-| Windows | `<Windows temp>/notion-enumerate-1aec42ca-be6b-4caf-b702-c9b57e11e3c5` | 234 |
-| Windows | `<Windows temp>/notion-enumerate-22aa7022-194f-4310-8b8e-ad67255e013a` | 428 |
-| Windows | `<Windows temp>/notion-enumerate-63faedbb-e0f3-4020-96bc-dd4106ba324e` | 234 |
-| Windows | `<Windows temp>/notion-enumerate-ace33965-a9f7-4652-bbb0-488daab9eb9f` | 432 |
-| Windows | `<Windows temp>/notion-enumerate-b47754d4-4608-4056-a585-d1c5601c1e27` | 56 |
-| Windows | `<Windows temp>/notion-enumerate-c646df24-b320-40ea-b5e3-5be53cdd020f` | 109 |
-| Windows | `<Windows temp>/notion-enumerate-cd67e2a0-c363-4161-8102-3494efb8a88b` | 216 |
-| Windows | `<Windows temp>/notion-enumerate-d4a70c40-a717-4a24-97e6-3f2d8bf63dce` | 214 |
-| Windows | `<Windows temp>/notion-enumerate-e295cd1b-6bee-4421-a1e8-fe8acec27578` | 18 |
-| Windows | `<Windows temp>/notion-enumerate-ed097c7d-454e-4945-baee-7f9f0a390365` | 28 |
-| Windows | `<Windows temp>/notion-map-11ca5790-fb2a-4605-ada0-28a08a23e150` | 208 |
-| Windows | `<Windows temp>/notion-map-3e23ab0f-7ac9-4c63-bb7b-ad48f3b78d86` | 175 |
-| Windows | `<Windows temp>/notion-map-4507dcf1-8a2e-4b2e-9afa-c01f5cc5e856` | 0 |
-| Windows | `<Windows temp>/notion-map-46a116a7-85a7-44a7-a816-eeea387821ee` | 173 |
-| Windows | `<Windows temp>/notion-map-61013d06-38de-4b3d-8cc4-8962fdb33739` | 0 |
-| Windows | `<Windows temp>/notion-map-848e29c7-7e20-48e5-8ad1-205ef5b6f17f` | 0 |
-| Windows | `<Windows temp>/notion-map-b0ac7fe8-28b1-4f2d-9bbf-307d64d01b4e` | 17 |
-| Windows | `<Windows temp>/notion-map-bbd85387-95ff-4cd0-b981-294ed0191ef1` | 175 |
-| Windows | `<Windows temp>/notion-map-c067a582-6049-4d5e-8498-ed92ddf0312f` | 175 |
-| Windows | `<Windows temp>/notion-map-d3c19e70-7631-406e-a70e-fccd93fa8d0f` | 0 |
-| Windows | `<Windows temp>/notion-publish-02681500-bda2-42e6-922c-e3a5d1af85b8` | 0 |
-| Windows | `<Windows temp>/notion-publish-107dd784-086a-4852-823c-adf611b081eb` | 234 |
-| Windows | `<Windows temp>/notion-publish-247ae587-916d-4b7a-adff-43082c4ef323` | 239 |
-| Windows | `<Windows temp>/notion-publish-3ca33673-993c-4343-9fd6-1cab93d5e426` | 234 |
-| Windows | `<Windows temp>/notion-publish-4c622868-5a16-44ec-87aa-3ef50a849ead` | 236 |
-| Windows | `<Windows temp>/notion-publish-526fcb69-6707-4827-a58e-af3e30df5c89` | 232 |
-| Windows | `<Windows temp>/notion-publish-5f6d6633-2a49-4c99-96d3-c1375f3fabb8` | 448 |
-| Windows | `<Windows temp>/notion-publish-7c46cb93-620b-424c-9774-6e8bf86f64a2` | 0 |
-| Windows | `<Windows temp>/notion-publish-80a7746f-4fc6-4aca-8476-00eeb47ec7de` | 167 |
-| Windows | `<Windows temp>/notion-publish-8cae99ac-cef7-4cf5-86ab-5ca268be83d9` | 228 |
-| Windows | `<Windows temp>/notion-publish-9002f9ef-0f45-46dd-9b7f-ea404a3db809` | 26 |
-| Windows | `<Windows temp>/notion-publish-a090dad0-bbf7-4f47-b5d2-26073d809baf` | 239 |
-| Windows | `<Windows temp>/notion-publish-a8ee4ad1-2361-4b58-a2bd-d189d595c991` | 0 |
-| Windows | `<Windows temp>/notion-publish-ae05a353-e546-48e1-bd53-72dc94d66ab4` | 239 |
-| Windows | `<Windows temp>/notion-publish-b045482a-d2a6-4b06-95fc-8efd1c4079b1` | 0 |
-| Windows | `<Windows temp>/notion-publish-c0a3e2e2-b297-48d8-884f-a84b69ded2bc` | 178 |
-| Windows | `<Windows temp>/notion-publish-c31c64c2-ed47-4f72-83c6-b6cce223abee` | 239 |
-| Windows | `<Windows temp>/notion-publish-c547b787-4282-4088-be92-e4b00c8ea73f` | 237 |
-| Windows | `<Windows temp>/notion-publish-cb811390-8060-4916-a428-3f3cf43ac498` | 226 |
-| Windows | `<Windows temp>/notion-publish-d9263378-01c0-44e4-924b-91ec0a32e24b` | 0 |
-| Windows | `<Windows temp>/notion-publish-dc273e0f-abaa-4f18-8ab1-282997e283f8` | 232 |
-| Windows | `<Windows temp>/notion-publish-e48e4b1c-1eda-4d24-bfc0-1796658322ef` | 234 |
-| Windows | `<Windows temp>/notion-publish-e88b6e00-f95d-4c98-bec1-f4f06a10a013` | 329 |
-| Windows | `<Windows temp>/notion-publish-e8c71333-100e-4948-a115-17742a481237` | 0 |
-| Windows | `<Windows temp>/notion-publish-f4fbafc1-b813-4c70-99d1-538aa847f44b` | 234 |
-| Windows | `<Windows temp>/notion-setup-5f027f49-19cc-43ef-bc20-475d62ec0fbd` | 439 |
-| Windows | `<Windows temp>/notion-setup-9a804771-91e8-4c31-971e-ef97110a6c67` | 433 |
-| Windows | `<Windows temp>/notion-setup-c9b2685a-a1e9-484e-9ddd-98e8a0e86e25` | 439 |
-| Windows | `<Windows temp>/semantic-async-9b3fb959-65a4-405c-9774-0afe526ddd50` | 36 |
-
-</details>
-
-RPM: 30,175,462 bytes. NSIS installer: 20,333,836 bytes; both included in target totals. The full test-temp population is 66 Fedora roots (including retained package extraction) and 64 Windows roots, exactly the entries expanded above. Individual run files are in the linked JSON; production backup contents are grouped for privacy.
-
-Cleanup candidates: the two disposable run roots, private pointer, retained package extraction and each test temporary root listed above. Shared build caches are retained for reuse. No item was deleted; no cleanup is requested by this report.
+Cleanup candidates are the new disposable run roots, copied bundle, retained package extraction
+and each listed test temporary root. Shared build caches and the reused candidate remain for reuse.
+No artifact was deleted. The only removals were the explicitly requested fixture-note deletion
+through the app and the helper's removal of this run's installed RPM.
 
 ## Historical candidate and merge (19727aa)
 

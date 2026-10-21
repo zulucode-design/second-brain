@@ -343,7 +343,7 @@ The first Fedora attempt showed nothing: the tunnel had stopped forwarding overn
 process lived on, so the app logged `Skipped the similarity check for a new note` for each
 capture, as designed for an unreachable backend. After the tunnel was restarted, all three cases
 passed. At that build, a check skipped that way was never run later. **Settled
-2026-10-17 by #216 at `32fe3afdc3092e42e937fd2f6edbd09453680f7b`:** failed checks now persist
+2026-10-17 by #216 at `eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9`:** failed checks now persist
 across a restart and rerun after the backend returns and indexing catches up. All seven named
 regression tests passed on both machines. The installed-package recovery check also passed:
 two offline captures survived a restart, a deleted capture's record was dropped, and the remaining

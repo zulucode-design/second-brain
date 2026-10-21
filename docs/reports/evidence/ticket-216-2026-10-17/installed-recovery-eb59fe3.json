@@ -1,0 +1,302 @@
+{
+  "candidate": "eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9",
+  "started": "2026-10-21T22:20:40.164Z",
+  "steps": [
+    {
+      "step": "safety",
+      "at": "2026-10-21T22:20:40.184Z",
+      "profileRoots": 8,
+      "presentRoots": 2,
+      "isolated": true
+    },
+    {
+      "step": "1-offline-captures",
+      "at": "2026-10-21T22:20:44.364Z",
+      "captured": 2,
+      "skippedLogLines": 2,
+      "skipLogs": [
+        "[2026-10-21][22:20:44][app_lib::similar_notes][INFO] Skipped the similarity check for a new note",
+        "[2026-10-21][22:20:44][app_lib::similar_notes][INFO] Skipped the similarity check for a new note"
+      ],
+      "records": [
+        {
+          "id": "29f5ff84-0ddd-40b3-9ae1-f78afdbbf131",
+          "file": "Shed spending.md"
+        },
+        {
+          "id": "608bba70-96ae-456f-a587-18fb4ceed060",
+          "file": "Shed wall wood.md"
+        }
+      ],
+      "cards": 0,
+      "notificationCalls": 0
+    },
+    {
+      "step": "2-restart-and-delete",
+      "at": "2026-10-21T22:20:46.784Z",
+      "recordsAfterRestart": 2,
+      "deletedThroughAppCommand": true,
+      "sourceFileGone": true,
+      "recordsAfterDelete": [
+        {
+          "id": "29f5ff84-0ddd-40b3-9ae1-f78afdbbf131",
+          "file": "Shed spending.md"
+        },
+        {
+          "id": "608bba70-96ae-456f-a587-18fb4ceed060",
+          "file": "Shed wall wood.md"
+        }
+      ]
+    },
+    {
+      "step": "3-restore-backend",
+      "at": "2026-10-21T22:20:47.293Z",
+      "reachableUrl": "http://127.0.0.1:11436",
+      "unreachableUrl": "http://127.0.0.1:11447",
+      "isolatedConfigChangedWhileAppStopped": true,
+      "existingBackendUnchanged": true
+    },
+    {
+      "step": "4-recovered-card",
+      "at": "2026-10-21T22:21:01.113Z",
+      "index": {
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "lastPass": {
+          "stopped": false,
+          "readMs": 0,
+          "chunkMs": 0,
+          "embedMs": 232,
+          "notes": 2,
+          "totalMs": 261,
+          "databaseMs": 28,
+          "chunks": 2
+        },
+        "indexedNotes": 4
+      },
+      "cards": [
+        {
+          "heading": "\u201cShed spending\u201d is similar to",
+          "matches": [
+            "Garden shed budget",
+            "Similar"
+          ]
+        }
+      ],
+      "log": "Deferred similarity checks: ran=1 found=1 dropped=1 waiting=0",
+      "remainingRecords": 0,
+      "notificationCalls": 0,
+      "screenshot": "similarity-card.png"
+    }
+  ],
+  "result": "PASS",
+  "tunnelPid": 2927575,
+  "notificationMonitorPid": 2927650,
+  "notificationMonitorReady": true,
+  "sessions": [
+    {
+      "launch": 1,
+      "pid": 2927709,
+      "health": {
+        "tauri": true,
+        "newNote": true,
+        "ready": "complete"
+      },
+      "backendUrl": "http://127.0.0.1:11447"
+    },
+    {
+      "launch": 2,
+      "pid": 2928076,
+      "health": {
+        "tauri": true,
+        "newNote": true,
+        "ready": "complete"
+      },
+      "backendUrl": "http://127.0.0.1:11447"
+    },
+    {
+      "launch": 3,
+      "pid": 2928398,
+      "health": {
+        "tauri": true,
+        "newNote": true,
+        "ready": "complete"
+      },
+      "backendUrl": "http://127.0.0.1:11436"
+    }
+  ],
+  "finalForwardedEndpoint": "PASS",
+  "notificationMonitorAliveAtFinalCheck": true,
+  "profileUnchanged": true,
+  "remainingOwnedChildProcesses": [],
+  "remainingAppProcesses": 0,
+  "finished": "2026-10-21T22:21:01.196Z",
+  "preinstall": {
+    "at": "2026-10-21T22:17:30.163548+00:00",
+    "profileRoots": 8,
+    "presentRoots": 2,
+    "source": "Cartesian product of four XDG default folders (.config, .local/share, .local/state, .cache) and two identifiers (io.github.zulucodedesign.SecondBrain, helixnotes), as profilePaths in reused controller",
+    "profileBackupCompleted": true,
+    "rpm": "src-tauri/target/release/bundle/rpm/Second Brain-0.1.0-alpha.1-1.x86_64.rpm",
+    "rpmBytes": 30178934,
+    "rpmSha256": "7875a1072952750dc9e57024ef2fca32eb9d0f22d61d36fd32ef64d8610fd42d"
+  },
+  "installedBinary": {
+    "candidate": "eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9",
+    "shaPresent": true,
+    "bytes": 52140568,
+    "sha256": "a745faccb74861488456964e3997c6d2ca1ca3f0c2eaa07c0b96a5ec5bfbf936"
+  },
+  "serverFirst": {
+    "at": "2026-10-21T22:15:02.2387826Z",
+    "serverPid": 14272,
+    "supervisorPid": 19912,
+    "listenerPid": 14272,
+    "serverCreated": "2026-10-21T22:14:34.7738850Z",
+    "supervisorCreated": "2026-10-21T22:14:33.5230850Z",
+    "embeddinggemma": true,
+    "embeddingModels": [
+      {
+        "name": "embeddinggemma:latest",
+        "digest": "85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1",
+        "size": 621875917
+      }
+    ]
+  },
+  "serverStability": {
+    "at": "2026-10-21T22:16:32.5483870Z",
+    "serverPid": 14272,
+    "supervisorPid": 19912,
+    "listenerPid": 14272,
+    "serverCreated": "2026-10-21T22:14:34.7738850Z",
+    "supervisorCreated": "2026-10-21T22:14:33.5230850Z",
+    "embeddinggemma": true,
+    "embeddingModels": [
+      {
+        "name": "embeddinggemma:latest",
+        "digest": "85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1",
+        "size": 621875917
+      }
+    ],
+    "secondsAfterFirst": 90.309605
+  },
+  "serverLoadedAfterInstalled": {
+    "at": "2026-10-21T22:21:27.7778990Z",
+    "serverPid": 14272,
+    "supervisorPid": 19912,
+    "listenerPid": 14272,
+    "serverCreated": "2026-10-21T22:14:34.7738850Z",
+    "supervisorCreated": "2026-10-21T22:14:33.5230850Z",
+    "embeddinggemma": true,
+    "observedWorkers": [
+      {
+        "pid": 2712,
+        "parentPid": 14272,
+        "created": "2026-10-21T22:14:34.7803830Z",
+        "image": "conhost.exe"
+      },
+      {
+        "pid": 21932,
+        "parentPid": 14272,
+        "created": "2026-10-21T22:20:53.4573890Z",
+        "image": "llama-server.exe"
+      },
+      {
+        "pid": 15380,
+        "parentPid": 21932,
+        "created": "2026-10-21T22:20:53.4649060Z",
+        "image": "conhost.exe"
+      }
+    ]
+  },
+  "serverLoadedAfterEndToEnd": {
+    "at": "2026-10-21T22:24:01.8220795Z",
+    "serverPid": 14272,
+    "supervisorPid": 19912,
+    "listenerPid": 14272,
+    "serverCreated": "2026-10-21T22:14:34.7738850Z",
+    "supervisorCreated": "2026-10-21T22:14:33.5230850Z",
+    "embeddinggemma": true,
+    "observedWorkers": [
+      {
+        "pid": 2712,
+        "parentPid": 14272,
+        "created": "2026-10-21T22:14:34.7803830Z",
+        "image": "conhost.exe"
+      },
+      {
+        "pid": 21932,
+        "parentPid": 14272,
+        "created": "2026-10-21T22:20:53.4573890Z",
+        "image": "llama-server.exe"
+      },
+      {
+        "pid": 15380,
+        "parentPid": 21932,
+        "created": "2026-10-21T22:20:53.4649060Z",
+        "image": "conhost.exe"
+      }
+    ]
+  },
+  "serverCleanup": {
+    "at": "2026-10-21T22:24:52.7864574Z",
+    "supervisorPid": 19912,
+    "serverPid": 14272,
+    "supervisorCreated": "2026-10-21T22:14:33.5230850Z",
+    "serverCreated": "2026-10-21T22:14:34.7738850Z",
+    "observedWorkers": [
+      {
+        "pid": 2712,
+        "parentPid": 14272,
+        "created": "2026-10-21T22:14:34.7803830Z",
+        "image": "conhost.exe"
+      },
+      {
+        "pid": 21932,
+        "parentPid": 14272,
+        "created": "2026-10-21T22:20:53.4573890Z",
+        "image": "llama-server.exe"
+      },
+      {
+        "pid": 15380,
+        "parentPid": 21932,
+        "created": "2026-10-21T22:20:53.4649060Z",
+        "image": "conhost.exe"
+      }
+    ],
+    "supervisorAbsent": true,
+    "serverAbsent": true,
+    "observedWorkersAbsent": true,
+    "gateListenerAbsent": true,
+    "userListenerAfter": [],
+    "retainedFiles": [],
+    "modelWorkerObserved": true,
+    "stoppedOnlyExactSupervisor": true
+  },
+  "packageCleanup": {
+    "removeExit": 0,
+    "queryExit": 1,
+    "packageAbsent": true,
+    "binaryAbsent": true,
+    "desktopEntriesAbsent": true
+  },
+  "finalFedoraState": {
+    "at": "2026-10-21T22:24:29.671893+00:00",
+    "profileRoots": 8,
+    "presentProfileRoots": 2,
+    "profileUnchanged": true,
+    "appAndDriverProcesses": [],
+    "checkedPorts": [
+      4444,
+      4447,
+      4456,
+      4457,
+      11435,
+      11436
+    ],
+    "listeningPorts": [],
+    "packageAbsent": true,
+    "installedBinaryAbsent": true,
+    "desktopEntriesAbsent": true
+  }
+}

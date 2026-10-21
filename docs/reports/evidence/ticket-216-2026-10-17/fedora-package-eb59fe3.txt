@@ -1,0 +1,1 @@
+verified usr/share/applications/io.github.zulucodedesign.SecondBrain.desktop in Second Brain-0.1.0-alpha.1-1.x86_64.rpm

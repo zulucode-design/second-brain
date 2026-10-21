@@ -1,0 +1,1291 @@
+$ pnpm check && pnpm test && pnpm test:rust && pnpm lint:rust && pnpm build
+$ svelte-kit sync && svelte-check --tsconfig ./tsconfig.json
+Loading svelte-check in workspace: <repo>
+Getting Svelte diagnostics...
+
+svelte-check found 0 errors and 0 warnings
+$ node --test tests/*.test.mjs
+✔ switching to a provider restores its remembered model (1.339017ms)
+✔ a provider with no remembered model starts with its default (0.335352ms)
+✔ the active provider takes ai_model, which is all an older config remembers (0.307206ms)
+✔ a cleared model falls back to the default instead of staying empty (0.311795ms)
+✔ a model sent in a save that has not returned wins over the stale saved config (0.325276ms)
+✔ a cleared model sent in a save that has not returned restores the default (0.270319ms)
+✔ walkthrough accepts only a loopback Ollama port (3.872401ms)
+✔ harness config changes only active vault and backup ownership (1.780158ms)
+✔ pairing config keeps one explicit peer and a paused disposable vault (0.768804ms)
+✔ pairing refuses a malformed peer identity (0.379719ms)
+✔ controller lock excludes a concurrent run and replaces a stale owner (4.539554ms)
+✔ Windows launch task targets the logged-in desktop identity (0.990128ms)
+✔ public traces drop account names, home paths, and host names (1.32235ms)
+✔ driven gate config turns off scheduled backups and close-to-tray, and nothing else (0.581765ms)
+✔ snapshot refuses to overwrite existing evidence (1.61881ms)
+✔ profile folders are redirected for the run and put back after it (3.859126ms)
+✔ a profile restore stopped halfway finishes, and never removes a link it did not make (1.839337ms)
+✔ a profile the run must not touch is refused before anything changes (1.069295ms)
+✔ a folder aside that cannot be read fails the restore instead of passing for absent (1.065604ms)
+✔ every published walkthrough note is checked for omission and duplication (0.607502ms)
+✔ a Notion list is read to its last page (1.637734ms)
+✔ each expected note must be in Notion exactly once (0.234954ms)
+✔ window state is put back as it was, or removed when the run created it (2.996781ms)
+✔ restore rejects an invalid timeout before touching either machine (101.955083ms)
+✔ vault hash covers metadata, empty folders, and names, and nothing else (2.888195ms)
+✔ restore progress reads the journal and stage, and kill points wait for them (2.220066ms)
+✔ the pre-restore vault differs from the backed-up fixture (701.828858ms)
+✔ recovery must land on exactly one whole state (0.2568ms)
+✔ diagnostic archive members are read back whether stored or deflated (2.473842ms)
+✔ diagnostic leak check names each planted value and the member that holds it (0.97569ms)
+✔ diagnostic leak check finds a Windows path escaped in JSON or written with forward slashes (1.234657ms)
+✔ diagnostic leak check finds a forward-slash path written with backslashes (0.529117ms)
+✔ walkthrough refuses to start without its installer, RPM, or Notion workspace (370.942818ms)
+✔ acceptance vault summary hashes files, finds markers, and names conflict copies (1.837702ms)
+✔ acceptance backup summary reports wanted members by hash and absence (7.328306ms)
+✔ acceptance images are valid PNGs with their own bytes (5.573586ms)
+✔ writes the Ask fixture into a vault once, with every behaviour it promises (33.294325ms)
+✔ every question cites notes that exist, and one has nothing to cite (21.128802ms)
+✔ refuses a folder that is not a vault (0.573299ms)
+✔ an answer moves through reading, thinking, and answering to done (9.093798ms)
+✔ a stream that finishes before the plan arrives still gets its sources (3.038156ms)
+✔ no related note ends the question without a model call (2.670137ms)
+✔ Stop during retrieval cancels the request and ignores what comes after (4.931997ms)
+✔ a vault switch drops the old answers and stops the running one (4.215833ms)
+✔ a fourth question drops the oldest answer and stops it if still running (7.223064ms)
+✔ a listener that cannot start shows an error instead of searching forever (1.149328ms)
+✔ a stream error keeps the partial answer and shows why it stopped (1.4471ms)
+✔ keeps only the latest three answers and reports the one it drops (4.192534ms)
+✔ a new answer in another vault drops every answer from the old one (0.419596ms)
+✔ a vault switch drops every answer from the vault that was left (0.636345ms)
+✔ a new question expands itself even after the user expanded an older answer (0.372948ms)
+✔ the progress line names the stage and counts seconds within it (1.129503ms)
+✔ the coverage line shows how many related notes were read, and which only in part (0.619586ms)
+✔ citation markers become buttons for real sources and vanish otherwise (8.118158ms)
+✔ gpt-oss citation brackets become buttons too (1.698386ms)
+✔ citations inside code stay literal text (1.201198ms)
+✔ an answer cannot render an image, a link, or raw HTML (1.160483ms)
+✔ ordinary Markdown still renders (1.479683ms)
+✔ Ask is unavailable, with a reason, until a provider is set (1.217662ms)
+✔ in the question box, Enter asks and Down or Tab moves into the sources (0.24632ms)
+✔ arrow keys move through the sources without leaving the list (0.273848ms)
+✔ a citation whose note is gone is marked missing; one that opens is not (0.330776ms)
+✔ the unread list shows the best notes first and every note on request (0.31009ms)
+✔ a cited note deleted on disk is reported gone even when it is the open note (0.699176ms)
+✔ a different note created at a cited path is reported gone, not opened (0.324099ms)
+✔ a load in flight renders as loading, never as empty (2.7048ms)
+✔ a completed load with no items is a genuine empty state (0.412173ms)
+✔ a completed load with items renders content (0.357103ms)
+✔ a failed load never renders as empty and always offers retry (0.747084ms)
+✔ a failure that arrives after content still reports the failure (0.649434ms)
+✔ failure messages stay readable whatever the backend threw (0.61144ms)
+✔ failure messages never collapse to an empty or placeholder string (0.720127ms)
+✔ the Tasks and Graph views resolve their rendering through the shared state helper (26.17755ms)
+✔ a caught load failure is recorded as failure rather than logged and dropped (2.725237ms)
+✔ the views offer a retry control for a failed load (3.919888ms)
+✔ a failed task mutation is shown to the user instead of only logged (2.658102ms)
+✔ persisted Rust and TypeScript models retain field types and nullability (10.886054ms)
+✔ typed frontend events match every backend wire name (35.275107ms)
+✔ mine: newer typing joined to an older preserving save reaches the copy before anything is replaced (11.588509ms)
+✔ disk: newer typing joined to an older preserving save reaches the copy before anything is replaced (4.305276ms)
+✔ close: proves the newest draft is in the copy, then closes without resolving or reading (2.092336ms)
+✔ taking the disk version of a note that is gone is refused, keeping the draft (1.087104ms)
+✔ a save failure that kept nothing aborts with the editor still dirty (0.658194ms)
+✔ an unexpected successful save aborts without replacing the editor (0.372526ms)
+✔ typing, a same-path reload, or a draft during the flush ends it with nothing replaced (4.401872ms)
+✔ a draft open before the choice refuses without taking the lock (0.505364ms)
+✔ a draft appearing during the read keeps the editor as it is (0.707517ms)
+✔ a failed resolve keeps the edits in a fresh copy and does not load (0.680946ms)
+✔ a disk conflict blocks navigation, relocation and close without the generic save alert (0.66956ms)
+✔ both windows and the editor route the conflict the same way (6.845452ms)
+✔ a draft opened while the lock is being taken ends the choice before any flush (0.93426ms)
+✔ the dialog keeps focus and keys while a choice is applied, and nothing reopens editing (4.113118ms)
+✔ mutation preparation waits for an existing producer, rejects new work, and exposes its edit to the following flush (3.266947ms)
+✔ a producer validates its originating document before insertion, including same-path reloads (0.667857ms)
+✔ saved attachment is reported if a note switch or same-path reload cancels insertion (2.047074ms)
+✔ attachment insertion succeeds only while its document is current (0.527546ms)
+✔ a rejected editor insertion reports an already saved attachment (0.452319ms)
+✔ a throwing editor insertion reports the saved attachment before surfacing the error (1.083321ms)
+✔ active relocation never mutates the filesystem when save fails or identity changed (0.854554ms)
+✔ active relocation orders flush, authoritative mutation, and atomic rebase without a second read (0.717984ms)
+✔ flush-dependent delayed work cannot self-drain and cannot apply after close locks admission (0.570818ms)
+✔ vault-switch decision gate does not tear down the editor after save rejection (0.818001ms)
+✔ secondary navigation save rejection blocks read and commit (0.769594ms)
+✔ secondary navigation performs a final flush before committing (0.69938ms)
+✔ startup generation rejects late restoration after activity and permanently after unmount (0.359527ms)
+✔ active task mutation holds its lock and cannot replace a navigation winner (20.07111ms)
+✔ a reported relocation tells the user when another note opened first or the mutation failed (10.524744ms)
+✔ a clean editor takes the changed note from disk, and later saves start from its revision (4.869516ms)
+✔ a frontmatter-only change still reloads, because the revision moved (0.449115ms)
+✔ the same revision on disk, including the echo of our own save, changes nothing (0.396885ms)
+✔ a dirty editor is never replaced, before or during the read (0.699285ms)
+✔ an edit that autosaved during the read moved the revision, so the read is stale (0.401111ms)
+✔ navigating away or starting a close during the read cancels the reload (0.444621ms)
+✔ a change while waiting for the lock is checked again under it (16.727349ms)
+✔ a note that cannot be read keeps what the editor shows (0.592834ms)
+✔ the lock is released when the commit throws (1.120957ms)
+✔ a reload queued with navigation waits its turn instead of colliding with its lock (11.50575ms)
+✔ a close waits out a reload that holds the lock, then takes it (1.152126ms)
+✔ a close released while it waited takes no lock, and one released while locking gives it back (1.823069ms)
+✔ a conflict choice reloads the open note at once, without waiting for the conflict list (1.941488ms)
+✔ a failed conflict choice still reloads, then reports the failure without listing (0.594968ms)
+✔ both windows treat an uncommitted note or callout title like unsaved text (5.034073ms)
+✔ an open draft or editor dialog defers the reload, before the read, during it, or while locking (2.023276ms)
+✔ a deferred reload runs once the draft is committed or the dialog closes (0.458556ms)
+✔ unsaved edits are skipped for good, not deferred (0.223948ms)
+✔ both windows retry a deferred reload, and the editor counts its dialogs and menus as drafts (6.58992ms)
+✔ closing or toggling View Mode does not write an unedited note (#196) (23.273375ms)
+✔ the first edit after loading identical content is saved (17.737692ms)
+✔ loading different content is not an edit, and the edit after it is (6.552657ms)
+✔ Editor.svelte routes every update and content swap through the helpers (12.685539ms)
+✔ small graphs keep exact pairwise repulsion (31.597509ms)
+✔ large graphs approximate the exact repulsion closely (204.863721ms)
+✔ coincident bodies do not recurse forever or produce NaN (12.006869ms)
+✔ a clean import shows its counts and no error (3.545632ms)
+✔ a partial import shows what converted alongside the reason it stopped (0.63613ms)
+✔ an import that changed nothing shows only the reason, and skips the refresh (0.360782ms)
+✔ a failure with no reason still says something (0.327566ms)
+✔ shows times under a minute in seconds with one decimal (1.763703ms)
+✔ shows a minute and longer as minutes and seconds (0.306909ms)
+✔ never shows a time that rounds up to a minute as 60 seconds (0.256302ms)
+✔ summarises a pass as its notes, chunks and total time (0.37431ms)
+✔ labels the four stage times in order (1.667335ms)
+✔ pnpm install fails when the prepare svelte-kit sync fails (1241.939462ms)
+✔ the test package helper installs only a plain Second Brain package (6171.146075ms)
+✔ the test package helper exits 0 after an install and removes its staging copy (11.866736ms)
+✔ the test package helper refuses to run without sudo (3.708689ms)
+✔ keeps bold open when a link ends the marked span (14.023366ms)
+✔ keeps bold open when a link starts the marked span (1.235758ms)
+✔ keeps one bold span around a link in the middle (0.946692ms)
+✔ keeps nested bold and italic marks open across a link (1.759624ms)
+✔ preserves wiki-link aliases inside a bold span (0.63314ms)
+✔ clamps a context menu to every viewport edge (2.468173ms)
+✔ places a submenu on the available side and clamps it vertically (0.42408ms)
+✔ sorts numeric name segments by numeric value (2.7797ms)
+✔ sorts numbers naturally wherever they appear in a name (0.448592ms)
+✔ a note read for navigation must be the expected one when an id is given (1.671311ms)
+✔ navigation checks identity on the note it reads after waiting on a save, and on the open note (6.322792ms)
+✔ global creation never infers a folder outside the active notebook view (1.935702ms)
+✔ a valid active subfolder is only a suggestion inside its own category (0.521087ms)
+✔ category confirmation always produces one of the four PARA destinations (1.602923ms)
+✔ resolves note links relative to Windows note paths (2.534656ms)
+✔ preserves Linux relative note-link resolution (0.348253ms)
+✔ converts Windows asset URLs back to portable attachment paths (0.660104ms)
+✔ preserves portable asset paths on Linux and macOS (0.76595ms)
+✔ decodes local asset URLs without damaging platform roots (0.282559ms)
+✔ resolves vault files consistently across platforms (0.471064ms)
+✔ a file inside the vault is not treated as external, on either separator (0.455482ms)
+✔ a file outside the vault is external, and a sibling prefix is not inside (0.396108ms)
+✔ a renamed note keeps the file name the backend gave it, not its title (#213) (0.640818ms)
+✔ all 200 variable-height holding rows stay reachable (2.438793ms)
+✔ fixed-height note views keep their bounded virtual window (0.478778ms)
+✔ holding rows expose preview and filing without normal note actions (2.856247ms)
+✔ ordinary note rows retain their normal actions (0.476683ms)
+✔ a run that changed nothing reads as healthy, not as nothing happening (2.437732ms)
+✔ a run lists only what it actually did (0.348886ms)
+✔ failures are always mentioned (0.431051ms)
+✔ nothing skipped shows no line at all (0.412881ms)
+✔ skipped notes always say why (0.577381ms)
+✔ a single skipped note is not pluralised (0.27787ms)
+✔ an unknown skip reason is shown rather than dropped (0.42648ms)
+✔ with no token the only next step is to connect (0.582717ms)
+✔ a connected machine with no databases is asked to choose a parent page (1.013729ms)
+✔ a failed run surfaces its reason as the next step (1.08064ms)
+✔ a healthy, set-up machine has no next step (0.410575ms)
+✔ the four PARA roots can contain folders but cannot be mutated or reordered (3.121217ms)
+✔ ordinary folders stay editable only within PARA destinations (0.627349ms)
+✔ Windows separators follow the same category policy (0.308278ms)
+✔ the fixture holds 10,000 linked notes and one 5,000-word note (767.918455ms)
+✔ stats use the nearest-rank p95 and the true median (0.614599ms)
+✔ startup pairs each launch with the next ready mark and budgets decide the verdict (0.805654ms)
+✔ packages expose the independent Second Brain identity (25.111545ms)
+✔ the inherited updater is absent from packages and runtime (17.160627ms)
+✔ the stable app id keys credentials and machine-level state (3.411532ms)
+✔ no Rust source addresses the HelixNotes machine directories except the one-time move (57.885884ms)
+✔ Tab and Shift+Tab move to the other field and wrap (#213) (3.468558ms)
+✔ Tab never opens the category picker (0.413071ms)
+✔ Enter in the title moves to the body; in the body it is a newline (0.345201ms)
+✔ Enter that confirms an input-method composition is left to the field (0.297576ms)
+✔ Ctrl+Enter opens the picker from either field once both are filled (3.610955ms)
+✔ Ctrl+Enter with a field empty names that field, title first (0.453839ms)
+✔ missingField treats whitespace as empty (0.31297ms)
+✔ Esc asks before discarding when either field has text (0.453481ms)
+✔ digits are typed while writing and pick a category while choosing (0.497391ms)
+✔ no issues and no error shows no banner (2.868407ms)
+✔ a recovered restore is a dismissible notice, not a repair (3.586765ms)
+✔ unowned restore folders are shown first, with every path, since they may be the only copy (0.371878ms)
+✔ a real repair outranks restore notices and counts only repairs (0.333626ms)
+✔ a failed repair attempt keeps the repair banner with its error (0.484392ms)
+✔ unowned restore folders outrank a repair: they may be the only copy of some notes (0.327032ms)
+✔ immediate navigation cancels debounce and waits for the captured save (15.044155ms)
+✔ save rejection blocks navigation, keeps dirty, and remains retryable (1.79623ms)
+✔ close during debounce drains the pending revision before resolving (0.592934ms)
+✔ close during an in-flight autosave joins the same serialization tail (1.949634ms)
+✔ a newer same-path revision stays dirty and is drained after an older save (11.088056ms)
+✔ an old-path completion cannot clear a newer document revision (3.07277ms)
+✔ a metadata-only edit advances the revision and persists the updated snapshot (2.360669ms)
+✔ an edit arriving during preparation is prepared again before capture (4.118381ms)
+✔ a capture path that diverges from coordinator identity fails once without persisting (1.771244ms)
+✔ a coordinator-owned metadata save adopts the returned revision for the next write (1.385995ms)
+✔ rebase carries an edit made during the rename to the new path (2.086761ms)
+✔ an old-path save failing after the rename retries the edit at the new path (2.577909ms)
+✔ rebase still refuses a path the coordinator does not own (0.941333ms)
+✔ a failed save of a replaced document is still reported, not retried as the new one (1.492485ms)
+✔ a new card goes first and replaces an older check of the same note (5.454891ms)
+✔ a vault switch drops every card from the vault that was left (0.498308ms)
+✔ the coverage line appears only when more notes passed than the card shows (2.532285ms)
+✔ a note made in the app is checked once, when the user first leaves it (0.637943ms)
+✔ closing a new note counts as leaving it; older notes are never checked (0.36848ms)
+✔ a new note left by a vault switch is checked in the vault it was opened in (0.32889ms)
+✔ an append closes the open note first and reopens it after (19.27706ms)
+✔ a legacy empty root notebook resumes at Needs a category (2.437682ms)
+✔ real notebooks and current list views still restore normally (0.312113ms)
+✔ disabled restoration and obsolete startup values use a safe fallback (0.281469ms)
+✔ a freshly generated fixture checks complete (472.182079ms)
+✔ generation refuses a non-vault and a vault that already has the fixture (228.09746ms)
+✔ a generation that fails partway leaves no half-written fixture behind (352.438398ms)
+✔ a missing sentinel is incomplete even though other notes arrived (428.14811ms)
+✔ truncated content, conflict copies, and resurrected duplicates are not convergence (483.950163ms)
+✔ unrelated conflict copies already in the vault do not fail the fixture (383.228822ms)
+✔ a truncated conflict copy of a fixture note still counts as a conflict (433.581691ms)
+✔ a conflict copy of an app file fails the fixture, except in trash (549.499347ms)
+✔ a note moved to the wrong category folder is a stray, not a match (474.175846ms)
+✔ the WebDAV client module is absent from the production crate (12.604886ms)
+✔ production command, config, API, scheduler, and UI paths retain no WebDAV contracts (15.311331ms)
+✔ the removed frontend configuration helper cannot be imported (1.014461ms)
+✔ the selected sidecar is bundled and every app launch path prepares it (4.163106ms)
+✔ sync remains an explicit guarded batch rather than ambient Tailnet access (5.050535ms)
+✔ the Syncthing device ID uses native clipboard copy with confirmation (2.631097ms)
+✔ a delayed local attachment is presented as not synced yet (2.236925ms)
+✔ a completed sync refreshes the live workspace without an app restart (1.162957ms)
+✔ Ctrl+Z undoes; Ctrl+Shift+Z and Ctrl+Y redo (#213) (1.584018ms)
+✔ other keys and combinations are left alone (0.319102ms)
+✔ web clipping requires an actual pasted URL before category submission (1.100014ms)
+✔ web clipping displays backend failure reasons without losing the fallback (0.313904ms)
+ℹ tests 254
+ℹ suites 0
+ℹ pass 254
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7177.132714
+$ node scripts/test-rust.mjs
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.97s
+     Running unittests src/lib.rs (src-tauri/target/debug/deps/app_lib-c9b8ec66b11551bc)
+
+running 748 tests
+test ai::tests::a_local_model_without_a_modelfile_size_assumes_ollamas_smallest_default ... ok
+test ai::tests::a_cloud_model_gets_its_full_capacity ... ok
+test ai::tests::a_local_model_gets_what_its_modelfile_allocates_not_its_capacity ... ok
+test ai::tests::a_local_allocation_never_exceeds_the_model_capacity ... ok
+test ai::tests::a_registration_that_never_starts_unregisters_when_dropped ... ok
+test ai::tests::a_completion_with_no_answer_text_is_an_error ... ok
+test ai::tests::a_crlf_stream_without_spaces_after_colons_still_streams ... ok
+test ai::tests::an_unreachable_ollama_reports_no_context_window ... ok
+test ai::tests::an_answer_cut_off_by_the_token_limit_is_an_error ... ok
+test ai::tests::an_error_inside_the_stream_is_returned_once ... ok
+test ai::tests::an_openai_stream_reports_reasoning_once_then_the_answer ... ok
+test ai_health::tests::a_bare_name_does_not_match_a_different_tag ... ok
+test ai_health::tests::a_model_is_found_by_its_bare_name ... ok
+test ai_health::tests::a_model_is_found_by_its_exact_tagged_name ... ok
+test ai_health::tests::a_model_that_is_not_installed_is_not_found ... ok
+test ai_health::tests::a_response_with_no_models_finds_nothing ... ok
+test ai_health::tests::ai_status_generation_rejects_stale_probe_results ... ok
+test ai_health::tests::an_available_backend_carries_no_reason ... ok
+test ai::tests::empty_anthropic_text_deltas_are_not_an_answer ... ok
+test ai::tests::reasoning_that_runs_out_of_tokens_before_answering_is_an_error ... ok
+test ai::tests::concurrent_requests_tag_every_event_with_their_own_id ... ok
+test ai_health::tests::an_unavailable_backend_always_says_why ... ok
+test ai_health::tests::an_unavailable_backend_is_reprobed_sooner_than_an_available_one ... ok
+test ai_health::tests::an_unknown_backend_is_probed_as_eagerly_as_a_down_one ... ok
+test ai_health::tests::an_unprobed_backend_is_unknown_rather_than_unavailable ... ok
+test ai_health::tests::credential_changes_create_a_new_exact_health_target ... ok
+test ai_health::tests::fast_refusal_applies_only_to_the_exact_current_target ... ok
+test ai_health::tests::openai_compatible_connection_failures_name_the_configured_backend ... ok
+test ai_health::tests::switching_provider_protocol_invalidates_the_tracked_target ... ok
+test ai_health::tests::an_openai_compatible_local_server_is_probed_through_its_public_interface ... ok
+test ai_health::tests::the_probe_url_tolerates_a_trailing_slash ... ok
+test ai_health::tests::the_probe_url_lists_models_without_running_inference ... ok
+test ai_health::tests::with_no_ollama_backend_to_watch_the_poller_idles ... ok
+test ai_provider::tests::an_openai_compatible_local_server_resolves_as_a_probeable_backend ... ok
+test ai_provider::tests::an_openai_compatible_profile_produces_its_own_health_target ... ok
+test ai_provider::tests::one_resolved_request_profile_owns_provider_routing_and_validation ... ok
+test app_dirs::tests::a_helixnotes_installation_is_never_touched ... ok
+test app_dirs::tests::earlier_second_brain_state_moves_under_the_identifier ... ok
+test app_dirs::tests::existing_identifier_state_is_never_overwritten ... ok
+test ask::tests::a_question_with_no_related_note_skips_the_model_even_in_a_tiny_window ... ok
+test ask::tests::a_read_note_is_answered_only_when_the_message_fits ... ok
+test app_dirs::tests::per_vault_state_merges_into_an_existing_folder ... ok
+test ask::tests::no_retrieved_chunk_means_no_sources ... ok
+test ask::tests::note_text_cannot_close_its_source_tag ... ok
+test ask::tests::related_notes_that_did_not_fit_are_an_error_not_a_silent_no_match ... ok
+test ask::tests::sources_are_numbered_best_first_and_each_reads_in_note_order ... ok
+test ai_health::tests::authenticated_ollama_health_and_connection_checks_send_bearer_token ... ok
+test ask::tests::the_budget_leaves_room_for_the_answer_the_template_the_prompt_and_the_question ... ok
+test ask::tests::the_cost_of_every_excerpt_covers_the_prompt_it_builds ... ok
+test ask::tests::the_prompt_never_exceeds_the_budget_for_any_script ... ok
+test asset_scope::tests::static_asset_scope_does_not_expose_the_filesystem ... ok
+test asset_scope::tests::external_note_scope_allows_relative_assets_only_below_its_directory ... ok
+test autostart::linux::tests::an_exec_path_with_a_space_is_quoted ... ok
+test autostart::linux::tests::a_mixed_name_binary_refreshes_the_entry_without_losing_the_preference ... ok
+test autostart::linux::tests::disabling_removes_an_existing_entry ... ok
+test autostart::linux::tests::disabling_when_nothing_was_ever_written_is_not_an_error ... ok
+test autostart::linux::tests::enabling_writes_an_entry_that_was_not_there ... ok
+test autostart::linux::tests::the_entry_is_named_for_the_app_id_under_the_autostart_directory ... ok
+test asset_scope::tests::runtime_scope_allows_only_the_selected_vault ... ok
+test backup::tests::a_blocked_recovery_refuses_and_says_where_the_notes_are ... ok
+test backup::tests::a_backup_holds_exactly_what_a_restore_replaces ... ok
+test backup::tests::a_corrupt_journal_cannot_delete_outside_the_vaults_directory ... ok
+test backup::tests::a_mid_commit_failure_rolls_back_every_live_path ... ok
+test autostart::linux::tests::enabling_again_with_the_same_exec_does_not_rewrite_the_file ... ok
+test backup::tests::a_publish_lost_to_power_failure_is_completed_not_deleted ... ok
+test backup::tests::a_second_restore_waits_until_the_first_is_recovered ... ok
+test backup::tests::a_settlement_failure_refuses_to_open_and_keeps_recovery_data ... ok
+test backup::tests::a_whole_vault_opens_even_when_cleanup_cannot_finish ... ok
+test ai_health::tests::ollama_probe_socket_matrix_reports_actionable_results ... ok
+test backup::tests::an_incomplete_rollback_keeps_its_journal_for_the_next_open ... ok
+test backup::tests::an_injected_disk_write_failure_stops_staging ... ok
+test backup::tests::an_unreadable_journal_blocks_restore_and_says_which_file_to_move ... ok
+test backup::tests::an_unreadable_journal_blocks_recovery_without_touching_the_vault ... ok
+test backup::tests::both_backup_kinds_are_dated_from_their_names ... ok
+test ai::tests::a_character_split_across_network_chunks_arrives_intact ... ok
+test backup::tests::corrupt_late_entry_leaves_the_live_vault_untouched ... ok
+test backup::tests::delete_backup_rejects_files_outside_backup_directory ... ok
+test backup::tests::backup_includes_vault_metadata_but_can_exclude_attachments ... ok
+test backup::tests::edits_made_after_an_undone_restore_survive_the_delayed_cleanup ... ok
+test backup::tests::edits_made_after_a_kept_restore_survive_the_delayed_cleanup ... ok
+test backup::tests::dot_folders_in_an_old_archive_leave_the_live_ones_untouched ... ok
+test backup::tests::interrupted_archive_leaves_the_live_vault_untouched ... ok
+test backup::tests::pre_sync_backup_is_identifiable_and_always_contains_attachments ... ok
+test ai::tests::a_stream_cut_off_before_it_finishes_is_an_error_after_its_partial_text ... ok
+test backup::tests::pruning_keeps_the_newest_scheduled_backup_among_frequent_pre_sync_ones ... ok
+test backup::tests::invalid_commit_shape_is_rejected_before_live_paths_are_displaced ... ok
+test bulk_mutation::tests::a_live_lease_refuses_a_second_bulk_mutation_instead_of_queueing_it ... ok
+test bulk_mutation::tests::an_active_sync_excludes_a_bulk_mutation ... ok
+test bulk_mutation::tests::dropping_a_lease_always_reenables_watcher_delivery ... ok
+test bulk_mutation::tests::terminal_payloads_have_exactly_three_unambiguous_outcomes ... ok
+test commands::commit_policy_tests::canonical_revision_survives_every_projection_failure ... ok
+test backup::tests::staging_write_failure_never_reaches_the_live_vault ... ok
+test commands::config_permission_tests::config_files_are_owner_only ... ok
+test commands::config_startup_tests::absent_config_is_a_clean_first_launch ... ok
+test backup::tests::recovery_touches_only_its_own_vault_and_reports_unowned_restore_folders ... ok
+test commands::config_startup_tests::an_interrupted_config_save_keeps_the_previous_config ... ok
+test backup::tests::restore_preserves_attachments_when_the_backup_omits_them ... ok
+test commands::config_startup_tests::incompatible_config_keeps_its_discoverable_vaults_without_opening_one ... ok
+test commands::config_startup_tests::malformed_config_is_reported_and_preserved_not_treated_as_first_launch ... ok
+test commands::config_startup_tests::the_runtime_config_error_is_never_persisted ... ok
+test commands::config_startup_tests::unreadable_config_is_its_own_outcome ... ok
+test commands::config_startup_tests::remembered_ai_models_survive_a_save_and_reload ... ok
+test commands::custom_theme_reference_tests::deleting_custom_theme_resets_system_pair_references ... ok
+test commands::config_startup_tests::an_incomplete_directory_move_blocks_opening_any_vault ... ok
+test commands::external_access_tests::external_urls_reject_commands_and_unsupported_schemes ... ok
+test commands::external_access_tests::external_urls_allow_supported_schemes ... ok
+test commands::import_outcome_tests::a_clean_import_is_a_success ... ok
+test commands::import_outcome_tests::a_partial_import_reports_its_counts_alongside_the_reason_it_stopped ... ok
+test commands::import_outcome_tests::a_refused_import_still_emits_a_well_formed_terminal ... ok
+test commands::import_outcome_tests::an_import_that_changed_nothing_and_failed_is_a_failure_not_a_partial_change ... ok
+test commands::import_outcome_tests::an_import_that_changed_the_vault_and_then_failed_is_changed_incomplete ... ok
+test commands::external_access_tests::file_access_requires_the_active_vault_or_an_explicit_user_scope ... ok
+test commands::restore_outcome_tests::a_failed_restore_whose_reconcile_also_fails_reports_both ... ok
+test commands::restore_outcome_tests::a_failed_restore_changed_the_vault_only_when_it_says_so ... ok
+test commands::restore_outcome_tests::a_restore_refused_the_lease_never_runs ... ok
+test commands::restore_outcome_tests::a_restore_and_its_reconcile_that_both_succeed_are_a_success ... ok
+test commands::config_startup_tests::legacy_vault_list_keeps_only_the_active_vault_and_its_credential ... ok
+test commands::restore_outcome_tests::a_restore_whose_reconcile_fails_changed_the_vault_and_says_so ... ok
+test commands::external_access_tests::the_external_viewer_reads_only_authorized_markdown_and_never_relaxes_mutation ... ok
+test commands::secret_config_tests::an_invalid_retirement_marker_hydrates_secrets_but_preserves_legacy_vault_ids ... ok
+test commands::secret_config_tests::unavailable_store_starts_fail_closed_without_erasing_plaintext_recovery_copy ... ok
+test commands::secret_config_tests::successful_startup_migration_redacts_the_config_file ... ok
+test commands::secret_config_tests::unavailable_store_still_allows_non_secret_settings_to_persist ... ok
+test commands::secret_config_tests::legacy_active_notion_token_survives_a_settings_save_while_keyring_is_locked ... ok
+test commands::similar_append_tests::an_append_whose_capture_cannot_move_to_trash_keeps_both_and_says_why ... ok
+test commands::similar_append_tests::an_append_refuses_a_changed_note_and_keeps_an_id_less_notes_old_text ... ok
+test commands::task_due_date_tests::an_absent_or_empty_value_clears_the_due_date ... ok
+test backup::tests::a_restore_killed_at_any_step_recovers_to_one_whole_vault ... ok
+test commands::vault_stats_path_tests::stats_count_notes_and_attachments_but_not_private_or_trash_files ... ok
+test commands::task_due_date_tests::a_leap_day_is_accepted_only_in_a_leap_year ... ok
+test durable::tests::a_failed_temporary_write_leaves_the_destination_untouched ... ok
+test durable::tests::an_interrupted_replace_keeps_the_previous_good_content ... ok
+test durable::tests::private_files_are_owner_only_and_shared_files_keep_their_mode ... ok
+test durable::tests::replaces_existing_content ... ok
+test history::tests::forced_snapshots_in_one_second_keep_the_newest_text ... ok
+test history::tests::rejects_history_path_traversal ... ok
+test hotkey::capture::tests::an_empty_or_whitespace_body_is_refused ... ok
+test hotkey::capture::tests::an_empty_or_whitespace_title_is_refused ... ok
+test hotkey::capture::tests::the_overlay_chooses_a_category_through_the_vault_s_own_parser ... ok
+test hotkey::capture::tests::the_title_and_body_are_kept_as_typed ... ok
+test hotkey::capture::tests::the_title_is_checked_first_when_both_are_empty ... ok
+test hotkey::capture::tests::the_title_is_trimmed_and_the_body_loses_only_trailing_whitespace ... ok
+test hotkey::portal::tests::a_bind_failure_that_is_not_a_response_keeps_its_own_cause ... ok
+test commands::task_due_date_tests::a_real_calendar_date_is_accepted ... ok
+test hotkey::portal::tests::a_bind_reply_that_says_nothing_about_the_trigger_displays_nothing ... ok
+test hotkey::portal::tests::a_desktop_without_the_portal_is_reported_as_such_rather_than_as_an_error ... ok
+test hotkey::portal::tests::a_dismissed_permission_dialog_is_a_denial_the_user_can_undo ... ok
+test hotkey::portal::tests::a_genuine_registration_failure_is_still_a_failure ... ok
+test hotkey::portal::tests::a_second_handshake_on_the_same_connection_is_not_a_failure ... ok
+test hotkey::portal::tests::registers_against_the_real_portal ... ignored, needs a desktop session and a person to answer the permission dialog
+test hotkey::portal::tests::every_unsuccessful_bind_response_is_a_denial_naming_the_reset_command ... ok
+test hotkey::portal::tests::the_trigger_shown_is_the_one_the_compositor_reported_for_our_shortcut ... ok
+test hotkey::startup::tests::a_failed_activation_ends_the_registered_session_with_an_unavailable_status ... ok
+test commands::task_due_date_tests::a_malformed_value_is_rejected_and_never_reaches_the_markdown ... ok
+test hotkey::startup::tests::available_is_published_before_the_activation_listener_can_run ... ok
+test hotkey::startup::tests::a_failed_startup_prerequisite_prevents_portal_registration ... ok
+test hotkey::tests::a_declined_permission_says_how_to_be_asked_again ... ok
+test hotkey::tests::a_missing_desktop_entry_is_reported_as_an_app_id_problem ... ok
+test hotkey::tests::a_registered_hotkey_offers_no_reason ... ok
+test hotkey::tests::a_shortcut_already_bound_is_not_bound_again ... ok
+test hotkey::tests::a_shortcut_that_is_not_bound_yet_needs_binding ... ok
+test hotkey::tests::an_unrecognised_portal_error_is_passed_through_rather_than_guessed_at ... ok
+test hotkey::tests::application_ids_accept_the_packaged_reverse_dns_identifier ... ok
+test hotkey::tests::application_ids_reject_values_tauri_or_the_portal_cannot_use ... ok
+test hotkey::tests::nothing_is_claimed_before_startup_decides ... ok
+test hotkey::vault_status::tests::a_real_directory_is_reachable_and_a_missing_path_is_not ... ok
+test hotkey::vault_status::tests::an_available_vault_shows_the_capture_window ... ok
+test hotkey::vault_status::tests::a_file_is_not_a_reachable_vault ... ok
+test hotkey::vault_status::tests::an_unreachable_configured_vault_is_reported_rather_than_silently_ignored ... ok
+test hotkey::vault_status::tests::no_configured_vault_plans_nothing ... ok
+test hotkey::vault_status::tests::the_notice_names_the_path_and_says_what_to_do ... ok
+test image_proxy::tests::keeps_image_wording_rather_than_the_clipper_s ... ok
+test image_proxy::tests::validates_only_public_web_image_urls ... ok
+test machine_local::tests::a_first_open_claims_an_identity_without_relying_on_the_lock ... ok
+test machine_local::tests::a_stranded_note_literally_named_replacement_md_is_still_rescued ... ok
+test machine_local::tests::a_second_open_migrates_nothing_and_disturbs_nothing ... ok
+test machine_local::tests::adopts_an_identity_a_crashed_process_never_finished_writing ... ok
+test machine_local::tests::keeps_an_identity_that_is_already_written ... ok
+test machine_local::tests::leaves_no_remnant_of_a_longer_previous_value ... ok
+test machine_local::tests::deleting_the_machine_local_directory_rebuilds_it_instead_of_failing ... ok
+test machine_local::tests::reads_an_existing_identity_even_when_it_cannot_be_written ... ok
+test machine_local::tests::migration_moves_machine_local_state_out_and_leaves_the_vault_syncable ... ok
+test machine_local::tests::renaming_the_vault_folder_keeps_the_same_machine_local_state ... ok
+test machine_local::tests::replaces_an_identity_that_is_damaged_rather_than_empty ... ok
+test machine_local::tests::upgrading_mid_rewrite_returns_the_stranded_note_instead_of_burying_it ... ok
+test machine_local::tests::two_stranded_notes_with_the_same_name_both_survive ... ok
+test notion::blocks::tests::a_code_fence_keeps_its_language_and_body ... ok
+test notion::blocks::tests::a_common_language_alias_is_translated ... ok
+test notion::blocks::tests::a_horizontal_rule_becomes_a_divider ... ok
+test notion::blocks::tests::a_link_keeps_its_destination ... ok
+test notion::blocks::tests::a_link_notion_cannot_take_keeps_its_text_without_the_link ... ok
+test notion::blocks::tests::a_mail_link_keeps_its_destination ... ok
+test notion::blocks::tests::a_nested_list_keeps_its_child_under_its_parent ... ok
+test notion::blocks::tests::a_note_that_is_only_frontmatter_body_text_still_converts ... ok
+test notion::blocks::tests::a_paragraph_becomes_a_paragraph ... ok
+test machine_local::tests::concurrent_opens_agree_on_one_identity ... ok
+test notion::blocks::tests::a_quote_becomes_a_quote_block_not_a_nested_paragraph ... ok
+test diagnostic_export::tests::default_export_excludes_vault_content_secrets_and_note_identity ... ok
+test notion::blocks::tests::a_url_longer_than_notion_accepts_keeps_its_text_without_the_link ... ok
+test notion::blocks::tests::an_empty_note_produces_no_blocks ... ok
+test commands::task_due_date_tests::an_impossible_date_is_rejected_with_a_message_naming_the_value ... ok
+test notion::blocks::tests::an_unknown_language_falls_back_instead_of_failing_the_request ... ok
+test notion::blocks::tests::an_external_image_links_its_source ... ok
+test notion::blocks::tests::an_image_becomes_a_link_because_attachments_never_upload ... ok
+test notion::blocks::tests::bulleted_and_numbered_lists_are_distinguished ... ok
+test notion::blocks::tests::headings_deeper_than_three_collapse_rather_than_vanish ... ok
+test notion::blocks::tests::blocks_are_batched_to_the_request_limit ... ok
+test notion::blocks::tests::headings_map_to_notions_three_levels ... ok
+test notion::blocks::tests::inline_styles_become_annotations ... ok
+test notion::blocks::tests::soft_line_breaks_do_not_glue_words_together ... ok
+test notion::blocks::tests::splitting_never_cuts_a_multibyte_character_in_half ... ok
+test notion::blocks::tests::nesting_deeper_than_notion_allows_is_flattened_rather_than_rejected ... ok
+test notion::blocks::tests::task_list_items_carry_their_checked_state ... ok
+test notion::blocks::tests::text_longer_than_two_thousand_characters_is_split_across_runs ... ok
+test notion::client::tests::a_connection_lost_after_the_request_was_sent_is_never_retried ... ok
+test notion::client::tests::a_connection_lost_while_the_body_arrives_is_a_network_error ... ok
+test notion::client::tests::a_database_without_a_data_source_is_refused_rather_than_recorded ... ok
+test notion::client::tests::a_list_without_results_is_refused_rather_than_read_as_empty ... ok
+test notion::client::tests::a_missing_retry_after_backs_off_rather_than_retrying_immediately ... ok
+test notion::blocks::tests::a_paragraph_too_long_for_one_block_becomes_several ... ok
+test notion::client::tests::a_note_with_no_page_yet_reports_none_rather_than_failing ... ok
+test notion::client::tests::a_page_is_found_by_its_note_id ... ok
+test notion::client::tests::a_page_with_no_readable_title_is_still_offered ... ok
+test notion::client::tests::a_new_database_is_found_even_when_it_shows_up_late ... ok
+test notion::client::tests::a_redirect_is_not_followed_so_a_landed_post_is_never_repeated ... ok
+test notion::client::tests::a_refusal_whose_body_is_cut_off_is_still_a_refusal ... ok
+test notion::client::tests::a_rejected_request_is_one_notes_problem_not_the_runs ... ok
+test notion::client::tests::a_rejected_token_is_fatal_and_never_retried ... ok
+test notion::client::tests::a_request_carries_the_token_and_the_pinned_api_version ... ok
+test notion::client::tests::a_retry_after_header_is_honoured_over_our_own_backoff ... ok
+test notion::client::tests::an_error_body_that_is_not_notions_is_never_repeated_verbatim ... ok
+test notion::client::tests::an_older_or_unmarked_database_is_never_taken_for_a_new_one ... ok
+test backup::tests::a_recovery_killed_at_any_step_finishes_when_run_again ... ok
+test notion::client::tests::appending_no_blocks_makes_no_request_at_all ... ok
+test ai::tests::a_cancelled_request_stops_without_reporting_done_or_error ... ok
+test notion::client::tests::creating_a_database_records_both_ids ... ok
+test notion::client::tests::erasing_content_is_one_request_rather_than_one_per_block ... ok
+test notion::client::tests::losing_access_to_the_workspace_reads_as_a_connection_problem ... ok
+test notion::client::tests::moving_a_page_targets_the_data_source_not_the_database ... ok
+test ai::tests::a_request_stopped_before_it_starts_never_reaches_the_model ... ok
+test machine_local::tests::without_a_lock_an_abandoned_claim_is_still_indistinguishable_from_a_live_one ... ok
+test notion::client::tests::the_page_picker_lists_titles_the_user_will_recognise ... ok
+test notion::client::tests::the_schema_has_no_category_property ... ok
+test notion::client::tests::trashing_a_page_is_recoverable_rather_than_destructive ... ok
+test notion::commands::tests::a_database_created_on_a_lost_connection_is_adopted_not_created_twice ... ok
+test notion::commands::tests::a_database_that_cannot_be_confirmed_is_created_only_by_the_next_setup ... ok
+test notion::commands::tests::a_failed_local_delete_restores_every_tombstone ... ok
+test notion::commands::tests::a_failed_local_restore_reinstates_every_tombstone ... ok
+test notion::commands::tests::a_known_note_that_has_not_changed_is_not_opened ... ok
+test notion::commands::tests::a_known_note_whose_timestamp_moved_is_read_again ... ok
+test notion::commands::tests::a_note_with_no_id_is_left_alone_rather_than_given_one ... ok
+test notion::client::tests::being_rate_limited_waits_the_requested_time_and_then_succeeds ... ok
+test notion::commands::tests::a_vault_that_never_set_notion_up_pays_nothing_on_delete ... ok
+test notion::commands::tests::deleting_a_note_records_the_page_that_still_needs_trashing ... ok
+test notion::commands::tests::deleting_a_note_that_was_never_published_leaves_no_tombstone ... ok
+test notion::commands::tests::a_setup_after_a_failed_one_adopts_the_database_that_landed ... ok
+test notion::commands::tests::enumeration_finds_notes_in_every_category ... ok
+test notion::commands::tests::files_that_are_not_notes_are_ignored ... ok
+test notion::commands::tests::holding_notes_reach_the_planner_as_uncategorised ... ok
+test notion::commands::tests::restoring_a_note_before_the_publisher_runs_clears_the_tombstone ... ok
+test notion::commands::tests::the_notes_own_category_decides_where_it_goes_not_the_folder_it_sits_in ... ok
+test notion::config::tests::a_blank_token_is_not_configured ... ok
+test notion::config::tests::a_configured_machine_that_is_switched_off_does_not_publish ... ok
+test notion::config::tests::a_damaged_registry_reads_as_not_set_up_rather_than_panicking ... ok
+test notion::config::tests::a_machine_without_a_token_is_not_configured ... ok
+test notion::commands::tests::synchronous_runtime_drivers_run_outside_the_command_runtime ... ok
+test notion::config::tests::a_registry_is_incomplete_until_every_category_has_a_database ... ok
+test notion::config::tests::a_registry_without_a_parent_page_is_incomplete_even_with_four_databases ... ok
+test notion::config::tests::a_registry_survives_a_save_and_reload ... ok
+test notion::config::tests::a_vault_that_never_configured_notion_loads_as_empty ... ok
+test notion::config::tests::an_interrupted_setup_reports_only_what_is_missing ... ok
+test notion::config::tests::an_unset_interval_falls_back_to_the_default ... ok
+test notion::config::tests::settings_that_were_never_configured_write_nothing_surprising ... ok
+test notion::config::tests::an_interrupted_registry_save_keeps_the_previous_registry ... ok
+test notion::config::tests::the_poll_interval_never_collapses_to_zero ... ok
+test notion::live_tests::the_publisher_against_a_real_notion_workspace ... ignored, needs a Notion workspace; see the module docs
+test notion::live_tests::this_process_can_reach_notion ... ignored, needs a Notion workspace; see the module docs
+test notion::config::tests::the_registry_holds_no_credential ... ok
+test notion::map::tests::a_note_id_that_looks_like_a_path_cannot_escape_the_map_directory ... ok
+test notion::map::tests::a_damaged_entry_reads_as_absent ... ok
+test notion::map::tests::a_note_never_published_has_no_entry ... ok
+test notion::map::tests::an_interrupted_creation_is_retried_rather_than_assumed_lost ... ok
+test notion::map::tests::an_entry_survives_a_save_and_reload ... ok
+test notion::map::tests::deleting_a_note_leaves_a_tombstone_naming_its_page ... ok
+test notion::map::tests::deleting_a_note_that_was_never_published_leaves_nothing_behind ... ok
+test notion::map::tests::removing_an_entry_that_is_already_gone_is_not_an_error ... ok
+test notion::map::tests::listing_entries_ignores_the_database_registry_sharing_the_directory ... ok
+test notion::map::tests::restoring_a_note_from_trash_clears_the_tombstone_and_keeps_the_page ... ok
+test notion::map::tests::restoring_a_note_that_was_not_deleted_changes_nothing ... ok
+test notion::plan::tests::a_category_with_no_database_is_skipped_rather_than_published_elsewhere ... ok
+test notion::plan::tests::a_conflict_copy_never_reaches_the_published_view ... ok
+test notion::plan::tests::a_deleted_note_that_never_had_a_page_is_simply_created ... ok
+test notion::plan::tests::a_file_resynced_with_identical_bytes_is_not_republished ... ok
+test notion::plan::tests::a_lost_map_adopts_the_existing_page_instead_of_duplicating_it ... ok
+test notion::plan::tests::a_lost_map_whose_note_changed_category_moves_the_page_rather_than_leaving_it ... ok
+test notion::plan::tests::a_note_both_edited_and_recategorised_is_visited_once ... ok
+test notion::plan::tests::a_note_never_published_is_created ... ok
+test notion::plan::tests::a_note_restored_and_edited_updates_rather_than_recreating ... ok
+test notion::plan::tests::a_note_restored_from_trash_costs_no_api_call ... ok
+test notion::plan::tests::a_note_with_no_entry_and_no_page_is_still_created ... ok
+test notion::plan::tests::a_note_with_no_entry_is_always_read ... ok
+test notion::plan::tests::a_published_entry_that_lost_its_page_id_resolves_instead_of_creating ... ok
+test notion::plan::tests::a_recategorised_note_moves_and_keeps_its_page ... ok
+test notion::plan::tests::a_tombstone_with_no_page_produces_no_call ... ok
+test notion::plan::tests::adoption_leaves_every_other_action_alone ... ok
+test notion::plan::tests::an_edited_note_replaces_its_content ... ok
+test notion::plan::tests::an_interrupted_creation_asks_notion_rather_than_creating_again ... ok
+test notion::plan::tests::an_uncategorised_note_is_skipped_and_counted ... ok
+test notion::plan::tests::an_unchanged_modification_time_means_the_file_is_not_even_read ... ok
+test notion::plan::tests::an_unchanged_note_does_nothing ... ok
+test notion::plan::tests::conflict_copies_are_recognised_by_the_engines_own_naming ... ok
+test notion::plan::tests::tombstones_become_trash_actions ... ok
+test notion::plan::tests::unfinished_work_is_always_reconsidered_whatever_the_timestamps_say ... ok
+test notion::properties::tests::a_comma_in_a_tag_is_removed_rather_than_failing_the_page ... ok
+test notion::properties::tests::a_very_long_tag_is_truncated_rather_than_rejected ... ok
+test notion::properties::tests::a_very_long_title_is_truncated_without_panicking_on_a_multibyte_boundary ... ok
+test notion::properties::tests::an_empty_tag_is_dropped_rather_than_sent ... ok
+test notion::properties::tests::an_untitled_note_is_named_rather_than_left_blank ... ok
+test notion::properties::tests::dates_are_sent_in_a_format_notion_accepts ... ok
+test notion::properties::tests::tags_become_multi_select_options ... ok
+test notion::properties::tests::the_note_id_travels_as_a_property_so_the_map_can_be_rebuilt ... ok
+test notion::properties::tests::the_title_becomes_the_pages_title ... ok
+test notion::properties::tests::there_is_no_category_property ... ok
+test notion::properties::tests::absurd_numbers_of_tags_are_capped_at_notions_limit ... ok
+test notion::publish::tests::a_conflict_copy_is_skipped_and_counted ... ok
+test notion::publish::tests::a_deleted_snapshot_never_creates_an_orphan_page ... ok
+test notion::publish::tests::a_failed_look_fails_the_note_instead_of_creating_again ... ok
+test notion::client::tests::notion_being_overloaded_is_handled_exactly_like_a_rate_limit ... ok
+test notion::publish::tests::a_new_note_is_created_and_recorded ... ok
+test notion::publish::tests::a_lost_map_adopts_existing_pages_instead_of_duplicating_them ... ok
+test notion::publish::tests::a_page_already_gone_from_notion_clears_its_tombstone_rather_than_retrying_forever ... ok
+test notion::publish::tests::a_note_that_cannot_be_read_is_skipped_without_stopping_the_run ... ok
+test notion::publish::tests::a_long_note_is_sent_in_batches_of_a_hundred_blocks ... ok
+test notion::publish::tests::a_page_is_not_created_when_its_intent_cannot_be_persisted ... ok
+test notion::publish::tests::a_page_created_on_a_lost_connection_is_adopted_in_the_same_run ... ok
+test notion::publish::tests::a_page_that_shows_up_after_the_last_look_is_adopted_by_the_next_run ... ok
+test notion::publish::tests::a_page_that_never_landed_is_created_once_by_the_next_run ... ok
+test notion::publish::tests::a_page_that_shows_up_late_is_still_adopted_not_duplicated ... ok
+test notion::publish::tests::a_recategorised_note_moves_and_always_rewrites_its_properties ... ok
+test notion::publish::tests::a_page_without_a_note_id_is_never_adopted ... ok
+test notion::publish::tests::a_rejected_token_stops_the_run_immediately ... ok
+test notion::publish::tests::a_tag_change_alone_counts_as_a_change ... ok
+test notion::publish::tests::a_title_change_alone_counts_as_a_change ... ok
+test notion::publish::tests::a_tombstoned_page_is_trashed_and_its_entry_removed ... ok
+test notion::publish::tests::a_second_run_over_unchanged_notes_calls_notion_not_at_all ... ok
+test notion::publish::tests::an_uncategorised_note_is_skipped_with_a_reason_the_panel_can_show ... ok
+test notion::publish::tests::an_interrupted_creation_adopts_the_existing_page_instead_of_duplicating ... ok
+test notion::publish::tests::an_unchanged_note_is_never_even_read_from_disk ... ok
+test notion::publish::tests::a_restore_waiting_ahead_of_the_publisher_cancels_the_tombstone ... ok
+test notion::publish::tests::progress_is_reported_for_every_note_so_a_first_sync_is_not_a_hang ... ok
+test notion::publish::tests::one_rejected_note_does_not_stop_the_others ... ok
+test perf_probe::tests::samples_append_as_json_lines_with_a_wall_clock ... ok
+test safe_fetch::tests::names_the_reason_each_address_is_refused ... ok
+test safe_fetch::tests::treats_every_private_range_as_off_limits ... ok
+test safe_fetch::tests::separates_a_local_name_from_a_private_literal ... ok
+test notion::publish::tests::the_publisher_keeps_the_lifecycle_guard_until_mapping_is_final ... ok
+test search::external::tests::a_conflict_copy_queued_by_the_watcher_never_becomes_findable ... ok
+test notion::client::tests::requests_are_spaced_to_stay_under_three_per_second ... ok
+test search::external::tests::a_burst_of_changes_collapses_into_one_batch ... ok
+test search::external::tests::a_note_created_outside_the_app_becomes_findable ... ok
+test search::external::tests::a_note_deleted_outside_the_app_disappears_from_search ... ok
+test search::external::tests::a_path_still_changing_is_held_back_for_another_window ... ok
+test search::external::tests::a_quiet_path_settles_and_a_fresh_one_waits ... ok
+test search::external::tests::a_vanished_path_settles_so_it_can_be_removed_from_the_index ... ok
+test search::external::tests::a_folder_renamed_with_no_child_events_reindexes_the_notes_inside ... ok
+test search::external::tests::a_note_reaching_one_batch_twice_is_indexed_once ... ok
+test search::external::tests::a_note_moved_between_categories_is_found_once_at_its_new_home ... ok
+test search::external::tests::an_edit_outside_the_app_replaces_the_old_content ... ok
+test search::external::tests::deleting_a_folder_outside_the_app_removes_the_notes_inside_it ... ok
+test search::tests::a_persistently_denied_commit_stops_after_the_retry_budget ... ok
+test search::tests::a_temporarily_denied_commit_is_retried ... ok
+test search::external::tests::several_folders_removed_at_once_are_all_swept ... ok
+test search::tests::an_unrelated_commit_error_is_not_retried ... ok
+test search::tests::a_failed_reconciliation_falls_back_to_a_full_rebuild ... ok
+test search::tests::an_unreadable_upsert_leaves_the_existing_index_unchanged ... ok
+test search::tests::conflict_copies_never_enter_keyword_search ... ok
+test search::tests::reconcile_adds_a_note_created_outside_the_index ... ok
+test search::tests::a_path_change_is_visible_as_one_index_batch ... ok
+test search::tests::reconcile_is_a_no_op_on_an_unchanged_vault ... ok
+test search::tests::reconcile_against_an_empty_index_behaves_like_a_rebuild ... ok
+test search::tests::reconcile_never_reads_a_note_whose_fingerprint_is_unchanged ... ok
+test secret_store::tests::failed_secret_update_rolls_back_earlier_keyring_changes ... ok
+test secret_store::tests::notion_token_follows_the_vault_id_when_the_folder_moves ... ok
+test secret_store::tests::persisted_config_contains_no_credentials ... ok
+test secret_store::tests::plaintext_credentials_migrate_to_the_secret_store ... ok
+test semantic_search::tests::a_bulk_change_reconciles_the_semantic_index_even_when_an_earlier_step_fails ... ok
+test semantic_search::tests::a_bulk_change_that_comes_and_goes_during_a_check_stops_the_rerun ... ok
+test semantic_search::tests::a_capture_renamed_before_its_check_starts_is_kept_by_its_id ... ok
+test search::tests::reconcile_removes_a_note_deleted_outside_the_index ... ok
+test semantic_search::tests::a_check_kept_under_another_path_to_the_open_vault_joins_its_list ... ok
+test semantic_search::tests::a_check_is_kept_while_it_runs_and_leaves_the_list_when_it_succeeds ... ok
+test semantic_search::tests::a_check_that_starts_after_a_vault_switch_is_kept_for_its_own_vault ... ok
+test semantic_search::tests::a_corrupt_derived_database_is_recreated_from_markdown ... ok
+test semantic_search::tests::a_database_at_the_current_schema_version_is_reopened_with_its_work_intact ... ok
+test search::tests::reconcile_moves_a_note_whose_fingerprint_is_unchanged_by_the_move ... ok
+test semantic_search::tests::a_database_predating_schema_versioning_is_rebuilt ... ok
+test semantic_search::tests::a_check_waiting_behind_another_is_kept_while_it_waits ... ok
+test semantic_search::tests::a_deferred_check_that_fails_again_stays_recorded ... ok
+test semantic_search::tests::a_deferred_note_moved_where_it_cannot_be_opened_is_not_taken_for_deleted ... ok
+test semantic_search::tests::a_deferred_check_runs_after_the_backend_returns_and_its_card_is_delivered ... ok
+test semantic_search::tests::a_deferred_note_moved_with_a_long_frontmatter_is_still_found ... ok
+test semantic_search::tests::a_deferred_note_without_an_id_behind_a_folder_that_cannot_be_read_is_not_taken_for_deleted ... ok
+test semantic_search::tests::a_failed_similarity_check_is_recorded_and_survives_reloading_its_file ... ok
+test semantic_search::tests::a_fresh_database_records_the_schema_version_it_was_created_with ... ok
+test semantic_search::tests::a_deferred_note_moved_with_bytes_that_are_not_utf8_stays_kept_and_the_next_check_runs ... ok
+test semantic_search::tests::a_fill_that_stops_part_way_holds_the_rerun_until_a_reconcile_completes ... ok
+test search::tests::reconcile_updates_a_note_edited_outside_the_index ... ok
+test semantic_search::tests::a_long_note_can_match_content_beyond_its_first_embedding_chunk ... ok
+test semantic_search::tests::a_note_that_vanishes_mid_pass_keeps_its_entry_until_the_next_reconcile ... ok
+test semantic_search::tests::a_load_that_starts_after_the_wait_is_waited_for_not_scanned_around ... ok
+test semantic_search::tests::a_moved_note_still_gets_its_deferred_check_and_a_deleted_one_is_dropped ... ok
+test semantic_search::tests::a_note_queued_in_place_of_an_unreadable_one_holds_the_rerun ... ok
+test semantic_search::tests::a_note_without_an_id_never_matches_itself_through_a_vault_link ... ok
+test semantic_search::tests::a_note_without_an_id_never_matches_itself ... ok
+test semantic_search::tests::a_note_written_at_a_captures_path_after_a_rerun_found_it_there_never_takes_its_check ... ok
+test semantic_search::tests::a_note_written_at_a_renamed_captures_old_path_never_takes_its_check ... ok
+test semantic_search::tests::a_pass_that_cannot_use_the_backend_records_that_it_stopped ... ok
+test semantic_search::tests::a_pass_that_sends_nothing_to_the_backend_keeps_the_earlier_record ... ok
+test semantic_search::tests::a_pass_that_leaves_notes_queued_reruns_nothing_until_the_queue_is_through ... ok
+test semantic_search::tests::a_persisted_embedding_finds_meaning_that_keyword_search_would_miss ... ok
+test semantic_search::tests::a_pass_that_stopped_or_found_the_queue_empty_reruns_nothing ... ok
+test semantic_search::tests::a_rebuild_during_a_pass_leaves_the_rerun_to_the_pass_that_embeds_what_it_queued ... ok
+test semantic_search::tests::a_rebuilt_database_keeps_the_embedding_profile_contract ... ok
+test semantic_search::tests::a_rebuild_or_reconcile_started_since_the_index_caught_up_stops_the_rerun ... ok
+test semantic_search::tests::a_replaced_index_refuses_to_retrieve ... ok
+test semantic_search::tests::a_pass_records_its_counts_and_stage_times_in_memory_only ... ok
+test semantic_search::tests::a_rerun_never_holds_the_index_slot_while_it_waits_for_the_config ... ok
+test semantic_search::tests::a_rerun_leaves_a_kept_check_to_its_first_attempt ... ok
+test semantic_search::tests::a_rerun_scans_the_vault_without_the_note_lock_and_a_bulk_change_meanwhile_keeps_the_check ... ok
+test semantic_search::tests::a_rerun_leaves_its_checks_to_the_pass_that_embeds_notes_saved_since_the_index_caught_up ... ok
+test semantic_search::tests::a_rerun_waits_while_a_bulk_change_holds_the_note_lock ... ok
+test semantic_search::tests::a_restore_that_rolls_back_reconciles_what_a_reconcile_meanwhile_dropped ... ok
+test semantic_search::tests::a_retired_index_writes_nothing_behind_its_replacement ... ok
+test semantic_search::tests::a_save_embedded_while_a_check_runs_stops_the_rerun ... ok
+test semantic_search::tests::a_rerun_waits_until_no_rebuild_or_reconcile_is_filling_the_queue ... ok
+test semantic_search::tests::a_search_that_outlives_its_index_reports_a_restart_instead_of_stale_results ... ok
+test semantic_search::tests::a_started_index_reruns_nothing_before_its_first_reconcile ... ok
+test semantic_search::tests::an_incomplete_set_of_derived_tables_is_replaced_not_patched ... ok
+test semantic_search::tests::an_index_replaced_after_a_check_scored_stops_the_rerun ... ok
+test semantic_search::tests::an_obsolete_revision_commits_nothing_and_the_newer_one_stays_queued ... ok
+test semantic_search::tests::an_unavailable_backend_queues_the_note_without_failing_its_change ... ok
+test semantic_search::tests::an_unchanged_indexed_note_is_not_queued_again ... ok
+test semantic_search::tests::an_unreadable_note_neither_stops_reconciliation_nor_leaves_the_index ... ok
+test semantic_search::tests::an_unreadable_queued_note_does_not_hold_up_the_rest_of_the_queue ... ok
+test semantic_search::tests::an_unrecognized_schema_version_is_rebuilt_rather_than_reused ... ok
+test semantic_search::tests::brute_force_search_latency_for_ten_thousand_notes ... ignored, representative-vault latency measurement; run explicitly
+test semantic_search::tests::changing_the_embedding_profile_invalidates_incompatible_vectors ... ok
+test semantic_search::tests::deleting_a_note_removes_its_embeddings_and_pending_work ... ok
+test semantic_search::tests::editing_replaces_the_old_embedding_instead_of_duplicating_the_note ... ok
+test semantic_search::tests::only_the_first_empty_pass_of_an_outage_is_logged ... ok
+test semantic_search::tests::opening_and_replacing_the_index_inside_async_code_does_not_panic ... ok
+test semantic_search::tests::overlapping_fills_hold_the_rerun_until_one_completes_alone ... ok
+test semantic_search::tests::a_search_during_the_cache_load_waits_and_returns_everything ... ok
+test semantic_search::tests::queries_and_notes_use_embeddinggemmas_retrieval_prompts ... ok
+test semantic_search::tests::queued_work_survives_restart_and_is_embedded_after_recovery ... ok
+test semantic_search::tests::rebuild_skips_an_unreadable_note_and_queues_the_notes_after_it ... ok
+test semantic_search::tests::rebuilding_uses_markdown_as_truth_and_discards_stale_entries ... ok
+test semantic_search::tests::reconciliation_queues_only_notes_that_changed_while_the_app_was_closed ... ok
+test semantic_search::tests::retrieval_charges_each_note_its_overhead_so_tiny_notes_cannot_overflow_the_prompt ... ok
+test semantic_search::tests::retrieval_reads_every_related_chunk_best_first_within_the_budget ... ok
+test semantic_search::tests::retrieval_respects_the_category_filter ... ok
+test semantic_search::tests::semantic_results_can_be_scoped_to_one_para_category ... ok
+test semantic_search::tests::semantic_search_hides_notes_below_the_confidence_cutoff ... ok
+test semantic_search::tests::semantic_search_keeps_title_only_notes_searchable ... ok
+test semantic_search::tests::semantic_search_keeps_relevant_matches_on_embeddinggemmas_score_scale ... ok
+test semantic_search::tests::similarity_calibration ... ignored, needs embeddinggemma on Ollama at SB_OLLAMA_URL; prints the similarity scores
+test semantic_search::tests::switching_away_and_back_retires_the_first_instance ... ok
+test semantic_search::tests::similar_notes_skip_the_new_note_itself_and_carry_the_indexed_revision ... ok
+test semantic_search::tests::the_cache_ranks_exactly_as_the_sql_scan ... ok
+test semantic_search::tests::the_cache_stays_equal_to_sqlite_through_every_write ... ok
+test semantic_search::tests::the_end_of_a_rebuild_leaves_the_notes_it_queued_to_the_next_pass ... ok
+test semantic_search::tests::the_end_of_a_rebuild_runs_the_caught_up_hook_it_held ... ok
+test semantic_search::tests::the_ollama_adapter_batches_inputs_through_the_embedding_endpoint ... ok
+test semantic_search::tests::the_similarity_check_skips_short_notes_drops_gone_or_changed_matches_and_caps_the_card ... ok
+test semantic_search::tests::the_status_carries_the_last_pass_in_the_shape_settings_reads ... ok
+test semantic_search::tests::the_background_worker_processes_queued_notes_when_the_backend_returns ... ok
+test shutdown::lifecycle_race_tests::cancelling_last_reserved_exit_participant_completes_exit ... ok
+test shutdown::lifecycle_race_tests::upgraded_exit_invalidates_the_old_timeout_generation ... ok
+test shutdown::lifecycle_race_tests::vault_switch_rejects_preexisting_reservations ... ok
+test shutdown::tests::a_close_stops_sync_until_it_is_released_and_never_revives_a_run ... ok
+test shutdown::tests::a_finished_hide_or_window_close_leaves_sync_free_to_run ... ok
+test shutdown::tests::quit_supersedes_hide_without_changing_request_identity ... ok
+test shutdown::tests::quit_supersedes_note_close_and_failure_cancels_the_exit ... ok
+test shutdown::tests::registration_authenticates_label_and_token_and_destroy_cleans_up ... ok
+test shutdown::tests::reservation_is_atomic_with_exit_and_late_registration_joins ... ok
+test shutdown::tests::stale_timeout_cannot_cancel_a_new_request ... ok
+test similar_notes::tests::a_check_kept_while_the_file_cannot_be_read_is_saved_when_another_vault_opens ... ok
+test similar_notes::tests::a_check_that_ran_while_the_file_could_not_be_read_leaves_it_when_another_vault_opens ... ok
+test similar_notes::tests::a_check_that_ran_while_the_file_could_not_be_replaced_leaves_it_when_another_vault_opens ... ok
+test similar_notes::tests::a_note_is_in_a_vault_opened_through_a_link_and_never_in_a_folder_that_is_not_one ... ok
+test similar_notes::tests::a_note_whose_folder_is_gone_is_placed_by_the_vault_unless_it_climbs_out ... ok
+test similar_notes::tests::an_append_keeps_the_note_and_marks_where_the_capture_starts ... ok
+test similar_notes::tests::an_unreadable_deferred_file_gives_an_empty_list_and_the_vault_still_opens ... ok
+test similar_notes::tests::opening_a_vault_reads_its_checks_and_reopening_it_keeps_the_open_list ... ok
+test similar_notes::tests::the_notification_never_names_a_note_and_counts_unseen_captures ... ok
+test sync_config::tests::a_config_write_failure_happens_before_any_credential_delete ... ok
+test sync_config::tests::a_delete_failure_leaves_a_durable_retry_after_configuration_is_clean ... ok
+test sync_config::tests::durable_private_write_replaces_existing_content ... ok
+test sync_config::tests::flat_global_nested_and_per_vault_settings_are_removed_without_touching_other_data ... ok
+test sync_config::tests::invalid_marker_blocks_vault_id_loss_and_retry_cleans_the_credential ... ok
+test sync_config::vault_path_tests::retirement_never_opens_or_creates_the_legacy_vault_path ... ok
+test sync_conflicts::tests::choosing_conflict_preserves_current_and_promotes_conflict ... ok
+test sync_conflicts::tests::conflict_pattern_pairs_with_its_original_and_near_misses_do_not ... ok
+test sync_conflicts::tests::keeping_current_archives_the_conflict_copy ... ok
+test sync_conflicts::tests::scanner_returns_both_versions_without_treating_metadata_as_a_conflict ... ok
+test sync_sidecar::live_tests::a_close_once_the_peer_connects_starts_neither_scan_nor_backup ... ignored, needs the bundled Syncthing binary and takes minutes; see the module docs
+test sync_sidecar::live_tests::a_second_machine_joining_a_vault_leaves_no_conflict_copy ... ignored, needs the bundled Syncthing binary and takes minutes; see the module docs
+test sync_sidecar::live_tests::only_a_batch_with_incoming_changes_takes_a_backup_and_it_comes_first ... ignored, needs the bundled Syncthing binary and takes minutes; see the module docs
+test notion::client::tests::a_failure_to_connect_is_retried_before_notion_counts_as_unreachable ... ok
+test sync_sidecar::tests::a_close_also_waits_for_a_syncthing_a_disable_already_stopped ... ok
+test sync_sidecar::tests::a_close_during_a_status_call_is_not_mistaken_for_a_disconnect ... ok
+test sync_sidecar::tests::a_close_ends_the_handoff_hold_as_a_failure ... ok
+test sync_sidecar::tests::a_later_started_peer_confirms_inside_the_first_peers_handoff_grace ... ok
+test sync_sidecar::tests::a_change_arriving_during_the_hold_ends_it_to_be_received ... ok
+test sync_sidecar::tests::a_moving_peer_index_restarts_the_stability_window ... ok
+test sync_sidecar::tests::a_pull_error_inside_a_clean_streak_restarts_the_stability_window ... ok
+test sync_sidecar::tests::a_scheduled_batch_reports_a_refusal_that_is_not_a_held_lease ... ok
+test sync_sidecar::tests::a_scheduled_batch_skips_a_window_whose_lease_is_held ... ok
+test sync_sidecar::tests::a_stop_check_reports_the_close ... ok
+test sync_sidecar::tests::a_pause_that_gets_no_answer_is_not_acknowledged ... ok
+test sync_sidecar::tests::an_unacknowledged_pause_stops_syncthing_whether_or_not_the_app_is_closing ... ok
+test sync_sidecar::tests::bilateral_completion_is_latched_for_the_peer_handoff ... ok
+test semantic_search::tests::an_unavailable_backend_is_retried_only_at_the_worker_interval ... ok
+test sync_sidecar::tests::convergence_requires_both_local_and_remote_completion ... ok
+test sync_sidecar::tests::durable_temp_ignore_is_appended_once_and_keeps_user_patterns ... ok
+test sync_sidecar::tests::control_state_is_machine_local_and_stable ... ok
+test sync_sidecar::tests::generated_config_is_hardened_before_the_first_serve ... ok
+test sync_sidecar::tests::generated_config_with_missing_safety_fields_fails_closed ... ok
+test sync_sidecar::tests::incompatible_control_state_fails_closed ... ok
+test sync_sidecar::tests::late_peer_index_activity_resets_completion_stability ... ok
+test sync_sidecar::tests::local_idle_is_not_convergence_before_the_remote_index_arrives ... ok
+test sync_sidecar::tests::pairing_requires_an_explicit_identity_on_the_tailnet ... ok
+test sync_sidecar::tests::recent_pull_errors_name_the_deadline_failure ... ok
+test sync_sidecar::tests::scheduled_windows_are_aligned_and_never_more_than_one_interval_away ... ok
+test sync_sidecar::tests::sync_now_still_reports_a_held_lease ... ok
+test sync_sidecar::tests::transient_pull_errors_do_not_end_a_run_that_later_converges ... ok
+test types::ai_provider_tests::a_shared_model_from_an_older_config_survives_the_first_switch_away ... ok
+test types::ai_provider_tests::an_existing_app_config_loads_the_typed_provider_without_rewriting_its_id ... ok
+test types::ai_provider_tests::an_unknown_legacy_provider_is_preserved_instead_of_rejecting_the_config ... ok
+test types::ai_provider_tests::disabling_ai_keeps_the_model_and_an_unknown_provider_keeps_its_own_entry ... ok
+test types::ai_provider_tests::each_provider_keeps_an_independent_model ... ok
+test types::ai_provider_tests::existing_provider_ids_round_trip_unchanged ... ok
+test types::startup_view_tests::existing_configs_default_system_theme_pair ... ok
+test types::startup_view_tests::legacy_daily_config_loads_without_re_emitting_or_reactivating_daily_notes ... ok
+test types::startup_view_tests::note_switcher_is_opt_in_for_new_and_existing_configs ... ok
+test types::startup_view_tests::serializes_supported_startup_views ... ok
+test types::startup_view_tests::unknown_startup_view_falls_back_to_all_notes ... ok
+test vault::conflicts::tests::recognises_only_the_complete_syncthing_markdown_pattern ... ok
+test vault::frontmatter::tests::a_note_predating_para_reads_as_uncategorised ... ok
+test vault::frontmatter::tests::an_uncategorised_note_writes_no_category_key ... ok
+test vault::frontmatter::tests::an_unrecognised_category_reads_as_uncategorised_rather_than_failing ... ok
+test vault::frontmatter::tests::category_survives_a_write_then_read ... ok
+test vault::frontmatter::tests::invalid_category_types_preserve_all_other_metadata ... ok
+test vault::frontmatter::tests::merging_drops_a_category_that_no_longer_applies ... ok
+test vault::frontmatter::tests::merging_sets_the_category_and_keeps_unknown_keys ... ok
+test vault::frontmatter::tests::source_url_survives_a_write_then_read ... ok
+test vault::frontmatter::tests::test_extract_preview_basic ... ok
+test vault::frontmatter::tests::test_extract_preview_no_frontmatter ... ok
+test vault::frontmatter::tests::test_strip_html_markdown ... ok
+test notion::client::tests::an_unreachable_notion_is_an_ordinary_offline_state ... ok
+test vault::import::tests::a_failed_write_is_reported_as_a_failure_rather_than_a_conversion ... ok
+test vault::import::tests::attachment_import_never_moves_internal_or_tool_state ... ok
+test vault::import::tests::a_link_is_counted_once_however_many_passes_resolve_it ... ok
+test vault::import::tests::encoding_a_space_in_a_link_counts_and_is_written ... ok
+test vault::import::tests::obsidian_import_preserves_category_and_survives_reconciliation ... ok
+test vault::import::tests::test_convert_syntax_code_block_protection ... ok
+test vault::import::tests::test_convert_syntax_comment ... ok
+test vault::import::tests::test_convert_syntax_highlight ... ok
+test vault::import::tests::test_extract_heading_title ... ok
+test vault::import::tests::test_is_dimension_spec ... ok
+test vault::import::tests::test_normalize_frontmatter_extracts_heading_title ... ok
+test vault::import::tests::test_normalize_frontmatter_generates_id ... ok
+test vault::import::tests::test_normalize_frontmatter_preserves_frontmatter_title ... ok
+test vault::import::tests::test_normalize_frontmatter_tags_from_comma_string ... ok
+test vault::import::tests::test_normalize_tags_array ... ok
+test vault::import::tests::test_normalize_tags_comma_string ... ok
+test vault::import::tests::test_normalize_tags_dedup_case_insensitive ... ok
+test vault::import::tests::test_convert_syntax_multiline_comment ... ok
+test vault::import::tests::test_normalize_tags_merge_singular_and_plural ... ok
+test vault::import::tests::test_normalize_tags_nested ... ok
+test vault::import::tests::test_normalize_tags_single_string ... ok
+test vault::import::tests::test_normalize_tags_singular_tag_key ... ok
+test vault::import::tests::test_normalize_tags_strips_hash ... ok
+test vault::import::tests::test_pathdiff_parent_dir ... ok
+test vault::import::tests::test_pathdiff_subdir ... ok
+test vault::import::tests::test_pathdiff_same_dir ... ok
+test vault::import::tests::test_rename_deprecated_alias ... ok
+test vault::import::tests::test_rename_deprecated_cssclass ... ok
+test vault::import::tests::test_rename_deprecated_no_change_needed ... ok
+test vault::import::tests::test_rename_deprecated_no_override ... ok
+test vault::import::tests::test_split_anchor ... ok
+test vault::import::tests::test_split_anchor_same_note ... ok
+test vault::operations::tests::a_cut_file_name_does_not_end_in_a_space_or_a_full_stop ... ok
+test vault::operations::tests::a_long_title_is_cut_to_a_short_file_name_and_kept_whole_in_the_note ... ok
+test vault::operations::tests::a_long_title_of_full_stops_is_not_trimmed_to_an_empty_name ... ok
+test vault::operations::tests::a_new_note_records_the_category_it_was_filed_under ... ok
+test vault::operations::tests::a_note_can_be_created_in_a_sub_folder_of_a_category ... ok
+test vault::operations::tests::a_note_cannot_be_created_outside_a_category ... ok
+test vault::operations::tests::a_pre_para_vault_keeps_its_notes_when_opened ... ok
+test vault::operations::tests::a_short_title_ending_in_a_full_stop_keeps_it ... ok
+test vault::operations::tests::a_note_changed_since_it_was_read_is_not_moved_to_trash ... ok
+test vault::operations::tests::a_title_in_wide_characters_is_cut_by_bytes_and_still_saves ... ok
+test vault::operations::tests::a_web_clipping_is_complete_and_records_its_source_url ... ok
+test vault::operations::tests::category_scan_is_recursive_and_filters_by_recorded_category ... ok
+test vault::operations::tests::backlink_write_failure_rolls_back_the_note_links_and_quick_access ... ok
+test vault::operations::tests::compares_numeric_segments_anywhere_in_names ... ok
+test vault::operations::tests::conflict_copies_are_not_notes_or_para_counts ... ok
+test vault::operations::tests::corrupt_quick_access_blocks_a_move_before_the_source_changes ... ok
+test vault::operations::tests::compare_and_swap_rejects_both_stale_writer_orders ... ok
+test vault::operations::tests::delete_create_restore_preserves_quick_access_by_note_identity ... ok
+test vault::operations::tests::duplicates_note_content_and_assigns_unique_identity_and_name ... ok
+test vault::operations::tests::editor_save_keeps_a_draft_whose_note_and_folder_are_gone ... ok
+test vault::operations::tests::duplicating_a_long_titled_note_finds_a_free_name_each_time ... ok
+test vault::operations::tests::editor_save_never_writes_a_draft_outside_its_own_conflict_copies ... ok
+test vault::operations::tests::editor_save_keeps_a_draft_whose_note_changed_on_disk_in_one_conflict_copy ... ok
+test vault::operations::tests::failed_backlink_rewrite_rolls_back_the_note_rename_and_prior_links ... ok
+test vault::operations::tests::filing_an_unfiled_note_gives_it_a_category_and_moves_it ... ok
+test vault::operations::tests::filing_only_accepts_regular_markdown_files ... ok
+test vault::operations::tests::filing_only_applies_to_notes_in_the_holding_area ... ok
+test sync_sidecar::tests::a_stopped_writer_is_waited_for_until_it_is_gone ... ok
+test vault::operations::tests::filing_rejects_a_category_that_is_not_one_of_the_four ... ok
+test vault::operations::tests::filing_rejects_a_symlinked_category_destination_before_rewriting_the_note ... ok
+test vault::operations::tests::filing_rejects_a_symlinked_holding_directory ... ok
+test vault::operations::tests::filing_rejects_a_symlinked_note_without_touching_its_target ... ok
+test vault::operations::tests::filing_rejects_a_traversal_path_without_touching_the_outside_file ... ok
+test vault::operations::tests::folders_inside_a_category_remain_editable ... ok
+test vault::operations::tests::holding_notes_are_readable_but_other_metadata_paths_are_not ... ok
+test vault::operations::tests::legacy_quick_access_migrates_to_note_ids_without_reordering ... ok
+test vault::operations::tests::loads_only_requested_note_switcher_titles ... ok
+test vault::operations::tests::moving_a_note_between_categories_updates_its_recorded_category ... ok
+test vault::operations::tests::moving_a_note_never_overwrites_a_same_named_destination ... ok
+test vault::operations::tests::moving_a_note_preserves_its_body ... ok
+test vault::operations::tests::moving_a_note_rejects_destinations_outside_para_categories ... ok
+test vault::operations::tests::moving_a_note_updates_path_based_wikilinks ... ok
+test vault::operations::tests::moving_a_note_updates_quick_access_to_the_collision_safe_destination ... ok
+test vault::operations::tests::moving_a_note_with_malformed_frontmatter_leaves_the_source_unchanged ... ok
+test vault::operations::tests::every_ordered_category_pair_preserves_note_identity_and_body ... ok
+test vault::operations::tests::normalizes_legacy_notebook_icon_keys_when_loading ... ok
+test vault::operations::tests::note_move_delete_and_restore_accept_a_symlinked_vault_path ... ok
+test vault::operations::tests::notebook_lifecycle_enumerates_all_descendant_notes ... ok
+test vault::operations::tests::opening_a_vault_creates_the_para_folders ... ok
+test vault::operations::tests::opening_a_vault_writes_no_machine_specific_config_and_keeps_an_old_one ... ok
+test vault::operations::tests::permanent_deletion_removes_the_note_restore_manifest ... ok
+test vault::operations::tests::persists_and_removes_builtin_notebook_icons ... ok
+test vault::operations::tests::reads_markdown_notes_from_trash_without_allowing_external_files ... ok
+test vault::operations::tests::rejects_notebook_creation_outside_vault ... ok
+test vault::operations::tests::rejects_permanent_deletion_outside_trash ... ok
+test vault::operations::tests::rejects_traversal_in_restored_notebook_metadata ... ok
+test vault::operations::tests::renaming_a_note_literally_called_replacement_is_supported ... ok
+test vault::operations::tests::renaming_a_note_never_overwrites_an_existing_note ... ok
+test semantic_search::tests::a_stalled_load_times_out_and_a_failed_one_falls_back_to_sql ... ok
+test vault::operations::tests::renaming_frontmatter_when_the_sanitized_filename_is_unchanged_is_supported ... ok
+test vault::operations::tests::renaming_to_a_long_title_cuts_the_file_name_and_keeps_the_title ... ok
+test vault::operations::tests::restore_manifest_cleanup_failure_rolls_back_note_and_quick_access ... ok
+test vault::operations::tests::restore_quick_access_failure_rolls_the_note_back_into_trash ... ok
+test vault::operations::tests::restore_rejects_a_trash_note_replaced_after_manifest_creation ... ok
+test vault::operations::tests::restoring_a_categorized_note_uses_its_category_without_overwriting ... ok
+test vault::operations::tests::restoring_an_uncategorized_legacy_note_uses_the_holding_area ... ok
+test vault::operations::tests::saving_and_renaming_preserve_only_the_user_authored_body ... ok
+test vault::operations::tests::sorts_notebooks_with_numeric_names_naturally ... ok
+test vault::operations::tests::the_category_folders_cannot_be_renamed_deleted_or_moved ... ok
+test vault::operations::tests::trash_manifest_failure_rolls_back_the_note_and_quick_access ... ok
+test vault::operations::tests::unreadable_backlink_content_blocks_a_move_before_the_source_changes ... ok
+test vault::operations::tests::vault_ui_state_is_machine_local_from_its_first_write ... ok
+test vault::para::tests::a_dot_prefixed_vault_root_is_still_reconciled ... ok
+test vault::para::tests::a_nested_category_name_does_not_change_the_category ... ok
+test vault::para::tests::a_note_already_under_its_category_is_left_alone ... ok
+test vault::para::tests::a_note_in_the_wrong_folder_moves_to_match_its_category ... ok
+test vault::para::tests::a_note_with_no_category_goes_to_the_holding_area ... ok
+test vault::para::tests::category_names_are_the_four_from_the_book ... ok
+test vault::para::tests::derives_category_from_the_top_level_folder ... ok
+test vault::para::tests::every_category_round_trips_through_its_folder_name ... ok
+test vault::para::tests::ignores_leading_path_noise_when_deriving_the_category ... ok
+test vault::para::tests::moving_a_note_never_overwrites_one_already_there ... ok
+test vault::para::tests::notes_left_unresolved_are_reported_again_on_the_next_pass ... ok
+test vault::para::tests::notes_outside_the_para_folders_have_no_category ... ok
+test vault::para::tests::parses_hand_edited_names_regardless_of_case ... ok
+test vault::para::tests::reconciliation_reports_mixed_success_instead_of_hiding_failed_notes ... ok
+test vault::para::tests::reconciling_never_rewrites_the_note ... ok
+test vault::para::tests::rejects_names_that_are_not_categories ... ok
+test vault::para::tests::scaffold_creates_the_four_folders ... ok
+test vault::para::tests::scaffold_is_safe_to_run_repeatedly ... ok
+test vault::para::tests::scaffold_leaves_an_existing_vault_untouched ... ok
+test vault::relocation::tests::a_staged_note_cannot_escape_through_a_symlinked_notebook ... ok
+test vault::relocation::tests::a_staged_note_from_another_machine_cannot_escape_this_vault ... ok
+test vault::relocation::tests::a_staged_note_is_restored_relative_to_this_vault ... ok
+test vault::relocation::tests::a_staged_note_whose_original_is_back_in_place_is_discarded_not_restored ... ok
+test vault::relocation::tests::a_successful_rewrite_leaves_no_staging_leftovers ... ok
+test vault::relocation::tests::a_transaction_from_before_the_claimed_subdirectory_still_recovers ... ok
+test vault::relocation::tests::an_interrupted_rewrite_of_replacement_md_recovers_the_original ... ok
+test vault::relocation::tests::cleanup_before_claim_error_removes_an_already_reserved_claimed_dir ... ok
+test vault::relocation::tests::cleanup_transaction_dir_never_touches_an_unretrieved_claimed_original ... ok
+test vault::relocation::tests::cleanup_transaction_dir_removes_a_settled_transaction_completely ... ok
+test vault::relocation::tests::concurrent_relocations_never_overwrite_each_other ... ok
+test vault::relocation::tests::directory_move_preserves_a_note_changed_after_preflight ... ok
+test vault::relocation::tests::directory_move_rollback_never_rewrites_a_recreated_source_file ... ok
+test vault::relocation::tests::directory_move_rollback_never_rewrites_a_replacement_destination ... ok
+test vault::relocation::tests::failed_startup_recovery_reports_every_path_and_preserves_the_notebook_tree ... ok
+test vault::relocation::tests::injected_failure_before_claim_leaves_source_unchanged ... ok
+test vault::relocation::tests::invalid_recovery_directory_leaves_no_published_duplicate ... ok
+test vault::operations::tests::moving_a_note_reindexes_the_target_and_every_rewritten_backlink ... ok
+test vault::relocation::tests::outside_destination_is_rejected_without_writes ... ok
+test vault::relocation::tests::rewriting_a_note_named_replacement_md_succeeds ... ok
+test vault::relocation::tests::source_modification_is_preserved_instead_of_unlinked ... ok
+test vault::relocation::tests::source_replacement_is_preserved_instead_of_unlinked ... ok
+test vault::relocation::tests::startup_recovery_completes_every_rewrite_in_an_interrupted_directory_move ... ok
+test vault::relocation::tests::startup_recovery_discards_a_legacy_empty_directory_manifest ... ok
+test vault::relocation::tests::startup_recovery_preserves_a_nonempty_corrupt_directory_manifest ... ok
+test vault::relocation::tests::symlinked_destination_escape_is_rejected_without_writes ... ok
+test vault::repair::tests::clearing_one_repair_stage_preserves_unresolved_issues ... ok
+test vault::repair::tests::dismissed_restore_folders_persist_when_no_issue_remains ... ok
+test vault::repair::tests::dismissed_restore_folders_stay_quiet_until_the_set_changes ... ok
+test vault::repair::tests::dismissing_one_restore_notice_keeps_the_other ... ok
+test vault::repair::tests::issues_are_deduplicated_and_persist_across_reload ... ok
+test vault::repair::tests::load_recovers_a_ledger_left_in_the_backup_slot ... ok
+test vault::sync_product::tests::a_dropbox_client_config_directory_is_not_a_sync_root ... ok
+test vault::operations::tests::moving_notebook_between_categories_updates_descendants_and_survives_reconciliation ... ok
+test vault::sync_product::tests::folders_inside_a_dropbox_root_are_rejected ... ok
+test vault::sync_product::tests::folders_inside_a_nextcloud_root_are_rejected ... ok
+test vault::sync_product::tests::a_plain_local_folder_is_accepted ... ok
+test vault::watcher::tests::a_vanished_folder_reaches_the_indexer ... ok
+test vault::watcher::tests::hidden_paths_are_withheld_because_a_rebuild_would_drop_them ... ok
+test vault::watcher::tests::notes_reach_the_indexer_and_other_existing_files_do_not ... ok
+test vault::watcher::tests::only_the_bytes_this_process_wrote_count_as_an_echo ... ok
+test vault_settings::tests::first_open_migrates_retention_and_later_machines_adopt_it ... ok
+test vault::sync_product::tests::folders_inside_a_onedrive_root_are_rejected ... ok
+test vault_settings::tests::invalid_shared_settings_fail_closed ... ok
+test web_clipping::tests::a_non_redirect_refresh_does_not_hide_a_later_real_one ... ok
+test web_clipping::tests::accepts_safe_cross_host_redirect_targets_for_public_web_pages ... ok
+test web_clipping::tests::clips_live_articles_from_the_public_web ... ignored, needs network access to third-party sites
+test vault::operations::tests::renaming_a_note_reports_every_path_that_search_must_reindex ... ok
+test web_clipping::tests::follows_a_meta_refresh_stub_to_the_real_article ... ok
+test web_clipping::tests::ignores_refreshes_that_are_not_redirects ... ok
+test web_clipping::tests::reads_a_meta_refresh_however_it_is_written ... ok
+test web_clipping::tests::extracts_the_article_as_markdown_without_page_furniture ... ok
+test web_clipping::tests::clips_an_article_whose_furniture_offers_a_login_link ... ok
+test web_clipping::tests::rejects_non_web_and_private_sources_before_fetching ... ok
+test web_clipping::tests::rejects_redirect_targets_to_private_addresses ... ok
+test web_clipping::tests::reports_a_timeout_as_a_distinct_actionable_failure ... ok
+test web_clipping::tests::reports_an_unreachable_host_without_producing_an_article ... ignored, needs network access to resolve a nonexistent host
+test web_clipping::tests::reports_login_required_statuses_distinctly ... ok
+test web_clipping::tests::rejects_non_article_content_without_calling_it_a_login_page ... ok
+test web_clipping::tests::rejects_a_login_wall_instead_of_creating_an_empty_clipping ... ok
+test sync_sidecar::tests::handoff_hold_ends_only_when_the_peer_reports_a_disconnect ... ok
+test semantic_search::tests::the_worker_retries_a_failed_fill_once_an_interval_until_it_completes ... ok
+test notion::client::tests::a_persistent_rate_limit_gives_up_rather_than_blocking_forever ... ok
+test notion::client::tests::a_failure_to_connect_after_the_rate_limit_retries_is_still_a_network_error ... ok
+test vault::relocation::tests::killing_the_app_mid_notebook_move_still_recovers ... ok
+
+test result: ok. 738 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 12.18s
+
+     Running unittests src/main.rs (src-tauri/target/debug/deps/second_brain-b3d0d65e63ec9a57)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests app_lib
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+$ cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.49s
+$ vite build
+vite v7.3.6 building ssr environment for production...
+transforming...
+✓ 263 modules transformed.
+rendering chunks...
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 2691 modules transformed.
+rendering chunks...
+computing gzip size...
+.svelte-kit/output/client/_app/version.json                                                   0.03 kB │ gzip:   0.05 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size3-Regular.CTq5MqoE.woff             4.42 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size4-Regular.Dl5lxZxV.woff2            4.93 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size2-Regular.Dy4dx90m.woff2            5.21 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size1-Regular.mCD8mA8B.woff2            5.47 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size4-Regular.BF-4gkZK.woff             5.98 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size2-Regular.oD1tc_U0.woff             6.19 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size1-Regular.C195tn64.woff             6.50 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Caligraphic-Regular.Di6jR-x-.woff2      6.91 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Caligraphic-Bold.Dq_IR9rO.woff2         6.91 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size3-Regular.DgpXs0kz.ttf              7.59 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Caligraphic-Regular.CTRA-rTL.woff       7.66 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Caligraphic-Bold.BEiXGLvX.woff          7.72 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Script-Regular.D3wIWfF6.woff2           9.64 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_SansSerif-Regular.DDBCnlJ7.woff2       10.34 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size4-Regular.DWFBv043.ttf             10.36 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Script-Regular.D5yQViql.woff           10.59 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Fraktur-Regular.CTYiF6lA.woff2         11.32 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Fraktur-Bold.CL6g_b3V.woff2            11.35 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size2-Regular.B7gKUWhC.ttf             11.51 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_SansSerif-Italic.C3H0VqGB.woff2        12.03 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_SansSerif-Bold.D1sUS0GD.woff2          12.22 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Size1-Regular.Dbsnue_I.ttf             12.23 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_SansSerif-Regular.CS6fqUqJ.woff        12.32 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Caligraphic-Regular.wX97UBjC.ttf       12.34 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Caligraphic-Bold.ATXxdsX0.ttf          12.37 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Fraktur-Regular.Dxdc4cR9.woff          13.21 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Fraktur-Bold.BsDP51OF.woff             13.30 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Typewriter-Regular.CO6r4hn1.woff2      13.57 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_SansSerif-Italic.DN2j7dab.woff         14.11 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_SansSerif-Bold.DbIhKOiC.woff           14.41 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Typewriter-Regular.C0xS9mPB.woff       16.03 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Math-BoldItalic.CZnvNsCZ.woff2         16.40 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Math-Italic.t53AETM-.woff2             16.44 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Script-Regular.C5JkGWo-.ttf            16.65 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-BoldItalic.DxDJ3AOS.woff2         16.78 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-Italic.NWA7e6Wa.woff2             16.99 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Math-BoldItalic.iY-2wyZ7.woff          18.67 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Math-Italic.DA0__PXp.woff              18.75 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-BoldItalic.SpSLRI95.woff          19.41 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_SansSerif-Regular.BNo7hRIc.ttf         19.44 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Fraktur-Regular.CB_wures.ttf           19.57 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Fraktur-Bold.BdnERNNW.ttf              19.58 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-Italic.BMLOBm91.woff              19.68 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_SansSerif-Italic.YYjJ1zSn.ttf          22.36 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_SansSerif-Bold.CFMepnvq.ttf            24.50 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-Bold.Cx986IdX.woff2               25.32 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-Regular.B22Nviop.woff2            26.27 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Typewriter-Regular.D3Ib7_Hf.ttf        27.56 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_AMS-Regular.BQhdFMY1.woff2             28.08 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-Bold.Jm3AIy58.woff                29.91 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-Regular.Dr94JaBh.woff             30.77 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Math-BoldItalic.B3XSjfu4.ttf           31.20 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Math-Italic.flOr_0UB.ttf               31.31 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-BoldItalic.DzxPMmG6.ttf           32.97 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_AMS-Regular.DMm9YOAa.woff              33.52 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-Italic.3WenGoN9.ttf               33.58 kB
+.svelte-kit/output/client/.vite/manifest.json                                                50.81 kB │ gzip:   4.96 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-Bold.waoOVXN0.ttf                 51.34 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_Main-Regular.ypZvNtVU.ttf              53.58 kB
+.svelte-kit/output/client/_app/immutable/assets/KaTeX_AMS-Regular.DRggAlZN.ttf               63.63 kB
+.svelte-kit/output/client/_app/immutable/assets/3.Bm8FD4mg.css                                1.36 kB │ gzip:   0.48 kB
+.svelte-kit/output/client/_app/immutable/assets/0.CFH1h_I4.css                               37.77 kB │ gzip:   8.33 kB
+.svelte-kit/output/client/_app/immutable/assets/2.B4EL6lu3.css                              201.88 kB │ gzip:  33.40 kB
+.svelte-kit/output/client/_app/immutable/nodes/2.t9_Ilr8z.js                                  0.07 kB │ gzip:   0.08 kB
+.svelte-kit/output/client/_app/immutable/entry/start.C-oXwZpp.js                              0.08 kB │ gzip:   0.09 kB
+.svelte-kit/output/client/_app/immutable/chunks/w_zYXWk6.js                                   0.10 kB │ gzip:   0.12 kB
+.svelte-kit/output/client/_app/immutable/chunks/Gi6I4Gst.js                                   0.15 kB │ gzip:   0.13 kB
+.svelte-kit/output/client/_app/immutable/chunks/CqWnF1K6.js                                   0.18 kB │ gzip:   0.15 kB
+.svelte-kit/output/client/_app/immutable/chunks/MgWXwHq7.js                                   0.21 kB │ gzip:   0.16 kB
+.svelte-kit/output/client/_app/immutable/chunks/4FX-V63W.js                                   0.22 kB │ gzip:   0.20 kB
+.svelte-kit/output/client/_app/immutable/chunks/b6rWyUgT.js                                   0.26 kB │ gzip:   0.21 kB
+.svelte-kit/output/client/_app/immutable/chunks/CiyWaMTI.js                                   0.26 kB │ gzip:   0.21 kB
+.svelte-kit/output/client/_app/immutable/chunks/RB4PS32h.js                                   0.27 kB │ gzip:   0.21 kB
+.svelte-kit/output/client/_app/immutable/chunks/Bm975o1g.js                                   0.31 kB │ gzip:   0.24 kB
+.svelte-kit/output/client/_app/immutable/chunks/BJ_eQqDS.js                                   0.35 kB │ gzip:   0.26 kB
+.svelte-kit/output/client/_app/immutable/chunks/Bx2n0PJO.js                                   0.44 kB │ gzip:   0.28 kB
+.svelte-kit/output/client/_app/immutable/chunks/DYqcurH1.js                                   0.49 kB │ gzip:   0.35 kB
+.svelte-kit/output/client/_app/immutable/nodes/1.D16fWKp3.js                                  0.51 kB │ gzip:   0.33 kB
+.svelte-kit/output/client/_app/immutable/chunks/COxby6Rn.js                                   0.53 kB │ gzip:   0.36 kB
+.svelte-kit/output/client/_app/immutable/chunks/V-xqH3zv.js                                   0.90 kB │ gzip:   0.50 kB
+.svelte-kit/output/client/_app/immutable/chunks/CmKTTxBW.js                                   1.18 kB │ gzip:   0.57 kB
+.svelte-kit/output/client/_app/immutable/chunks/wbPk3Yxo.js                                   1.37 kB │ gzip:   0.66 kB
+.svelte-kit/output/client/_app/immutable/chunks/BYd5_ZMs.js                                   1.52 kB │ gzip:   0.69 kB
+.svelte-kit/output/client/_app/immutable/chunks/DasuDUFm.js                                   1.72 kB │ gzip:   0.83 kB
+.svelte-kit/output/client/_app/immutable/chunks/DjKaNszM.js                                   1.81 kB │ gzip:   0.84 kB
+.svelte-kit/output/client/_app/immutable/chunks/Cw49fAG-.js                                   1.87 kB │ gzip:   0.86 kB
+.svelte-kit/output/client/_app/immutable/chunks/lzowPYqd.js                                   1.87 kB │ gzip:   0.82 kB
+.svelte-kit/output/client/_app/immutable/chunks/B8hjpw9r.js                                   1.92 kB │ gzip:   0.82 kB
+.svelte-kit/output/client/_app/immutable/chunks/ChmPeit8.js                                   2.06 kB │ gzip:   1.16 kB
+.svelte-kit/output/client/_app/immutable/chunks/CurBSdOX.js                                   3.13 kB │ gzip:   1.58 kB
+.svelte-kit/output/client/_app/immutable/chunks/oKRfUNoR.js                                   3.43 kB │ gzip:   1.47 kB
+.svelte-kit/output/client/_app/immutable/chunks/Dp2MtZh1.js                                   4.14 kB │ gzip:   1.78 kB
+.svelte-kit/output/client/_app/immutable/nodes/3.RTidmUNa.js                                  4.50 kB │ gzip:   1.94 kB
+.svelte-kit/output/client/_app/immutable/nodes/0.BkoIMbaA.js                                  4.65 kB │ gzip:   2.02 kB
+.svelte-kit/output/client/_app/immutable/chunks/DX6XiGOO.js                                   4.69 kB │ gzip:   2.18 kB
+.svelte-kit/output/client/_app/immutable/entry/app.DMsf-OHy.js                                4.84 kB │ gzip:   2.18 kB
+.svelte-kit/output/client/_app/immutable/chunks/dg22_G4G.js                                   5.06 kB │ gzip:   2.07 kB
+.svelte-kit/output/client/_app/immutable/chunks/fqaD1CF1.js                                   5.41 kB │ gzip:   2.43 kB
+.svelte-kit/output/client/_app/immutable/chunks/bJvR67Zn.js                                   5.63 kB │ gzip:   2.29 kB
+.svelte-kit/output/client/_app/immutable/chunks/BQzAiE1p.js                                   6.01 kB │ gzip:   2.57 kB
+.svelte-kit/output/client/_app/immutable/chunks/QzIRUpUD.js                                   6.18 kB │ gzip:   2.55 kB
+.svelte-kit/output/client/_app/immutable/chunks/CgqBymld.js                                   6.93 kB │ gzip:   2.80 kB
+.svelte-kit/output/client/_app/immutable/chunks/Bn9nP3-t.js                                   7.06 kB │ gzip:   2.71 kB
+.svelte-kit/output/client/_app/immutable/chunks/NJAGJByG.js                                   8.24 kB │ gzip:   3.66 kB
+.svelte-kit/output/client/_app/immutable/chunks/B0pSedMI.js                                   8.47 kB │ gzip:   3.25 kB
+.svelte-kit/output/client/_app/immutable/chunks/BfV7u03w.js                                   9.17 kB │ gzip:   4.16 kB
+.svelte-kit/output/client/_app/immutable/chunks/BHFgTQLH.js                                  10.02 kB │ gzip:   3.58 kB
+.svelte-kit/output/client/_app/immutable/chunks/Bbkx1OqD.js                                  10.21 kB │ gzip:   3.53 kB
+.svelte-kit/output/client/_app/immutable/chunks/C2-VL2WP.js                                  10.64 kB │ gzip:   4.08 kB
+.svelte-kit/output/client/_app/immutable/chunks/C3kSaby-.js                                  15.72 kB │ gzip:   4.40 kB
+.svelte-kit/output/client/_app/immutable/chunks/D0puQGHK.js                                  15.82 kB │ gzip:   5.60 kB
+.svelte-kit/output/client/_app/immutable/chunks/DRiJuHuE.js                                  17.43 kB │ gzip:   6.61 kB
+.svelte-kit/output/client/_app/immutable/chunks/Jh2D98k-.js                                  20.24 kB │ gzip:   7.16 kB
+.svelte-kit/output/client/_app/immutable/chunks/CqT2by9e.js                                  23.10 kB │ gzip:   7.77 kB
+.svelte-kit/output/client/_app/immutable/chunks/CIBm4fHj.js                                  23.12 kB │ gzip:   8.52 kB
+.svelte-kit/output/client/_app/immutable/chunks/CqW82mDi.js                                  23.50 kB │ gzip:   8.30 kB
+.svelte-kit/output/client/_app/immutable/chunks/DOmOIIwC.js                                  23.92 kB │ gzip:   8.32 kB
+.svelte-kit/output/client/_app/immutable/chunks/BmOvQdaJ.js                                  25.43 kB │ gzip:   6.74 kB
+.svelte-kit/output/client/_app/immutable/chunks/BRfQZYCu.js                                  26.36 kB │ gzip:   7.38 kB
+.svelte-kit/output/client/_app/immutable/chunks/CtTu8l_l.js                                  27.02 kB │ gzip:   9.36 kB
+.svelte-kit/output/client/_app/immutable/chunks/D6VnwbNi.js                                  27.10 kB │ gzip:  10.52 kB
+.svelte-kit/output/client/_app/immutable/chunks/C-mdbDht.js                                  28.30 kB │ gzip:  10.97 kB
+.svelte-kit/output/client/_app/immutable/chunks/C_VuFN_Z.js                                  29.33 kB │ gzip:   8.64 kB
+.svelte-kit/output/client/_app/immutable/chunks/BzfG0Ddq.js                                  30.78 kB │ gzip:  10.12 kB
+.svelte-kit/output/client/_app/immutable/chunks/Czvr6Qom.js                                  30.93 kB │ gzip:   9.68 kB
+.svelte-kit/output/client/_app/immutable/chunks/NgWxQlFI.js                                  30.99 kB │ gzip:  11.18 kB
+.svelte-kit/output/client/_app/immutable/chunks/DrWCJ3mW.js                                  33.90 kB │ gzip:   9.91 kB
+.svelte-kit/output/client/_app/immutable/chunks/CRJ-g1BY.js                                  38.06 kB │ gzip:  12.49 kB
+.svelte-kit/output/client/_app/immutable/chunks/WKONjj2b.js                                  41.85 kB │ gzip:  11.99 kB
+.svelte-kit/output/client/_app/immutable/chunks/qisGUBYD.js                                  41.92 kB │ gzip:  15.67 kB
+.svelte-kit/output/client/_app/immutable/chunks/p9ZBYIyv.js                                  49.11 kB │ gzip:  15.69 kB
+.svelte-kit/output/client/_app/immutable/chunks/C4xuQ6LR.js                                  60.64 kB │ gzip:  19.46 kB
+.svelte-kit/output/client/_app/immutable/chunks/Bdvib6Wu.js                                  69.63 kB │ gzip:  23.51 kB
+.svelte-kit/output/client/_app/immutable/chunks/grgVv3bA.js                                  69.89 kB │ gzip:  19.59 kB
+.svelte-kit/output/client/_app/immutable/chunks/CrD1KWNx.js                                  73.67 kB │ gzip:  21.21 kB
+.svelte-kit/output/client/_app/immutable/chunks/UM-7hkHK.js                                  81.67 kB │ gzip:  22.45 kB
+.svelte-kit/output/client/_app/immutable/chunks/DzIkSGdg.js                                 116.89 kB │ gzip:  31.09 kB
+.svelte-kit/output/client/_app/immutable/chunks/l7pfW3Qo.js                                 118.86 kB │ gzip:  43.70 kB
+.svelte-kit/output/client/_app/immutable/chunks/CyYgycZT.js                                 151.76 kB │ gzip:  43.09 kB
+.svelte-kit/output/client/_app/immutable/chunks/yzknjiTM.js                                 443.04 kB │ gzip: 141.98 kB
+.svelte-kit/output/client/_app/immutable/chunks/DK5yMwge.js                                 621.29 kB │ gzip: 148.33 kB
+.svelte-kit/output/client/_app/immutable/chunks/B3Y1XOAV.js                                 688.12 kB │ gzip: 154.15 kB
+.svelte-kit/output/client/_app/immutable/chunks/BpZC9VSe.js                               1,642.56 kB │ gzip: 499.89 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 14.74s
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size3-Regular.CTq5MqoE.woff           4.42 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size4-Regular.Dl5lxZxV.woff2          4.93 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size2-Regular.Dy4dx90m.woff2          5.21 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size1-Regular.mCD8mA8B.woff2          5.47 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size4-Regular.BF-4gkZK.woff           5.98 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size2-Regular.oD1tc_U0.woff           6.19 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size1-Regular.C195tn64.woff           6.50 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Caligraphic-Regular.Di6jR-x-.woff2    6.91 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Caligraphic-Bold.Dq_IR9rO.woff2       6.91 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size3-Regular.DgpXs0kz.ttf            7.59 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Caligraphic-Regular.CTRA-rTL.woff     7.66 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Caligraphic-Bold.BEiXGLvX.woff        7.72 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Script-Regular.D3wIWfF6.woff2         9.64 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_SansSerif-Regular.DDBCnlJ7.woff2     10.34 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size4-Regular.DWFBv043.ttf           10.36 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Script-Regular.D5yQViql.woff         10.59 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Fraktur-Regular.CTYiF6lA.woff2       11.32 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Fraktur-Bold.CL6g_b3V.woff2          11.35 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size2-Regular.B7gKUWhC.ttf           11.51 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_SansSerif-Italic.C3H0VqGB.woff2      12.03 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_SansSerif-Bold.D1sUS0GD.woff2        12.22 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Size1-Regular.Dbsnue_I.ttf           12.23 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_SansSerif-Regular.CS6fqUqJ.woff      12.32 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Caligraphic-Regular.wX97UBjC.ttf     12.34 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Caligraphic-Bold.ATXxdsX0.ttf        12.37 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Fraktur-Regular.Dxdc4cR9.woff        13.21 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Fraktur-Bold.BsDP51OF.woff           13.30 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Typewriter-Regular.CO6r4hn1.woff2    13.57 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_SansSerif-Italic.DN2j7dab.woff       14.11 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_SansSerif-Bold.DbIhKOiC.woff         14.41 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Typewriter-Regular.C0xS9mPB.woff     16.03 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Math-BoldItalic.CZnvNsCZ.woff2       16.40 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Math-Italic.t53AETM-.woff2           16.44 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Script-Regular.C5JkGWo-.ttf          16.65 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-BoldItalic.DxDJ3AOS.woff2       16.78 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-Italic.NWA7e6Wa.woff2           16.99 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Math-BoldItalic.iY-2wyZ7.woff        18.67 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Math-Italic.DA0__PXp.woff            18.75 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-BoldItalic.SpSLRI95.woff        19.41 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_SansSerif-Regular.BNo7hRIc.ttf       19.44 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Fraktur-Regular.CB_wures.ttf         19.57 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Fraktur-Bold.BdnERNNW.ttf            19.58 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-Italic.BMLOBm91.woff            19.68 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_SansSerif-Italic.YYjJ1zSn.ttf        22.36 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_SansSerif-Bold.CFMepnvq.ttf          24.50 kB
+.svelte-kit/output/server/.vite/manifest.json                                              25.13 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-Bold.Cx986IdX.woff2             25.32 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-Regular.B22Nviop.woff2          26.27 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Typewriter-Regular.D3Ib7_Hf.ttf      27.56 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_AMS-Regular.BQhdFMY1.woff2           28.08 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-Bold.Jm3AIy58.woff              29.91 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-Regular.Dr94JaBh.woff           30.77 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Math-BoldItalic.B3XSjfu4.ttf         31.20 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Math-Italic.flOr_0UB.ttf             31.31 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-BoldItalic.DzxPMmG6.ttf         32.97 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_AMS-Regular.DMm9YOAa.woff            33.52 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-Italic.3WenGoN9.ttf             33.58 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-Bold.waoOVXN0.ttf               51.34 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_Main-Regular.ypZvNtVU.ttf            53.58 kB
+.svelte-kit/output/server/_app/immutable/assets/KaTeX_AMS-Regular.DRggAlZN.ttf             63.63 kB
+.svelte-kit/output/server/_app/immutable/assets/_page.Bm8FD4mg.css                          1.36 kB
+.svelte-kit/output/server/_app/immutable/assets/_layout.CFH1h_I4.css                       37.77 kB
+.svelte-kit/output/server/_app/immutable/assets/_page.DymMx6wf.css                        102.28 kB
+.svelte-kit/output/server/entries/pages/_layout.ts.js                                       0.08 kB
+.svelte-kit/output/server/env.js                                                            0.23 kB
+.svelte-kit/output/server/internal.js                                                       0.35 kB
+.svelte-kit/output/server/chunks/server.js                                                  0.62 kB
+.svelte-kit/output/server/entries/pages/_layout.svelte.js                                   1.01 kB
+.svelte-kit/output/server/chunks/utils2.js                                                  1.05 kB
+.svelte-kit/output/server/chunks/utils3.js                                                  1.09 kB
+.svelte-kit/output/server/entries/pages/capture/_page.svelte.js                             1.22 kB
+.svelte-kit/output/server/entries/fallbacks/error.svelte.js                                 1.48 kB
+.svelte-kit/output/server/chunks/index.js                                                   3.12 kB
+.svelte-kit/output/server/chunks/internal.js                                                3.34 kB
+.svelte-kit/output/server/chunks/app.js                                                     3.59 kB
+.svelte-kit/output/server/chunks/attributes.js                                              5.45 kB
+.svelte-kit/output/server/chunks/exports.js                                                 5.59 kB
+.svelte-kit/output/server/entries/pages/_page.svelte.js                                    14.24 kB
+.svelte-kit/output/server/chunks/uneval.js                                                 17.62 kB
+.svelte-kit/output/server/chunks/root.js                                                   28.72 kB
+.svelte-kit/output/server/chunks/index2.js                                                 29.12 kB
+.svelte-kit/output/server/remote-entry.js                                                  36.79 kB
+.svelte-kit/output/server/chunks/utils.js                                                  58.82 kB
+.svelte-kit/output/server/chunks/context.js                                                62.96 kB
+.svelte-kit/output/server/index.js                                                        135.95 kB
+✓ built in 21.46s
+
+Run npm run preview to preview your production build locally.
+
+> Using @sveltejs/adapter-static
+  Wrote site to "build"
+  ✔ done
