@@ -734,4 +734,3 @@ test sync_sidecar::tests::a_pause_that_gets_no_answer_is_not_acknowledged ... ok
 test backup::tests::a_recovery_killed_at_any_step_finishes_when_run_again ... ok
 
 test result: ok. 715 passed; 0 failed; 9 ignored; 0 measured; 0 filtered out; finished in 22.77s
-
