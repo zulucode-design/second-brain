@@ -45,10 +45,12 @@ the folder stays paused. The app never overwrites patterns it couldn't read.
 
 Enable restores the sidecar for the active vault. Disable and vault switching request an
 authenticated shutdown and kill a process that does not exit promptly. Unexpected exits are
-restarted at most three times. A minimal watchdog process receives the API key through its
-environment and requests authenticated sidecar shutdown if the app process disappears; this
-also bounds cleanup after a forced app termination that cannot run normal Tauri teardown. An
-hourly scheduler requests guarded sync runs on shared UTC boundaries
+restarted at most three times. A restart that fails, and an exit after which the supervisor gives
+up, each leave one warning in the app log with the restart count; the error itself goes only to
+the status shown in Settings, since it can name paths (#224). A minimal watchdog process receives
+the API key through its environment and requests authenticated sidecar shutdown if the app
+process disappears; this also bounds cleanup after a forced app termination that cannot run
+normal Tauri teardown. An hourly scheduler requests guarded sync runs on shared UTC boundaries
 so independently launched machines overlap; it does not leave the folder or paired device
 continuously resumed. An immediate manual transfer requires pressing Sync now on both
 machines within the 30-second reachability window.
@@ -137,10 +139,15 @@ during the handoff hold. Each of those checks is at most two seconds apart, beca
 Syncthing call between them is bounded at two seconds. The stopped run pauses folder and device
 within a shared four-second budget, with no retry, and ends like any interrupted run: `failure`,
 or `changed-incomplete` if its backup was taken. Whenever Syncthing does not acknowledge a
-batch's pause, closing or not, the app stops the Syncthing process and waits until it has exited,
-before it reconciles and before it lets go of the lease. Nothing then writes to the vault once a
-save goes ahead, and the supervisor starts Syncthing again paused. A process that will not exit
-keeps the lease, and a close times out with its message.
+batch's pause, closing or not, the app stops the Syncthing process that batch resumed and waits
+until it has exited, before it reconciles and before it lets go of the lease. It also waits for any
+Syncthing a disable already stopped. Nothing then writes to the vault once a save goes ahead, and
+the supervisor starts Syncthing again paused. The batch resumes folder and device only while no
+Syncthing can start or stop, and records which start it resumed; with none running it does not
+resume. If that Syncthing died afterwards and the supervisor has already started another, the batch
+leaves the new one running and logs that it did: it started paused and no batch resumed it.
+Stopping it instead could leave sync stopped until the next batch (#224). A process that will not
+exit keeps the lease, and a close times out with its message.
 The scan, the ignore update, the safety backup, and the projection reconcile are not cut short;
 a close during one of them can still run out of time. The window then stays open and says so:
 "Closing timed out. Second Brain is still open. Try closing again."
