@@ -47,8 +47,8 @@ the brief's requirement to stop only the process the batch resumed. The intermed
 Round 1 ran on `630d5ba`. A Claude Sonnet 5.5 stand-in at extra-high (`xhigh`) effort ran it
 because Sol was at her usage limit, as AGENTS.md (Roles) provides. Spec plus Adversarial returned
 **CHANGES REQUIRED**. Standards plus Adversarial was cut off by a Sonnet session limit (HTTP 429)
-and had no completed verdict. Nicolas had asked to stop if the round was not clean; work paused
-there and resumed later.
+and had no completed verdict. The repository owner had asked to stop if the round was not clean;
+work paused there and resumed later.
 
 | Finding | Disposition |
 | --- | --- |
@@ -196,7 +196,7 @@ and the app's hourly scheduled batches.
 | Try | Run | Result |
 | --- | --- | --- |
 | 1 | `20261020T225459Z` | Stopped before `run-start`: Fedora template config missing. No app launch, batch, interruption or trace. |
-| 2 | `20261020T230234Z` | Claude stopped the run at Nicolas's request because of usage, before its first scheduled batch. No local report was completed; the stopped trace is retained. |
+| 2 | `20261020T230234Z` | Claude stopped the run at the repository owner's request because of usage, before its first scheduled batch. No local report was completed; the stopped trace is retained. |
 | 3 | `20261021T164504Z` | Restart and spared-replacement evidence passed; gate failed on one SSH check timeout before the second scheduled batch. |
 | 4 | `20261021T174531Z` | Passed: controller exit 0, `run-complete`, full convergence and backups. |
 
@@ -278,7 +278,7 @@ placeholder `%USERPROFILE%`; the per-run vault ID is the harness's random fixtur
 `~/` path is the Fedora fixture vault under `~/sb88/runs/` in the try 4 trace, as in earlier
 committed traces; and the other paths are the `D:\SecondBrainTest\...` test layout documented in
 `docs/alpha-harness.md`. The harness redacts these when it writes traces, and the check confirmed
-it. Nicolas is named only as the person who asked for the stop and the review pause.
+it. The report names no person, only the agents.
 
 The local source records are `status.md`, `round1-pending.md`, the round 2 and round 3 Spec and
 Standards review files, `verify-fedora-report.md`, `verify-windows-report.md`,
