@@ -508,7 +508,7 @@ enum Location {
     Gone,
     /// Not readable where the index or the record puts it, and not shown gone either: the file
     /// is there but cannot be read just now, the index has not caught up yet with a move made
-    /// while the app was closed, a note the vault scan could not open may be it, or a bulk
+    /// while the app was closed, a note the vault scan could not read may be it, or a bulk
     /// change came or went while it scanned. It is looked for again after the next pass.
     Unsure,
 }
@@ -629,13 +629,12 @@ fn scan_ids(vault: &str) -> Scan {
         {
             continue;
         }
-        match std::fs::read(path) {
+        // Read as `check` reads it, so a note that is not UTF-8 counts as unread: found here, it
+        // would fail its check as if the backend were away and stop the rerun.
+        match std::fs::read_to_string(path) {
             Ok(raw) => {
                 let filename = entry.file_name().to_string_lossy();
-                let (meta, _) = crate::vault::frontmatter::parse_note(
-                    &String::from_utf8_lossy(&raw),
-                    &filename,
-                );
+                let (meta, _) = crate::vault::frontmatter::parse_note(&raw, &filename);
                 ids.push((meta.id, path.to_string_lossy().to_string()));
             }
             Err(_) => complete = false,

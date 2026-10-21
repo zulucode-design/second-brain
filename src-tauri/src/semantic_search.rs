@@ -3454,6 +3454,69 @@ mod tests {
         cleanup(root);
     }
 
+    #[test]
+    fn a_deferred_note_moved_with_bytes_that_are_not_utf8_stays_kept_and_the_next_check_runs() {
+        let root = scratch("deferred-not-utf8-move");
+        let vault = root.to_str().unwrap();
+        let kept = root.join("Kept.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        let (available, index) = recovering_index(&root);
+        let app = open_app(vault, &index);
+        let cards = cards_from_reruns(&index, &app);
+        index.note_changed(&kept).unwrap();
+        index.retry_pending().unwrap();
+
+        // Two captures saved offline, each check failing: the first is kept ahead of the second.
+        available.store(false, Ordering::SeqCst);
+        let first = root.join("First capture.md");
+        let second = root.join("Second capture.md");
+        write_note(
+            &first,
+            "first-id",
+            "First capture",
+            "Areas",
+            "coffee beans today",
+        );
+        write_note(
+            &second,
+            "second-id",
+            "Second capture",
+            "Areas",
+            "more coffee beans",
+        );
+        for (note, id) in [(&first, "first-id"), (&second, "second-id")] {
+            index.note_changed(note).unwrap();
+            assert!(check_saved(&app, note, id).is_none());
+        }
+
+        // The first is moved while the app is closed, and its body gains bytes that are not
+        // UTF-8, its frontmatter id still readable. The reconcile on reopening cannot read it,
+        // so the index has it nowhere and only the vault scan can come across it.
+        let moved = root.join("Moved.md");
+        std::fs::rename(&first, &moved).unwrap();
+        let mut raw = std::fs::read(&moved).unwrap();
+        raw.extend_from_slice(&[0xff, 0xfe, 0xfd]);
+        std::fs::write(&moved, raw).unwrap();
+        available.store(true, Ordering::SeqCst);
+        index.reconcile_from_notes(&root).unwrap();
+
+        // The pass that embeds the second capture shows the backend back and reruns both.
+        index.retry_pending().unwrap();
+        assert_eq!(
+            shown(&cards),
+            [("Second capture".to_string(), vec!["Kept".to_string()])],
+            "the note no check can read does not stop the checks behind it"
+        );
+        assert_eq!(
+            waiting(&app),
+            [("first-id".to_string(), path_text(&first))],
+            "the note the scan cannot read may be this one"
+        );
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_deferred_note_without_an_id_behind_a_folder_that_cannot_be_read_is_not_taken_for_deleted()
