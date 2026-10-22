@@ -1,9 +1,10 @@
 # Deferred capture-time similarity (#216): verification
 
 Merge head to be carried by the pull request: `a1d921143c73a2fb255ab5f9a3d2068883f10181`,
-beside verified product candidate `eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9`. This run verifies
-the merge and adds a report-only commit afterward. Final review of the resulting report head is a
-separate run. Nothing was pushed in this run. The eb59fe3 sections below remain its historical record.
+beside verified product candidate `eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9`. This report records
+merge verification and subsequent report-only fixes. Final review of the resulting report head
+remains a separate run. Nothing was pushed in these runs. The eb59fe3 sections below remain its
+historical record.
 
 Date: 2026-10-21 (local date). Sol ran Kiro workflow section 7, steps 5 and 6, on candidate
 `eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9`.
@@ -49,8 +50,8 @@ On 2026-10-21, Sol followed Kiro workflow section 7 after main moved before a pu
 The initial local HEAD and published `fix/216-deferred-similarity` ref both matched
 `0823262f21bbfdb5787fc7c0835c450a5155d01c`; the local tree was clean. A fetch confirmed the pinned
 main `169b0f2d48c5ab6d7c3c23df7fc0c1da0321e1c8`, the merge of PR #231 for #224, the Syncthing
-batch restart. No pull request existed. The final reviews of `0823262` had been CLEAN on both axes;
-those reviews do not cover the new head.
+batch restart. No pull request existed. Sol ran the final reviews of `0823262`, which were CLEAN
+on both axes; those reviews do not cover the new head.
 
 `git merge --no-ff origin/main -m "Merge origin/main into fix/216-deferred-similarity"` produced
 `a1d921143c73a2fb255ab5f9a3d2068883f10181`. Its first parent is `0823262` and its second is
@@ -108,7 +109,7 @@ records every name. Regenerate that JSON from the repository root with
 Rust test functions against the existing explicit manifest and matches exact successful lines in
 this run's complete logs.
 
-These results are carried from **eb59fe3**, without rerunning them:
+These results are retained from **eb59fe3**, without rerunning them on the merged tree:
 
 | Carried result | Evidence from eb59fe3 |
 | --- | --- |
@@ -119,12 +120,24 @@ These results are carried from **eb59fe3**, without rerunning them:
 | Windows `pnpm build` | [Frontend build log](evidence/ticket-216-2026-10-17/windows-build-eb59fe3.txt): PASS; one static site. |
 | Windows `pnpm tauri:build` | [NSIS build log](evidence/ticket-216-2026-10-17/windows-tauri-build-eb59fe3.txt): PASS; one installer, nothing installed. |
 
-They still apply because the merge changes no file of this branch and no similarity, capture,
-index or vault code. Neither the installed-package by-hand steps nor the end-to-end run starts
-Syncthing. [#224's verification report](ticket-224-batch-syncthing-restart-2026-10-21.md) records its
-Windows build and a passing live Gate 1 on its own candidate `31d01e5`; this run does not claim those
-as new runs on `a1d9211`. No reason was found to invalidate the carried results. The #9 report still
-names eb59fe3, the product code that settled it, and was left unchanged.
+The installed-package by-hand steps and the end-to-end observations still apply because the merge
+changes no similarity, capture, index or vault code, and neither run enables sync in its isolated
+fixture vaults. This is source-based reasoning, not a rerun on `a1d9211`:
+[`sync_sidecar::activate_vault`](../../src-tauri/src/sync_sidecar.rs#L224-L229) reads the vault's
+control file and starts Syncthing only when `control.enabled` is true.
+[`read_control`](../../src-tauri/src/sync_sidecar.rs#L313-L328) creates missing control state through
+[`ControlState::new`](../../src-tauri/src/sync_sidecar.rs#L86-L103), which sets `enabled: false`.
+
+That reasoning does not cover the builds. The merge changed compiled source in
+`src-tauri/src/sync_sidecar.rs`, and no RPM or NSIS installer of `a1d9211` was built. The earlier
+build results remain evidence for `eb59fe3` only. The merged tree's compile evidence is Fedora
+`pnpm verify` (including `pnpm build`, Clippy and the Rust tests), plus Windows `pnpm test:rust`
+and `pnpm lint:rust` (formatting passed; Clippy ended with only the allowed #221 error). This is
+weaker than building the merged tree's installers; RPM and NSIS builds of `a1d9211` would settle
+that packaging gap. [#224's verification report](ticket-224-batch-syncthing-restart-2026-10-21.md)
+covers its own builds and passing live Gate 1 on `31d01e5`, not this merged tree. The #9 report
+continues to name eb59fe3, the product code that settled it; this report-only fix corrects its
+verification date and named-test counts.
 
 [Retained paths and sizes](evidence/ticket-216-2026-10-17/retained-paths-a1d9211.json) inventories this
 run's files, reused caches and test temporary roots. Both disposable run roots, their copied bundles
@@ -345,10 +358,13 @@ required, not new reviews performed during this verification. Every round identi
 | 26 / `32fe3af` | Sol | CLEAN on both axes, no findings | Full verification passed on both machines; report commit `5e5c1f9` |
 | Final / `5e5c1f9` | Sol | Standards CLEAN; Spec/Adversarial CHANGES REQUIRED, one adversarial P2: a lossy vault scan could stop checks behind a moved non-UTF-8 note | Kiro attempt 5: `eb59fe3`, imported by Claude |
 | 27 / `eb59fe3` | Sol | CLEAN on both axes, no findings | Full verification rerun in this report |
+| Final / `0823262` | Sol | CLEAN on both axes, no findings | Sol pushed `0823262`, then stopped before opening a pull request because main had moved; merged main as `a1d9211` |
+| Final / `0aa65a9` | Claude Sonnet stand-ins | Spec/Adversarial CLEAN with five P3s; Standards stopped at its session limit and gave no result | Three report P3s fixed in this report-only commit; Claude judged the two adversarial P3s (one recorded in the PR body, one needing no change); a fresh final review of this commit's head remains a separate run |
 
 Main's lock-order issue #227 and semantic-index overlap issue #228 remain open follow-ups. This
 verification does not claim to fix them. The report head still needs the final review required by
-AGENTS.md; round 27 covered the product candidate, not the resulting report commit.
+AGENTS.md; round 27 covered the product candidate, and the later final reviews covered earlier
+report heads, not this report-fix commit.
 
 ## Earlier verification and evidence
 
@@ -673,6 +689,12 @@ Claude's first three fix commits:
 - `c33a9be8286dee837dc3ccd3b310b9887a45913f`: intake documentation of machine-local state.
 - `7e8ff9f496f7014436c4220f90af33c95650942c`: round-1 fixes.
 - `19727aab6a2dcc0e1c5f1b7fc9db53b1110d6c37`: accepted round-2 fixes.
+
+Report commits after the main merge:
+
+- `9923644`: Sol recorded verification of merge `a1d9211`.
+- `0aa65a9`: a Claude Sonnet 5.5 stand-in rechecked and committed Sol's removal of the trailing
+  blank line from `windows-test-rust-a1d9211.txt` after Sol reached the usage limit before committing.
 
 ## Retained paths
 

@@ -92,7 +92,7 @@
       "Windows pnpm build",
       "Windows pnpm tauri:build"
     ],
-    "reason": "The merge changes no file of this branch and no similarity, capture, index or vault code. Neither the installed-package steps nor the end-to-end run starts Syncthing. The report for #224 records its Windows build and live Gate 1 on its own candidate."
+    "reason": "The installed-package steps and end-to-end observations remain applicable by source-based reasoning, not a rerun on a1d9211: the merge changes no similarity, capture, index or vault code, and neither run enables sync in its isolated fixture vaults. src-tauri/src/sync_sidecar.rs:224-229 starts Syncthing only when the vault's control.enabled is true; read_control at lines 313-328 creates missing state through ControlState::new at lines 86-103, which sets enabled: false. This reasoning does not cover the builds: the merge changed compiled source in sync_sidecar.rs, and no RPM or NSIS installer of a1d9211 was built. The build results remain eb59fe3's. The merged tree's compile evidence is pnpm verify on Fedora (including pnpm build, Clippy and the Rust tests), plus pnpm test:rust and pnpm lint:rust on Windows (formatting passed; Clippy ended with only the allowed #221 error). This is weaker than building the merged tree's installers; RPM and NSIS builds of a1d9211 would settle that packaging gap. The #224 report covers its own builds and live Gate 1 on 31d01e5, not this merged tree."
   },
   "installedNothing": true,
   "artifactCleanupPerformed": false,
