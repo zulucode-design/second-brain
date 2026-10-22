@@ -1,0 +1,12 @@
+Candidate: cc7caa9d245bd2f1bb5cb7555b31eaa6f148de37
+Rust target: <Fedora Rust 1.88 target> (reused separate cache)
+Command: RUSTUP_TOOLCHAIN=1.88.0 pnpm lint:rust
+Dependencies: cached, CARGO_NET_OFFLINE=true; no installation
+rustc 1.88.0 (6b00bc388 2025-06-23)
+clippy 0.1.88 (6b00bc3880 2025-06-23)
+$ cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+   Compiling second-brain v0.1.0-alpha.1 (<repository>/src-tauri)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.03s
+
+Exit code: 0
+Elapsed seconds: 8.342

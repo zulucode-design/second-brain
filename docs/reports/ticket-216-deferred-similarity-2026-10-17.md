@@ -1,10 +1,10 @@
 # Deferred capture-time similarity (#216): verification
 
-Next product head for PR #232: `8326def68cb2c37bcfe5ea42b26e80da63a31768`; this report commit
+Next product head for PR #232: `cc7caa9d245bd2f1bb5cb7555b31eaa6f148de37`; this report commit
 follows it. The affected Fedora checks passed on that head on 2026-10-22. Windows was unavailable
 and was not rerun. Verified product candidate `eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9` and merge
 `a1d921143c73a2fb255ab5f9a3d2068883f10181` retain their historical results below. Final review of
-the resulting report head remains a separate run. Nothing was pushed in this CI follow-up run.
+the resulting report head remains a separate run. Nothing was pushed in this scan-path follow-up run.
 
 Date: 2026-10-21 (local date). Sol ran Kiro workflow section 7, steps 5 and 6, on candidate
 `eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9`.
@@ -227,6 +227,84 @@ Rust 1.88 target and the listed test temporary roots; the stable cache remains f
 was deleted, installed or pushed. **VERIFY28: PASS**; a fresh final review of the resulting report
 head is a separate run before any push.
 
+## Final-review scan-path fix on cc7caa9 (2026-10-22)
+
+Sol's final review of `e91c8991f9c02cfc6e420849c7142360ecc8838f` found Standards CLEAN and
+one Spec/Adversarial P2: `scan_ids` read a note by its real path but listed it under
+`path.to_string_lossy()`. When a deferred note was moved to a filename that was not valid Unicode,
+that listed string named no file. Its check returned `CheckError::Failed`, stopping the rerun
+before later checks despite a healthy backend.
+
+At the owner's request, Kiro wrote attempt 7, based on `e91c899`: brief
+`3ddfe588fcdff26d172ab644eafc6961a41e94bd`, frozen handoff
+`fa72982f8edc670ec5bcd1edfe09fcd3e309c6c2`, code head
+`296c43818916460fd00679b77d96f78840dc4e78`. Claude imported its single code commit with `-x` as
+`cc7caa9` and found nothing to fix at intake. Kiro's sandbox runs are information only, not gate
+evidence. The scan now accepts a path only when `Path::to_str` succeeds, reads and lists that exact
+string, and otherwise marks the scan incomplete and skips the file. The deferred record stays
+kept while the rerun continues with the next check.
+
+Preflight confirmed clean HEAD `cc7caa9`, parent `e91c899`, and exactly
+`src-tauri/src/semantic_search.rs` and `src-tauri/src/similar_notes.rs` changed from that parent.
+After `git fetch origin`, `origin/main` remained
+`169b0f2d48c5ab6d7c3c23df7fc0c1da0321e1c8` and the published delivery branch remained
+`b2e9fffc62f3d25eeb74e4aaae85eff829ea200d`. All three Kiro skill copies matched. Sol's usage
+probe returned `OK` before each gate and the evidence checks; no stand-in was needed. The configured
+git identity matched the earlier report commit and was used unchanged. No product code was edited.
+
+| Machine | Check on cc7caa9 | Result and toolchain |
+| --- | --- | --- |
+| Fedora | `pnpm verify` | PASS, exit 0; all five constituent commands below passed under stable Rust 1.98.0 and Clippy 0.1.98. |
+| Fedora | `pnpm check` | PASS; 0 errors, 0 warnings. |
+| Fedora | `pnpm test` | PASS; 254 passed, 0 failed, 0 skipped. |
+| Fedora | `pnpm test:rust` | PASS; 756 listed, 746 passed, 0 failed, 10 ignored, 0 filtered. Main and doc suites each ran 0 tests. |
+| Fedora | `pnpm lint:rust` inside verify | PASS; formatting and all-target Clippy clean under stable Rust 1.98.0. |
+| Fedora | `pnpm build` | PASS; one static site. |
+| Fedora | `RUSTUP_TOOLCHAIN=1.88.0 pnpm lint:rust` | PASS, exit 0; formatting and all-target Clippy clean under CI's pinned toolchain. |
+
+Versions were `rustc 1.98.0 (88d9e12ae 2026-08-18)` and
+`clippy 0.1.98 (88d9e12ae1 2026-08-18)` for verify, and
+`rustc 1.88.0 (6b00bc388 2025-06-23)` and `clippy 0.1.88 (6b00bc3880 2025-06-23)` for the pinned
+lint. Node was 24.22.1 and pnpm was 11.22.0. Verify reused `src-tauri/target`; the pinned lint reused
+the separate Rust 1.88 target from VERIFY28. Both gates used cached dependencies with
+`CARGO_NET_OFFLINE=true`; nothing was installed.
+
+Full logs: [Fedora verify](evidence/ticket-216-2026-10-17/fedora-verify-cc7caa9.txt) and
+[Fedora Rust 1.88 lint](evidence/ticket-216-2026-10-17/fedora-lint-rust-1.88-cc7caa9.txt).
+Relative to pinned main, the branch adds exactly 52 Rust test functions: the previous 51 plus
+`semantic_search::tests::a_deferred_note_moved_to_a_name_that_is_not_unicode_stays_kept_and_the_next_check_runs`.
+All 52 have exactly one successful full-name line in this Fedora run: **52/52 PASS**. The new test's
+Unix variant uses byte `0xFF` in the filename and proves that the first deferred record remains
+kept while the second check delivers its card. The named JavaScript vault-switch test also passed.
+The [named-test match](evidence/ticket-216-2026-10-17/named-tests-cc7caa9.json) compares the added
+functions with the explicit manifest and records every successful line. Regenerate it from the
+repository root with
+`python3 docs/reports/evidence/ticket-216-2026-10-17/match-tests-cc7caa9.py`.
+
+Windows SSH timed out on the single attempt after 6 seconds, exit 255. No retry, disk check,
+checkout update or Windows gate followed. **Windows was not rerun on cc7caa9. The new test's Windows
+variant, which uses an unpaired surrogate, has not run anywhere yet.** This head has 47 applicable
+named Windows tests and five Unix-only tests; no 47/47 Windows result is claimed. The last local
+Windows results remain `a1d9211`: 715 passed, 9 ignored, **46/46 named tests PASS**, and only the
+allowed #221 lint error, with logs linked in the merge section. CI's `windows-rust` job passed on
+published `b2e9fff`; it runs `pnpm test:rust` under Rust 1.88 on the head pushed next, whose result
+is pending.
+
+The RPM/package checks, installed-package by-hand recovery, end-to-end similarity run and Windows
+frontend/NSIS builds remain carried historical results from `eb59fe3` and `a1d9211` as assigned
+above, because this follow-up changes only path eligibility in the deferred vault scan and its
+regression test, with no packaging, frontend or installer changes. **The carried by-hand and
+end-to-end results do not exercise this scan fix; the new unit test does.** Earlier packaging proof
+limits remain: no RPM or NSIS installer of `cc7caa9` was built in this run.
+
+[Run summary and Windows status](evidence/ticket-216-2026-10-17/verification-cc7caa9.json).
+[Retained paths and sizes](evidence/ticket-216-2026-10-17/retained-paths-cc7caa9.json) lists this
+run's artifacts, reused caches and new test temporary roots. Cleanup candidates are the private run
+root, the separate Rust 1.88 target and the listed test temporary roots; the stable cache remains
+for reuse. Nothing was deleted, installed or pushed, and no process was explicitly stopped.
+**VERIFY29: PASS**; a fresh final review of the resulting report head remains a separate run before
+any push.
+
 ## Current command results
 
 Every result in this section is from `eb59fe3`; no earlier candidate supplies a current gate result.
@@ -444,11 +522,12 @@ required, not new reviews performed during this verification. Every round identi
 | Final / `0aa65a9` | Claude Sonnet stand-ins | Spec/Adversarial CLEAN with five P3s; Standards stopped at its session limit and gave no result | Three report P3s fixed in this report-only commit; Claude judged the two adversarial P3s (one recorded in the PR body, one needing no change); a fresh final review of this commit's head remains a separate run |
 | Final / `b2e9fff` | Sol | CLEAN on both axes, no findings | Sol pushed `b2e9fff` and opened PR #232 |
 | CI / `b2e9fff` | GitHub Actions | `verify` FAIL on Clippy 1.88's `nonminimal_bool`; `windows-rust` PASS | Kiro attempt 6: `8326def`, imported by Claude |
+| Final / `e91c899` | Sol | Standards CLEAN; Spec/Adversarial one P2: a lossy scan path for a non-Unicode filename could stop later checks | Kiro attempt 7: `cc7caa9`, imported by Claude |
 
 Main's lock-order issue #227 and semantic-index overlap issue #228 remain open follow-ups. This
 verification does not claim to fix them. The report head still needs the final review required by
 AGENTS.md; round 27 covered the product candidate, and the later final reviews covered earlier
-report heads, not this CI follow-up report commit.
+report heads, not this scan-path follow-up report commit.
 
 ## Earlier verification and evidence
 
