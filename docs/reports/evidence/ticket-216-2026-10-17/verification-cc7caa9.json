@@ -1,0 +1,113 @@
+{
+  "candidate": "cc7caa9d245bd2f1bb5cb7555b31eaa6f148de37",
+  "date": "2026-10-22",
+  "stage": "Kiro workflow section 7; affected checks and report after a final-review finding. Fresh final review is a separate run.",
+  "preflight": {
+    "parent": "e91c8991f9c02cfc6e420849c7142360ecc8838f",
+    "initialTreeClean": true,
+    "onlyCodePathsChanged": [
+      "src-tauri/src/semantic_search.rs",
+      "src-tauri/src/similar_notes.rs"
+    ],
+    "fetchedMain": "169b0f2d48c5ab6d7c3c23df7fc0c1da0321e1c8",
+    "fetchedDeliveryBranch": "b2e9fffc62f3d25eeb74e4aaae85eff829ea200d",
+    "kiroSkillCopiesIdentical": true,
+    "gitIdentityMatchesEarlierReportCommit": true
+  },
+  "finding": {
+    "reviewedHead": "e91c8991f9c02cfc6e420849c7142360ecc8838f",
+    "standards": "CLEAN",
+    "specAdversarial": "One P2: listing a lossy scan path for a filename that is not valid Unicode stops later deferred checks.",
+    "attempt": 7,
+    "brief": "3ddfe588fcdff26d172ab644eafc6961a41e94bd",
+    "handoff": "fa72982f8edc670ec5bcd1edfe09fcd3e309c6c2",
+    "codeHead": "296c43818916460fd00679b77d96f78840dc4e78",
+    "importedBy": "Claude",
+    "import": "cc7caa9d245bd2f1bb5cb7555b31eaa6f148de37"
+  },
+  "fedora": {
+    "verify": {
+      "command": "pnpm verify",
+      "candidate": "cc7caa9d245bd2f1bb5cb7555b31eaa6f148de37",
+      "exitCode": 0,
+      "elapsedSeconds": 72.057
+    },
+    "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18); clippy 0.1.98 (88d9e12ae1 2026-08-18)",
+    "node": "24.22.1",
+    "pnpm": "11.22.0",
+    "check": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "javascript": {
+      "passed": 254,
+      "failed": 0,
+      "skipped": 0
+    },
+    "rust": {
+      "listed": 756,
+      "passed": 746,
+      "failed": 0,
+      "ignored": 10,
+      "filtered": 0,
+      "mainTests": 0,
+      "docTests": 0
+    },
+    "stableLint": "PASS",
+    "build": "PASS; one static site",
+    "rust188Lint": {
+      "command": "RUSTUP_TOOLCHAIN=1.88.0 pnpm lint:rust",
+      "candidate": "cc7caa9d245bd2f1bb5cb7555b31eaa6f148de37",
+      "exitCode": 0,
+      "elapsedSeconds": 8.342
+    },
+    "rust188Toolchain": "rustc 1.88.0 (6b00bc388 2025-06-23); clippy 0.1.88 (6b00bc3880 2025-06-23)",
+    "rust188Target": "<Fedora Rust 1.88 target>; reused VERIFY28 separate cache, distinct from src-tauri/target",
+    "offlineDependencies": true,
+    "namedRustPassed": 52,
+    "namedMatch": "named-tests-cc7caa9.json"
+  },
+  "windows": {
+    "attempts": 1,
+    "exitCode": 255,
+    "elapsedSeconds": 6.011,
+    "connectTimeoutSeconds": 6,
+    "connectionAttempts": 1,
+    "answered": false,
+    "result": "NOT RERUN",
+    "reason": "One SSH connection attempt timed out; no retry or disk check.",
+    "applicableNamedRustTests": 47,
+    "unixOnlyNamedRustTests": 5,
+    "newRegressionVariant": "NOT RUN anywhere yet; unpaired-surrogate filename",
+    "lastLocalCandidate": "a1d921143c73a2fb255ab5f9a3d2068883f10181",
+    "lastLocalNamedRustPassed": 46,
+    "lastLocalRust": {
+      "passed": 715,
+      "ignored": 9
+    },
+    "lastLocalLint": "Allowed #221 bind_instead_of_map error only.",
+    "ciOnB2e9fff": "windows-rust PASS",
+    "nextCi": "windows-rust runs pnpm test:rust under Rust 1.88 on the next pushed head; pending."
+  },
+  "carried": {
+    "candidates": [
+      "eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9",
+      "a1d921143c73a2fb255ab5f9a3d2068883f10181"
+    ],
+    "scope": "RPM/package checks, installed-package by-hand recovery, end-to-end similarity, and Windows frontend/NSIS builds remain historical results assigned to those heads in the report.",
+    "reason": "This follow-up changes only path eligibility in the deferred vault scan and its regression test, with no packaging, frontend or installer changes.",
+    "proofLimit": "Carried by-hand and end-to-end results do not exercise this fix; the new unit test does. No RPM or NSIS installer of this head was built."
+  },
+  "usageProbes": {
+    "beforeVerify": "OK",
+    "beforeRust188Lint": "OK",
+    "beforeEvidenceChecks": "OK"
+  },
+  "productCodeEdited": false,
+  "installed": false,
+  "deleted": false,
+  "pushed": false,
+  "processesExplicitlyStopped": [],
+  "finalReview": "Not run; separate run on resulting report head.",
+  "result": "VERIFY29: PASS"
+}

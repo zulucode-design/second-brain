@@ -1,0 +1,7 @@
+{
+  "candidate": "32fe3afdc3092e42e937fd2f6edbd09453680f7b",
+  "command": "node scripts/similar-run.mjs --app src-tauri/target/debug/second-brain --root <new disposable root>",
+  "routing": "Private ssh PATH wrapper replaces only -L upstream :127.0.0.1:11434 with :127.0.0.1:11436; all original arguments and actual /usr/bin/ssh retained. Both initial tunnel and later relay reach same gate-owned Windows server. Candidate scripts unchanged.",
+  "reason": "Existing user port 11434 has no listener. Temporary server mandated for installed check, reused without changing user service.",
+  "wrapperSource": "#!/usr/bin/python3\nimport os, sys\nargs = sys.argv[1:]\nfor n in range(1, len(args)):\n    if args[n - 1] == '-L' and args[n].endswith(':127.0.0.1:11434'):\n        args[n] = args[n][:-5] + '11436'\nos.execv('/usr/bin/ssh', ['ssh', *args])\n"
+}

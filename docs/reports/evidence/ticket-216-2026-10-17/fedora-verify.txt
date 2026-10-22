@@ -1,0 +1,38 @@
+Candidate: 19727aab6a2dcc0e1c5f1b7fc9db53b1110d6c37
+Command: pnpm verify
+Exit: 0
+Selected output; test-name population is the seven required tests.
+
+$ pnpm check && pnpm test && pnpm test:rust && pnpm lint:rust && pnpm build
+$ svelte-kit sync && svelte-check --tsconfig ./tsconfig.json
+svelte-check found 0 errors and 0 warnings
+$ node --test tests/*.test.mjs
+ℹ tests 253
+ℹ suites 0
+ℹ pass 253
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4292.076707
+$ node scripts/test-rust.mjs
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 27.41s
+running 704 tests
+test semantic_search::tests::a_failed_similarity_check_is_recorded_and_survives_reloading_its_file ... ok
+test semantic_search::tests::a_deferred_check_runs_after_the_backend_returns_and_its_card_is_delivered ... ok
+test semantic_search::tests::a_deferred_check_that_fails_again_stays_recorded ... ok
+test semantic_search::tests::a_moved_note_still_gets_its_deferred_check_and_a_deleted_one_is_dropped ... ok
+test semantic_search::tests::a_pass_that_leaves_notes_queued_reruns_nothing_until_the_queue_is_through ... ok
+test semantic_search::tests::a_pass_that_stopped_or_found_the_queue_empty_reruns_nothing ... ok
+test similar_notes::tests::an_unreadable_deferred_file_gives_an_empty_list_and_the_vault_still_opens ... ok
+test result: ok. 694 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 9.50s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+$ cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.13s
+$ vite build
+✓ 263 modules transformed.
+✓ 2691 modules transformed.
+  Wrote site to "build"

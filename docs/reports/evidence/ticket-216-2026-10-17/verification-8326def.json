@@ -1,0 +1,95 @@
+{
+  "candidate": "8326def68cb2c37bcfe5ea42b26e80da63a31768",
+  "date": "2026-10-22",
+  "stage": "Kiro workflow section 7, step 9; affected checks and report only. Final review is a separate run.",
+  "preflight": {
+    "parent": "b2e9fffc62f3d25eeb74e4aaae85eff829ea200d",
+    "initialTreeClean": true,
+    "onlyCodePathChanged": "src-tauri/src/similar_notes.rs",
+    "fetchedMain": "169b0f2d48c5ab6d7c3c23df7fc0c1da0321e1c8",
+    "fetchedDeliveryBranch": "b2e9fffc62f3d25eeb74e4aaae85eff829ea200d",
+    "kiroSkillCopiesIdentical": true,
+    "gitIdentityMatchesEarlierReportCommit": true
+  },
+  "fedora": {
+    "verify": {
+      "candidate": "8326def68cb2c37bcfe5ea42b26e80da63a31768",
+      "command": "pnpm verify",
+      "exitCode": 0,
+      "elapsedSeconds": 78.697
+    },
+    "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18); clippy 0.1.98 (88d9e12ae1 2026-08-18)",
+    "node": "24.22.1",
+    "pnpm": "11.22.0",
+    "check": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "javascript": {
+      "passed": 254,
+      "failed": 0,
+      "skipped": 0
+    },
+    "rust": {
+      "listed": 755,
+      "passed": 745,
+      "failed": 0,
+      "ignored": 10,
+      "filtered": 0,
+      "mainTests": 0,
+      "docTests": 0
+    },
+    "stableLint": "PASS",
+    "build": "PASS; one static site",
+    "rust188Lint": {
+      "candidate": "8326def68cb2c37bcfe5ea42b26e80da63a31768",
+      "command": "RUSTUP_TOOLCHAIN=1.88.0 pnpm lint:rust",
+      "exitCode": 0,
+      "elapsedSeconds": 130.343
+    },
+    "rust188Toolchain": "rustc 1.88.0 (6b00bc388 2025-06-23); clippy 0.1.88 (6b00bc3880 2025-06-23)",
+    "rust188Target": "<Fedora Rust 1.88 target>; separate from existing src-tauri/target",
+    "offlineDependencies": true,
+    "namedRustPassed": 51,
+    "namedMatch": "named-tests-8326def.json"
+  },
+  "windows": {
+    "attempts": 1,
+    "exitCode": 255,
+    "elapsedSeconds": 6.011,
+    "answered": false,
+    "result": "NOT RERUN",
+    "reason": "One SSH connection attempt timed out.",
+    "connectTimeoutSeconds": 6,
+    "connectionAttempts": 1,
+    "lastLocalCandidate": "a1d921143c73a2fb255ab5f9a3d2068883f10181",
+    "lastLocalNamedRustPassed": 46,
+    "lastLocalRust": {
+      "passed": 715,
+      "ignored": 9
+    },
+    "lastLocalLint": "Allowed #221 bind_instead_of_map error only.",
+    "ciOnB2e9fff": "windows-rust PASS",
+    "nextCi": "windows-rust runs pnpm test:rust under Rust 1.88 on the next pushed head; pending."
+  },
+  "carried": {
+    "candidates": [
+      "eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9",
+      "a1d921143c73a2fb255ab5f9a3d2068883f10181"
+    ],
+    "scope": "All other evidence as assigned to those commits in the report, including Windows tests/lint and the earlier package, installed recovery, end-to-end and installer results. Packaging proof limits remain.",
+    "reason": "8326def changes only how one boolean is written, with the same value in every case."
+  },
+  "usageProbes": {
+    "beforeRust188Lint": "OK",
+    "beforeVerify": "OK",
+    "beforeEvidenceChecks": "OK"
+  },
+  "productCodeEdited": false,
+  "installed": false,
+  "deleted": false,
+  "pushed": false,
+  "processesExplicitlyStopped": [],
+  "finalReview": "Not run; separate run on resulting report head.",
+  "result": "VERIFY28: PASS"
+}

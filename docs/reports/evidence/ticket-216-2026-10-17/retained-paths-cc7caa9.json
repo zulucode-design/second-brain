@@ -1,0 +1,523 @@
+{
+  "candidate": "cc7caa9d245bd2f1bb5cb7555b31eaa6f148de37",
+  "snapshot": "After all gates and named-test match; before report commit. Later git operations do not change these run files. No artifact cleanup performed.",
+  "aliases": {
+    "<Fedora run>": "verify29-cc7caa9-itefczzm",
+    "<Fedora Rust 1.88 target>": "verify28-rust188-8326def-2nc_mek0",
+    "<Fedora temp>": "system temporary directory",
+    "<Private run index>": "private verification directory"
+  },
+  "population": "Regular file lengths recursively under each root without following directory links. Reused caches include pre-existing bytes. Test temporary roots are new names since the before-run snapshot, restricted to the same prefixes as VERIFY28.",
+  "regeneration": "Use os.walk(path, followlinks=False), exclude directory links, sum lstat().st_size for regular files. Compare system temp names to before-tmp.json in the private run; retain helixnotes-, machine-local-, notion-, semantic-, sync-, vault-, .tmp and tmp prefixes.",
+  "fedora": {
+    "roots": [
+      {
+        "path": "<Fedora run>",
+        "bytes": 312869,
+        "files": 11
+      },
+      {
+        "path": "<Fedora Rust 1.88 target>",
+        "bytes": 2172146923,
+        "files": 5726
+      },
+      {
+        "path": ".svelte-kit",
+        "bytes": 8531948,
+        "files": 284
+      },
+      {
+        "path": "build",
+        "bytes": 6787349,
+        "files": 170
+      },
+      {
+        "path": "src-tauri/target",
+        "bytes": 21230895192,
+        "files": 19740
+      }
+    ],
+    "testTemporaryRoots": [
+      {
+        "path": "<Fedora temp>/helixnotes-machine-state-0161cdf0-e437-4705-96a7-cc21bf99e9bf",
+        "bytes": 79001,
+        "files": 183
+      },
+      {
+        "path": "<Fedora temp>/machine-local-abandoned-claim-c73dfb8e-2892-4826-954c-961c50425dff",
+        "bytes": 36,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/machine-local-concurrent-23f75f3f-00f4-4204-b528-91b464f6a349",
+        "bytes": 36,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/machine-local-damaged-id-8b7ec47c-a324-4f54-b617-1bff71ac99b7",
+        "bytes": 36,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/machine-local-existing-id-c8ef636a-d93c-4d45-b84b-0e1c9ad4b80a",
+        "bytes": 37,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/machine-local-first-open-c08169e0-6bb9-410f-965c-4c4a01ed68b8",
+        "bytes": 36,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/machine-local-read-only-id-57b95950-7c64-4322-a23f-efe00c1d621e",
+        "bytes": 36,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/machine-local-truncation-06c46304-89d3-42e1-a266-57e00ba78196",
+        "bytes": 36,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/machine-local-unlocked-fallback-207e7f17-a381-476e-88d9-fdccacd78b3d",
+        "bytes": 0,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-config-31fb534c-4dff-4a0c-ada8-218d058aa351",
+        "bytes": 0,
+        "files": 0
+      },
+      {
+        "path": "<Fedora temp>/notion-config-74bbf6d3-ab47-4d5c-af1e-8a71ed7a63bb",
+        "bytes": 139,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-config-a84e0d75-89e6-4fb3-aa5e-6665eedc3154",
+        "bytes": 135,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-config-fcffadd7-2ca8-40bf-aac3-accf606d4e5f",
+        "bytes": 18,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-enumerate-13648604-a02d-44ba-b133-5af5669378bb",
+        "bytes": 234,
+        "files": 2
+      },
+      {
+        "path": "<Fedora temp>/notion-enumerate-14c969f3-8621-4008-a9da-3d6a51002aae",
+        "bytes": 218,
+        "files": 2
+      },
+      {
+        "path": "<Fedora temp>/notion-enumerate-2473dc28-f7ee-4f60-9695-856323f19dcc",
+        "bytes": 428,
+        "files": 4
+      },
+      {
+        "path": "<Fedora temp>/notion-enumerate-3ff33dd1-3783-4ec2-b4f0-a54a7d968bae",
+        "bytes": 214,
+        "files": 2
+      },
+      {
+        "path": "<Fedora temp>/notion-enumerate-4e3b01ab-ba5b-40ff-952a-dad793e2de0e",
+        "bytes": 29,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-enumerate-5bf2cd10-809f-4bcc-8b4a-150f8ed6ea00",
+        "bytes": 28,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-enumerate-68d3ee08-b2a6-46bb-8d6a-66c3c5690507",
+        "bytes": 58,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-enumerate-8f7f9fde-b63b-4f93-8626-31afe2606699",
+        "bytes": 216,
+        "files": 2
+      },
+      {
+        "path": "<Fedora temp>/notion-enumerate-ad75bd0a-93e2-4992-959a-815d15473477",
+        "bytes": 432,
+        "files": 4
+      },
+      {
+        "path": "<Fedora temp>/notion-enumerate-bedfca5c-b8f5-4d1f-ba76-1c0de09162ed",
+        "bytes": 109,
+        "files": 2
+      },
+      {
+        "path": "<Fedora temp>/notion-enumerate-cb9cf5ba-b9ef-4a47-bdb4-de11cfdefe6d",
+        "bytes": 234,
+        "files": 2
+      },
+      {
+        "path": "<Fedora temp>/notion-enumerate-cf996b1c-52c8-47b6-9ff5-b8197b60a597",
+        "bytes": 18,
+        "files": 2
+      },
+      {
+        "path": "<Fedora temp>/notion-enumerate-f8ce2395-3532-4165-b483-a117c50e50c5",
+        "bytes": 56,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-map-09172479-4062-40ec-84f3-8a296601e483",
+        "bytes": 175,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-map-1e94f799-1bd4-45e7-8491-08e35329cd34",
+        "bytes": 173,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-map-365f6c37-a0a0-4b55-b4eb-d0994a3eb1b6",
+        "bytes": 0,
+        "files": 0
+      },
+      {
+        "path": "<Fedora temp>/notion-map-59648b7c-bd00-49c2-964d-1fa257f25c72",
+        "bytes": 175,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-map-70164cbf-d4ca-41d0-9df1-661845b7bd0a",
+        "bytes": 0,
+        "files": 0
+      },
+      {
+        "path": "<Fedora temp>/notion-map-9aa7c212-31df-4eb1-9e63-0d3c3c85e428",
+        "bytes": 17,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-map-b5d90586-8e91-4817-9a3b-e6fc1bf01b79",
+        "bytes": 208,
+        "files": 2
+      },
+      {
+        "path": "<Fedora temp>/notion-map-d4d0278e-2ae1-4686-9b66-6761188a167d",
+        "bytes": 0,
+        "files": 0
+      },
+      {
+        "path": "<Fedora temp>/notion-map-e9e8109f-f737-45ba-8d85-86990c984da7",
+        "bytes": 0,
+        "files": 0
+      },
+      {
+        "path": "<Fedora temp>/notion-map-f528859f-559a-4b50-b122-3671324e0031",
+        "bytes": 175,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-0c90312e-79f8-411a-a17c-ec8eb120f025",
+        "bytes": 0,
+        "files": 0
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-1a3638ab-f720-4425-ae72-4c7302e8bdb3",
+        "bytes": 0,
+        "files": 0
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-23dcff82-69f6-4ce2-8c0d-9d742a7cdde0",
+        "bytes": 26,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-25f93f7d-9c69-46ba-86ae-8664bd3b8f85",
+        "bytes": 234,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-2b0648e6-b9bb-442b-b306-3b1d3d8df9d6",
+        "bytes": 234,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-2e7d5764-f46e-4c6a-9030-de06f6054a05",
+        "bytes": 234,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-47504f82-2b74-4567-80cd-a3f25d7b5227",
+        "bytes": 239,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-499c2487-3929-44ab-9840-1c39acc800b5",
+        "bytes": 234,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-61ae3aa8-391c-4014-9cba-6aad4458dddd",
+        "bytes": 228,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-659eed05-98bb-4724-9f49-867fb401bd34",
+        "bytes": 232,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-6a3efbf6-0a6b-4dcd-b1a3-ee6d2a9bb64b",
+        "bytes": 0,
+        "files": 0
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-7a95bf0f-51ac-4d36-96e9-ddb8ba74f88d",
+        "bytes": 236,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-7c090cb1-20c9-42c9-895c-4b4e8a49e351",
+        "bytes": 178,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-8926967a-12e5-4faf-8ff8-6508ce430a77",
+        "bytes": 232,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-8c96e66e-cf38-4a53-ab7f-bb6d6a2f30b3",
+        "bytes": 167,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-8d7a9c35-9084-4f5c-b5b2-3c70f03fb060",
+        "bytes": 0,
+        "files": 0
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-9400707f-13c1-4a5e-b83c-48fbea411e99",
+        "bytes": 448,
+        "files": 2
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-984bdfde-983f-460e-b232-4fbdc7a4ef5e",
+        "bytes": 239,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-9caf6e68-c7ba-46b9-87f5-4279345ff1d9",
+        "bytes": 0,
+        "files": 0
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-a647886a-fe5d-47d6-8195-dfd4f964d5a5",
+        "bytes": 0,
+        "files": 0
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-a7c25af9-379b-42a7-bbe0-28014fc8ceac",
+        "bytes": 239,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-af1a902c-8481-4f98-b718-2a1f91f15ef4",
+        "bytes": 237,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-d9f0d431-d97b-418c-968c-105916a8c61d",
+        "bytes": 329,
+        "files": 2
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-ef73bac7-f508-462f-a33c-74d152517a03",
+        "bytes": 239,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-publish-f71197b7-6548-49e9-8f52-8df4782dda71",
+        "bytes": 226,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-setup-2221964c-a2a8-4c67-b8f4-d0f9cf116497",
+        "bytes": 433,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-setup-33dcb974-dc07-46cb-9d08-da86959bce79",
+        "bytes": 439,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/notion-setup-fcf33729-a3b0-4ef9-ace9-483514b4af24",
+        "bytes": 439,
+        "files": 1
+      },
+      {
+        "path": "<Fedora temp>/semantic-async-c2872680-2e7c-49ff-97be-962920d4aa4a",
+        "bytes": 36,
+        "files": 1
+      }
+    ],
+    "testTemporaryRootCount": 65,
+    "testTemporaryBytes": 88521,
+    "runFiles": [
+      {
+        "path": "<Fedora run>/before-tmp.json",
+        "bytes": 193838
+      },
+      {
+        "path": "<Fedora run>/fedora-lint-rust-1.88-cc7caa9.raw.txt",
+        "bytes": 376
+      },
+      {
+        "path": "<Fedora run>/fedora-lint-rust-1.88.status.json",
+        "bytes": 161
+      },
+      {
+        "path": "<Fedora run>/fedora-verify-cc7caa9.raw.txt",
+        "bytes": 116453
+      },
+      {
+        "path": "<Fedora run>/fedora-verify.status.json",
+        "bytes": 135
+      },
+      {
+        "path": "<Fedora run>/state.json",
+        "bytes": 230
+      },
+      {
+        "path": "<Fedora run>/usage-before-evidence.raw.txt",
+        "bytes": 489
+      },
+      {
+        "path": "<Fedora run>/usage-before-rust188-lint.raw.txt",
+        "bytes": 489
+      },
+      {
+        "path": "<Fedora run>/usage-before-verify.raw.txt",
+        "bytes": 489
+      },
+      {
+        "path": "<Fedora run>/windows-ssh.raw.txt",
+        "bytes": 65
+      },
+      {
+        "path": "<Fedora run>/windows-ssh.status.json",
+        "bytes": 144
+      }
+    ],
+    "privateRunPointer": {
+      "path": "<Private run index>/verify29-current.private.txt",
+      "bytes": 63,
+      "files": 1
+    }
+  },
+  "evidenceFilesExcludingThisInventory": [
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/fedora-lint-rust-1.88-cc7caa9.txt",
+      "bytes": 613
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/fedora-verify-cc7caa9.txt",
+      "bytes": 116571
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/match-tests-cc7caa9.py",
+      "bytes": 3588
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/named-tests-cc7caa9.json",
+      "bytes": 12339
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/verification-cc7caa9.json",
+      "bytes": 4233
+    }
+  ],
+  "windows": {
+    "newRetainedPaths": [],
+    "reason": "SSH timed out before any remote command ran."
+  },
+  "wouldDelete": [
+    "<Fedora run>",
+    "<Fedora Rust 1.88 target>",
+    "<Fedora temp>/helixnotes-machine-state-0161cdf0-e437-4705-96a7-cc21bf99e9bf",
+    "<Fedora temp>/machine-local-abandoned-claim-c73dfb8e-2892-4826-954c-961c50425dff",
+    "<Fedora temp>/machine-local-concurrent-23f75f3f-00f4-4204-b528-91b464f6a349",
+    "<Fedora temp>/machine-local-damaged-id-8b7ec47c-a324-4f54-b617-1bff71ac99b7",
+    "<Fedora temp>/machine-local-existing-id-c8ef636a-d93c-4d45-b84b-0e1c9ad4b80a",
+    "<Fedora temp>/machine-local-first-open-c08169e0-6bb9-410f-965c-4c4a01ed68b8",
+    "<Fedora temp>/machine-local-read-only-id-57b95950-7c64-4322-a23f-efe00c1d621e",
+    "<Fedora temp>/machine-local-truncation-06c46304-89d3-42e1-a266-57e00ba78196",
+    "<Fedora temp>/machine-local-unlocked-fallback-207e7f17-a381-476e-88d9-fdccacd78b3d",
+    "<Fedora temp>/notion-config-31fb534c-4dff-4a0c-ada8-218d058aa351",
+    "<Fedora temp>/notion-config-74bbf6d3-ab47-4d5c-af1e-8a71ed7a63bb",
+    "<Fedora temp>/notion-config-a84e0d75-89e6-4fb3-aa5e-6665eedc3154",
+    "<Fedora temp>/notion-config-fcffadd7-2ca8-40bf-aac3-accf606d4e5f",
+    "<Fedora temp>/notion-enumerate-13648604-a02d-44ba-b133-5af5669378bb",
+    "<Fedora temp>/notion-enumerate-14c969f3-8621-4008-a9da-3d6a51002aae",
+    "<Fedora temp>/notion-enumerate-2473dc28-f7ee-4f60-9695-856323f19dcc",
+    "<Fedora temp>/notion-enumerate-3ff33dd1-3783-4ec2-b4f0-a54a7d968bae",
+    "<Fedora temp>/notion-enumerate-4e3b01ab-ba5b-40ff-952a-dad793e2de0e",
+    "<Fedora temp>/notion-enumerate-5bf2cd10-809f-4bcc-8b4a-150f8ed6ea00",
+    "<Fedora temp>/notion-enumerate-68d3ee08-b2a6-46bb-8d6a-66c3c5690507",
+    "<Fedora temp>/notion-enumerate-8f7f9fde-b63b-4f93-8626-31afe2606699",
+    "<Fedora temp>/notion-enumerate-ad75bd0a-93e2-4992-959a-815d15473477",
+    "<Fedora temp>/notion-enumerate-bedfca5c-b8f5-4d1f-ba76-1c0de09162ed",
+    "<Fedora temp>/notion-enumerate-cb9cf5ba-b9ef-4a47-bdb4-de11cfdefe6d",
+    "<Fedora temp>/notion-enumerate-cf996b1c-52c8-47b6-9ff5-b8197b60a597",
+    "<Fedora temp>/notion-enumerate-f8ce2395-3532-4165-b483-a117c50e50c5",
+    "<Fedora temp>/notion-map-09172479-4062-40ec-84f3-8a296601e483",
+    "<Fedora temp>/notion-map-1e94f799-1bd4-45e7-8491-08e35329cd34",
+    "<Fedora temp>/notion-map-365f6c37-a0a0-4b55-b4eb-d0994a3eb1b6",
+    "<Fedora temp>/notion-map-59648b7c-bd00-49c2-964d-1fa257f25c72",
+    "<Fedora temp>/notion-map-70164cbf-d4ca-41d0-9df1-661845b7bd0a",
+    "<Fedora temp>/notion-map-9aa7c212-31df-4eb1-9e63-0d3c3c85e428",
+    "<Fedora temp>/notion-map-b5d90586-8e91-4817-9a3b-e6fc1bf01b79",
+    "<Fedora temp>/notion-map-d4d0278e-2ae1-4686-9b66-6761188a167d",
+    "<Fedora temp>/notion-map-e9e8109f-f737-45ba-8d85-86990c984da7",
+    "<Fedora temp>/notion-map-f528859f-559a-4b50-b122-3671324e0031",
+    "<Fedora temp>/notion-publish-0c90312e-79f8-411a-a17c-ec8eb120f025",
+    "<Fedora temp>/notion-publish-1a3638ab-f720-4425-ae72-4c7302e8bdb3",
+    "<Fedora temp>/notion-publish-23dcff82-69f6-4ce2-8c0d-9d742a7cdde0",
+    "<Fedora temp>/notion-publish-25f93f7d-9c69-46ba-86ae-8664bd3b8f85",
+    "<Fedora temp>/notion-publish-2b0648e6-b9bb-442b-b306-3b1d3d8df9d6",
+    "<Fedora temp>/notion-publish-2e7d5764-f46e-4c6a-9030-de06f6054a05",
+    "<Fedora temp>/notion-publish-47504f82-2b74-4567-80cd-a3f25d7b5227",
+    "<Fedora temp>/notion-publish-499c2487-3929-44ab-9840-1c39acc800b5",
+    "<Fedora temp>/notion-publish-61ae3aa8-391c-4014-9cba-6aad4458dddd",
+    "<Fedora temp>/notion-publish-659eed05-98bb-4724-9f49-867fb401bd34",
+    "<Fedora temp>/notion-publish-6a3efbf6-0a6b-4dcd-b1a3-ee6d2a9bb64b",
+    "<Fedora temp>/notion-publish-7a95bf0f-51ac-4d36-96e9-ddb8ba74f88d",
+    "<Fedora temp>/notion-publish-7c090cb1-20c9-42c9-895c-4b4e8a49e351",
+    "<Fedora temp>/notion-publish-8926967a-12e5-4faf-8ff8-6508ce430a77",
+    "<Fedora temp>/notion-publish-8c96e66e-cf38-4a53-ab7f-bb6d6a2f30b3",
+    "<Fedora temp>/notion-publish-8d7a9c35-9084-4f5c-b5b2-3c70f03fb060",
+    "<Fedora temp>/notion-publish-9400707f-13c1-4a5e-b83c-48fbea411e99",
+    "<Fedora temp>/notion-publish-984bdfde-983f-460e-b232-4fbdc7a4ef5e",
+    "<Fedora temp>/notion-publish-9caf6e68-c7ba-46b9-87f5-4279345ff1d9",
+    "<Fedora temp>/notion-publish-a647886a-fe5d-47d6-8195-dfd4f964d5a5",
+    "<Fedora temp>/notion-publish-a7c25af9-379b-42a7-bbe0-28014fc8ceac",
+    "<Fedora temp>/notion-publish-af1a902c-8481-4f98-b718-2a1f91f15ef4",
+    "<Fedora temp>/notion-publish-d9f0d431-d97b-418c-968c-105916a8c61d",
+    "<Fedora temp>/notion-publish-ef73bac7-f508-462f-a33c-74d152517a03",
+    "<Fedora temp>/notion-publish-f71197b7-6548-49e9-8f52-8df4782dda71",
+    "<Fedora temp>/notion-setup-2221964c-a2a8-4c67-b8f4-d0f9cf116497",
+    "<Fedora temp>/notion-setup-33dcb974-dc07-46cb-9d08-da86959bce79",
+    "<Fedora temp>/notion-setup-fcf33729-a3b0-4ef9-ace9-483514b4af24",
+    "<Fedora temp>/semantic-async-c2872680-2e7c-49ff-97be-962920d4aa4a"
+  ],
+  "retainForReuse": [
+    ".svelte-kit",
+    "build",
+    "src-tauri/target"
+  ],
+  "deletionPerformed": false,
+  "installationPerformed": false
+}

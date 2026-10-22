@@ -35,26 +35,36 @@ test('the coverage line appears only when more notes passed than the card shows'
   assert.equal(similarCoverage(check('/v/c.md', 2, 2)), null);
 });
 
+const note = (id, path, vault = '/v') => ({ id, path, vault });
+
 test('a note made in the app is checked once, when the user first leaves it', () => {
   const watcher = createLeaveWatcher();
   watcher.created('new');
 
-  assert.equal(watcher.opened({ id: 'new', path: '/v/Untitled.md' }), null);
+  assert.equal(watcher.opened(note('new', '/v/Untitled.md')), null);
   // Retitling renames the file: still the same note, so not a leave.
-  assert.equal(watcher.opened({ id: 'new', path: '/v/Cedar.md' }), null);
-  assert.equal(watcher.opened({ id: 'old', path: '/v/Old.md' }), '/v/Cedar.md');
-  assert.equal(watcher.opened({ id: 'new', path: '/v/Cedar.md' }), null);
+  assert.equal(watcher.opened(note('new', '/v/Cedar.md')), null);
+  assert.deepEqual(watcher.opened(note('old', '/v/Old.md')), note('new', '/v/Cedar.md'));
+  assert.equal(watcher.opened(note('new', '/v/Cedar.md')), null);
   assert.equal(watcher.opened(null), null, 'only the first leave checks it');
 });
 
 test('closing a new note counts as leaving it; older notes are never checked', () => {
   const watcher = createLeaveWatcher();
-  watcher.opened({ id: 'old', path: '/v/Old.md' });
-  assert.equal(watcher.opened({ id: 'other', path: '/v/Other.md' }), null);
+  watcher.opened(note('old', '/v/Old.md'));
+  assert.equal(watcher.opened(note('other', '/v/Other.md')), null);
 
   watcher.created('new');
-  watcher.opened({ id: 'new', path: '/v/New.md' });
-  assert.equal(watcher.opened(null), '/v/New.md');
+  watcher.opened(note('new', '/v/New.md'));
+  assert.deepEqual(watcher.opened(null), note('new', '/v/New.md'));
+});
+
+test('a new note left by a vault switch is checked in the vault it was opened in', () => {
+  const watcher = createLeaveWatcher();
+  watcher.created('new');
+  watcher.opened(note('new', '/one/New.md', '/one'));
+
+  assert.equal(watcher.opened(note('other', '/two/Other.md', '/two'))?.vault, '/one');
 });
 
 test('an append closes the open note first and reopens it after', async () => {

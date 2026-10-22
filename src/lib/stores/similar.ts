@@ -68,9 +68,10 @@ export function noteCreatedInApp(id: string) {
 void listenAppEvent('similarNotesFound', ({ payload }) => show(payload));
 
 activeNote.subscribe((note) => {
-  const left = watcher.opened(note ? { id: note.meta.id, path: note.path } : null);
-  if (!left) return;
-  checkSimilarNotes(left)
+  const vault = get(appConfig)?.active_vault ?? null;
+  const left = watcher.opened(note ? { id: note.meta.id, path: note.path, vault } : null);
+  if (!left?.vault) return;
+  checkSimilarNotes(left.vault, left.path, left.id)
     .then((check) => check && show(check))
     .catch((error) => console.error('Similarity check failed:', error));
 });

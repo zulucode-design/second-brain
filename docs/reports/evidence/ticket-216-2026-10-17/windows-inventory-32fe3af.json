@@ -1,0 +1,395 @@
+{
+  "at": "2026-10-20T22:45:41.0206791Z",
+  "candidate": "32fe3afdc3092e42e937fd2f6edbd09453680f7b",
+  "treeClean": false,
+  "status": " M src-tauri/Cargo.toml",
+  "normalizedTrackedContentUnchanged": true,
+  "normalizedDiffExit": 0,
+  "indexDiffExit": 0,
+  "installedNothing": true,
+  "roots": [
+    {
+      "path": "<Windows run>",
+      "bytes": 349095767,
+      "files": 21634
+    },
+    {
+      "path": "<Windows shared Rust target>",
+      "bytes": 8320788222,
+      "files": 14354
+    },
+    {
+      "path": "<Windows temp>/helixnotes-machine-state-98e03df2-3f2e-4493-aa62-cd4f6d0b7d1e",
+      "bytes": 80082,
+      "files": 178
+    },
+    {
+      "path": "<Windows temp>/machine-local-abandoned-claim-b35d4a89-3948-4f76-a6e5-468d38ffe772",
+      "bytes": 36,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/machine-local-concurrent-2871f045-f7ea-4e9d-875e-303c8dec3e26",
+      "bytes": 36,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/machine-local-damaged-id-6cdd0761-373e-47ed-8014-62356fcc5eb8",
+      "bytes": 36,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/machine-local-existing-id-87efc4bb-2728-4f54-81cb-4c6bc1157d7c",
+      "bytes": 37,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/machine-local-first-open-92b22626-a51b-4e2a-b777-ffaa59adb260",
+      "bytes": 36,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/machine-local-truncation-cacdfb4c-e3ed-4b51-8561-82e8d6b8ab33",
+      "bytes": 36,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/machine-local-unlocked-fallback-cd324580-661d-4577-8374-c43028081f03",
+      "bytes": 0,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-config-3a3e0a61-5a1d-4619-a2fe-16d5ec4eabb9",
+      "bytes": 139,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-config-7096f7a3-185a-4e45-b363-f91837fca980",
+      "bytes": 135,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-config-8af3643b-52b3-4732-9195-de43fd69abb8",
+      "bytes": 18,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-config-dc67008a-f530-4142-a64c-4493b5b4cbcb",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-13e013ce-674b-4a26-8c07-61eaa5de0016",
+      "bytes": 29,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-1851f2f3-0cb4-45cb-991e-b87517be901e",
+      "bytes": 58,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-18b638a2-2129-461a-a369-20632b314d59",
+      "bytes": 218,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-1aec42ca-be6b-4caf-b702-c9b57e11e3c5",
+      "bytes": 234,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-22aa7022-194f-4310-8b8e-ad67255e013a",
+      "bytes": 428,
+      "files": 4
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-63faedbb-e0f3-4020-96bc-dd4106ba324e",
+      "bytes": 234,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-ace33965-a9f7-4652-bbb0-488daab9eb9f",
+      "bytes": 432,
+      "files": 4
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-b47754d4-4608-4056-a585-d1c5601c1e27",
+      "bytes": 56,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-c646df24-b320-40ea-b5e3-5be53cdd020f",
+      "bytes": 109,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-cd67e2a0-c363-4161-8102-3494efb8a88b",
+      "bytes": 216,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-d4a70c40-a717-4a24-97e6-3f2d8bf63dce",
+      "bytes": 214,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-e295cd1b-6bee-4421-a1e8-fe8acec27578",
+      "bytes": 18,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-ed097c7d-454e-4945-baee-7f9f0a390365",
+      "bytes": 28,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-map-11ca5790-fb2a-4605-ada0-28a08a23e150",
+      "bytes": 208,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-map-3e23ab0f-7ac9-4c63-bb7b-ad48f3b78d86",
+      "bytes": 175,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-map-4507dcf1-8a2e-4b2e-9afa-c01f5cc5e856",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-map-46a116a7-85a7-44a7-a816-eeea387821ee",
+      "bytes": 173,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-map-61013d06-38de-4b3d-8cc4-8962fdb33739",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-map-848e29c7-7e20-48e5-8ad1-205ef5b6f17f",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-map-b0ac7fe8-28b1-4f2d-9bbf-307d64d01b4e",
+      "bytes": 17,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-map-bbd85387-95ff-4cd0-b981-294ed0191ef1",
+      "bytes": 175,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-map-c067a582-6049-4d5e-8498-ed92ddf0312f",
+      "bytes": 175,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-map-d3c19e70-7631-406e-a70e-fccd93fa8d0f",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-publish-02681500-bda2-42e6-922c-e3a5d1af85b8",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-publish-107dd784-086a-4852-823c-adf611b081eb",
+      "bytes": 234,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-247ae587-916d-4b7a-adff-43082c4ef323",
+      "bytes": 239,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-3ca33673-993c-4343-9fd6-1cab93d5e426",
+      "bytes": 234,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-4c622868-5a16-44ec-87aa-3ef50a849ead",
+      "bytes": 236,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-526fcb69-6707-4827-a58e-af3e30df5c89",
+      "bytes": 232,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-5f6d6633-2a49-4c99-96d3-c1375f3fabb8",
+      "bytes": 448,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-publish-7c46cb93-620b-424c-9774-6e8bf86f64a2",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-publish-80a7746f-4fc6-4aca-8476-00eeb47ec7de",
+      "bytes": 167,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-8cae99ac-cef7-4cf5-86ab-5ca268be83d9",
+      "bytes": 228,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-9002f9ef-0f45-46dd-9b7f-ea404a3db809",
+      "bytes": 26,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-a090dad0-bbf7-4f47-b5d2-26073d809baf",
+      "bytes": 239,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-a8ee4ad1-2361-4b58-a2bd-d189d595c991",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-publish-ae05a353-e546-48e1-bd53-72dc94d66ab4",
+      "bytes": 239,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-b045482a-d2a6-4b06-95fc-8efd1c4079b1",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-publish-c0a3e2e2-b297-48d8-884f-a84b69ded2bc",
+      "bytes": 178,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-c31c64c2-ed47-4f72-83c6-b6cce223abee",
+      "bytes": 239,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-c547b787-4282-4088-be92-e4b00c8ea73f",
+      "bytes": 237,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-cb811390-8060-4916-a428-3f3cf43ac498",
+      "bytes": 226,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-d9263378-01c0-44e4-924b-91ec0a32e24b",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-publish-dc273e0f-abaa-4f18-8ab1-282997e283f8",
+      "bytes": 232,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-e48e4b1c-1eda-4d24-bfc0-1796658322ef",
+      "bytes": 234,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-e88b6e00-f95d-4c98-bec1-f4f06a10a013",
+      "bytes": 329,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-publish-e8c71333-100e-4948-a115-17742a481237",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-publish-f4fbafc1-b813-4c70-99d1-538aa847f44b",
+      "bytes": 234,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-setup-5f027f49-19cc-43ef-bc20-475d62ec0fbd",
+      "bytes": 439,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-setup-9a804771-91e8-4c31-971e-ef97110a6c67",
+      "bytes": 433,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-setup-c9b2685a-a1e9-484e-9ddd-98e8a0e86e25",
+      "bytes": 439,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/semantic-async-9b3fb959-65a4-405c-9774-0afe526ddd50",
+      "bytes": 36,
+      "files": 1
+    }
+  ],
+  "files": [
+    {
+      "path": "<Windows run>/before-tmp.json",
+      "bytes": 101683
+    },
+    {
+      "path": "<Windows run>/build.log",
+      "bytes": 35907
+    },
+    {
+      "path": "<Windows run>/candidate.bundle",
+      "bytes": 5491033
+    },
+    {
+      "path": "<Windows run>/lint-rust.log",
+      "bytes": 13298
+    },
+    {
+      "path": "<Windows run>/ollama-gate.ps1",
+      "bytes": 1213
+    },
+    {
+      "path": "<Windows run>/owned-process.cs",
+      "bytes": 4803
+    },
+    {
+      "path": "<Windows run>/tauri-build.log",
+      "bytes": 50913
+    },
+    {
+      "path": "<Windows run>/test-rust.log",
+      "bytes": 78504
+    }
+  ],
+  "installers": [
+    {
+      "file": "Second Brain_0.1.0-alpha.1_x64-setup.exe",
+      "bytes": 20333836,
+      "sha256": "01de77d0878deda5d9c43a100fdb505822c7927cfbecbdba9f9e2f1ddf3ec9ab"
+    }
+  ],
+  "disk": [
+    {
+      "Name": "C",
+      "Free": 63751217152,
+      "Used": 191081058304
+    },
+    {
+      "Name": "D",
+      "Free": 137665474560,
+      "Used": 772502683648
+    }
+  ]
+}

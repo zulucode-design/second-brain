@@ -1,0 +1,308 @@
+{
+  "candidate": "19727aab6a2dcc0e1c5f1b7fc9db53b1110d6c37",
+  "startingReportHead": "82193338e95255ecffbc211192e0121eb1b698f6",
+  "branch": "fix/216-deferred-similarity",
+  "treeCleanBeforeRun": true,
+  "localDate": "2026-10-17",
+  "result": "PASS",
+  "usageProbe": "Required gpt-6.1-sol low read-only probe returned OK, exit 0.",
+  "scope": "Only the missing installed recovery sequence was run. Previous command gates were not repeated; report-only commits changed no product code.",
+  "package": {
+    "candidate": "19727aab6a2dcc0e1c5f1b7fc9db53b1110d6c37",
+    "rpm": "src-tauri/target/release/bundle/rpm/Second Brain-0.1.0-alpha.1-1.x86_64.rpm",
+    "bytes": 30178896,
+    "sha256": "15038b41e9e898541374af84c9176678748ecd10eda859b3d323df304de599e1",
+    "installHelperExit": 0,
+    "installedShaConfirmed": true,
+    "installedBinarySha256": "90f4fba4a3f6a3f18e93806803f5515f7d6d205db649becac89ebc5016d5df7f",
+    "installedBytes": 52189440
+  },
+  "temporaryServer": {
+    "port": 11436,
+    "leaseSeconds": 7200,
+    "dedicatedSshSessionHeldOpen": true,
+    "supervisorSource": "scripts/windows/ollama-gate.ps1 with unchanged owned-process.cs beside it",
+    "usesInstalledOllamaAndExistingModels": true,
+    "downloadRequested": false,
+    "stability": {
+      "first": {
+        "at": "2026-10-18T03:09:32.6092032Z",
+        "serverPid": 42716,
+        "supervisorPid": 14528,
+        "listenerPid": 42716,
+        "serverCreated": "2026-10-18T03:09:22.8510270Z",
+        "supervisorCreated": "2026-10-18T03:09:21.6921760Z",
+        "embeddinggemma": true,
+        "embeddingModels": [
+          {
+            "name": "embeddinggemma:latest",
+            "digest": "85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1",
+            "size": 621875917
+          }
+        ]
+      },
+      "stable": {
+        "at": "2026-10-18T03:11:18.6225122Z",
+        "serverPid": 42716,
+        "supervisorPid": 14528,
+        "listenerPid": 42716,
+        "serverCreated": "2026-10-18T03:09:22.8510270Z",
+        "supervisorCreated": "2026-10-18T03:09:21.6921760Z",
+        "embeddinggemma": true,
+        "embeddingModels": [
+          {
+            "name": "embeddinggemma:latest",
+            "digest": "85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1",
+            "size": 621875917
+          }
+        ]
+      },
+      "intervalSeconds": 106.013309,
+      "result": "PASS"
+    },
+    "finalEndpointAndLoadedProcessTree": {
+      "at": "2026-10-18T03:12:01.1204209Z",
+      "serverPid": 42716,
+      "supervisorPid": 14528,
+      "listenerPid": 42716,
+      "serverCreated": "2026-10-18T03:09:22.8510270Z",
+      "supervisorCreated": "2026-10-18T03:09:21.6921760Z",
+      "embeddinggemma": true,
+      "observedWorkers": [
+        {
+          "pid": 47992,
+          "parentPid": 42716,
+          "created": "2026-10-18T03:09:22.8608510Z",
+          "image": "conhost.exe"
+        },
+        {
+          "pid": 59648,
+          "parentPid": 42716,
+          "created": "2026-10-18T03:11:47.2121760Z",
+          "image": "llama-server.exe"
+        },
+        {
+          "pid": 28772,
+          "parentPid": 59648,
+          "created": "2026-10-18T03:11:47.2181860Z",
+          "image": "conhost.exe"
+        }
+      ]
+    },
+    "cleanup": {
+      "at": "2026-10-18T03:12:15.9166635Z",
+      "supervisorPid": 14528,
+      "serverPid": 42716,
+      "supervisorCreated": "2026-10-18T03:09:21.6921760Z",
+      "serverCreated": "2026-10-18T03:09:22.8510270Z",
+      "observedWorkers": [
+        {
+          "pid": 47992,
+          "parentPid": 42716,
+          "created": "2026-10-18T03:09:22.8608510Z",
+          "image": "conhost.exe"
+        },
+        {
+          "pid": 59648,
+          "parentPid": 42716,
+          "created": "2026-10-18T03:11:47.2121760Z",
+          "image": "llama-server.exe"
+        },
+        {
+          "pid": 28772,
+          "parentPid": 59648,
+          "created": "2026-10-18T03:11:47.2181860Z",
+          "image": "conhost.exe"
+        }
+      ],
+      "supervisorAbsent": true,
+      "serverAbsent": true,
+      "observedWorkersAbsent": true,
+      "gateListenerAbsent": true,
+      "userListenerAfter": [],
+      "retainedFiles": [
+        {
+          "Name": "ollama-gate.ps1",
+          "Length": 1213
+        },
+        {
+          "Name": "owned-process.cs",
+          "Length": 4803
+        }
+      ],
+      "modelWorkerObserved": true,
+      "stoppedOnlyExactSupervisor": true
+    },
+    "heldSshSessionExit": {
+      "exit": 1,
+      "expected": true,
+      "reason": "Exact supervisor PID was deliberately stopped after checking its creation time."
+    }
+  },
+  "installedCheck": {
+    "started": "2026-10-18T03:11:36.472Z",
+    "finished": "2026-10-18T03:11:52.321Z",
+    "controllerExit": 0,
+    "drive": "Installed /usr/bin/second-brain through tauri-driver/WebDriver and the same app commands used by capture and deletion. No direct state mutation simulated deferred checks.",
+    "fixture": "First three notes and first two captures from scripts/similarity-fixture.json, in a fresh disposable vault with isolated XDG roots.",
+    "sessions": [
+      {
+        "launch": 1,
+        "pid": 1205129,
+        "health": {
+          "tauri": true,
+          "newNote": true,
+          "ready": "complete"
+        },
+        "backendUrl": "http://127.0.0.1:11447"
+      },
+      {
+        "launch": 2,
+        "pid": 1205625,
+        "health": {
+          "tauri": true,
+          "newNote": true,
+          "ready": "complete"
+        },
+        "backendUrl": "http://127.0.0.1:11447"
+      },
+      {
+        "launch": 3,
+        "pid": 1205868,
+        "health": {
+          "tauri": true,
+          "newNote": true,
+          "ready": "complete"
+        },
+        "backendUrl": "http://127.0.0.1:11436"
+      }
+    ],
+    "steps": [
+      {
+        "number": 1,
+        "result": "PASS",
+        "step": "1-offline-captures",
+        "at": "2026-10-18T03:11:39.560Z",
+        "captured": 2,
+        "skippedLogLines": 2,
+        "skipLogs": [
+          "[2026-10-18][03:11:39][app_lib::similar_notes][INFO] Skipped the similarity check for a new note",
+          "[2026-10-18][03:11:39][app_lib::similar_notes][INFO] Skipped the similarity check for a new note"
+        ],
+        "records": [
+          {
+            "id": "424f8441-0c9d-47d2-88c4-a22ae8a338cf",
+            "file": "Shed spending.md"
+          },
+          {
+            "id": "d27d3c70-047a-416a-b180-29de4e5a4e67",
+            "file": "Shed wall wood.md"
+          }
+        ],
+        "cards": 0,
+        "notificationCalls": 0
+      },
+      {
+        "number": 2,
+        "result": "PASS",
+        "step": "2-restart-and-delete",
+        "at": "2026-10-18T03:11:40.665Z",
+        "recordsAfterRestart": 2,
+        "deletedThroughAppCommand": true,
+        "sourceFileGone": true,
+        "recordsAfterDelete": [
+          {
+            "id": "424f8441-0c9d-47d2-88c4-a22ae8a338cf",
+            "file": "Shed spending.md"
+          },
+          {
+            "id": "d27d3c70-047a-416a-b180-29de4e5a4e67",
+            "file": "Shed wall wood.md"
+          }
+        ]
+      },
+      {
+        "number": 3,
+        "result": "PASS",
+        "step": "3-restore-backend",
+        "at": "2026-10-18T03:11:41.172Z",
+        "reachableUrl": "http://127.0.0.1:11436",
+        "unreachableUrl": "http://127.0.0.1:11447",
+        "isolatedConfigChangedWhileAppStopped": true,
+        "existingBackendUnchanged": true
+      },
+      {
+        "number": 4,
+        "result": "PASS",
+        "step": "4-recovered-card",
+        "at": "2026-10-18T03:11:52.257Z",
+        "index": {
+          "queuedNotes": 0,
+          "model": "embeddinggemma",
+          "lastPass": {
+            "stopped": false,
+            "readMs": 0,
+            "chunkMs": 0,
+            "embedMs": 53,
+            "notes": 2,
+            "totalMs": 67,
+            "databaseMs": 14,
+            "chunks": 2
+          },
+          "indexedNotes": 4
+        },
+        "cards": [
+          {
+            "heading": "\u201cShed spending\u201d is similar to",
+            "matches": [
+              "Garden shed budget",
+              "Similar"
+            ]
+          }
+        ],
+        "log": "Deferred similarity checks: ran=1 found=1 dropped=1 waiting=0",
+        "remainingRecords": 0,
+        "notificationCalls": 0,
+        "screenshot": "similarity-card.png"
+      }
+    ],
+    "finalForwardedEndpoint": "PASS",
+    "notificationMonitor": {
+      "readyBeforeFirstCapture": true,
+      "aliveAtFinalCheck": true,
+      "appNotifyMethodCalls": 0,
+      "population": "org.freedesktop.Notifications.Notify method calls whose first D-Bus string argument was Second Brain, during all three app sessions.",
+      "method": "dbus-monitor --session filtered to Notifications.Notify; controller parses calls and asserts zero."
+    },
+    "profileUnchanged": true,
+    "remainingAppProcesses": 0,
+    "remainingOwnedChildProcesses": []
+  },
+  "fedoraCleanup": {
+    "at": "2026-10-18T03:12:29.092071+00:00",
+    "removeHelperExit": 0,
+    "rpmQueryExit": 1,
+    "packageAbsent": true,
+    "appBinaryAndDesktopEntriesAbsent": true,
+    "preinstallProfileContentsAndExistenceUnchanged": true,
+    "allRecordedAppTunnelMonitorPidsAbsent": true,
+    "remainingOwnedChildProcesses": [],
+    "gatePortsHaveNoListeners": true,
+    "gatePortEvidence": "State Recv-Q Send-Q Local Address:Port Peer Address:PortProcess\n",
+    "artifactDeletionPerformed": false,
+    "fixtureDeletion": "Only the required app-command deletion of the second disposable capture; no artifact or personal data cleanup."
+  },
+  "screenOnlyBarrierReached": false,
+  "productionOllamaProcessOrConfigurationChanged": false,
+  "postCheckObservation": "An optional post-run raw-log display stopped on a UnicodeDecodeError while reading a binary database .log as UTF-8. No acceptance assertion failed. No verification continued or reran after that display error; evidence below uses observations already saved by the completed controller.",
+  "productCodeEdited": false,
+  "pushed": false,
+  "artifactsDeleted": false,
+  "counts": {
+    "population": "Four required installed-package recovery steps",
+    "command": "python3 -c 'import json,collections; print(collections.Counter(s[\"result\"] for s in json.load(open(\"docs/reports/evidence/ticket-216-2026-10-17/installed-recovery.json\"))[\"installedCheck\"][\"steps\"]))'",
+    "passed": 4,
+    "failed": 0
+  },
+  "privacy": "Only fixture note text, generated identifiers, public system paths, and repository-relative paths are published. Production backups, full session-bus output, and unfiltered logs remain private."
+}

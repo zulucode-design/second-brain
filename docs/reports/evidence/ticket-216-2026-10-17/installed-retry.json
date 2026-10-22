@@ -1,0 +1,165 @@
+{
+  "candidate": "19727aab6a2dcc0e1c5f1b7fc9db53b1110d6c37",
+  "startingReportHead": "8da341274cfee8ffbe0adf4610da20bcebe68777",
+  "branch": "fix/216-deferred-similarity",
+  "startingTreeClean": true,
+  "localDate": "2026-10-17",
+  "runner": "Sol",
+  "usageProbe": "OK",
+  "result": "FAIL",
+  "failureStage": "Temporary Windows server stability preflight, before package installation or app launch",
+  "failureOwner": "Controller probe timing; no observed product or backend failure",
+  "stopOnFailureHonored": true,
+  "serverLaunch": {
+    "script": "scripts/windows/ollama-gate.ps1",
+    "companion": "scripts/windows/owned-process.cs",
+    "port": 11436,
+    "lifetimeSeconds": 7200,
+    "dedicatedPowerShell": true,
+    "heldOpenInOneSshSession": true,
+    "usesInstalledOllama": true,
+    "usesExistingModelStore": true,
+    "downloads": 0
+  },
+  "serverStability": {
+    "first": {
+      "at": "2026-10-18T02:17:27.1012416Z",
+      "serverPid": 49888,
+      "supervisorPid": 45132,
+      "listenerPid": 49888,
+      "serverCreated": "2026-10-18T02:17:13.1832930Z",
+      "supervisorCreated": "2026-10-18T02:17:11.9355940Z",
+      "embeddinggemma": true,
+      "embeddingModels": [
+        {
+          "name": "embeddinggemma:latest",
+          "digest": "85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1",
+          "size": 621875917
+        }
+      ]
+    },
+    "second": {
+      "at": "2026-10-18T02:18:07.2141760Z",
+      "serverPid": 49888,
+      "supervisorPid": 45132,
+      "listenerPid": 49888,
+      "serverCreated": "2026-10-18T02:17:13.1832930Z",
+      "supervisorCreated": "2026-10-18T02:17:11.9355940Z",
+      "embeddinggemma": true,
+      "embeddingModels": [
+        {
+          "name": "embeddinggemma:latest",
+          "digest": "85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1",
+          "size": 621875917
+        }
+      ]
+    },
+    "elapsedSeconds": 40.112935,
+    "requiredMinimumSeconds": 60,
+    "result": "FAIL",
+    "failure": "Controller scheduled second probe before the required one-minute interval. No product or backend failure observed. Stopped without retry."
+  },
+  "failedAssertion": {
+    "expression": "(second_answer_at - first_answer_at).total_seconds() >= 60",
+    "expectedMinimumSeconds": 60,
+    "actualSeconds": 40.112935,
+    "exception": "AssertionError: 40.112935",
+    "retryAttempted": false
+  },
+  "steps": [
+    {
+      "step": 1,
+      "result": "NOT RUN",
+      "acceptance": "FAIL",
+      "required": "Two offline captures, two skip log lines, two deferred records.",
+      "observation": "No package installed, app launched, fixture created, or record file produced in this follow-up."
+    },
+    {
+      "step": 2,
+      "result": "NOT RUN",
+      "acceptance": "FAIL",
+      "required": "Restart and delete the second capture through the app.",
+      "observation": "No app or fixture existed. Nothing deleted."
+    },
+    {
+      "step": 3,
+      "result": "NOT RUN",
+      "acceptance": "FAIL",
+      "required": "Restore app URL to forwarded port 11436.",
+      "observation": "No tunnel or isolated app configuration started; no URL changed."
+    },
+    {
+      "step": 4,
+      "result": "NOT RUN",
+      "acceptance": "FAIL",
+      "required": "Card naming the repeated fixture note after indexing, zero notifications, ran=1 found=1 dropped=1 waiting=0, zero deferred records.",
+      "observation": "No indexing, card, notification monitor, deferred summary, or screenshot produced."
+    }
+  ],
+  "stepResultMeaning": "FAIL denotes missing acceptance proof; NOT RUN is the observed execution status.",
+  "windowsCleanup": {
+    "at": "2026-10-18T02:18:42.9290870Z",
+    "supervisorPid": 45132,
+    "serverPid": 49888,
+    "supervisorCreated": "2026-10-18T02:17:11.9355940Z",
+    "serverCreated": "2026-10-18T02:17:13.1832930Z",
+    "observedWorkers": [
+      {
+        "pid": 1784,
+        "parentPid": 49888,
+        "created": "2026-10-18T02:17:14.6861840Z",
+        "image": "conhost.exe"
+      }
+    ],
+    "supervisorAbsent": true,
+    "serverAbsent": true,
+    "observedWorkersAbsent": true,
+    "gateListenerAbsent": true,
+    "userListenerAfter": [],
+    "retainedFiles": [
+      {
+        "Name": "ollama-gate.ps1",
+        "Length": 1213
+      },
+      {
+        "Name": "owned-process.cs",
+        "Length": 4803
+      }
+    ],
+    "noModelLoaded": true,
+    "stoppedOnlyExactSupervisor": true
+  },
+  "fedoraCleanup": {
+    "at": "2026-10-18T02:19:02.295765+00:00",
+    "profileRoots": 8,
+    "presentProfileRoots": 2,
+    "originalProfileUnchanged": true,
+    "installedAppProcesses": [],
+    "rpmQueryExit": 1,
+    "rpmQueryOutput": "package second-brain is not installed",
+    "installedFilesAbsent": true,
+    "rpmInstalledThisRetry": false,
+    "packageRemovalNeeded": false,
+    "tunnelStartedThisRetry": false,
+    "appLaunched": false,
+    "fixtureCreated": false,
+    "fileDeletionPerformed": false
+  },
+  "ownedSshSessionExit": {
+    "exit": 1,
+    "reason": "Expected connection termination after deliberate exact-PID supervisor stop."
+  },
+  "productionOllamaProcessOrConfigurationChanged": false,
+  "forwardingTunnelStarted": false,
+  "screenOnlyBarrierReached": false,
+  "productCodeEdited": false,
+  "pushed": false,
+  "artifactsDeleted": false,
+  "counts": {
+    "population": "Four required installed-package recovery steps",
+    "command": "python -c 'import json; from collections import Counter; print(Counter(step[\"result\"] for step in json.load(open(\"docs/reports/evidence/ticket-216-2026-10-17/installed-retry.json\"))[\"steps\"]))'",
+    "passed": 0,
+    "notRun": 4
+  },
+  "nextRun": "Obtain two successful /api/tags replies at least 60 seconds apart from the same server PID, then forward 11436, install and SHA-check the candidate, and run all four recovery steps."
+}

@@ -1,0 +1,2372 @@
+{
+  "candidate": "32fe3afdc3092e42e937fd2f6edbd09453680f7b",
+  "at": "2026-10-20T22:47:58.514667+00:00",
+  "measurement": "Logical regular-file bytes; reused caches include pre-existing content. Nested files and packages are included in parent roots. Private profile backups grouped; no private contents or original paths published. Snapshot before report commit.",
+  "regenerate": "Use pathlib.Path.rglob plus stat().st_size for Fedora roots; read-only Get-ChildItem -File -Recurse | Measure-Object Length -Sum for Windows roots. New test temp roots are differences from the saved pre-run directory inventories, restricted on Fedora to known fixture prefixes.",
+  "logicalRoots": {
+    "<Fedora run>": "verify-32fe3af-e5nfjvjc",
+    "<Windows run>": "sb216/verify-32fe3af-e5nfjvjc",
+    "<Fedora temp>": "machine temporary directory",
+    "<Windows temp>": "machine temporary directory",
+    "<Windows shared Rust target>": "shared cache from Windows build layout"
+  },
+  "roots": [
+    {
+      "machine": "Fedora",
+      "path": "<Fedora run>",
+      "bytes": 9338097,
+      "files": 307,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<private pointers>/verify-current.private.txt",
+      "bytes": 61,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": ".svelte-kit",
+      "bytes": 8532312,
+      "files": 284,
+      "cleanupCandidate": false
+    },
+    {
+      "machine": "Fedora",
+      "path": "build",
+      "bytes": 6787344,
+      "files": 170,
+      "cleanupCandidate": false
+    },
+    {
+      "machine": "Fedora",
+      "path": "src-tauri/binaries",
+      "bytes": 26818686,
+      "files": 2,
+      "cleanupCandidate": false
+    },
+    {
+      "machine": "Fedora",
+      "path": "src-tauri/target",
+      "bytes": 20606459090,
+      "files": 19458,
+      "cleanupCandidate": false
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/helixnotes-machine-state-87d56f1f-4838-4e94-b528-8e2ac974c2ec",
+      "bytes": 78798,
+      "files": 181,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/machine-local-abandoned-claim-b0aca440-65de-4df5-830c-ea92f273ab7e",
+      "bytes": 36,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/machine-local-concurrent-f231caa8-74a3-4f03-9419-4f6950bca400",
+      "bytes": 36,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/machine-local-damaged-id-d0b21258-6748-4217-885b-9d811373755d",
+      "bytes": 36,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/machine-local-existing-id-4ce2a3e4-da69-409e-9f5b-d7a42225ae93",
+      "bytes": 37,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/machine-local-first-open-6393fcfa-e12d-4b4b-a327-42abbb7ede68",
+      "bytes": 36,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/machine-local-read-only-id-b95c7b3c-e52a-47e2-93af-f54607a15db7",
+      "bytes": 36,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/machine-local-truncation-9743d411-2292-471d-b56e-f66d9425c823",
+      "bytes": 36,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/machine-local-unlocked-fallback-fa96bcaa-2973-42ae-a809-86fbd3312fe0",
+      "bytes": 0,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-config-140c6c5d-ea66-4daf-9533-66a5195650fc",
+      "bytes": 139,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-config-6bccc2ab-3410-4050-872d-e4c047a78fcb",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-config-c9ce85f1-bf58-421e-968f-1832cdbd3c85",
+      "bytes": 135,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-config-f6943dda-5d2a-4dff-a858-5168bdcb5eac",
+      "bytes": 18,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-enumerate-06a26cb6-5c9c-4cc5-a9fd-f6c7dae4c416",
+      "bytes": 234,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-enumerate-11efe943-46e3-417a-9c86-646a464b5893",
+      "bytes": 29,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-enumerate-175e7e5c-d659-4e4f-bcac-7499be362e86",
+      "bytes": 28,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-enumerate-3ec25ef7-ffd8-4b08-8537-07cf94aa0aa9",
+      "bytes": 109,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-enumerate-4084d239-4b53-4b73-8c8f-828c4f198471",
+      "bytes": 18,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-enumerate-4453808e-e1c0-49b5-af06-52dc8259cb3c",
+      "bytes": 56,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-enumerate-48c693df-26c2-40bf-8e16-70563b59a2f0",
+      "bytes": 432,
+      "files": 4,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-enumerate-4affe9c0-6058-4e83-a3b6-6042eb2028b9",
+      "bytes": 218,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-enumerate-506b0ca8-6279-4cfe-a600-41620b936ddd",
+      "bytes": 216,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-enumerate-51f91be7-0845-42b6-80a7-1728aeca2fe1",
+      "bytes": 428,
+      "files": 4,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-enumerate-8cff271b-19e2-4a2e-90c0-3ad2b6cb2e59",
+      "bytes": 214,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-enumerate-d3209f14-8b6f-4b36-8a47-d35f3549605b",
+      "bytes": 58,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-enumerate-de4a2013-47fc-4f72-b911-857118687ec7",
+      "bytes": 234,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-map-1018ba04-c938-439b-884c-178f57824682",
+      "bytes": 175,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-map-225d1dae-aa28-46b0-8bc7-bdef89ae22a8",
+      "bytes": 175,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-map-4a9462b8-bedc-4a16-a3be-a45679925750",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-map-580df563-fcce-4a1e-8476-76eeae59ce5d",
+      "bytes": 208,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-map-77f07e9b-8173-4175-8bb3-4e956bf087c2",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-map-893f1489-0f82-4718-8583-2e4e5a4cdf92",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-map-9b4b6dbf-1970-40c9-ac71-2b18d225b0df",
+      "bytes": 173,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-map-d6682342-672e-4003-b7a9-2b8dfe99af12",
+      "bytes": 175,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-map-e3ab0b14-a3c4-4a58-a0f4-21777a80de64",
+      "bytes": 17,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-map-e41b091b-1a94-427c-98fc-21ef1fb7210f",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-00bc0eb1-9ef1-4283-b0a3-96266d938ecd",
+      "bytes": 237,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-02f08af9-3d8d-4ee3-99c6-ed7152864bc4",
+      "bytes": 239,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-07ed03a5-c696-4bd3-8d53-7f4537fbe019",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-0d9e58fc-95a4-415f-bb6f-b9eaedae2eb1",
+      "bytes": 232,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-12680f77-7cd4-4359-8d1f-bea95290a192",
+      "bytes": 448,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-1e0fd8df-3280-42f2-a4b6-3e8429672a2a",
+      "bytes": 329,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-2c148b12-38ca-4f53-bc8e-c849c756d518",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-37a29971-b702-4101-b648-c8af25beed96",
+      "bytes": 232,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-3c0838bf-802c-435b-a3db-b5d498e99aab",
+      "bytes": 239,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-492aadc4-6429-4757-8bcb-ee319bc3105b",
+      "bytes": 26,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-4a68edda-5690-4ada-a54c-d96722fd2d1d",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-4afc1135-e02c-45b3-baa1-1f76c2082a75",
+      "bytes": 234,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-5229a64c-a849-4605-8ce3-3b7c309bb1d8",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-65596c1c-d342-4f57-aecb-db74d487b3ed",
+      "bytes": 234,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-8085a2ff-717d-488b-95bc-a557cf8afeb8",
+      "bytes": 234,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-90336b22-a0b5-4ed9-8abf-c6490a7ba6ee",
+      "bytes": 239,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-9306d9b0-82d3-4833-bd8a-2573ef0c9d85",
+      "bytes": 239,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-956e94b7-188c-4cff-a484-d629f5bd0455",
+      "bytes": 167,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-b872b1f5-f932-46e7-aab9-d28c48e2164c",
+      "bytes": 228,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-bac7d397-d11d-4653-ad29-d3ec54a3649f",
+      "bytes": 234,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-cef73ba6-13a2-4dfe-9a79-6ab1a89aede6",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-d7aca02f-9dd2-437f-be17-9c4825195163",
+      "bytes": 236,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-e1c73292-2c8c-4130-9056-c119856ff065",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-e4e6d119-18d5-4a08-abde-b5f3862b3e39",
+      "bytes": 226,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-publish-f902973c-2e8c-45c8-abd8-d8d27935f215",
+      "bytes": 178,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-setup-76d24448-6168-4fa5-b96e-4f4ebc25dab7",
+      "bytes": 439,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-setup-820c9323-44c8-4429-ba53-9d018f90fd87",
+      "bytes": 433,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/notion-setup-e65d49e1-7bda-4015-91c8-66850c16355a",
+      "bytes": 439,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/semantic-async-2e208f27-25b3-42c3-89c5-c8c79d795d70",
+      "bytes": 36,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Fedora",
+      "path": "<Fedora temp>/tmp.xt7xvywyBA",
+      "bytes": 78966359,
+      "files": 7,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows run>",
+      "bytes": 349095767,
+      "files": 21634,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows shared Rust target>",
+      "bytes": 8320788222,
+      "files": 14354,
+      "cleanupCandidate": false
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/helixnotes-machine-state-98e03df2-3f2e-4493-aa62-cd4f6d0b7d1e",
+      "bytes": 80082,
+      "files": 178,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/machine-local-abandoned-claim-b35d4a89-3948-4f76-a6e5-468d38ffe772",
+      "bytes": 36,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/machine-local-concurrent-2871f045-f7ea-4e9d-875e-303c8dec3e26",
+      "bytes": 36,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/machine-local-damaged-id-6cdd0761-373e-47ed-8014-62356fcc5eb8",
+      "bytes": 36,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/machine-local-existing-id-87efc4bb-2728-4f54-81cb-4c6bc1157d7c",
+      "bytes": 37,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/machine-local-first-open-92b22626-a51b-4e2a-b777-ffaa59adb260",
+      "bytes": 36,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/machine-local-truncation-cacdfb4c-e3ed-4b51-8561-82e8d6b8ab33",
+      "bytes": 36,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/machine-local-unlocked-fallback-cd324580-661d-4577-8374-c43028081f03",
+      "bytes": 0,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-config-3a3e0a61-5a1d-4619-a2fe-16d5ec4eabb9",
+      "bytes": 139,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-config-7096f7a3-185a-4e45-b363-f91837fca980",
+      "bytes": 135,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-config-8af3643b-52b3-4732-9195-de43fd69abb8",
+      "bytes": 18,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-config-dc67008a-f530-4142-a64c-4493b5b4cbcb",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-enumerate-13e013ce-674b-4a26-8c07-61eaa5de0016",
+      "bytes": 29,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-enumerate-1851f2f3-0cb4-45cb-991e-b87517be901e",
+      "bytes": 58,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-enumerate-18b638a2-2129-461a-a369-20632b314d59",
+      "bytes": 218,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-enumerate-1aec42ca-be6b-4caf-b702-c9b57e11e3c5",
+      "bytes": 234,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-enumerate-22aa7022-194f-4310-8b8e-ad67255e013a",
+      "bytes": 428,
+      "files": 4,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-enumerate-63faedbb-e0f3-4020-96bc-dd4106ba324e",
+      "bytes": 234,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-enumerate-ace33965-a9f7-4652-bbb0-488daab9eb9f",
+      "bytes": 432,
+      "files": 4,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-enumerate-b47754d4-4608-4056-a585-d1c5601c1e27",
+      "bytes": 56,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-enumerate-c646df24-b320-40ea-b5e3-5be53cdd020f",
+      "bytes": 109,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-enumerate-cd67e2a0-c363-4161-8102-3494efb8a88b",
+      "bytes": 216,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-enumerate-d4a70c40-a717-4a24-97e6-3f2d8bf63dce",
+      "bytes": 214,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-enumerate-e295cd1b-6bee-4421-a1e8-fe8acec27578",
+      "bytes": 18,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-enumerate-ed097c7d-454e-4945-baee-7f9f0a390365",
+      "bytes": 28,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-map-11ca5790-fb2a-4605-ada0-28a08a23e150",
+      "bytes": 208,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-map-3e23ab0f-7ac9-4c63-bb7b-ad48f3b78d86",
+      "bytes": 175,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-map-4507dcf1-8a2e-4b2e-9afa-c01f5cc5e856",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-map-46a116a7-85a7-44a7-a816-eeea387821ee",
+      "bytes": 173,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-map-61013d06-38de-4b3d-8cc4-8962fdb33739",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-map-848e29c7-7e20-48e5-8ad1-205ef5b6f17f",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-map-b0ac7fe8-28b1-4f2d-9bbf-307d64d01b4e",
+      "bytes": 17,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-map-bbd85387-95ff-4cd0-b981-294ed0191ef1",
+      "bytes": 175,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-map-c067a582-6049-4d5e-8498-ed92ddf0312f",
+      "bytes": 175,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-map-d3c19e70-7631-406e-a70e-fccd93fa8d0f",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-02681500-bda2-42e6-922c-e3a5d1af85b8",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-107dd784-086a-4852-823c-adf611b081eb",
+      "bytes": 234,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-247ae587-916d-4b7a-adff-43082c4ef323",
+      "bytes": 239,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-3ca33673-993c-4343-9fd6-1cab93d5e426",
+      "bytes": 234,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-4c622868-5a16-44ec-87aa-3ef50a849ead",
+      "bytes": 236,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-526fcb69-6707-4827-a58e-af3e30df5c89",
+      "bytes": 232,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-5f6d6633-2a49-4c99-96d3-c1375f3fabb8",
+      "bytes": 448,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-7c46cb93-620b-424c-9774-6e8bf86f64a2",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-80a7746f-4fc6-4aca-8476-00eeb47ec7de",
+      "bytes": 167,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-8cae99ac-cef7-4cf5-86ab-5ca268be83d9",
+      "bytes": 228,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-9002f9ef-0f45-46dd-9b7f-ea404a3db809",
+      "bytes": 26,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-a090dad0-bbf7-4f47-b5d2-26073d809baf",
+      "bytes": 239,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-a8ee4ad1-2361-4b58-a2bd-d189d595c991",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-ae05a353-e546-48e1-bd53-72dc94d66ab4",
+      "bytes": 239,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-b045482a-d2a6-4b06-95fc-8efd1c4079b1",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-c0a3e2e2-b297-48d8-884f-a84b69ded2bc",
+      "bytes": 178,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-c31c64c2-ed47-4f72-83c6-b6cce223abee",
+      "bytes": 239,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-c547b787-4282-4088-be92-e4b00c8ea73f",
+      "bytes": 237,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-cb811390-8060-4916-a428-3f3cf43ac498",
+      "bytes": 226,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-d9263378-01c0-44e4-924b-91ec0a32e24b",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-dc273e0f-abaa-4f18-8ab1-282997e283f8",
+      "bytes": 232,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-e48e4b1c-1eda-4d24-bfc0-1796658322ef",
+      "bytes": 234,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-e88b6e00-f95d-4c98-bec1-f4f06a10a013",
+      "bytes": 329,
+      "files": 2,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-e8c71333-100e-4948-a115-17742a481237",
+      "bytes": 0,
+      "files": 0,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-publish-f4fbafc1-b813-4c70-99d1-538aa847f44b",
+      "bytes": 234,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-setup-5f027f49-19cc-43ef-bc20-475d62ec0fbd",
+      "bytes": 439,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-setup-9a804771-91e8-4c31-971e-ef97110a6c67",
+      "bytes": 433,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/notion-setup-c9b2685a-a1e9-484e-9ddd-98e8a0e86e25",
+      "bytes": 439,
+      "files": 1,
+      "cleanupCandidate": true
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows temp>/semantic-async-9b3fb959-65a4-405c-9774-0afe526ddd50",
+      "bytes": 36,
+      "files": 1,
+      "cleanupCandidate": true
+    }
+  ],
+  "privateBackupGroups": [
+    {
+      "path": "<Fedora run>/preinstall-profile-backup",
+      "bytes": 4441,
+      "files": 2
+    },
+    {
+      "path": "<Fedora run>/manual/profile-backup",
+      "bytes": 4417,
+      "files": 2
+    }
+  ],
+  "fedoraRunFiles": [
+    {
+      "path": "<Fedora run>/added-tests-matched.json",
+      "bytes": 23527
+    },
+    {
+      "path": "<Fedora run>/before-tmp.json",
+      "bytes": 178332
+    },
+    {
+      "path": "<Fedora run>/candidate.bundle",
+      "bytes": 5491033
+    },
+    {
+      "path": "<Fedora run>/current-report-prefix.md",
+      "bytes": 22428
+    },
+    {
+      "path": "<Fedora run>/fedora-debug-build.exit",
+      "bytes": 2
+    },
+    {
+      "path": "<Fedora run>/fedora-debug-build.log",
+      "bytes": 26446
+    },
+    {
+      "path": "<Fedora run>/fedora-final-state.json",
+      "bytes": 265
+    },
+    {
+      "path": "<Fedora run>/fedora-package-cleanup.json",
+      "bytes": 297
+    },
+    {
+      "path": "<Fedora run>/fedora-package-verify.exit",
+      "bytes": 2
+    },
+    {
+      "path": "<Fedora run>/fedora-package-verify.log",
+      "bytes": 120
+    },
+    {
+      "path": "<Fedora run>/fedora-tauri-build.exit",
+      "bytes": 2
+    },
+    {
+      "path": "<Fedora run>/fedora-tauri-build.log",
+      "bytes": 26493
+    },
+    {
+      "path": "<Fedora run>/fedora-verify.exit",
+      "bytes": 2
+    },
+    {
+      "path": "<Fedora run>/fedora-verify.log",
+      "bytes": 115311
+    },
+    {
+      "path": "<Fedora run>/historical-report.md",
+      "bytes": 23469
+    },
+    {
+      "path": "<Fedora run>/install.exit",
+      "bytes": 2
+    },
+    {
+      "path": "<Fedora run>/install.private.log",
+      "bytes": 36
+    },
+    {
+      "path": "<Fedora run>/installed-binary.json",
+      "bytes": 252
+    },
+    {
+      "path": "<Fedora run>/manual/1-offline-captures-deferred.json",
+      "bytes": 262
+    },
+    {
+      "path": "<Fedora run>/manual/2-restart-and-delete-deferred.json",
+      "bytes": 262
+    },
+    {
+      "path": "<Fedora run>/manual/3-restore-backend-deferred.json",
+      "bytes": 262
+    },
+    {
+      "path": "<Fedora run>/manual/4-recovered-card-deferred.json",
+      "bytes": 19
+    },
+    {
+      "path": "<Fedora run>/manual/cache/mesa_shader_cache/index",
+      "bytes": 2097160
+    },
+    {
+      "path": "<Fedora run>/manual/cache/mesa_shader_cache/marker",
+      "bytes": 0
+    },
+    {
+      "path": "<Fedora run>/manual/config/io.github.zulucodedesign.SecondBrain/.legacy-dirs-checked",
+      "bytes": 0
+    },
+    {
+      "path": "<Fedora run>/manual/config/io.github.zulucodedesign.SecondBrain/.window-state.json",
+      "bytes": 415
+    },
+    {
+      "path": "<Fedora run>/manual/config/io.github.zulucodedesign.SecondBrain/config.json",
+      "bytes": 1839
+    },
+    {
+      "path": "<Fedora run>/manual/config/io.github.zulucodedesign.SecondBrain/webdav-retirement-v1.json",
+      "bytes": 137
+    },
+    {
+      "path": "<Fedora run>/manual/data/gvfs-metadata/root",
+      "bytes": 64
+    },
+    {
+      "path": "<Fedora run>/manual/data/gvfs-metadata/root-0a3f3761.log",
+      "bytes": 32768
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/CacheStorage/salt",
+      "bytes": 8
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/WebKitCache/Version 17/salt",
+      "bytes": 8
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/hsts-storage.sqlite",
+      "bytes": 12288
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/localstorage/tauri_localhost_0.localstorage",
+      "bytes": 12288
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/localstorage/tauri_localhost_0.localstorage-shm",
+      "bytes": 32768
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/localstorage/tauri_localhost_0.localstorage-wal",
+      "bytes": 0
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/logs/Second Brain.log",
+      "bytes": 8768
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/mediakeys/v1/salt",
+      "bytes": 8
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/storage/salt",
+      "bytes": 8
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/deferred_similarity.json",
+      "bytes": 18
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/.managed.json",
+      "bytes": 990
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/.tantivy-meta.lock",
+      "bytes": 0
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/.tantivy-writer.lock",
+      "bytes": 0
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/029f16742927410fb7305f19c9752cbf.fast",
+      "bytes": 145
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/029f16742927410fb7305f19c9752cbf.fieldnorm",
+      "bytes": 134
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/029f16742927410fb7305f19c9752cbf.idx",
+      "bytes": 229
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/029f16742927410fb7305f19c9752cbf.pos",
+      "bytes": 199
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/029f16742927410fb7305f19c9752cbf.store",
+      "bytes": 302
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/029f16742927410fb7305f19c9752cbf.term",
+      "bytes": 1063
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/8609c22f6a194679a09e2ef17b57d2b1.fast",
+      "bytes": 145
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/8609c22f6a194679a09e2ef17b57d2b1.fieldnorm",
+      "bytes": 133
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/8609c22f6a194679a09e2ef17b57d2b1.idx",
+      "bytes": 231
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/8609c22f6a194679a09e2ef17b57d2b1.pos",
+      "bytes": 215
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/8609c22f6a194679a09e2ef17b57d2b1.store",
+      "bytes": 295
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/8609c22f6a194679a09e2ef17b57d2b1.term",
+      "bytes": 1010
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/8c8b854bbe5647a999fbd9b3135b830e.fast",
+      "bytes": 145
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/8c8b854bbe5647a999fbd9b3135b830e.fieldnorm",
+      "bytes": 134
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/8c8b854bbe5647a999fbd9b3135b830e.idx",
+      "bytes": 205
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/8c8b854bbe5647a999fbd9b3135b830e.pos",
+      "bytes": 172
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/8c8b854bbe5647a999fbd9b3135b830e.store",
+      "bytes": 288
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/8c8b854bbe5647a999fbd9b3135b830e.term",
+      "bytes": 885
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/a0b53926fed44b5e82a70f0ae32b1415.fast",
+      "bytes": 145
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/a0b53926fed44b5e82a70f0ae32b1415.fieldnorm",
+      "bytes": 132
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/a0b53926fed44b5e82a70f0ae32b1415.idx",
+      "bytes": 231
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/a0b53926fed44b5e82a70f0ae32b1415.pos",
+      "bytes": 206
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/a0b53926fed44b5e82a70f0ae32b1415.store",
+      "bytes": 296
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/a0b53926fed44b5e82a70f0ae32b1415.term",
+      "bytes": 1050
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/index/meta.json",
+      "bytes": 1885
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/search/version",
+      "bytes": 28
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/semantic.sqlite3",
+      "bytes": 53248
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/state.json",
+      "bytes": 524
+    },
+    {
+      "path": "<Fedora run>/manual/data/io.github.zulucodedesign.SecondBrain/vaults/811e630d-f3a9-4e2f-927e-be059d04fa66/sync-control.json",
+      "bytes": 122
+    },
+    {
+      "path": "<Fedora run>/manual/driver.private.log",
+      "bytes": 0
+    },
+    {
+      "path": "<Fedora run>/manual/health-session-1.png",
+      "bytes": 54894
+    },
+    {
+      "path": "<Fedora run>/manual/health-session-2.png",
+      "bytes": 68146
+    },
+    {
+      "path": "<Fedora run>/manual/health-session-3.png",
+      "bytes": 61200
+    },
+    {
+      "path": "<Fedora run>/manual/notifications.private.log",
+      "bytes": 394
+    },
+    {
+      "path": "<Fedora run>/manual/observations.json",
+      "bytes": 3462
+    },
+    {
+      "path": "<Fedora run>/manual/similarity-card.png",
+      "bytes": 90225
+    },
+    {
+      "path": "<Fedora run>/manual/vault/.helixnotes/.gitignore",
+      "bytes": 29
+    },
+    {
+      "path": "<Fedora run>/manual/vault/.helixnotes/history/0b732a91-36b5-4398-81e4-07cc5b1c531e/2026-10-20T22-36-57.md",
+      "bytes": 206
+    },
+    {
+      "path": "<Fedora run>/manual/vault/.helixnotes/history/a5996a4d-7eb1-4c00-b3c0-fd2602601f6f/2026-10-20T22-36-57.md",
+      "bytes": 205
+    },
+    {
+      "path": "<Fedora run>/manual/vault/.helixnotes/settings.json",
+      "bytes": 46
+    },
+    {
+      "path": "<Fedora run>/manual/vault/.helixnotes/trash/20261020223659338_Shed wall wood.md",
+      "bytes": 322
+    },
+    {
+      "path": "<Fedora run>/manual/vault/.helixnotes/trash/20261020223659338_Shed wall wood.md.restore.json",
+      "bytes": 228
+    },
+    {
+      "path": "<Fedora run>/manual/vault/.helixnotes/vault_id",
+      "bytes": 36
+    },
+    {
+      "path": "<Fedora run>/manual/vault/Areas/Shed spending.md",
+      "bytes": 307
+    },
+    {
+      "path": "<Fedora run>/manual/vault/Projects/Garden shed budget.md",
+      "bytes": 434
+    },
+    {
+      "path": "<Fedora run>/manual/vault/Projects/Shed materials decision.md",
+      "bytes": 424
+    },
+    {
+      "path": "<Fedora run>/manual/vault/Projects/Shed permit check.md",
+      "bytes": 425
+    },
+    {
+      "path": "<Fedora run>/manual-check.mjs",
+      "bytes": 14410
+    },
+    {
+      "path": "<Fedora run>/manual-controller.exit",
+      "bytes": 2
+    },
+    {
+      "path": "<Fedora run>/manual-controller.private.log",
+      "bytes": 102
+    },
+    {
+      "path": "<Fedora run>/named-tests.private.json",
+      "bytes": 9269
+    },
+    {
+      "path": "<Fedora run>/ollama-supervisor.private.log",
+      "bytes": 101
+    },
+    {
+      "path": "<Fedora run>/preflight.json",
+      "bytes": 310
+    },
+    {
+      "path": "<Fedora run>/preinstall.json",
+      "bytes": 530
+    },
+    {
+      "path": "<Fedora run>/remove.exit",
+      "bytes": 2
+    },
+    {
+      "path": "<Fedora run>/remove.private.log",
+      "bytes": 0
+    },
+    {
+      "path": "<Fedora run>/retained-package-extraction.txt",
+      "bytes": 24
+    },
+    {
+      "path": "<Fedora run>/review-history.md",
+      "bytes": 3047
+    },
+    {
+      "path": "<Fedora run>/server-first.json",
+      "bytes": 433
+    },
+    {
+      "path": "<Fedora run>/server-loaded-final.json",
+      "bytes": 687
+    },
+    {
+      "path": "<Fedora run>/server-loaded-manual.json",
+      "bytes": 1201
+    },
+    {
+      "path": "<Fedora run>/server-pids.json",
+      "bytes": 117
+    },
+    {
+      "path": "<Fedora run>/server-stability.json",
+      "bytes": 1006
+    },
+    {
+      "path": "<Fedora run>/similar-run/config/io.github.zulucodedesign.SecondBrain/.legacy-dirs-checked",
+      "bytes": 0
+    },
+    {
+      "path": "<Fedora run>/similar-run/config/io.github.zulucodedesign.SecondBrain/config.json",
+      "bytes": 1867
+    },
+    {
+      "path": "<Fedora run>/similar-run/config/io.github.zulucodedesign.SecondBrain/webdav-retirement-v1.json",
+      "bytes": 137
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/gvfs-metadata/root",
+      "bytes": 64
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/gvfs-metadata/root-bc9e6a50.log",
+      "bytes": 32768
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/CacheStorage/salt",
+      "bytes": 8
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/WebKitCache/Version 17/salt",
+      "bytes": 8
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/hsts-storage.sqlite",
+      "bytes": 12288
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/localstorage/tauri_localhost_0.localstorage",
+      "bytes": 12288
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/logs/Second Brain.log",
+      "bytes": 135049
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/mediakeys/v1/salt",
+      "bytes": 8
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/storage/MlgmtNb2kguBZw7a8P4FGi1aIkLYZRsiSHV2AHr5FJ0/MlgmtNb2kguBZw7a8P4FGi1aIkLYZRsiSHV2AHr5FJ0/origin",
+      "bytes": 50
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/storage/salt",
+      "bytes": 8
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/438eb4ed-1d98-4ef8-bd84-eef4108d8eb4/search/index/.managed.json",
+      "bytes": 14
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/438eb4ed-1d98-4ef8-bd84-eef4108d8eb4/search/index/.tantivy-meta.lock",
+      "bytes": 0
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/438eb4ed-1d98-4ef8-bd84-eef4108d8eb4/search/index/.tantivy-writer.lock",
+      "bytes": 0
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/438eb4ed-1d98-4ef8-bd84-eef4108d8eb4/search/index/meta.json",
+      "bytes": 1422
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/438eb4ed-1d98-4ef8-bd84-eef4108d8eb4/search/version",
+      "bytes": 28
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/438eb4ed-1d98-4ef8-bd84-eef4108d8eb4/semantic.sqlite3",
+      "bytes": 36864
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/438eb4ed-1d98-4ef8-bd84-eef4108d8eb4/sync-control.json",
+      "bytes": 122
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/deferred_similarity.json",
+      "bytes": 212
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/.managed.json",
+      "bytes": 1521
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/.tantivy-meta.lock",
+      "bytes": 0
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/.tantivy-writer.lock",
+      "bytes": 0
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/04497e0c2e844870a5f6ad34c1d71027.fast",
+      "bytes": 145
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/04497e0c2e844870a5f6ad34c1d71027.fieldnorm",
+      "bytes": 133
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/04497e0c2e844870a5f6ad34c1d71027.idx",
+      "bytes": 209
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/04497e0c2e844870a5f6ad34c1d71027.pos",
+      "bytes": 175
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/04497e0c2e844870a5f6ad34c1d71027.store",
+      "bytes": 311
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/04497e0c2e844870a5f6ad34c1d71027.term",
+      "bytes": 937
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/802107bf63f1452388f96b66b03f627e.fast",
+      "bytes": 145
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/802107bf63f1452388f96b66b03f627e.fieldnorm",
+      "bytes": 134
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/802107bf63f1452388f96b66b03f627e.idx",
+      "bytes": 197
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/802107bf63f1452388f96b66b03f627e.pos",
+      "bytes": 165
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/802107bf63f1452388f96b66b03f627e.store",
+      "bytes": 304
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/802107bf63f1452388f96b66b03f627e.term",
+      "bytes": 881
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/9657f583c6454295a4ecf41d99881fed.fast",
+      "bytes": 145
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/9657f583c6454295a4ecf41d99881fed.fieldnorm",
+      "bytes": 134
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/9657f583c6454295a4ecf41d99881fed.idx",
+      "bytes": 197
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/9657f583c6454295a4ecf41d99881fed.pos",
+      "bytes": 165
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/9657f583c6454295a4ecf41d99881fed.store",
+      "bytes": 304
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/9657f583c6454295a4ecf41d99881fed.term",
+      "bytes": 871
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/965bc3a983364428b76bf9e8c79fe749.385.del",
+      "bytes": 106
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/965bc3a983364428b76bf9e8c79fe749.fast",
+      "bytes": 146
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/965bc3a983364428b76bf9e8c79fe749.fieldnorm",
+      "bytes": 284
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/965bc3a983364428b76bf9e8c79fe749.idx",
+      "bytes": 1786
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/965bc3a983364428b76bf9e8c79fe749.pos",
+      "bytes": 1512
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/965bc3a983364428b76bf9e8c79fe749.store",
+      "bytes": 1844
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/965bc3a983364428b76bf9e8c79fe749.term",
+      "bytes": 7100
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/b50e60e9c1234d78a7fe5ed516324d26.fast",
+      "bytes": 145
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/b50e60e9c1234d78a7fe5ed516324d26.fieldnorm",
+      "bytes": 134
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/b50e60e9c1234d78a7fe5ed516324d26.idx",
+      "bytes": 227
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/b50e60e9c1234d78a7fe5ed516324d26.pos",
+      "bytes": 196
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/b50e60e9c1234d78a7fe5ed516324d26.store",
+      "bytes": 314
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/b50e60e9c1234d78a7fe5ed516324d26.term",
+      "bytes": 1044
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/b8dd3b138ac246e18a54ed1411485f7d.fast",
+      "bytes": 145
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/b8dd3b138ac246e18a54ed1411485f7d.fieldnorm",
+      "bytes": 134
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/b8dd3b138ac246e18a54ed1411485f7d.idx",
+      "bytes": 190
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/b8dd3b138ac246e18a54ed1411485f7d.pos",
+      "bytes": 156
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/b8dd3b138ac246e18a54ed1411485f7d.store",
+      "bytes": 308
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/b8dd3b138ac246e18a54ed1411485f7d.term",
+      "bytes": 859
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/index/meta.json",
+      "bytes": 2176
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/search/version",
+      "bytes": 28
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/semantic.sqlite3",
+      "bytes": 184320
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/state.json",
+      "bytes": 639
+    },
+    {
+      "path": "<Fedora run>/similar-run/data/io.github.zulucodedesign.SecondBrain/vaults/7879b1d7-3a5e-414f-a0b2-1e0cf9857113/sync-control.json",
+      "bytes": 122
+    },
+    {
+      "path": "<Fedora run>/similar-run/other-vault/.helixnotes/.gitignore",
+      "bytes": 29
+    },
+    {
+      "path": "<Fedora run>/similar-run/other-vault/.helixnotes/settings.json",
+      "bytes": 46
+    },
+    {
+      "path": "<Fedora run>/similar-run/other-vault/.helixnotes/vault_id",
+      "bytes": 36
+    },
+    {
+      "path": "<Fedora run>/similar-run/similar-run.json",
+      "bytes": 11095
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/.gitignore",
+      "bytes": 29
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/00000009-0000-4000-8000-000000000001/2026-10-20T22-39-53.md",
+      "bytes": 16
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/00000009-0000-4000-8000-000000000001/2026-10-20T22-39-54.md",
+      "bytes": 434
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/00000009-0000-4000-8000-000000000001/2026-10-20T22-39-55.md",
+      "bytes": 604
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/00000009-0000-4000-8000-000000000002/2026-10-20T22-39-55.md",
+      "bytes": 424
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/2dac08dc-48eb-4b4a-9bb8-e603e401d4c6/2026-10-20T22-39-48.md",
+      "bytes": 213
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/423c9607-18b5-4c39-b784-ae02a8acd949/2026-10-20T22-39-25.md",
+      "bytes": 207
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/43d8014d-aa69-4619-b4b9-de5d4fc608a0/2026-10-20T22-39-27.md",
+      "bytes": 206
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/51f03a34-9a7a-42bb-9894-9f6a9f63afc4/2026-10-20T22-39-37.md",
+      "bytes": 214
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/5af42189-f921-4440-9003-a0f4621bb0bb/2026-10-20T22-40-32.md",
+      "bytes": 214
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/6d65d5d1-953e-4aac-b777-9b18aff72a93/2026-10-20T22-39-50.md",
+      "bytes": 221
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/76651fc4-e5da-4f79-a33c-958ce73be4fd/2026-10-20T22-39-26.md",
+      "bytes": 207
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/7f852d68-492a-4838-8ab4-ab4f8526ced5/2026-10-20T22-39-25.md",
+      "bytes": 207
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/8b5d84a1-6fe5-4dad-8b00-03bbd3c8834a/2026-10-20T22-39-39.md",
+      "bytes": 215
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/95ba936b-9b6a-451b-aa6b-264e18b14b20/2026-10-20T22-40-05.md",
+      "bytes": 221
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/9a3e805e-68f6-49da-8eec-b676a47e6cf9/2026-10-20T22-39-54.md",
+      "bytes": 220
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/9b9d3111-e022-4603-8e0c-06eab9dc8c70/2026-10-20T22-39-42.md",
+      "bytes": 206
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/aed5426e-3169-4931-94e3-65201341ea52/2026-10-20T22-39-34.md",
+      "bytes": 208
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/b52290b5-e2a9-4484-957f-fb0ab9df7669/2026-10-20T22-40-01.md",
+      "bytes": 219
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/b7525f30-00d3-42ff-9691-5a5959ccdb79/2026-10-20T22-39-31.md",
+      "bytes": 213
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/b929b2d4-3f68-49f3-a1a6-cfd54398e2ed/2026-10-20T22-39-58.md",
+      "bytes": 219
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/d6270c41-962f-4628-a128-33cb38d6fea5/2026-10-20T22-39-23.md",
+      "bytes": 206
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/dcc42ac5-aaf7-482e-9216-88ecf5e473df/2026-10-20T22-39-26.md",
+      "bytes": 209
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/e5240022-3606-401c-9c39-a0b09dc6fb79/2026-10-20T22-40-27.md",
+      "bytes": 214
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/e7898ed6-f0df-47cd-99d3-87ad1cf7eb04/2026-10-20T22-39-53.md",
+      "bytes": 220
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/e824ba25-90c8-4e57-9742-be6579031116/2026-10-20T22-39-23.md",
+      "bytes": 205
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/f02e165d-caa3-479c-a25c-df591815b020/2026-10-20T22-39-45.md",
+      "bytes": 199
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/fa51bc98-ec59-456a-aca3-a52ac030b7e9/2026-10-20T22-39-28.md",
+      "bytes": 208
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/history/fb69cdad-98af-4a8b-89ee-015dee8ac3ed/2026-10-20T22-39-27.md",
+      "bytes": 204
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/settings.json",
+      "bytes": 46
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/trash/20261020223953379_Shed spending.md",
+      "bytes": 307
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/trash/20261020223953379_Shed spending.md.restore.json",
+      "bytes": 227
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/trash/20261020223954254_Shed spending (open capture).md",
+      "bytes": 322
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/trash/20261020223954254_Shed spending (open capture).md.restore.json",
+      "bytes": 242
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/trash/20261020223955497_Shed wall wood (open target).md",
+      "bytes": 336
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/trash/20261020223955497_Shed wall wood (open target).md.restore.json",
+      "bytes": 242
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/.helixnotes/vault_id",
+      "bytes": 36
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Bathroom bulb and smoke alarm.md",
+      "bytes": 303
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Cold brew ratio (late).md",
+      "bytes": 299
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Cold brew ratio (unfocused).md",
+      "bytes": 304
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Cold brew ratio.md",
+      "bytes": 292
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Dentist.md",
+      "bytes": 254
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Espresso recipe (unfocused).md",
+      "bytes": 290
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Espresso recipe.md",
+      "bytes": 278
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Habit stacking.md",
+      "bytes": 317
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Half marathon in March.md",
+      "bytes": 293
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Knee pain after long runs (moved).md",
+      "bytes": 370
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Knee pain on runs.md",
+      "bytes": 290
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Lighthouse story idea.md",
+      "bytes": 286
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Lisbon plans.md",
+      "bytes": 308
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/New burr grinder.md",
+      "bytes": 288
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Porto day trip.md",
+      "bytes": 274
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Running plan October.md",
+      "bytes": 333
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Rye sourdough attempt.md",
+      "bytes": 308
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Shed gutter idea.md",
+      "bytes": 288
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Shed spending (while offline).md",
+      "bytes": 323
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Shed wall wood.md",
+      "bytes": 322
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Sourdough hydration notes.md",
+      "bytes": 386
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Sourdough starter feeding.md",
+      "bytes": 395
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Starter routine (held).md",
+      "bytes": 310
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Starter routine.md",
+      "bytes": 303
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/Tax documents checklist.md",
+      "bytes": 349
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Areas/The Psychology of Money.md",
+      "bytes": 299
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Projects/Garden shed budget.md",
+      "bytes": 783
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Projects/Lisbon trip planning.md",
+      "bytes": 341
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Projects/Shed materials decision.md",
+      "bytes": 623
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Projects/Shed permit check.md",
+      "bytes": 425
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Resources/Book notes: Atomic Habits.md",
+      "bytes": 390
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Resources/Book notes: Deep Work.md",
+      "bytes": 368
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Resources/Cold brew coffee guide.md",
+      "bytes": 370
+    },
+    {
+      "path": "<Fedora run>/similar-run/vault/Resources/Espresso dialing in.md",
+      "bytes": 347
+    },
+    {
+      "path": "<Fedora run>/similar-run-routing.json",
+      "bytes": 852
+    },
+    {
+      "path": "<Fedora run>/similar-run.exit",
+      "bytes": 2
+    },
+    {
+      "path": "<Fedora run>/similar-run.private.log",
+      "bytes": 2981
+    },
+    {
+      "path": "<Fedora run>/similar-ssh-bin/ssh",
+      "bytes": 235
+    },
+    {
+      "path": "<Fedora run>/usage-fedora-build.log",
+      "bytes": 489
+    },
+    {
+      "path": "<Fedora run>/usage-fedora-debug-build.log",
+      "bytes": 490
+    },
+    {
+      "path": "<Fedora run>/usage-installed-check.log",
+      "bytes": 489
+    },
+    {
+      "path": "<Fedora run>/usage-linux-package.log",
+      "bytes": 490
+    },
+    {
+      "path": "<Fedora run>/usage-report-validation.log",
+      "bytes": 489
+    },
+    {
+      "path": "<Fedora run>/usage-similar-run.log",
+      "bytes": 487
+    },
+    {
+      "path": "<Fedora run>/usage-windows-build.log",
+      "bytes": 489
+    },
+    {
+      "path": "<Fedora run>/usage-windows-lint.log",
+      "bytes": 489
+    },
+    {
+      "path": "<Fedora run>/usage-windows-rust.log",
+      "bytes": 489
+    },
+    {
+      "path": "<Fedora run>/usage-windows-tauri.log",
+      "bytes": 489
+    },
+    {
+      "path": "<Fedora run>/win-build.ps1",
+      "bytes": 660
+    },
+    {
+      "path": "<Fedora run>/win-build.ps1.log",
+      "bytes": 4154
+    },
+    {
+      "path": "<Fedora run>/win-cleanup.ps1",
+      "bytes": 3140
+    },
+    {
+      "path": "<Fedora run>/win-cleanup.ps1.log",
+      "bytes": 2394
+    },
+    {
+      "path": "<Fedora run>/win-init.ps1",
+      "bytes": 414
+    },
+    {
+      "path": "<Fedora run>/win-init.ps1.log",
+      "bytes": 108
+    },
+    {
+      "path": "<Fedora run>/win-inspect.ps1",
+      "bytes": 595
+    },
+    {
+      "path": "<Fedora run>/win-inspect.ps1.log",
+      "bytes": 922
+    },
+    {
+      "path": "<Fedora run>/win-inventory.ps1",
+      "bytes": 2301
+    },
+    {
+      "path": "<Fedora run>/win-inventory.ps1.log",
+      "bytes": 17456
+    },
+    {
+      "path": "<Fedora run>/win-lint-rust.ps1",
+      "bytes": 668
+    },
+    {
+      "path": "<Fedora run>/win-lint-rust.ps1.log",
+      "bytes": 1626
+    },
+    {
+      "path": "<Fedora run>/win-ollama-prep.ps1",
+      "bytes": 876
+    },
+    {
+      "path": "<Fedora run>/win-ollama-prep.ps1.log",
+      "bytes": 2246
+    },
+    {
+      "path": "<Fedora run>/win-prep.ps1",
+      "bytes": 786
+    },
+    {
+      "path": "<Fedora run>/win-prep.ps1.log",
+      "bytes": 2651
+    },
+    {
+      "path": "<Fedora run>/win-probe-first.ps1",
+      "bytes": 1253
+    },
+    {
+      "path": "<Fedora run>/win-probe-first.ps1.log",
+      "bytes": 624
+    },
+    {
+      "path": "<Fedora run>/win-probe-loaded.ps1",
+      "bytes": 1717
+    },
+    {
+      "path": "<Fedora run>/win-probe-loaded.ps1.log",
+      "bytes": 1230
+    },
+    {
+      "path": "<Fedora run>/win-probe-stable.ps1",
+      "bytes": 1253
+    },
+    {
+      "path": "<Fedora run>/win-probe-stable.ps1.log",
+      "bytes": 624
+    },
+    {
+      "path": "<Fedora run>/win-ssh.py",
+      "bytes": 463
+    },
+    {
+      "path": "<Fedora run>/win-status-after.ps1",
+      "bytes": 377
+    },
+    {
+      "path": "<Fedora run>/win-status-after.ps1.log",
+      "bytes": 491
+    },
+    {
+      "path": "<Fedora run>/win-status-identity.ps1",
+      "bytes": 613
+    },
+    {
+      "path": "<Fedora run>/win-status-identity.ps1.log",
+      "bytes": 396
+    },
+    {
+      "path": "<Fedora run>/win-tauri-build.ps1",
+      "bytes": 672
+    },
+    {
+      "path": "<Fedora run>/win-tauri-build.ps1.log",
+      "bytes": 1526
+    },
+    {
+      "path": "<Fedora run>/win-test-rust.ps1",
+      "bytes": 705
+    },
+    {
+      "path": "<Fedora run>/win-test-rust.ps1.log",
+      "bytes": 2122
+    },
+    {
+      "path": "<Fedora run>/windows-build.log",
+      "bytes": 35907
+    },
+    {
+      "path": "<Fedora run>/windows-inventory.exit",
+      "bytes": 2
+    },
+    {
+      "path": "<Fedora run>/windows-inventory.json",
+      "bytes": 17456
+    },
+    {
+      "path": "<Fedora run>/windows-inventory.parsed.json",
+      "bytes": 10158
+    },
+    {
+      "path": "<Fedora run>/windows-inventory.raw.json",
+      "bytes": 733
+    },
+    {
+      "path": "<Fedora run>/windows-lint-rust.log",
+      "bytes": 13298
+    },
+    {
+      "path": "<Fedora run>/windows-lint-rust.partial.log",
+      "bytes": 13298
+    },
+    {
+      "path": "<Fedora run>/windows-tauri-build.log",
+      "bytes": 50913
+    },
+    {
+      "path": "<Fedora run>/windows-tauri-build.partial.log",
+      "bytes": 50913
+    },
+    {
+      "path": "<Fedora run>/windows-test-rust.log",
+      "bytes": 78504
+    },
+    {
+      "path": "<Fedora run>/windows-test-rust.partial.log",
+      "bytes": 34206
+    }
+  ],
+  "windowsRunFiles": [
+    {
+      "path": "<Windows run>/before-tmp.json",
+      "bytes": 101683
+    },
+    {
+      "path": "<Windows run>/build.log",
+      "bytes": 35907
+    },
+    {
+      "path": "<Windows run>/candidate.bundle",
+      "bytes": 5491033
+    },
+    {
+      "path": "<Windows run>/lint-rust.log",
+      "bytes": 13298
+    },
+    {
+      "path": "<Windows run>/ollama-gate.ps1",
+      "bytes": 1213
+    },
+    {
+      "path": "<Windows run>/owned-process.cs",
+      "bytes": 4803
+    },
+    {
+      "path": "<Windows run>/tauri-build.log",
+      "bytes": 50913
+    },
+    {
+      "path": "<Windows run>/test-rust.log",
+      "bytes": 78504
+    }
+  ],
+  "packages": [
+    {
+      "machine": "Fedora",
+      "path": "src-tauri/target/release/bundle/rpm/Second Brain-0.1.0-alpha.1-1.x86_64.rpm",
+      "bytes": 30175462
+    },
+    {
+      "machine": "Windows",
+      "path": "<Windows shared Rust target>/release/bundle/nsis/Second Brain_0.1.0-alpha.1_x64-setup.exe",
+      "bytes": 20333836
+    }
+  ],
+  "cleanupPolicy": "No discretionary artifact deletion performed. Entries marked cleanupCandidate are what could be deleted only after item-specific owner approval. Shared caches retained for reuse; live model store excluded and untouched. Earlier retained-path inventories remain linked in historical report.",
+  "newCommittedEvidenceFiles": [
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/added-tests-matched-32fe3af.json",
+      "bytes": 23527,
+      "sha256": "7c44a742156ac39a04a7b460cacc652d422d358fed7d0282c2afb34af6160063"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/fedora-debug-build-32fe3af.txt",
+      "bytes": 26406,
+      "sha256": "ba9294bfcaeb0f99cee3a7aa133e56a7a3c2a849e2d5f1c8c33738e194e6bdc3"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/fedora-package-32fe3af.txt",
+      "bytes": 120,
+      "sha256": "2be515eccce0dab02c4b0b125bb7abbcda28fe2f98d4f287cf44d674e3e71f6c"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/fedora-tauri-build-32fe3af.txt",
+      "bytes": 26412,
+      "sha256": "ebc00a76b1d70bc211d2607ba85f17c06501c0526e930d010afca6cb50970d46"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/fedora-verify-32fe3af.txt",
+      "bytes": 115251,
+      "sha256": "6072d514f341756e87932421bb238b31e7d69051f2026e2b60cbb1e1f6a6d5f8"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/installed-recovery-32fe3af-after-delete-deferred.json",
+      "bytes": 262,
+      "sha256": "b1f9fb4095a2d5efc9a59d69b0f947896b7bef15588f39673ea4383cf4b561fb"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/installed-recovery-32fe3af-card.png",
+      "bytes": 90225,
+      "sha256": "d3add37f5218f3d00efb19baea00552b8fa30aabccbad3536b03ab4eaa666b8f"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/installed-recovery-32fe3af-empty-deferred.json",
+      "bytes": 19,
+      "sha256": "caff5752efd7abaac4289dfac6160ab254513e4c8a5476916398d755ab4949dc"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/installed-recovery-32fe3af-offline-deferred.json",
+      "bytes": 262,
+      "sha256": "b1f9fb4095a2d5efc9a59d69b0f947896b7bef15588f39673ea4383cf4b561fb"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/installed-recovery-32fe3af.json",
+      "bytes": 9651,
+      "sha256": "099dae65621a8578f72242d19c0619818b70c40470a1113309a6ce36864cc6cf"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/installed-recovery-controller-32fe3af.mjs",
+      "bytes": 14486,
+      "sha256": "4670cc1e37cf9e02694a448029fb39413e257f8884030608dfb330bf2cc47437"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/match-added-tests-32fe3af.py",
+      "bytes": 1295,
+      "sha256": "b619fa817130a0d0652e42cf7e21fb815b237187c463e214d68ed32d37e92792"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/match-tests-32fe3af.py",
+      "bytes": 847,
+      "sha256": "925f71f8abf8527002d59a05d5a4e881de9746e930c1356f505759212327a432"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/named-tests-32fe3af.json",
+      "bytes": 9269,
+      "sha256": "336e10ad000ff202d263193f805c0d734ac6f0bb5675d0fddfbd59b0324378b7"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/similar-run-32fe3af.json",
+      "bytes": 11095,
+      "sha256": "d3d0bdce7c55ce74464bbdf52e2b2af5a4fba2ea2cfd10d01ef6df44b3eea3f9"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/similar-run-routing-32fe3af.json",
+      "bytes": 852,
+      "sha256": "7f6bc36abd375b12da67aaa54163f368029f2d9f28d1c7441667bdcbd6840534"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/verification-32fe3af.json",
+      "bytes": 4830,
+      "sha256": "16aaf3c6e1c364a0e384f09ec38a3e51d787dd27ea71a7964759b6b7cbdb9517"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/windows-build-32fe3af.txt",
+      "bytes": 25672,
+      "sha256": "c7ae17f5ee81784f39b7a36be7382ec2e28a408b78b186278cea9b47b517362c"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/windows-inventory-32fe3af.json",
+      "bytes": 10158,
+      "sha256": "0470e898bd590959839a72bea3b4dfd9e4eb4725a5216f5333e1e405463afa66"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/windows-lint-rust-32fe3af.txt",
+      "bytes": 13259,
+      "sha256": "ab833e6dae07018bfd7712a4d57bfb4e4a477d7ef8025b6afbec2e21d6a4b503"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/windows-post-build-state-32fe3af.json",
+      "bytes": 734,
+      "sha256": "d59dbcd6dcd77dff801e4dc03cc84d0398e153992db0173a74c87a8eaca04ebf"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/windows-tauri-build-32fe3af.txt",
+      "bytes": 40583,
+      "sha256": "5b25ab5ba22108b1797f7e024fe4c281efede758b683109990898cc8b8183b41"
+    },
+    {
+      "path": "docs/reports/evidence/ticket-216-2026-10-17/windows-test-rust-32fe3af.txt",
+      "bytes": 78453,
+      "sha256": "34d1a167e539cda12a96ea629357803c879af880b2c6d5eccbee57d08d57a652"
+    }
+  ],
+  "inventoryFileExcludedFromSelfHash": true
+}

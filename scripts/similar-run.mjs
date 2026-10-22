@@ -6,15 +6,17 @@
 // Same setup as ask-run.mjs: a fresh run root, tauri-driver, and the desktop's Ollama tunnelled
 // in. The vault holds scripts/similarity-fixture.json's notes. Each fixture capture is filed
 // through the command the overlay uses (WebDriver cannot press a global hotkey), and the card
-// it raises in the main window is read back. Then Append, Dismiss, refused Appends on a note
-// edited and a note moved since the check, Open, Append with the capture open in the editor, Append with the similar note open, and a capture with the
+// it raises in the main window is read back once the app logs that its check has ended. Then
+// Append, Dismiss, refused Appends on a note edited and a note moved since the check, Open, Append
+// with the capture open in the editor, Append with the similar note open, and a capture with the
 // backend gone are each tried once.
 // On Linux, two more duplicates are captured with the main window minimized, and the
 // notifications the app sends are read off the session bus with dbus-monitor. A click on one
 // cannot be scripted, so that stays a hand check.
-// Last, a relay holds the backend's requests so a check waits across a vault switch: one held
-// check with no switch shows its card, then one held while the vault switches must leave no card
-// and no notification once released.
+// Last, the backend comes back behind a relay, and the capture made without it gets its card
+// (#216). The relay then holds the backend's requests so a check waits across a vault switch: one
+// held check with no switch shows its card, then one held while the vault switches must leave no
+// card and no notification once released.
 
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -202,12 +204,16 @@ function heldBackend(upstreamPort) {
   };
 }
 
-// How many times the app has logged skipping a check for a note: its check failed, which an
-// unreachable backend or a retired index both cause.
-function skippedChecks(root) {
+// Logged when a check for a note fails, which an unreachable backend or a retired index both
+// cause, and when a quick capture's check has ended, once any card it found is sent (#216).
+const SKIPPED = 'Skipped the similarity check for a new note';
+const FINISHED = 'Finished the similarity check for a capture';
+
+// How many times the app has logged `line`; null before it has a log.
+function logged(root, line) {
   const log = readdirSync(join(root, 'data'), { recursive: true }).find((name) => String(name).endsWith('Second Brain.log'));
   if (!log) return null;
-  return readFileSync(join(root, 'data', String(log)), 'utf8').split('Skipped the similarity check for a new note').length - 1;
+  return readFileSync(join(root, 'data', String(log)), 'utf8').split(line).length - 1;
 }
 
 const trashed = (vault, path) =>
@@ -242,6 +248,7 @@ async function main() {
           duplicatesFound: results.filter((result) => result.duplicateOf && !result.missed).length,
           duplicates: results.filter((result) => result.duplicateOf).length,
           wrongCards: results.filter((result) => result.wrong.length > 0).length,
+          inconclusive: results.filter((result) => result.inconclusive).length,
         },
         // Vault-relative, so the trace names no home directory when it is committed as evidence.
         results: results.map((result) => ({ ...result, path: relative(vault, result.path) })),
@@ -254,21 +261,28 @@ async function main() {
     };
     try {
       for (const item of fixture.captures) {
+        const finishedBefore = logged(settings.root, FINISHED) ?? 0;
+        const skippedBefore = logged(settings.root, SKIPPED) ?? 0;
         const started = Date.now();
         const entry = await capture(browser, item.title, item.body);
         // The overlay closes once this command returns, so this is what the user waits for.
         const captureMs = Date.now() - started;
-        // The backend's own check sends the card; this asks the same question directly, so the
-        // run knows whether a card is due rather than waiting out a timeout.
-        const expected = await invoke(browser, 'check_similar_notes', { path: entry.path });
-        if (expected?.failed) throw new Error(`check failed: ${expected.failed}`);
+        // The backend's own check sends the card, and logs its end once it has. Asking the backend
+        // directly would take the check's turn, and its card with it (#216).
+        const finished = await browser
+          .waitUntil(async () => (logged(settings.root, FINISHED) ?? 0) > finishedBefore, {
+            timeout: CARD_TIMEOUT,
+            interval: 500,
+          })
+          .then(() => true, () => false);
+        // A card sent before that line reaches the page a moment later.
         let card = null;
-        if (expected) {
-          card = await waitForCard(browser, entry.meta.title);
-        } else {
-          await sleep(5_000);
-          card = await readCard(browser, entry.meta.title);
-        }
+        await browser
+          .waitUntil(async () => (card = await readCard(browser, entry.meta.title)) !== null, {
+            timeout: 2_000,
+            interval: 250,
+          })
+          .catch(() => {});
         const shown = card?.matches.map((match) => match.title) ?? [];
         results.push({
           capture: item.title,
@@ -277,13 +291,15 @@ async function main() {
           path: entry.path,
           title: entry.meta.title,
           captureMs,
-          // From the capture to the card, or to the end of the 5-second wait when none is due.
+          // From the capture to the card, or to the end of the wait when none came.
           seconds: Math.round((Date.now() - started) / 1000),
           shown,
           coverage: card?.coverage ?? null,
           excerpts: card?.matches.map((match) => match.excerpt) ?? [],
           missed: Boolean(item.duplicateOf) && !shown.includes(item.duplicateOf),
           wrong: shown.filter((title) => title !== item.duplicateOf),
+          // The check never ended, or failed and was kept: what the capture shows proves nothing.
+          inconclusive: !finished || (logged(settings.root, SKIPPED) ?? 0) > skippedBefore,
         });
         console.log(`${shown.length ? shown.join(', ') : '(no card)'}  <-  ${item.title}`);
       }
@@ -460,6 +476,12 @@ async function main() {
         const backend = heldBackend(OLLAMA_PORT + 1);
         try {
           await backend.listen();
+          // The offline capture's check was kept, and runs once the index has caught up with the
+          // backend back (#216): its card comes now, before anything below counts cards.
+          actions.offline.cardOnceBack = await waitForCard(browser, offline.meta.title).then(
+            () => true,
+            () => false,
+          );
           const other = join(settings.root, 'other-vault');
           mkdirSync(join(other, '.helixnotes'), { recursive: true });
           writeFileSync(join(other, '.helixnotes', 'vault_id'), randomUUID(), { flag: 'wx' });
@@ -492,7 +514,7 @@ async function main() {
           // The late check: its embedding is held while the vault switches, then released.
           const notifiedBeforeLate = notifyCalls(busOutput).length;
           const cardsBeforeLate = await cardCount(browser);
-          const skippedBeforeLate = skippedChecks(settings.root);
+          const skippedBeforeLate = logged(settings.root, SKIPPED);
           backend.hold();
           since = Date.now();
           const late = await capture(browser, `${duplicates[3].title} (late)`, duplicates[3].body);
@@ -524,7 +546,7 @@ async function main() {
             answersAfterRelease: backend.answers.filter((at) => at >= releasedAt).length,
             // 1 when the late check failed (a retired index, or the capture read under the new
             // vault); 0 when it finished and the vault check dropped it.
-            lateCheckSkipped: skippedBeforeLate === null ? null : skippedChecks(settings.root) - skippedBeforeLate,
+            lateCheckSkipped: skippedBeforeLate === null ? null : logged(settings.root, SKIPPED) - skippedBeforeLate,
             // The control's card stays (the page was not switched); any more is the late one.
             cardsAfterSwitch: (await cardCount(browser)) - cardsBeforeLate,
             notificationsAfterSwitch: notifyCalls(busOutput).length - notifiedBeforeLate,

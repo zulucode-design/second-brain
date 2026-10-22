@@ -1,0 +1,780 @@
+{
+  "source": "test functions present in candidate but absent from origin/main, matched by function suffix against complete logs; commands shown in report",
+  "tests": [
+    {
+      "file": "src-tauri/src/commands.rs",
+      "function": "a_failed_restore_changed_the_vault_only_when_it_says_so",
+      "fedora": [
+        [
+          "commands::restore_outcome_tests::a_failed_restore_changed_the_vault_only_when_it_says_so",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "commands::restore_outcome_tests::a_failed_restore_changed_the_vault_only_when_it_says_so",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands.rs",
+      "function": "a_failed_restore_whose_reconcile_also_fails_reports_both",
+      "fedora": [
+        [
+          "commands::restore_outcome_tests::a_failed_restore_whose_reconcile_also_fails_reports_both",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "commands::restore_outcome_tests::a_failed_restore_whose_reconcile_also_fails_reports_both",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands.rs",
+      "function": "a_restore_and_its_reconcile_that_both_succeed_are_a_success",
+      "fedora": [
+        [
+          "commands::restore_outcome_tests::a_restore_and_its_reconcile_that_both_succeed_are_a_success",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "commands::restore_outcome_tests::a_restore_and_its_reconcile_that_both_succeed_are_a_success",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands.rs",
+      "function": "a_restore_refused_the_lease_never_runs",
+      "fedora": [
+        [
+          "commands::restore_outcome_tests::a_restore_refused_the_lease_never_runs",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "commands::restore_outcome_tests::a_restore_refused_the_lease_never_runs",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/commands.rs",
+      "function": "a_restore_whose_reconcile_fails_changed_the_vault_and_says_so",
+      "fedora": [
+        [
+          "commands::restore_outcome_tests::a_restore_whose_reconcile_fails_changed_the_vault_and_says_so",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "commands::restore_outcome_tests::a_restore_whose_reconcile_fails_changed_the_vault_and_says_so",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_bulk_change_reconciles_the_semantic_index_even_when_an_earlier_step_fails",
+      "fedora": [
+        [
+          "semantic_search::tests::a_bulk_change_reconciles_the_semantic_index_even_when_an_earlier_step_fails",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_bulk_change_reconciles_the_semantic_index_even_when_an_earlier_step_fails",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_bulk_change_that_comes_and_goes_during_a_check_stops_the_rerun",
+      "fedora": [
+        [
+          "semantic_search::tests::a_bulk_change_that_comes_and_goes_during_a_check_stops_the_rerun",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_bulk_change_that_comes_and_goes_during_a_check_stops_the_rerun",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_capture_renamed_before_its_check_starts_is_kept_by_its_id",
+      "fedora": [
+        [
+          "semantic_search::tests::a_capture_renamed_before_its_check_starts_is_kept_by_its_id",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_capture_renamed_before_its_check_starts_is_kept_by_its_id",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_check_is_kept_while_it_runs_and_leaves_the_list_when_it_succeeds",
+      "fedora": [
+        [
+          "semantic_search::tests::a_check_is_kept_while_it_runs_and_leaves_the_list_when_it_succeeds",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_check_is_kept_while_it_runs_and_leaves_the_list_when_it_succeeds",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_check_kept_under_another_path_to_the_open_vault_joins_its_list",
+      "fedora": [
+        [
+          "semantic_search::tests::a_check_kept_under_another_path_to_the_open_vault_joins_its_list",
+          "ok"
+        ]
+      ],
+      "windows": []
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_check_that_starts_after_a_vault_switch_is_kept_for_its_own_vault",
+      "fedora": [
+        [
+          "semantic_search::tests::a_check_that_starts_after_a_vault_switch_is_kept_for_its_own_vault",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_check_that_starts_after_a_vault_switch_is_kept_for_its_own_vault",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_check_waiting_behind_another_is_kept_while_it_waits",
+      "fedora": [
+        [
+          "semantic_search::tests::a_check_waiting_behind_another_is_kept_while_it_waits",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_check_waiting_behind_another_is_kept_while_it_waits",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_deferred_check_runs_after_the_backend_returns_and_its_card_is_delivered",
+      "fedora": [
+        [
+          "semantic_search::tests::a_deferred_check_runs_after_the_backend_returns_and_its_card_is_delivered",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_deferred_check_runs_after_the_backend_returns_and_its_card_is_delivered",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_deferred_check_that_fails_again_stays_recorded",
+      "fedora": [
+        [
+          "semantic_search::tests::a_deferred_check_that_fails_again_stays_recorded",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_deferred_check_that_fails_again_stays_recorded",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_deferred_note_moved_where_it_cannot_be_opened_is_not_taken_for_deleted",
+      "fedora": [
+        [
+          "semantic_search::tests::a_deferred_note_moved_where_it_cannot_be_opened_is_not_taken_for_deleted",
+          "ok"
+        ]
+      ],
+      "windows": []
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_deferred_note_moved_with_a_long_frontmatter_is_still_found",
+      "fedora": [
+        [
+          "semantic_search::tests::a_deferred_note_moved_with_a_long_frontmatter_is_still_found",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_deferred_note_moved_with_a_long_frontmatter_is_still_found",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_deferred_note_without_an_id_behind_a_folder_that_cannot_be_read_is_not_taken_for_deleted",
+      "fedora": [
+        [
+          "semantic_search::tests::a_deferred_note_without_an_id_behind_a_folder_that_cannot_be_read_is_not_taken_for_deleted",
+          "ok"
+        ]
+      ],
+      "windows": []
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_failed_similarity_check_is_recorded_and_survives_reloading_its_file",
+      "fedora": [
+        [
+          "semantic_search::tests::a_failed_similarity_check_is_recorded_and_survives_reloading_its_file",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_failed_similarity_check_is_recorded_and_survives_reloading_its_file",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_fill_that_stops_part_way_holds_the_rerun_until_a_reconcile_completes",
+      "fedora": [
+        [
+          "semantic_search::tests::a_fill_that_stops_part_way_holds_the_rerun_until_a_reconcile_completes",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_fill_that_stops_part_way_holds_the_rerun_until_a_reconcile_completes",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_moved_note_still_gets_its_deferred_check_and_a_deleted_one_is_dropped",
+      "fedora": [
+        [
+          "semantic_search::tests::a_moved_note_still_gets_its_deferred_check_and_a_deleted_one_is_dropped",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_moved_note_still_gets_its_deferred_check_and_a_deleted_one_is_dropped",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_note_queued_in_place_of_an_unreadable_one_holds_the_rerun",
+      "fedora": [
+        [
+          "semantic_search::tests::a_note_queued_in_place_of_an_unreadable_one_holds_the_rerun",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_note_queued_in_place_of_an_unreadable_one_holds_the_rerun",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_note_without_an_id_never_matches_itself",
+      "fedora": [
+        [
+          "semantic_search::tests::a_note_without_an_id_never_matches_itself",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_note_without_an_id_never_matches_itself",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_note_without_an_id_never_matches_itself_through_a_vault_link",
+      "fedora": [
+        [
+          "semantic_search::tests::a_note_without_an_id_never_matches_itself_through_a_vault_link",
+          "ok"
+        ]
+      ],
+      "windows": []
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_note_written_at_a_captures_path_after_a_rerun_found_it_there_never_takes_its_check",
+      "fedora": [
+        [
+          "semantic_search::tests::a_note_written_at_a_captures_path_after_a_rerun_found_it_there_never_takes_its_check",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_note_written_at_a_captures_path_after_a_rerun_found_it_there_never_takes_its_check",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_note_written_at_a_renamed_captures_old_path_never_takes_its_check",
+      "fedora": [
+        [
+          "semantic_search::tests::a_note_written_at_a_renamed_captures_old_path_never_takes_its_check",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_note_written_at_a_renamed_captures_old_path_never_takes_its_check",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_pass_that_leaves_notes_queued_reruns_nothing_until_the_queue_is_through",
+      "fedora": [
+        [
+          "semantic_search::tests::a_pass_that_leaves_notes_queued_reruns_nothing_until_the_queue_is_through",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_pass_that_leaves_notes_queued_reruns_nothing_until_the_queue_is_through",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_pass_that_stopped_or_found_the_queue_empty_reruns_nothing",
+      "fedora": [
+        [
+          "semantic_search::tests::a_pass_that_stopped_or_found_the_queue_empty_reruns_nothing",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_pass_that_stopped_or_found_the_queue_empty_reruns_nothing",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_rebuild_during_a_pass_leaves_the_rerun_to_the_pass_that_embeds_what_it_queued",
+      "fedora": [
+        [
+          "semantic_search::tests::a_rebuild_during_a_pass_leaves_the_rerun_to_the_pass_that_embeds_what_it_queued",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_rebuild_during_a_pass_leaves_the_rerun_to_the_pass_that_embeds_what_it_queued",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_rebuild_or_reconcile_started_since_the_index_caught_up_stops_the_rerun",
+      "fedora": [
+        [
+          "semantic_search::tests::a_rebuild_or_reconcile_started_since_the_index_caught_up_stops_the_rerun",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_rebuild_or_reconcile_started_since_the_index_caught_up_stops_the_rerun",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_rerun_leaves_a_kept_check_to_its_first_attempt",
+      "fedora": [
+        [
+          "semantic_search::tests::a_rerun_leaves_a_kept_check_to_its_first_attempt",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_rerun_leaves_a_kept_check_to_its_first_attempt",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_rerun_leaves_its_checks_to_the_pass_that_embeds_notes_saved_since_the_index_caught_up",
+      "fedora": [
+        [
+          "semantic_search::tests::a_rerun_leaves_its_checks_to_the_pass_that_embeds_notes_saved_since_the_index_caught_up",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_rerun_leaves_its_checks_to_the_pass_that_embeds_notes_saved_since_the_index_caught_up",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_rerun_never_holds_the_index_slot_while_it_waits_for_the_config",
+      "fedora": [
+        [
+          "semantic_search::tests::a_rerun_never_holds_the_index_slot_while_it_waits_for_the_config",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_rerun_never_holds_the_index_slot_while_it_waits_for_the_config",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_rerun_scans_the_vault_without_the_note_lock_and_a_bulk_change_meanwhile_keeps_the_check",
+      "fedora": [
+        [
+          "semantic_search::tests::a_rerun_scans_the_vault_without_the_note_lock_and_a_bulk_change_meanwhile_keeps_the_check",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_rerun_scans_the_vault_without_the_note_lock_and_a_bulk_change_meanwhile_keeps_the_check",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_rerun_waits_until_no_rebuild_or_reconcile_is_filling_the_queue",
+      "fedora": [
+        [
+          "semantic_search::tests::a_rerun_waits_until_no_rebuild_or_reconcile_is_filling_the_queue",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_rerun_waits_until_no_rebuild_or_reconcile_is_filling_the_queue",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_rerun_waits_while_a_bulk_change_holds_the_note_lock",
+      "fedora": [
+        [
+          "semantic_search::tests::a_rerun_waits_while_a_bulk_change_holds_the_note_lock",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_rerun_waits_while_a_bulk_change_holds_the_note_lock",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_restore_that_rolls_back_reconciles_what_a_reconcile_meanwhile_dropped",
+      "fedora": [
+        [
+          "semantic_search::tests::a_restore_that_rolls_back_reconciles_what_a_reconcile_meanwhile_dropped",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_restore_that_rolls_back_reconciles_what_a_reconcile_meanwhile_dropped",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_save_embedded_while_a_check_runs_stops_the_rerun",
+      "fedora": [
+        [
+          "semantic_search::tests::a_save_embedded_while_a_check_runs_stops_the_rerun",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_save_embedded_while_a_check_runs_stops_the_rerun",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "a_started_index_reruns_nothing_before_its_first_reconcile",
+      "fedora": [
+        [
+          "semantic_search::tests::a_started_index_reruns_nothing_before_its_first_reconcile",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::a_started_index_reruns_nothing_before_its_first_reconcile",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "an_index_replaced_after_a_check_scored_stops_the_rerun",
+      "fedora": [
+        [
+          "semantic_search::tests::an_index_replaced_after_a_check_scored_stops_the_rerun",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::an_index_replaced_after_a_check_scored_stops_the_rerun",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "overlapping_fills_hold_the_rerun_until_one_completes_alone",
+      "fedora": [
+        [
+          "semantic_search::tests::overlapping_fills_hold_the_rerun_until_one_completes_alone",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::overlapping_fills_hold_the_rerun_until_one_completes_alone",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "the_end_of_a_rebuild_leaves_the_notes_it_queued_to_the_next_pass",
+      "fedora": [
+        [
+          "semantic_search::tests::the_end_of_a_rebuild_leaves_the_notes_it_queued_to_the_next_pass",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::the_end_of_a_rebuild_leaves_the_notes_it_queued_to_the_next_pass",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "the_end_of_a_rebuild_runs_the_caught_up_hook_it_held",
+      "fedora": [
+        [
+          "semantic_search::tests::the_end_of_a_rebuild_runs_the_caught_up_hook_it_held",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::the_end_of_a_rebuild_runs_the_caught_up_hook_it_held",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/semantic_search.rs",
+      "function": "the_worker_retries_a_failed_fill_once_an_interval_until_it_completes",
+      "fedora": [
+        [
+          "semantic_search::tests::the_worker_retries_a_failed_fill_once_an_interval_until_it_completes",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "semantic_search::tests::the_worker_retries_a_failed_fill_once_an_interval_until_it_completes",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/similar_notes.rs",
+      "function": "a_check_kept_while_the_file_cannot_be_read_is_saved_when_another_vault_opens",
+      "fedora": [
+        [
+          "similar_notes::tests::a_check_kept_while_the_file_cannot_be_read_is_saved_when_another_vault_opens",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "similar_notes::tests::a_check_kept_while_the_file_cannot_be_read_is_saved_when_another_vault_opens",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/similar_notes.rs",
+      "function": "a_check_that_ran_while_the_file_could_not_be_read_leaves_it_when_another_vault_opens",
+      "fedora": [
+        [
+          "similar_notes::tests::a_check_that_ran_while_the_file_could_not_be_read_leaves_it_when_another_vault_opens",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "similar_notes::tests::a_check_that_ran_while_the_file_could_not_be_read_leaves_it_when_another_vault_opens",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/similar_notes.rs",
+      "function": "a_check_that_ran_while_the_file_could_not_be_replaced_leaves_it_when_another_vault_opens",
+      "fedora": [
+        [
+          "similar_notes::tests::a_check_that_ran_while_the_file_could_not_be_replaced_leaves_it_when_another_vault_opens",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "similar_notes::tests::a_check_that_ran_while_the_file_could_not_be_replaced_leaves_it_when_another_vault_opens",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/similar_notes.rs",
+      "function": "a_note_is_in_a_vault_opened_through_a_link_and_never_in_a_folder_that_is_not_one",
+      "fedora": [
+        [
+          "similar_notes::tests::a_note_is_in_a_vault_opened_through_a_link_and_never_in_a_folder_that_is_not_one",
+          "ok"
+        ]
+      ],
+      "windows": []
+    },
+    {
+      "file": "src-tauri/src/similar_notes.rs",
+      "function": "a_note_whose_folder_is_gone_is_placed_by_the_vault_unless_it_climbs_out",
+      "fedora": [
+        [
+          "similar_notes::tests::a_note_whose_folder_is_gone_is_placed_by_the_vault_unless_it_climbs_out",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "similar_notes::tests::a_note_whose_folder_is_gone_is_placed_by_the_vault_unless_it_climbs_out",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/similar_notes.rs",
+      "function": "an_unreadable_deferred_file_gives_an_empty_list_and_the_vault_still_opens",
+      "fedora": [
+        [
+          "similar_notes::tests::an_unreadable_deferred_file_gives_an_empty_list_and_the_vault_still_opens",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "similar_notes::tests::an_unreadable_deferred_file_gives_an_empty_list_and_the_vault_still_opens",
+          "ok"
+        ]
+      ]
+    },
+    {
+      "file": "src-tauri/src/similar_notes.rs",
+      "function": "opening_a_vault_reads_its_checks_and_reopening_it_keeps_the_open_list",
+      "fedora": [
+        [
+          "similar_notes::tests::opening_a_vault_reads_its_checks_and_reopening_it_keeps_the_open_list",
+          "ok"
+        ]
+      ],
+      "windows": [
+        [
+          "similar_notes::tests::opening_a_vault_reads_its_checks_and_reopening_it_keeps_the_open_list",
+          "ok"
+        ]
+      ]
+    }
+  ]
+}

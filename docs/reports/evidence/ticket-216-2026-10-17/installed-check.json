@@ -1,0 +1,36 @@
+{
+  "candidate": "19727aab6a2dcc0e1c5f1b7fc9db53b1110d6c37",
+  "started": "2026-10-18T02:04:48.685Z",
+  "steps": [
+    {
+      "step": "safety",
+      "at": "2026-10-18T02:04:48.697Z",
+      "profileRoots": 8,
+      "presentRoots": 2,
+      "isolated": true
+    }
+  ],
+  "result": "FAIL",
+  "failure": "gate-owned embedding tunnel exited 0; is port 11446 taken?",
+  "profileUnchanged": true,
+  "remainingAppProcesses": 0,
+  "finished": "2026-10-18T02:06:26.218Z",
+  "primaryFailure": {
+    "stage": "embedding backend preflight, before app launch or fixture creation",
+    "command": "curl --silent --show-error --max-time 10 http://127.0.0.1:11446/api/tags --output <private output>",
+    "exit": 52,
+    "stderr": "curl: (52) Empty reply from server"
+  },
+  "failureInterpretation": "The controller exit message follows the deliberate stop of its owned tunnel after the curl failure. It does not establish that the local port was occupied.",
+  "appLaunched": false,
+  "fixtureCreated": false,
+  "byHandSteps": {
+    "1": "NOT RUN",
+    "2": "NOT RUN",
+    "3": "NOT RUN",
+    "4": "NOT RUN"
+  },
+  "screenshotTaken": false,
+  "existingBackendOrTunnelChanged": false,
+  "ownedTunnelAbsent": true
+}

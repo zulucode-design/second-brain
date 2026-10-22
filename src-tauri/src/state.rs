@@ -54,6 +54,10 @@ pub struct AppState {
     /// portal handshake that can prompt, so the settings UI reads the outcome instead of
     /// re-running it every time the panel opens.
     pub hotkey_status: Mutex<crate::hotkey::HotkeyStatus>,
+    /// Similarity checks of the open vault kept while they run, and kept on if they fail while
+    /// the embedding backend is away, waiting to run (#216). Mirrored to a machine-local file,
+    /// so a restart keeps them.
+    pub deferred_checks: Mutex<crate::similar_notes::DeferredChecks>,
 }
 
 impl AppState {
@@ -82,6 +86,7 @@ impl AppState {
                 generation: 0,
                 status: AiStatus::unknown(),
             }),
+            deferred_checks: Mutex::new(Default::default()),
         }
     }
 }

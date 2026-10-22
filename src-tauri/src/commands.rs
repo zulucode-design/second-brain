@@ -507,6 +507,14 @@ fn open_vault_path(
     next.max_versions_per_note = shared_settings.max_versions_per_note;
     save_app_config(&next)?;
     *search_slot = Some(search);
+    // Before the worker starts, so the first pass that embeds notes and gets the queue through
+    // reruns this vault's failed similarity checks (#216). Read under the list's lock, after
+    // every step that can fail, so no check kept meanwhile is missed and a vault that fails to
+    // open leaves the open vault's list alone. Reading it never fails.
+    if let Ok(mut deferred) = state.deferred_checks.lock() {
+        deferred.open(&path);
+    }
+    crate::similar_notes::rerun_when_caught_up(&app, &semantic);
     crate::semantic_search::SemanticIndex::replace_in(&mut semantic_slot, semantic.clone());
     *watcher_slot = Some(new_watcher);
     *config = next;
@@ -1171,17 +1179,14 @@ pub fn quick_capture_note(
         capture.title,
     )?;
 
-    let current_revision = operations::read_vault_note(
-        &state
-            .config
-            .lock()
-            .map_err(|error| error.to_string())?
-            .active_vault
-            .clone()
-            .ok_or("No active vault")?,
-        &entry.path,
-    )?
-    .revision;
+    let vault_path = state
+        .config
+        .lock()
+        .map_err(|error| error.to_string())?
+        .active_vault
+        .clone()
+        .ok_or("No active vault")?;
+    let current_revision = operations::read_vault_note(&vault_path, &entry.path)?.revision;
     save_note(
         state,
         entry.path.clone(),
@@ -1190,7 +1195,7 @@ pub fn quick_capture_note(
         current_revision,
     )?;
     // Only now that the capture is on disk: the check can never cost the user their note.
-    crate::similar_notes::after_capture(app, entry.path.clone());
+    crate::similar_notes::after_capture(app, vault_path, entry.path.clone(), entry.meta.id.clone());
 
     Ok(NoteEntry {
         preview: capture.body,
@@ -1199,14 +1204,21 @@ pub fn quick_capture_note(
 }
 
 /// The capture-time similarity check (#9) for a note written in the app, run when the user
-/// first leaves it. `None` when nothing is similar or the check could not run.
+/// first leaves it. `vault` is the vault the note was opened in, since leaving it can be what
+/// switches vaults, and `id` its frontmatter id, which finds it if it has moved since. `None` when
+/// nothing is similar or the check could not run.
 #[tauri::command]
 pub async fn check_similar_notes(
     app: tauri::AppHandle,
+    vault: String,
     path: String,
+    id: String,
 ) -> Result<Option<crate::similar_notes::SimilarityCheck>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        crate::similar_notes::check_now(&app.state::<AppState>(), &path)
+        if !crate::similar_notes::note_in_opened_vault(&vault, &path) {
+            return None;
+        }
+        crate::similar_notes::check_now(&app.state::<AppState>(), &vault, &path, &id)
     })
     .await
     .map_err(|error| format!("Similarity check failed: {error}"))
@@ -3155,7 +3167,150 @@ mod import_outcome_tests {
     }
 }
 
+#[cfg(test)]
+mod restore_outcome_tests {
+    use super::restore_and_reconcile;
+    use crate::backup::RestoreError;
+    use crate::bulk_mutation::{BulkMutationOutcome, BulkMutationTerminal};
+    use crate::state::AppState;
+    use crate::types::AppConfig;
+
+    /// The terminal for a restore that ends as `restored`, in a vault whose shared settings are
+    /// damaged unless `reconciles`, so reconciling it fails.
+    fn restore(restored: Result<(), RestoreError>, reconciles: bool) -> BulkMutationTerminal {
+        let vault =
+            std::env::temp_dir().join(format!("sb-restore-outcome-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(vault.join(".helixnotes")).unwrap();
+        if !reconciles {
+            std::fs::write(vault.join(".helixnotes").join("settings.json"), "damaged").unwrap();
+        }
+        let state = AppState::new(AppConfig::default());
+        let terminal = restore_and_reconcile(&state, vault.to_str().unwrap(), || restored);
+        std::fs::remove_dir_all(&vault).unwrap();
+        terminal
+    }
+
+    fn failed(changed: bool) -> Result<(), RestoreError> {
+        Err(RestoreError {
+            message: "Restore failed.".into(),
+            changed,
+        })
+    }
+
+    #[test]
+    fn a_restore_and_its_reconcile_that_both_succeed_are_a_success() {
+        let terminal = restore(Ok(()), true);
+        assert!(terminal.success);
+        assert_eq!(terminal.outcome, BulkMutationOutcome::Success);
+        assert_eq!(terminal.error, None);
+    }
+
+    #[test]
+    fn a_restore_whose_reconcile_fails_changed_the_vault_and_says_so() {
+        let terminal = restore(Ok(()), false);
+        assert_eq!(terminal.outcome, BulkMutationOutcome::ChangedIncomplete);
+        assert!(terminal.error.unwrap().starts_with(
+            "Vault restored, but derived views could not be reconciled: \
+             Shared vault settings are invalid"
+        ));
+    }
+
+    #[test]
+    fn a_failed_restore_changed_the_vault_only_when_it_says_so() {
+        let terminal = restore(failed(true), true);
+        assert_eq!(terminal.outcome, BulkMutationOutcome::ChangedIncomplete);
+        assert_eq!(terminal.error.as_deref(), Some("Restore failed."));
+
+        let terminal = restore(failed(false), true);
+        assert_eq!(terminal.outcome, BulkMutationOutcome::Failure);
+        assert_eq!(terminal.error.as_deref(), Some("Restore failed."));
+    }
+
+    #[test]
+    fn a_failed_restore_whose_reconcile_also_fails_reports_both() {
+        let terminal = restore(failed(false), false);
+        assert_eq!(terminal.outcome, BulkMutationOutcome::Failure);
+        assert!(terminal.error.unwrap().starts_with(
+            "Restore failed. Derived views also could not be reconciled: \
+             Shared vault settings are invalid"
+        ));
+    }
+
+    #[test]
+    fn a_restore_refused_the_lease_never_runs() {
+        let state = AppState::new(AppConfig::default());
+        let _held = state
+            .bulk_mutation
+            .acquire(&state.note_mutation, &state.vault_activity)
+            .unwrap();
+        let terminal = restore_and_reconcile(&state, "unused", || {
+            panic!("the restore ran without the lease")
+        });
+        assert_eq!(terminal.outcome, BulkMutationOutcome::Failure);
+        assert_eq!(
+            terminal.error.as_deref(),
+            Some("Another bulk vault operation is already running")
+        );
+    }
+}
+
+/// Runs `restore` under the bulk lease, then reconciles the derived views whatever it did: even a
+/// restore that rolled back had folders moved aside for a while, and a reconcile that ran then
+/// without the note lock, such as the semantic worker's retry, indexed that layout (#216).
+pub(crate) fn restore_and_reconcile(
+    state: &AppState,
+    vault_path: &str,
+    restore: impl FnOnce() -> Result<(), crate::backup::RestoreError>,
+) -> BulkMutationTerminal {
+    let _lease = match state
+        .bulk_mutation
+        .acquire(&state.note_mutation, &state.vault_activity)
+    {
+        Ok(lease) => lease,
+        Err(error) => return BulkMutationTerminal::failure(error),
+    };
+    let restored = restore();
+    let reconciliation = reconcile_bulk_projections(state, vault_path);
+    match (restored, reconciliation) {
+        (Ok(()), Ok(())) => BulkMutationTerminal::success(),
+        (Ok(()), Err(error)) => BulkMutationTerminal::changed_incomplete(format!(
+            "Vault restored, but derived views could not be reconciled: {error}"
+        )),
+        (Err(error), reconciliation) => {
+            let message = reconciliation
+                .err()
+                .map_or(error.message.clone(), |reconcile| {
+                    format!(
+                        "{} Derived views also could not be reconciled: {reconcile}",
+                        error.message
+                    )
+                });
+            if error.changed {
+                BulkMutationTerminal::changed_incomplete(message)
+            } else {
+                BulkMutationTerminal::failure(message)
+            }
+        }
+    }
+}
+
 pub(crate) fn reconcile_bulk_projections(state: &AppState, vault_path: &str) -> Result<(), String> {
+    let settings_and_search = reconcile_settings_and_search(state, vault_path);
+    // Even when a step above fails: until it is reconciled, the semantic index can miss notes the
+    // change wrote, and deferred similarity checks would run against it (#216).
+    let semantic = match state
+        .semantic_index
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+    {
+        Some(semantic) => semantic.reconcile_from_notes(Path::new(vault_path)),
+        None => Ok(()),
+    };
+    settings_and_search.and(semantic)
+}
+
+fn reconcile_settings_and_search(state: &AppState, vault_path: &str) -> Result<(), String> {
     let legacy_max_versions = state
         .config
         .lock()
@@ -3176,14 +3331,6 @@ pub(crate) fn reconcile_bulk_projections(state: &AppState, vault_path: &str) -> 
         .and_then(|guard| guard.clone())
     {
         search.reconcile(vault_path)?;
-    }
-    if let Some(semantic) = state
-        .semantic_index
-        .lock()
-        .ok()
-        .and_then(|guard| guard.clone())
-    {
-        semantic.reconcile_from_notes(Path::new(vault_path))?;
     }
     Ok(())
 }
@@ -3656,33 +3803,9 @@ pub fn restore_backup(app: AppHandle, backup_path: String) -> Result<(), String>
     std::thread::spawn(move || {
         use tauri::Emitter;
         let state = app.state::<AppState>();
-        let terminal = match state
-            .bulk_mutation
-            .acquire(&state.note_mutation, &state.vault_activity)
-        {
-            Err(error) => BulkMutationTerminal::failure(error),
-            Ok(_lease) => {
-                match crate::backup::restore_backup(&vault_path, &backup_dir, &backup_path) {
-                    Ok(()) => match reconcile_bulk_projections(&state, &vault_path) {
-                        Ok(()) => crate::bulk_mutation::BulkMutationTerminal::success(),
-                        Err(error) => BulkMutationTerminal::changed_incomplete(format!(
-                            "Vault restored, but derived views could not be reconciled: {error}"
-                        )),
-                    },
-                    Err(error) if error.changed => {
-                        let reconciliation = reconcile_bulk_projections(&state, &vault_path).err();
-                        let message = reconciliation.map_or(error.message.clone(), |reconcile| {
-                            format!(
-                                "{} Derived views also could not be reconciled: {reconcile}",
-                                error.message
-                            )
-                        });
-                        crate::bulk_mutation::BulkMutationTerminal::changed_incomplete(message)
-                    }
-                    Err(error) => BulkMutationTerminal::failure(error.message),
-                }
-            }
-        };
+        let terminal = restore_and_reconcile(&state, &vault_path, || {
+            crate::backup::restore_backup(&vault_path, &backup_dir, &backup_path)
+        });
         let _ = app.emit(
             crate::events::RESTORE_DONE,
             serde_json::json!({
@@ -3780,6 +3903,8 @@ fn restart_semantic_index(app: &AppHandle) -> Result<(), String> {
         &base_url,
         token,
     )?);
+    // The vault's deferred similarity checks stay loaded; the new worker reruns them (#216).
+    crate::similar_notes::rerun_when_caught_up(app, &semantic);
     crate::semantic_search::SemanticIndex::replace_in(
         &mut *app
             .state::<AppState>()

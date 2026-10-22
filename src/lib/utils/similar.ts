@@ -57,6 +57,8 @@ export function similarCoverage(check: SimilarityCheck): string | null {
 interface OpenNote {
   id: string;
   path: string;
+  /** The vault it was opened in: leaving a note can be what switches vaults. */
+  vault: string | null;
 }
 
 /**
@@ -70,13 +72,13 @@ export function createLeaveWatcher() {
     created(id: string) {
       created.add(id);
     },
-    /** The open note became `note`; returns the path of a new note just left, to check. */
-    opened(note: OpenNote | null): string | null {
+    /** The open note became `note`; returns a new note just left, to check. */
+    opened(note: OpenNote | null): OpenNote | null {
       const left = current;
       current = note;
       // The same note under a new path is a rename, not leaving it.
       if (!left || left.id === note?.id || !created.delete(left.id)) return null;
-      return left.path;
+      return left;
     },
   };
 }

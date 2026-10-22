@@ -1,0 +1,304 @@
+{
+  "candidate": "8326def68cb2c37bcfe5ea42b26e80da63a31768",
+  "main": "169b0f2d48c5ab6d7c3c23df7fc0c1da0321e1c8",
+  "branchAddedRustTests": 51,
+  "addedFunctionsExactlyMatchManifest": true,
+  "regeneration": "python3 docs/reports/evidence/ticket-216-2026-10-17/match-tests-8326def.py",
+  "machines": {
+    "fedora": {
+      "candidate": "8326def68cb2c37bcfe5ea42b26e80da63a31768",
+      "log": "fedora-verify-8326def.txt",
+      "namedRustPassed": 51,
+      "rust": {
+        "listed": 755,
+        "passed": 745,
+        "failed": 0,
+        "ignored": 10,
+        "filtered": 0
+      },
+      "namedTests": [
+        {
+          "name": "semantic_search::tests::a_failed_similarity_check_is_recorded_and_survives_reloading_its_file",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_deferred_check_runs_after_the_backend_returns_and_its_card_is_delivered",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_moved_note_still_gets_its_deferred_check_and_a_deleted_one_is_dropped",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_deferred_check_that_fails_again_stays_recorded",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_pass_that_stopped_or_found_the_queue_empty_reruns_nothing",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_pass_that_leaves_notes_queued_reruns_nothing_until_the_queue_is_through",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_check_is_kept_while_it_runs_and_leaves_the_list_when_it_succeeds",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_check_waiting_behind_another_is_kept_while_it_waits",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_started_index_reruns_nothing_before_its_first_reconcile",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_rerun_waits_until_no_rebuild_or_reconcile_is_filling_the_queue",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::the_end_of_a_rebuild_runs_the_caught_up_hook_it_held",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::the_end_of_a_rebuild_leaves_the_notes_it_queued_to_the_next_pass",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_rebuild_or_reconcile_started_since_the_index_caught_up_stops_the_rerun",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_rerun_never_holds_the_index_slot_while_it_waits_for_the_config",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_rebuild_during_a_pass_leaves_the_rerun_to_the_pass_that_embeds_what_it_queued",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_deferred_note_moved_with_a_long_frontmatter_is_still_found",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_note_without_an_id_never_matches_itself",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_note_queued_in_place_of_an_unreadable_one_holds_the_rerun",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_fill_that_stops_part_way_holds_the_rerun_until_a_reconcile_completes",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_rerun_waits_while_a_bulk_change_holds_the_note_lock",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_rerun_scans_the_vault_without_the_note_lock_and_a_bulk_change_meanwhile_keeps_the_check",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::the_worker_retries_a_failed_fill_once_an_interval_until_it_completes",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_bulk_change_that_comes_and_goes_during_a_check_stops_the_rerun",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_bulk_change_reconciles_the_semantic_index_even_when_an_earlier_step_fails",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::overlapping_fills_hold_the_rerun_until_one_completes_alone",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_restore_that_rolls_back_reconciles_what_a_reconcile_meanwhile_dropped",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_check_that_starts_after_a_vault_switch_is_kept_for_its_own_vault",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_rerun_leaves_its_checks_to_the_pass_that_embeds_notes_saved_since_the_index_caught_up",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_save_embedded_while_a_check_runs_stops_the_rerun",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::an_index_replaced_after_a_check_scored_stops_the_rerun",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_rerun_leaves_a_kept_check_to_its_first_attempt",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_capture_renamed_before_its_check_starts_is_kept_by_its_id",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_note_written_at_a_renamed_captures_old_path_never_takes_its_check",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_note_written_at_a_captures_path_after_a_rerun_found_it_there_never_takes_its_check",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "similar_notes::tests::an_unreadable_deferred_file_gives_an_empty_list_and_the_vault_still_opens",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "similar_notes::tests::opening_a_vault_reads_its_checks_and_reopening_it_keeps_the_open_list",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "similar_notes::tests::a_check_kept_while_the_file_cannot_be_read_is_saved_when_another_vault_opens",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "similar_notes::tests::a_note_whose_folder_is_gone_is_placed_by_the_vault_unless_it_climbs_out",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "similar_notes::tests::a_check_that_ran_while_the_file_could_not_be_replaced_leaves_it_when_another_vault_opens",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "similar_notes::tests::a_check_that_ran_while_the_file_could_not_be_read_leaves_it_when_another_vault_opens",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_deferred_note_moved_where_it_cannot_be_opened_is_not_taken_for_deleted",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_deferred_note_without_an_id_behind_a_folder_that_cannot_be_read_is_not_taken_for_deleted",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_note_without_an_id_never_matches_itself_through_a_vault_link",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_check_kept_under_another_path_to_the_open_vault_joins_its_list",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "similar_notes::tests::a_note_is_in_a_vault_opened_through_a_link_and_never_in_a_folder_that_is_not_one",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "commands::restore_outcome_tests::a_failed_restore_whose_reconcile_also_fails_reports_both",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "commands::restore_outcome_tests::a_restore_and_its_reconcile_that_both_succeed_are_a_success",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "commands::restore_outcome_tests::a_restore_refused_the_lease_never_runs",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "commands::restore_outcome_tests::a_failed_restore_changed_the_vault_only_when_it_says_so",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "commands::restore_outcome_tests::a_restore_whose_reconcile_fails_changed_the_vault_and_says_so",
+          "result": "PASS",
+          "successfulLogLines": 1
+        },
+        {
+          "name": "semantic_search::tests::a_deferred_note_moved_with_bytes_that_are_not_utf8_stays_kept_and_the_next_check_runs",
+          "result": "PASS",
+          "successfulLogLines": 1
+        }
+      ],
+      "namedJavascriptTest": {
+        "name": "a new note left by a vault switch is checked in the vault it was opened in",
+        "result": "PASS"
+      }
+    },
+    "windows": {
+      "rerun": false,
+      "reason": "One SSH connection attempt timed out; no retry.",
+      "lastCandidate": "a1d921143c73a2fb255ab5f9a3d2068883f10181",
+      "lastMatch": "named-tests-a1d9211.json",
+      "lastLog": "windows-test-rust-a1d9211.txt",
+      "lastNamedRustPassed": 46,
+      "lastRust": {
+        "listed": 724,
+        "passed": 715,
+        "failed": 0,
+        "ignored": 9,
+        "filtered": 0
+      },
+      "unixOnlyNotCompiled": [
+        "semantic_search::tests::a_deferred_note_moved_where_it_cannot_be_opened_is_not_taken_for_deleted",
+        "semantic_search::tests::a_deferred_note_without_an_id_behind_a_folder_that_cannot_be_read_is_not_taken_for_deleted",
+        "semantic_search::tests::a_note_without_an_id_never_matches_itself_through_a_vault_link",
+        "semantic_search::tests::a_check_kept_under_another_path_to_the_open_vault_joins_its_list",
+        "similar_notes::tests::a_note_is_in_a_vault_opened_through_a_link_and_never_in_a_folder_that_is_not_one"
+      ]
+    }
+  }
+}

@@ -246,8 +246,30 @@ that say the same thing.
 - **When it runs.** After a quick capture is saved, in the background: the overlay closes
   exactly as before and never waits on it. A note created in the app is checked once, the
   first time the user leaves it (switches note or closes it). Web clips are not checked. A
-  note under 3 words is too short to judge, and an unreachable embedding backend skips the
-  check without a word.
+  note under 3 words is too short to judge. A check is kept for the vault in a small
+  machine-local file while it waits its turn or runs, and stays kept if it fails, as it does
+  while the embedding backend is unreachable, so quitting or restarting keeps it and sync
+  never carries it (#216). It runs once the backend is back and the indexing queue is
+  through: notes have been embedded, nothing is queued but unreadable notes, and no
+  reconcile or rebuild is still filling the queue, including the one that follows opening
+  the vault, or stopped part way or overlapped another with none completed alone since. It
+  runs at the end of the pass, reconcile or rebuild that makes all three true; a pass that a
+  reconcile or rebuild overlapped leaves it to the next pass. A reconcile or rebuild that
+  starts before the checks finish stops them, as does a restore, import or sync batch that
+  runs before they finish, or a note saved before they finish, and those left run once the
+  queue is through again. A check still waiting for its first run is left to that run, so a
+  quick capture's notification is never lost to a rerun.
+  By then the notes saved offline are indexed too, so two duplicates written in the same
+  offline session can match each other.
+  A check kept while nothing is left to index, as when the backend comes back during the
+  check itself or drops again during a rerun, waits for the next pass that embeds a note.
+  It runs on the note's current text, wherever the note was renamed or moved to. It never
+  expires: it leaves the list when it runs or when its note is deleted. A note counts as
+  deleted only when it is found nowhere, which needs two things: every folder and note in
+  the vault could be read (one that cannot may hold the note, moved), and no restore, import
+  or sync batch ran while the vault was searched.
+  Each result shows as its own ordinary card, newest first, with no cap, no notification
+  and no summary.
 - **What it compares.** The new note is embedded as a document, the way notes are indexed,
   and compared with every indexed note in all four categories (§12); the note itself is
   excluded. Only its first chunk's worth of text is embedded, the length every stored vector

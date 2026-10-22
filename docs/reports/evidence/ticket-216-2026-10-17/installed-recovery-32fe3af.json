@@ -1,0 +1,319 @@
+{
+  "candidate": "32fe3afdc3092e42e937fd2f6edbd09453680f7b",
+  "started": "2026-10-20T22:36:54.741Z",
+  "steps": [
+    {
+      "step": "safety",
+      "at": "2026-10-20T22:36:54.753Z",
+      "profileRoots": 8,
+      "presentRoots": 2,
+      "isolated": true
+    },
+    {
+      "step": "1-offline-captures",
+      "at": "2026-10-20T22:36:57.973Z",
+      "captured": 2,
+      "skippedLogLines": 2,
+      "skipLogs": [
+        "[2026-10-20][22:36:57][app_lib::similar_notes][INFO] Skipped the similarity check for a new note",
+        "[2026-10-20][22:36:57][app_lib::similar_notes][INFO] Skipped the similarity check for a new note"
+      ],
+      "records": [
+        {
+          "id": "a5996a4d-7eb1-4c00-b3c0-fd2602601f6f",
+          "file": "Shed spending.md"
+        },
+        {
+          "id": "0b732a91-36b5-4398-81e4-07cc5b1c531e",
+          "file": "Shed wall wood.md"
+        }
+      ],
+      "cards": 0,
+      "notificationCalls": 0
+    },
+    {
+      "step": "2-restart-and-delete",
+      "at": "2026-10-20T22:36:59.351Z",
+      "recordsAfterRestart": 2,
+      "deletedThroughAppCommand": true,
+      "sourceFileGone": true,
+      "recordsAfterDelete": [
+        {
+          "id": "a5996a4d-7eb1-4c00-b3c0-fd2602601f6f",
+          "file": "Shed spending.md"
+        },
+        {
+          "id": "0b732a91-36b5-4398-81e4-07cc5b1c531e",
+          "file": "Shed wall wood.md"
+        }
+      ]
+    },
+    {
+      "step": "3-restore-backend",
+      "at": "2026-10-20T22:36:59.858Z",
+      "reachableUrl": "http://127.0.0.1:11436",
+      "unreachableUrl": "http://127.0.0.1:11447",
+      "isolatedConfigChangedWhileAppStopped": true,
+      "existingBackendUnchanged": true
+    },
+    {
+      "step": "4-recovered-card",
+      "at": "2026-10-20T22:37:14.948Z",
+      "index": {
+        "queuedNotes": 0,
+        "model": "embeddinggemma",
+        "lastPass": {
+          "stopped": false,
+          "readMs": 0,
+          "chunkMs": 0,
+          "embedMs": 517,
+          "notes": 2,
+          "totalMs": 536,
+          "databaseMs": 18,
+          "chunks": 2
+        },
+        "indexedNotes": 4
+      },
+      "cards": [
+        {
+          "heading": "\u201cShed spending\u201d is similar to",
+          "matches": [
+            "Garden shed budget",
+            "Similar"
+          ]
+        }
+      ],
+      "log": "Deferred similarity checks: ran=1 found=1 dropped=1 waiting=0",
+      "remainingRecords": 0,
+      "notificationCalls": 0,
+      "screenshot": "similarity-card.png"
+    }
+  ],
+  "result": "PASS",
+  "tunnelPid": 2506401,
+  "notificationMonitorPid": 2506418,
+  "notificationMonitorReady": true,
+  "sessions": [
+    {
+      "launch": 1,
+      "pid": 2506501,
+      "health": {
+        "tauri": true,
+        "newNote": true,
+        "ready": "complete"
+      },
+      "backendUrl": "http://127.0.0.1:11447"
+    },
+    {
+      "launch": 2,
+      "pid": 2506799,
+      "health": {
+        "tauri": true,
+        "newNote": true,
+        "ready": "complete"
+      },
+      "backendUrl": "http://127.0.0.1:11447"
+    },
+    {
+      "launch": 3,
+      "pid": 2507037,
+      "health": {
+        "tauri": true,
+        "newNote": true,
+        "ready": "complete"
+      },
+      "backendUrl": "http://127.0.0.1:11436"
+    }
+  ],
+  "finalForwardedEndpoint": "PASS",
+  "notificationMonitorAliveAtFinalCheck": true,
+  "profileUnchanged": true,
+  "remainingOwnedChildProcesses": [],
+  "remainingAppProcesses": 0,
+  "finished": "2026-10-20T22:37:15.464Z",
+  "preinstall": {
+    "at": "2026-10-20T22:35:34.382071+00:00",
+    "profileRoots": 8,
+    "presentRoots": 2,
+    "source": "Cartesian product of four XDG default folders (.config, .local/share, .local/state, .cache) and two identifiers (io.github.zulucodedesign.SecondBrain, helixnotes), as profilePaths in reused controller",
+    "rpm": "src-tauri/target/release/bundle/rpm/Second Brain-0.1.0-alpha.1-1.x86_64.rpm",
+    "rpmBytes": 30175462,
+    "rpmSha256": "a7e5831b4dde1f01d6c37d2fb521d2facbf766dd350f74a1bdb4a4d919eca0b2",
+    "runningInstalledApps": []
+  },
+  "package": {
+    "candidate": "32fe3afdc3092e42e937fd2f6edbd09453680f7b",
+    "installedShaConfirmed": true,
+    "installedBinaryBytes": 52139624,
+    "installedBinarySha256": "e87bdbb4d9e1b9daf2347ba8fa50ab290151c43194bbd26be42ddc0fb54a318d",
+    "installHelperExit": 0
+  },
+  "packageCleanup": {
+    "rpmQueryExit": 1,
+    "rpmQuery": "package second-brain is not installed",
+    "helperRemoveExit": 0,
+    "absent": {
+      "/usr/bin/second-brain": true,
+      "/usr/share/applications/Second Brain.desktop": true,
+      "/usr/share/applications/io.github.zulucodedesign.SecondBrain.desktop": true
+    }
+  },
+  "temporaryServer": {
+    "port": 11436,
+    "leaseSeconds": 7200,
+    "dedicatedSshSessionHeldOpen": true,
+    "source": "scripts/windows/ollama-gate.ps1 and unchanged owned-process.cs",
+    "stability": {
+      "first": {
+        "at": "2026-10-20T22:35:10.6090090Z",
+        "serverPid": 21604,
+        "supervisorPid": 4128,
+        "listenerPid": 21604,
+        "serverCreated": "2026-10-20T22:34:51.8386030Z",
+        "supervisorCreated": "2026-10-20T22:34:47.8045890Z",
+        "embeddinggemma": true,
+        "embeddingModels": [
+          {
+            "name": "embeddinggemma:latest",
+            "digest": "85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1",
+            "size": 621875917
+          }
+        ]
+      },
+      "stable": {
+        "at": "2026-10-20T22:36:23.3233857Z",
+        "serverPid": 21604,
+        "supervisorPid": 4128,
+        "listenerPid": 21604,
+        "serverCreated": "2026-10-20T22:34:51.8386030Z",
+        "supervisorCreated": "2026-10-20T22:34:47.8045890Z",
+        "embeddinggemma": true,
+        "embeddingModels": [
+          {
+            "name": "embeddinggemma:latest",
+            "digest": "85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1",
+            "size": 621875917
+          }
+        ]
+      },
+      "intervalSeconds": 72.714376,
+      "result": "PASS"
+    },
+    "loadedAfterInstalledCheck": {
+      "at": "2026-10-20T22:37:56.1618428Z",
+      "serverPid": 21604,
+      "supervisorPid": 4128,
+      "listenerPid": 21604,
+      "serverCreated": "2026-10-20T22:34:51.8386030Z",
+      "supervisorCreated": "2026-10-20T22:34:47.8045890Z",
+      "embeddinggemma": true,
+      "observedWorkers": [
+        {
+          "pid": 20684,
+          "parentPid": 21604,
+          "created": "2026-10-20T22:34:51.8601180Z",
+          "image": "conhost.exe"
+        },
+        {
+          "pid": 7404,
+          "parentPid": 21604,
+          "created": "2026-10-20T22:37:06.8727550Z",
+          "image": "llama-server.exe"
+        },
+        {
+          "pid": 10308,
+          "parentPid": 7404,
+          "created": "2026-10-20T22:37:06.8870460Z",
+          "image": "conhost.exe"
+        }
+      ]
+    },
+    "finalEndpointAfterSimilarityRun": {
+      "at": "2026-10-20T22:41:40.3541537Z",
+      "serverPid": 21604,
+      "supervisorPid": 4128,
+      "listenerPid": 21604,
+      "serverCreated": "2026-10-20T22:34:51.8386030Z",
+      "supervisorCreated": "2026-10-20T22:34:47.8045890Z",
+      "embeddinggemma": true,
+      "observedWorkers": [
+        {
+          "pid": 20684,
+          "parentPid": 21604,
+          "created": "2026-10-20T22:34:51.8601180Z",
+          "image": "conhost.exe"
+        },
+        {
+          "pid": 7404,
+          "parentPid": 21604,
+          "created": "2026-10-20T22:37:06.8727550Z",
+          "image": "llama-server.exe"
+        },
+        {
+          "pid": 10308,
+          "parentPid": 7404,
+          "created": "2026-10-20T22:37:06.8870460Z",
+          "image": "conhost.exe"
+        }
+      ]
+    },
+    "cleanup": {
+      "at": "2026-10-20T22:42:04.5928139Z",
+      "supervisorPid": 4128,
+      "serverPid": 21604,
+      "supervisorCreated": "2026-10-20T22:34:47.8045890Z",
+      "serverCreated": "2026-10-20T22:34:51.8386030Z",
+      "observedWorkers": [
+        {
+          "pid": 20684,
+          "parentPid": 21604,
+          "created": "2026-10-20T22:34:51.8601180Z",
+          "image": "conhost.exe"
+        },
+        {
+          "pid": 7404,
+          "parentPid": 21604,
+          "created": "2026-10-20T22:37:06.8727550Z",
+          "image": "llama-server.exe"
+        },
+        {
+          "pid": 10308,
+          "parentPid": 7404,
+          "created": "2026-10-20T22:37:06.8870460Z",
+          "image": "conhost.exe"
+        },
+        {
+          "pid": 20684,
+          "parentPid": 21604,
+          "created": "2026-10-20T22:34:51.8601180Z",
+          "image": "conhost.exe"
+        },
+        {
+          "pid": 7404,
+          "parentPid": 21604,
+          "created": "2026-10-20T22:37:06.8727550Z",
+          "image": "llama-server.exe"
+        },
+        {
+          "pid": 10308,
+          "parentPid": 7404,
+          "created": "2026-10-20T22:37:06.8870460Z",
+          "image": "conhost.exe"
+        }
+      ],
+      "supervisorAbsent": true,
+      "serverAbsent": true,
+      "observedWorkersAbsent": true,
+      "gateListenerAbsent": true,
+      "userListenerAfter": [],
+      "retainedFiles": [],
+      "modelWorkerObserved": true,
+      "stoppedOnlyExactSupervisor": true
+    }
+  },
+  "proofLimits": [
+    "Step 3 edited isolated config with app stopped, then relaunched; installed running-worker outage recovery not exercised by this sequence.",
+    "No positive control for Notify silence in installed check; source rerun_deferred only calls show_card. Debug end-to-end run records positive notification controls separately."
+  ],
+  "controllerReusedFrom": "installed-recovery-controller.mjs; only candidate metadata and new-copy header changed"
+}

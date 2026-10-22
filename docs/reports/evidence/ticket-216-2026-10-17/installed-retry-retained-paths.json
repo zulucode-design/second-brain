@@ -1,0 +1,118 @@
+{
+  "candidate": "19727aab6a2dcc0e1c5f1b7fc9db53b1110d6c37",
+  "unit": "Logical file bytes, excluding directory metadata. Nested backup totals are included in the root total.",
+  "aliases": {
+    "<Fedora retry run>": "Private local gate directory named byhand-19727aa-ebui91e0.",
+    "<Windows retry run>": "Windows test root, sb216/byhand-19727aa-ebui91e0."
+  },
+  "roots": {
+    "Fedora": [
+      {
+        "path": "<Fedora retry run>",
+        "bytes": 30997,
+        "kind": "Private scripts, observations, logs, and production-profile backup; prepared controller was never run."
+      }
+    ],
+    "Windows": [
+      {
+        "path": "<Windows retry run>",
+        "bytes": 6016,
+        "kind": "Copied bounded supervisor and companion source; no server or worker left running."
+      }
+    ]
+  },
+  "privateBackupGroups": [
+    {
+      "path": "<Fedora retry run>/preinstall-profile-backup",
+      "bytes": 4418,
+      "contents": "Private production-profile backup and manifest; filenames and contents not published."
+    }
+  ],
+  "files": {
+    "Fedora": [
+      {
+        "path": "<Fedora retry run>/fedora-cleanup.json",
+        "bytes": 464
+      },
+      {
+        "path": "<Fedora retry run>/manual-check.mjs",
+        "bytes": 13072
+      },
+      {
+        "path": "<Fedora retry run>/ollama-supervisor.private.log",
+        "bytes": 102
+      },
+      {
+        "path": "<Fedora retry run>/run-name.txt",
+        "bytes": 24
+      },
+      {
+        "path": "<Fedora retry run>/server-pids.json",
+        "bytes": 118
+      },
+      {
+        "path": "<Fedora retry run>/server-stability.json",
+        "bytes": 1193
+      },
+      {
+        "path": "<Fedora retry run>/usage.txt",
+        "bytes": 63
+      },
+      {
+        "path": "<Fedora retry run>/win-cleanup.ps1",
+        "bytes": 2932
+      },
+      {
+        "path": "<Fedora retry run>/win-cleanup.ps1.log",
+        "bytes": 1215
+      },
+      {
+        "path": "<Fedora retry run>/win-prep.ps1",
+        "bytes": 929
+      },
+      {
+        "path": "<Fedora retry run>/win-prep.ps1.log",
+        "bytes": 2246
+      },
+      {
+        "path": "<Fedora retry run>/win-probe-minute.ps1",
+        "bytes": 1254
+      },
+      {
+        "path": "<Fedora retry run>/win-probe-minute.ps1.log",
+        "bytes": 625
+      },
+      {
+        "path": "<Fedora retry run>/win-probe.ps1",
+        "bytes": 1254
+      },
+      {
+        "path": "<Fedora retry run>/win-probe.ps1.log",
+        "bytes": 625
+      },
+      {
+        "path": "<Fedora retry run>/win-ssh.py",
+        "bytes": 463
+      }
+    ],
+    "Windows": [
+      {
+        "path": "<Windows retry run>/ollama-gate.ps1",
+        "bytes": 1213
+      },
+      {
+        "path": "<Windows retry run>/owned-process.cs",
+        "bytes": 4803
+      }
+    ]
+  },
+  "inventoryMethod": "Python Path.rglob over each new run root: sum stat().st_size for files; private backup subtree grouped. Windows file lengths captured by cleanup Get-ChildItem -File -Recurse | Select-Object Name,Length.",
+  "previousRunInventory": "retained-paths.json; earlier artifacts retained without a new measurement.",
+  "existingCandidateRpm": {
+    "path": "src-tauri/target/release/bundle/rpm/Second Brain-0.1.0-alpha.1-1.x86_64.rpm",
+    "bytes": 30178896,
+    "createdThisRetry": false
+  },
+  "deleted": false,
+  "cleanupCandidates": "Both additional run roots only after item-specific approval. Nothing deleted."
+}

@@ -1,0 +1,427 @@
+{
+  "at": "2026-10-21T22:23:50.2122465Z",
+  "candidate": "eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9",
+  "status": [
+    " M src-tauri/Cargo.toml"
+  ],
+  "normalizedTrackedContentUnchanged": true,
+  "diffExit": 0,
+  "indexExit": 0,
+  "headBlob": "2195ed7bfdbb622667dd0bf5cdd303153b8c23de",
+  "normalizedWorkBlob": "2195ed7bfdbb622667dd0bf5cdd303153b8c23de",
+  "tempBaselineNames": 2212,
+  "installedNothing": true,
+  "expected169InstallExists": true,
+  "commands": {
+    "test-rust": 0,
+    "lint-rust": 101,
+    "build": 0,
+    "tauri-build": 0
+  },
+  "roots": [
+    {
+      "path": "<Windows run>",
+      "bytes": 5778540,
+      "files": 12
+    },
+    {
+      "path": "<Windows candidate>",
+      "bytes": 343945953,
+      "files": 21650
+    },
+    {
+      "path": "<Windows shared Rust target>",
+      "bytes": 8999643198,
+      "files": 14638
+    },
+    {
+      "path": "<Windows temp>/helixnotes-machine-state-466db102-9ef3-406f-8bac-f2b2badd17b4",
+      "bytes": 79823,
+      "files": 179
+    },
+    {
+      "path": "<Windows temp>/machine-local-abandoned-claim-decfb34e-a73a-4f0a-acfb-ce433c77307f",
+      "bytes": 36,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/machine-local-concurrent-5aca5bc2-d909-45b4-8518-5a0b77f8be0c",
+      "bytes": 36,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/machine-local-damaged-id-8d812442-abc4-4ff1-9576-1712d514a8de",
+      "bytes": 36,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/machine-local-existing-id-f4e5fe3e-2bd3-41f9-adf2-c9baed068880",
+      "bytes": 37,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/machine-local-first-open-5fa7c547-b3b4-4747-89d3-6903f02cdc8c",
+      "bytes": 36,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/machine-local-truncation-e62908c1-94fe-45c2-ad7d-f7bb14970701",
+      "bytes": 36,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/machine-local-unlocked-fallback-14ee82cb-1cf7-46be-963d-d2e4bc257e26",
+      "bytes": 0,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-config-6e4139ca-34bc-413b-99cf-2f1f8c334d83",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-config-ad13afd9-edb7-4a84-8f95-1e678cbef468",
+      "bytes": 135,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-config-ad8148c6-7df1-4319-89a8-14169906f0b1",
+      "bytes": 18,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-config-f0c02f1a-3255-42ee-9cd0-211b48e016d0",
+      "bytes": 139,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-1b301bab-2a2a-4392-bc5d-56632260b299",
+      "bytes": 428,
+      "files": 4
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-38748476-3cc1-4210-aec8-2e5d05dd0c77",
+      "bytes": 58,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-3ac27a8d-ba9c-42b0-bb81-d444063d19e7",
+      "bytes": 18,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-556ed930-0caf-4310-b8df-7dbab40af3d4",
+      "bytes": 218,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-88d22c77-b9a8-456b-b675-1734f1aeeac1",
+      "bytes": 234,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-8eb86606-f83e-4a6c-abef-6232ce637eb2",
+      "bytes": 28,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-958ccd1d-2c02-4f4d-afc5-d9079b9d01d4",
+      "bytes": 432,
+      "files": 4
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-a2ac7c9b-af39-42d0-b3ff-ad91d0fc4008",
+      "bytes": 234,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-ac0ef9d3-b62a-4731-9cdb-e5d3b5dd4a5b",
+      "bytes": 214,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-c51042f7-1bbd-4d1c-aa93-7847df01588c",
+      "bytes": 29,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-c63197f7-867b-4959-aaf9-ed7763b49589",
+      "bytes": 216,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-d974a6b7-ff89-41f9-8708-5007da72e0cc",
+      "bytes": 109,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-enumerate-db56b4e7-4ccb-419f-bd53-36cb6f6f5e41",
+      "bytes": 56,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-map-427bffa6-015f-408f-aa73-16b1090989cb",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-map-4ecf4b9d-635c-4bef-9b48-0cf802f3c588",
+      "bytes": 175,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-map-52991d52-3798-4ee7-9be6-5e1be5ee308d",
+      "bytes": 175,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-map-6e177d49-ea15-461d-95ca-8e221a859066",
+      "bytes": 17,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-map-73841153-f129-42c5-9208-563b4b2f24c2",
+      "bytes": 208,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-map-7e7f4083-baf9-4d09-be52-175e9a84da7d",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-map-877f9fb2-3bf3-4473-9704-f6cb07aa436b",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-map-bc9090b9-67d6-4c8e-be31-eb9476858247",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-map-c13a4a3f-ff02-4408-a2c1-675a674e9478",
+      "bytes": 173,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-map-e272326b-f2aa-4858-a269-77131a49189d",
+      "bytes": 175,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-01825c1b-9a76-4d2c-a0e8-727e7bc4cc5e",
+      "bytes": 237,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-0d4d038d-538c-41fd-a6ad-fefb36d8ab1b",
+      "bytes": 239,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-1ff7e445-297a-4b63-83e2-feb39735c6c3",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-publish-26daae1c-2f7d-4736-bbeb-16e8d4abc185",
+      "bytes": 234,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-2c503e4e-1e53-4a09-bd28-48e7c20056f2",
+      "bytes": 228,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-3067581d-9b44-4854-a511-4541bedfa468",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-publish-3bbb7d23-9e43-4f60-9c8f-c55c79ba3889",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-publish-5295530d-fc0e-4db9-933d-56feab3569bb",
+      "bytes": 239,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-53ec5c9e-df71-4154-b493-89f742f35c22",
+      "bytes": 234,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-58df8c33-369a-4617-a983-f618644eb52d",
+      "bytes": 448,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-publish-7986eb56-02c5-422f-8a7a-9b976c68389a",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-publish-8042068f-8af9-4271-8206-34137d33c231",
+      "bytes": 234,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-81fe1d58-a81d-4813-8ba4-679b969c2af3",
+      "bytes": 226,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-84695632-f0c4-47ad-95c7-513fed515502",
+      "bytes": 232,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-a99c05e0-92cb-439f-9b5d-b3030131f901",
+      "bytes": 239,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-aaca4f0c-bc9a-4829-bd04-40786b866418",
+      "bytes": 234,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-aaeba273-8464-4eb9-8f17-8399e648431d",
+      "bytes": 239,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-ac3ffaa9-d188-40a3-bf9e-8b13a1dcf92a",
+      "bytes": 178,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-b5be3d39-9bc0-462c-9981-7279636d39b4",
+      "bytes": 167,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-b7a7de13-5e2a-4706-b736-c07ecf5bab28",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-publish-c7a285fb-1f76-422f-989b-6a84e42858c7",
+      "bytes": 232,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-d91aa152-1d71-429f-b63b-a98c05345227",
+      "bytes": 26,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-e181c6c6-6722-4146-b964-e4518f45e34e",
+      "bytes": 0,
+      "files": 0
+    },
+    {
+      "path": "<Windows temp>/notion-publish-ede101c6-8618-4f17-9981-6849044b3bd7",
+      "bytes": 236,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-publish-f40a2bcd-b212-4f28-a199-abcb7ca7ac2f",
+      "bytes": 329,
+      "files": 2
+    },
+    {
+      "path": "<Windows temp>/notion-setup-c9edf73f-ab97-412b-9c98-0befc58e3f78",
+      "bytes": 439,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-setup-d052666a-fd6b-4b0c-b6b3-ecfc23f62455",
+      "bytes": 433,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/notion-setup-f9a5212d-7797-4e2d-a24f-9aea77234d89",
+      "bytes": 439,
+      "files": 1
+    },
+    {
+      "path": "<Windows temp>/semantic-async-b8fe896e-3b6d-4ed4-b4f4-17c3191ba0f4",
+      "bytes": 36,
+      "files": 1
+    }
+  ],
+  "files": [
+    {
+      "path": "<Windows run>/before-win-temp-names.json",
+      "bytes": 53097
+    },
+    {
+      "path": "<Windows run>/build.exit",
+      "bytes": 1
+    },
+    {
+      "path": "<Windows run>/build.log",
+      "bytes": 35907
+    },
+    {
+      "path": "<Windows run>/candidate.bundle",
+      "bytes": 5580459
+    },
+    {
+      "path": "<Windows run>/lint-rust.exit",
+      "bytes": 3
+    },
+    {
+      "path": "<Windows run>/lint-rust.log",
+      "bytes": 1257
+    },
+    {
+      "path": "<Windows run>/ollama-gate.ps1",
+      "bytes": 1213
+    },
+    {
+      "path": "<Windows run>/owned-process.cs",
+      "bytes": 4803
+    },
+    {
+      "path": "<Windows run>/tauri-build.exit",
+      "bytes": 1
+    },
+    {
+      "path": "<Windows run>/tauri-build.log",
+      "bytes": 37011
+    },
+    {
+      "path": "<Windows run>/test-rust.exit",
+      "bytes": 1
+    },
+    {
+      "path": "<Windows run>/test-rust.log",
+      "bytes": 64787
+    }
+  ],
+  "installers": [
+    {
+      "file": "Second Brain_0.1.0-alpha.1_x64-setup.exe",
+      "bytes": 20332261,
+      "sha256": "465bb942dba5a2639e087d94fe7e9557216c083059c84d8ff7391386c8dd8d6c"
+    }
+  ],
+  "disk": [
+    {
+      "Name": "C",
+      "Free": 68693610496,
+      "Used": 186138669056
+    },
+    {
+      "Name": "D",
+      "Free": 131572920320,
+      "Used": 778595237888
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "headBlob": "2195ed7bfdbb622667dd0bf5cdd303153b8c23de",
+  "normalizedWorkingBlob": "2195ed7bfdbb622667dd0bf5cdd303153b8c23de",
+  "identical": true,
+  "statusAfterReadOnlyDiff": " M src-tauri/Cargo.toml",
+  "diffExit": 0,
+  "diff": {},
+  "candidate": "32fe3afdc3092e42e937fd2f6edbd09453680f7b",
+  "initialWindowsTreeClean": true,
+  "rawPostBuildStatus": " M src-tauri/Cargo.toml",
+  "fileRestoredOrEditedByVerifier": false,
+  "interpretation": "Git reports a modified path, but its normalized working blob equals the candidate blob and git diff --exit-code returns 0. Initial inventory incorrectly required empty porcelain; corrected inventory records both status and content identity. No candidate content failure established."
+}

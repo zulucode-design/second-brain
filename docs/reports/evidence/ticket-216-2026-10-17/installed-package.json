@@ -1,0 +1,21 @@
+{
+  "candidate": "19727aab6a2dcc0e1c5f1b7fc9db53b1110d6c37",
+  "shaPresent": true,
+  "bytes": 52189440,
+  "sha256": "90f4fba4a3f6a3f18e93806803f5515f7d6d205db649becac89ebc5016d5df7f",
+  "rpm": {
+    "file": "src-tauri/target/release/bundle/rpm/Second Brain-0.1.0-alpha.1-1.x86_64.rpm",
+    "bytes": 30178896,
+    "sha256": "15038b41e9e898541374af84c9176678748ecd10eda859b3d323df304de599e1"
+  },
+  "installCommand": "sudo -n /usr/local/libexec/second-brain-test-package install-candidate <candidate RPM>",
+  "installExit": 0,
+  "removeCommand": "sudo -n /usr/local/libexec/second-brain-test-package remove-test-install",
+  "removeExit": 0,
+  "removalCheck": {
+    "rpm -q second-brain": "package second-brain is not installed (expected exit 1)",
+    "appBinaryAbsent": true,
+    "generatedDesktopEntryAbsent": true,
+    "identifierDesktopEntryAbsent": true
+  }
+}

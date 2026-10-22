@@ -7,6 +7,8 @@ use serde::Serialize;
 pub struct BulkMutationCoordinator {
     gate: Mutex<()>,
     watcher_suppressions: AtomicUsize,
+    /// Leases granted so far, so work done without the note lock can tell one came and went.
+    granted: AtomicUsize,
 }
 
 pub struct BulkMutationLease<'a> {
@@ -93,6 +95,7 @@ impl BulkMutationCoordinator {
         Self {
             gate: Mutex::new(()),
             watcher_suppressions: AtomicUsize::new(0),
+            granted: AtomicUsize::new(0),
         }
     }
 
@@ -127,6 +130,7 @@ impl BulkMutationCoordinator {
             ));
         }
         self.watcher_suppressions.fetch_add(1, Ordering::SeqCst);
+        self.granted.fetch_add(1, Ordering::SeqCst);
         Ok(BulkMutationLease {
             coordinator: self,
             _gate: gate,
@@ -137,6 +141,11 @@ impl BulkMutationCoordinator {
 
     pub fn watcher_suppressed(&self) -> bool {
         self.watcher_suppressions.load(Ordering::SeqCst) != 0
+    }
+
+    /// How many leases have been granted, each while it held the note lock.
+    pub fn granted(&self) -> usize {
+        self.granted.load(Ordering::SeqCst)
     }
 }
 

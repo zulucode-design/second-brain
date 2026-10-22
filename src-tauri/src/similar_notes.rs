@@ -2,13 +2,16 @@
 //! the same thing, so the user can fold the new one in instead of keeping a near-duplicate.
 //!
 //! The check only ever runs after the note is safely on disk, and every failure ends it quietly:
-//! a capture must never wait on it or be lost to it.
+//! a capture must never wait on it or be lost to it. A check that could not run is kept, and
+//! runs again once the semantic index has caught up (#216).
 
 use crate::semantic_search::SemanticIndex;
 use crate::state::AppState;
 use crate::vault::operations;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
 use tauri::{AppHandle, Emitter, Manager};
 
 /// The score a note must reach to count as saying the same thing. Calibrated against live
@@ -52,27 +55,51 @@ pub struct SimilarMatch {
     pub excerpt: String,
 }
 
+/// Why [`check`] judged nothing.
+#[derive(Debug)]
+pub enum CheckError {
+    /// The note at the path has another id, or none: the note checked for is elsewhere, and
+    /// nothing says the backend is away.
+    AnotherNote,
+    /// The note could not be read, or the index or the embedding backend failed. Without the
+    /// cause, which nothing logs: an embedding failure carries the backend's response body.
+    Failed,
+}
+
 /// The existing notes most like the note at `path`, or `None` when there are none or the note
-/// is too short to judge.
+/// is too short to judge. With `id` not empty, the note at `path` must have that frontmatter id:
+/// another note there is [`CheckError::AnotherNote`], never a note judged in its place.
 pub fn check(
     index: &SemanticIndex,
     vault: &str,
     path: &str,
-) -> Result<Option<SimilarityCheck>, String> {
-    let note = operations::read_note(vault, path)?;
+    id: &str,
+) -> Result<Option<SimilarityCheck>, CheckError> {
+    let note = operations::read_note(vault, path).map_err(|_| CheckError::Failed)?;
+    // Compared on the read that is judged, so a note that takes `path` after this one is renamed
+    // never stands in for it.
+    if !id.is_empty() && note.meta.id != id {
+        return Err(CheckError::AnotherNote);
+    }
     let words =
         note.meta.title.split_whitespace().count() + note.content.split_whitespace().count();
     if words < MIN_WORDS {
         return Ok(None);
     }
-    let found = index.similar(
-        &note.meta.title,
-        &note.content,
-        &note.meta.id,
-        SIMILAR_SCORE,
-    )?;
+    let found = index
+        .similar(
+            &note.meta.title,
+            &note.content,
+            &note.meta.id,
+            SIMILAR_SCORE,
+        )
+        .map_err(|_| CheckError::Failed)?;
+    #[cfg(test)]
+    AFTER_SCORING.with_borrow_mut(|after| after.as_mut().map(|after| after()));
     let mut matches: Vec<SimilarMatch> = found
         .into_iter()
+        // A note without an id is indexed by its path, which `similar` cannot exclude.
+        .filter(|similar| !same_path(&similar.found.path, path))
         // Deleted or unreadable since it was indexed: nothing to append to. Changed since: the
         // passage may no longer be in it, and the card would vouch for text the user never saw.
         .filter_map(|similar| {
@@ -105,13 +132,56 @@ pub fn check(
     }))
 }
 
-/// [`check`] against the open vault, with every failure treated as "nothing found": no index,
-/// an unreachable embedding backend, or a note that vanished.
-pub fn check_now(state: &AppState, path: &str) -> Option<SimilarityCheck> {
-    let index = state.semantic_index.lock().ok()?.clone()?;
-    let vault = state.config.lock().ok()?.active_vault.clone()?;
-    match check(&index, &vault, path) {
-        Ok(found) => found,
+/// [`check`] for the note at `path` in `vault`, the vault it was saved in, whose frontmatter id
+/// is `id` (empty when it has none), with every failure treated as "nothing found": no index, an
+/// unreachable embedding backend, or a note that vanished. The check is kept in that vault's list
+/// while it waits its turn or runs, and stays kept when [`check`] itself fails, as it does while
+/// the backend is unreachable or another note has taken the note's path, or when another vault
+/// is open by then, to run once that vault's index has caught up (#216). Reruns leave it to this
+/// first attempt, whose card a quick capture's notification follows, until the attempt ends.
+pub fn check_now(state: &AppState, vault: &str, path: &str, id: &str) -> Option<SimilarityCheck> {
+    // Without a semantic index nothing could run it, now or later.
+    if state.semantic_index.lock().ok()?.is_none() {
+        return None;
+    }
+    // The id the caller had when the note was saved or opened, not one read now: the note may
+    // have been renamed or moved since, and the id still finds it.
+    let kept = DeferredCheck {
+        id: id.to_string(),
+        path: path.to_string(),
+    };
+    // Marked before it is kept, so no rerun takes it from this attempt.
+    let first = FirstAttempt::start(vault, &kept);
+    // Kept before it waits its turn or runs, so quitting while it waits behind another check,
+    // or on the backend's timeout, still leaves it to run later.
+    with_kept(state, vault, |checks| checks.keep(kept.clone()));
+    #[cfg(test)]
+    BEFORE_TURN.with_borrow_mut(|before| before.as_mut().map(|before| before()));
+    // Dropped in this order: a check left kept is the reruns' before the next turn starts.
+    let _turn = (
+        first,
+        CHECKING.lock().unwrap_or_else(PoisonError::into_inner),
+    );
+    // A rerun already checking the note when this was kept, for an earlier check of it, ran it
+    // and showed its card.
+    let mut waiting = false;
+    with_kept(state, vault, |checks| waiting = checks.holds(&kept));
+    if !waiting {
+        return None;
+    }
+    // Another vault's index cannot judge the note; its own vault's list keeps the check. Run
+    // under the open vault's path, which its card is shown for.
+    let (index, open) = open_index(state)?;
+    if !same_path(&open, vault) {
+        return None;
+    }
+    // Judged only while it is still the note at `path`: another note there leaves the check kept,
+    // for a rerun to find this one by its id.
+    match check(&index, &open, path, id) {
+        Ok(found) => {
+            with_kept(state, vault, |checks| checks.forget(&[&kept]));
+            found
+        }
         Err(_) => {
             // Without the error: an embedding failure carries the backend's response body,
             // which docs/log-privacy.md keeps out of the log.
@@ -119,6 +189,672 @@ pub fn check_now(state: &AppState, path: &str) -> Option<SimilarityCheck> {
             None
         }
     }
+}
+
+/// Whether two paths name the same file or folder, as a vault opened through a link and
+/// through its target do, and their notes.
+fn same_path(one: &str, other: &str) -> bool {
+    one == other
+        || matches!(
+            (dunce::canonicalize(one), dunce::canonicalize(other)),
+            (Ok(one), Ok(other)) if one == other
+        )
+}
+
+/// Whether the note at `path` is in `vault`, compared as resolved paths, since a vault opened
+/// through a link keeps the link in its path while a note can carry the resolved one, and
+/// whether the app has opened that vault: keeping a check creates the vault's machine-local
+/// state, and nothing should appear in a folder that is not a vault. A note no longer at `path`,
+/// renamed or moved since, alone or with the folders above it, is placed by the nearest folder
+/// above it that is still there: its check is kept by its id.
+pub(crate) fn note_in_opened_vault(vault: &str, path: &str) -> bool {
+    let (Ok(root), Some(note)) = (
+        dunce::canonicalize(vault),
+        resolve_what_is_there(Path::new(path)),
+    ) else {
+        return false;
+    };
+    note.starts_with(&root) && operations::helixnotes_dir(vault).is_dir()
+}
+
+/// `path` with the nearest of it and the folders above it that is still there resolved, and the
+/// names below that one, which are gone, after it. `None` when what is gone could lead anywhere
+/// once resolved: a `..` below a folder that is gone, which nothing can resolve yet, or something
+/// there that does not resolve, such as a link to nothing.
+fn resolve_what_is_there(path: &Path) -> Option<PathBuf> {
+    let mut gone = Vec::new();
+    let mut at = path;
+    loop {
+        if let Ok(mut resolved) = dunce::canonicalize(at) {
+            resolved.extend(gone.iter().rev());
+            return Some(resolved);
+        }
+        match std::fs::symlink_metadata(at) {
+            // Gone: the folder above it places it.
+            Err(error) if is_gone(&error) => {}
+            // There, yet it does not resolve: a link to nothing, which could point anywhere once
+            // its target appears, or an entry that cannot be read, which could be one.
+            _ => return None,
+        }
+        // A `..` has no name: below a folder that is gone, it could climb anywhere.
+        gone.push(at.file_name()?);
+        at = at.parent()?;
+    }
+}
+
+/// The file in the vault's machine-local folder that keeps deferred checks across a restart.
+const DEFERRED_FILE: &str = "deferred_similarity.json";
+
+/// A note whose similarity check is running, or failed and is waiting to run (#216).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct DeferredCheck {
+    /// The note's frontmatter id, which finds it again after a rename or a move. Empty when it
+    /// has none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) id: String,
+    /// Where the note was when its check was kept: how a note without an id is found.
+    pub(crate) path: String,
+}
+
+impl DeferredCheck {
+    fn same_note(&self, other: &Self) -> bool {
+        if self.id.is_empty() || other.id.is_empty() {
+            self.path == other.path
+        } else {
+            self.id == other.id
+        }
+    }
+}
+
+/// The open vault's deferred checks, oldest first (#216). Every change rewrites a file in the
+/// vault's machine-local folder, never inside the vault, so a restart keeps them and sync never
+/// carries them.
+#[derive(Debug, Default)]
+pub struct DeferredChecks {
+    /// The vault they belong to. `None` until a vault opens.
+    vault: Option<String>,
+    checks: Vec<DeferredCheck>,
+    /// The checks the file held when it was last read or written, and none while it cannot be
+    /// read: any others in `checks` wait only in memory. Any of these that `checks` has dropped
+    /// since, because they ran or their note is gone, are still in the file after a write that
+    /// failed, and come back when the app quits or another vault opens without a save that
+    /// succeeds: one that ran then runs once more.
+    in_file: Vec<DeferredCheck>,
+    /// The file was there but could not be read: it is read again before anything is written
+    /// over it, so an error that passes never costs the checks it holds.
+    unread: bool,
+    /// Notes whose checks ran or were dropped while the file could not be read, so its older
+    /// checks for them do not come back.
+    forgotten: Vec<DeferredCheck>,
+}
+
+/// The file's shape: `{"checks": [...]}`.
+#[derive(Deserialize, Serialize)]
+struct DeferredFile<C> {
+    checks: C,
+}
+
+fn deferred_file(vault: &str) -> Result<PathBuf, String> {
+    crate::machine_local::vault_dir(Path::new(vault)).map(|dir| dir.join(DEFERRED_FILE))
+}
+
+/// The checks in `vault`'s file. A missing file holds none, and so does a damaged one, which
+/// the next save replaces. `None` when the file is there but cannot be read just now.
+fn read_kept(vault: &str) -> Option<Vec<DeferredCheck>> {
+    match std::fs::read(deferred_file(vault).ok()?) {
+        Ok(bytes) => Some(
+            serde_json::from_slice::<DeferredFile<Vec<DeferredCheck>>>(&bytes)
+                .map(|file| file.checks)
+                .unwrap_or_else(|_| {
+                    log::warn!("The deferred similarity checks were damaged, so none are waiting");
+                    Vec::new()
+                }),
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(Vec::new()),
+        Err(_) => None,
+    }
+}
+
+impl DeferredChecks {
+    /// The checks kept for `vault`. A missing or damaged file is an empty list, and so is one
+    /// that cannot be read, with one log line: a lost deferred check never stops a vault from
+    /// opening.
+    pub fn load(vault: &str) -> Self {
+        let read = read_kept(vault);
+        if read.is_none() {
+            // The outcome only: the error can name the file.
+            log::warn!("The deferred similarity checks could not be read, so none are waiting");
+        }
+        Self {
+            vault: Some(vault.to_string()),
+            unread: read.is_none(),
+            in_file: read.clone().unwrap_or_default(),
+            checks: read.unwrap_or_default(),
+            forgotten: Vec::new(),
+        }
+    }
+
+    /// Makes `vault`'s checks the open ones, read from its file. Reopening the open vault keeps
+    /// the list it has: a check kept since the file was read is only there. Opening another
+    /// first saves once more whenever the file may not match the list, since the file may take
+    /// the change now. Checks that wait only in memory and still cannot be saved are lost, and
+    /// the log counts them. Checks that ran, or whose note is gone, and still cannot be dropped
+    /// from the file come back when that vault opens again, as they do when the app quits
+    /// without a save that succeeds: one that ran then runs once more.
+    pub fn open(&mut self, vault: &str) {
+        if !self
+            .vault
+            .as_deref()
+            .is_some_and(|open| same_path(open, vault))
+        {
+            if self.file_may_differ() {
+                self.save();
+                self.log_lost();
+            }
+            *self = Self::load(vault);
+        }
+    }
+
+    /// Reads the file again when it could not be read before, its checks ahead of any made
+    /// since, which replace their note's, and without those that ran or were dropped since.
+    /// False while it still cannot be read.
+    fn reread(&mut self) -> bool {
+        if !self.unread {
+            return true;
+        }
+        let Some(older) = self.vault.as_deref().and_then(read_kept) else {
+            return false;
+        };
+        let mut checks: Vec<DeferredCheck> = older
+            .iter()
+            .filter(|old| {
+                !self.holds(old) && !self.forgotten.iter().any(|gone| gone.same_note(old))
+            })
+            .cloned()
+            .collect();
+        checks.append(&mut self.checks);
+        self.checks = checks;
+        self.in_file = older;
+        self.unread = false;
+        self.forgotten.clear();
+        true
+    }
+
+    /// Reads a file that could not be read before and writes it back at once, without the checks
+    /// that ran or were dropped since, so a restart does not bring them back.
+    fn recover(&mut self) {
+        if self.unread && self.reread() {
+            self.save();
+        }
+    }
+
+    /// Rewrites the file. When that fails, the checks kept since it was last read or written wait
+    /// only in memory, and are lost when the app quits or another vault opens without a save
+    /// that succeeds.
+    fn save(&mut self) {
+        let Some(vault) = self.vault.clone() else {
+            return;
+        };
+        // Still unreadable, the file keeps what it holds, and these wait in memory.
+        if !self.reread() {
+            log::warn!("Could not save the deferred similarity checks");
+            return;
+        }
+        let saved = deferred_file(&vault).and_then(|file| {
+            let bytes = serde_json::to_vec_pretty(&DeferredFile {
+                checks: &self.checks,
+            })
+            .map_err(|error| error.to_string())?;
+            crate::durable::replace(&file, &bytes, crate::durable::Mode::Private)
+        });
+        match saved {
+            Ok(()) => self.in_file = self.checks.clone(),
+            // Without the error, which can name the file.
+            Err(_) => log::warn!("Could not save the deferred similarity checks"),
+        }
+    }
+
+    /// How many checks wait only in memory: kept since the file was last read or written.
+    fn unsaved(&self) -> usize {
+        self.checks
+            .iter()
+            .filter(|check| !self.in_file.contains(check))
+            .count()
+    }
+
+    /// Whether the file may not match the list, either way: a check waits only in memory, or
+    /// the file may still hold one the list has dropped, because it ran or its note is gone,
+    /// after a write that failed or while the file could not be read. A dropped one comes back
+    /// when the app quits or another vault opens without a save that succeeds.
+    fn file_may_differ(&self) -> bool {
+        self.unsaved() > 0
+            || !self.forgotten.is_empty()
+            || self
+                .in_file
+                .iter()
+                .any(|saved| !self.checks.contains(saved))
+    }
+
+    /// Logs how many checks are lost as this list is let go, unsaved.
+    fn log_lost(&self) {
+        let lost = self.unsaved();
+        if lost > 0 {
+            // A count only (docs/log-privacy.md).
+            log::warn!("Lost deferred similarity checks that could not be saved: lost={lost}");
+        }
+    }
+
+    /// Keeps `check` as the newest, in place of an earlier one for the same note.
+    fn keep(&mut self, check: DeferredCheck) {
+        self.checks.retain(|kept| !kept.same_note(&check));
+        self.checks.push(check);
+        self.save();
+    }
+
+    /// Whether a check is kept for `check`'s note.
+    fn holds(&self, check: &DeferredCheck) -> bool {
+        self.checks.iter().any(|kept| kept.same_note(check))
+    }
+
+    /// Drops the checks kept for these notes: they ran, or the note is gone.
+    fn forget(&mut self, done: &[&DeferredCheck]) {
+        self.checks
+            .retain(|kept| !done.iter().any(|check| kept.same_note(check)));
+        if self.unread {
+            self.forgotten
+                .extend(done.iter().map(|check| (*check).clone()));
+        }
+        self.save();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn checks(&self) -> &[DeferredCheck] {
+        &self.checks
+    }
+}
+
+/// Runs `with` on `vault`'s deferred checks.
+fn with_kept(state: &AppState, vault: &str, with: impl FnOnce(&mut DeferredChecks)) {
+    let Ok(mut open) = state.deferred_checks.lock() else {
+        return;
+    };
+    match open
+        .vault
+        .as_deref()
+        .map(|open_vault| same_path(open_vault, vault))
+    {
+        Some(true) => with(&mut open),
+        // The vault was switched while the check ran. The check belongs to the vault it ran in,
+        // whose file keeps it for that vault's next open. The open list stays locked meanwhile,
+        // so reopening that vault cannot read the file between this read and write. Unlike the
+        // open list, this one is let go at once: a check it cannot save to that file is lost
+        // then, and the log counts it.
+        Some(false) => {
+            let mut other = DeferredChecks::load(vault);
+            with(&mut other);
+            other.log_lost();
+        }
+        None => {
+            *open = DeferredChecks::load(vault);
+            with(&mut open);
+        }
+    }
+}
+
+/// Where a deferred check's note is now.
+enum Location {
+    At(String),
+    /// Deleted: neither the index nor the vault has it any more.
+    Gone,
+    /// Not readable where the index or the record puts it, and not shown gone either: the file
+    /// is there but cannot be read just now, the index has not caught up yet with a move made
+    /// while the app was closed, a note the vault scan could not read may be it, or a bulk
+    /// change came or went while it scanned. It is looked for again after the next pass.
+    Unsure,
+}
+
+/// Every note's frontmatter id and path, and whether the walk read every folder and note: one
+/// it could not may be a deferred check's note, moved.
+type Scan = (Vec<(String, String)>, bool);
+
+/// Finds a deferred check's note: by its id through the index, then at its recorded path, while
+/// `settled_notes` holds the note lock, then by its id across the vault, scanned into `scanned`
+/// once for every check of a rerun after it lets the lock go. `leases` is the bulk leases granted,
+/// read under that lock.
+fn locate(
+    state: &AppState,
+    index: &SemanticIndex,
+    vault: &str,
+    deferred: &DeferredCheck,
+    settled_notes: MutexGuard<'_, ()>,
+    leases: usize,
+    scanned: &mut Option<Scan>,
+) -> Result<Location, String> {
+    let indexed = if deferred.id.is_empty() {
+        Vec::new()
+    } else {
+        index.paths_of_note(&deferred.id)?
+    };
+    let mut unsure = !indexed.is_empty();
+    for path in indexed.iter().chain(std::iter::once(&deferred.path)) {
+        // Not `read_note`, which reads the trash too: a note in the trash has left the vault.
+        match operations::read_vault_note(vault, path) {
+            Ok(note) if deferred.id.is_empty() || note.meta.id == deferred.id => {
+                return Ok(Location::At(path.clone()));
+            }
+            // Another note has that path now.
+            Ok(_) => {}
+            Err(_) if !absent(path) => unsure = true,
+            Err(_) => {}
+        }
+    }
+    if unsure {
+        return Ok(Location::Unsure);
+    }
+    // The index can miss a note moved while the app was closed, so the vault has the last word
+    // before the check is dropped.
+    if !deferred.id.is_empty() {
+        // Without the lock, since a save waits for it on the main thread.
+        drop(settled_notes);
+        let (notes, complete) = scanned.get_or_insert_with(|| {
+            let (notes, complete) = scan_ids(vault);
+            (
+                notes,
+                complete && notes_still_settled(state, leases).is_some(),
+            )
+        });
+        if let Some((_, path)) = notes.iter().find(|(id, _)| *id == deferred.id) {
+            return Ok(Location::At(path.clone()));
+        }
+        if !*complete {
+            return Ok(Location::Unsure);
+        }
+    }
+    Ok(Location::Gone)
+}
+
+/// Nothing is at `path`, or nothing a note could be: a file there that cannot be read, or a
+/// folder above it that cannot be, does not count.
+fn absent(path: &str) -> bool {
+    match std::fs::metadata(path) {
+        Ok(metadata) => !metadata.is_file(),
+        Err(error) => is_gone(&error),
+    }
+}
+
+/// Whether `error`, from reaching a path, says nothing is there: the entry is missing, or what
+/// is above it is no longer a folder. One test, so placing a check and dropping one agree on
+/// what is gone.
+fn is_gone(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+    )
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Runs as a vault scan starts on this thread, so a test can act while it runs.
+    pub(crate) static DURING_SCAN: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
+        const { std::cell::RefCell::new(None) };
+    /// Runs once a check on this thread has scored its note, so a test can act before it ends.
+    pub(crate) static AFTER_SCORING: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
+        const { std::cell::RefCell::new(None) };
+    /// Runs once [`check_now`] on this thread has kept its check, before it takes its turn.
+    pub(crate) static BEFORE_TURN: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
+        const { std::cell::RefCell::new(None) };
+    /// Runs once a rerun on this thread has found a kept check's note, before it checks it.
+    pub(crate) static AFTER_LOCATING: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Walks the vault's notes as the index sees them, each read in full: the note list's scan
+/// reads only the start of a note, which can cut a long frontmatter short of its id.
+fn scan_ids(vault: &str) -> Scan {
+    #[cfg(test)]
+    DURING_SCAN.with_borrow_mut(|during| during.as_mut().map(|during| during()));
+    let root = Path::new(vault);
+    let (mut ids, mut complete) = (Vec::new(), true);
+    for entry in walkdir::WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| !crate::search::is_ignored_by_index(entry.path(), root))
+    {
+        let Ok(entry) = entry else {
+            complete = false;
+            continue;
+        };
+        let path = entry.path();
+        if !entry.file_type().is_file()
+            || path.extension().and_then(|value| value.to_str()) != Some("md")
+        {
+            continue;
+        }
+        // Read as `check` reads it, by the path listed for it, so a note that is not UTF-8 counts
+        // as unread, and so does one whose path is not valid Unicode, which no `String` names:
+        // found here, either would fail its check as if the backend were away and stop the rerun.
+        let Some(listed) = path.to_str() else {
+            complete = false;
+            continue;
+        };
+        match std::fs::read_to_string(listed) {
+            Ok(raw) => {
+                let filename = entry.file_name().to_string_lossy();
+                let (meta, _) = crate::vault::frontmatter::parse_note(&raw, &filename);
+                ids.push((meta.id, listed.to_string()));
+            }
+            Err(_) => complete = false,
+        }
+    }
+    (ids, complete)
+}
+
+/// The note lock, unless something holds it: a save for a moment, or a bulk change for as long
+/// as it moves notes.
+fn notes_settled(state: &AppState) -> Option<MutexGuard<'_, ()>> {
+    match state.note_mutation.try_lock() {
+        Ok(guard) => Some(guard),
+        Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+        Err(TryLockError::WouldBlock) => None,
+    }
+}
+
+/// [`notes_settled`], unless a restore, import or sync batch has been granted a lease since
+/// `leases` was read under the note lock: one that came and went can have hidden notes meanwhile.
+fn notes_still_settled(state: &AppState, leases: usize) -> Option<MutexGuard<'_, ()>> {
+    notes_settled(state).filter(|_held| state.bulk_mutation.granted() == leases)
+}
+
+/// The open vault and its semantic index, one lock at a time: renaming a notebook holds `config`
+/// while it takes the index slot. The slot read again shows no vault switch came between the two.
+fn open_index(state: &AppState) -> Option<(Arc<SemanticIndex>, String)> {
+    let index = state.semantic_index.lock().ok()?.clone()?;
+    let vault = state.config.lock().ok()?.active_vault.clone()?;
+    let still = state.semantic_index.lock().ok()?.clone()?;
+    Arc::ptr_eq(&index, &still).then_some((index, vault))
+}
+
+/// One run of kept checks at a time, so two passes that finish close together never run a check
+/// twice, and a rerun never runs one that [`check_now`] is still running.
+static CHECKING: Mutex<()> = Mutex::new(());
+
+/// The checks [`check_now`] has kept and not yet ended, each with its vault: reruns leave them to
+/// it, since a rerun's card never notifies (#216). Never saved, so after a restart every kept
+/// check is the reruns'.
+static FIRST_ATTEMPTS: Mutex<Vec<(String, DeferredCheck)>> = Mutex::new(Vec::new());
+
+/// A check in [`FIRST_ATTEMPTS`] until dropped.
+struct FirstAttempt((String, DeferredCheck));
+
+impl FirstAttempt {
+    fn start(vault: &str, check: &DeferredCheck) -> Self {
+        let attempt = (vault.to_string(), check.clone());
+        first_attempts().push(attempt.clone());
+        Self(attempt)
+    }
+}
+
+impl Drop for FirstAttempt {
+    fn drop(&mut self) {
+        let mut attempts = first_attempts();
+        if let Some(at) = attempts.iter().position(|attempt| *attempt == self.0) {
+            attempts.remove(at);
+        }
+    }
+}
+
+fn first_attempts() -> MutexGuard<'static, Vec<(String, DeferredCheck)>> {
+    FIRST_ATTEMPTS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Whether `check`, kept for `vault`, waits on its first attempt.
+fn in_first_attempt(vault: &str, check: &DeferredCheck) -> bool {
+    first_attempts()
+        .iter()
+        .any(|(kept_in, attempt)| attempt.same_note(check) && same_path(kept_in, vault))
+}
+
+/// Runs each of the open vault's deferred checks once, oldest first, on the note's current
+/// text, and hands every result with matches to `deliver` (#216). A check that runs leaves the
+/// list, matches or not; one that fails again stays; one whose path another note took once it
+/// was found stays, and the rest still run; a deleted note's is dropped; one whose first
+/// attempt in [`check_now`] has not ended is left to it. They stop, and the rest wait for the
+/// next rerun, once the index may no longer be caught up: a rebuild or reconcile started since it
+/// caught up or stopped part way, a note was queued or saved since, or settings replaced it. They
+/// stop too when something holds the note lock as a check looks for its note or ends, or a bulk
+/// change came and went while a check ran.
+pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(SimilarityCheck)) {
+    let _checking = CHECKING.lock().unwrap_or_else(PoisonError::into_inner);
+    let Some((index, vault)) = open_index(state) else {
+        return;
+    };
+    let waiting = match state.deferred_checks.lock() {
+        Ok(mut list)
+            if list
+                .vault
+                .as_deref()
+                .is_some_and(|open| same_path(open, &vault)) =>
+        {
+            // A file that could not be read when the vault opened gives up its checks once it can.
+            list.recover();
+            list.checks.clone()
+        }
+        _ => return,
+    };
+    if waiting.is_empty() {
+        return;
+    }
+    let mut settled = Vec::new();
+    let (mut found, mut dropped) = (0, 0);
+    let mut scanned = None;
+    for deferred in &waiting {
+        // Its first attempt runs it, and can notify for a quick capture.
+        if in_first_attempt(&vault, deferred) {
+            continue;
+        }
+        // A rebuild or reconcile started since the index caught up can leave it short of notes,
+        // so this check and the rest wait until the queue is through again.
+        let Some(mark) = index.caught_up_mark() else {
+            index.owe_caught_up();
+            break;
+        };
+        // A restore, an import or a sync batch holds the note lock while it moves notes, and can
+        // leave some missing until it ends: located only while it is free, settled only if none
+        // came or went meanwhile, and otherwise this check and the rest wait for the next pass.
+        let Some(settled_notes) = notes_settled(state) else {
+            index.owe_caught_up();
+            break;
+        };
+        let leases = state.bulk_mutation.granted();
+        match locate(
+            state,
+            &index,
+            &vault,
+            deferred,
+            settled_notes,
+            leases,
+            &mut scanned,
+        ) {
+            Ok(Location::At(path)) => {
+                #[cfg(test)]
+                AFTER_LOCATING.with_borrow_mut(|after| after.as_mut().map(|after| after()));
+                // Its id compared again on the read that is judged: `locate` has let the note
+                // lock go, and a note written at `path` from outside the app since would
+                // otherwise be judged in its place.
+                match check(&index, &vault, &path, &deferred.id) {
+                    // The mark is read under the lock, so a bulk change cannot reconcile between
+                    // it and the lease count.
+                    Ok(_)
+                        if notes_still_settled(state, leases)
+                            .is_none_or(|_held| index.caught_up_mark() != Some(mark)) =>
+                    {
+                        index.owe_caught_up();
+                        break;
+                    }
+                    Ok(result) => {
+                        settled.push(deferred);
+                        if let Some(result) = result {
+                            found += 1;
+                            deliver(result);
+                        }
+                    }
+                    // Another note took its path once it was found, which says nothing about the
+                    // backend: kept, and looked for by its id again after the next pass.
+                    Err(CheckError::AnotherNote) => {}
+                    // Most likely the backend is away again: the rest wait for the next pass
+                    // rather than each waiting out its timeout.
+                    Err(CheckError::Failed) => break,
+                }
+            }
+            Ok(Location::Gone) => {
+                dropped += 1;
+                settled.push(deferred);
+            }
+            Ok(Location::Unsure) | Err(_) => {}
+        }
+    }
+    // Nothing changed, so nothing to log: a check that cannot run yet would otherwise log after
+    // every pass.
+    if settled.is_empty() {
+        return;
+    }
+    let ran = settled.len() - dropped;
+    let still_waiting = waiting.len() - settled.len();
+    if let Ok(mut list) = state.deferred_checks.lock() {
+        // Unless the vault was switched meanwhile: its file then keeps every check for its next
+        // open, and those that ran run once more.
+        if list
+            .vault
+            .as_deref()
+            .is_some_and(|open| same_path(open, &vault))
+        {
+            list.forget(&settled);
+        }
+    }
+    // Counts only, never a note (docs/log-privacy.md).
+    log::info!(
+        "Deferred similarity checks: ran={ran} found={found} dropped={dropped} \
+         waiting={still_waiting}"
+    );
+}
+
+/// Reruns the deferred checks off the indexing worker's thread and shows each result with
+/// matches as the ordinary card. Oldest first, so the newest lands on top, since cards show
+/// newest first. No notification and no summary: the user did not just capture anything.
+fn rerun_deferred(app: AppHandle) {
+    tauri::async_runtime::spawn_blocking(move || {
+        rerun_deferred_checks(&app.state::<AppState>(), |found| {
+            show_card(&app, &found);
+        });
+    });
+}
+
+/// Reruns the open vault's deferred checks when `index` has caught up, as
+/// `SemanticIndex::on_caught_up` defines it (#216). For every new index, before its worker starts.
+pub fn rerun_when_caught_up(app: &AppHandle, index: &SemanticIndex) {
+    let app = app.clone();
+    index.on_caught_up(move || rerun_deferred(app.clone()));
 }
 
 /// `existing` with the capture added at the end under a dated marker, title line included.
@@ -139,26 +875,33 @@ pub fn with_capture_appended(
     )
 }
 
+/// Shows `found` as the ordinary card in the main window. False when it is not shown: a check
+/// can outlast a vault switch, and its card belongs to the vault it ran in.
+fn show_card(app: &AppHandle, found: &SimilarityCheck) -> bool {
+    if !vault_still_open(app, &found.vault) {
+        return false;
+    }
+    if let Err(error) = app.emit_to("main", crate::events::SIMILAR_NOTES_FOUND, found) {
+        log::warn!("Could not show the similar-notes card: {error}");
+        return false;
+    }
+    true
+}
+
 /// Run the check for a quick capture in the background, show what it found in the main
 /// window, and raise a notification when the user is looking elsewhere.
-pub fn after_capture(app: AppHandle, path: String) {
+pub fn after_capture(app: AppHandle, vault: String, path: String, id: String) {
     // Read now, while it still describes this capture: the next overlay overwrites it.
     let focused_at_capture = MAIN_FOCUSED_AT_CAPTURE.load(Ordering::SeqCst);
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(found) = check_now(&app.state::<AppState>(), &path) else {
-            return;
-        };
-        // A check can outlast a vault switch; its card and its nudge belong to the old vault.
-        if !vault_still_open(&app, &found.vault) {
-            return;
+        if let Some(found) = check_now(&app.state::<AppState>(), &vault, &path, &id) {
+            // Its nudge, like its card, belongs to the vault the check ran in.
+            if show_card(&app, &found) && !focused_at_capture && !main_window_focused(&app) {
+                notify(&app, found.vault);
+            }
         }
-        if let Err(error) = app.emit_to("main", crate::events::SIMILAR_NOTES_FOUND, &found) {
-            log::warn!("Could not show the similar-notes card: {error}");
-            return;
-        }
-        if !focused_at_capture && !main_window_focused(&app) {
-            notify(&app, found.vault);
-        }
+        // Once any card is sent: scripts/similar-run.mjs reads this as the check's end.
+        log::info!("Finished the similarity check for a capture");
     });
 }
 
@@ -416,7 +1159,282 @@ fn notify(_app: &AppHandle, _vault: String) {}
 
 #[cfg(test)]
 mod tests {
-    use super::{notification_title, with_capture_appended};
+    use super::{
+        deferred_file, notification_title, with_capture_appended, DeferredCheck, DeferredChecks,
+        DeferredFile,
+    };
+
+    #[test]
+    fn opening_a_vault_reads_its_checks_and_reopening_it_keeps_the_open_list() {
+        let first = std::env::temp_dir().join(format!("sb-deferred-{}", uuid::Uuid::new_v4()));
+        let second = std::env::temp_dir().join(format!("sb-deferred-{}", uuid::Uuid::new_v4()));
+        let (first_text, second_text) = (first.to_str().unwrap(), second.to_str().unwrap());
+        for vault in [&first, &second] {
+            std::fs::create_dir_all(vault).unwrap();
+        }
+        let kept = DeferredCheck {
+            id: "note-id".to_string(),
+            path: "Areas/Note.md".to_string(),
+        };
+        let mut open = DeferredChecks::default();
+        open.open(first_text);
+        open.keep(kept.clone());
+        // As the file read when the vault began opening again, before that check was kept.
+        let none: DeferredFile<Vec<DeferredCheck>> = DeferredFile { checks: Vec::new() };
+        let file = deferred_file(first_text).unwrap();
+        std::fs::write(&file, serde_json::to_vec(&none).unwrap()).unwrap();
+        open.open(first_text);
+        assert_eq!(open.checks(), [kept], "the open list has the newer check");
+        open.open(second_text);
+        assert!(open.checks().is_empty(), "another vault's file");
+        for vault in [first, second] {
+            std::fs::remove_dir_all(vault).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_note_is_in_a_vault_opened_through_a_link_and_never_in_a_folder_that_is_not_one() {
+        let root = std::env::temp_dir().join(format!("sb-deferred-{}", uuid::Uuid::new_v4()));
+        let (vault, link, plain) = (root.join("Vault"), root.join("Link"), root.join("Plain"));
+        std::fs::create_dir_all(vault.join(".helixnotes")).unwrap();
+        std::fs::create_dir_all(&plain).unwrap();
+        std::os::unix::fs::symlink(&vault, &link).unwrap();
+        let (note, stray) = (vault.join("Note.md"), plain.join("Note.md"));
+        std::fs::write(&note, "note").unwrap();
+        std::fs::write(&stray, "note").unwrap();
+        let text = |path: &std::path::Path| path.to_str().unwrap().to_string();
+        assert!(
+            super::note_in_opened_vault(&text(&link), &text(&note)),
+            "opened through a link"
+        );
+        assert!(super::note_in_opened_vault(&text(&vault), &text(&note)));
+        assert!(
+            !super::note_in_opened_vault(&text(&plain), &text(&stray)),
+            "never opened as a vault"
+        );
+        assert!(
+            !super::note_in_opened_vault(&text(&link), &text(&stray)),
+            "outside the vault"
+        );
+        let (renamed, escaped) = (vault.join("Gone.md"), vault.join("../Plain/Gone.md"));
+        assert!(
+            super::note_in_opened_vault(&text(&link), &text(&renamed)),
+            "renamed since: placed by its folder"
+        );
+        assert!(
+            !super::note_in_opened_vault(&text(&vault), &text(&escaped)),
+            "a folder outside the vault"
+        );
+        let dangling = vault.join("Dangling");
+        std::os::unix::fs::symlink(root.join("Missing"), &dangling).unwrap();
+        assert!(
+            !super::note_in_opened_vault(&text(&vault), &text(&dangling.join("Note.md"))),
+            "through a link to nothing, which could point outside the vault"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_note_whose_folder_is_gone_is_placed_by_the_vault_unless_it_climbs_out() {
+        let root = std::env::temp_dir().join(format!("sb-deferred-{}", uuid::Uuid::new_v4()));
+        let (vault, plain) = (root.join("Vault"), root.join("Plain"));
+        std::fs::create_dir_all(vault.join(".helixnotes")).unwrap();
+        std::fs::create_dir_all(&plain).unwrap();
+        // Beside the vault, so a `..` that Windows resolves before it reaches the disk finds a
+        // note there, outside the vault.
+        std::fs::write(plain.join("Note.md"), "note").unwrap();
+        let text = |path: &std::path::Path| path.to_str().unwrap().to_string();
+        // Its folder renamed since, so neither the note nor its folder is there.
+        let (in_gone, climbing) = (
+            vault.join("Gone/Note.md"),
+            vault.join("Gone/../../Plain/Note.md"),
+        );
+        assert!(
+            super::note_in_opened_vault(&text(&vault), &text(&in_gone)),
+            "its folder renamed since: placed by the vault"
+        );
+        assert!(
+            !super::note_in_opened_vault(&text(&vault), &text(&climbing)),
+            "climbing out below a folder that is gone"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_deferred_file_gives_an_empty_list_and_the_vault_still_opens() {
+        let vault = std::env::temp_dir().join(format!("sb-deferred-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&vault).unwrap();
+        let vault_text = vault.to_str().unwrap();
+        let file = deferred_file(vault_text).unwrap();
+        assert!(
+            DeferredChecks::load(vault_text).checks().is_empty(),
+            "a missing file is an empty list"
+        );
+
+        // `load` has no error to return, so opening the vault goes on with an empty list.
+        std::fs::write(&file, b"{ not json").unwrap();
+        let mut loaded = DeferredChecks::load(vault_text);
+        assert!(loaded.checks().is_empty(), "a damaged file");
+        // The next change writes a whole file over the damaged one.
+        loaded.keep(DeferredCheck {
+            id: "note-id".to_string(),
+            path: "Areas/Note.md".to_string(),
+        });
+        assert_eq!(DeferredChecks::load(vault_text).checks(), loaded.checks());
+
+        std::fs::remove_file(&file).unwrap();
+        std::fs::create_dir(&file).unwrap();
+        let mut unread = DeferredChecks::load(vault_text);
+        assert!(
+            unread.checks().is_empty(),
+            "a file that cannot be read at all"
+        );
+        let check = |id: &str, path: &str| DeferredCheck {
+            id: id.to_string(),
+            path: path.to_string(),
+        };
+        unread.keep(check("newer-id", "Areas/Newer.md"));
+        unread.keep(check("ran-id", "Areas/Ran.md"));
+        unread.forget(&[&check("ran-id", "Areas/Ran.md")]);
+        assert!(
+            file.is_dir(),
+            "nothing is written over what could not be read"
+        );
+
+        // Once it can be read, its checks come back ahead of the newer ones. A newer check
+        // replaces its note's older one, and one that ran meanwhile stays gone.
+        std::fs::remove_dir(&file).unwrap();
+        let older = DeferredFile {
+            checks: vec![
+                check("older-id", "Areas/Older.md"),
+                check("newer-id", "Areas/Before the move.md"),
+                check("ran-id", "Areas/Ran.md"),
+            ],
+        };
+        std::fs::write(&file, serde_json::to_vec(&older).unwrap()).unwrap();
+        unread.recover();
+        let recovered = [
+            check("older-id", "Areas/Older.md"),
+            check("newer-id", "Areas/Newer.md"),
+        ];
+        assert_eq!(unread.checks(), recovered);
+        assert_eq!(
+            DeferredChecks::load(vault_text).checks(),
+            recovered,
+            "written back at once, so a restart does not bring back the check that ran"
+        );
+        unread.keep(check("another-id", "Areas/Another.md"));
+        let expected = [
+            check("older-id", "Areas/Older.md"),
+            check("newer-id", "Areas/Newer.md"),
+            check("another-id", "Areas/Another.md"),
+        ];
+        assert_eq!(unread.checks(), expected);
+        assert_eq!(DeferredChecks::load(vault_text).checks(), expected);
+        std::fs::remove_file(&file).unwrap();
+        std::fs::remove_dir_all(&vault).unwrap();
+    }
+
+    #[test]
+    fn a_check_kept_while_the_file_cannot_be_read_is_saved_when_another_vault_opens() {
+        let first = std::env::temp_dir().join(format!("sb-deferred-{}", uuid::Uuid::new_v4()));
+        let second = std::env::temp_dir().join(format!("sb-deferred-{}", uuid::Uuid::new_v4()));
+        let (first_text, second_text) = (first.to_str().unwrap(), second.to_str().unwrap());
+        for vault in [&first, &second] {
+            std::fs::create_dir_all(vault).unwrap();
+        }
+        let file = deferred_file(first_text).unwrap();
+        std::fs::create_dir(&file).unwrap();
+        let mut open = DeferredChecks::default();
+        open.open(first_text);
+        let kept = DeferredCheck {
+            id: "note-id".to_string(),
+            path: "Areas/Note.md".to_string(),
+        };
+        // Kept only in memory: nothing is written over what could not be read.
+        open.keep(kept.clone());
+
+        // Readable again by the time another vault opens.
+        std::fs::remove_dir(&file).unwrap();
+        let none: DeferredFile<Vec<DeferredCheck>> = DeferredFile { checks: Vec::new() };
+        std::fs::write(&file, serde_json::to_vec(&none).unwrap()).unwrap();
+        open.open(second_text);
+        assert_eq!(
+            DeferredChecks::load(first_text).checks(),
+            [kept],
+            "saved before the list was let go"
+        );
+        std::fs::remove_file(&file).unwrap();
+        for vault in [first, second] {
+            std::fs::remove_dir_all(vault).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_check_that_ran_while_the_file_could_not_be_replaced_leaves_it_when_another_vault_opens() {
+        let first = std::env::temp_dir().join(format!("sb-deferred-{}", uuid::Uuid::new_v4()));
+        let second = std::env::temp_dir().join(format!("sb-deferred-{}", uuid::Uuid::new_v4()));
+        let (first_text, second_text) = (first.to_str().unwrap(), second.to_str().unwrap());
+        for vault in [&first, &second] {
+            std::fs::create_dir_all(vault).unwrap();
+        }
+        let ran = DeferredCheck {
+            id: "note-id".to_string(),
+            path: "Areas/Note.md".to_string(),
+        };
+        let mut open = DeferredChecks::default();
+        open.open(first_text);
+        open.keep(ran.clone());
+        // It ran, but the file still holds it: its replacement failed.
+        crate::durable::tests::with_interrupted_replace(|| open.forget(&[&ran]));
+
+        // The file can be replaced again by the time another vault opens.
+        open.open(second_text);
+        assert!(
+            DeferredChecks::load(first_text).checks().is_empty(),
+            "dropped from the file before the list was let go, so it does not run again"
+        );
+        std::fs::remove_file(deferred_file(first_text).unwrap()).unwrap();
+        for vault in [first, second] {
+            std::fs::remove_dir_all(vault).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_check_that_ran_while_the_file_could_not_be_read_leaves_it_when_another_vault_opens() {
+        let first = std::env::temp_dir().join(format!("sb-deferred-{}", uuid::Uuid::new_v4()));
+        let second = std::env::temp_dir().join(format!("sb-deferred-{}", uuid::Uuid::new_v4()));
+        let (first_text, second_text) = (first.to_str().unwrap(), second.to_str().unwrap());
+        for vault in [&first, &second] {
+            std::fs::create_dir_all(vault).unwrap();
+        }
+        let file = deferred_file(first_text).unwrap();
+        std::fs::create_dir(&file).unwrap();
+        let mut open = DeferredChecks::default();
+        open.open(first_text);
+        let ran = DeferredCheck {
+            id: "note-id".to_string(),
+            path: "Areas/Note.md".to_string(),
+        };
+        // Kept and run while nothing is written over what could not be read.
+        open.keep(ran.clone());
+        open.forget(&[&ran]);
+
+        // Readable again by the time another vault opens, and still holding it.
+        std::fs::remove_dir(&file).unwrap();
+        let held = DeferredFile { checks: vec![ran] };
+        std::fs::write(&file, serde_json::to_vec(&held).unwrap()).unwrap();
+        open.open(second_text);
+        assert!(
+            DeferredChecks::load(first_text).checks().is_empty(),
+            "dropped from the file before the list was let go, so it does not run again"
+        );
+        std::fs::remove_file(&file).unwrap();
+        for vault in [first, second] {
+            std::fs::remove_dir_all(vault).unwrap();
+        }
+    }
 
     #[test]
     fn an_append_keeps_the_note_and_marks_where_the_capture_starts() {

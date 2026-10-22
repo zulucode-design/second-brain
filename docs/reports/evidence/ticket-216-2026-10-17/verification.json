@@ -1,0 +1,62 @@
+{
+  "candidate": "19727aab6a2dcc0e1c5f1b7fc9db53b1110d6c37",
+  "localDate": "2026-10-17",
+  "merge": {
+    "originMain": "70859f6bc09811d90305ec69cfec5d808b77cb5c",
+    "outcome": "no merge needed"
+  },
+  "release": {
+    "systemctl --user is-active sb169-gate1-rerun": "inactive",
+    "rpm -q second-brain": "package second-brain is not installed"
+  },
+  "usageChecks": {
+    "command": "codex exec -m gpt-6.1-sol -c model_reasoning_effort=low -s read-only --skip-git-repo-check \"Reply with exactly: OK\" < /dev/null",
+    "outcome": "OK before each verification run; no fallback used in this run"
+  },
+  "windowsDiskBeforeBytes": {
+    "C": 51715661824,
+    "D": 16380592128
+  },
+  "windowsDiskAfterBytes": {
+    "C": 51718815744,
+    "D": 16417280000
+  },
+  "namedTests": [
+    {
+      "test": "similar_notes::tests::an_unreadable_deferred_file_gives_an_empty_list_and_the_vault_still_opens",
+      "Fedora": "PASS",
+      "Windows": "PASS"
+    },
+    {
+      "test": "semantic_search::tests::a_failed_similarity_check_is_recorded_and_survives_reloading_its_file",
+      "Fedora": "PASS",
+      "Windows": "PASS"
+    },
+    {
+      "test": "semantic_search::tests::a_deferred_check_runs_after_the_backend_returns_and_its_card_is_delivered",
+      "Fedora": "PASS",
+      "Windows": "PASS"
+    },
+    {
+      "test": "semantic_search::tests::a_moved_note_still_gets_its_deferred_check_and_a_deleted_one_is_dropped",
+      "Fedora": "PASS",
+      "Windows": "PASS"
+    },
+    {
+      "test": "semantic_search::tests::a_deferred_check_that_fails_again_stays_recorded",
+      "Fedora": "PASS",
+      "Windows": "PASS"
+    },
+    {
+      "test": "semantic_search::tests::a_pass_that_stopped_or_found_the_queue_empty_reruns_nothing",
+      "Fedora": "PASS",
+      "Windows": "PASS"
+    },
+    {
+      "test": "semantic_search::tests::a_pass_that_leaves_notes_queued_reruns_nothing_until_the_queue_is_through",
+      "Fedora": "PASS",
+      "Windows": "PASS"
+    }
+  ],
+  "result": "VERIFY: FAIL"
+}
