@@ -1,10 +1,10 @@
 # Deferred capture-time similarity (#216): verification
 
-Merge head to be carried by the pull request: `a1d921143c73a2fb255ab5f9a3d2068883f10181`,
-beside verified product candidate `eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9`. This report records
-merge verification and subsequent report-only fixes. Final review of the resulting report head
-remains a separate run. Nothing was pushed in these runs. The eb59fe3 sections below remain its
-historical record.
+Next product head for PR #232: `8326def68cb2c37bcfe5ea42b26e80da63a31768`; this report commit
+follows it. The affected Fedora checks passed on that head on 2026-10-22. Windows was unavailable
+and was not rerun. Verified product candidate `eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9` and merge
+`a1d921143c73a2fb255ab5f9a3d2068883f10181` retain their historical results below. Final review of
+the resulting report head remains a separate run. Nothing was pushed in this CI follow-up run.
 
 Date: 2026-10-21 (local date). Sol ran Kiro workflow section 7, steps 5 and 6, on candidate
 `eb59fe3db78591d0ae10bfccffc0fe24ee1d77e9`.
@@ -144,6 +144,88 @@ run's files, reused caches and test temporary roots. Both disposable run roots, 
 and the listed test temporary roots are cleanup candidates; nothing was deleted. The existing
 Windows install was preserved. No product code was edited, no push was made, and no pull request was
 opened. **MERGE-VERIFY: PASS**; final review of the report commit remains a separate run.
+
+## CI follow-up on 8326def (2026-10-22)
+
+Sol followed Kiro workflow section 7, step 9. The final review of
+`b2e9fffc62f3d25eeb74e4aaae85eff829ea200d` was CLEAN on both axes. Sol then pushed that head and
+opened [PR #232](https://github.com/zulucode-design/second-brain/pull/232).
+[CI verify](https://github.com/zulucode-design/second-brain/actions/runs/39761755774/job/119767365541)
+failed on one distinct Clippy error, reported for both lib and lib test:
+
+```text
+error: this boolean expression can be simplified
+   --> src/similar_notes.rs:784:28
+    = note: `-D clippy::nonminimal-bool` implied by `-D warnings`
+error: could not compile `second-brain` (lib) due to 1 previous error
+error: could not compile `second-brain` (lib test) due to 1 previous error
+[ELIFECYCLE] Command failed with exit code 101.
+```
+
+The local lint runs used newer stable Rust, whose Clippy did not report this expression; CI pins
+Rust 1.88.0 in `.github/workflows/verify.yml`. At the owner's request, Kiro wrote attempt 6:
+brief `f13caa22ca54b3badb849c93f80e95882fdf7d6d`, frozen handoff
+`4c6fdf0f2293ae7b1af283816fd4ae70906352b2`, code head
+`3107dd9cf8eadc76bb8fd4d3d852f785fac6f779`, based on `b2e9fff`. Claude imported its single code
+commit with `-x` as `8326def` and found nothing to fix at intake. Kiro's sandbox runs are not gate
+evidence. The import changes only two lines of `rerun_deferred_checks`, adopting Clippy 1.88's
+suggestion: `!option.is_some_and(predicate)` becomes `option.is_none_or(negated_predicate)`.
+Both forms return true for `None`, false for an unchanged mark under `Some(_held)`, and true for
+a changed mark. `_held` still holds the note lock while the mark is read. There is no
+platform-specific code in the change.
+
+Preflight confirmed clean HEAD `8326def`, parent `b2e9fff`, and only
+`src-tauri/src/similar_notes.rs` changed from that parent. After `git fetch origin`, `origin/main`
+remained `169b0f2d48c5ab6d7c3c23df7fc0c1da0321e1c8` and the published delivery branch remained
+`b2e9fff`. The three Kiro skill copies matched. Sol's usage probe returned `OK` before each gate
+and the evidence checks. Sol ran the checks; no stand-in was needed and no product code was edited.
+
+| Machine | Check on 8326def | Result and toolchain |
+| --- | --- | --- |
+| Fedora | `pnpm verify` | PASS, exit 0; all five constituent commands below passed, using stable Rust 1.98.0 and Clippy 0.1.98. |
+| Fedora | `pnpm check` | PASS; 0 errors, 0 warnings. |
+| Fedora | `pnpm test` | PASS; 254 passed, 0 failed, 0 skipped. |
+| Fedora | `pnpm test:rust` | PASS; 755 listed, 745 passed, 0 failed, 10 ignored, 0 filtered. Main and doc suites each ran 0 tests. |
+| Fedora | `pnpm lint:rust` inside verify | PASS; formatting and Clippy clean under stable Rust 1.98.0. |
+| Fedora | `pnpm build` | PASS; one static site. |
+| Fedora | `RUSTUP_TOOLCHAIN=1.88.0 pnpm lint:rust` | PASS, exit 0; formatting and all-target Clippy clean under CI's pinned toolchain. |
+
+The pinned-toolchain commands reported `rustc 1.88.0 (6b00bc388 2025-06-23)` and
+`clippy 0.1.88 (6b00bc3880 2025-06-23)`. That lint used a separate `CARGO_TARGET_DIR`, aliased as
+`<Fedora Rust 1.88 target>` in the evidence, to avoid rebuilding the existing stable cache with a
+different toolchain. `pnpm verify` reused `src-tauri/target`. Both commands used cached dependencies
+offline; nothing was installed. Node was 24.22.1 and pnpm was 11.22.0.
+
+Full logs: [Fedora verify](evidence/ticket-216-2026-10-17/fedora-verify-8326def.txt) and
+[Fedora Rust 1.88 lint](evidence/ticket-216-2026-10-17/fedora-lint-rust-1.88-8326def.txt).
+The branch still adds exactly 51 Rust test functions relative to pinned main, matching the explicit
+manifest. All 51 have exactly one successful full-name line in this run: **51/51 PASS**. All five
+restore-outcome tests, the non-UTF-8 regression and the named JavaScript vault-switch test passed.
+[Named-test match](evidence/ticket-216-2026-10-17/named-tests-8326def.json) can be regenerated from
+the repository root with
+`python3 docs/reports/evidence/ticket-216-2026-10-17/match-tests-8326def.py`.
+
+Windows SSH timed out on the single attempt, with a 6-second connection timeout and exit 255.
+No retry, disk check, checkout update or Windows gate followed. **Windows was not rerun on
+8326def.** Its last local results remain `a1d9211`: 715 Rust passes, 9 ignored, **46/46 named
+tests PASS**, five Unix-only tests not compiled, and only the allowed #221 Clippy error, as linked
+in the merge section. Separately,
+[CI windows-rust on b2e9fff](https://github.com/zulucode-design/second-brain/actions/runs/39761755774/job/119767365779)
+passed. That job runs `pnpm test:rust` under Rust 1.88 on the head pushed next; its result on that
+future head is pending.
+
+Everything else remains carried from `eb59fe3` and `a1d9211` as recorded above, including Windows
+tests and lint, RPM/package checks, installed recovery, the end-to-end similarity run and Windows
+frontend/NSIS builds, because `8326def` changes only how one boolean is written, with the same
+value in every case. The earlier packaging proof limits remain; no installer of the merged tree
+or this head was built in this run.
+
+[Run summary and Windows status](evidence/ticket-216-2026-10-17/verification-8326def.json).
+[Retained paths and sizes](evidence/ticket-216-2026-10-17/retained-paths-8326def.json) lists this
+run's artifacts and test temporary roots. Cleanup candidates are the private run root, the separate
+Rust 1.88 target and the listed test temporary roots; the stable cache remains for reuse. Nothing
+was deleted, installed or pushed. **VERIFY28: PASS**; a fresh final review of the resulting report
+head is a separate run before any push.
 
 ## Current command results
 
@@ -360,11 +442,13 @@ required, not new reviews performed during this verification. Every round identi
 | 27 / `eb59fe3` | Sol | CLEAN on both axes, no findings | Full verification rerun in this report |
 | Final / `0823262` | Sol | CLEAN on both axes, no findings | Sol pushed `0823262`, then stopped before opening a pull request because main had moved; merged main as `a1d9211` |
 | Final / `0aa65a9` | Claude Sonnet stand-ins | Spec/Adversarial CLEAN with five P3s; Standards stopped at its session limit and gave no result | Three report P3s fixed in this report-only commit; Claude judged the two adversarial P3s (one recorded in the PR body, one needing no change); a fresh final review of this commit's head remains a separate run |
+| Final / `b2e9fff` | Sol | CLEAN on both axes, no findings | Sol pushed `b2e9fff` and opened PR #232 |
+| CI / `b2e9fff` | GitHub Actions | `verify` FAIL on Clippy 1.88's `nonminimal_bool`; `windows-rust` PASS | Kiro attempt 6: `8326def`, imported by Claude |
 
 Main's lock-order issue #227 and semantic-index overlap issue #228 remain open follow-ups. This
 verification does not claim to fix them. The report head still needs the final review required by
 AGENTS.md; round 27 covered the product candidate, and the later final reviews covered earlier
-report heads, not this report-fix commit.
+report heads, not this CI follow-up report commit.
 
 ## Earlier verification and evidence
 
