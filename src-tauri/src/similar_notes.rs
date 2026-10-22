@@ -781,8 +781,8 @@ pub(crate) fn rerun_deferred_checks(state: &AppState, mut deliver: impl FnMut(Si
                     // The mark is read under the lock, so a bulk change cannot reconcile between
                     // it and the lease count.
                     Ok(_)
-                        if !notes_still_settled(state, leases)
-                            .is_some_and(|_held| index.caught_up_mark() == Some(mark)) =>
+                        if notes_still_settled(state, leases)
+                            .is_none_or(|_held| index.caught_up_mark() != Some(mark)) =>
                     {
                         index.owe_caught_up();
                         break;
