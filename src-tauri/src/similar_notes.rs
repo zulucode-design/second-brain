@@ -629,13 +629,18 @@ fn scan_ids(vault: &str) -> Scan {
         {
             continue;
         }
-        // Read as `check` reads it, so a note that is not UTF-8 counts as unread: found here, it
-        // would fail its check as if the backend were away and stop the rerun.
-        match std::fs::read_to_string(path) {
+        // Read as `check` reads it, by the path listed for it, so a note that is not UTF-8 counts
+        // as unread, and so does one whose path is not valid Unicode, which no `String` names:
+        // found here, either would fail its check as if the backend were away and stop the rerun.
+        let Some(listed) = path.to_str() else {
+            complete = false;
+            continue;
+        };
+        match std::fs::read_to_string(listed) {
             Ok(raw) => {
                 let filename = entry.file_name().to_string_lossy();
                 let (meta, _) = crate::vault::frontmatter::parse_note(&raw, &filename);
-                ids.push((meta.id, path.to_string_lossy().to_string()));
+                ids.push((meta.id, listed.to_string()));
             }
             Err(_) => complete = false,
         }

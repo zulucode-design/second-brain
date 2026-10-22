@@ -3517,6 +3517,84 @@ mod tests {
         cleanup(root);
     }
 
+    #[test]
+    fn a_deferred_note_moved_to_a_name_that_is_not_unicode_stays_kept_and_the_next_check_runs() {
+        // A file name no `String` holds, so the app cannot name the note by its path.
+        #[cfg(unix)]
+        let name = {
+            use std::os::unix::ffi::OsStrExt;
+            std::ffi::OsStr::from_bytes(b"Moved-\xff.md").to_os_string()
+        };
+        #[cfg(windows)]
+        let name = {
+            use std::os::windows::ffi::OsStringExt;
+            let wide: Vec<u16> = "Moved-"
+                .encode_utf16()
+                .chain([0xD800])
+                .chain(".md".encode_utf16())
+                .collect();
+            std::ffi::OsString::from_wide(&wide)
+        };
+        let root = scratch("deferred-not-unicode-move");
+        let vault = root.to_str().unwrap();
+        let kept = root.join("Kept.md");
+        write_note(&kept, "kept-id", "Kept", "Areas", "coffee ratio");
+        let (available, index) = recovering_index(&root);
+        let app = open_app(vault, &index);
+        let cards = cards_from_reruns(&index, &app);
+        index.note_changed(&kept).unwrap();
+        index.retry_pending().unwrap();
+
+        // Two captures saved offline, each check failing: the first is kept ahead of the second.
+        available.store(false, Ordering::SeqCst);
+        let first = root.join("First capture.md");
+        let second = root.join("Second capture.md");
+        write_note(
+            &first,
+            "first-id",
+            "First capture",
+            "Areas",
+            "coffee beans today",
+        );
+        write_note(
+            &second,
+            "second-id",
+            "Second capture",
+            "Areas",
+            "more coffee beans",
+        );
+        for (note, id) in [(&first, "first-id"), (&second, "second-id")] {
+            index.note_changed(note).unwrap();
+            assert!(check_saved(&app, note, id).is_none());
+        }
+
+        // The first is moved while the app is closed to a name that is not valid Unicode, its
+        // text and id unchanged. The reconcile on reopening can only queue it under a lossy
+        // path, which no file has, so the index loses it and only the vault scan can come
+        // across it.
+        let moved = root.join(&name);
+        assert!(moved.to_str().is_none());
+        std::fs::rename(&first, &moved).unwrap();
+        available.store(true, Ordering::SeqCst);
+        index.reconcile_from_notes(&root).unwrap();
+
+        // The pass that embeds the second capture shows the backend back and reruns both.
+        index.retry_pending().unwrap();
+        assert_eq!(
+            shown(&cards),
+            [("Second capture".to_string(), vec!["Kept".to_string()])],
+            "the note no check can name does not stop the checks behind it"
+        );
+        assert_eq!(
+            waiting(&app),
+            [("first-id".to_string(), path_text(&first))],
+            "the note the scan cannot list may be this one"
+        );
+        drop(app);
+        drop(index);
+        cleanup(root);
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_deferred_note_without_an_id_behind_a_folder_that_cannot_be_read_is_not_taken_for_deleted()
