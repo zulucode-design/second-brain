@@ -1,29 +1,30 @@
 ---
 name: kiro-workflow
-description: "Kiro first-pass workflow: the brief, exchange branch, handoff, import, intake, fixes, review and publication. Use whenever a task involves Kiro: a Kiro brief or handoff, a `kiro/*` branch, a pull request Kiro opened, the Kiro mirror, or an issue given to Kiro."
+description: "Kiro workflow for first passes and fix attempts: the brief, exchange branch, Kiro session, handoff, import, intake, review and publication. Use whenever a task involves Kiro: a Kiro brief or handoff, a `kiro/*` branch, a pull request Kiro opened, the Kiro mirror, an issue given to Kiro, or a review, test or CI finding to fix."
 ---
 
 # Kiro workflow
 
-Kiro, Amazon's coding agent, writes the first pass of an issue in its own sandbox. That sandbox sees
-only the GitHub repository Kiro is connected to. It has no access to Nicolas's Fedora machine, his
-Windows machine, or anything else on them.
+Kiro, Amazon's coding agent, writes the first pass of an issue and, by default, the fixes after it,
+in a cloud sandbox. That sandbox sees only the GitHub repository Kiro is connected to. It has no
+access to Nicolas's Fedora machine, his Windows machine, or anything else on them.
 
-Everything after Kiro's first pass belongs to Claude and Sol, as `AGENTS.md` assigns it. Read its
-**Roles** and **Pull requests** sections rather than working from memory of them; they still bind.
-This skill adds only what is specific to Kiro.
+Everything else belongs to Claude and Sol, as `AGENTS.md` assigns it. Read its **Roles** and
+**Pull requests** sections rather than working from memory of them; they still bind. Roles says
+which fixes go to Kiro and which stay with Claude. This skill adds only what is specific to Kiro.
 
 ## Who does what
 
-- **Kiro** writes the first pass of the code and its tests, within the brief. It commits its own
-  work and pushes only its own working branch. It never merges anything.
-- **Claude** grills Nicolas before the brief, writes and commits the brief, runs the watcher, imports
-  and reads Kiro's work, and writes every fix after it: intake, review, test, CI and conflict fixes.
-  A fix never goes back to Kiro. Claude never pushes.
+- **Kiro** writes the code and tests each brief asks for: a first pass, or the fixes of a fix
+  attempt. It commits its own work and pushes only its own working branch. It never merges anything.
+- **Claude** grills Nicolas before a first-pass brief, triages each round of findings, writes and
+  commits every brief, starts and resumes every Kiro session, runs the watcher, imports and reads
+  Kiro's work, and makes the fixes `AGENTS.md` Roles keeps with Claude. Claude never pushes.
 - **Sol** makes every push from this machine, the exchange branch included, keeps the mirror in step,
   and runs every check, test and review, at `xhigh` reasoning effort. Sol commits the report, opens
   the pull request, watches CI and merges after Nicolas's go-ahead.
-- **Nicolas** settles scope in the grilling, starts each Kiro session, and gives the go-ahead to
+- **Nicolas** settles scope in the grilling, may send any fix to Claude or to agents Claude directs,
+  starts a Kiro session by hand only when the CLI cannot (section 3), and gives the go-ahead to
   merge.
 
 Everyone commits their own work.
@@ -100,9 +101,24 @@ The brief holds:
 
 The brief never changes once pushed. A changed brief is a new attempt, with `<k>` raised by one.
 
-Sol pushes the exchange branch, in mirror mode after setting mirror main to `base_sha`. Nicolas then
-starts a Kiro session on the working repository, with the exchange branch chosen as the base branch,
-and asks Kiro to follow the `kiro-workflow` skill and the brief.
+Sol pushes the exchange branch, in mirror mode after setting mirror main to `base_sha`. Claude then
+starts Kiro (section 3).
+
+### Fix attempts
+
+A fix attempt carries one round of findings to Kiro: from a review round, the final review, one of
+Sol's test runs, or CI. Claude triages the round first. Each finding is either fixed, or left unfixed
+with a follow-up issue as `AGENTS.md` **Pull requests** allows. A finding that needs a decision on
+scope, security, data loss or the product contract goes to Nicolas before the brief. One fix attempt
+then carries every finding of the round that Roles gives to Kiro, from both review axes.
+
+A fix attempt follows the steps above, except:
+
+- Its `base_sha` is the head of the delivery branch `fix/<N>-<slug>`, and its exchange branch starts
+  there. Sol pushes that branch to the mirror with the brief commit on top; mirror main stays where it
+  is.
+- Its brief quotes each finding verbatim and says that `docs/reports/` stays untouched. It may link
+  the issue instead of quoting it when an earlier brief for the issue quoted it.
 
 ## 2. Kiro's rules
 
@@ -110,6 +126,8 @@ Kiro, this section is yours.
 
 - Read `AGENTS.md`, this skill, the brief, and the parts of `docs/SPEC.md` and `CONTEXT.md` the brief
   points to.
+- One session may receive several briefs for an issue, one per attempt. Work from the newest brief;
+  where it differs from what you remember of an earlier attempt, the brief wins.
 - Work on the exchange branch or on a branch created from it. Your branch must contain the brief
   commit unchanged.
 - Change only the files the brief allows. Never touch `.github/`, `.gitignore`, `AGENTS.md`,
@@ -153,10 +171,33 @@ state: working | question | ready_for_claude
 ## Question
 ```
 
-## 3. Watcher
+## 3. Kiro sessions and the watcher
 
-While any Kiro task is open, Claude runs one background shell loop against the working repository,
-covering every open task:
+Claude starts every Kiro session from this machine with the Kiro CLI, in Kiro's cloud sandbox:
+
+```bash
+kiro-cli chat --no-interactive --agent-engine v3 --cloud --repo <working repository> \
+  --model claude-opus-5.5 --effort xhigh "<prompt>" < /dev/null
+```
+
+- The prompt names the exchange branch and the brief, and asks Kiro to follow this skill and the
+  brief.
+- Every session runs `claude-opus-5.5` at `xhigh` effort unless Nicolas names another model or
+  effort. A session keeps its model and effort for its whole life.
+- One session per issue. The issue's first attempt starts it, and the CLI prints its ID as
+  `[cloud] session <id>`. Claude keeps that ID in its notes for the task, outside the repository, and
+  starts every later attempt by resuming the session:
+  `kiro-cli chat --no-interactive --agent-engine v3 --resume-id <id> "<prompt>" < /dev/null`.
+  If the resume fails, Claude starts a fresh session with the same prompt; the brief carries
+  everything Kiro needs.
+- The session runs in Kiro's cloud and keeps working after the local CLI exits or this machine
+  sleeps. The CLI exiting is the quick sign that Kiro has finished; the watcher is the reliable one.
+- If the CLI cannot start or resume a session, Claude tells Nicolas. He starts one by hand on the
+  working repository, with the exchange branch as its base branch, and asks Kiro to follow this skill
+  and the brief.
+
+While any Kiro session is working on an attempt, Claude runs one background shell loop against the
+working repository, covering every such attempt:
 
 - `git fetch` every ref, then list the refs that changed since the last poll, not only `kiro/*`.
   `git ls-remote` alone does not update local refs, so fetch before reading a handoff.
@@ -169,15 +210,15 @@ covering every open task:
   never read as "nothing changed".
 - After 24 hours with no push, tell Nicolas once.
 
-The watcher stops when the last open task closes. If Claude's session restarts, Claude restarts it
-from the pinned commits.
+The watcher stops once no session is working on an attempt. If Claude's session restarts, Claude
+restarts the watcher from the pinned commits.
 
 ## 4. Questions
 
 On `state: question`, Claude answers from the issue and `docs/SPEC.md` where they settle it, and
 otherwise asks Nicolas. The answer goes into a new brief as the next attempt, since a brief never
-changes. Kiro may also stop in its session without pushing; Nicolas sees that there, and the watcher's
-24-hour notice covers it.
+changes. Kiro may also stop without pushing. Claude reads its last message in the CLI output, or by
+resuming the session, and the watcher's 24-hour notice covers a stop nobody saw.
 
 ## 5. Freeze and import
 
@@ -185,11 +226,15 @@ On `ready_for_claude`, Claude freezes the attempt at the handoff commit `H`:
 
 - `H` changes only the handoff file, and `H^` is the `code_head` its frontmatter names.
 - `brief_sha` is an ancestor of `H`, and `base_sha` of `brief_sha`, with the brief file unchanged.
-- In mirror mode, mirror main still equals `base_sha`.
+- In mirror mode, mirror main still equals the commit Sol last set it to. For a first pass, that
+  commit is `base_sha`.
+- For a fix attempt, `base_sha` is the delivery branch head the brief names, and the delivery branch
+  still ends there.
 
 Claude does not import later pushes. It reads them, and if they matter, the next attempt covers them.
 
 Claude creates the delivery branch `fix/<N>-<slug>` in a worktree at `base_sha` on this repository.
+For a fix attempt, the delivery branch already ends at `base_sha`, and Claude imports onto it.
 `git cherry-pick -x` copies each code commit in `brief_sha..code_head`, skipping brief and handoff
 commits. From a commit that mixes code with the brief or handoff, Claude imports only the code and
 keeps Kiro as author. A merge commit anywhere in that range rejects the attempt. Claude removes any
@@ -217,22 +262,25 @@ who revokes or rotates it, and any deletion or history rewrite waits for his app
 
 1. Claude's intake fixes, committed locally.
 2. Sol's build gate: `pnpm check`, the Linux compile, and `pnpm test:rust` on Windows early.
-3. Sol's review loop on the exact head, Spec and Standards separately, at `xhigh`. Claude fixes each
-   round. When the same finding comes back or three rounds pass without a clean result, Claude writes
-   a diagnosis and takes it to Nicolas.
+3. Sol's review loop on the exact head, Spec and Standards separately, at `xhigh`. Claude triages
+   each round and routes its fixes as `AGENTS.md` Roles says: by default a fix attempt to Kiro
+   (section 1), frozen, imported and read like a first pass (sections 5 and 6). When a finding comes
+   back after Claude's own fix, or three rounds pass without a clean result, Claude writes a
+   diagnosis and takes it to Nicolas.
 4. Sol merges `origin/main` once. Conflicts go to Claude.
 5. Sol's full verification on that head, on both machines: `pnpm verify` and the machine and package
    checks the brief names. Sol matches the tests the change adds against the tests that actually ran.
    A new Rust test marked `#[ignore]` runs by name through `pnpm test:rust`, which passes its
    arguments on to `cargo test`; otherwise Sol records the acceptance it covers as unverified.
-6. Sol commits the report, recording the candidate commit, the review rounds and Claude's fix
-   commits.
+   Failures go to Claude, who routes their fixes as in step 3.
+6. Sol commits the report, recording the candidate commit, the review rounds, and for each round
+   who made its fixes (Kiro's attempt, Claude, or agents Claude directed) and the fix commits.
 7. The final review of that exact head.
 8. Sol pushes and opens the pull request with its `Final review: <sha>` line, and adds the closing
    reference when the attempt completes the issue. Before merge, Sol checks the pull request's
    `closingIssuesReferences`, since a sentence like "does not close #N" still closes it.
-9. CI. A failure goes to Claude; Sol reruns the affected checks and a fresh review of the whole
-   branch's exact head before the next push.
+9. CI. A failure goes to Claude, who routes its fix as in step 3; Sol reruns the affected checks and
+   a fresh review of the whole branch's exact head before the next push.
 10. Claude tells Nicolas the pull request can merge, and Sol merges after his go-ahead.
 
 If main moves again before the pull request opens, Sol merges it, reruns the affected checks and
@@ -252,8 +300,9 @@ updates and the merge wait for Sol.
 
 ## 9. Measurement
 
-After three Kiro issues, Claude reports, for each one, Claude's fix commits after import and the
-number of review rounds, taken from git and the committed reports.
+After three Kiro issues, Claude reports, for each one, the fix commits after import by who made them
+(Kiro, Claude, or agents Claude directed) and the number of review rounds, taken from git and the
+committed reports.
 
 ## 10. First task in each mode
 
@@ -266,12 +315,19 @@ Record, from the pilot:
 - whether the watcher woke Claude, survived a restart and handled an API failure;
 - which checks Kiro ran in its sandbox, and the sandbox's network and secrets settings.
 
+Mirror mode, recorded. In #158, #169 and #216, Kiro worked on the exchange branch, delivered by
+pushing with no pull request, and followed the handoff template. In #158 the watcher woke Claude and
+survived restarts, no API failure came up, and the sandbox was Amazon Linux without GTK, so
+`pnpm test:rust` could not run there. In the CLI tests of 2026-10-23, Kiro read this skill directly
+rather than loading it natively, and the sandbox reported open outbound network.
+
 ## Privacy
 
 The same rules cover this public repository and the private mirror. Briefs, handoffs, commits, pull
 request text and evidence carry no hostnames, private machine paths, note content, credentials or
 personal data. Nicolas checks that Kiro's environment holds no secrets, environment variables, cloud
-roles or connected tools beyond what the task needs.
+roles or connected tools beyond what the task needs. The Kiro CLI on this machine has no MCP servers
+configured, and stays that way: the CLI reports MCP isolation for cloud sessions as unconfirmed.
 
 ## Changing this skill
 
