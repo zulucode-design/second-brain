@@ -192,7 +192,7 @@ kiro-cli chat --no-interactive --agent-engine v3 --cloud --repo <working reposit
   everything Kiro needs.
 - The session runs in Kiro's cloud and keeps working after the local CLI exits or this machine
   sleeps. The CLI exiting is the quick sign that Kiro has finished; the watcher is the reliable one.
-- If the CLI cannot start or resume a session, Claude tells Nicolas. He starts one by hand on the
+- If the CLI cannot start a fresh session either, Claude tells Nicolas. He starts one by hand on the
   working repository, with the exchange branch as its base branch, and asks Kiro to follow this skill
   and the brief.
 
