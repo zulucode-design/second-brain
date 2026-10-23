@@ -35,7 +35,8 @@ of an issue, and by default writes the fixes after it (see Kiro workflow below).
   makes the intake fixes after importing Kiro's work, resolves merge conflicts, and fixes a finding
   itself when Nicolas says so, when Kiro is unavailable or the fix needs the Fedora or Windows
   machine, or when Kiro's fix for that finding has failed intake or review twice. When Nicolas asks,
-  agents Claude directs fix them instead. Sol never fixes what she reviews.
+  agents Claude directs fix them instead; Sol is never one of them. A finding in Sol's report goes to
+  Sol, who wrote it.
 - **Sol** runs the tests and checks (`pnpm verify`, manual runs, verification matrices) and reports
   failures back to Claude. Sol also runs the final review below, opens the pull request once that
   review is clean, watches CI and reports failures back to Claude, and merges.

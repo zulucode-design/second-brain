@@ -115,8 +115,8 @@ then carries every finding of the round that Roles gives to Kiro, from both revi
 A fix attempt follows the steps above, except:
 
 - Its `base_sha` is the head of the delivery branch `fix/<N>-<slug>`, and its exchange branch starts
-  there. Sol pushes that branch to the mirror with the brief commit on top; mirror main stays where it
-  is.
+  there. Sol pushes that branch to the working repository with the brief commit on top; in mirror
+  mode, mirror main stays where it is.
 - Its brief quotes each finding verbatim and says that `docs/reports/` stays untouched. It may link
   the issue instead of quoting it when an earlier brief for the issue quoted it.
 
