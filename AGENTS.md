@@ -25,12 +25,18 @@ also hits the app binary, where a second manifest is a hard linker error (`CVT11
 
 ## Roles
 
-Claude and Sol split each change. Claude writes the code; Sol (Codex `gpt-6.1-sol`, reasoning
-effort xhigh) does the administrative work around it. Kiro, Amazon's coding agent, may write the
-first pass of an issue (see Kiro workflow below); Claude owns every fix after it.
+Claude orchestrates each change and owns its code; Sol (Codex `gpt-6.1-sol`, reasoning effort
+xhigh) does the administrative work around it. Kiro, Amazon's coding agent, may write the first pass
+of an issue, and by default writes the fixes after it (see Kiro workflow below).
 
-- **Claude** writes the code and its tests, and fixes every finding that review, a test run, or CI
-  raises, CI failures included. Claude does not run the tests.
+- **Claude** writes the code and its tests when Kiro has not written the first pass, and triages
+  every finding that review, a test run, or CI raises. Claude does not run the tests.
+- **Kiro** fixes those findings by default, on every issue, whoever wrote the first pass. Claude
+  makes the intake fixes after importing Kiro's work, resolves merge conflicts, and fixes a finding
+  itself when Nicolas says so, or when Kiro is unavailable or the fix needs the Fedora or Windows
+  machine. When Kiro's fix for a finding has failed intake or review twice, Claude either briefs Kiro
+  once more or fixes it itself. When Nicolas asks, agents Claude directs fix them instead; Sol is
+  never one of them. A finding in Sol's report goes to Sol, who wrote it.
 - **Sol** runs the tests and checks (`pnpm verify`, manual runs, verification matrices) and reports
   failures back to Claude. Sol also runs the final review below, opens the pull request once that
   review is clean, watches CI and reports failures back to Claude, and merges.
@@ -40,7 +46,7 @@ first pass of an issue (see Kiro workflow below); Claude owns every fix after it
   `codex exec -m gpt-6.1-sol -c model_reasoning_effort=low -s read-only --skip-git-repo-check "Reply with exactly: OK" < /dev/null`
   (without `< /dev/null` it waits on stdin). `OK` means Sol runs it. A usage-limit error means
   Claude Sonnet 5.5 agents at extra-high (`xhigh`) reasoning effort run that review or test run in
-  her place. Report any other error to Nicolas. Claude still writes and fixes the code.
+  her place. Report any other error to Nicolas. Code and fixes still go as above.
 
 ## Pull requests
 
@@ -107,8 +113,8 @@ and sizes, then wait for his answer.
 ### Kiro workflow
 
 When a task involves Kiro (a Kiro brief or handoff, a `kiro/*` branch, a pull request opened by
-Kiro, or an issue given to Kiro), invoke the `kiro-workflow` skill before acting. If native
-invocation is unavailable, read
+Kiro, an issue given to Kiro, or a review, test or CI finding to fix), invoke the `kiro-workflow`
+skill before acting. If native invocation is unavailable, read
 [.claude/skills/kiro-workflow/SKILL.md](.claude/skills/kiro-workflow/SKILL.md) directly; identical
 copies live in `.agents/skills/` and `.kiro/skills/`. If the skill is missing or the copies differ,
 stop Kiro work. Kiro never merges, pushes only its own working branch, and opens pull requests only
