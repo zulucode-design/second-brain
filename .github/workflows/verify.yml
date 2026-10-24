@@ -44,8 +44,8 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Install Rust 1.88
-        uses: dtolnay/rust-toolchain@1.88.0
+      - name: Install Rust 1.90
+        uses: dtolnay/rust-toolchain@1.90.0
         with:
           components: clippy, rustfmt
 
@@ -95,8 +95,8 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install Rust 1.88
-        uses: dtolnay/rust-toolchain@1.88.0
+      - name: Install Rust 1.90
+        uses: dtolnay/rust-toolchain@1.90.0
 
       - name: Run Windows Rust tests
         run: pnpm test:rust

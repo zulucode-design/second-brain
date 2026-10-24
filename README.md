@@ -56,7 +56,7 @@ notes flow out, nothing flows back.
 
 ## Development
 
-Requires Rust (MSRV 1.88), Node, and pnpm.
+Requires Rust (MSRV 1.90), Node, and pnpm.
 
 ```bash
 pnpm install

@@ -7,7 +7,7 @@ license = "AGPL-3.0-or-later"
 homepage = "https://github.com/zulucode-design/second-brain"
 repository = "https://github.com/zulucode-design/second-brain"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.90"
 
 [lints.clippy]
 # This style lint is version-dependent and produces over 100 legacy-only diagnostics on Rust 1.88.
@@ -79,7 +79,7 @@ gtk = "0.18"
 tauri-plugin-global-shortcut = "2"
 # Toasts for hotkey/windows.rs and similar_notes.rs: a tag so a new toast replaces the last (#153),
 # and Foundation for the click handler (#9).
-windows = { version = "0.61", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications"] }
+windows = { version = "0.62", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications"] }
 # HKEY_CURRENT_USER-only registry access for autostart/windows.rs. No admin privilege and
 # no service, matching the same current-user-only contract as the Linux .desktop entry.
-winreg = "0.52"
+winreg = "0.56"
