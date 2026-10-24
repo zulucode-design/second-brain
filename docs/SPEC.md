@@ -95,7 +95,7 @@ baseline rather than an enforced maximum.
 - **Frontend**: SvelteKit + Svelte 5, Tailwind 4
 - **Editor**: TipTap 3
 - **Full-text search**: Tantivy
-- **Rust MSRV**: 1.88
+- **Rust MSRV**: 1.90
 
 Tauri was chosen over Electron specifically for its small memory footprint, leaving
 headroom for local AI models on the desktop.

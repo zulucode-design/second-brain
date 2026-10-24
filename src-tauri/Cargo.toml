@@ -7,7 +7,7 @@ license = "AGPL-3.0-or-later"
 homepage = "https://github.com/zulucode-design/second-brain"
 repository = "https://github.com/zulucode-design/second-brain"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.90"
 
 [lints.clippy]
 # This style lint is version-dependent and produces over 100 legacy-only diagnostics on Rust 1.88.
