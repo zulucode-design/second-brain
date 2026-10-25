@@ -345,7 +345,7 @@ mod tests {
         let mut names = Vec::new();
         for index in 0..archive.len() {
             let mut entry = archive.by_index(index).unwrap();
-            names.push(entry.name().to_string());
+            names.push(entry.name().unwrap().into_owned());
             entry.read_to_string(&mut exported).unwrap();
         }
 

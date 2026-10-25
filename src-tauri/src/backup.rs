@@ -908,6 +908,15 @@ fn move_entry(from: &Path, to: &Path) -> Result<(), String> {
     }
 }
 
+/// An entry's name for messages. zip 9 decodes a name only when asked, and decoding can fail;
+/// the raw bytes are then shown lossily, so reporting a refusal can never fail on the name.
+fn entry_label<R: Read>(entry: &zip::read::ZipFile<'_, R>) -> String {
+    match entry.name() {
+        Ok(name) => name.into_owned(),
+        Err(_) => String::from_utf8_lossy(entry.name_raw()).into_owned(),
+    }
+}
+
 fn extract_and_validate_with(
     backup: &Path,
     stage: &Path,
@@ -928,12 +937,11 @@ fn extract_and_validate_with(
             .map_err(|e| format!("Unreadable backup entry: {e}"))?;
         let relative = entry
             .enclosed_name()
-            .ok_or_else(|| format!("Unsafe path in backup: {}", entry.name()))?
-            .to_path_buf();
+            .ok_or_else(|| format!("Unsafe path in backup: {}", entry_label(&entry)))?;
         if relative.as_os_str().is_empty() || !paths.insert(relative.clone()) {
             return Err(format!(
                 "Duplicate or empty path in backup: {}",
-                entry.name()
+                entry_label(&entry)
             ));
         }
         if entry
@@ -942,7 +950,7 @@ fn extract_and_validate_with(
         {
             return Err(format!(
                 "Symbolic links are not allowed in backups: {}",
-                entry.name()
+                entry_label(&entry)
             ));
         }
         total_bytes = total_bytes
@@ -961,8 +969,7 @@ fn extract_and_validate_with(
             .map_err(|e| format!("Unreadable backup entry: {e}"))?;
         let relative = entry
             .enclosed_name()
-            .ok_or_else(|| format!("Unsafe path in backup: {}", entry.name()))?
-            .to_path_buf();
+            .ok_or_else(|| format!("Unsafe path in backup: {}", entry_label(&entry)))?;
         let destination = stage.join(&relative);
         if entry.is_dir() {
             fs::create_dir_all(&destination)
@@ -975,7 +982,7 @@ fn extract_and_validate_with(
             let mut output = fs::File::create(&destination)
                 .map_err(|e| format!("Cannot stage backup file: {e}"))?;
             std::io::copy(&mut entry, &mut output)
-                .map_err(|e| format!("Cannot extract backup entry {}: {e}", entry.name()))?;
+                .map_err(|e| format!("Cannot extract backup entry {}: {e}", entry_label(&entry)))?;
             output
                 .sync_all()
                 .map_err(|e| format!("Cannot flush staged backup file: {e}"))?;
@@ -1024,7 +1031,7 @@ mod tests {
     use crate::types::BackupKind;
     use std::collections::BTreeMap;
     use std::fs;
-    use std::io::{Seek, SeekFrom, Write};
+    use std::io::{Read, Seek, SeekFrom, Write};
     use std::path::{Path, PathBuf};
     use uuid::Uuid;
     use zip::{write::SimpleFileOptions, ZipArchive};
@@ -1203,13 +1210,32 @@ mod tests {
             let start = archive
                 .by_name("Resources/corrupt.md")
                 .unwrap()
-                .data_start();
+                .data_start()
+                .expect("an opened entry knows where its data starts");
             start
         };
         let mut file = fs::OpenOptions::new().write(true).open(&backup).unwrap();
         file.seek(SeekFrom::Start(data_start)).unwrap();
         file.write_all(&[0xff]).unwrap();
         file.sync_all().unwrap();
+
+        // The damaged byte must sit in the intended entry: it alone fails its CRC check.
+        let mut archive = ZipArchive::new(fs::File::open(&backup).unwrap()).unwrap();
+        let mut body = Vec::new();
+        let error = archive
+            .by_name("Resources/corrupt.md")
+            .unwrap()
+            .read_to_end(&mut body)
+            .expect_err("the damaged entry must fail its CRC check");
+        assert!(error.to_string().contains("checksum"), "{error}");
+        let mut body = Vec::new();
+        archive
+            .by_name("Projects/restored.md")
+            .unwrap()
+            .read_to_end(&mut body)
+            .unwrap();
+        assert_eq!(body, b"replacement note");
+        drop(archive);
 
         let result = restore_backup(
             vault.to_str().unwrap(),
@@ -1618,7 +1644,10 @@ mod tests {
 
         let entry = create_pre_sync_backup(vault.to_str().unwrap(), &backups).unwrap();
         let archive = ZipArchive::new(fs::File::open(&entry.path).unwrap()).unwrap();
-        let mut names: Vec<&str> = archive.file_names().collect();
+        let mut names: Vec<String> = archive
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .collect();
         names.sort();
         assert_eq!(
             names,
