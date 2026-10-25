@@ -750,6 +750,127 @@ mod tests {
         );
     }
 
+    /// The text `ClaimLock::acquire` gives up with, spelled out so that changing it fails here.
+    const CLAIM_HELD: &str =
+        "The vault identity is held by another process that never finished writing it";
+
+    /// A scratch directory holding one empty file to take the claim lock on, outside any
+    /// vault and the machine-local root.
+    fn claim_scratch(label: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("machine-local-{label}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("claim"), b"").unwrap();
+        dir
+    }
+
+    /// A handle on the scratch claim file, opened the way `vault_id` opens the marker.
+    fn open_claim(dir: &Path) -> std::fs::File {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(dir.join("claim"))
+            .unwrap()
+    }
+
+    /// `acquire`'s outcome in a comparable form: `Ok(true)` locked, `Ok(false)` no lock here.
+    fn claim_outcome(result: Result<Option<ClaimLock<'_>>, String>) -> Result<bool, String> {
+        result.map(|claim| claim.is_some())
+    }
+
+    #[test]
+    fn only_another_holder_counts_as_lock_contention() {
+        assert!(is_lock_contention(&std::fs::TryLockError::WouldBlock));
+        assert!(!is_lock_contention(&std::fs::TryLockError::Error(
+            std::io::ErrorKind::Unsupported.into()
+        )));
+    }
+
+    /// The standard library maps only `ERROR_LOCK_VIOLATION` (33) to `WouldBlock`. A sharing
+    /// violation arrives as an error, and the app has always read it as another holder.
+    #[test]
+    #[cfg(windows)]
+    fn a_sharing_violation_is_lock_contention_on_windows() {
+        let error = std::fs::TryLockError::Error(std::io::Error::from_raw_os_error(32));
+
+        assert!(is_lock_contention(&error));
+    }
+
+    /// The numbers the app once read as lock errors on every platform are Windows codes. On
+    /// Linux they are `EPIPE` and `EDOM`, which say nothing about another holder.
+    #[test]
+    #[cfg(not(windows))]
+    fn no_raw_os_error_is_lock_contention_off_windows() {
+        for code in [32, 33] {
+            let error = std::fs::TryLockError::Error(std::io::Error::from_raw_os_error(code));
+
+            assert!(!is_lock_contention(&error), "OS error {code}");
+        }
+    }
+
+    /// A filesystem that cannot lock still opens the vault, and is asked once rather than
+    /// waited on.
+    #[test]
+    fn an_unsupported_lock_opens_without_one_and_is_not_retried() {
+        let dir = claim_scratch("lock-unsupported");
+        let file = open_claim(&dir);
+        let mut attempts = 0;
+
+        let outcome = claim_outcome(ClaimLock::acquire_with(&file, |_| {
+            attempts += 1;
+            Err(std::fs::TryLockError::Error(
+                std::io::ErrorKind::Unsupported.into(),
+            ))
+        }));
+
+        assert_eq!(outcome, Ok(false));
+        assert_eq!(attempts, 1);
+        drop(file);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A holder that never lets go is waited out for the bounded time, then refused.
+    #[test]
+    fn a_lock_that_stays_held_is_refused_after_every_attempt() {
+        let dir = claim_scratch("lock-held");
+        let file = open_claim(&dir);
+        let mut attempts = 0;
+        let started = std::time::Instant::now();
+
+        let outcome = claim_outcome(ClaimLock::acquire_with(&file, |_| {
+            attempts += 1;
+            Err(std::fs::TryLockError::WouldBlock)
+        }));
+
+        assert_eq!(outcome, Err(CLAIM_HELD.to_string()));
+        assert_eq!(attempts, CLAIM_LOCK_ATTEMPTS);
+        // Waited between attempts rather than spinning through them.
+        assert!(started.elapsed() >= CLAIM_LOCK_WAIT * (CLAIM_LOCK_ATTEMPTS - 1));
+        drop(file);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_held_lock_is_retried_until_it_frees() {
+        let dir = claim_scratch("lock-frees");
+        let file = open_claim(&dir);
+        let mut attempts = 0;
+
+        let outcome = claim_outcome(ClaimLock::acquire_with(&file, |_| {
+            attempts += 1;
+            if attempts < 3 {
+                Err(std::fs::TryLockError::WouldBlock)
+            } else {
+                Ok(())
+            }
+        }));
+
+        assert_eq!(outcome, Ok(true));
+        assert_eq!(attempts, 3);
+        drop(file);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn migration_moves_machine_local_state_out_and_leaves_the_vault_syncable() {
         let vault = legacy_vault("migrate");
