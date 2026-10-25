@@ -4602,6 +4602,19 @@ mod config_startup_tests {
             std::fs::read_to_string(dir.join(&copies[0])).unwrap(),
             "{\"vaults\": [ truncated"
         );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(dir.join(&copies[0]))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600,
+                "the preserved copy of a damaged config must be owner-only"
+            );
+        }
         std::fs::remove_dir_all(dir).unwrap();
     }
 
