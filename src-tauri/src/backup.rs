@@ -1931,6 +1931,75 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// Fedora file and folder names may hold a backslash anywhere, hand-added attachments
+    /// included. A backup stores them unchanged and restores them to the same native files.
+    #[cfg(unix)]
+    #[test]
+    fn fedora_backslash_names_survive_a_backup_and_restore() {
+        let root =
+            std::env::temp_dir().join(format!("second-brain-backslash-trip-{}", Uuid::new_v4()));
+        let vault = root.join("vault");
+        let backups = root.join("backups");
+        let files: [(&str, &[u8]); 5] = [
+            ("Resources/a\\b.md", b"# a\\b\r\nliteral backslash\n"),
+            ("Areas/x\\y/note.md", b"in a folder named x\\y"),
+            (
+                "Projects/ends in\\",
+                b"a file whose name ends in a backslash",
+            ),
+            (
+                ".helixnotes/attachments/scan\\1.png",
+                b"\x89PNG\r\n\x1a\n\x00\xff",
+            ),
+            ("Projects/plain.md", b"plain"),
+        ];
+        for (path, body) in files {
+            let path = vault.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+
+        let entry = create_backup(vault.to_str().unwrap(), &backups, true).unwrap();
+
+        let archive = ZipArchive::new(fs::File::open(&entry.path).unwrap()).unwrap();
+        let mut names: Vec<String> = archive
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                ".helixnotes/",
+                ".helixnotes/attachments/",
+                ".helixnotes/attachments/scan\\1.png",
+                "Areas/",
+                "Areas/x\\y/",
+                "Areas/x\\y/note.md",
+                "Projects/",
+                "Projects/ends in\\",
+                "Projects/plain.md",
+                "Resources/",
+                "Resources/a\\b.md",
+            ]
+        );
+        drop(archive);
+
+        let before = tree(&vault);
+        fs::write(vault.join("Resources/a\\b.md"), "edited after the backup").unwrap();
+        fs::remove_dir_all(vault.join("Areas")).unwrap();
+        fs::remove_file(vault.join("Projects/ends in\\")).unwrap();
+
+        restore_backup(vault.to_str().unwrap(), &backups, &entry.path).unwrap();
+
+        assert_eq!(tree(&vault), before);
+        assert!(vault.join("Areas/x\\y").is_dir());
+        assert!(vault.join("Projects/ends in\\").is_file());
+        assert!(!vault.join("Resources/a").exists());
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     /// The vault zip 2.6.1 wrote `test-fixtures/deps-zip9/old-backup.zip` from, as byte strings
     /// so no checkout setting can change them. The README beside the archive says how.
     const OLD_BACKUP_VAULT: &[(&str, &[u8])] = &[
