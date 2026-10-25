@@ -2076,6 +2076,80 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// The vault the earlier `create_backup`, on zip 2.4.2, wrote
+    /// `test-fixtures/deps-zip9/old-backslash-names.zip` from. Every backslash is part of a Fedora
+    /// file or folder name. The README beside the archive says how it was made.
+    const BACKSLASH_VAULT: &[(&str, &[u8])] = &[
+        (
+            "Resources/a\\b.md",
+            b"# a\\b\r\nA note whose name holds a backslash.\n",
+        ),
+        ("Areas/x\\y/note.md", b"In a folder named x\\y.\n"),
+        (
+            ".helixnotes/attachments/scan\\1.png",
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x5c\xff",
+        ),
+        ("Projects/plain.md", b"An ordinary note.\n"),
+        (
+            ".helixnotes/vault_id",
+            b"00000000-0000-4000-8000-000000000238",
+        ),
+    ];
+
+    /// Fedora reads each backslash as part of a name and Windows as a separator, as the earlier
+    /// release restored them.
+    #[test]
+    fn backslash_names_in_a_zip_2_backup_restore_at_their_native_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "second-brain-old-backslash-names-{}",
+            Uuid::new_v4()
+        ));
+        let vault = root.join("vault");
+        let backups = root.join("backups");
+        for (path, body) in [("live.md", "live"), (".helixnotes/vault_id", "live-id")] {
+            let path = vault.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+        fs::create_dir_all(&backups).unwrap();
+        let backup = backups.join("helixnotes-backup-2026-10-01T09-30-00.zip");
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("test-fixtures/deps-zip9/old-backslash-names.zip"),
+            &backup,
+        )
+        .unwrap();
+
+        // The fixture stores the backslashes as written.
+        let archive = ZipArchive::new(fs::File::open(&backup).unwrap()).unwrap();
+        let mut files: Vec<String> = archive
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .filter(|name| !name.ends_with('/'))
+            .collect();
+        files.sort();
+        let mut expected_files: Vec<&str> = BACKSLASH_VAULT.iter().map(|(path, _)| *path).collect();
+        expected_files.sort();
+        assert_eq!(files, expected_files);
+        drop(archive);
+
+        restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap()).unwrap();
+
+        let expected: BTreeMap<PathBuf, Vec<u8>> = BACKSLASH_VAULT
+            .iter()
+            .map(|(path, body)| (PathBuf::from(*path), body.to_vec()))
+            .collect();
+        assert_eq!(tree(&vault), expected);
+        let note = if cfg!(windows) {
+            vault.join("Resources").join("a").join("b.md")
+        } else {
+            vault.join("Resources").join("a\\b.md")
+        };
+        assert_eq!(fs::read(note).unwrap(), BACKSLASH_VAULT[0].1);
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn pruning_keeps_the_newest_scheduled_backup_among_frequent_pre_sync_ones() {
         let root = std::env::temp_dir().join(format!("second-brain-retention-{}", Uuid::new_v4()));

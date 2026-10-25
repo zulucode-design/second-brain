@@ -65,3 +65,37 @@ Entries, in archive order (directories are Stored, as `add_directory` writes the
 | `Resources/日本語/メモ.md` | Deflated |
 
 SHA-256: `bc91e541d39626f2ae8fe92e79fbd6b1718e3ade74813e09bb702eedf720874c`, 2112 bytes.
+
+## old-backslash-names.zip
+
+A backup of a Fedora vault whose file and folder names hold backslashes, as the code
+v0.1.0-alpha.1 shipped writes it (#237, attempt 2).
+`backslash_names_in_a_zip_2_backup_restore_at_their_native_paths` in `backup::tests` restores it
+and compares the vault to `BACKSLASH_VAULT`, the byte strings it was built from.
+
+It was written once, on Linux, by a scratch crate outside the repository. That crate compiles
+`src-tauri/src/backup.rs` at `17d98d0`, unchanged, against `zip = "=2.4.2"`, the version
+v0.1.0-alpha.1 locks, with `default-features = false, features = ["deflate"]` and Rust 1.90.
+Stand-ins replace the crate modules the file uses (`types`, `app_dirs`, `durable`, and
+`vault::path` copied as it is). It writes `BACKSLASH_VAULT` to a temporary vault and calls
+`create_backup(vault, backups, true)`. The entry-writing code of `create_backup` is the same at
+`ca8062a`, the commit that set the version to 0.1.0-alpha.1: names from `to_portable_string`,
+`add_directory` and `start_file`, Deflated at level 6. Built against `zip = "=2.6.1"`, the same
+crate wrote a byte-identical file, and a second zip 2.4.2 run reproduced it. Entries follow the
+walk's directory listing order.
+
+| Entry | Method |
+|---|---|
+| `Resources/` | directory |
+| `Resources/a\b.md` | Deflated |
+| `Areas/` | directory |
+| `Areas/x\y/` | directory |
+| `Areas/x\y/note.md` | Deflated |
+| `.helixnotes/` | directory |
+| `.helixnotes/attachments/` | directory |
+| `.helixnotes/attachments/scan\1.png` | Deflated |
+| `.helixnotes/vault_id` | Deflated |
+| `Projects/` | directory |
+| `Projects/plain.md` | Deflated |
+
+SHA-256: `8efe3e65ca63f1f57d5c313af4184be5551fcdeb1557c1b9f2d502ad77786629`, 1341 bytes.
