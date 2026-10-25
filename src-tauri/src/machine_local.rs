@@ -91,9 +91,23 @@ fn machine_root() -> Result<PathBuf, String> {
 const CLAIM_LOCK_ATTEMPTS: u32 = 50;
 const CLAIM_LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(10);
 
-fn is_lock_contention(error: &std::io::Error) -> bool {
-    matches!(error.kind(), std::io::ErrorKind::WouldBlock)
-        || matches!(error.raw_os_error(), Some(32 | 33))
+/// `ERROR_SHARING_VIOLATION` on Windows.
+const ERROR_SHARING_VIOLATION: i32 = 32;
+
+/// Whether a failed `File::try_lock` means another handle holds the lock, rather than that
+/// locking failed or is unavailable here.
+///
+/// The standard library already reports a held lock as `WouldBlock`: `EWOULDBLOCK` from
+/// `flock` on Unix, and `ERROR_LOCK_VIOLATION` (33) from `LockFileEx` on Windows. Windows has
+/// always counted `ERROR_SHARING_VIOLATION` as contention here too, and still does. Elsewhere
+/// no raw error number is contention: on Linux, 32 and 33 are `EPIPE` and `EDOM`.
+fn is_lock_contention(error: &std::fs::TryLockError) -> bool {
+    match error {
+        std::fs::TryLockError::WouldBlock => true,
+        std::fs::TryLockError::Error(error) => {
+            cfg!(windows) && error.raw_os_error() == Some(ERROR_SHARING_VIOLATION)
+        }
+    }
 }
 
 /// Read the vault's identity, creating it on first open.
@@ -230,18 +244,29 @@ struct ClaimLock<'a>(&'a std::fs::File);
 impl<'a> ClaimLock<'a> {
     /// `Ok(None)` means this filesystem cannot lock, not that the lock was refused.
     fn acquire(file: &'a std::fs::File) -> Result<Option<ClaimLock<'a>>, String> {
-        use fs4::FileExt;
+        Self::acquire_with(file, std::fs::File::try_lock)
+    }
 
+    /// `acquire`, with the lock attempt passed in, so its retry policy can be tested without
+    /// a second process holding the lock.
+    fn acquire_with(
+        file: &'a std::fs::File,
+        mut try_lock: impl FnMut(&std::fs::File) -> Result<(), std::fs::TryLockError>,
+    ) -> Result<Option<ClaimLock<'a>>, String> {
         for attempt in 0..CLAIM_LOCK_ATTEMPTS {
             if attempt > 0 {
                 std::thread::sleep(CLAIM_LOCK_WAIT);
             }
-            match file.try_lock_exclusive() {
+            match try_lock(file) {
                 Ok(()) => return Ok(Some(ClaimLock(file))),
                 Err(error) if is_lock_contention(&error) => continue,
-                // Locking is unsupported here. Refusing to open the vault over that would be
-                // a worse failure than the one locks are here to fix.
+                // Locking is unsupported here, or failed for some reason other than another
+                // holder. Refusing to open the vault over that would be a worse failure than
+                // the one locks are here to fix.
                 Err(error) => {
+                    // A `TryLockError` prints only that an I/O error happened; the `io::Error`
+                    // inside it says which.
+                    let error = std::io::Error::from(error);
                     log::warn!("Vault identity locking is unavailable: {error}");
                     return Ok(None);
                 }
@@ -256,9 +281,7 @@ impl<'a> ClaimLock<'a> {
 
 impl Drop for ClaimLock<'_> {
     fn drop(&mut self) {
-        use fs4::FileExt;
-
-        let _ = FileExt::unlock(self.0);
+        let _ = self.0.unlock();
     }
 }
 
