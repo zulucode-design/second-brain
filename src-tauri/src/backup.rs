@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -920,6 +920,39 @@ fn entry_label<R: Read>(entry: &zip::read::ZipFile<'_, R>) -> String {
     }
 }
 
+/// Where an entry goes in the stage, read with this OS's own path rules, and whether it is a
+/// directory. `None` when the name is not a plain relative path.
+///
+/// Backups store names as `to_portable_string` gives them. On Fedora a backslash is an ordinary
+/// file name character, so `Resources/a\b.md` is one file there and must come back as one; on
+/// Windows it separates `a` from `b.md`. zip 9 reads every name with Windows rules, so its paths
+/// are not used. On every OS this refuses a NUL, any `..` part, and a name that Windows reads as
+/// rooted or on a drive: `/abs.md`, `\abs.md`, `\\server\share\x.md`, `C:abs.md`.
+fn native_entry(name: &str) -> Option<(PathBuf, bool)> {
+    let windows_rooted = name.starts_with(['/', '\\'])
+        || matches!(name.as_bytes(), [drive, b':', ..] if drive.is_ascii_alphabetic());
+    if name.contains('\0') || windows_rooted || name.split(['/', '\\']).any(|part| part == "..") {
+        return None;
+    }
+    let mut path = PathBuf::new();
+    for component in Path::new(name).components() {
+        match component {
+            Component::Normal(part) => path.push(part),
+            Component::CurDir => {}
+            Component::Prefix(_) | Component::RootDir | Component::ParentDir => return None,
+        }
+    }
+    // On Windows a part such as `c:x` reads as a drive when pushed, and replaces the path.
+    if !path
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return None;
+    }
+    // A trailing separator marks a directory, so on Fedora a file named `x\` stays a file.
+    Some((path, name.ends_with(std::path::is_separator)))
+}
+
 fn extract_and_validate_with(
     backup: &Path,
     stage: &Path,
@@ -934,23 +967,17 @@ fn extract_and_validate_with(
     }
     let mut total_bytes = 0_u64;
     let mut paths = HashSet::new();
+    // The second pass writes exactly the paths this pass accepted.
+    let mut targets = Vec::with_capacity(archive.len());
     for index in 0..archive.len() {
         let entry = archive
             .by_index(index)
             .map_err(|e| format!("Unreadable backup entry: {e}"))?;
-        let relative = entry
-            .enclosed_name()
-            .ok_or_else(|| format!("Unsafe path in backup: {}", entry_label(&entry)))?;
-        // zip 9 reads every name with Windows path rules and drops a leading root or drive, so
-        // `/abs.md` comes back as `abs.md` and, on Linux, `a\b.md` as `a/b.md`. A name passes
-        // only when that is already its path on this OS, as every name the app writes is;
-        // anything else is refused rather than restored somewhere it did not name.
-        if !entry
+        let (relative, is_dir) = entry
             .name()
-            .is_ok_and(|name| Path::new(&*name) == relative.as_path())
-        {
-            return Err(format!("Unsafe path in backup: {}", entry_label(&entry)));
-        }
+            .ok()
+            .and_then(|name| native_entry(&name))
+            .ok_or_else(|| format!("Unsafe path in backup: {}", entry_label(&entry)))?;
         if relative.as_os_str().is_empty() || !paths.insert(relative.clone()) {
             return Err(format!(
                 "Duplicate or empty path in backup: {}",
@@ -972,19 +999,17 @@ fn extract_and_validate_with(
         if total_bytes > MAX_ARCHIVE_BYTES {
             return Err(format!("Backup expands beyond {MAX_ARCHIVE_BYTES} bytes"));
         }
+        targets.push((relative, is_dir));
     }
 
     // Extraction is deliberately a second pass: the complete archive shape and declared
     // expanded size are accepted before a single potentially large payload reaches disk.
-    for index in 0..archive.len() {
+    for (index, (relative, is_dir)) in targets.iter().enumerate() {
         let mut entry = archive
             .by_index(index)
             .map_err(|e| format!("Unreadable backup entry: {e}"))?;
-        let relative = entry
-            .enclosed_name()
-            .ok_or_else(|| format!("Unsafe path in backup: {}", entry_label(&entry)))?;
-        let destination = stage.join(&relative);
-        if entry.is_dir() {
+        let destination = stage.join(relative);
+        if *is_dir {
             fs::create_dir_all(&destination)
                 .map_err(|e| format!("Cannot stage backup directory: {e}"))?;
         } else {
@@ -1330,14 +1355,21 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// Rooted, drive, UNC and `..` names are refused on every OS, whichever separator they use.
     #[test]
-    fn names_that_escape_or_move_are_refused_before_any_live_change() {
+    fn rooted_drive_and_parent_names_are_refused_before_any_live_change() {
         for name in [
             "../escape.md",
             "a/../../escape.md",
+            "a/../b.md",
+            "..\\escape.md",
+            "a\\..\\..\\escape.md",
             "/abs.md",
             "\\abs.md",
             "C:\\abs.md",
+            "C:abs.md",
+            "\\\\server\\share\\abs.md",
+            "//server/share/abs.md",
             "nul\0.md",
         ] {
             assert_refused_unchanged(&format!("{name:?}"), "Unsafe path in backup", |writer| {
@@ -1349,36 +1381,64 @@ mod tests {
         }
     }
 
-    /// zip 2.6.1 restored `a\b.md` as `a/b.md` on Windows and as one file named `a\b.md` on
-    /// Linux. zip 9 would make it `a/b.md` on Linux too, so Linux refuses it instead.
+    /// On Windows `c:x.md` names a drive even inside a path, and pushing it would replace the
+    /// stage path. On Fedora it is an ordinary file name.
+    #[cfg(windows)]
     #[test]
-    fn a_backslash_name_restores_as_before_on_windows_and_is_refused_elsewhere() {
-        let write = |writer: &mut zip::ZipWriter<fs::File>| {
+    fn a_drive_inside_a_name_is_refused_on_windows() {
+        assert_refused_unchanged("Projects/c:x.md", "Unsafe path in backup", |writer| {
             writer
-                .start_file("a\\b.md", SimpleFileOptions::default())
+                .start_file("Projects/c:x.md", SimpleFileOptions::default())
                 .unwrap();
-            writer.write_all(b"backslash").unwrap();
-        };
-        if cfg!(windows) {
-            let (root, vault, backups, _) = restore_fixture("backslash-name");
-            let backup = backups.join("backslash.zip");
-            write_archive(&backup, write);
+            writer.write_all(b"hostile").unwrap();
+        });
+    }
 
-            restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap()).unwrap();
+    /// On Fedora `a\b.md` is one file, so it comes back as that file, byte for byte. On Windows
+    /// the backslash separates `a` from `b.md`, as zip 2.6.1 restored it there.
+    #[test]
+    fn a_backslash_name_restores_at_its_native_path() {
+        let (root, vault, backups, _) = restore_fixture("backslash-name");
+        let backup = backups.join("backslash.zip");
+        write_archive(&backup, |writer| {
+            for (name, body) in [("a\\b.md", "top level"), ("Resources/c\\d.md", "nested")] {
+                writer
+                    .start_file(name, SimpleFileOptions::default())
+                    .unwrap();
+                writer.write_all(body.as_bytes()).unwrap();
+            }
+        });
 
-            assert_eq!(
-                fs::read(vault.join("a").join("b.md")).unwrap(),
-                b"backslash"
-            );
-            assert_eq!(
-                fs::read(vault.join("Projects").join("restored.md")).unwrap(),
-                b"restored"
-            );
-            assert_eq!(restore_leftovers(&root), Vec::<String>::new());
-            fs::remove_dir_all(root).unwrap();
+        restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap()).unwrap();
+
+        let (top, nested) = if cfg!(windows) {
+            (
+                vault.join("a").join("b.md"),
+                vault.join("Resources").join("c").join("d.md"),
+            )
         } else {
-            assert_refused_unchanged("a\\b.md", "Unsafe path in backup", write);
-        }
+            (
+                vault.join("a\\b.md"),
+                vault.join("Resources").join("c\\d.md"),
+            )
+        };
+        assert_eq!(fs::read(top).unwrap(), b"top level");
+        assert_eq!(fs::read(nested).unwrap(), b"nested");
+        // `PathBuf::from` reads each name as this OS does: one file on Fedora, two parts on
+        // Windows. The live metadata stays, since the archive has none.
+        let expected: BTreeMap<PathBuf, Vec<u8>> = [
+            ("Projects/restored.md", "restored"),
+            ("a\\b.md", "top level"),
+            ("Resources/c\\d.md", "nested"),
+            (".helixnotes/vault_id", "live-id"),
+            (".helixnotes/attachments/keep.bin", "attachment"),
+        ]
+        .into_iter()
+        .map(|(path, body)| (PathBuf::from(path), body.as_bytes().to_vec()))
+        .collect();
+        assert_eq!(tree(&vault), expected);
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
