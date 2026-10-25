@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Issue 221: Windows test and lint verification</title>
+<style>
+  body { max-width: 68rem; margin: 2rem auto; padding: 0 1rem; font: 16px/1.55 system-ui, sans-serif; color: #20252b; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid #cbd2d9; padding: .55rem; text-align: left; vertical-align: top; }
+  th { background: #edf1f5; }
+  code { overflow-wrap: anywhere; }
+</style>
+<main>
+<h1>Issue 221: Windows test and lint verification</h1>
+<p>2026-10-25. This delivery covers the two Linux package-helper tests and the Windows
+Clippy failure in <code>damaged_config</code>. Both helper tests now skip outside Linux or
+when bash cannot start. The permission helper preserves the damaged configuration copy's
+Unix mode of <code>0o600</code> and passes Clippy on both supported platforms.</p>
+
+<p><strong>Issue 221 remains open.</strong> Its install-failure test belongs to
+<a href="https://github.com/zulucode-design/second-brain/issues/244">issue 244</a>, as the
+<a href="https://github.com/zulucode-design/second-brain/issues/221#issuecomment-6399788673">approved scope split</a>
+records. Windows <code>pnpm verify</code> still fails on that existing test. The failure is
+disclosed below and is not counted as a pass.</p>
+
+<h2>Candidate and provenance</h2>
+<ul>
+  <li>Base and fetched main: <code>17d98d007bea1422f1fb43a333263a7008862114</code>.</li>
+  <li>Verified candidate: <code>1c6452eca40bddbd610b3069fef091fe9f36df43</code>.</li>
+  <li>Immutable brief: <code>6837e23cae27991685a63e8a7f14889b91f775c6</code>.</li>
+  <li>Frozen Kiro handoff: <code>e79ec27859ebb887e180e5774c8f0825e0403f63</code>;
+      code head: <code>8e11e26fa5064ee6c43f210070f4da963444c8e5</code>.</li>
+  <li>Sol verified the handoff-only final commit, parent/code-head match, unchanged brief,
+      ancestry, absence of merge commits, frozen mirror main, allowed files, and privacy.
+      No files were added by the code commits, so no new file required an ignore-rule exception.</li>
+  <li>Three Kiro commits were imported with <code>git cherry-pick -x</code>:
+      <code>c61e4e7</code> (test skips), <code>93d9f92</code> (permission helper), and
+      <code>1c6452e</code> (Unix mode assertion). Sol made no application-code fix after import.</li>
+  <li>No dependency, lockfile, CI configuration, package-helper script, or install-failure test changed.</li>
+</ul>
+
+<h2>Review</h2>
+<p>Round 1 reviewed <code>git diff origin/main...HEAD</code> at the verified candidate.
+Spec and Standards ran as separate, independent <code>codex exec</code> sessions using
+<code>gpt-6.1-sol</code> at <code>xhigh</code>. Both returned <strong>CLEAN</strong>.
+There were no review findings or fix attempts. Sol then fetched and merged main once;
+Git reported already up to date, so the candidate did not change.</p>
+<p>The report commit changes documentation only. Its final publication review must cover the
+whole branch, including this report; the PR's <code>Final review:</code> line records that exact head.</p>
+
+<h2>Verification by Sol</h2>
+<p>Every result below belongs to candidate
+<code>1c6452eca40bddbd610b3069fef091fe9f36df43</code>. Fedora 44 used Node 24.22.1;
+Windows 11 used Node 24.19.0. Both used pnpm 11.22.0 and Rust 1.90.0. Sol's required usage
+probe returned <code>OK</code> before each review or test run. Kiro's sandbox runs are not gate evidence.</p>
+<table>
+  <thead><tr><th>Platform and command</th><th>Result and scope</th></tr></thead>
+  <tbody>
+    <tr><td>Both: <code>pnpm install --frozen-lockfile</code></td>
+      <td>Passed, including the prepare script. Lockfiles stayed unchanged.</td></tr>
+    <tr><td>Fedora: <code>pnpm check</code></td>
+      <td>Passed with 0 errors and 0 warnings.</td></tr>
+    <tr><td>Fedora: <code>cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets</code></td>
+      <td>Passed on Rust 1.90.0.</td></tr>
+    <tr><td>Fedora: <code>pnpm test:rust config_startup_tests</code></td>
+      <td>9 passed; 0 failed; 0 ignored. The malformed-configuration test ran with the new
+      assertion that the preserved copy has mode <code>0o600</code>.</td></tr>
+    <tr><td>Fedora: <code>pnpm verify</code></td>
+      <td>Passed. JavaScript: 254 passed, 0 failed, 0 skipped; all three package-helper tests ran.
+      Rust: 746 passed, 0 failed, 10 ignored. Formatting, Clippy with warnings denied, and
+      frontend build passed.</td></tr>
+    <tr><td>Windows: <code>pnpm test:rust</code></td>
+      <td>Passed through the supported Windows manifest wrapper: 716 passed, 0 failed, 9 ignored.
+      This early build-gate run used the same unchanged candidate as final verification.</td></tr>
+    <tr><td>Windows: <code>pnpm verify</code></td>
+      <td>Failed only at the existing install-failure test: 254 JavaScript tests, 248 passed,
+      1 failed, 5 skipped. Both changed package-helper tests skipped with the reason
+      <q>the test package helper is Linux-only, and this platform is win32</q>.
+      Typecheck passed with 0 errors and 0 warnings. The failure is
+      <code>pnpm install fails when the prepare svelte-kit sync fails</code>, whose unchanged
+      Windows spawn produces <code>undefined\nundefined</code>. Issue 244 owns its repair.
+      The command stopped before Rust, Clippy, and build.</td></tr>
+    <tr><td>Windows: <code>pnpm lint:rust</code></td>
+      <td>Passed separately after the verify failure. Formatting and Clippy with
+      <code>-D warnings</code> passed, including the changed permission helper.</td></tr>
+    <tr><td>Windows: <code>pnpm build</code></td>
+      <td>Passed separately after the verify failure.</td></tr>
+  </tbody>
+</table>
+
+<h2>Remaining work and limits</h2>
+<p>Issue 244 must repair the install-failure test before Windows full verification can pass.
+It owns the SvelteKit fixture migration and the Windows child-process invocation, so this
+partial delivery leaves that file untouched. The PR must name this remaining failure, its
+scope reason, and issue 244. It must not carry a closing reference to issue 221.</p>
+<p>The 10 Fedora and 9 Windows ignored Rust tests were not run or claimed as passes. This
+attempt adds an assertion to an existing test and changes skip conditions on existing tests;
+all affected tests were observed in the real platform runs. The brief requires no installed-package
+check for this partial issue. No GUI or package-runtime result is claimed.</p>
+</main>
+</html>
