@@ -938,6 +938,16 @@ fn extract_and_validate_with(
         let relative = entry
             .enclosed_name()
             .ok_or_else(|| format!("Unsafe path in backup: {}", entry_label(&entry)))?;
+        // zip 9 reads every name with Windows path rules and drops a leading root or drive, so
+        // `/abs.md` comes back as `abs.md` and, on Linux, `a\b.md` as `a/b.md`. A name passes
+        // only when that is already its path on this OS, as every name the app writes is;
+        // anything else is refused rather than restored somewhere it did not name.
+        if !entry
+            .name()
+            .is_ok_and(|name| Path::new(&*name) == relative.as_path())
+        {
+            return Err(format!("Unsafe path in backup: {}", entry_label(&entry)));
+        }
         if relative.as_os_str().is_empty() || !paths.insert(relative.clone()) {
             return Err(format!(
                 "Duplicate or empty path in backup: {}",
@@ -1280,6 +1290,114 @@ mod tests {
         assert_eq!(fs::read_to_string(vault.join("live.md")).unwrap(), "live");
         assert!(!vault.join("restored.md").exists());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Write `backup`: one ordinary note first, then whatever `write` adds.
+    fn write_archive(backup: &Path, write: impl FnOnce(&mut zip::ZipWriter<fs::File>)) {
+        let mut writer = zip::ZipWriter::new(fs::File::create(backup).unwrap());
+        writer
+            .start_file("Projects/restored.md", SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(b"restored").unwrap();
+        write(&mut writer);
+        writer.finish().unwrap();
+    }
+
+    /// A restore of the archive `write` builds must be refused for `reason`, report no change,
+    /// and leave the live vault and everything beside it exactly as they were.
+    fn assert_refused_unchanged(
+        case: &str,
+        reason: &str,
+        write: impl FnOnce(&mut zip::ZipWriter<fs::File>),
+    ) {
+        let (root, vault, backups, _) = restore_fixture("hostile-archive");
+        let backup = backups.join("hostile.zip");
+        write_archive(&backup, write);
+        let before = tree(&vault);
+        let everything_before = tree(&root);
+
+        let error = restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap())
+            .expect_err(case);
+
+        assert!(error.message.contains(reason), "{case}: {}", error.message);
+        assert!(!error.changed, "{case}");
+        assert_eq!(tree(&vault), before, "{case}");
+        assert_eq!(tree(&root), everything_before, "{case}");
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new(), "{case}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn names_that_escape_or_move_are_refused_before_any_live_change() {
+        for name in [
+            "../escape.md",
+            "a/../../escape.md",
+            "/abs.md",
+            "\\abs.md",
+            "C:\\abs.md",
+            "nul\0.md",
+        ] {
+            assert_refused_unchanged(&format!("{name:?}"), "Unsafe path in backup", |writer| {
+                writer
+                    .start_file(name, SimpleFileOptions::default())
+                    .unwrap();
+                writer.write_all(b"hostile").unwrap();
+            });
+        }
+    }
+
+    /// zip 2.6.1 restored `a\b.md` as `a/b.md` on Windows and as one file named `a\b.md` on
+    /// Linux. zip 9 would make it `a/b.md` on Linux too, so Linux refuses it instead.
+    #[test]
+    fn a_backslash_name_restores_as_before_on_windows_and_is_refused_elsewhere() {
+        let write = |writer: &mut zip::ZipWriter<fs::File>| {
+            writer
+                .start_file("a\\b.md", SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(b"backslash").unwrap();
+        };
+        if cfg!(windows) {
+            let (root, vault, backups, _) = restore_fixture("backslash-name");
+            let backup = backups.join("backslash.zip");
+            write_archive(&backup, write);
+
+            restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap()).unwrap();
+
+            assert_eq!(
+                fs::read(vault.join("a").join("b.md")).unwrap(),
+                b"backslash"
+            );
+            assert_eq!(
+                fs::read(vault.join("Projects").join("restored.md")).unwrap(),
+                b"restored"
+            );
+            assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+            fs::remove_dir_all(root).unwrap();
+        } else {
+            assert_refused_unchanged("a\\b.md", "Unsafe path in backup", write);
+        }
+    }
+
+    #[test]
+    fn symlinks_and_two_entries_for_one_path_are_refused_before_any_live_change() {
+        assert_refused_unchanged("symlink", "Symbolic links are not allowed", |writer| {
+            writer
+                .add_symlink(
+                    "Projects/link.md",
+                    "../../outside.md",
+                    SimpleFileOptions::default(),
+                )
+                .unwrap();
+        });
+        assert_refused_unchanged("b.md and b.md/", "Duplicate or empty path", |writer| {
+            writer
+                .start_file("b.md", SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(b"file").unwrap();
+            writer
+                .add_directory("b.md/", SimpleFileOptions::default())
+                .unwrap();
+        });
     }
 
     #[test]
