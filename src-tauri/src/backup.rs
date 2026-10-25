@@ -112,9 +112,12 @@ fn create_backup_of_kind(
     let file = fs::File::create(&backup_path)
         .map_err(|e| format!("Failed to create backup file: {}", e))?;
     let mut zip = zip::ZipWriter::new(file);
+    // zip 2 marked every entry as made on Unix; zip 9 marks them DOS on Windows unless told.
+    // Unix keeps new backups exactly as earlier releases wrote them.
     let options = SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
-        .compression_level(Some(6));
+        .compression_level(Some(6))
+        .system(zip::System::Unix);
 
     let attachments_dir = vault.join(METADATA_DIR).join("attachments");
     // The archive holds exactly what a restore touches: the top-level entries it replaces and
@@ -1786,6 +1789,85 @@ mod tests {
         fs::remove_file(vault.join("Projects/.draft.md")).unwrap();
         restore_backup(vault.to_str().unwrap(), &backups, &entry.path).unwrap();
         assert_eq!(tree(&vault), before);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The entries v0.1.0-alpha.1, built with zip 2.4.2, reads back: portable names with `/`
+    /// separators, directory entries ending in `/`, files deflated, all marked as made on Unix.
+    #[test]
+    fn a_new_backup_is_written_as_earlier_releases_read_it() {
+        let root =
+            std::env::temp_dir().join(format!("second-brain-backup-format-{}", Uuid::new_v4()));
+        let vault = root.join("vault");
+        let backups = root.join("backups");
+        let every_byte: Vec<u8> = (0..=u8::MAX).collect();
+        let files: [(&str, &[u8]); 6] = [
+            (
+                "Projects/Café ☕/Plan für 2027.md",
+                "# Plan für 2027\r\nCafé ☕\n".as_bytes(),
+            ),
+            ("Resources/日本語/メモ.md", "メモ".as_bytes()),
+            ("Archives/empty.md", b""),
+            ("Areas/.drafts/.deeper/hidden.md", b"in a nested dot folder"),
+            (
+                ".helixnotes/attachments/every-byte.bin",
+                every_byte.as_slice(),
+            ),
+            (".helixnotes/vault_id", b"vault-id"),
+        ];
+        for (path, body) in files {
+            let path = vault.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+
+        let entry = create_backup(vault.to_str().unwrap(), &backups, true).unwrap();
+
+        let mut archive = ZipArchive::new(fs::File::open(&entry.path).unwrap()).unwrap();
+        let mut names: Vec<String> = archive
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                ".helixnotes/",
+                ".helixnotes/attachments/",
+                ".helixnotes/attachments/every-byte.bin",
+                ".helixnotes/vault_id",
+                "Archives/",
+                "Archives/empty.md",
+                "Areas/",
+                "Areas/.drafts/",
+                "Areas/.drafts/.deeper/",
+                "Areas/.drafts/.deeper/hidden.md",
+                "Projects/",
+                "Projects/Café ☕/",
+                "Projects/Café ☕/Plan für 2027.md",
+                "Resources/",
+                "Resources/日本語/",
+                "Resources/日本語/メモ.md",
+            ]
+        );
+        for index in 0..archive.len() {
+            let entry = archive.by_index(index).unwrap();
+            assert_eq!(entry.system(), zip::System::Unix, "{:?}", entry.name());
+        }
+        for (path, body) in files {
+            let mut entry = archive.by_name(path).unwrap();
+            if !body.is_empty() {
+                assert_eq!(
+                    entry.compression(),
+                    zip::CompressionMethod::Deflated,
+                    "{path}"
+                );
+            }
+            let mut read = Vec::new();
+            entry.read_to_end(&mut read).unwrap();
+            assert_eq!(read, body, "{path}");
+        }
+        drop(archive);
         fs::remove_dir_all(root).unwrap();
     }
 
