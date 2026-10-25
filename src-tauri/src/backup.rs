@@ -1871,6 +1871,82 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// The vault zip 2.6.1 wrote `test-fixtures/deps-zip9/old-backup.zip` from, as byte strings
+    /// so no checkout setting can change them. The README beside the archive says how.
+    const OLD_BACKUP_VAULT: &[(&str, &[u8])] = &[
+        (
+            "Projects/Café ☕/Plan für 2027.md",
+            b"# Plan f\xc3\xbcr 2027\r\n\r\nCaf\xc3\xa9 \xe2\x98\x95: CRLF and LF line endings stay as written.\n",
+        ),
+        ("Resources/日本語/メモ.md", b"# \xe3\x83\xa1\xe3\x83\xa2\n"),
+        ("Archives/empty.md", b""),
+        (".helixnotes/vault_id", b"00000000-0000-4000-8000-000000000237"),
+        (
+            ".helixnotes/history/00000000-0000-4000-8000-000000000001/2026-10-01T09-30-00.md",
+            b"# Plan\n\nAn older version.\n",
+        ),
+        (
+            ".helixnotes/attachments/diagram.png",
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x7f\x80\xfe\xff",
+        ),
+    ];
+
+    #[test]
+    fn a_backup_written_with_zip_2_restores_in_this_build() {
+        let root = std::env::temp_dir().join(format!("second-brain-old-backup-{}", Uuid::new_v4()));
+        let vault = root.join("vault");
+        let backups = root.join("backups");
+        for (path, body) in [
+            ("live.md", "live"),
+            (".helixnotes/vault_id", "live-id"),
+            (".helixnotes/attachments/live.bin", "live attachment"),
+        ] {
+            let path = vault.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+        fs::create_dir_all(&backups).unwrap();
+        let backup = backups.join("helixnotes-backup-2026-10-01T09-30-00.zip");
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("test-fixtures/deps-zip9/old-backup.zip"),
+            &backup,
+        )
+        .unwrap();
+
+        // The fixture must hold both methods a restore reads.
+        let mut archive = ZipArchive::new(fs::File::open(&backup).unwrap()).unwrap();
+        let mut methods = BTreeMap::new();
+        for index in 0..archive.len() {
+            let entry = archive.by_index(index).unwrap();
+            if !entry.is_dir() {
+                methods.insert(entry.name().unwrap().into_owned(), entry.compression());
+            }
+        }
+        drop(archive);
+        let expected_methods: BTreeMap<String, zip::CompressionMethod> = OLD_BACKUP_VAULT
+            .iter()
+            .map(|(path, _)| {
+                let method = if *path == ".helixnotes/attachments/diagram.png" {
+                    zip::CompressionMethod::Stored
+                } else {
+                    zip::CompressionMethod::Deflated
+                };
+                (path.to_string(), method)
+            })
+            .collect();
+        assert_eq!(methods, expected_methods);
+
+        restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap()).unwrap();
+
+        let expected: BTreeMap<PathBuf, Vec<u8>> = OLD_BACKUP_VAULT
+            .iter()
+            .map(|(path, body)| (PathBuf::from(*path), body.to_vec()))
+            .collect();
+        assert_eq!(tree(&vault), expected);
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn pruning_keeps_the_newest_scheduled_backup_among_frequent_pre_sync_ones() {
         let root = std::env::temp_dir().join(format!("second-brain-retention-{}", Uuid::new_v4()));
