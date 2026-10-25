@@ -515,40 +515,40 @@ fn harden_generated_config_xml(
 ) -> Result<Vec<u8>, String> {
     use quick_xml::events::{BytesText, Event};
 
+    // quick-xml 0.42 gives element names as UTF-8 text, so the open-element path is kept as
+    // text and matched against string literals.
     fn replacement(
-        path: &[Vec<u8>],
+        path: &[String],
         control: &ControlState,
         local_address: std::net::Ipv4Addr,
     ) -> Option<(&'static str, String)> {
-        if path.len() != 3 || path[0] != b"configuration" {
+        if path.len() != 3 || path[0] != "configuration" {
             return None;
         }
-        match (path[1].as_slice(), path[2].as_slice()) {
-            (b"gui", b"address") => {
-                Some(("gui/address", format!("127.0.0.1:{}", control.gui_port)))
-            }
-            (b"gui", b"apikey") => Some(("gui/apikey", control.api_key.clone())),
-            (b"options", b"listenAddress") => Some((
+        match (path[1].as_str(), path[2].as_str()) {
+            ("gui", "address") => Some(("gui/address", format!("127.0.0.1:{}", control.gui_port))),
+            ("gui", "apikey") => Some(("gui/apikey", control.api_key.clone())),
+            ("options", "listenAddress") => Some((
                 "options/listenAddress",
                 format!("tcp://{local_address}:22000"),
             )),
-            (b"options", b"globalAnnounceEnabled") => {
+            ("options", "globalAnnounceEnabled") => {
                 Some(("options/globalAnnounceEnabled", "false".into()))
             }
-            (b"options", b"localAnnounceEnabled") => {
+            ("options", "localAnnounceEnabled") => {
                 Some(("options/localAnnounceEnabled", "false".into()))
             }
-            (b"options", b"relaysEnabled") => Some(("options/relaysEnabled", "false".into())),
-            (b"options", b"startBrowser") => Some(("options/startBrowser", "false".into())),
-            (b"options", b"natEnabled") => Some(("options/natEnabled", "false".into())),
-            (b"options", b"urAccepted") => Some(("options/urAccepted", "-1".into())),
-            (b"options", b"autoUpgradeIntervalH") => {
+            ("options", "relaysEnabled") => Some(("options/relaysEnabled", "false".into())),
+            ("options", "startBrowser") => Some(("options/startBrowser", "false".into())),
+            ("options", "natEnabled") => Some(("options/natEnabled", "false".into())),
+            ("options", "urAccepted") => Some(("options/urAccepted", "-1".into())),
+            ("options", "autoUpgradeIntervalH") => {
                 Some(("options/autoUpgradeIntervalH", "0".into()))
             }
-            (b"options", b"crashReportingEnabled") => {
+            ("options", "crashReportingEnabled") => {
                 Some(("options/crashReportingEnabled", "false".into()))
             }
-            (b"options", b"announceLANAddresses") => {
+            ("options", "announceLANAddresses") => {
                 Some(("options/announceLANAddresses", "false".into()))
             }
             _ => None,
@@ -558,7 +558,7 @@ fn harden_generated_config_xml(
     let mut reader = quick_xml::Reader::from_str(contents);
     reader.config_mut().trim_text(false);
     let mut writer = quick_xml::Writer::new(Vec::with_capacity(contents.len()));
-    let mut path = Vec::<Vec<u8>>::new();
+    let mut path = Vec::<String>::new();
     let mut replaced = std::collections::BTreeSet::new();
     loop {
         let event = reader
@@ -566,7 +566,7 @@ fn harden_generated_config_xml(
             .map_err(|error| format!("Generated Syncthing configuration is invalid: {error}"))?;
         match event {
             Event::Start(start) => {
-                path.push(start.name().as_ref().to_vec());
+                path.push(start.name().as_ref().to_owned());
                 writer
                     .write_event(Event::Start(start))
                     .map_err(|error| error.to_string())?;
