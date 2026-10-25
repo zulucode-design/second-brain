@@ -871,6 +871,175 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// Set in a process test's child to the scratch directory whose claim it holds.
+    const HOLDER_DIR_VAR: &str = "HELIXNOTES_TEST_CLAIM_HOLDER_DIR";
+    /// Written by the holder once it has the claim.
+    const HOLDER_READY: &str = "holder-ready";
+    /// Written by the parent to tell the holder to exit.
+    const HOLDER_EXIT: &str = "holder-exit";
+    /// How long the parent waits for the holder to reach each step.
+    const HOLDER_DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
+
+    /// The child side of the process tests: take the claim, say so, and keep it until killed
+    /// or told to exit. Never returns.
+    fn hold_the_claim(dir: &Path) -> ! {
+        let file = open_claim(dir);
+        let Ok(Some(_claim)) = ClaimLock::acquire(&file) else {
+            // The parent sees the exit before any ready marker and fails with it.
+            std::process::exit(3);
+        };
+        std::fs::write(dir.join(HOLDER_READY), b"ready").unwrap();
+        // Bounded, so a parent that died without killing its child does not leave it behind.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while std::time::Instant::now() < deadline {
+            if dir.join(HOLDER_EXIT).exists() {
+                // `exit` runs no destructors, so `_claim` is never dropped: the lock is still
+                // held as the process ends, and only the operating system can release it.
+                std::process::exit(0);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        std::process::exit(2);
+    }
+
+    /// A child process of this test binary that holds the claim in a scratch directory.
+    ///
+    /// Dropping it kills and reaps the child, so no failure path leaves one running.
+    struct Holder(std::process::Child);
+
+    impl Holder {
+        /// Run the test named `test` again as the holder for `dir`, and wait until it holds
+        /// the claim.
+        fn start(test: &str, dir: &Path) -> Holder {
+            let child = std::process::Command::new(std::env::current_exe().unwrap())
+                .arg(format!("machine_local::tests::{test}"))
+                .arg("--exact")
+                .env(HOLDER_DIR_VAR, dir)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let mut holder = Holder(child);
+            let ready = dir.join(HOLDER_READY);
+            let deadline = std::time::Instant::now() + HOLDER_DEADLINE;
+            while !ready.exists() {
+                if let Some(status) = holder.0.try_wait().unwrap() {
+                    panic!("the holder exited before it took the claim: {status}");
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the holder never took the claim"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            holder
+        }
+
+        /// Tell the child to exit normally, still holding the claim, and reap it.
+        fn exit(&mut self, dir: &Path) -> std::process::ExitStatus {
+            std::fs::write(dir.join(HOLDER_EXIT), b"exit").unwrap();
+            let deadline = std::time::Instant::now() + HOLDER_DEADLINE;
+            while self.0.try_wait().unwrap().is_none() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the holder never exited"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            self.0.wait().unwrap()
+        }
+
+        /// Kill the child while it holds the claim, and reap it.
+        fn kill(&mut self) {
+            self.0.kill().unwrap();
+            self.0.wait().unwrap();
+        }
+    }
+
+    impl Drop for Holder {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    /// The parent's own handle on the claim is refused while the holder has it. Checked
+    /// without reading the file, which on Windows the lock covers.
+    fn assert_claim_is_held_elsewhere(file: &std::fs::File) {
+        let attempt = file.try_lock();
+        assert!(
+            matches!(attempt, Err(std::fs::TryLockError::WouldBlock)),
+            "a claim held by another process was not refused: {attempt:?}"
+        );
+    }
+
+    /// What the lock is for, seen from a second process: while another process holds the
+    /// claim, this one waits its bounded time and is refused, rather than taking the claim
+    /// over as abandoned.
+    #[test]
+    fn a_claim_held_by_another_process_is_refused() {
+        if let Ok(dir) = std::env::var(HOLDER_DIR_VAR) {
+            hold_the_claim(Path::new(&dir));
+        }
+        let dir = claim_scratch("claim-held");
+        let holder = Holder::start("a_claim_held_by_another_process_is_refused", &dir);
+        let file = open_claim(&dir);
+
+        assert_claim_is_held_elsewhere(&file);
+        assert_eq!(
+            claim_outcome(ClaimLock::acquire(&file)),
+            Err(CLAIM_HELD.to_string())
+        );
+
+        drop(holder);
+        drop(file);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// ADR-0006 rests on the operating system releasing the lock when its holder ends. The
+    /// holder here exits without dropping its claim, so nothing but the OS can release it.
+    #[test]
+    fn a_claim_is_released_when_its_holder_exits() {
+        if let Ok(dir) = std::env::var(HOLDER_DIR_VAR) {
+            hold_the_claim(Path::new(&dir));
+        }
+        let dir = claim_scratch("claim-exit");
+        let mut holder = Holder::start("a_claim_is_released_when_its_holder_exits", &dir);
+        let file = open_claim(&dir);
+        assert_claim_is_held_elsewhere(&file);
+
+        let status = holder.exit(&dir);
+
+        assert!(
+            status.success(),
+            "the holder did not exit normally: {status}"
+        );
+        assert_eq!(claim_outcome(ClaimLock::acquire(&file)), Ok(true));
+        drop(holder);
+        drop(file);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The case the lock exists for: a process killed while it holds the claim, as a crash
+    /// mid-claim would leave it, does not keep the claim from the next process.
+    #[test]
+    fn a_claim_is_released_when_its_holder_is_killed() {
+        if let Ok(dir) = std::env::var(HOLDER_DIR_VAR) {
+            hold_the_claim(Path::new(&dir));
+        }
+        let dir = claim_scratch("claim-kill");
+        let mut holder = Holder::start("a_claim_is_released_when_its_holder_is_killed", &dir);
+        let file = open_claim(&dir);
+        assert_claim_is_held_elsewhere(&file);
+
+        holder.kill();
+
+        assert_eq!(claim_outcome(ClaimLock::acquire(&file)), Ok(true));
+        drop(holder);
+        drop(file);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn migration_moves_machine_local_state_out_and_leaves_the_vault_syncable() {
         let vault = legacy_vault("migrate");
