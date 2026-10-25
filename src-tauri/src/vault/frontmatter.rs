@@ -1,8 +1,9 @@
 use crate::types::NoteMeta;
 use crate::vault::para::ParaCategory;
 use chrono::{NaiveDate, NaiveDateTime, Utc};
-use gray_matter::engine::YAML;
-use gray_matter::Matter;
+use gray_matter::engine::{Engine, YAML};
+use gray_matter::{Matter, Pod};
+use serde::de::IgnoredAny;
 use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -25,6 +26,91 @@ where
 {
     let value = serde_yaml::Value::deserialize(deserializer)?;
     Ok(value.as_str().map(str::to_owned))
+}
+
+/// A note split into its front matter and its body.
+///
+/// `parse_frontmatter` is the one place that decides what a front matter that will not
+/// parse means: the note keeps its body and its front matter text, and only `fields` goes
+/// missing. Callers that edit the front matter parse `matter` with `serde_yaml` themselves.
+pub(crate) struct ParsedFrontmatter {
+    /// The text between the delimiters, trimmed. Empty when the note has no front matter or
+    /// an empty one.
+    pub(crate) matter: String,
+    /// The lines after the closing delimiter, joined with `\n`: `\r\n` becomes `\n`, and the
+    /// empty lines at the start and the final newline are dropped. A note without front
+    /// matter is all body, and an unterminated front matter leaves every line after the
+    /// opening delimiter. A file of three bytes or fewer has an empty body; gray_matter has
+    /// always read it that way.
+    pub(crate) body: String,
+    /// The fields the app reads, or `None` when there is no front matter, it is not valid
+    /// YAML, or it does not read as these fields. A single wrongly typed field makes them all
+    /// `None`, as it always has.
+    fields: Option<RawFrontmatter>,
+}
+
+/// Finds the front matter without reading it.
+///
+/// gray_matter 0.3 fails the whole parse when its engine or its deserialization fails, and
+/// then returns neither the front matter text nor the body. Reading the YAML afterwards, in
+/// `parse_frontmatter`, keeps a bad front matter from costing the note its body.
+struct Delimiters;
+
+impl Engine for Delimiters {
+    fn parse(_: &str) -> gray_matter::Result<Pod> {
+        Ok(Pod::Null)
+    }
+}
+
+/// Split a note into its front matter text, its body and the fields the app reads.
+pub(crate) fn parse_frontmatter(raw: &str) -> ParsedFrontmatter {
+    let parsed = match Matter::<Delimiters>::new().parse::<IgnoredAny>(raw) {
+        Ok(parsed) => parsed,
+        // Cannot happen: `Delimiters` never fails and `IgnoredAny` accepts any value. Were it
+        // to, the note reads as one without front matter, so all of its text stays the body.
+        Err(_) => {
+            return ParsedFrontmatter {
+                matter: String::new(),
+                body: raw.to_string(),
+                fields: None,
+            }
+        }
+    };
+    let fields = if parsed.matter.is_empty() {
+        None
+    } else {
+        YAML::parse(&parsed.matter)
+            .ok()
+            .and_then(|pod| serde_json::from_value(pod_to_json(pod)).ok())
+    };
+    ParsedFrontmatter {
+        matter: parsed.matter,
+        body: parsed.content,
+        fields,
+    }
+}
+
+/// Convert the YAML value the way gray_matter 0.2 did before deserializing it, so the fields
+/// read as they did then. 0.3 deserializes with code of its own, which, for one, drops every
+/// field when one holds a number too large for a float (`title: 1e999`), where 0.2 read that
+/// field as null and kept the others.
+fn pod_to_json(pod: Pod) -> serde_json::Value {
+    use serde_json::Value;
+    match pod {
+        Pod::Null => Value::Null,
+        Pod::String(text) => Value::String(text),
+        Pod::Integer(number) => Value::from(number),
+        // An infinity has no JSON number, so it becomes null, as it did in 0.2.
+        Pod::Float(number) => Value::from(number),
+        Pod::Boolean(flag) => Value::Bool(flag),
+        Pod::Array(items) => Value::Array(items.into_iter().map(pod_to_json).collect()),
+        Pod::Hash(entries) => Value::Object(
+            entries
+                .into_iter()
+                .map(|(key, value)| (key, pod_to_json(value)))
+                .collect(),
+        ),
+    }
 }
 
 /// Try to parse a date string in multiple common formats.
@@ -54,13 +140,9 @@ pub fn parse_date_flexible(s: &str) -> Option<chrono::DateTime<Utc>> {
 }
 
 pub fn parse_note(raw: &str, filename: &str) -> (NoteMeta, String) {
-    let matter = Matter::<YAML>::new();
-    let result = matter.parse(raw);
+    let parsed = parse_frontmatter(raw);
 
-    let fm: RawFrontmatter = result
-        .data
-        .and_then(|d| d.deserialize().ok())
-        .unwrap_or_default();
+    let fm: RawFrontmatter = parsed.fields.unwrap_or_default();
 
     let title = fm.title.unwrap_or_else(|| filename_to_title(filename));
 
@@ -92,8 +174,7 @@ pub fn parse_note(raw: &str, filename: &str) -> (NoteMeta, String) {
         source_url: fm.source_url,
     };
 
-    let content = result.content;
-    (meta, content)
+    (meta, parsed.body)
 }
 
 pub fn serialize_frontmatter(meta: &NoteMeta) -> String {
@@ -142,8 +223,7 @@ pub fn update_note_raw(meta: &NoteMeta, body: &str) -> String {
 /// Merge NoteMeta fields into existing frontmatter, preserving unknown YAML keys.
 /// Falls back to serialize_frontmatter() if the original has no frontmatter.
 pub fn merge_frontmatter(original_raw: &str, meta: &NoteMeta, body: &str) -> String {
-    let matter = Matter::<YAML>::new();
-    let parsed = matter.parse(original_raw);
+    let parsed = parse_frontmatter(original_raw);
 
     // If original had no frontmatter, use the simple serializer
     if parsed.matter.trim().is_empty() {
@@ -227,8 +307,7 @@ pub fn merge_frontmatter(original_raw: &str, meta: &NoteMeta, body: &str) -> Str
 /// Unlike `merge_frontmatter`, this is deliberately fallible: a move must not replace
 /// malformed metadata with generated defaults and then delete the only original copy.
 pub fn set_category(raw: &str, category: ParaCategory) -> Result<String, String> {
-    let matter = Matter::<YAML>::new();
-    let parsed = matter.parse(raw);
+    let parsed = parse_frontmatter(raw);
     let mut mapping = if parsed.matter.trim().is_empty() {
         serde_yaml::Mapping::new()
     } else {
@@ -242,7 +321,7 @@ pub fn set_category(raw: &str, category: ParaCategory) -> Result<String, String>
     );
     let yaml = serde_yaml::to_string(&serde_yaml::Value::Mapping(mapping))
         .map_err(|error| format!("Could not serialize updated category: {error}"))?;
-    Ok(format!("---\n{yaml}---\n{}", parsed.content))
+    Ok(format!("---\n{yaml}---\n{}", parsed.body))
 }
 
 pub fn filename_to_title(filename: &str) -> String {
@@ -268,9 +347,8 @@ pub fn filename_to_title(filename: &str) -> String {
 
 /// Quick title extraction from raw note content (frontmatter only, no full parse)
 pub fn extract_title(raw: &str) -> Option<String> {
-    let matter = Matter::<YAML>::new();
-    let result = matter.parse(raw);
-    let mapping: serde_yaml::Mapping = serde_yaml::from_str(&result.matter).ok()?;
+    let parsed = parse_frontmatter(raw);
+    let mapping: serde_yaml::Mapping = serde_yaml::from_str(&parsed.matter).ok()?;
     mapping
         .get(serde_yaml::Value::String("title".into()))
         .and_then(serde_yaml::Value::as_str)

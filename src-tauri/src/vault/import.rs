@@ -3,8 +3,6 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 use chrono::Utc;
-use gray_matter::engine::YAML;
-use gray_matter::Matter;
 use regex::Regex;
 use uuid::Uuid;
 
@@ -253,8 +251,7 @@ fn build_file_index(vault: &Path) -> HashMap<String, String> {
 }
 
 fn rename_deprecated_properties(raw: &str) -> String {
-    let matter = Matter::<YAML>::new();
-    let result = matter.parse(raw);
+    let result = frontmatter::parse_frontmatter(raw);
 
     if result.matter.trim().is_empty() {
         return raw.to_string();
@@ -288,12 +285,11 @@ fn rename_deprecated_properties(raw: &str) -> String {
         Err(_) => return raw.to_string(),
     };
 
-    format!("---\n{}---\n{}", yaml_str, result.content)
+    format!("---\n{}---\n{}", yaml_str, result.body)
 }
 
 fn normalize_frontmatter(raw: &str, path: &Path) -> (NoteMeta, String) {
-    let matter = Matter::<YAML>::new();
-    let result = matter.parse(raw);
+    let result = frontmatter::parse_frontmatter(raw);
     let yaml_str = result.matter.trim();
 
     let mapping: serde_yaml::Mapping = if yaml_str.is_empty() {
@@ -312,7 +308,7 @@ fn normalize_frontmatter(raw: &str, path: &Path) -> (NoteMeta, String) {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| {
-            if let Some(h) = extract_heading_title(&result.content) {
+            if let Some(h) = extract_heading_title(&result.body) {
                 h
             } else {
                 let fname = path
@@ -375,7 +371,7 @@ fn normalize_frontmatter(raw: &str, path: &Path) -> (NoteMeta, String) {
         category,
         source_url: None,
     };
-    (meta, result.content)
+    (meta, result.body)
 }
 
 fn normalize_tags(mapping: &serde_yaml::Mapping) -> Vec<String> {
