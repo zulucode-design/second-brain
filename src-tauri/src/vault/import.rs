@@ -1302,4 +1302,314 @@ mod tests {
         assert_eq!(file, "");
         assert_eq!(anchor, Some("Heading"));
     }
+
+    /// What `normalize_frontmatter` reads from a table input, as the app read it with
+    /// gray_matter 0.2.9.
+    struct Normalized {
+        /// `None` where the note has no id it can read, so a fresh one is generated.
+        id: Option<&'static str>,
+        title: String,
+        tags: &'static [&'static str],
+        pinned: bool,
+        /// `None` where the date is missing or unreadable and the file has no time of its
+        /// own, so the read time stands in.
+        created: Option<&'static str>,
+        modified: Option<&'static str>,
+        category: Option<ParaCategory>,
+    }
+
+    impl Normalized {
+        /// Nothing reads, so the id is generated and the title comes from the file name.
+        fn generated() -> Normalized {
+            Normalized {
+                id: None,
+                title: "Table note".into(),
+                tags: &[],
+                pinned: false,
+                created: None,
+                modified: None,
+                category: None,
+            }
+        }
+    }
+
+    /// For each case of `frontmatter::tests::cases()`, in the same order: what
+    /// `rename_deprecated_properties` returns, `None` meaning the input unchanged, and what
+    /// `normalize_frontmatter` reads. Recorded, like the cases, with gray_matter 0.2.9.
+    fn import_expectations() -> Vec<(&'static str, Option<String>, Normalized)> {
+        let long = "x".repeat(5000);
+        vec![
+            (
+                "no_frontmatter",
+                None,
+                Normalized {
+                    title: "Heading".into(),
+                    ..Normalized::generated()
+                },
+            ),
+            ("empty_frontmatter", None, Normalized::generated()),
+            ("unterminated", None, Normalized::generated()),
+            ("malformed_yaml", None, Normalized::generated()),
+            ("tab_indented", None, Normalized::generated()),
+            ("scalar", None, Normalized::generated()),
+            (
+                "tags_number",
+                None,
+                Normalized {
+                    id: Some("typed-id"),
+                    title: "Typed".into(),
+                    tags: &["5"],
+                    category: Some(ParaCategory::Areas),
+                    ..Normalized::generated()
+                },
+            ),
+            (
+                "title_number",
+                None,
+                Normalized {
+                    id: Some("typed-id"),
+                    category: Some(ParaCategory::Areas),
+                    ..Normalized::generated()
+                },
+            ),
+            (
+                "pinned_yes",
+                None,
+                Normalized {
+                    id: Some("typed-id"),
+                    title: "Typed".into(),
+                    category: Some(ParaCategory::Areas),
+                    ..Normalized::generated()
+                },
+            ),
+            (
+                "crlf",
+                Some(
+                    concat!(
+                        "---\n",
+                        "id: crlf-id\n",
+                        "title: Windows note\n",
+                        "tags:\n",
+                        "- a\n",
+                        "- b\n",
+                        "category: Resources\n",
+                        "aliases: old\n",
+                        "---\n",
+                        "line one\n",
+                        "line two"
+                    )
+                    .into(),
+                ),
+                Normalized {
+                    id: Some("crlf-id"),
+                    title: "Windows note".into(),
+                    tags: &["a", "b"],
+                    category: Some(ParaCategory::Resources),
+                    ..Normalized::generated()
+                },
+            ),
+            ("crlf_malformed", None, Normalized::generated()),
+            ("byte_order_mark", None, Normalized::generated()),
+            (
+                "unquoted_dates",
+                None,
+                Normalized {
+                    title: "Dated".into(),
+                    created: Some("2024-01-02T00:00:00+00:00"),
+                    modified: Some("2024-02-03T04:05:06+00:00"),
+                    ..Normalized::generated()
+                },
+            ),
+            (
+                "quoted_dates",
+                None,
+                Normalized {
+                    title: "Dated".into(),
+                    created: Some("2024-01-02T03:04:05+00:00"),
+                    modified: Some("2024-02-03T02:05:06+00:00"),
+                    ..Normalized::generated()
+                },
+            ),
+            (
+                "tags_without_value",
+                None,
+                Normalized {
+                    title: "Untagged".into(),
+                    ..Normalized::generated()
+                },
+            ),
+            (
+                "anchor_and_alias",
+                None,
+                Normalized {
+                    title: "Anchored".into(),
+                    category: Some(ParaCategory::Projects),
+                    ..Normalized::generated()
+                },
+            ),
+            (
+                "second_delimiter_in_body",
+                None,
+                Normalized {
+                    title: "Ruled".into(),
+                    ..Normalized::generated()
+                },
+            ),
+            ("duplicate_keys", None, Normalized::generated()),
+            ("title_with_colon", None, Normalized::generated()),
+            (
+                "spaces_after_delimiter",
+                None,
+                Normalized {
+                    title: "Spaced".into(),
+                    ..Normalized::generated()
+                },
+            ),
+            ("indented_delimiter", None, Normalized::generated()),
+            (
+                "long_title",
+                None,
+                Normalized {
+                    title: long.clone(),
+                    category: Some(ParaCategory::Archives),
+                    ..Normalized::generated()
+                },
+            ),
+            (
+                "unicode_values",
+                None,
+                Normalized {
+                    title: "Café ☕ – 日本語".into(),
+                    tags: &["naïve", "東京"],
+                    category: Some(ParaCategory::Areas),
+                    ..Normalized::generated()
+                },
+            ),
+            (
+                "nested_unknown_keys",
+                None,
+                Normalized {
+                    id: Some("nested-id"),
+                    title: "Nested".into(),
+                    category: Some(ParaCategory::Projects),
+                    ..Normalized::generated()
+                },
+            ),
+            (
+                "unknown_keys_and_source_url",
+                None,
+                Normalized {
+                    id: Some("clip-id"),
+                    title: "Clip".into(),
+                    tags: &["web"],
+                    pinned: true,
+                    created: Some("2024-01-02T03:04:05+00:00"),
+                    modified: Some("2024-02-03T04:05:06+00:00"),
+                    category: Some(ParaCategory::Resources),
+                },
+            ),
+            (
+                "overflowing_float",
+                None,
+                Normalized {
+                    id: Some("float-id"),
+                    title: "1e999".into(),
+                    category: Some(ParaCategory::Projects),
+                    ..Normalized::generated()
+                },
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_table_input_renames_and_normalizes_as_it_did_with_gray_matter_0_2() {
+        let cases = frontmatter::tests::cases();
+        let expectations = import_expectations();
+        assert_eq!(cases.len(), expectations.len());
+        // A file that does not exist has no times, so a missing date reads as the read time.
+        let path = Path::new("no-such-folder").join("Table note.md");
+        for (case, (name, renamed, expected)) in cases.iter().zip(expectations) {
+            assert_eq!(case.name, name);
+            assert_eq!(
+                rename_deprecated_properties(&case.raw),
+                renamed.unwrap_or_else(|| case.raw.clone()),
+                "{name}: rename"
+            );
+
+            let before = Utc::now();
+            let (meta, body) = normalize_frontmatter(&case.raw, &path);
+            let read_between = (before, Utc::now());
+            match expected.id {
+                Some(id) => assert_eq!(meta.id, id, "{name}: id"),
+                None => assert!(
+                    Uuid::parse_str(&meta.id).is_ok(),
+                    "{name}: expected a generated id, got {}",
+                    meta.id
+                ),
+            }
+            assert_eq!(meta.title, expected.title, "{name}: title");
+            assert_eq!(meta.tags, expected.tags, "{name}: tags");
+            assert_eq!(meta.pinned, expected.pinned, "{name}: pinned");
+            frontmatter::tests::assert_date(
+                meta.created,
+                expected.created,
+                read_between,
+                &format!("{name}: created"),
+            );
+            frontmatter::tests::assert_date(
+                meta.modified,
+                expected.modified,
+                read_between,
+                &format!("{name}: modified"),
+            );
+            assert_eq!(meta.category, expected.category, "{name}: category");
+            assert_eq!(meta.source_url, None, "{name}: source_url");
+            // With gray_matter 0.2.9 this was the body `parse_note` read, too.
+            assert_eq!(body, case.note.body, "{name}: body");
+        }
+    }
+
+    /// The import replaces front matter it cannot read with generated front matter, losing
+    /// the category it held, and keeps the body, as it did with gray_matter 0.2.9. What it
+    /// should write instead is a separate decision.
+    #[test]
+    fn importing_a_note_with_malformed_front_matter_keeps_its_body() {
+        let vault = std::env::temp_dir().join(format!("import-malformed-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&vault).unwrap();
+        let note_path = vault.join("Broken note.md");
+        std::fs::write(
+            &note_path,
+            concat!(
+                "---\n",
+                "id: \"stable-id\"\n",
+                "title: [broken\n",
+                "category: Projects\n",
+                "---\n",
+                "valuable body\n",
+                "\n",
+                "second paragraph\n"
+            ),
+        )
+        .unwrap();
+
+        let result = import(&vault.to_string_lossy()).unwrap();
+        let written = std::fs::read_to_string(&note_path).unwrap();
+        std::fs::remove_dir_all(&vault).unwrap();
+
+        let (meta, body) = frontmatter::parse_note(&written, "Broken note.md");
+        assert_eq!(body, "valuable body\n\nsecond paragraph");
+        assert!(Uuid::parse_str(&meta.id).is_ok(), "a fresh id: {written}");
+        assert_eq!(meta.title, "Broken note");
+        assert!(meta.tags.is_empty());
+        assert!(!meta.pinned);
+        assert_eq!(meta.category, None);
+        assert_eq!(
+            written,
+            frontmatter::update_note_raw(&meta, "valuable body\n\nsecond paragraph"),
+            "generated front matter, then the original body"
+        );
+        assert_eq!(result.files_converted, 1);
+        assert_eq!(result.frontmatter_normalized, 1);
+        assert!(result.failed.is_empty(), "{:?}", result.failed);
+    }
 }
