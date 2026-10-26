@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Issue 238: gray_matter 0.3 verification</title>
+<style>
+body { max-width: 68rem; margin: 2rem auto; padding: 0 1rem; font: 16px/1.55 system-ui, sans-serif; color: #20252b; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+th, td { border: 1px solid #cbd2d9; padding: .55rem; text-align: left; vertical-align: top; }
+th { background: #edf1f5; }
+code { overflow-wrap: anywhere; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+<main>
+<h1>Issue 238: gray_matter 0.3 verification</h1>
+<p>2026-10-26. The branch upgrades gray_matter from 0.2.9 to 0.3.2 and routes front matter
+reads through one helper that preserves the body when YAML cannot be read. Following the
+approved attempt-2 decision on #238, each metadata field reads independently: a wrongly typed
+field no longer hides the category or other readable fields. Import shares the id, title and
+list-tag readings, while retaining its Obsidian tag conversion. Trash restore accepts a changed
+id reading when the recorded content hash proves the file is unchanged.</p>
+<p><strong>Publication is pending.</strong> Installed-package checks passed on Fedora and Windows.
+Windows full verification retains the #244 test failure; changed-id history/Notion continuity
+remains unfixed under #248. The report commit and whole branch still need final review on both
+axes before any push or PR, then CI and separate merge approval.</p>
+
+<h2>Candidate and provenance</h2>
+<ul>
+<li>Wave baseline: <code>17d98d007bea1422f1fb43a333263a7008862114</code>.</li>
+<li>Verified and packaged candidate: <code>7388bc57e8bf85c4128c7ee2b576f7326771fec2</code>,
+on <code>fix/238-gray-matter</code>.</li>
+<li>Kiro attempt 1 supplied three commits, imported with <code>cherry-pick -x</code>:
+<code>bf268a8</code> (shared parsing helper; source <code>4ba43cf</code>),
+<code>198f298</code> (front matter oracle table; source <code>2ca1ac4</code>), and
+<code>64a6cbc</code> (import oracle tests; source <code>20e94f9</code>).
+Those tests initially recorded gray_matter 0.2.9 behavior; attempt 2 changed the expectations
+where the approved per-field rules changed behavior.</li>
+<li>Claude applied the prescribed manifest change in <code>e5ca5ba</code>. Sol regenerated
+and audited only <code>src-tauri/Cargo.lock</code> in <code>0f74709</code>.</li>
+<li>Kiro reached its monthly usage limit. Its own attempt-2 work never left its sandbox
+and was not imported. Claude Sonnet 5.5 agents directed by Claude wrote the delivered
+attempt 2: <code>01c31ba</code> (independent field reads) and <code>5234807</code>
+(expanded compatibility table and category/save regressions).</li>
+<li>A Claude Sonnet 5.5 agent wrote both round-1 repairs: <code>c137da8</code>
+(import uses shared fields) and <code>13517c8</code> (hash-guarded legacy trash restore,
+current Quick Access identity and regression tests).</li>
+<li>Sol merged main <code>3b066747db0a059bc95f731d6ca4df40527d4f28</code> once,
+without conflicts, producing <code>7388bc5</code>. Main includes PR #245's Windows lint
+repair and PR #247's native identity lock. The merge required no lock regeneration;
+its only change to the branch's existing lock was removal of the direct fs4 dependency.</li>
+</ul>
+<p>The lock audit against main found only the expected graph changes: gray_matter
+0.2.9 to 0.3.2, yaml-rust2 0.8.1 to 0.10.4, hashlink 0.8.4 to 0.10.0 (0.9.1 retained),
+and removal of toml 0.5.11. gray_matter drops its serde_json/toml edges and uses the already
+locked thiserror 2.0.21. hashbrown 0.14.5 no longer activates allocator-api2 through the removed
+hashlink version; its version/checksum and other consumers remain unchanged. No unrelated
+package version or checksum changed. Merged manifests retain Rust minimum 1.90 and exactly
+Tauri CLI 2.12.2, with <code>gray_matter = "0.3"</code> and no direct fs4.</p>
+
+<h2>Review</h2>
+<p>Sol ran independent Spec and Standards reviews at each head below. The four #238
+review-log headers record <code>gpt-6.1-sol</code> at <code>xhigh</code>.
+These are the two pre-merge review rounds;
+neither substitutes for final review of the report/publication head.</p>
+<table>
+<thead><tr><th>Round and head</th><th>Finding</th><th>Disposition</th></tr></thead>
+<tbody>
+<tr><td>R1, <code>5234807c4172a5228aa5952e4c0f147a5c64c852</code>, Spec</td>
+<td>P2: import bypassed the shared rules for numeric/boolean id, title and list-tag values.</td>
+<td>Fixed by a Claude Sonnet 5.5 agent in <code>c137da8</code>; shared fields now feed
+import, with its existing fallbacks and tag conversion retained.</td></tr>
+<tr><td>R1, same head, Standards</td>
+<td>P2: a pre-upgrade trash manifest could reject an unchanged note whose id now reads differently.</td>
+<td>Fixed by the same agent in <code>13517c8</code>. A matching content hash permits
+restore; absent or mismatched hashes retain identity rejection. Quick Access uses the current id.</td></tr>
+<tr><td>R2, <code>13517c8df20ca72215e9636176088695cc1bfc73</code>, Spec</td>
+<td>P2: import converts non-list tags even though ordinary note reading rejects them.</td>
+<td>Declined by the clarification on #238. Import keeps Obsidian string/comma/scalar tag
+conversion: <code>tags: 5</code> imports as <code>["5"]</code>. The non-list rule applies
+to note reading. No code repair was requested for this finding.</td></tr>
+<tr><td>R2, same head, Standards</td>
+<td>P2: changed id readings orphan history and Notion publication bindings.</td>
+<td>Left unfixed by the #238 clarification; open follow-up #248 owns compatibility lookup
+or migration. Snapshots remain on disk but are not listed under the new id; a later Notion
+publish can create a second page. The trash fix does not repair those bindings.</td></tr>
+</tbody>
+</table>
+<p>Retained review evidence, cited by name: <code>238-r1-spec.log</code>,
+<code>238-r1-standards.log</code>, <code>238-r2-spec.log</code>, and
+<code>238-r2-standards.log</code>, with their corresponding <code>-prompt.md</code> and
+<code>-last.md</code> records. The issue's attempt-2 decision supersedes the original
+one-wrong-field-drops-all-fields requirement. Its round-2 clarification accepts the importer
+tag rules and <code>.NaN</code>/<code>.inf</code> title reading as <code>0.0</code>.</p>
+
+<h2>Verification by Sol</h2>
+<p>Fedora 44 and Windows 11 used pnpm 11.22.0, recorded in
+<code>238-20261026174451-pnpm-install.log</code> and <code>238-mv-windows-install.log</code>.
+The initial Fedora lock/build gates explicitly compiled with Rust
+1.90.0; their unpinned Rust test/lint commands used stable 1.98.0. Windows tests used 1.90.0;
+the early Windows lint was reproduced on 1.90.0 and stable 1.98.1. Merge verification and
+candidate package builds used Rust 1.90.0. The #238 gate instructions record that Claude
+supplied the pre-run usage checks. Kiro/implementer sandbox checks are not gate evidence.</p>
+<table>
+<thead><tr><th>Candidate and command</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td><code>0f74709</code>, Fedora, <code>238-lock-gate</code>:
+<code>pnpm install --frozen-lockfile</code>; <code>pnpm check</code>;
+<code>RUSTUP_TOOLCHAIN=1.90.0 cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets</code>;
+<code>pnpm test:rust vault::frontmatter::</code>, <code>vault::import::</code>,
+<code>vault::operations::</code>; <code>pnpm lint:rust</code></td>
+<td>Passed. Frozen install reused 482 packages, downloaded 0. Typecheck: 829 files,
+0 errors/warnings. Rust: 15 front matter, 34 import and 73 operations tests passed
+(122 total), 0 failed/ignored. All six original added tests ran. Formatting and Clippy passed.
+The separate <code>title: True</code>/category probe was source reading, not an installed run:
+it identified the category-loss behavior addressed by attempt 2.</td></tr>
+<tr><td><code>5234807</code>, <code>238-gate2</code>: Fedora repeats check,
+locked 1.90 compile, the three focused Rust commands and lint; Windows frozen install,
+full <code>pnpm test:rust</code> and <code>pnpm lint:rust</code></td>
+<td>Fedora passed: 829 files, 0 errors/warnings; 17 front matter, 34 import, 73 operations
+tests passed, 0 failed/ignored; lint passed. Windows reused 482 packages, downloaded 0;
+Rust 724 passed, 0 failed, 9 ignored. Windows formatting passed but Clippy failed only
+the pre-existing <code>clippy::bind_instead_of_map</code> in <code>src-tauri/src/commands.rs</code>
+(#221). Gate 2 therefore recorded FAIL. All eight then-added front matter/import tests passed
+on both machines. No installed-app check or JavaScript test was part of this gate.</td></tr>
+<tr><td><code>13517c8</code>, <code>238-gate3</code>: same commands as gate 2</td>
+<td>Fedora passed: 829 files, 0 errors/warnings; 17 front matter, 35 import, 75 operations
+tests passed, 0 failed/ignored; compile/lint passed. Windows reused 482 packages, downloaded 0;
+Rust 727 passed, 0 failed, 9 ignored. Formatting passed; Clippy retained only the known
+#221 diagnostic, already repaired on main by PR #245. Gate 3 recorded PASS with that known
+lint exception. Its inventory covered nine front matter/import tests; the two new restore tests
+also ran within the operations/full suites and are explicitly matched below at the merged head.</td></tr>
+<tr><td><code>7388bc5</code>, <code>238-merge-verify</code>, both:
+<code>pnpm install --frozen-lockfile</code>; Fedora <code>pnpm verify</code> and
+<code>pnpm test:rust vault::</code></td>
+<td>Frozen installs passed; Windows reused 482 packages, downloaded 0. Fedora full verification
+passed: typecheck 829 files, 0 errors/warnings; JavaScript 254 passed, 0 failed/skipped;
+Rust 765 passed, 0 failed, 10 ignored; formatting, Clippy and frontend build passed.
+Focused vault run: 188 passed, 0 failed/ignored, 587 filtered.</td></tr>
+<tr><td><code>7388bc5</code>, Windows: <code>pnpm verify</code></td>
+<td>Failed only <code>pnpm install fails when the prepare svelte-kit sync fails</code>
+in <code>tests/install-failure.test.mjs</code> (#244): expected
+<code>/INTENTIONAL_SYNC_FAILURE/</code>, received <code>undefined\nundefined</code>.
+Typecheck passed; JavaScript 248 passed, 1 failed, 5 skipped. The command stopped after
+JavaScript, so its later stages are not claimed as having run within <code>verify</code>.</td></tr>
+<tr><td><code>7388bc5</code>, Windows, separate <code>pnpm test:rust</code>,
+<code>pnpm lint:rust</code>, <code>pnpm build</code></td>
+<td>Passed: Rust 735 passed, 0 failed, 9 ignored; formatting and Clippy passed,
+including the repaired #221 path; frontend build passed. Both platforms' builds emitted
+the existing nonfatal chunk-size warning.</td></tr>
+<tr><td><code>7388bc5</code>, both: Tauri CLI 2.12.2 RPM/NSIS builds and installed checks,
+<code>238-installed-resume-report.md</code></td>
+<td>Passed with the disclosed #249 BOM editor limitation. Both installed candidate executables
+embed the exact commit. Windows accepted run: <code>238-installed-windows-20261026191415690</code>
+(r3), 212 passing controller checks and 377 passing content/metadata audit checks.
+Fedora accepted run: <code>238-installed-fedora-20261026220531952</code> (r2), 211 passing
+controller checks, 377 passing content/metadata audit checks and 157 passing cross-platform/
+restoration checks. There are no failed checks in these accepted records. Counts describe
+controller assertions, not separate test cases.</td></tr>
+</tbody>
+</table>
+<p>Earlier gates retain their own candidate attribution; merged-head runs repeat the relevant
+checks rather than treating an earlier pass as proof of the new commit. Gate records are
+<code>238-lock-gate.log</code> and <code>238-20261026174451-*.log</code>,
+<code>238-gate2-summary.log</code>, <code>238-gate3-summary.log</code>,
+<code>238-merge-verify-last.md</code>, and <code>238-mv-summary.log</code>, with the
+corresponding per-command logs.</p>
+
+<h2>Added tests matched to execution</h2>
+<p>The inventory from <code>git diff origin/main...7388bc5 -- src-tauri/src/vault/</code>
+contains 11 added tests: six front matter, three import and two restore tests. None is ignored.
+Each exact name appears as passed in Fedora's full <code>pnpm verify</code> Rust output,
+its focused <code>pnpm test:rust vault::</code> output, and Windows' separate full
+<code>pnpm test:rust</code> output at <code>7388bc5</code>.
+<code>238-mv-test-inventory.json</code> and <code>238-mv-test-proof.log</code> retain the
+name-by-name match.</p>
+<table>
+<thead><tr><th>Test (module prefix shown in each group)</th><th>Fedora full</th><th>Fedora vault</th><th>Windows full</th></tr></thead>
+<tbody>
+<tr><th colspan="4"><code>vault::frontmatter::tests</code></th></tr>
+<tr><td><code>a_field_that_reads_oddly_never_costs_the_category</code></td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>a_wrongly_typed_title_keeps_the_category_through_a_save</code></td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>each_table_input_gives_the_expected_title</code></td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>each_table_input_merges_as_expected</code></td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>each_table_input_reads_as_expected</code></td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>set_category_refuses_front_matter_it_cannot_read_and_keeps_every_other_key</code></td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><th colspan="4"><code>vault::import::tests</code></th></tr>
+<tr><td><code>a_number_or_boolean_id_title_and_tag_keep_their_text_on_import</code></td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>each_table_input_renames_and_normalizes_as_expected</code></td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>importing_a_note_with_malformed_front_matter_keeps_its_body</code></td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><th colspan="4"><code>vault::operations::tests</code></th></tr>
+<tr><td><code>restore_accepts_an_id_that_now_reads_differently_when_the_content_is_unchanged</code></td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>restore_refuses_a_different_id_reading_unless_the_content_hash_matches</code></td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+</tbody>
+</table>
+<p>The table tests cover parsing, title extraction, save/merge, category changes, importer
+normalization and malformed-body preservation, including explicit line endings, BOM,
+unknown/nested keys, Unicode, dates, scalar/type edge cases and changed YAML readings.
+The restore tests cover unchanged legacy content and rejection when its hash is absent or
+different. The existing malformed-front-matter move and category/source-url preservation
+regressions also passed in the vault/full runs.</p>
+<details><summary>Reproduce the added-test count and installed assertion counts</summary>
+<p>This counts added <code>#[test]</code> functions in the candidate's vault diff:</p>
+<pre><code>git diff --unified=0 origin/main...7388bc5 -- src-tauri/src/vault/ | python3 -c 'import re,sys; print(len(re.findall(r"^\+\s*#\[test\]\n\+\s*fn \w+\(", sys.stdin.read(), re.M)))'</code></pre>
+<p>In each retained installed run directory, this recounts controller and content-audit
+assertions and failure lists; include <code>final-audit.json</code> for Fedora's additional
+cross-platform/restoration population:</p>
+<pre><code>jq '{checks: (.checks | length), failures: ((.failures // .failed) | length)}' result.json audit.json
+jq '{checks: (.checks | length), failures: (.failed | length)}' final-audit.json</code></pre>
+</details>
+
+<h2>Package checksums</h2>
+<p>Installed comparisons used released <code>v0.1.0-alpha.1</code>, commit
+<code>a5c367059f98be3e5d4e946d8a407543ab473d8b</code>, and candidate <code>7388bc5</code>.
+Packages and their build logs are retained outside the repository.</p>
+<table>
+<thead><tr><th>Package</th><th>Bytes</th><th>SHA-256</th></tr></thead>
+<tbody>
+<tr><td>Fedora candidate RPM</td><td>31,336,236</td><td><code>f321d868881af14f05161eb95be0c5d223f6886a0e4714600da524fa55a75f32</code></td></tr>
+<tr><td>Windows candidate NSIS</td><td>20,609,223</td><td><code>7fdce0a68d9a43f27266b5330951e77c74ab4c67c5a148110b0898802c45e43f</code></td></tr>
+<tr><td>Fedora previous-release RPM</td><td>30,027,694</td><td><code>7a4913a50b4b0b209e6c462281c88e50a2dcd1a57c04fb9be843e16a807f8726</code></td></tr>
+<tr><td>Windows previous-release NSIS</td><td>20,266,191</td><td><code>51d58292b38aaa967bae39f35ef780a5fd0eb1bd1df1d1af6b59487d42b47163</code></td></tr>
+</tbody>
+</table>
+<p>Fedora's candidate packaged executable is 51,237,288 bytes, SHA-256
+<code>bd4f6994cc47a702af255692993a46f11b380eccb2028c92edf5fbf6501d6762</code>.
+The RPM desktop entry matches source, and its payload contains exactly the seven approved
+package paths. Windows' installed candidate executable is 36,929,536 bytes, SHA-256
+<code>a708147532d6c692a647b4a58834fb3fa7f1d9d7cf816d0186e602f454df6c25</code>;
+its pre-bundle build executable has SHA-256
+<code>3ae2214970ab7d3c7616f19de101b6de850ba7e711ff2f94c951698e88bcd3d8</code>.
+Installed/package payload hashes, rather than the pre-bundle hash alone, identify what ran.</p>
+
+<h2>Installed per-note comparisons</h2>
+<p>These are synthetic fixtures only. Each cell records displayed title; tags; pinned state;
+actual location after opening. Holding means <code>.helixnotes/unfiled/</code> with no category;
+a PARA location also matches the metadata category. The previous-release and candidate runs
+used copies of the same fixture population. All 21 original file hashes stayed unchanged on
+open in each version, including notes relocated by reconciliation. All 17 notes with a readable
+category remained filed in the candidate. The 15 metadata/location difference groups follow
+the #238 decisions; Fedora and Windows observations agree. Generated dates were not compared
+across machines. No note bodies are included here.</p>
+<h3>Windows 11: previous release versus 7388bc5</h3>
+<table>
+<thead><tr><th>Input kind</th><th>Previous release</th><th>Candidate</th></tr></thead>
+<tbody>
+<tr><td><code>no-frontmatter</code></td><td><code>238 no frontmatter</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 no frontmatter</code>; <code>[]</code>; pinned <code>false</code>; Holding</td></tr>
+<tr><td><code>empty-frontmatter</code></td><td><code>238 empty frontmatter</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 empty frontmatter</code>; <code>[]</code>; pinned <code>false</code>; Holding</td></tr>
+<tr><td><code>malformed-yaml</code></td><td><code>238 malformed yaml</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 malformed yaml</code>; <code>[]</code>; pinned <code>false</code>; Holding</td></tr>
+<tr><td><code>unknown-keys</code></td><td><code>238 unknown-keys</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Archives</td><td><code>238 unknown-keys</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Archives</td></tr>
+<tr><td><code>crlf</code></td><td><code>238 crlf</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Projects</td><td><code>238 crlf</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Projects</td></tr>
+<tr><td><code>bom</code></td><td><code>238 bom</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 bom</code>; <code>[]</code>; pinned <code>false</code>; Holding</td></tr>
+<tr><td><code>title-True</code></td><td><code>True</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Resources</td><td><code>true</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Resources</td></tr>
+<tr><td><code>title-FALSE</code></td><td><code>FALSE</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Archives</td><td><code>false</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Archives</td></tr>
+<tr><td><code>tags-True</code></td><td><code>238 tags-True</code>; <code>[&quot;True&quot;]</code>; pinned <code>false</code>; Projects</td><td><code>238 tags-True</code>; <code>[&quot;true&quot;]</code>; pinned <code>false</code>; Projects</td></tr>
+<tr><td><code>title-NaN</code></td><td><code>.NaN</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Areas</td><td><code>0.0</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Areas</td></tr>
+<tr><td><code>pinned-True</code></td><td><code>238 pinned True</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 pinned-True</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>true</code>; Resources</td></tr>
+<tr><td><code>title-inf</code></td><td><code>238 title inf</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Archives</td><td><code>inf</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Archives</td></tr>
+<tr><td><code>tags-inf</code></td><td><code>238 tags inf</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 tags-inf</code>; <code>[&quot;inf&quot;]</code>; pinned <code>false</code>; Projects</td></tr>
+<tr><td><code>tags-number</code></td><td><code>238 tags number</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 tags-number</code>; <code>[]</code>; pinned <code>false</code>; Areas</td></tr>
+<tr><td><code>title-number</code></td><td><code>238 title number</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>123</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Resources</td></tr>
+<tr><td><code>pinned-yes</code></td><td><code>238 pinned yes</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 pinned-yes</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Archives</td></tr>
+<tr><td><code>id-number</code></td><td><code>238 id number</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 id-number</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Projects</td></tr>
+<tr><td><code>obsidian-tags</code></td><td><code>238 obsidian tags</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 obsidian-tags</code>; <code>[]</code>; pinned <code>false</code>; Areas</td></tr>
+<tr><td><code>title-dotinf</code></td><td><code>238 title dotinf</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>0.0</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Resources</td></tr>
+<tr><td><code>tags-number-item</code></td><td><code>238 tags number item</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 tags-number-item</code>; <code>[&quot;123&quot;]</code>; pinned <code>false</code>; Archives</td></tr>
+<tr><td><code>id-TRUE</code></td><td><code>238 id-TRUE</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Projects</td><td><code>238 id-TRUE</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Projects</td></tr>
+</tbody>
+</table>
+<h3>Fedora 44: previous release versus 7388bc5</h3>
+<table>
+<thead><tr><th>Input kind</th><th>Previous release</th><th>Candidate</th></tr></thead>
+<tbody>
+<tr><td><code>no-frontmatter</code></td><td><code>238 no frontmatter</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 no frontmatter</code>; <code>[]</code>; pinned <code>false</code>; Holding</td></tr>
+<tr><td><code>empty-frontmatter</code></td><td><code>238 empty frontmatter</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 empty frontmatter</code>; <code>[]</code>; pinned <code>false</code>; Holding</td></tr>
+<tr><td><code>malformed-yaml</code></td><td><code>238 malformed yaml</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 malformed yaml</code>; <code>[]</code>; pinned <code>false</code>; Holding</td></tr>
+<tr><td><code>unknown-keys</code></td><td><code>238 unknown-keys</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Archives</td><td><code>238 unknown-keys</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Archives</td></tr>
+<tr><td><code>crlf</code></td><td><code>238 crlf</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Projects</td><td><code>238 crlf</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Projects</td></tr>
+<tr><td><code>bom</code></td><td><code>238 bom</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 bom</code>; <code>[]</code>; pinned <code>false</code>; Holding</td></tr>
+<tr><td><code>title-True</code></td><td><code>True</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Resources</td><td><code>true</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Resources</td></tr>
+<tr><td><code>title-FALSE</code></td><td><code>FALSE</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Archives</td><td><code>false</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Archives</td></tr>
+<tr><td><code>tags-True</code></td><td><code>238 tags-True</code>; <code>[&quot;True&quot;]</code>; pinned <code>false</code>; Projects</td><td><code>238 tags-True</code>; <code>[&quot;true&quot;]</code>; pinned <code>false</code>; Projects</td></tr>
+<tr><td><code>title-NaN</code></td><td><code>.NaN</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Areas</td><td><code>0.0</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Areas</td></tr>
+<tr><td><code>pinned-True</code></td><td><code>238 pinned True</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 pinned-True</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>true</code>; Resources</td></tr>
+<tr><td><code>title-inf</code></td><td><code>238 title inf</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Archives</td><td><code>inf</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Archives</td></tr>
+<tr><td><code>tags-inf</code></td><td><code>238 tags inf</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 tags-inf</code>; <code>[&quot;inf&quot;]</code>; pinned <code>false</code>; Projects</td></tr>
+<tr><td><code>tags-number</code></td><td><code>238 tags number</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 tags-number</code>; <code>[]</code>; pinned <code>false</code>; Areas</td></tr>
+<tr><td><code>title-number</code></td><td><code>238 title number</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>123</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Resources</td></tr>
+<tr><td><code>pinned-yes</code></td><td><code>238 pinned yes</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 pinned-yes</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Archives</td></tr>
+<tr><td><code>id-number</code></td><td><code>238 id number</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 id-number</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Projects</td></tr>
+<tr><td><code>obsidian-tags</code></td><td><code>238 obsidian tags</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 obsidian-tags</code>; <code>[]</code>; pinned <code>false</code>; Areas</td></tr>
+<tr><td><code>title-dotinf</code></td><td><code>238 title dotinf</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>0.0</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Resources</td></tr>
+<tr><td><code>tags-number-item</code></td><td><code>238 tags number item</code>; <code>[]</code>; pinned <code>false</code>; Holding</td><td><code>238 tags-number-item</code>; <code>[&quot;123&quot;]</code>; pinned <code>false</code>; Archives</td></tr>
+<tr><td><code>id-TRUE</code></td><td><code>238 id-TRUE</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Projects</td><td><code>238 id-TRUE</code>; <code>[&quot;baseline&quot;]</code>; pinned <code>false</code>; Projects</td></tr>
+</tbody>
+</table>
+<p>Additional identity readings on both machines: <code>id-number</code> changes from empty
+to <code>123</code>, and <code>id-TRUE</code> changes from <code>TRUE</code> to <code>true</code>.
+History/Notion continuity for changed ids is the #248 limitation, not an installed-gate pass.</p>
+
+<h2>Installed saves, moves, import and trash</h2>
+<ul>
+<li>Both platforms saved nineteen candidate GUI edits and one BOM edit through the installed
+<code>save_note</code> command. Complete-file audits retained every body after removing only
+the intended edit marker and normalizing line ends; unknown mappings and applicable categories
+survived. No-front-matter and empty-front-matter notes were explicitly filed before editing.</li>
+<li>Malformed YAML stayed a read-only holding preview. Filing refused with
+<code>Cannot update category because frontmatter is invalid</code>, preserving exact bytes.
+It was not edited or saved.</li>
+<li>On both machines the unknown-keys note moved from Archives to Projects. Its body and
+unknown mapping survived; the category and location changed together.</li>
+<li>Obsidian import on a fresh copy normalized 17 notes on each machine. Complete bodies,
+unknown mappings and categories survived; the four holding notes stayed unchanged.
+Comma-separated tags became <code>["a", "b"]</code>; scalar <code>tags: 5</code> became
+<code>["5"]</code>, as the clarified import contract requires.</li>
+<li>The previous release trashed an <code>id: TRUE</code> note; the installed candidate
+restored it on each platform and read <code>true</code>. Restored bytes matched the original
+fixture, including its complete body. This exercises the legacy-manifest restore repair.</li>
+<li>The BOM rich-editor rewrite is pre-existing #249. A leading BOM prevents front matter
+recognition, so the apparent YAML is body text; rich-editor save rewrites that block into
+a Markdown heading. Old and candidate rich-editor output matched on both machines after
+excluding generated front matter and the final newline. The accepted candidate preservation
+check used <code>save_note</code>, as Claude authorized, and preserved the complete BOM body.
+Fedora's separate candidate rich-editor probe used the import copy after import evidence was
+captured. This does not establish BOM rich-editor preservation.</li>
+</ul>
+<p>Windows r1 (<code>238-installed-windows-20261026191053667</code>) failed setup because
+the expected previous-release installer was absent; later runs used the retained installer.
+Windows r2 (<code>238-installed-windows-20261026191125046</code>) falsely reported 17 save
+and two move failures because its lookup included history snapshots instead of only live
+notes. The live files held the edits and correct move. Windows r3 fixed that lookup and is
+the accepted run. Fedora r1 (<code>238-installed-fedora-20261026220152457</code>) reached
+import completion but timed out taking an immediate WebKit screenshot. Its state was restored
+before a fresh r2; the controller now waits for import/refresh completion and bounds WebDriver
+requests. Fedora r2 captured the screenshot and passed. These were verification-script/setup/
+capture errors, not application failures; earlier attempts remain retained.</p>
+
+<h2>Cleanup and retained evidence</h2>
+<p>Both machines returned to their original #242 package,
+<code>5d7a2a4985dfbe089e55452834cbb2bd1f44ac08</code>. Windows checks matched all four
+package-file hashes and original config/window-state hashes; logs and WebView profile were
+restored as normal directories. No app, packaged sidecar, driver, harness task or controller
+lock remained. The two separately owned Windows keep-awake holders were left untouched with
+their original deadline, approximately 01:20 UTC on 2026-10-27.</p>
+<p>Fedora matched all seven original package-file byte counts and hashes, and
+<code>rpm -V second-brain</code> was clean. Original config, data and cache directory absence
+was restored, including config/window-state absence. No app, packaged sidecar,
+<code>tauri-driver</code>, <code>WebKitWebDriver</code> or controller lock remained. Owned Fedora
+keep-awake processes and their observed child were stopped by exact PID. Controller locks
+were retained by rename. No manual deletion was performed; earlier traces, packages and
+screenshots remain outside the repository.</p>
+<p>The installed runs wrote no #238 trace under <code>docs/reports/evidence/</code>, so this
+commit includes only the report. External evidence is cited by name, without private paths:</p>
+<ul>
+<li><code>238-installed-resume-report.md</code> is the combined installed result;
+<code>238-installed-resume-diagnosis.json</code> records the Windows script/BOM diagnosis.</li>
+<li><code>238-installed-windows-20261026191415690</code> and
+<code>238-installed-fedora-20261026220531952</code> retain each accepted run's
+<code>trace.jsonl</code>, <code>result.json</code>, <code>audit.json</code>, observations,
+screenshots, before/after snapshots and complete-file save/move/import diffs. Fedora also
+retains <code>final-audit.json</code>.</li>
+<li>Package identity/build evidence: <code>238-installed-packages.json</code>,
+<code>238-installed-package-fedora.json</code>, <code>238-installed-package-windows.json</code>,
+<code>238-installed-fedora-rpm-payload.json</code>,
+<code>238-installed-build-fedora-resume.log</code>, and <code>238-installed-build-windows.log</code>.</li>
+<li>Restoration evidence: <code>238-installed-cleanup-windows-resume-20261026T214939Z.json</code>,
+<code>238-installed-cleanup-fedora-resume.json</code>,
+<code>238-installed-fedora-awake-cleanup.json</code>, and
+<code>238-installed-fedora-windows-awake-check.json</code>.</li>
+</ul>
+
+<h2>Remaining work and limits</h2>
+<p>All #238-specific verification described here is complete on candidate <code>7388bc5</code>,
+subject to the disclosed exceptions. This report changes only documentation; application
+sources, tests, manifests and lockfiles remain identical to the tested and packaged candidate,
+so its evidence carries to the report commit. The entire exact publication head still requires
+final Spec and Standards review, then PR and CI. The PR must name its reviewed commit in
+<code>Final review:</code>, disclose the unfixed findings, explain their scope, and link their
+follow-up issues. Merge waits for separate approval.</p>
+<p>Windows <code>pnpm verify</code> remains failed at the #244 install-failure test. Changed
+id readings still lose history/Notion bindings (#248); app-generated UUID ids retain their
+reading. The <code>.NaN</code>/<code>.inf</code> title conversion to <code>0.0</code> is an
+accepted #238 behavior. BOM rich-editor rewriting remains #249; only the command-save
+route preserved that fixture. The 10 Fedora and 9 Windows ignored Rust tests are not claimed
+as passes. No live Notion publication, Ollama, sync, or broader GUI result is claimed.</p>
+</main>
+</html>
