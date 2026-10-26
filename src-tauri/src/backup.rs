@@ -930,7 +930,8 @@ fn entry_label<R: Read>(entry: &zip::read::ZipFile<'_, R>) -> String {
 ///
 /// Before any component is read, this refuses on every OS a NUL and a name that Windows reads as
 /// rooted or on a drive: `/abs.md`, `\abs.md`, `\\server\share\x.md`, `C:abs.md`. Then it refuses
-/// any `..` component, read with this OS's own path rules.
+/// any `..` component, read with this OS's own path rules, and on Windows any component NTFS
+/// cannot hold as the file it names (`windows_unsafe_component`).
 fn native_entry(name: &str) -> Option<(PathBuf, bool)> {
     let windows_rooted = name.starts_with(['/', '\\'])
         || matches!(name.as_bytes(), [drive, b':', ..] if drive.is_ascii_alphabetic());
@@ -940,7 +941,13 @@ fn native_entry(name: &str) -> Option<(PathBuf, bool)> {
     let mut path = PathBuf::new();
     for component in Path::new(name).components() {
         match component {
-            Component::Normal(part) => path.push(part),
+            Component::Normal(part) => {
+                #[cfg(windows)]
+                if part.to_str().is_none_or(windows_unsafe_component) {
+                    return None;
+                }
+                path.push(part);
+            }
             Component::CurDir => {}
             Component::Prefix(_) | Component::RootDir | Component::ParentDir => return None,
         }
@@ -954,6 +961,55 @@ fn native_entry(name: &str) -> Option<(PathBuf, bool)> {
     }
     // A trailing separator marks a directory, so on Fedora a file named `x\` stays a file.
     Some((path, name.ends_with(std::path::is_separator)))
+}
+
+/// Whether NTFS would write the path component `component` somewhere other than the file it
+/// names, or not at all: a reserved character (a `:` opens an alternate data stream, so
+/// `note.md::$DATA` is `note.md` itself), an ASCII control character, a trailing dot or space,
+/// which Windows drops, more than 255 UTF-16 units, or a device name.
+///
+/// These are the refusals zip 9.1.0's Windows `enclosed_name()` makes. Its device check slices
+/// the name at byte 3, which panics inside a multibyte character such as the `ï` of `naïve.md`
+/// or an emoji, so this one compares bytes and slices only where a character starts (#237).
+#[cfg(any(windows, test))]
+fn windows_unsafe_component(component: &str) -> bool {
+    component.is_empty()
+        || component.encode_utf16().count() > 255
+        || component.contains(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
+        || component.chars().any(|c| c.is_ascii_control())
+        || component.ends_with(['.', ' '])
+        || windows_device_name(component)
+}
+
+/// Whether Windows reads `component` as a device, whatever its case and whatever follows its
+/// first dot, once trailing spaces and dots are dropped: `CON`, `PRN`, `AUX`, `NUL`, `CONIN$`,
+/// `CONOUT$`, `CLOCK$`, and `COM` or `LPT` followed by one character, `1` to `9`, `¹`, `²` or `³`.
+#[cfg(any(windows, test))]
+fn windows_device_name(component: &str) -> bool {
+    let Some(first) = component.split(['.', ':']).next() else {
+        return false;
+    };
+    let stem = first.trim_end_matches([' ', '.']);
+    const DEVICES: [&str; 7] = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "CLOCK$"];
+    if DEVICES
+        .iter()
+        .any(|device| stem.eq_ignore_ascii_case(device))
+    {
+        return true;
+    }
+    // `COM` and `LPT` are ASCII, so the first three bytes are compared before anything is cut,
+    // and `get` cuts only where a character starts.
+    let numbered = stem.as_bytes().get(..3).is_some_and(|prefix| {
+        prefix.eq_ignore_ascii_case(b"COM") || prefix.eq_ignore_ascii_case(b"LPT")
+    });
+    let Some(rest) = stem.get(3..).filter(|_| numbered) else {
+        return false;
+    };
+    let mut rest = rest.chars();
+    matches!(
+        (rest.next(), rest.next()),
+        (Some('1'..='9' | '¹' | '²' | '³'), None)
+    )
 }
 
 fn extract_and_validate_with(
@@ -981,15 +1037,6 @@ fn extract_and_validate_with(
             .ok()
             .and_then(|name| native_entry(&name))
             .ok_or_else(|| format!("Unsafe path in backup: {}", entry_label(&entry)))?;
-        // On Windows zip 9 reads names by this OS's rules, and its check also refuses names NTFS
-        // would write somewhere else or not at all: alternate data streams (`ab:c.md`, and
-        // `note.md::$DATA`, which aliases `note.md`), device names such as `CON`, trailing dots
-        // or spaces, and reserved characters. The path it gives must be the one accepted above,
-        // which is the one the second pass writes.
-        #[cfg(windows)]
-        if entry.enclosed_name().as_deref() != Some(relative.as_path()) {
-            return Err(format!("Unsafe path in backup: {}", entry_label(&entry)));
-        }
         if relative.as_os_str().is_empty() || !paths.insert(relative.clone()) {
             return Err(format!(
                 "Duplicate or empty path in backup: {}",
@@ -1076,7 +1123,8 @@ mod tests {
     use super::{
         cleanup_old_backups, create_backup, create_pre_sync_backup, delete_backup,
         extract_and_validate_with, list_backups, recover_interrupted_restore, recover_with,
-        restore_backup, restore_backup_with, Interrupt, RecoveredRestore, RestoreStep,
+        restore_backup, restore_backup_with, windows_unsafe_component, Interrupt, RecoveredRestore,
+        RestoreStep,
     };
     use crate::types::BackupKind;
     use std::collections::BTreeMap;
@@ -1465,11 +1513,12 @@ mod tests {
 
     /// Names Fedora holds as ordinary files but NTFS cannot: an alternate data stream, a stream
     /// name that aliases the file beside it, a drive inside a path (pushing it would replace the
-    /// stage path), a device name, a trailing dot or space, and a reserved character. Windows
-    /// refuses each archive whole, before anything is staged; Fedora restores every name as is.
+    /// stage path), device names, a trailing dot or space, reserved characters and an ASCII
+    /// control character. Windows refuses each archive whole, before anything is staged; Fedora
+    /// restores every name as is.
     #[test]
     fn names_windows_cannot_hold_are_refused_there_and_kept_on_fedora() {
-        let cases: [&[(&str, &[u8])]; 7] = [
+        let cases: &[&[(&str, &[u8])]] = &[
             &[("Projects/ab:c.md", b"an alternate data stream on Windows")],
             &[
                 ("Projects/note.md", b"the note"),
@@ -1480,9 +1529,28 @@ mod tests {
             ],
             &[("Projects/c:x.md", b"a drive inside a path on Windows")],
             &[("Projects/CON.md", b"a device on Windows")],
+            &[("Projects/aux.tar.gz", b"a device, whatever the case")],
+            &[("Projects/NUL .md", b"a device once the space is dropped")],
+            &[("Projects/CONIN$", b"the console input")],
+            &[("Projects/CLOCK$.md", b"the clock device")],
+            &[("Projects/COM1.md", b"a serial port")],
+            &[("Projects/lpt9.txt", b"a printer port")],
+            &[(
+                "Projects/COM\u{b9}.md",
+                b"a serial port with a superscript one",
+            )],
+            &[(
+                "Projects/LPT\u{b3}",
+                b"a printer port with a superscript three",
+            )],
+            &[("Projects/CON/note.md", b"a device as a folder")],
             &[("Projects/trailing dot.", b"Windows drops the dot")],
             &[("Projects/trailing space ", b"Windows drops the space")],
             &[("Projects/a|b.md", b"a reserved character on Windows")],
+            &[("Projects/a<b>.md", b"reserved characters on Windows")],
+            &[("Projects/what?*.md", b"wildcards on Windows")],
+            &[("Projects/say \"hi\".md", b"quotes on Windows")],
+            &[("Projects/a\u{1}b.md", b"an ASCII control character")],
         ];
         for entries in cases {
             let names: Vec<&str> = entries.iter().map(|(name, _)| *name).collect();
@@ -1495,6 +1563,114 @@ mod tests {
                 assert_restored_at_native_paths(&case, entries);
             }
         }
+        // A component over 255 UTF-16 units is longer than NTFS allows. On Fedora it is also
+        // over the 255-byte name limit, so it cannot exist there to restore.
+        if cfg!(windows) {
+            let long = format!("Projects/{}.md", "\u{1F600}".repeat(127));
+            assert_refused_unchanged("a 257-unit name", "Unsafe path in backup", |writer| {
+                write_entries(writer, &[(long.as_str(), b"too long for NTFS")])
+            });
+        }
+    }
+
+    /// The Windows name check compares the `COM` and `LPT` prefixes as bytes and cuts the name
+    /// only where a character starts, so a multibyte character at byte 3, which made zip 9.1.0's
+    /// own check panic, is an ordinary name (#237). Pure logic, so it runs on every OS.
+    #[test]
+    fn the_windows_name_check_never_cuts_a_character() {
+        let ascii_255 = "a".repeat(255);
+        let ascii_256 = "a".repeat(256);
+        let at_255_units = format!("{}a", "\u{1F600}".repeat(127));
+        let at_256_units = "\u{1F600}".repeat(128);
+        for (component, unsafe_on_windows) in [
+            ("na\u{ef}ve.md", false),
+            ("\u{1F600}.md", false),
+            ("\u{1F600}", false),
+            ("\u{1F44D}\u{1F3FD} done.md", false),
+            ("Gr\u{f6}\u{df}e", false),
+            ("\u{41f}\u{440}\u{438}\u{432}\u{435}\u{442}.md", false),
+            ("a\u{20ac}.md", false),
+            ("Zo\u{eb}.md", false),
+            ("COM\u{e9}.md", false),
+            ("LPT\u{1F600}.md", false),
+            // zip 9.1.0 casts the character after `COM` to a byte, so it takes U+0131 for `1`.
+            ("COM\u{131}.md", false),
+            ("COM.md", false),
+            ("COMMENT.md", false),
+            ("LPT10.md", false),
+            ("CONSOLE.md", false),
+            ("NULL.md", false),
+            (ascii_255.as_str(), false),
+            (at_255_units.as_str(), false),
+            ("CON", true),
+            ("con.md", true),
+            ("Aux.tar.gz", true),
+            ("NUL .md", true),
+            ("PRN. .md", true),
+            ("CONIN$", true),
+            ("conout$.txt", true),
+            ("CLOCK$.md", true),
+            ("COM1", true),
+            ("com9.md", true),
+            ("COM1 .md", true),
+            ("LPT1.md", true),
+            ("lpt9", true),
+            ("COM\u{b9}.md", true),
+            ("LPT\u{b2}.md", true),
+            ("LPT\u{b3}", true),
+            ("ab:c.md", true),
+            ("note.md::$DATA", true),
+            ("a<b", true),
+            ("a>b", true),
+            ("a\"b", true),
+            ("a|b", true),
+            ("a?b", true),
+            ("a*b", true),
+            ("a/b", true),
+            ("a\\b", true),
+            ("a\u{1}b", true),
+            ("a\u{7f}b", true),
+            ("trailing.", true),
+            ("trailing ", true),
+            ("", true),
+            (ascii_256.as_str(), true),
+            (at_256_units.as_str(), true),
+        ] {
+            assert_eq!(
+                windows_unsafe_component(component),
+                unsafe_on_windows,
+                "{component:?}"
+            );
+        }
+    }
+
+    /// Names whose third byte falls inside a multibyte character, as files and as folders,
+    /// restore at their native paths, byte for byte, on every OS. On Windows these reached zip
+    /// 9.1.0's device check and panicked the restore (#237).
+    #[test]
+    fn multibyte_names_restore_at_their_native_paths_on_every_os() {
+        assert_restored_at_native_paths(
+            "multibyte names",
+            &[
+                ("Projects/na\u{ef}ve.md", "na\u{ef}ve".as_bytes()),
+                ("Projects/\u{1F600}.md", "\u{1F600}".as_bytes()),
+                (
+                    "Projects/\u{1F44D}\u{1F3FD} done.md",
+                    b"an emoji with a skin tone",
+                ),
+                (
+                    "Areas/Gr\u{f6}\u{df}e/\u{41f}\u{440}\u{438}\u{432}\u{435}\u{442}.md",
+                    "\u{41f}\u{440}\u{438}\u{432}\u{435}\u{442}".as_bytes(),
+                ),
+                (
+                    "Resources/a\u{20ac}/Zo\u{eb}.md",
+                    b"in a folder named a\xe2\x82\xac",
+                ),
+                ("Projects/COM\u{e9}.md", b"not a serial port"),
+                ("Projects/LPT10.md", b"not a printer port"),
+                ("Projects/COM\u{131}.md", b"not a serial port either"),
+            ],
+        );
     }
 
     /// On Fedora `a\b.md` is one file, so it comes back as that file, byte for byte. On Windows
