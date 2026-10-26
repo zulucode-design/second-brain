@@ -2036,6 +2036,10 @@ mod tests {
 
     /// Fedora file and folder names may hold a backslash anywhere, hand-added attachments
     /// included. A backup stores them unchanged and restores them to the same native files.
+    ///
+    /// v0.1.0-alpha.1's zip 2.4.2 reader takes an entry whose name ends in a backslash for a
+    /// directory, so that release restores `ends in\` as an empty folder; this build restores it
+    /// as the file it is (#237).
     #[cfg(unix)]
     #[test]
     fn fedora_backslash_names_survive_a_backup_and_restore() {
@@ -2043,8 +2047,12 @@ mod tests {
             std::env::temp_dir().join(format!("second-brain-backslash-trip-{}", Uuid::new_v4()));
         let vault = root.join("vault");
         let backups = root.join("backups");
-        let files: [(&str, &[u8]); 5] = [
+        let files: [(&str, &[u8]); 6] = [
             ("Resources/a\\b.md", b"# a\\b\r\nliteral backslash\n"),
+            (
+                "Resources/a\\..\\b.md",
+                b"one Fedora file named a\\..\\b.md",
+            ),
             ("Areas/x\\y/note.md", b"in a folder named x\\y"),
             (
                 "Projects/ends in\\",
@@ -2083,6 +2091,7 @@ mod tests {
                 "Projects/ends in\\",
                 "Projects/plain.md",
                 "Resources/",
+                "Resources/a\\..\\b.md",
                 "Resources/a\\b.md",
             ]
         );
@@ -2090,6 +2099,7 @@ mod tests {
 
         let before = tree(&vault);
         fs::write(vault.join("Resources/a\\b.md"), "edited after the backup").unwrap();
+        fs::remove_file(vault.join("Resources/a\\..\\b.md")).unwrap();
         fs::remove_dir_all(vault.join("Areas")).unwrap();
         fs::remove_file(vault.join("Projects/ends in\\")).unwrap();
 
@@ -2098,7 +2108,9 @@ mod tests {
         assert_eq!(tree(&vault), before);
         assert!(vault.join("Areas/x\\y").is_dir());
         assert!(vault.join("Projects/ends in\\").is_file());
+        assert!(vault.join("Resources/a\\..\\b.md").is_file());
         assert!(!vault.join("Resources/a").exists());
+        assert!(!vault.join("b.md").exists());
         assert_eq!(restore_leftovers(&root), Vec::<String>::new());
         fs::remove_dir_all(root).unwrap();
     }
@@ -2249,6 +2261,86 @@ mod tests {
             vault.join("Resources").join("a\\b.md")
         };
         assert_eq!(fs::read(note).unwrap(), BACKSLASH_VAULT[0].1);
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The vault the earlier `create_backup`, on zip 2.4.2, wrote
+    /// `test-fixtures/deps-zip9/old-fedora-literal-names.zip` from. Each backslash is part of a
+    /// Fedora file name. The README beside the archive says how it was made.
+    const FEDORA_LITERAL_VAULT: &[(&str, &[u8])] = &[
+        (
+            "Resources/a\\..\\b.md",
+            b"# a\\..\\b\nOne Fedora file whose name holds a backslash, two dots and a backslash.\n",
+        ),
+        (
+            "Projects/ends in\\",
+            b"A Fedora file whose name ends in a backslash.\n",
+        ),
+        ("Projects/plain.md", b"An ordinary note.\n"),
+        (
+            ".helixnotes/vault_id",
+            b"00000000-0000-4000-8000-000000000237",
+        ),
+    ];
+
+    /// On Fedora both names are ordinary files and come back byte for byte, `ends in\` as a file.
+    /// On Windows the backslashes separate components, so `a\..\b.md` holds a parent part and the
+    /// archive is refused whole, with the live vault unchanged.
+    #[test]
+    fn fedora_literal_names_in_a_zip_2_backup_follow_each_os() {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test-fixtures/deps-zip9/old-fedora-literal-names.zip");
+
+        // The fixture stores the names as written, `ends in\` as a regular file.
+        let mut archive = ZipArchive::new(fs::File::open(&fixture).unwrap()).unwrap();
+        let mut files: Vec<String> = archive
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .filter(|name| !name.ends_with('/'))
+            .collect();
+        files.sort();
+        let mut expected_files: Vec<&str> =
+            FEDORA_LITERAL_VAULT.iter().map(|(path, _)| *path).collect();
+        expected_files.sort();
+        assert_eq!(files, expected_files);
+        let mode = archive.by_name("Projects/ends in\\").unwrap().unix_mode();
+        assert_eq!(mode.map(|mode| mode & 0o170000), Some(0o100000));
+        drop(archive);
+
+        if cfg!(windows) {
+            assert_backup_refused_unchanged(
+                "old-fedora-literal-names.zip",
+                "Unsafe path in backup",
+                |backup| {
+                    fs::copy(&fixture, backup).unwrap();
+                },
+            );
+            return;
+        }
+
+        let root =
+            std::env::temp_dir().join(format!("second-brain-old-literal-{}", Uuid::new_v4()));
+        let vault = root.join("vault");
+        let backups = root.join("backups");
+        for (path, body) in [("live.md", "live"), (".helixnotes/vault_id", "live-id")] {
+            let path = vault.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+        fs::create_dir_all(&backups).unwrap();
+        let backup = backups.join("helixnotes-backup-2026-10-01T09-30-00.zip");
+        fs::copy(&fixture, &backup).unwrap();
+
+        restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap()).unwrap();
+
+        let expected: BTreeMap<PathBuf, Vec<u8>> = FEDORA_LITERAL_VAULT
+            .iter()
+            .map(|(path, body)| (PathBuf::from(*path), body.to_vec()))
+            .collect();
+        assert_eq!(tree(&vault), expected);
+        assert!(vault.join("Projects/ends in\\").is_file());
+        assert!(vault.join("Resources/a\\..\\b.md").is_file());
         assert_eq!(restore_leftovers(&root), Vec::<String>::new());
         fs::remove_dir_all(root).unwrap();
     }

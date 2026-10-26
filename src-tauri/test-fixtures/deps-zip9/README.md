@@ -99,3 +99,35 @@ walk's directory listing order.
 | `Projects/plain.md` | Deflated |
 
 SHA-256: `8efe3e65ca63f1f57d5c313af4184be5551fcdeb1557c1b9f2d502ad77786629`, 1341 bytes.
+
+## old-fedora-literal-names.zip
+
+A backup of a Fedora vault holding two names that are ordinary files only on Fedora, as the code
+v0.1.0-alpha.1 shipped writes it (#237, attempt 3): `Resources/a\..\b.md`, one file whose name
+holds a backslash, two dots and a backslash, and `Projects/ends in\`, a regular file whose name
+ends in a backslash. `fedora_literal_names_in_a_zip_2_backup_follow_each_os` in `backup::tests`
+restores it on Fedora and compares the vault to `FEDORA_LITERAL_VAULT`, the byte strings it was
+built from. On Windows, where the backslashes separate components, the test requires the restore
+to refuse the archive whole and leave the live vault unchanged.
+
+It was written once, on Linux, the same way as `old-backslash-names.zip`: a scratch crate outside
+the repository compiles `src-tauri/src/backup.rs` at `17d98d0`, unchanged, against
+`zip = "=2.4.2"` (the version v0.1.0-alpha.1 locks), with `default-features = false,
+features = ["deflate"]` and Rust 1.90, writes `FEDORA_LITERAL_VAULT` to a temporary vault and
+calls `create_backup(vault, backups, true)`. Built against `zip = "=2.6.1"`, the same crate wrote
+a byte-identical file, and a second zip 2.4.2 run reproduced it. `Projects/ends in\` is written by
+`start_file`, as a regular file entry; the zip 2.4.2 reader of v0.1.0-alpha.1 nevertheless takes
+any entry whose name ends in a backslash for a directory, so that release restores this file as an
+empty folder. This build restores it as the file it is.
+
+| Entry | Method |
+|---|---|
+| `Resources/` | directory |
+| `Resources/a\..\b.md` | Deflated |
+| `Projects/` | directory |
+| `Projects/ends in\` | Deflated, regular file |
+| `Projects/plain.md` | Deflated |
+| `.helixnotes/` | directory |
+| `.helixnotes/vault_id` | Deflated |
+
+SHA-256: `a228735752547fcd049d527a63f931fb74614c7d8dd6393bb480ddd4260d3f3c`, 923 bytes.
