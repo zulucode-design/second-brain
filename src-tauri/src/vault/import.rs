@@ -1522,7 +1522,7 @@ mod tests {
     }
 
     #[test]
-    fn each_table_input_renames_and_normalizes_as_it_did_with_gray_matter_0_2() {
+    fn each_table_input_renames_and_normalizes_as_expected() {
         let cases = frontmatter::tests::cases();
         let expectations = import_expectations();
         assert_eq!(cases.len(), expectations.len());

@@ -8,11 +8,17 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct RawFrontmatter {
+    #[serde(default, deserialize_with = "deserialize_scalar_text")]
     id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_scalar_text")]
     title: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_tags")]
     tags: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_pinned")]
     pinned: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_scalar_text")]
     created: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_scalar_text")]
     modified: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_string")]
     category: Option<String>,
@@ -26,6 +32,44 @@ where
 {
     let value = serde_yaml::Value::deserialize(deserializer)?;
     Ok(value.as_str().map(str::to_owned))
+}
+
+/// A string reads as itself; a boolean or a number reads as the text serde_json prints for it.
+/// Anything else, a null, a list or a map, has no text.
+fn scalar_text(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(text) => Some(text.clone()),
+        serde_json::Value::Bool(_) | serde_json::Value::Number(_) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+// Each field reads on its own: a value of the wrong type is missing, and the other fields
+// still read. The value arrives as JSON from `pod_to_json`, where NaN and the infinities
+// are already null.
+
+fn deserialize_scalar_text<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(scalar_text(&serde_json::Value::deserialize(deserializer)?))
+}
+
+fn deserialize_tags<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Array(items) => Some(items.iter().filter_map(scalar_text).collect()),
+        _ => None,
+    })
+}
+
+fn deserialize_pinned<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(serde_json::Value::deserialize(deserializer)?.as_bool())
 }
 
 /// A note split into its front matter and its body.
@@ -44,8 +88,8 @@ pub(crate) struct ParsedFrontmatter {
     /// always read it that way.
     pub(crate) body: String,
     /// The fields the app reads, or `None` when there is no front matter, it is not valid
-    /// YAML, or it does not read as these fields. A single wrongly typed field makes them all
-    /// `None`, as it always has.
+    /// YAML, or it is not a map. Each field reads on its own: one with the wrong type is
+    /// missing and the others still read.
     fields: Option<RawFrontmatter>,
 }
 
@@ -81,7 +125,10 @@ pub(crate) fn parse_frontmatter(raw: &str) -> ParsedFrontmatter {
     } else {
         YAML::parse(&parsed.matter)
             .ok()
-            .and_then(|pod| serde_json::from_value(pod_to_json(pod)).ok())
+            .map(pod_to_json)
+            // Only a map has fields: serde would read a list as a struct, element by element.
+            .filter(serde_json::Value::is_object)
+            .and_then(|value| serde_json::from_value(value).ok())
     };
     ParsedFrontmatter {
         matter: parsed.matter,
@@ -347,12 +394,7 @@ pub fn filename_to_title(filename: &str) -> String {
 
 /// Quick title extraction from raw note content (frontmatter only, no full parse)
 pub fn extract_title(raw: &str) -> Option<String> {
-    let parsed = parse_frontmatter(raw);
-    let mapping: serde_yaml::Mapping = serde_yaml::from_str(&parsed.matter).ok()?;
-    mapping
-        .get(serde_yaml::Value::String("title".into()))
-        .and_then(serde_yaml::Value::as_str)
-        .map(str::to_owned)
+    parse_frontmatter(raw).fields?.title
 }
 
 pub fn extract_preview(content: &str, max_len: usize) -> String {
@@ -675,12 +717,13 @@ pub(crate) mod tests {
         assert!(stripped.contains("Telefoonnummer"));
     }
 
-    /// One input of the table, and what the app returned for it with gray_matter 0.2.9,
-    /// before the move to 0.3.
+    /// One input of the table, and what the app returns for it.
     ///
-    /// The expected values were recorded by running that code in a scratch project outside
-    /// the repository. Every input spells out its `\n` and `\r\n`, so a checkout's
-    /// line-ending setting cannot change it.
+    /// The expected values were recorded by running the app with gray_matter 0.2.9, in a
+    /// scratch project outside the repository, before the move to 0.3. Each field now reads
+    /// on its own, so where a wrongly typed field used to make every field read as missing,
+    /// the row says what it reads now. Every input spells out its `\n` and `\r\n`, so a
+    /// checkout's line-ending setting cannot change it.
     pub(crate) struct Case {
         pub(crate) name: &'static str,
         pub(crate) raw: String,
@@ -826,7 +869,13 @@ pub(crate) mod tests {
                     "body\n"
                 )
                 .into(),
-                note: Note::unread("body".into()),
+                // gray_matter 0.2.9: every field missing. Now only the tags are.
+                note: Note {
+                    id: "typed-id",
+                    title: "Typed".into(),
+                    category: Some(ParaCategory::Areas),
+                    ..Note::unread("body".into())
+                },
                 title: Some("Typed".into()),
                 merged: Merged::Edited(
                     concat!(
@@ -855,8 +904,14 @@ pub(crate) mod tests {
                     "body\n"
                 )
                 .into(),
-                note: Note::unread("body".into()),
-                title: None,
+                // gray_matter 0.2.9: every field missing. Now a number reads as its text.
+                note: Note {
+                    id: "typed-id",
+                    title: "123".into(),
+                    category: Some(ParaCategory::Areas),
+                    ..Note::unread("body".into())
+                },
+                title: Some("123".into()),
                 merged: Merged::Edited(
                     concat!(
                         "id: typed-id\n",
@@ -883,7 +938,13 @@ pub(crate) mod tests {
                     "body\n"
                 )
                 .into(),
-                note: Note::unread("body".into()),
+                // gray_matter 0.2.9: every field missing. Now only `pinned` reads as false.
+                note: Note {
+                    id: "typed-id",
+                    title: "Typed".into(),
+                    category: Some(ParaCategory::Areas),
+                    ..Note::unread("body".into())
+                },
                 title: Some("Typed".into()),
                 merged: Merged::Edited(
                     concat!(
@@ -1404,7 +1465,9 @@ pub(crate) mod tests {
                     category: Some(ParaCategory::Projects),
                     ..Note::unread("body".into())
                 },
-                title: Some("1e999".into()),
+                // gray_matter 0.2.9: `extract_title` gave "1e999". An infinity now reads as
+                // missing there, as it does in `parse_note`.
+                title: None,
                 merged: Merged::Edited(
                     concat!(
                         "id: float-id\n",
@@ -1440,7 +1503,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn each_table_input_reads_as_it_did_with_gray_matter_0_2() {
+    fn each_table_input_reads_as_expected() {
         for case in cases() {
             let name = case.name;
             let expected = &case.note;
@@ -1475,14 +1538,14 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn each_table_input_gives_the_title_it_did_with_gray_matter_0_2() {
+    fn each_table_input_gives_the_expected_title() {
         for case in cases() {
             assert_eq!(extract_title(&case.raw), case.title, "{}", case.name);
         }
     }
 
     #[test]
-    fn each_table_input_merges_as_it_did_with_gray_matter_0_2() {
+    fn each_table_input_merges_as_expected() {
         for case in cases() {
             let expected = match &case.merged {
                 Merged::Fresh => update_note_raw(&merge_meta(), "edited body\n"),
