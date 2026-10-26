@@ -981,6 +981,15 @@ fn extract_and_validate_with(
             .ok()
             .and_then(|name| native_entry(&name))
             .ok_or_else(|| format!("Unsafe path in backup: {}", entry_label(&entry)))?;
+        // On Windows zip 9 reads names by this OS's rules, and its check also refuses names NTFS
+        // would write somewhere else or not at all: alternate data streams (`ab:c.md`, and
+        // `note.md::$DATA`, which aliases `note.md`), device names such as `CON`, trailing dots
+        // or spaces, and reserved characters. The path it gives must be the one accepted above,
+        // which is the one the second pass writes.
+        #[cfg(windows)]
+        if entry.enclosed_name().as_deref() != Some(relative.as_path()) {
+            return Err(format!("Unsafe path in backup: {}", entry_label(&entry)));
+        }
         if relative.as_os_str().is_empty() || !paths.insert(relative.clone()) {
             return Err(format!(
                 "Duplicate or empty path in backup: {}",
@@ -1454,17 +1463,38 @@ mod tests {
         }
     }
 
-    /// On Windows `c:x.md` names a drive even inside a path, and pushing it would replace the
-    /// stage path. On Fedora it is an ordinary file name.
-    #[cfg(windows)]
+    /// Names Fedora holds as ordinary files but NTFS cannot: an alternate data stream, a stream
+    /// name that aliases the file beside it, a drive inside a path (pushing it would replace the
+    /// stage path), a device name, a trailing dot or space, and a reserved character. Windows
+    /// refuses each archive whole, before anything is staged; Fedora restores every name as is.
     #[test]
-    fn a_drive_inside_a_name_is_refused_on_windows() {
-        assert_refused_unchanged("Projects/c:x.md", "Unsafe path in backup", |writer| {
-            writer
-                .start_file("Projects/c:x.md", SimpleFileOptions::default())
-                .unwrap();
-            writer.write_all(b"hostile").unwrap();
-        });
+    fn names_windows_cannot_hold_are_refused_there_and_kept_on_fedora() {
+        let cases: [&[(&str, &[u8])]; 7] = [
+            &[("Projects/ab:c.md", b"an alternate data stream on Windows")],
+            &[
+                ("Projects/note.md", b"the note"),
+                (
+                    "Projects/note.md::$DATA",
+                    b"the same NTFS stream as the note",
+                ),
+            ],
+            &[("Projects/c:x.md", b"a drive inside a path on Windows")],
+            &[("Projects/CON.md", b"a device on Windows")],
+            &[("Projects/trailing dot.", b"Windows drops the dot")],
+            &[("Projects/trailing space ", b"Windows drops the space")],
+            &[("Projects/a|b.md", b"a reserved character on Windows")],
+        ];
+        for entries in cases {
+            let names: Vec<&str> = entries.iter().map(|(name, _)| *name).collect();
+            let case = format!("{names:?}");
+            if cfg!(windows) {
+                assert_refused_unchanged(&case, "Unsafe path in backup", |writer| {
+                    write_entries(writer, entries)
+                });
+            } else {
+                assert_restored_at_native_paths(&case, entries);
+            }
+        }
     }
 
     /// On Fedora `a\b.md` is one file, so it comes back as that file, byte for byte. On Windows
