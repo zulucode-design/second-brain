@@ -800,7 +800,7 @@ pub(crate) mod tests {
 
     pub(crate) fn cases() -> Vec<Case> {
         let long = "x".repeat(5000);
-        vec![
+        let mut rows = vec![
             Case {
                 name: "no_frontmatter",
                 raw: "# Heading\n\nJust a body.\n".into(),
@@ -1482,7 +1482,398 @@ pub(crate) mod tests {
                 ),
                 moved: Moved::Edited("id: float-id\ntitle: 1e999\ncategory: Areas\n".into()),
             },
-        ]
+            Case {
+                name: "title_capitalised_true",
+                raw: concat!(
+                    "---\n",
+                    "id: \"typed-id\"\n",
+                    "title: True\n",
+                    "category: Projects\n",
+                    "---\n",
+                    "body\n"
+                )
+                .into(),
+                // gray_matter 0.2.9: the text `True`. A YAML boolean now reads as `true`.
+                note: Note {
+                    id: "typed-id",
+                    title: "true".into(),
+                    category: Some(ParaCategory::Projects),
+                    ..Note::unread("body".into())
+                },
+                title: Some("true".into()),
+                merged: Merged::Edited(
+                    concat!(
+                        "id: typed-id\n",
+                        "title: Merged title\n",
+                        "category: Resources\n",
+                        "tags: []\n",
+                        "pinned: false\n",
+                        "created: 2024-01-02T03:04:05+00:00\n",
+                        "modified: 2024-02-03T04:05:06+00:00\n"
+                    )
+                    .into(),
+                ),
+                moved: Moved::Edited("id: typed-id\ntitle: true\ncategory: Areas\n".into()),
+            },
+            Case {
+                name: "capitalised_booleans_in_other_fields",
+                raw: concat!(
+                    "---\n",
+                    "id: TRUE\n",
+                    "title: FALSE\n",
+                    "created: True\n",
+                    "modified: False\n",
+                    "category: Projects\n",
+                    "---\n",
+                    "body\n"
+                )
+                .into(),
+                // gray_matter 0.2.9: the texts `TRUE`, `FALSE`, `True` and `False`. They are
+                // not dates, so both dates read as the read time, then and now.
+                note: Note {
+                    id: "true",
+                    title: "false".into(),
+                    category: Some(ParaCategory::Projects),
+                    ..Note::unread("body".into())
+                },
+                title: Some("false".into()),
+                merged: Merged::Edited(
+                    concat!(
+                        "id: true\n",
+                        "title: Merged title\n",
+                        "created: 2024-01-02T03:04:05+00:00\n",
+                        "modified: 2024-02-03T04:05:06+00:00\n",
+                        "category: Resources\n",
+                        "tags: []\n",
+                        "pinned: false\n"
+                    )
+                    .into(),
+                ),
+                moved: Moved::Edited(
+                    concat!(
+                        "id: true\n",
+                        "title: false\n",
+                        "created: true\n",
+                        "modified: false\n",
+                        "category: Areas\n"
+                    )
+                    .into(),
+                ),
+            },
+            Case {
+                name: "tags_capitalised_bool",
+                raw: concat!(
+                    "---\n",
+                    "id: \"typed-id\"\n",
+                    "title: \"Typed\"\n",
+                    "tags: [True]\n",
+                    "category: Projects\n",
+                    "---\n",
+                    "body\n"
+                )
+                .into(),
+                // gray_matter 0.2.9: the tag `True`.
+                note: Note {
+                    id: "typed-id",
+                    title: "Typed".into(),
+                    tags: &["true"],
+                    category: Some(ParaCategory::Projects),
+                    ..Note::unread("body".into())
+                },
+                title: Some("Typed".into()),
+                merged: Merged::Edited(
+                    concat!(
+                        "id: typed-id\n",
+                        "title: Merged title\n",
+                        "tags: []\n",
+                        "category: Resources\n",
+                        "pinned: false\n",
+                        "created: 2024-01-02T03:04:05+00:00\n",
+                        "modified: 2024-02-03T04:05:06+00:00\n"
+                    )
+                    .into(),
+                ),
+                moved: Moved::Edited(
+                    "id: typed-id\ntitle: Typed\ntags:\n- true\ncategory: Areas\n".into(),
+                ),
+            },
+            Case {
+                name: "title_dot_nan",
+                raw: concat!(
+                    "---\n",
+                    "id: \"typed-id\"\n",
+                    "title: .NaN\n",
+                    "category: Projects\n",
+                    "---\n",
+                    "body\n"
+                )
+                .into(),
+                // gray_matter 0.2.9: the text `.NaN`. gray_matter 0.3 turns every `.nan` and
+                // `.inf` into 0.0 before this code sees the value, so the title reads as
+                // "0.0" and not as missing.
+                note: Note {
+                    id: "typed-id",
+                    title: "0.0".into(),
+                    category: Some(ParaCategory::Projects),
+                    ..Note::unread("body".into())
+                },
+                title: Some("0.0".into()),
+                merged: Merged::Edited(
+                    concat!(
+                        "id: typed-id\n",
+                        "title: Merged title\n",
+                        "category: Resources\n",
+                        "tags: []\n",
+                        "pinned: false\n",
+                        "created: 2024-01-02T03:04:05+00:00\n",
+                        "modified: 2024-02-03T04:05:06+00:00\n"
+                    )
+                    .into(),
+                ),
+                moved: Moved::Edited("id: typed-id\ntitle: .nan\ncategory: Areas\n".into()),
+            },
+            Case {
+                name: "pinned_capitalised_true",
+                raw: concat!(
+                    "---\n",
+                    "id: \"typed-id\"\n",
+                    "title: \"Typed\"\n",
+                    "pinned: True\n",
+                    "category: Projects\n",
+                    "---\n",
+                    "body\n"
+                )
+                .into(),
+                // gray_matter 0.2.9: the text `True`, so the pinned flag read as missing.
+                note: Note {
+                    id: "typed-id",
+                    title: "Typed".into(),
+                    pinned: true,
+                    category: Some(ParaCategory::Projects),
+                    ..Note::unread("body".into())
+                },
+                title: Some("Typed".into()),
+                merged: Merged::Edited(
+                    concat!(
+                        "id: typed-id\n",
+                        "title: Merged title\n",
+                        "pinned: false\n",
+                        "category: Resources\n",
+                        "tags: []\n",
+                        "created: 2024-01-02T03:04:05+00:00\n",
+                        "modified: 2024-02-03T04:05:06+00:00\n"
+                    )
+                    .into(),
+                ),
+                moved: Moved::Edited(
+                    "id: typed-id\ntitle: Typed\npinned: true\ncategory: Areas\n".into(),
+                ),
+            },
+            Case {
+                name: "tags_inf",
+                raw: concat!(
+                    "---\n",
+                    "id: \"typed-id\"\n",
+                    "title: \"Typed\"\n",
+                    "tags: [inf]\n",
+                    "category: Projects\n",
+                    "---\n",
+                    "body\n"
+                )
+                .into(),
+                // gray_matter 0.2.9: a float, which made every field read as missing.
+                note: Note {
+                    id: "typed-id",
+                    title: "Typed".into(),
+                    tags: &["inf"],
+                    category: Some(ParaCategory::Projects),
+                    ..Note::unread("body".into())
+                },
+                title: Some("Typed".into()),
+                merged: Merged::Edited(
+                    concat!(
+                        "id: typed-id\n",
+                        "title: Merged title\n",
+                        "tags: []\n",
+                        "category: Resources\n",
+                        "pinned: false\n",
+                        "created: 2024-01-02T03:04:05+00:00\n",
+                        "modified: 2024-02-03T04:05:06+00:00\n"
+                    )
+                    .into(),
+                ),
+                moved: Moved::Edited(
+                    "id: typed-id\ntitle: Typed\ntags:\n- inf\ncategory: Areas\n".into(),
+                ),
+            },
+            Case {
+                name: "tags_mixed_items",
+                raw: concat!(
+                    "---\n",
+                    "id: \"typed-id\"\n",
+                    "tags: [a, 1, true, [x], {k: v}, null, 2.5]\n",
+                    "category: Projects\n",
+                    "---\n",
+                    "body\n"
+                )
+                .into(),
+                // Not in gray_matter 0.2.9's table: a string, a number and a boolean item
+                // read as their text; a list, a map and a null item are skipped.
+                note: Note {
+                    id: "typed-id",
+                    tags: &["a", "1", "true", "2.5"],
+                    category: Some(ParaCategory::Projects),
+                    ..Note::unread("body".into())
+                },
+                title: None,
+                merged: Merged::Edited(
+                    concat!(
+                        "id: typed-id\n",
+                        "tags: []\n",
+                        "category: Resources\n",
+                        "title: Merged title\n",
+                        "pinned: false\n",
+                        "created: 2024-01-02T03:04:05+00:00\n",
+                        "modified: 2024-02-03T04:05:06+00:00\n"
+                    )
+                    .into(),
+                ),
+                moved: Moved::Edited(
+                    concat!(
+                        "id: typed-id\n",
+                        "tags:\n",
+                        "- a\n",
+                        "- 1\n",
+                        "- true\n",
+                        "- - x\n",
+                        "- k: v\n",
+                        "- null\n",
+                        "- 2.5\n",
+                        "category: Areas\n"
+                    )
+                    .into(),
+                ),
+            },
+            Case {
+                name: "title_list",
+                raw: concat!(
+                    "---\n",
+                    "id: \"typed-id\"\n",
+                    "title: [a, b]\n",
+                    "category: Projects\n",
+                    "---\n",
+                    "body\n"
+                )
+                .into(),
+                // Not in gray_matter 0.2.9's table: a list has no text, so only the title is
+                // missing.
+                note: Note {
+                    id: "typed-id",
+                    category: Some(ParaCategory::Projects),
+                    ..Note::unread("body".into())
+                },
+                title: None,
+                merged: Merged::Edited(
+                    concat!(
+                        "id: typed-id\n",
+                        "title: Merged title\n",
+                        "category: Resources\n",
+                        "tags: []\n",
+                        "pinned: false\n",
+                        "created: 2024-01-02T03:04:05+00:00\n",
+                        "modified: 2024-02-03T04:05:06+00:00\n"
+                    )
+                    .into(),
+                ),
+                moved: Moved::Edited("id: typed-id\ntitle:\n- a\n- b\ncategory: Areas\n".into()),
+            },
+            Case {
+                name: "id_and_title_numbers",
+                raw: concat!(
+                    "---\n",
+                    "id: 123\n",
+                    "title: 1.5\n",
+                    "category: Projects\n",
+                    "---\n",
+                    "body\n"
+                )
+                .into(),
+                // Not in gray_matter 0.2.9's table: a number reads as the text serde_json
+                // prints for it.
+                note: Note {
+                    id: "123",
+                    title: "1.5".into(),
+                    category: Some(ParaCategory::Projects),
+                    ..Note::unread("body".into())
+                },
+                title: Some("1.5".into()),
+                merged: Merged::Edited(
+                    concat!(
+                        "id: 123\n",
+                        "title: Merged title\n",
+                        "category: Resources\n",
+                        "tags: []\n",
+                        "pinned: false\n",
+                        "created: 2024-01-02T03:04:05+00:00\n",
+                        "modified: 2024-02-03T04:05:06+00:00\n"
+                    )
+                    .into(),
+                ),
+                moved: Moved::Edited("id: 123\ntitle: 1.5\ncategory: Areas\n".into()),
+            },
+            Case {
+                name: "list_front_matter",
+                raw: "---\n- list-id\n- Listed\n---\nbody\n".into(),
+                // Not in gray_matter 0.2.9's table: only a map has fields, so a list does not
+                // read as an id and a title.
+                note: Note::unread("body".into()),
+                title: None,
+                merged: Merged::Fresh,
+                moved: Moved::Refused,
+            },
+        ];
+        rows.extend(SPELLED_TITLES.map(|(name, spelling)| spelled_title(name, spelling)));
+        rows
+    }
+
+    /// Plain scalars that gray_matter 0.2.9 read as floats, so the title came from the file
+    /// name, and that gray_matter 0.3 reads as text.
+    pub(crate) const SPELLED_TITLES: [(&str, &str); 4] = [
+        ("title_inf", "inf"),
+        ("title_nan", "nan"),
+        ("title_nan_mixed_case", "NaN"),
+        ("title_infinity", "Infinity"),
+    ];
+
+    fn spelled_title(name: &'static str, spelling: &'static str) -> Case {
+        Case {
+            name,
+            raw: format!(
+                "---\nid: \"typed-id\"\ntitle: {spelling}\ncategory: Projects\n---\nbody\n"
+            ),
+            note: Note {
+                id: "typed-id",
+                title: spelling.into(),
+                category: Some(ParaCategory::Projects),
+                ..Note::unread("body".into())
+            },
+            title: Some(spelling.into()),
+            merged: Merged::Edited(
+                concat!(
+                    "id: typed-id\n",
+                    "title: Merged title\n",
+                    "category: Resources\n",
+                    "tags: []\n",
+                    "pinned: false\n",
+                    "created: 2024-01-02T03:04:05+00:00\n",
+                    "modified: 2024-02-03T04:05:06+00:00\n"
+                )
+                .into(),
+            ),
+            moved: Moved::Edited(format!(
+                "id: typed-id\ntitle: {spelling}\ncategory: Areas\n"
+            )),
+        }
     }
 
     /// A date given in the note reads as that date; a missing or unreadable one reads as
@@ -1586,5 +1977,57 @@ pub(crate) mod tests {
                 "{name}: the moved note keeps its body"
             );
         }
+    }
+
+    /// A field that reads oddly or not at all must not take the category with it, or the
+    /// note would read as uncategorised and reconciliation would move it.
+    #[test]
+    fn a_field_that_reads_oddly_never_costs_the_category() {
+        let names = [
+            "tags_number",
+            "title_number",
+            "pinned_yes",
+            "overflowing_float",
+            "title_capitalised_true",
+            "capitalised_booleans_in_other_fields",
+            "tags_capitalised_bool",
+            "title_dot_nan",
+            "pinned_capitalised_true",
+            "tags_inf",
+            "title_inf",
+            "title_nan",
+            "title_nan_mixed_case",
+            "title_infinity",
+            "tags_mixed_items",
+            "title_list",
+            "id_and_title_numbers",
+        ];
+        let all = cases();
+        for name in names {
+            let case = all.iter().find(|case| case.name == name).expect(name);
+            assert!(
+                case.note.category.is_some(),
+                "{name}: the row has a category"
+            );
+            let (meta, _) = parse_note(&case.raw, "Table note.md");
+            assert_eq!(meta.category, case.note.category, "{name}: category");
+        }
+    }
+
+    /// Saving a note writes back the category it read, so a wrongly typed title must not
+    /// make the note lose it on the way.
+    #[test]
+    fn a_wrongly_typed_title_keeps_the_category_through_a_save() {
+        let original = "---\nid: \"typed-id\"\ntitle: [a, b]\ncategory: Projects\n---\nbody\n";
+        let (meta, body) = parse_note(original, "Typed.md");
+        assert_eq!(meta.category, Some(ParaCategory::Projects));
+
+        let merged = merge_frontmatter(original, &meta, &body);
+
+        assert!(merged.contains("category: Projects\n"), "{merged}");
+        let (reread, _) = parse_note(&merged, "Typed.md");
+        assert_eq!(reread.id, "typed-id");
+        assert_eq!(reread.title, "Typed");
+        assert_eq!(reread.category, Some(ParaCategory::Projects));
     }
 }

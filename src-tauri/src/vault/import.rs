@@ -1303,8 +1303,7 @@ mod tests {
         assert_eq!(anchor, Some("Heading"));
     }
 
-    /// What `normalize_frontmatter` reads from a table input, as the app read it with
-    /// gray_matter 0.2.9.
+    /// What `normalize_frontmatter` reads from a table input.
     struct Normalized {
         /// `None` where the note has no id it can read, so a fresh one is generated.
         id: Option<&'static str>,
@@ -1335,10 +1334,12 @@ mod tests {
 
     /// For each case of `frontmatter::tests::cases()`, in the same order: what
     /// `rename_deprecated_properties` returns, `None` meaning the input unchanged, and what
-    /// `normalize_frontmatter` reads. Recorded, like the cases, with gray_matter 0.2.9.
+    /// `normalize_frontmatter` reads. The first rows were recorded with gray_matter 0.2.9, as
+    /// the cases were. `normalize_frontmatter` reads the YAML itself, so the rows added since
+    /// were recorded by running it.
     fn import_expectations() -> Vec<(&'static str, Option<String>, Normalized)> {
         let long = "x".repeat(5000);
-        vec![
+        let mut rows = vec![
             (
                 "no_frontmatter",
                 None,
@@ -1518,7 +1519,111 @@ mod tests {
                     ..Normalized::generated()
                 },
             ),
-        ]
+            (
+                "title_capitalised_true",
+                None,
+                Normalized {
+                    id: Some("typed-id"),
+                    category: Some(ParaCategory::Projects),
+                    ..Normalized::generated()
+                },
+            ),
+            (
+                "capitalised_booleans_in_other_fields",
+                None,
+                Normalized {
+                    category: Some(ParaCategory::Projects),
+                    ..Normalized::generated()
+                },
+            ),
+            (
+                "tags_capitalised_bool",
+                None,
+                Normalized {
+                    id: Some("typed-id"),
+                    title: "Typed".into(),
+                    category: Some(ParaCategory::Projects),
+                    ..Normalized::generated()
+                },
+            ),
+            (
+                "title_dot_nan",
+                None,
+                Normalized {
+                    id: Some("typed-id"),
+                    category: Some(ParaCategory::Projects),
+                    ..Normalized::generated()
+                },
+            ),
+            (
+                "pinned_capitalised_true",
+                None,
+                Normalized {
+                    id: Some("typed-id"),
+                    title: "Typed".into(),
+                    pinned: true,
+                    category: Some(ParaCategory::Projects),
+                    ..Normalized::generated()
+                },
+            ),
+            (
+                "tags_inf",
+                None,
+                Normalized {
+                    id: Some("typed-id"),
+                    title: "Typed".into(),
+                    tags: &["inf"],
+                    category: Some(ParaCategory::Projects),
+                    ..Normalized::generated()
+                },
+            ),
+            (
+                "tags_mixed_items",
+                None,
+                Normalized {
+                    id: Some("typed-id"),
+                    tags: &["a", "1", "2.5"],
+                    category: Some(ParaCategory::Projects),
+                    ..Normalized::generated()
+                },
+            ),
+            (
+                "title_list",
+                None,
+                Normalized {
+                    id: Some("typed-id"),
+                    category: Some(ParaCategory::Projects),
+                    ..Normalized::generated()
+                },
+            ),
+            (
+                "id_and_title_numbers",
+                None,
+                Normalized {
+                    category: Some(ParaCategory::Projects),
+                    ..Normalized::generated()
+                },
+            ),
+            ("list_front_matter", None, Normalized::generated()),
+        ];
+        // The rows above from `title_capitalised_true` on show that `normalize_frontmatter`
+        // reads an id or a title only when it is a YAML string. A boolean or a number there
+        // reads as text in `parse_note` and as missing here, and the category reads in both.
+        // `inf`, `nan`, `NaN` and `Infinity` are strings to the YAML reader, so they read as
+        // titles here as they do in `parse_note`.
+        rows.extend(frontmatter::tests::SPELLED_TITLES.map(|(name, spelling)| {
+            (
+                name,
+                None,
+                Normalized {
+                    id: Some("typed-id"),
+                    title: spelling.into(),
+                    category: Some(ParaCategory::Projects),
+                    ..Normalized::generated()
+                },
+            )
+        }));
+        rows
     }
 
     #[test]
