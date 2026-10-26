@@ -60,8 +60,10 @@ created the marker before testing lockability, which on a lockless filesystem le
 process staring at an empty file none of them was allowed to fill: the original bug,
 reintroduced for those filesystems. That draft was caught in review.
 
-`fs4` provides the lock. It is already in the dependency tree via Tantivy, so making it a
-direct dependency adds no crates to the build.
+The standard library's `File::try_lock` provides the lock: `flock` on Unix, and `LockFileEx`
+over the whole file on Windows. It has been stable since Rust 1.89, within the project's 1.90
+minimum, so the lock needs no dependency of its own. It was first taken through the `fs4`
+crate, whose 1.x releases dropped the call it used (#241).
 
 ## Consequences
 
