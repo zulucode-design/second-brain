@@ -91,9 +91,23 @@ fn machine_root() -> Result<PathBuf, String> {
 const CLAIM_LOCK_ATTEMPTS: u32 = 50;
 const CLAIM_LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(10);
 
-fn is_lock_contention(error: &std::io::Error) -> bool {
-    matches!(error.kind(), std::io::ErrorKind::WouldBlock)
-        || matches!(error.raw_os_error(), Some(32 | 33))
+/// `ERROR_SHARING_VIOLATION` on Windows.
+const ERROR_SHARING_VIOLATION: i32 = 32;
+
+/// Whether a failed `File::try_lock` means another handle holds the lock, rather than that
+/// locking failed or is unavailable here.
+///
+/// The standard library already reports a held lock as `WouldBlock`: `EWOULDBLOCK` from
+/// `flock` on Unix, and `ERROR_LOCK_VIOLATION` (33) from `LockFileEx` on Windows. Windows has
+/// always counted `ERROR_SHARING_VIOLATION` as contention here too, and still does. Elsewhere
+/// no raw error number is contention: on Linux, 32 and 33 are `EPIPE` and `EDOM`.
+fn is_lock_contention(error: &std::fs::TryLockError) -> bool {
+    match error {
+        std::fs::TryLockError::WouldBlock => true,
+        std::fs::TryLockError::Error(error) => {
+            cfg!(windows) && error.raw_os_error() == Some(ERROR_SHARING_VIOLATION)
+        }
+    }
 }
 
 /// Read the vault's identity, creating it on first open.
@@ -230,18 +244,29 @@ struct ClaimLock<'a>(&'a std::fs::File);
 impl<'a> ClaimLock<'a> {
     /// `Ok(None)` means this filesystem cannot lock, not that the lock was refused.
     fn acquire(file: &'a std::fs::File) -> Result<Option<ClaimLock<'a>>, String> {
-        use fs4::FileExt;
+        Self::acquire_with(file, std::fs::File::try_lock)
+    }
 
+    /// `acquire`, with the lock attempt passed in, so its retry policy can be tested without
+    /// a second process holding the lock.
+    fn acquire_with(
+        file: &'a std::fs::File,
+        mut try_lock: impl FnMut(&std::fs::File) -> Result<(), std::fs::TryLockError>,
+    ) -> Result<Option<ClaimLock<'a>>, String> {
         for attempt in 0..CLAIM_LOCK_ATTEMPTS {
             if attempt > 0 {
                 std::thread::sleep(CLAIM_LOCK_WAIT);
             }
-            match file.try_lock_exclusive() {
+            match try_lock(file) {
                 Ok(()) => return Ok(Some(ClaimLock(file))),
                 Err(error) if is_lock_contention(&error) => continue,
-                // Locking is unsupported here. Refusing to open the vault over that would be
-                // a worse failure than the one locks are here to fix.
+                // Locking is unsupported here, or failed for some reason other than another
+                // holder. Refusing to open the vault over that would be a worse failure than
+                // the one locks are here to fix.
                 Err(error) => {
+                    // A `TryLockError` prints only that an I/O error happened; the `io::Error`
+                    // inside it says which.
+                    let error = std::io::Error::from(error);
                     log::warn!("Vault identity locking is unavailable: {error}");
                     return Ok(None);
                 }
@@ -256,9 +281,7 @@ impl<'a> ClaimLock<'a> {
 
 impl Drop for ClaimLock<'_> {
     fn drop(&mut self) {
-        use fs4::FileExt;
-
-        let _ = FileExt::unlock(self.0);
+        let _ = self.0.unlock();
     }
 }
 
@@ -725,6 +748,296 @@ mod tests {
             ids.iter().all(|id| id == first),
             "processes disagreed on the vault identity: {ids:?}"
         );
+    }
+
+    /// The text `ClaimLock::acquire` gives up with, spelled out so that changing it fails here.
+    const CLAIM_HELD: &str =
+        "The vault identity is held by another process that never finished writing it";
+
+    /// A scratch directory holding one empty file to take the claim lock on, outside any
+    /// vault and the machine-local root.
+    fn claim_scratch(label: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("machine-local-{label}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("claim"), b"").unwrap();
+        dir
+    }
+
+    /// A handle on the scratch claim file, opened the way `vault_id` opens the marker.
+    fn open_claim(dir: &Path) -> std::fs::File {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(dir.join("claim"))
+            .unwrap()
+    }
+
+    /// `acquire`'s outcome in a comparable form: `Ok(true)` locked, `Ok(false)` no lock here.
+    fn claim_outcome(result: Result<Option<ClaimLock<'_>>, String>) -> Result<bool, String> {
+        result.map(|claim| claim.is_some())
+    }
+
+    #[test]
+    fn only_another_holder_counts_as_lock_contention() {
+        assert!(is_lock_contention(&std::fs::TryLockError::WouldBlock));
+        assert!(!is_lock_contention(&std::fs::TryLockError::Error(
+            std::io::ErrorKind::Unsupported.into()
+        )));
+    }
+
+    /// The standard library maps only `ERROR_LOCK_VIOLATION` (33) to `WouldBlock`. A sharing
+    /// violation arrives as an error, and the app has always read it as another holder.
+    #[test]
+    #[cfg(windows)]
+    fn a_sharing_violation_is_lock_contention_on_windows() {
+        let error = std::fs::TryLockError::Error(std::io::Error::from_raw_os_error(32));
+
+        assert!(is_lock_contention(&error));
+    }
+
+    /// The numbers the app once read as lock errors on every platform are Windows codes. On
+    /// Linux they are `EPIPE` and `EDOM`, which say nothing about another holder.
+    #[test]
+    #[cfg(not(windows))]
+    fn no_raw_os_error_is_lock_contention_off_windows() {
+        for code in [32, 33] {
+            let error = std::fs::TryLockError::Error(std::io::Error::from_raw_os_error(code));
+
+            assert!(!is_lock_contention(&error), "OS error {code}");
+        }
+    }
+
+    /// A filesystem that cannot lock still opens the vault, and is asked once rather than
+    /// waited on.
+    #[test]
+    fn an_unsupported_lock_opens_without_one_and_is_not_retried() {
+        let dir = claim_scratch("lock-unsupported");
+        let file = open_claim(&dir);
+        let mut attempts = 0;
+
+        let outcome = claim_outcome(ClaimLock::acquire_with(&file, |_| {
+            attempts += 1;
+            Err(std::fs::TryLockError::Error(
+                std::io::ErrorKind::Unsupported.into(),
+            ))
+        }));
+
+        assert_eq!(outcome, Ok(false));
+        assert_eq!(attempts, 1);
+        drop(file);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A holder that never lets go is waited out for the bounded time, then refused.
+    #[test]
+    fn a_lock_that_stays_held_is_refused_after_every_attempt() {
+        let dir = claim_scratch("lock-held");
+        let file = open_claim(&dir);
+        let mut attempts = 0;
+        let started = std::time::Instant::now();
+
+        let outcome = claim_outcome(ClaimLock::acquire_with(&file, |_| {
+            attempts += 1;
+            Err(std::fs::TryLockError::WouldBlock)
+        }));
+
+        assert_eq!(outcome, Err(CLAIM_HELD.to_string()));
+        assert_eq!(attempts, CLAIM_LOCK_ATTEMPTS);
+        // Waited between attempts rather than spinning through them.
+        assert!(started.elapsed() >= CLAIM_LOCK_WAIT * (CLAIM_LOCK_ATTEMPTS - 1));
+        drop(file);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_held_lock_is_retried_until_it_frees() {
+        let dir = claim_scratch("lock-frees");
+        let file = open_claim(&dir);
+        let mut attempts = 0;
+
+        let outcome = claim_outcome(ClaimLock::acquire_with(&file, |_| {
+            attempts += 1;
+            if attempts < 3 {
+                Err(std::fs::TryLockError::WouldBlock)
+            } else {
+                Ok(())
+            }
+        }));
+
+        assert_eq!(outcome, Ok(true));
+        assert_eq!(attempts, 3);
+        drop(file);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Set in a process test's child to the scratch directory whose claim it holds.
+    const HOLDER_DIR_VAR: &str = "HELIXNOTES_TEST_CLAIM_HOLDER_DIR";
+    /// Written by the holder once it has the claim.
+    const HOLDER_READY: &str = "holder-ready";
+    /// Written by the parent to tell the holder to exit.
+    const HOLDER_EXIT: &str = "holder-exit";
+    /// How long the parent waits for the holder to reach each step.
+    const HOLDER_DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
+
+    /// The child side of the process tests: take the claim, say so, and keep it until killed
+    /// or told to exit. Never returns.
+    fn hold_the_claim(dir: &Path) -> ! {
+        let file = open_claim(dir);
+        let Ok(Some(_claim)) = ClaimLock::acquire(&file) else {
+            // The parent sees the exit before any ready marker and fails with it.
+            std::process::exit(3);
+        };
+        std::fs::write(dir.join(HOLDER_READY), b"ready").unwrap();
+        // Bounded, so a parent that died without killing its child does not leave it behind.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while std::time::Instant::now() < deadline {
+            if dir.join(HOLDER_EXIT).exists() {
+                // `exit` runs no destructors, so `_claim` is never dropped: the lock is still
+                // held as the process ends, and only the operating system can release it.
+                std::process::exit(0);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        std::process::exit(2);
+    }
+
+    /// A child process of this test binary that holds the claim in a scratch directory.
+    ///
+    /// Dropping it kills and reaps the child, so no failure path leaves one running.
+    struct Holder(std::process::Child);
+
+    impl Holder {
+        /// Run the test named `test` again as the holder for `dir`, and wait until it holds
+        /// the claim.
+        fn start(test: &str, dir: &Path) -> Holder {
+            let child = std::process::Command::new(std::env::current_exe().unwrap())
+                .arg(format!("machine_local::tests::{test}"))
+                .arg("--exact")
+                .env(HOLDER_DIR_VAR, dir)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let mut holder = Holder(child);
+            let ready = dir.join(HOLDER_READY);
+            let deadline = std::time::Instant::now() + HOLDER_DEADLINE;
+            while !ready.exists() {
+                if let Some(status) = holder.0.try_wait().unwrap() {
+                    panic!("the holder exited before it took the claim: {status}");
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the holder never took the claim"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            holder
+        }
+
+        /// Tell the child to exit normally, still holding the claim, and reap it.
+        fn exit(&mut self, dir: &Path) -> std::process::ExitStatus {
+            std::fs::write(dir.join(HOLDER_EXIT), b"exit").unwrap();
+            let deadline = std::time::Instant::now() + HOLDER_DEADLINE;
+            while self.0.try_wait().unwrap().is_none() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the holder never exited"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            self.0.wait().unwrap()
+        }
+
+        /// Kill the child while it holds the claim, and reap it.
+        fn kill(&mut self) {
+            self.0.kill().unwrap();
+            self.0.wait().unwrap();
+        }
+    }
+
+    impl Drop for Holder {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    /// The parent's own handle on the claim is refused while the holder has it. Checked
+    /// without reading the file, which on Windows the lock covers.
+    fn assert_claim_is_held_elsewhere(file: &std::fs::File) {
+        let attempt = file.try_lock();
+        assert!(
+            matches!(attempt, Err(std::fs::TryLockError::WouldBlock)),
+            "a claim held by another process was not refused: {attempt:?}"
+        );
+    }
+
+    /// What the lock is for, seen from a second process: while another process holds the
+    /// claim, this one waits its bounded time and is refused, rather than taking the claim
+    /// over as abandoned.
+    #[test]
+    fn a_claim_held_by_another_process_is_refused() {
+        if let Ok(dir) = std::env::var(HOLDER_DIR_VAR) {
+            hold_the_claim(Path::new(&dir));
+        }
+        let dir = claim_scratch("claim-held");
+        let holder = Holder::start("a_claim_held_by_another_process_is_refused", &dir);
+        let file = open_claim(&dir);
+
+        assert_claim_is_held_elsewhere(&file);
+        assert_eq!(
+            claim_outcome(ClaimLock::acquire(&file)),
+            Err(CLAIM_HELD.to_string())
+        );
+
+        drop(holder);
+        drop(file);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// ADR-0006 rests on the operating system releasing the lock when its holder ends. The
+    /// holder here exits without dropping its claim, so nothing but the OS can release it.
+    #[test]
+    fn a_claim_is_released_when_its_holder_exits() {
+        if let Ok(dir) = std::env::var(HOLDER_DIR_VAR) {
+            hold_the_claim(Path::new(&dir));
+        }
+        let dir = claim_scratch("claim-exit");
+        let mut holder = Holder::start("a_claim_is_released_when_its_holder_exits", &dir);
+        let file = open_claim(&dir);
+        assert_claim_is_held_elsewhere(&file);
+
+        let status = holder.exit(&dir);
+
+        assert!(
+            status.success(),
+            "the holder did not exit normally: {status}"
+        );
+        assert_eq!(claim_outcome(ClaimLock::acquire(&file)), Ok(true));
+        drop(holder);
+        drop(file);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The case the lock exists for: a process killed while it holds the claim, as a crash
+    /// mid-claim would leave it, does not keep the claim from the next process.
+    #[test]
+    fn a_claim_is_released_when_its_holder_is_killed() {
+        if let Ok(dir) = std::env::var(HOLDER_DIR_VAR) {
+            hold_the_claim(Path::new(&dir));
+        }
+        let dir = claim_scratch("claim-kill");
+        let mut holder = Holder::start("a_claim_is_released_when_its_holder_is_killed", &dir);
+        let file = open_claim(&dir);
+        assert_claim_is_held_elsewhere(&file);
+
+        holder.kill();
+
+        assert_eq!(claim_outcome(ClaimLock::acquire(&file)), Ok(true));
+        drop(holder);
+        drop(file);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

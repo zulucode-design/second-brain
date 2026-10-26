@@ -4417,14 +4417,7 @@ fn damaged_config(path: &std::path::Path, damage: ConfigDamage) -> AppConfig {
         "json.damaged-{}",
         chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
     ));
-    let copied = std::fs::copy(path, &preserved).and_then(|_| {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&preserved, std::fs::Permissions::from_mode(0o600))?;
-        }
-        Ok(())
-    });
+    let copied = std::fs::copy(path, &preserved).and_then(|_| owner_only(&preserved));
     let reason = damage.reason;
     let (message, config_save_blocked) = match copied {
         Ok(()) => (
@@ -4449,6 +4442,20 @@ fn damaged_config(path: &std::path::Path, damage: ConfigDamage) -> AppConfig {
         config_save_blocked,
         ..AppConfig::default()
     }
+}
+
+/// Makes the preserved copy of a damaged config owner-only (`0o600`) on Unix, and does
+/// nothing elsewhere. A function rather than a `cfg` block in `damaged_config`'s closure,
+/// so the closure keeps one shape that Clippy accepts on every platform.
+fn owner_only(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
 }
 
 fn migrate_single_vault(config: &mut AppConfig) -> bool {
@@ -4595,6 +4602,19 @@ mod config_startup_tests {
             std::fs::read_to_string(dir.join(&copies[0])).unwrap(),
             "{\"vaults\": [ truncated"
         );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(dir.join(&copies[0]))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600,
+                "the preserved copy of a damaged config must be owner-only"
+            );
+        }
         std::fs::remove_dir_all(dir).unwrap();
     }
 
