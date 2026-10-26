@@ -2521,6 +2521,143 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// The vault the earlier `create_backup`, on zip 2.4.2, wrote
+    /// `test-fixtures/deps-zip9/old-unicode-names.zip` from. In every note, folder and attachment
+    /// name but `COMé.md`, which sits next to a device name, the third byte falls inside a
+    /// multibyte character, where zip 9.1.0's Windows device check cut it and panicked (#237).
+    /// The README beside the archive says how it was made.
+    const UNICODE_VAULT: &[(&str, &[u8])] = &[
+        (
+            "Projects/na\u{ef}ve.md",
+            b"# Na\xc3\xafve\nThe third byte of this name is inside the \xc3\xaf.\n",
+        ),
+        (
+            "Projects/\u{1F600}.md",
+            b"# \xf0\x9f\x98\x80\nA note named with one emoji.\n",
+        ),
+        (
+            "Projects/\u{1F44D}\u{1F3FD} done.md",
+            b"An emoji with a skin tone modifier.\n",
+        ),
+        (
+            "Areas/Gr\u{f6}\u{df}e/\u{41f}\u{440}\u{438}\u{432}\u{435}\u{442}.md",
+            b"\xd0\x9f\xd1\x80\xd0\xb8\xd0\xb2\xd0\xb5\xd1\x82\r\n",
+        ),
+        (
+            "Resources/a\u{20ac}/Zo\u{eb}.md",
+            b"In a folder named a\xe2\x82\xac.\n",
+        ),
+        ("Projects/COM\u{e9}.md", b"Not a serial port.\n"),
+        (
+            ".helixnotes/attachments/\u{1F600} scan.png",
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\xf0\x9f\x98\x80\xff",
+        ),
+        (
+            ".helixnotes/vault_id",
+            b"00000000-0000-4000-8000-000000000239",
+        ),
+    ];
+
+    /// Every name in `UNICODE_VAULT` is valid on both NTFS and Fedora, so the earlier backup
+    /// restores, byte for byte and at the same paths, on every OS.
+    #[test]
+    fn multibyte_names_in_a_zip_2_backup_restore_on_every_os() {
+        let root =
+            std::env::temp_dir().join(format!("second-brain-old-unicode-{}", Uuid::new_v4()));
+        let vault = root.join("vault");
+        let backups = root.join("backups");
+        for (path, body) in [
+            ("live.md", "live"),
+            (".helixnotes/vault_id", "live-id"),
+            (".helixnotes/attachments/live.bin", "live attachment"),
+        ] {
+            let path = vault.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+        fs::create_dir_all(&backups).unwrap();
+        let backup = backups.join("helixnotes-backup-2026-10-01T09-30-00.zip");
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("test-fixtures/deps-zip9/old-unicode-names.zip"),
+            &backup,
+        )
+        .unwrap();
+
+        // The fixture stores the names as written.
+        let archive = ZipArchive::new(fs::File::open(&backup).unwrap()).unwrap();
+        let mut files: Vec<String> = archive
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .filter(|name| !name.ends_with('/'))
+            .collect();
+        files.sort();
+        let mut expected_files: Vec<&str> = UNICODE_VAULT.iter().map(|(path, _)| *path).collect();
+        expected_files.sort();
+        assert_eq!(files, expected_files);
+        drop(archive);
+
+        restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap()).unwrap();
+
+        let expected: BTreeMap<PathBuf, Vec<u8>> = UNICODE_VAULT
+            .iter()
+            .map(|(path, body)| (PathBuf::from(*path), body.to_vec()))
+            .collect();
+        assert_eq!(tree(&vault), expected);
+        assert_eq!(
+            fs::read(vault.join("Projects").join("na\u{ef}ve.md")).unwrap(),
+            UNICODE_VAULT[0].1
+        );
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The same names, written by this build's `create_backup`, come back byte for byte on every
+    /// OS after the notes, folder and attachment are edited or removed.
+    #[test]
+    fn multibyte_names_survive_a_backup_and_restore() {
+        let root =
+            std::env::temp_dir().join(format!("second-brain-unicode-trip-{}", Uuid::new_v4()));
+        let vault = root.join("vault");
+        let backups = root.join("backups");
+        for (path, body) in UNICODE_VAULT {
+            let path = vault.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+
+        let entry = create_backup(vault.to_str().unwrap(), &backups, true).unwrap();
+
+        let archive = ZipArchive::new(fs::File::open(&entry.path).unwrap()).unwrap();
+        let mut files: Vec<String> = archive
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .filter(|name| !name.ends_with('/'))
+            .collect();
+        files.sort();
+        let mut expected_files: Vec<&str> = UNICODE_VAULT.iter().map(|(path, _)| *path).collect();
+        expected_files.sort();
+        assert_eq!(files, expected_files);
+        drop(archive);
+
+        let before = tree(&vault);
+        fs::write(
+            vault.join("Projects/na\u{ef}ve.md"),
+            "edited after the backup",
+        )
+        .unwrap();
+        fs::remove_file(vault.join("Projects/\u{1F600}.md")).unwrap();
+        fs::remove_dir_all(vault.join("Areas")).unwrap();
+        fs::remove_file(vault.join(".helixnotes/attachments/\u{1F600} scan.png")).unwrap();
+
+        restore_backup(vault.to_str().unwrap(), &backups, &entry.path).unwrap();
+
+        assert_eq!(tree(&vault), before);
+        assert!(vault.join("Areas/Gr\u{f6}\u{df}e").is_dir());
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn pruning_keeps_the_newest_scheduled_backup_among_frequent_pre_sync_ones() {
         let root = std::env::temp_dir().join(format!("second-brain-retention-{}", Uuid::new_v4()));

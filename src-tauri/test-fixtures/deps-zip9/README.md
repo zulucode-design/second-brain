@@ -131,3 +131,41 @@ empty folder. This build restores it as the file it is.
 | `.helixnotes/vault_id` | Deflated |
 
 SHA-256: `a228735752547fcd049d527a63f931fb74614c7d8dd6393bb480ddd4260d3f3c`, 923 bytes.
+
+## old-unicode-names.zip
+
+A backup of a vault whose note, folder and attachment names put a multibyte character across
+their third byte, as the code v0.1.0-alpha.1 shipped writes it (#237, attempt 4). On Windows,
+zip 9.1.0's `enclosed_name()` cut such names at byte 3 and panicked the restore. `COMé.md`, the
+one exception, sits next to the device names `COM1` to `COM9` and must still restore.
+`multibyte_names_in_a_zip_2_backup_restore_on_every_os` in `backup::tests` restores it on every OS
+and compares the vault to `UNICODE_VAULT`, the byte strings it was built from. Every name is valid
+on both NTFS and Fedora.
+
+It was written once, on Linux, the same way as `old-backslash-names.zip`: a scratch crate outside
+the repository compiles `src-tauri/src/backup.rs` at `17d98d0`, unchanged, against
+`zip = "=2.4.2"` (the version v0.1.0-alpha.1 locks), with `default-features = false,
+features = ["deflate"]` and Rust 1.90, writes `UNICODE_VAULT` to a temporary vault and calls
+`create_backup(vault, backups, true)`. Built against `zip = "=2.6.1"`, the same crate wrote a
+byte-identical file, and a second zip 2.4.2 run reproduced it. Every non-ASCII name carries the
+UTF-8 flag.
+
+| Entry | Method |
+|---|---|
+| `Projects/` | directory |
+| `Projects/naïve.md` | Deflated |
+| `Projects/😀.md` | Deflated |
+| `Projects/👍🏽 done.md` | Deflated |
+| `Projects/COMé.md` | Deflated |
+| `Areas/` | directory |
+| `Areas/Größe/` | directory |
+| `Areas/Größe/Привет.md` | Deflated |
+| `Resources/` | directory |
+| `Resources/a€/` | directory |
+| `Resources/a€/Zoë.md` | Deflated |
+| `.helixnotes/` | directory |
+| `.helixnotes/attachments/` | directory |
+| `.helixnotes/attachments/😀 scan.png` | Deflated |
+| `.helixnotes/vault_id` | Deflated |
+
+SHA-256: `fce32dcd884364dc6ebfa1676afe543cc2b1396ef874a1b2ddc30f901dc5df40`, 1958 bytes.
