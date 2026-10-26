@@ -7,13 +7,13 @@ use serde::de::IgnoredAny;
 use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Default)]
-struct RawFrontmatter {
+pub(crate) struct RawFrontmatter {
     #[serde(default, deserialize_with = "deserialize_scalar_text")]
-    id: Option<String>,
+    pub(crate) id: Option<String>,
     #[serde(default, deserialize_with = "deserialize_scalar_text")]
-    title: Option<String>,
+    pub(crate) title: Option<String>,
     #[serde(default, deserialize_with = "deserialize_tags")]
-    tags: Option<Vec<String>>,
+    pub(crate) tags: Option<Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_pinned")]
     pinned: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_scalar_text")]
@@ -90,7 +90,7 @@ pub(crate) struct ParsedFrontmatter {
     /// The fields the app reads, or `None` when there is no front matter, it is not valid
     /// YAML, or it is not a map. Each field reads on its own: one with the wrong type is
     /// missing and the others still read.
-    fields: Option<RawFrontmatter>,
+    pub(crate) fields: Option<RawFrontmatter>,
 }
 
 /// Finds the front matter without reading it.

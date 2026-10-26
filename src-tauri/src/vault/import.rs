@@ -301,28 +301,26 @@ fn normalize_frontmatter(raw: &str, path: &Path) -> (NoteMeta, String) {
         }
     };
 
-    let tags = normalize_tags(&mapping);
+    // `id`, `title` and the `tags` list read by the rules `parse_note` follows, so a number or
+    // a boolean there reads as its text; the fallbacks below are the importer's own.
+    let fields = result.fields.unwrap_or_default();
 
-    let title = mapping
-        .get(serde_yaml::Value::String("title".into()))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            if let Some(h) = extract_heading_title(&result.body) {
-                h
-            } else {
-                let fname = path
-                    .file_stem()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("Untitled");
-                frontmatter::filename_to_title(fname)
-            }
-        });
+    let tags = normalize_tags(&mapping, fields.tags);
 
-    let id = mapping
-        .get(serde_yaml::Value::String("id".into()))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
+    let title = fields.title.unwrap_or_else(|| {
+        if let Some(h) = extract_heading_title(&result.body) {
+            h
+        } else {
+            let fname = path
+                .file_stem()
+                .and_then(|n| n.to_str())
+                .unwrap_or("Untitled");
+            frontmatter::filename_to_title(fname)
+        }
+    });
+
+    let id = fields
+        .id
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
@@ -374,18 +372,24 @@ fn normalize_frontmatter(raw: &str, path: &Path) -> (NoteMeta, String) {
     (meta, result.body)
 }
 
-fn normalize_tags(mapping: &serde_yaml::Mapping) -> Vec<String> {
+/// `listed` is the `tags` list as `parse_note` reads it, `None` where `tags` is not a list. A
+/// `tags` that is not a list (a string, a number) and the `tag` key are the importer's own.
+fn normalize_tags(mapping: &serde_yaml::Mapping, listed: Option<Vec<String>>) -> Vec<String> {
     let mut tags = Vec::new();
     let mut seen = HashSet::new();
 
-    for key in &["tags", "tag"] {
-        if let Some(val) = mapping.get(serde_yaml::Value::String((*key).into())) {
-            for raw in yaml_value_to_strings(val) {
-                let cleaned = raw.trim().trim_start_matches('#').trim().to_string();
-                if !cleaned.is_empty() && seen.insert(cleaned.to_lowercase()) {
-                    tags.push(cleaned);
-                }
-            }
+    let from_key = |key: &str| {
+        mapping
+            .get(serde_yaml::Value::String(key.into()))
+            .map(yaml_value_to_strings)
+            .unwrap_or_default()
+    };
+    let plural = listed.unwrap_or_else(|| from_key("tags"));
+
+    for raw in plural.into_iter().chain(from_key("tag")) {
+        let cleaned = raw.trim().trim_start_matches('#').trim().to_string();
+        if !cleaned.is_empty() && seen.insert(cleaned.to_lowercase()) {
+            tags.push(cleaned);
         }
     }
     tags
@@ -897,14 +901,14 @@ mod tests {
     #[test]
     fn test_normalize_tags_comma_string() {
         let mapping: serde_yaml::Mapping = serde_yaml::from_str("tags: \"a, b, c\"").unwrap();
-        let tags = normalize_tags(&mapping);
+        let tags = normalize_tags(&mapping, None);
         assert_eq!(tags, vec!["a", "b", "c"]);
     }
 
     #[test]
     fn test_normalize_tags_single_string() {
         let mapping: serde_yaml::Mapping = serde_yaml::from_str("tags: only-one").unwrap();
-        let tags = normalize_tags(&mapping);
+        let tags = normalize_tags(&mapping, None);
         assert_eq!(tags, vec!["only-one"]);
     }
 
@@ -912,14 +916,14 @@ mod tests {
     fn test_normalize_tags_array() {
         let mapping: serde_yaml::Mapping =
             serde_yaml::from_str("tags:\n  - alpha\n  - beta").unwrap();
-        let tags = normalize_tags(&mapping);
+        let tags = normalize_tags(&mapping, None);
         assert_eq!(tags, vec!["alpha", "beta"]);
     }
 
     #[test]
     fn test_normalize_tags_singular_tag_key() {
         let mapping: serde_yaml::Mapping = serde_yaml::from_str("tag: solo").unwrap();
-        let tags = normalize_tags(&mapping);
+        let tags = normalize_tags(&mapping, None);
         assert_eq!(tags, vec!["solo"]);
     }
 
@@ -927,14 +931,14 @@ mod tests {
     fn test_normalize_tags_merge_singular_and_plural() {
         let mapping: serde_yaml::Mapping =
             serde_yaml::from_str("tags:\n  - a\n  - b\ntag: c").unwrap();
-        let tags = normalize_tags(&mapping);
+        let tags = normalize_tags(&mapping, None);
         assert_eq!(tags, vec!["a", "b", "c"]);
     }
 
     #[test]
     fn test_normalize_tags_dedup_case_insensitive() {
         let mapping: serde_yaml::Mapping = serde_yaml::from_str("tags: [Foo, foo]").unwrap();
-        let tags = normalize_tags(&mapping);
+        let tags = normalize_tags(&mapping, None);
         assert_eq!(tags, vec!["Foo"]);
     }
 
@@ -942,7 +946,7 @@ mod tests {
     fn test_normalize_tags_nested() {
         let mapping: serde_yaml::Mapping =
             serde_yaml::from_str("tags:\n  - project/work\n  - important").unwrap();
-        let tags = normalize_tags(&mapping);
+        let tags = normalize_tags(&mapping, None);
         assert_eq!(tags, vec!["project/work", "important"]);
     }
 
@@ -1242,7 +1246,7 @@ mod tests {
     #[test]
     fn test_normalize_tags_strips_hash() {
         let mapping: serde_yaml::Mapping = serde_yaml::from_str("tags:\n  - \"#hashed\"").unwrap();
-        let tags = normalize_tags(&mapping);
+        let tags = normalize_tags(&mapping, None);
         assert_eq!(tags, vec!["hashed"]);
     }
 
@@ -1335,8 +1339,10 @@ mod tests {
     /// For each case of `frontmatter::tests::cases()`, in the same order: what
     /// `rename_deprecated_properties` returns, `None` meaning the input unchanged, and what
     /// `normalize_frontmatter` reads. The first rows were recorded with gray_matter 0.2.9, as
-    /// the cases were. `normalize_frontmatter` reads the YAML itself, so the rows added since
-    /// were recorded by running it.
+    /// the cases were. `normalize_frontmatter` reads `id`, `title` and a `tags` list by the
+    /// rules `parse_note` follows and the other fields itself, so the rows that read an id or
+    /// a title that is not a string (`title_number`, `overflowing_float`) follow `parse_note`,
+    /// and the rows added since were recorded by running it.
     fn import_expectations() -> Vec<(&'static str, Option<String>, Normalized)> {
         let long = "x".repeat(5000);
         let mut rows = vec![
@@ -1369,6 +1375,7 @@ mod tests {
                 None,
                 Normalized {
                     id: Some("typed-id"),
+                    title: "123".into(),
                     category: Some(ParaCategory::Areas),
                     ..Normalized::generated()
                 },
@@ -1514,7 +1521,6 @@ mod tests {
                 None,
                 Normalized {
                     id: Some("float-id"),
-                    title: "1e999".into(),
                     category: Some(ParaCategory::Projects),
                     ..Normalized::generated()
                 },
@@ -1524,6 +1530,7 @@ mod tests {
                 None,
                 Normalized {
                     id: Some("typed-id"),
+                    title: "true".into(),
                     category: Some(ParaCategory::Projects),
                     ..Normalized::generated()
                 },
@@ -1532,6 +1539,8 @@ mod tests {
                 "capitalised_booleans_in_other_fields",
                 None,
                 Normalized {
+                    id: Some("true"),
+                    title: "false".into(),
                     category: Some(ParaCategory::Projects),
                     ..Normalized::generated()
                 },
@@ -1542,6 +1551,7 @@ mod tests {
                 Normalized {
                     id: Some("typed-id"),
                     title: "Typed".into(),
+                    tags: &["true"],
                     category: Some(ParaCategory::Projects),
                     ..Normalized::generated()
                 },
@@ -1551,6 +1561,7 @@ mod tests {
                 None,
                 Normalized {
                     id: Some("typed-id"),
+                    title: "0.0".into(),
                     category: Some(ParaCategory::Projects),
                     ..Normalized::generated()
                 },
@@ -1582,7 +1593,7 @@ mod tests {
                 None,
                 Normalized {
                     id: Some("typed-id"),
-                    tags: &["a", "1", "2.5"],
+                    tags: &["a", "1", "true", "2.5"],
                     category: Some(ParaCategory::Projects),
                     ..Normalized::generated()
                 },
@@ -1600,6 +1611,8 @@ mod tests {
                 "id_and_title_numbers",
                 None,
                 Normalized {
+                    id: Some("123"),
+                    title: "1.5".into(),
                     category: Some(ParaCategory::Projects),
                     ..Normalized::generated()
                 },
@@ -1607,10 +1620,9 @@ mod tests {
             ("list_front_matter", None, Normalized::generated()),
         ];
         // The rows above from `title_capitalised_true` on show that `normalize_frontmatter`
-        // reads an id or a title only when it is a YAML string. A boolean or a number there
-        // reads as text in `parse_note` and as missing here, and the category reads in both.
-        // `inf`, `nan`, `NaN` and `Infinity` are strings to the YAML reader, so they read as
-        // titles here as they do in `parse_note`.
+        // reads an id, a title and the items of a `tags` list as `parse_note` does: a boolean
+        // or a number reads as its text. `inf`, `nan`, `NaN` and `Infinity` are strings to the
+        // YAML reader, so they read as titles.
         rows.extend(frontmatter::tests::SPELLED_TITLES.map(|(name, spelling)| {
             (
                 name,
@@ -1672,6 +1684,24 @@ mod tests {
             // With gray_matter 0.2.9 this was the body `parse_note` read, too.
             assert_eq!(body, case.note.body, "{name}: body");
         }
+    }
+
+    #[test]
+    fn a_number_or_boolean_id_title_and_tag_keep_their_text_on_import() {
+        let raw = "---\nid: 123\ntitle: 1.5\ntags: [true]\n---\nbody\n";
+        let path = Path::new("no-such-folder").join("Table note.md");
+
+        let (meta, body) = normalize_frontmatter(raw, &path);
+        let read = frontmatter::parse_note(raw, "Table note.md").0;
+
+        assert_eq!(meta.id, "123");
+        assert_eq!(meta.title, "1.5");
+        assert_eq!(meta.tags, ["true"]);
+        assert_eq!(
+            (&meta.id, &meta.title, &meta.tags),
+            (&read.id, &read.title, &read.tags)
+        );
+        assert_eq!(body, "body");
     }
 
     /// The import replaces front matter it cannot read with generated front matter, losing
