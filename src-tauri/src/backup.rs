@@ -924,14 +924,17 @@ fn entry_label<R: Read>(entry: &zip::read::ZipFile<'_, R>) -> String {
 /// directory. `None` when the name is not a plain relative path.
 ///
 /// Backups store names as `to_portable_string` gives them. On Fedora a backslash is an ordinary
-/// file name character, so `Resources/a\b.md` is one file there and must come back as one; on
-/// Windows it separates `a` from `b.md`. zip 9 reads every name with Windows rules, so its paths
-/// are not used. On every OS this refuses a NUL, any `..` part, and a name that Windows reads as
-/// rooted or on a drive: `/abs.md`, `\abs.md`, `\\server\share\x.md`, `C:abs.md`.
+/// file name character, so `Resources/a\b.md`, and even `Resources/a\..\b.md`, is one file there
+/// and must come back as one. On Windows the backslash separates components, so the second name
+/// holds a `..` part there. zip 9 reads every name with Windows rules, so its paths are not used.
+///
+/// Before any component is read, this refuses on every OS a NUL and a name that Windows reads as
+/// rooted or on a drive: `/abs.md`, `\abs.md`, `\\server\share\x.md`, `C:abs.md`. Then it refuses
+/// any `..` component, read with this OS's own path rules.
 fn native_entry(name: &str) -> Option<(PathBuf, bool)> {
     let windows_rooted = name.starts_with(['/', '\\'])
         || matches!(name.as_bytes(), [drive, b':', ..] if drive.is_ascii_alphabetic());
-    if name.contains('\0') || windows_rooted || name.split(['/', '\\']).any(|part| part == "..") {
+    if name.contains('\0') || windows_rooted {
         return None;
     }
     let mut path = PathBuf::new();
@@ -1331,6 +1334,16 @@ mod tests {
         writer.finish().unwrap();
     }
 
+    /// Add each of `entries` to `writer`, as a file holding its bytes.
+    fn write_entries(writer: &mut zip::ZipWriter<fs::File>, entries: &[(&str, &[u8])]) {
+        for (name, body) in entries {
+            writer
+                .start_file(*name, SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(body).unwrap();
+        }
+    }
+
     /// A restore of the archive `write` builds must be refused for `reason`, report no change,
     /// and leave the live vault and everything beside it exactly as they were.
     fn assert_refused_unchanged(
@@ -1338,9 +1351,14 @@ mod tests {
         reason: &str,
         write: impl FnOnce(&mut zip::ZipWriter<fs::File>),
     ) {
+        assert_backup_refused_unchanged(case, reason, |backup| write_archive(backup, write));
+    }
+
+    /// As `assert_refused_unchanged`, for the archive `place` puts at the path it is given.
+    fn assert_backup_refused_unchanged(case: &str, reason: &str, place: impl FnOnce(&Path)) {
         let (root, vault, backups, _) = restore_fixture("hostile-archive");
         let backup = backups.join("hostile.zip");
-        write_archive(&backup, write);
+        place(&backup);
         let before = tree(&vault);
         let everything_before = tree(&root);
 
@@ -1355,15 +1373,38 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    /// Rooted, drive, UNC and `..` names are refused on every OS, whichever separator they use.
+    /// A restore of an archive holding `entries`, after one ordinary note, must succeed and give
+    /// each entry back, byte for byte, at the path `PathBuf::from` reads from its name on this OS.
+    fn assert_restored_at_native_paths(case: &str, entries: &[(&str, &[u8])]) {
+        let (root, vault, backups, _) = restore_fixture("native-names");
+        let backup = backups.join("native.zip");
+        write_archive(&backup, |writer| write_entries(writer, entries));
+
+        restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap())
+            .unwrap_or_else(|error| panic!("{case}: {}", error.message));
+
+        // The live metadata stays, since the archive has none.
+        let expected: BTreeMap<PathBuf, Vec<u8>> = [
+            ("Projects/restored.md", &b"restored"[..]),
+            (".helixnotes/vault_id", b"live-id"),
+            (".helixnotes/attachments/keep.bin", b"attachment"),
+        ]
+        .iter()
+        .chain(entries)
+        .map(|(path, body)| (PathBuf::from(path), body.to_vec()))
+        .collect();
+        assert_eq!(tree(&vault), expected, "{case}");
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new(), "{case}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Forward-slash `..`, rooted, drive, UNC and NUL names are refused on every OS.
     #[test]
     fn rooted_drive_and_parent_names_are_refused_before_any_live_change() {
         for name in [
             "../escape.md",
             "a/../../escape.md",
             "a/../b.md",
-            "..\\escape.md",
-            "a\\..\\..\\escape.md",
             "/abs.md",
             "\\abs.md",
             "C:\\abs.md",
@@ -1377,6 +1418,38 @@ mod tests {
                     .start_file(name, SimpleFileOptions::default())
                     .unwrap();
                 writer.write_all(b"hostile").unwrap();
+            });
+        }
+    }
+
+    /// `..` between backslashes is a parent on Windows, so each archive is refused there, whole.
+    /// On Fedora each name is one ordinary file and comes back at that name, byte for byte.
+    #[test]
+    fn backslash_parents_are_refused_on_windows_and_kept_on_fedora() {
+        for (name, body) in [
+            (
+                "Resources/a\\..\\b.md",
+                &b"one Fedora file named a\\..\\b.md"[..],
+            ),
+            ("Resources/..\\b.md", b"one Fedora file named ..\\b.md"),
+            (
+                "a\\..\\..\\escape.md",
+                b"one Fedora file, an escape on Windows",
+            ),
+        ] {
+            if cfg!(windows) {
+                assert_refused_unchanged(name, "Unsafe path in backup", |writer| {
+                    write_entries(writer, &[(name, body)])
+                });
+            } else {
+                assert_restored_at_native_paths(name, &[(name, body)]);
+            }
+        }
+        // A restore never publishes a top-level name that starts with a dot, so on Fedora this
+        // one would not reach the vault; on Windows it escapes, and is refused.
+        if cfg!(windows) {
+            assert_refused_unchanged("..\\escape.md", "Unsafe path in backup", |writer| {
+                write_entries(writer, &[("..\\escape.md", b"escape")])
             });
         }
     }
