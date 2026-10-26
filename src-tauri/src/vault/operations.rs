@@ -2480,7 +2480,9 @@ fn restore_note_inner(
         let data = fs::read(&manifest_path).map_err(|error| error.to_string())?;
         let manifest: TrashedNoteManifest =
             serde_json::from_slice(&data).map_err(|error| error.to_string())?;
-        if manifest.note_id != source_meta.id {
+        // Byte-identical to what was trashed, so an id that reads differently now is the parser's.
+        let unchanged = manifest.content_sha256.as_ref() == Some(&source_hash);
+        if !unchanged && manifest.note_id != source_meta.id {
             return Err("Trash restore metadata does not match the note identity".to_string());
         }
         if manifest
@@ -2545,7 +2547,11 @@ fn restore_note_inner(
     }
 
     if let (Some(manifest), Some(entries)) = (&manifest, quick_access.as_mut()) {
-        entries.retain(|entry| entry.note_id.as_deref() != Some(manifest.note_id.as_str()));
+        // The manifest may hold an older reading of the id; the entry takes the one read now.
+        entries.retain(|entry| {
+            entry.note_id.as_deref() != Some(manifest.note_id.as_str())
+                && entry.note_id.as_deref() != Some(source_meta.id.as_str())
+        });
         let insert_at = manifest
             .quick_access_index
             .unwrap_or(entries.len())
@@ -2569,7 +2575,7 @@ fn restore_note_inner(
         entries.insert(
             insert_at,
             QuickAccessEntry {
-                note_id: (!manifest.note_id.is_empty()).then(|| manifest.note_id.clone()),
+                note_id: (!source_meta.id.is_empty()).then(|| source_meta.id.clone()),
                 relative_path,
             },
         );
@@ -4252,6 +4258,105 @@ mod tests {
         assert!(std::path::Path::new(&trash_path).is_file());
         assert!(!vault.join("Projects/Plan.md").exists());
         fs::remove_dir_all(vault).unwrap();
+    }
+
+    /// A note with `id: TRUE`: the release before gray_matter 0.3 read that id as "TRUE", and the
+    /// parser now reads "true".
+    const NOTE_WITH_CAPITALISED_BOOLEAN_ID: &str =
+        "---\nid: TRUE\ntitle: Plan\ncategory: Projects\n---\nbody\n";
+
+    /// Puts that note in Trash with the manifest that release wrote for it, whose `note_id` is
+    /// "TRUE". Returns the trashed path.
+    fn trash_the_note_with_the_old_id_reading(
+        vault_str: &str,
+        content_sha256: Option<String>,
+    ) -> String {
+        let trashed = helixnotes_dir(vault_str)
+            .join("trash")
+            .join("20240101000000000_Plan.md");
+        fs::write(&trashed, NOTE_WITH_CAPITALISED_BOOLEAN_ID).unwrap();
+        let manifest = super::TrashedNoteManifest {
+            note_id: "TRUE".to_string(),
+            original_relative_path: "Projects/Plan.md".to_string(),
+            quick_access_index: Some(1),
+            content_sha256,
+        };
+        fs::write(
+            super::trashed_note_manifest_path(&trashed),
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        trashed.to_string_lossy().to_string()
+    }
+
+    #[test]
+    fn restore_accepts_an_id_that_now_reads_differently_when_the_content_is_unchanged() {
+        let vault = scaffolded_vault("restore-old-id-reading");
+        let vault_str = vault.to_string_lossy().to_string();
+        let entry = |note_id: &str, relative_path: &str| super::QuickAccessEntry {
+            note_id: Some(note_id.to_string()),
+            relative_path: relative_path.to_string(),
+        };
+        // A stale entry under each reading of the id, and one that is not this note's.
+        super::save_quick_access_entries(
+            &vault_str,
+            &[
+                entry("TRUE", "Resources/Stale-old.md"),
+                entry("other-id", "Resources/Other.md"),
+                entry("true", "Resources/Stale-new.md"),
+            ],
+        )
+        .unwrap();
+        let trash_path = trash_the_note_with_the_old_id_reading(
+            &vault_str,
+            Some(super::content_sha256(
+                NOTE_WITH_CAPITALISED_BOOLEAN_ID.as_bytes(),
+            )),
+        );
+        let trashed = std::path::Path::new(&trash_path);
+
+        let restored = super::restore_note(&vault_str, &trash_path).unwrap();
+
+        assert_eq!(
+            std::path::Path::new(&restored),
+            vault.join("Projects/Plan.md")
+        );
+        assert_eq!(
+            fs::read_to_string(&restored).unwrap(),
+            NOTE_WITH_CAPITALISED_BOOLEAN_ID
+        );
+        assert!(!trashed.exists());
+        assert!(!super::trashed_note_manifest_path(trashed).exists());
+        assert_eq!(
+            super::load_quick_access_entries(&vault_str).unwrap(),
+            [
+                entry("other-id", "Resources/Other.md"),
+                entry("true", "Projects/Plan.md")
+            ]
+        );
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn restore_refuses_a_different_id_reading_unless_the_content_hash_matches() {
+        for recorded_hash in [None, Some(super::content_sha256(b"another note"))] {
+            let vault = scaffolded_vault("restore-id-mismatch");
+            let vault_str = vault.to_string_lossy().to_string();
+            let trash_path = trash_the_note_with_the_old_id_reading(&vault_str, recorded_hash);
+
+            let result = super::restore_note(&vault_str, &trash_path);
+
+            assert_eq!(
+                result,
+                Err("Trash restore metadata does not match the note identity".to_string())
+            );
+            assert_eq!(
+                fs::read_to_string(&trash_path).unwrap(),
+                NOTE_WITH_CAPITALISED_BOOLEAN_ID
+            );
+            assert!(!vault.join("Projects/Plan.md").exists());
+            fs::remove_dir_all(vault).unwrap();
+        }
     }
 
     #[cfg(unix)]

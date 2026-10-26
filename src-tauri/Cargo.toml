@@ -40,7 +40,7 @@ chrono = { version = "0.4", features = ["serde", "unstable-locales"] }
 sys-locale = "0.3"
 uuid = { version = "1", features = ["v4"] }
 tantivy = "0.22"
-gray_matter = "0.2"
+gray_matter = "0.3"
 tokio = { version = "1", features = ["full"] }
 dirs = "6"
 dunce = "1"
