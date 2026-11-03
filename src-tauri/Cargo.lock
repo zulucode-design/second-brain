@@ -4292,7 +4292,7 @@ dependencies = [
  "notify",
  "png 0.17.16",
  "pulldown-cmark",
- "quick-xml 0.41.0",
+ "quick-xml 0.42.0",
  "rayon",
  "regex",
  "reqwest 0.12.28",

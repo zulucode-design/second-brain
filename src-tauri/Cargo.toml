@@ -50,7 +50,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "str
 rusqlite = { version = "0.32", features = ["bundled"] }
 futures = "0.3"
 rayon = "1"
-quick-xml = "0.41"
+quick-xml = "0.42"
 urlencoding = "2"
 sha2 = "0.10"
 same-file = "1"
