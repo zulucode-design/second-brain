@@ -515,40 +515,40 @@ fn harden_generated_config_xml(
 ) -> Result<Vec<u8>, String> {
     use quick_xml::events::{BytesText, Event};
 
+    // quick-xml 0.42 gives element names as UTF-8 text, so the open-element path is kept as
+    // text and matched against string literals.
     fn replacement(
-        path: &[Vec<u8>],
+        path: &[String],
         control: &ControlState,
         local_address: std::net::Ipv4Addr,
     ) -> Option<(&'static str, String)> {
-        if path.len() != 3 || path[0] != b"configuration" {
+        if path.len() != 3 || path[0] != "configuration" {
             return None;
         }
-        match (path[1].as_slice(), path[2].as_slice()) {
-            (b"gui", b"address") => {
-                Some(("gui/address", format!("127.0.0.1:{}", control.gui_port)))
-            }
-            (b"gui", b"apikey") => Some(("gui/apikey", control.api_key.clone())),
-            (b"options", b"listenAddress") => Some((
+        match (path[1].as_str(), path[2].as_str()) {
+            ("gui", "address") => Some(("gui/address", format!("127.0.0.1:{}", control.gui_port))),
+            ("gui", "apikey") => Some(("gui/apikey", control.api_key.clone())),
+            ("options", "listenAddress") => Some((
                 "options/listenAddress",
                 format!("tcp://{local_address}:22000"),
             )),
-            (b"options", b"globalAnnounceEnabled") => {
+            ("options", "globalAnnounceEnabled") => {
                 Some(("options/globalAnnounceEnabled", "false".into()))
             }
-            (b"options", b"localAnnounceEnabled") => {
+            ("options", "localAnnounceEnabled") => {
                 Some(("options/localAnnounceEnabled", "false".into()))
             }
-            (b"options", b"relaysEnabled") => Some(("options/relaysEnabled", "false".into())),
-            (b"options", b"startBrowser") => Some(("options/startBrowser", "false".into())),
-            (b"options", b"natEnabled") => Some(("options/natEnabled", "false".into())),
-            (b"options", b"urAccepted") => Some(("options/urAccepted", "-1".into())),
-            (b"options", b"autoUpgradeIntervalH") => {
+            ("options", "relaysEnabled") => Some(("options/relaysEnabled", "false".into())),
+            ("options", "startBrowser") => Some(("options/startBrowser", "false".into())),
+            ("options", "natEnabled") => Some(("options/natEnabled", "false".into())),
+            ("options", "urAccepted") => Some(("options/urAccepted", "-1".into())),
+            ("options", "autoUpgradeIntervalH") => {
                 Some(("options/autoUpgradeIntervalH", "0".into()))
             }
-            (b"options", b"crashReportingEnabled") => {
+            ("options", "crashReportingEnabled") => {
                 Some(("options/crashReportingEnabled", "false".into()))
             }
-            (b"options", b"announceLANAddresses") => {
+            ("options", "announceLANAddresses") => {
                 Some(("options/announceLANAddresses", "false".into()))
             }
             _ => None,
@@ -558,7 +558,7 @@ fn harden_generated_config_xml(
     let mut reader = quick_xml::Reader::from_str(contents);
     reader.config_mut().trim_text(false);
     let mut writer = quick_xml::Writer::new(Vec::with_capacity(contents.len()));
-    let mut path = Vec::<Vec<u8>>::new();
+    let mut path = Vec::<String>::new();
     let mut replaced = std::collections::BTreeSet::new();
     loop {
         let event = reader
@@ -566,7 +566,7 @@ fn harden_generated_config_xml(
             .map_err(|error| format!("Generated Syncthing configuration is invalid: {error}"))?;
         match event {
             Event::Start(start) => {
-                path.push(start.name().as_ref().to_vec());
+                path.push(start.name().as_ref().to_owned());
                 writer
                     .write_event(Event::Start(start))
                     .map_err(|error| error.to_string())?;
@@ -2547,6 +2547,280 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("missing required safety fields"));
+    }
+
+    // `config.xml` as Syncthing 2.1.5's `generate --no-port-probing` writes it, with a placeholder
+    // device id, device name and API key, and the result of hardening it for
+    // `hardening_control("app-owned-key")`. The expected file was produced with quick-xml 0.41,
+    // before the port to 0.42, so it records the behavior the port must keep (#242).
+    const GENERATED_CONFIG: &str =
+        include_str!("../test-fixtures/deps-quickxml042/syncthing-2.1.5-config.xml");
+    const HARDENED_CONFIG: &str =
+        include_str!("../test-fixtures/deps-quickxml042/syncthing-2.1.5-config.hardened.xml");
+
+    /// The twelve safety fields: the path under `<configuration>`, the text in
+    /// `GENERATED_CONFIG`, and the text hardening writes for `hardening_control("app-owned-key")`.
+    const SAFETY_FIELDS: [(&str, &str, &str); 12] = [
+        ("gui/address", "127.0.0.1:8384", "127.0.0.1:22046"),
+        (
+            "gui/apikey",
+            "placeholder-generated-api-key",
+            "app-owned-key",
+        ),
+        (
+            "options/listenAddress",
+            "default",
+            "tcp://100.124.210.13:22000",
+        ),
+        ("options/globalAnnounceEnabled", "true", "false"),
+        ("options/localAnnounceEnabled", "true", "false"),
+        ("options/relaysEnabled", "true", "false"),
+        ("options/startBrowser", "true", "false"),
+        ("options/natEnabled", "true", "false"),
+        ("options/urAccepted", "0", "-1"),
+        ("options/autoUpgradeIntervalH", "12", "0"),
+        ("options/crashReportingEnabled", "true", "false"),
+        ("options/announceLANAddresses", "true", "false"),
+    ];
+
+    /// A config with everything hardening must pass through untouched: an XML declaration, a
+    /// comment, non-ASCII text and attributes, entity and character references, CDATA, empty
+    /// elements, a tab and a CRLF. Each `{<path>}` token stands for one safety field's text.
+    const PASS_THROUGH_CONFIG: &str = concat!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!-- Généré pour un test : <gui> & <options> here are not markup -->
+<configuration version="52">
+    <device id="PLACEHOLDER-DEVICE-ID" name="Poste ünïcødé 東京 &amp; co" introducedBy="">
+        <address>dynamic</address>
+        <label>Café &amp; thé &lt;crème&gt; &#233; &#x263A;</label>
+    </device>
+    <gui enabled="true" tls="false" sendBasicAuthPrompt="false">
+        <address>{gui/address}</address>
+        <apikey>{gui/apikey}</apikey>
+        <theme><![CDATA[<b>dark</b> & "raw" text]]></theme>
+    </gui>
+    <ldap></ldap>
+    <empty/>
+"#,
+        "\t<!-- a tab before this comment and a CRLF after it -->\r\n",
+        r#"    <options>
+        <listenAddress>{options/listenAddress}</listenAddress>
+        <globalAnnounceServer>default</globalAnnounceServer>
+        <globalAnnounceEnabled>{options/globalAnnounceEnabled}</globalAnnounceEnabled>
+        <localAnnounceEnabled>{options/localAnnounceEnabled}</localAnnounceEnabled>
+        <localAnnounceMCAddr>[ff12::8384]:21027</localAnnounceMCAddr>
+        <relaysEnabled>{options/relaysEnabled}</relaysEnabled>
+        <startBrowser>{options/startBrowser}</startBrowser>
+        <natEnabled>{options/natEnabled}</natEnabled>
+        <urAccepted>{options/urAccepted}</urAccepted>
+        <urUniqueID></urUniqueID>
+        <urURL>https://data.syncthing.net/newdata?a=1&amp;b=2</urURL>
+        <autoUpgradeIntervalH>{options/autoUpgradeIntervalH}</autoUpgradeIntervalH>
+        <minHomeDiskFree unit="%">1</minHomeDiskFree>
+        <crashReportingEnabled>{options/crashReportingEnabled}</crashReportingEnabled>
+        <announceLANAddresses>{options/announceLANAddresses}</announceLANAddresses>
+    </options>
+    <defaults>
+        <device id="" introducedBy="">
+            <address>dynamic</address>
+        </device>
+        <ignores />
+    </defaults>
+</configuration>
+"#,
+    );
+
+    fn hardening_control(api_key: &str) -> ControlState {
+        ControlState {
+            version: 1,
+            enabled: true,
+            api_key: api_key.into(),
+            gui_port: 22046,
+            peer: None,
+        }
+    }
+
+    fn harden(generated: &str, api_key: &str) -> Result<String, String> {
+        harden_generated_config_xml(
+            generated,
+            &hardening_control(api_key),
+            "100.124.210.13".parse().unwrap(),
+        )
+        .map(|hardened| String::from_utf8(hardened).unwrap())
+    }
+
+    /// The fixture with LF line endings, since a Windows checkout may convert them.
+    fn generated_fixture() -> String {
+        GENERATED_CONFIG.replace("\r\n", "\n")
+    }
+
+    fn element(path: &str, text: &str) -> String {
+        let name = path.rsplit('/').next().unwrap();
+        format!("<{name}>{text}</{name}>")
+    }
+
+    #[test]
+    fn a_real_shaped_generated_config_hardens_to_the_recorded_result() {
+        let generated = generated_fixture();
+        let expected = HARDENED_CONFIG.replace("\r\n", "\n");
+
+        assert_eq!(harden(&generated, "app-owned-key").unwrap(), expected);
+
+        // The recorded result differs from the generated file in the twelve fields alone.
+        for (path, before, after) in SAFETY_FIELDS {
+            assert_eq!(
+                generated.matches(&element(path, before)).count(),
+                1,
+                "{path}"
+            );
+            assert_eq!(expected.matches(&element(path, after)).count(), 1, "{path}");
+        }
+        assert_eq!(generated.lines().count(), expected.lines().count());
+        let changed = generated
+            .lines()
+            .zip(expected.lines())
+            .filter(|(before, after)| before != after)
+            .count();
+        assert_eq!(changed, SAFETY_FIELDS.len());
+    }
+
+    #[test]
+    fn hardening_changes_only_the_texts_of_the_twelve_safety_fields() {
+        let mut generated = PASS_THROUGH_CONFIG.to_string();
+        let mut expected = PASS_THROUGH_CONFIG.to_string();
+        for (path, before, after) in SAFETY_FIELDS {
+            let token = format!("{{{path}}}");
+            assert_eq!(PASS_THROUGH_CONFIG.matches(&token).count(), 1, "{path}");
+            generated = generated.replace(&token, before);
+            expected = expected.replace(&token, after);
+        }
+
+        assert_eq!(harden(&generated, "app-owned-key").unwrap(), expected);
+    }
+
+    #[test]
+    fn a_replacement_value_is_written_as_escaped_text() {
+        let hardened = harden(&generated_fixture(), "a<b&c>d").unwrap();
+
+        assert!(hardened.contains("<apikey>a&lt;b&amp;c&gt;d</apikey>"));
+        assert!(!hardened.contains("a<b&c>d"));
+    }
+
+    #[test]
+    fn a_missing_empty_or_self_closing_safety_field_fails_closed() {
+        let generated = generated_fixture();
+        for (path, before, _) in SAFETY_FIELDS {
+            let name = path.rsplit('/').next().unwrap();
+            let field = element(path, before);
+            for broken in [
+                String::new(),
+                format!("<{name}></{name}>"),
+                format!("<{name}/>"),
+            ] {
+                let error =
+                    harden(&generated.replacen(&field, &broken, 1), "app-owned-key").unwrap_err();
+                assert_eq!(
+                    error,
+                    "Generated Syncthing configuration is missing required safety fields (found 11 of 12)",
+                    "{path} as {broken:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_invalid_generated_config_fails_without_echoing_its_text() {
+        let generated = generated_fixture();
+        let field = "<apikey>placeholder-generated-api-key</apikey>";
+        assert!(generated.contains(field));
+        let mismatched = generated.replace(field, "<apikey>placeholder-generated-api-key</gui>");
+
+        let error = harden(&mismatched, "app-owned-key").unwrap_err();
+
+        assert!(
+            error.starts_with("Generated Syncthing configuration is invalid:"),
+            "{error}"
+        );
+        assert!(!error.contains("placeholder-generated-api-key"));
+        assert!(!error.contains("app-owned-key"));
+    }
+
+    #[test]
+    fn an_address_below_a_device_or_nested_deeper_is_not_replaced() {
+        let generated = generated_fixture()
+            .replacen(
+                "<address>dynamic</address>",
+                "<address>device-address</address>",
+                1,
+            )
+            .replacen(
+                "<address>dynamic</address>",
+                "<address>defaults-device-address</address>",
+                1,
+            )
+            .replace(
+                "<theme>default</theme>",
+                "<theme>default</theme><nested><address>nested-gui-address</address></nested>",
+            );
+        // The first `<address>` sits in `<configuration><device>`, the second in
+        // `<configuration><defaults><device>`, the third in `<configuration><gui><nested>`.
+        let at = |text: &str| generated.find(text).unwrap();
+        assert!(at("<address>device-address") < at("<gui "));
+        assert!(at("<defaults>") < at("<address>defaults-device-address"));
+        assert!(at("<gui ") < at("<nested>") && at("<nested>") < at("</gui>"));
+
+        let hardened = harden(&generated, "app-owned-key").unwrap();
+
+        for untouched in [
+            "device-address",
+            "defaults-device-address",
+            "nested-gui-address",
+        ] {
+            assert_eq!(
+                hardened
+                    .matches(&format!("<address>{untouched}</address>"))
+                    .count(),
+                1,
+                "{untouched}"
+            );
+        }
+        assert_eq!(
+            hardened
+                .matches("<address>127.0.0.1:22046</address>")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_safety_field_is_replaced_only_at_its_exact_path() {
+        // The same last two names one level deeper, and a child inside a safety field.
+        let deeper = "<gui><address>defaults-gui-address</address></gui>\
+                      <options><natEnabled>defaults-nat-enabled</natEnabled></options>";
+        let field = "<apikey>placeholder-generated-api-key</apikey>";
+        let generated = generated_fixture()
+            .replace("<defaults>", &format!("<defaults>{deeper}"))
+            .replace(
+                field,
+                "<apikey>placeholder-generated-api-key<child>apikey-child</child></apikey>",
+            );
+
+        let hardened = harden(&generated, "app-owned-key").unwrap();
+
+        assert!(hardened.contains(&format!("<defaults>{deeper}")));
+        assert!(hardened.contains("<apikey>app-owned-key<child>apikey-child</child></apikey>"));
+
+        // The same fields under another root element are not a Syncthing configuration.
+        let renamed = generated_fixture()
+            .replace(
+                "<configuration version=\"52\">",
+                "<settings version=\"52\">",
+            )
+            .replace("</configuration>", "</settings>");
+        assert_eq!(
+            harden(&renamed, "app-owned-key").unwrap_err(),
+            "Generated Syncthing configuration is missing required safety fields (found 0 of 12)"
+        );
     }
 
     #[test]

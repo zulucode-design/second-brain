@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Issue 242: quick-xml 0.42 verification</title>
+<style>
+body { max-width: 68rem; margin: 2rem auto; padding: 0 1rem; font: 16px/1.55 system-ui, sans-serif; color: #20252b; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+th, td { border: 1px solid #cbd2d9; padding: .55rem; text-align: left; vertical-align: top; }
+th { background: #edf1f5; }
+code { overflow-wrap: anywhere; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+<main>
+<h1>Issue 242: quick-xml 0.42 verification</h1>
+<p>2026-11-02. The branch moves quick-xml from 0.41 to 0.42 and ports
+<code>harden_generated_config_xml</code> in <code>src-tauri/src/sync_sidecar.rs</code> to the
+new text API. The open-element path is now <code>Vec&lt;String&gt;</code>, and the inner
+<code>replacement</code> function matches string literals instead of byte strings. The twelve
+safety replacements, the exact three-level path rule, <code>REQUIRED_FIELDS</code> and both
+error texts are unchanged. Seven new tests and a fixture pair recorded with quick-xml 0.41 pin
+that behavior.</p>
+<p><strong>Publication is pending.</strong> Every post-merge and installed check the issue asks
+for ran on candidate <code>5d7a2a4</code> on Fedora and Windows, including the XML and socket audit,
+Gate 3 step 1 and the Gate 1 interrupted-sync run. Windows <code>pnpm verify</code> still fails
+the one existing #244 install-failure test. Final review of the exact publication head, the PR,
+CI and Nicolas's merge approval have not happened.</p>
+
+<h2>Candidate and provenance</h2>
+<ul>
+<li>Wave baseline: <code>17d98d007bea1422f1fb43a333263a7008862114</code>.</li>
+<li>Verified and packaged candidate: <code>5d7a2a4985dfbe089e55452834cbb2bd1f44ac08</code>,
+on <code>fix/242-quick-xml</code>. It merges public main
+<code>3b066747db0a059bc95f731d6ca4df40527d4f28</code>, which includes PR #245 and PR #247.</li>
+<li>Immutable brief: <code>9024effa7ef424836182b19b6dbee0b496458c1f</code>;
+frozen handoff: <code>9644597904bc7dbedd6c3da0538ca497b2e9ad75</code>;
+Kiro code head: <code>59bea009cce6d765dbca0ff1ab8575ac3bfff02f</code>.</li>
+<li>Sol imported three Kiro commits with <code>cherry-pick -x</code> during its temporary
+orchestration on 2026-10-25. <code>760caac</code> adds the fixture pair, from Kiro's
+<code>aa3933e</code>. <code>0306b69</code> ports the function, from <code>aa9a6d2</code>.
+<code>1f9dc8a</code> adds the seven tests, from <code>59bea00</code>. Freeze, allowed-file,
+ignore and privacy intake were clean.</li>
+<li><code>8833bae</code> is the prescribed manifest edit, <code>quick-xml = "0.41"</code> to
+<code>"0.42"</code> with no features. <code>fb6e063</code> is Sol's lock regeneration.</li>
+<li>Main was merged twice without conflicts. <code>28ad1e1</code> took main
+<code>1374b82</code> from PR #245, and <code>5d7a2a4</code> took main <code>3b06674</code>
+from PR #247. Lock regeneration after each merge changed nothing.</li>
+<li>No application code changed after import. The branch's own diff has the same stable
+patch-id at the reviewed head and at the candidate, <code>673721225e54884f127c10779cdfc975069df16d</code>.</li>
+</ul>
+<p>The lockfile already held both quick-xml versions before this branch. <code>plist</code>
+1.10.3 uses 0.42.0 and <code>wayland-scanner</code> 0.31.11 keeps 0.41.0. The regenerated lock
+changes one line, the app's own dependency reference, and no package version or checksum.
+Sol's first <code>cargo update</code> named only <code>quick-xml</code> and stopped as ambiguous;
+the qualified update for <code>quick-xml@0.42.0</code> then locked 0 packages. Merged manifests
+keep <code>rust-version = "1.90"</code> and Tauri CLI exactly 2.12.2.</p>
+<p>The fixture pair lives in <code>src-tauri/test-fixtures/deps-quickxml042/</code>. Kiro's
+handoff says the pinned Syncthing 2.1.5 generated the input in its Linux sandbox, and that it
+replaced only the device id, device name and API key with placeholders. Kiro produced the
+expected file with the baseline function built against <code>quick-xml = "=0.41.0"</code>,
+using the existing test's control values. The committed files match the handoff's hashes:
+input 6,581 bytes, SHA-256 <code>cd7856e7b212df4ed96be11baa70e93d802dcc1425dd370db58fbbaae094d867</code>;
+expected 6,592 bytes, SHA-256 <code>55a550f398808b2f4fd0ab43468a20adacf2b1aeda54dd58b1708bfffa4e8eb7</code>.
+They differ in exactly 12 lines. Kiro's sandbox runs are information only, not gate evidence.</p>
+
+<h2>Review</h2>
+<p>Round 1 reviewed the whole branch at <code>fb6e0637015c903a177615f1e60b0ca5dacb9aeb</code>
+against the wave baseline. Sol ran separate Spec and Standards <code>codex exec</code> reviews.
+Both log headers record <code>gpt-6.1-sol</code> at <code>xhigh</code>, and each run followed an
+<code>OK</code> usage probe. Both returned CLEAN, so there were no findings and no fix attempts.
+The Spec prompt checked the brief's ten criteria, the allowlist, the out-of-scope list and the
+fixture provenance in the frozen handoff. The two later main merges brought no #242 change, as
+the matching patch-id above shows. Round 1 is not the final review. The exact publication head
+still needs both axes. Records: <code>242-r1-spec.log</code> and <code>242-r1-standards.log</code>,
+with their <code>-prompt.md</code> and <code>-last.md</code> files.</p>
+
+<h2>Verification by Sol</h2>
+<p>Sol ran every gate below on Fedora 44 and on Windows 11 Pro 10.0.26200. The
+<code>5d7a2a4</code> runners set <code>RUSTUP_TOOLCHAIN=1.90.0</code> on both machines, which
+covers the issue's Rust 1.90 criterion. Each command followed its own successful usage probe.
+The first <code>5d7a2a4</code> queues were interrupted before any result or package. They are
+not claimed. The replacement <code>after-247-r1</code> queues produced every <code>5d7a2a4</code>
+result here.</p>
+<table>
+<thead><tr><th>Candidate and command</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td><code>fb6e063</code>, build gate. Both: frozen <code>pnpm install</code>. Fedora:
+<code>pnpm check</code> and
+<code>cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets</code>.
+Windows: <code>RUSTUP_TOOLCHAIN=1.90.0 pnpm test:rust</code></td>
+<td>Passed. Both installs reused 482 packages and downloaded 0. Typecheck found 0 errors and
+0 warnings. The Fedora compile passed; its gate record does not name the toolchain. Windows
+Rust: 723 passed, 0 failed, 9 ignored.</td></tr>
+<tr><td><code>28ad1e1</code>, after the #245 merge. Fedora <code>pnpm verify</code>, both
+<code>pnpm test:rust sync_sidecar::</code>, Fedora's three live tests, Windows
+<code>pnpm verify</code>, and separate Windows <code>pnpm test:rust</code>,
+<code>pnpm lint:rust</code> and <code>pnpm build</code></td>
+<td>Fedora verify passed: JavaScript 254 passed, 0 failed, 0 skipped; Rust 753 passed,
+0 failed, 10 ignored. Focused sidecar runs: 42 passed, 3 ignored on each machine. All three
+live tests passed on Fedora. Windows verify failed only the #244 test, 248 passed, 1 failed,
+5 skipped. Windows Rust 723 passed, 0 failed, 9 ignored; lint and build passed. The
+<code>5d7a2a4</code> runs below supersede this row, which keeps its own attribution.</td></tr>
+<tr><td><code>5d7a2a4</code>, Fedora: <code>pnpm verify</code></td>
+<td>Passed. Typecheck 0 errors, 0 warnings. JavaScript 254 passed, 0 failed, 0 skipped.
+Rust 761 passed, 0 failed, 10 ignored. Formatting, Clippy and the frontend build passed. The
+build printed the existing nonfatal chunk-size warning.</td></tr>
+<tr><td><code>5d7a2a4</code>, Windows: <code>pnpm verify</code></td>
+<td><strong>Failed</strong>, only at the existing
+<code>pnpm install fails when the prepare svelte-kit sync fails</code> test in
+<code>tests/install-failure.test.mjs</code>. It expected <code>/INTENTIONAL_SYNC_FAILURE/</code>
+and received <code>undefined\nundefined</code>. Typecheck passed. JavaScript 248 passed,
+1 failed, 5 skipped. The command stopped after JavaScript, so its Rust, lint and build stages
+did not run inside <code>verify</code>. This branch does not touch that test file.
+<a href="https://github.com/zulucode-design/second-brain/issues/244">Issue 244</a> owns the
+repair.</td></tr>
+<tr><td><code>5d7a2a4</code>, Windows, separate: <code>pnpm test:rust</code>,
+<code>pnpm lint:rust</code>, and <code>pnpm tauri:build --bundles nsis</code></td>
+<td>Passed. Rust 731 passed, 0 failed, 9 ignored. Formatting and Clippy with
+<code>-D warnings</code> passed. The NSIS build ran the <code>pnpm build</code> frontend step,
+which passed with the same chunk-size warning, then the release compile and installer.</td></tr>
+<tr><td><code>5d7a2a4</code>, both: <code>pnpm test:rust sync_sidecar::</code></td>
+<td>Passed on each machine: 42 passed, 0 failed, 3 ignored. The three ignored tests are the
+live tests in the next row.</td></tr>
+<tr><td><code>5d7a2a4</code>, both: <code>node scripts/prepare-syncthing.mjs</code>, then one at
+a time with <code>-- --ignored --nocapture</code>:
+<code>only_a_batch_with_incoming_changes_takes_a_backup_and_it_comes_first</code>,
+<code>a_second_machine_joining_a_vault_leaves_no_conflict_copy</code>,
+<code>a_close_once_the_peer_connects_starts_neither_scan_nor_backup</code></td>
+<td>All six runs passed. Fedora took 354.97 s, 81.52 s and 11.51 s; Windows took 357.70 s,
+83.18 s and 12.32 s. These tests drive <code>sync_batch</code> against real Syncthing processes
+and never call the ported function. They are a regression check, not proof of the port.</td></tr>
+<tr><td><code>5d7a2a4</code>, both: <code>pnpm tauri:build</code> with <code>--bundles rpm</code>
+and <code>--bundles nsis</code>, then candidate-specific preservation</td>
+<td>Passed. Sol preserved both packages with their hashes, listed below. The Fedora packaged
+binary embeds the candidate and its digest matches the RPM manifest. The Windows build
+executable embeds the candidate.</td></tr>
+<tr><td><code>5d7a2a4</code>, both installed packages: XML and socket audit plus Gate 3 step 1,
+run <code>20261026T173412Z</code></td>
+<td><strong>Passed</strong> on both machines. Details below.</td></tr>
+<tr><td><code>5d7a2a4</code>, both installed packages:
+<code>node scripts/alpha-harness.mjs sync --candidate 5d7a2a4985dfbe089e55452834cbb2bd1f44ac08 --timeout-minutes 70</code>,
+run <code>20261026T173534Z</code></td>
+<td><strong>Passed.</strong> Details below.</td></tr>
+</tbody>
+</table>
+<p>Gate records: <code>gate-results.jsonl</code>, <code>242-queue-fedora-after-247-r1.log</code>,
+<code>242-queue-windows-after-247-r1.log</code>, <code>242-after-247-r1-fedora-state.json</code>
+and <code>242-after-247-r1-windows-state.json</code>, with one log per command, such as
+<code>242-verify-windows-after-247-r1.log</code>. Earlier rows use <code>242-check-fedora.log</code>,
+<code>242-compile-fedora.log</code>, <code>242-rust-windows-build-gate.log</code> and the
+<code>-after-245</code> logs.</p>
+
+<h2>Added tests matched to execution</h2>
+<p>The diff adds seven plain <code>#[test]</code> functions to <code>sync_sidecar::tests</code>
+and no <code>#[ignore]</code>. It removes and edits no test, so the two existing hardening tests
+are unedited. Each name below appears as passed in four <code>5d7a2a4</code> logs:
+Fedora's full <code>pnpm verify</code>, Fedora's <code>sync_sidecar::</code> run, Windows'
+separate full <code>pnpm test:rust</code>, and Windows' <code>sync_sidecar::</code> run.</p>
+<table>
+<thead><tr><th>Test in <code>sync_sidecar::tests</code></th><th>Fedora full</th><th>Fedora focused</th><th>Windows full</th><th>Windows focused</th></tr></thead>
+<tbody>
+<tr><th colspan="5">Added</th></tr>
+<tr><td><code>a_real_shaped_generated_config_hardens_to_the_recorded_result</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>hardening_changes_only_the_texts_of_the_twelve_safety_fields</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>a_replacement_value_is_written_as_escaped_text</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>a_missing_empty_or_self_closing_safety_field_fails_closed</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>an_invalid_generated_config_fails_without_echoing_its_text</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>an_address_below_a_device_or_nested_deeper_is_not_replaced</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>a_safety_field_is_replaced_only_at_its_exact_path</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><th colspan="5">Existing, unedited</th></tr>
+<tr><td><code>generated_config_is_hardened_before_the_first_serve</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>generated_config_with_missing_safety_fields_fails_closed</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+</tbody>
+</table>
+<p>The real-shaped test reads both fixtures with <code>include_str!</code> and normalizes line
+endings first. The other tests cover pass-through of a declaration, comments, CDATA, entities,
+non-ASCII text and empty elements; escaping of <code>a&lt;b&amp;c&gt;d</code>; each of the twelve
+fields missing, empty or self-closing; a mismatched end tag whose error carries no key; and
+<code>address</code> elements under <code>device</code>, <code>defaults/device</code> and deeper
+paths that must stay unchanged.</p>
+<details><summary>Reproduce the counts</summary>
+<p>Added tests in the candidate's sidecar diff. This prints 7:</p>
+<pre><code>git diff --unified=0 3b06674...5d7a2a4 -- src-tauri/src/sync_sidecar.rs | python3 -c 'import re,sys; print(len(re.findall(r"^\+\s*#\[test\]\n\+\s*fn \w+\(", sys.stdin.read(), re.M)))'</code></pre>
+<p>Patch-id of the reviewed change and of the candidate's change. Both print
+<code>673721225e54884f127c10779cdfc975069df16d</code>:</p>
+<pre><code>git diff 17d98d0 fb6e063 | git patch-id --stable
+git diff 3b06674...5d7a2a4 | git patch-id --stable</code></pre>
+<p>Each test name in each of the four retained logs. Every count is 1:</p>
+<pre><code>grep -cE '^test sync_sidecar::tests::&lt;name&gt; \.\.\. ok' &lt;log&gt;</code></pre>
+</details>
+
+<h2>Installed XML, sockets and Gate 3 step 1</h2>
+<p>Run <code>20261026T173412Z</code> ran against both installed candidate packages and opened a
+fresh vault with sync enabled on each machine. Sol drove it with a small adapter kept outside
+the repository. The adapter loads the candidate's own <code>scripts/alpha-harness.mjs</code>
+unchanged, SHA-256 <code>5d6607e7e5258925890b6ab1ff369c7cf508a1809dc0ac6ea0954cd4d615b24b</code>,
+and uses its lock, package checks, native WebDriver, journal and cleanup. After launch, an audit
+script on each machine parsed the machine-local Syncthing <code>config.xml</code>. It took the
+expected API key and GUI port from the machine-local control state and the address from
+<code>tailscale ip -4</code>. The audit returns pass flags, option names and sidecar PIDs, so the
+trace holds no key, device id or address.</p>
+<ul>
+<li>All twelve fields matched criterion 2 on both machines. The GUI address is
+<code>127.0.0.1:&lt;gui port&gt;</code>, the API key equals the control state, and
+<code>listenAddress</code> is <code>tcp://&lt;Tailscale IPv4&gt;:22000</code>.
+<code>globalAnnounceEnabled</code>, <code>localAnnounceEnabled</code>, <code>relaysEnabled</code>,
+<code>startBrowser</code>, <code>natEnabled</code>, <code>crashReportingEnabled</code> and
+<code>announceLANAddresses</code> are <code>false</code>. <code>urAccepted</code> is
+<code>-1</code> and <code>autoUpgradeIntervalH</code> is <code>0</code>.</li>
+<li>Every <code>address</code> under <code>device</code> and <code>defaults/device</code> stayed
+<code>dynamic</code>. Sync was enabled and unpaired.</li>
+<li>The audit read the sidecar's own listening sockets, with <code>ss -H -lntp</code> on Fedora
+and <code>Get-NetTCPConnection -State Listen</code> on Windows. The GUI port listened only on
+<code>127.0.0.1</code>, and port 22000 only on the Tailscale address.</li>
+<li>Gate 3 step 1 conditions held in both native WebViews: the four PARA roots, 0 repair
+issues, and running app, sidecar and watchdog processes. Sol inspected both app-only
+screenshots; they stay outside the repository.</li>
+<li>Package identity: on Fedora, <code>rpm -V</code> was clean, the desktop and portal entries
+verified, and the installed binary embeds the candidate. The Windows installer hash matched the
+preserved NSIS package, and the installed executable embeds the candidate.</li>
+<li>Cleanup: both final process lists were empty. On Windows the driver stopped, config and
+window state were restored with the original window-state hash, logs and the WebView profile
+moved back, and the vault junction and scheduled task were removed. Fedora ran under synthetic
+XDG roots.</li>
+</ul>
+<p>Attempt r1, run <code>20261026T172903Z</code>, stopped on Fedora after the app launched and
+before any check ran. The adapter's own snapshot of its child processes read
+<code>/proc</code> for an auxiliary process that had already exited, and failed with
+<code>ENOENT</code>. Cleanup recorded an empty Fedora process list and released the controller
+lock. The Windows stage never started. Sol changed only that snapshot, so it now skips vanished
+auxiliary children; the stamps for the owned app, sidecar, watchdog and driver stay strict. This
+was a verification-script error, not an application failure, and its trace is committed too.</p>
+
+<h2>Gate 1 interrupted sync</h2>
+<p>Run <code>20261026T173534Z</code> started at 17:35:34 UTC on 2026-10-26 and recorded
+<code>run-complete</code> at 19:00:45 UTC. Its runner and controller exited 0.</p>
+<ul>
+<li>Both installed apps reported build commit <code>5d7a2a4</code>, with the executable hashes
+listed below.</li>
+<li>Fedora generated a synthetic fixture of 5,000 notes plus a sentinel, and the two apps
+paired.</li>
+<li>During the first scheduled batch, Windows reached 1,076 of 5,000 matching notes at
+18:00:18 UTC. The controller stopped the exact sidecar, PID 37524, and observed its replacement,
+PID 37576.</li>
+<li>Windows polls then read 2,081 matching notes at 18:00:21, 2,099 at 19:00:12 and 5,000 at
+19:00:23 UTC, after the next scheduled batch. None of the 2,934 polls saw wrong content, a
+duplicate id, a conflict copy or a stray file.</li>
+<li>Final state on both replicas: 5,000 matching notes, 0 missing, 0 wrong content, sentinel
+present, 0 duplicate ids, 0 conflict copies, 0 strays.</li>
+<li>Pre-sync backups: Fedora has one, named for 18:00:11. Windows has two, named for 18:00:11
+and 19:00:10. The required receiving Windows backups are present.</li>
+<li>Both final app, sidecar and watchdog process lists were empty. Windows config, window state,
+logs and WebView profile were restored, and the vault junction and scheduled task were
+removed.</li>
+</ul>
+<p>Windows restoration rests on the stock controller's own events in this trace. The #242
+records hold no separate post-run inspection of the Windows machine for this run.</p>
+
+<h2>Package checksums</h2>
+<table>
+<thead><tr><th>Artifact</th><th>Bytes</th><th>SHA-256</th></tr></thead>
+<tbody>
+<tr><td>Fedora candidate RPM</td><td>31,360,579</td><td><code>8ddea7c3c0172ed6a665c5b1c1ba78207e3fbb28c9536308c15185ed9ecca113</code></td></tr>
+<tr><td>Windows candidate NSIS installer</td><td>20,589,184</td><td><code>1db7629e3d90c96423e21342dd70075f08bd0aa9d993c559557ec72b5dc68953</code></td></tr>
+<tr><td>Fedora installed <code>second-brain</code>, same as the RPM payload binary</td><td>51,288,344</td><td><code>1ef09ecaa89d4b8a4b481d924d5f3cf11c4d38ca9c124761ba58dfaf4a99a728</code></td></tr>
+<tr><td>Windows installed <code>second-brain.exe</code></td><td>36,862,464</td><td><code>5e49f0ac7c84acadae38ea3e2d2bb1530cc8cb6dafc26986e1313a68994c76cd</code></td></tr>
+<tr><td>Windows build executable before bundling</td><td>not recorded</td><td><code>52367be0f60634eeabeb7d1293e481dbffbb8369e386d24d40e1b25753c09776</code></td></tr>
+</tbody>
+</table>
+<p>The installed hashes, not the pre-bundle hash, identify what ran. Both packages are retained
+outside the repository. <code>242-package-artifacts-after-247.json</code>,
+<code>242-package-fedora-after-247-r1.json</code> and <code>242-package-windows-after-247-r1.json</code>
+record them.</p>
+
+<h2>Committed traces</h2>
+<p>These redacted traces are committed with this report. They hold counts, booleans, hashes and
+<code>~</code>, <code>%USERPROFILE%</code> or <code>D:\SecondBrainTest</code> paths, the same
+kinds earlier committed traces hold. They contain no key, token, Tailscale address, device id
+or note content.</p>
+<table>
+<thead><tr><th>Trace</th><th>Rows</th><th>Bytes</th><th>SHA-256</th></tr></thead>
+<tbody>
+<tr><td><a href="evidence/alpha-harness-sync-20261026T173534Z.jsonl">Gate 1, run 20261026T173534Z</a></td><td>2,951</td><td>1,010,615</td><td><code>3a9b2dbd1634853ea56bd9189c226365577a787128107a8286ff5d2a50d824d1</code></td></tr>
+<tr><td><a href="evidence/alpha-harness-deps-242-step1-20261026T173412Z.jsonl">XML, sockets and Gate 3 step 1, r2, run 20261026T173412Z</a></td><td>19</td><td>6,796</td><td><code>1183badc296c63df7c319fbcd3f7b913dd3711cac0447be270ac9948a21392e6</code></td></tr>
+<tr><td><a href="evidence/alpha-harness-deps-242-step1-20261026T172903Z.jsonl">Failed attempt r1, run 20261026T172903Z</a></td><td>7</td><td>1,874</td><td><code>9d7b52383ad32140d501e81f643e0dce30a015d6958297169e0091336ba6136c</code></td></tr>
+</tbody>
+</table>
+<p>Rows come from <code>wc -l</code> and hashes from <code>sha256sum</code> on each file.
+<code>grep -c '"event":"fixture-poll"'</code> on the Gate 1 trace returns the 2,934 polls.
+Other records stay outside the repository and are cited by name:
+<code>242-installed-runtime-plan.md</code>, <code>242-installed-step1-state.json</code>,
+<code>242-installed-step1-state-before-r2.json</code>, <code>242-installed-step1-r2-runner.json</code>,
+<code>242-installed-sync-r1-runner.json</code>, the adapter folder <code>installed-242-step1</code>
+with <code>audit-fedora.py</code> and <code>audit-windows.ps1</code>, and the screenshots
+<code>fedora-sync-startup.png</code> and <code>windows-sync-startup.png</code>.</p>
+
+<h2>Remaining work and limits</h2>
+<p>This commit adds only the report and its three traces. Application sources, tests, fixtures,
+manifests and the lockfile are identical to tested and packaged candidate <code>5d7a2a4</code>,
+so its evidence carries to this commit. The whole branch still needs final review on both axes
+at the exact publication head, then the PR with its <code>Final review:</code> line, then CI.
+Merge waits for Nicolas's separate approval.</p>
+<p>Windows <code>pnpm verify</code> remains failed at the #244 install-failure test, and the PR
+must say so, with the reason and issue 244. Windows Rust, lint and the NSIS build, which
+includes the frontend build, passed separately. The 10 Fedora and 9 Windows ignored tests in
+the full runs are not claimed as passes, apart from the three live tests run by name. Only
+step 1 of Gate 3 ran; no AI, Notion or Ollama result is claimed.</p>
+<p>The fixture comes from the Linux build of Syncthing. No Windows-generated fixture exists,
+though the installed Windows audit did parse a real Windows-generated <code>config.xml</code>.</p>
+<p>Kiro's handoff records one escaping difference between the versions and four older
+behaviors. No test pins any of them.</p>
+<ul>
+<li>quick-xml 0.42 writes a carriage return in a replacement value as <code>&amp;#13;</code>,
+where 0.41 wrote it raw. None of the twelve values can hold one. The API key is
+<code>Uuid::new_v4().simple()</code>, 32 hex characters, at <code>sync_sidecar.rs</code> line 100,
+and the other eleven are formatted numbers, addresses or fixed literals. This rests on reading
+the source, not on a run.</li>
+<li>A document whose root end tag is missing at end of input is accepted and hardened.</li>
+<li>A leading BOM is dropped from the output.</li>
+<li>An unknown entity such as <code>&amp;bogus;</code> passes through.</li>
+<li>A comment inside a safety field puts the new value on each side of it, the same effect as the
+out-of-scope entity-reference case.</li>
+</ul>
+<p>Kiro's sandbox compared both quick-xml versions on 26 inputs. 25 gave identical results; the
+one difference was a key containing a carriage return. The last four behaviors above were
+identical under both versions, so they predate the port. That comparison is information only.</p>
+</main>
+</html>
