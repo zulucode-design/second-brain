@@ -342,29 +342,46 @@ one. The rule is therefore part of the machine-state restore, and the run keeps 
   a key from the copied config. Immediately before a machine's `config.json` gets the key, the
   controller looks again and arms that machine's removal only when no entry is there. If one is,
   that machine's run stops with nothing planted and nothing deleted.
-- **A lookup that fails is never read as "absent".** On Fedora, `secret-tool` exiting with a message
-  (no D-Bus session, a locked collection) is a failure. On Windows, only `ERROR_NOT_FOUND` (1168)
-  from `CredReadW` means absent, and only success or `ERROR_NOT_FOUND` from `CredDeleteW` is a
-  completed delete. Any other code stops `alpha-desktop.ps1` before it answers; it writes the call
-  and the code, nothing else, and exits 1. A failed check before the run or before the plant stops
-  the run with nothing planted. A failed check during cleanup records the entry as `left: null`
-  (unknown) and fails the run.
-- **It learns only whether the entry exists.** On Fedora, `secret-tool lookup` runs with its
-  standard output sent to the operating system's null device, and only the exit status is read. On
-  Windows, `scripts/windows/alpha-desktop.ps1` runs in the desktop session, because an SSH logon has
-  no Credential Manager, and writes `found` and `left` to a result file named for that one call,
-  which the worker deletes once read. It accepts exactly the app's four AI targets (`ai:anthropic`,
+- **A locked entry is present.** On Fedora, existence comes from the Secret Service's own
+  `SearchItems` method (`busctl --user call org.freedesktop.secrets /org/freedesktop/secrets
+  org.freedesktop.Secret.Service SearchItems`), which lists the matching unlocked and locked items
+  by path and never returns a secret. An entry exists when either list is non-empty. `secret-tool
+  lookup` is not used: it exits 1 with no message both for no entry and for an entry it could not
+  unlock. On Windows, `alpha-desktop.ps1` reads the credential before and after its work, and an
+  entry either read saw exists, so `{ found: false, left: true }` counts as present.
+- **A lookup that fails is never read as "absent".** On Fedora, a `SearchItems` call that fails (no
+  session bus, no Secret Service) or answers in any other shape is a failure. On Windows, only
+  `ERROR_NOT_FOUND` (1168) from `CredReadW` means absent, and only success or `ERROR_NOT_FOUND` from
+  `CredDeleteW` is a completed delete. Any other code stops `alpha-desktop.ps1` before it answers;
+  it writes the call and the code, nothing else, and exits 1. A failed check before the run or
+  before the plant stops the run with nothing planted. A failed check during cleanup records the
+  entry as `left: null` (unknown) and fails the run.
+- **It learns only whether the entry exists.** On Fedora, `SearchItems` answers with item paths
+  only, and removal uses `secret-tool clear`, which prints nothing and still runs with its standard
+  output sent to the operating system's null device. `clear` deletes unlocked items only, so an
+  entry locked by then stays, and the search after it reports the entry as left. On Windows,
+  `scripts/windows/alpha-desktop.ps1` runs in the desktop session, because an SSH logon has no
+  Credential Manager, and writes `found` and `left` to a result file named for that one call, which
+  the worker deletes once read. It accepts exactly the app's four AI targets (`ai:anthropic`,
   `ai:openai`, `ai:ollama` and `ai:openai-compatible`, each followed by the service) and the Notion
   token, and refuses every other target. No value, part of one, length or hash reaches the
   controller, a log, a file or a trace.
 - **It removes what it planted, after a pass, a failure or Ctrl+C.** When a machine's part of the
   run ends and its app and driver are stopped, the controller deletes the entry on every machine
   whose plant was armed, and checks that none is left. An entry that is left fails the run. A run
-  that refused, or failed or stopped before the plant, deletes nothing. Ctrl+C (`SIGINT`) and
-  `SIGTERM` stop the walkthrough at its next step and go through the same cleanup as a failed run
-  (apps and drivers stopped, configs restored, Notion cleaned up, the key removed) before the
-  controller exits non-zero. Press Ctrl+C once: the terminal also sends it to the controller's own
-  child processes, so a second press can cut short the commands the cleanup is running.
+  that refused, or failed or stopped before the plant, deletes nothing. Each cleanup step (Notion,
+  then the machine's teardown, then the key) runs even when an earlier one, a failure report or a
+  trace write threw, for example because the evidence disk filled up.
+- **Ctrl+C and `SIGTERM` stop the run and clean up.** The first signal stops the walkthrough at its
+  next step. If the gate is still running, the controller ends its WebDriver sessions, stops its
+  machine's app and driver by exact PID (on Windows the app's sidecar and watchdog too), waits until
+  none of them runs, and waits for the gate to unwind. Only then does it run the same cleanup as a
+  failed run, so a request the app was still serving, such as a Notion Connect, cannot store a
+  credential after the cleanup has looked. A failure while stopping them is recorded and the
+  cleanup goes on. A signal during the final checks still fails the run: a run that received one
+  never records `run-complete` and always exits non-zero. Press Ctrl+C once: the terminal also
+  sends it to the controller's own child processes, so a second press can cut short the commands
+  the cleanup is running.
 - **Only a hard kill leaves the entry.** A controller killed any other way (`SIGKILL`, a closed
   terminal, a power loss) cannot clean up. Cancelling the GitHub Actions run counts as one: the
   runner signals the step's shell rather than the controller, and does not wait for the controller's
@@ -374,19 +391,21 @@ one. The rule is therefore part of the machine-state restore, and the run keeps 
 - **The trace records existence only.** Each machine gets an `ai-keys-checked` event before the run
   (`existed` for each account), an `ai-keys-armed` event before its plant (`armed`, and `existed`
   for each account), and an `ai-keys-removed` event after its cleanup (`armed`, and when armed
-  `removed` and `left` for each account).
+  `removed` and `left` for each account). A machine whose gate a signal stopped also gets a
+  `stopped-gate-settled` event once its app is stopped and its gate has unwound.
 
 Any one-off verification script that plants a key in the app config must do the same: check the
-keyring first and refuse if the entry is there, delete what it planted whether it passed, failed or
-was interrupted, check that nothing is left, and keep every value out of its output. The installed
-checks for #237 planted a key without doing so and left a fake `ai:openai` entry on both machines,
-deleted by hand on 2026-11-02.
+keyring first, counting a locked entry as present, and refuse if the entry is there; delete what it
+planted whether it passed, failed or was interrupted; check that nothing is left; and keep every
+value out of its output. The installed checks for #237 planted a key without doing so and left a
+fake `ai:openai` entry on both machines, deleted by hand on 2026-11-02.
 
 `tests/alpha-harness-keyring.test.mjs` runs the walkthrough controller's own sequence against fake
-machines, fake signals and fakes of both keyrings: an entry present before the run, one that
-appears before the plant, failures before and after the plant, `SIGINT` and `SIGTERM`, lookup and
-delete errors on each platform, and the Windows result files and timeouts. It uses neither the real
-keyring nor a real machine.
+machines, fake signals and fakes of both keyrings: an entry present before the run, locked or not,
+one that appears before the plant or between the Windows script's two reads, failures before and
+after the plant, `SIGINT` and `SIGTERM` (including during a Notion Connect and during the final
+checks), trace writes that fail after the plant, lookup and delete errors on each platform, and the
+Windows result files and timeouts. It uses neither the real keyring nor a real machine.
 
 ## Harness upkeep
 
