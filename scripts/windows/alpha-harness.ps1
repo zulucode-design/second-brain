@@ -68,7 +68,22 @@ if ($Action -eq 'Shortcut') {
 # Runs a harness script on the interactive desktop, where input and screen capture reach the
 # user's session. ExecutablePath is the script; it must live under D:\SecondBrainTest.
 if ($Action -eq 'DesktopScript') {
+  # The script's task is waited on for five minutes. One still running then is stopped, and waited
+  # on for up to 30 seconds more, before the task is removed, so a script never writes its result
+  # after its caller has given up on it (#252). A task an earlier call left running under the same
+  # name is stopped first, with the same 30-second wait. scripts/alpha-harness.mjs sizes its own
+  # timeouts from these three waits (DESKTOP_TASK_BUDGET_MS).
   if (-not $TaskName) { throw 'TaskName is required' }
+  function Stop-DesktopTask {
+    Stop-ScheduledTask -TaskName $TaskName
+    $stopDeadline = (Get-Date).AddSeconds(30)
+    while ((Get-ScheduledTask -TaskName $TaskName).State -eq 'Running' -and (Get-Date) -lt $stopDeadline) {
+      Start-Sleep -Milliseconds 500
+    }
+    if ((Get-ScheduledTask -TaskName $TaskName).State -eq 'Running') { throw "desktop script $TaskName could not be stopped" }
+  }
+  $staleTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+  if ($staleTask -and $staleTask.State -eq 'Running') { Stop-DesktopTask }
   $interactiveUser = (Get-CimInstance Win32_ComputerSystem).UserName
   if (-not $interactiveUser) { throw 'no interactive Windows user is logged in' }
   $shellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -84,7 +99,10 @@ if ($Action -eq 'DesktopScript') {
       Start-Sleep -Milliseconds 500
       $taskState = (Get-ScheduledTask -TaskName $TaskName).State
     } while ($taskState -eq 'Running' -and (Get-Date) -lt $taskDeadline)
-    if ($taskState -eq 'Running') { throw "desktop script $TaskName did not finish" }
+    if ($taskState -eq 'Running') {
+      Stop-DesktopTask
+      throw "desktop script $TaskName did not finish within 5 minutes and was stopped"
+    }
     $taskResult = (Get-ScheduledTaskInfo -TaskName $TaskName).LastTaskResult
   } finally {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
