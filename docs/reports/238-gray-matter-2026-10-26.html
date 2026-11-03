@@ -382,5 +382,150 @@ reading. The <code>.NaN</code>/<code>.inf</code> title conversion to <code>0.0</
 accepted #238 behavior. BOM rich-editor rewriting remains #249; only the command-save
 route preserved that fixture. The 10 Fedora and 9 Windows ignored Rust tests are not claimed
 as passes. No live Notion publication, Ollama, sync, or broader GUI result is claimed.</p>
+<h2>Main merged again after #242 and #237</h2>
+<p>2026-11-03. Sol fetched origin and confirmed main at <code>7beb6473d7a59c1f4b3e9702ba460c12b78c988e</code>. The conflict-free
+<code>git merge --no-ff origin/main -m &quot;Merge origin/main into fix/238-gray-matter&quot;</code>
+produced merge candidate <code>ed5549501fa0cddaf857403540e9848a03b4ba2a</code>, with prior PR head
+<code>d7439bf2822eb2b2ffc302de4015c3fac409fc79</code> as its first parent. All new gate results below belong to this
+merge candidate, before the report-only commit. No push, application launch, installed-package
+walkthrough, harness gate, system package installation or manual deletion was performed.
+Sol did not inspect, print or copy a keyring value.</p>
+
+<p>The locked Rust 1.90.0 check passed:
+<code>RUSTUP_TOOLCHAIN=1.90.0 cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets</code>.
+The merged lock resolves <code>gray_matter 0.3.2</code>, <code>yaml-rust2 0.10.4</code>,
+<code>zip 9.1.0</code> and <code>quick-xml 0.41.0 / 0.42.0</code>; the direct quick-xml dependency is
+0.42.0. The check and all subsequent commands left <code>src-tauri/Cargo.lock</code> unchanged.
+Evidence: <code>238-rm-fedora-cargo-check.log</code> and <code>238-rm-lock.log</code>;
+merge transcript: <code>238-rm-merge.log</code>.</p>
+
+<p>Fedora 44 used Node 26.13.0; Windows 11 used Node 24.19.0 in an isolated checkout cloned
+from a Git bundle of the merge candidate. Both used pnpm 11.22.0 and
+<code>RUSTUP_TOOLCHAIN=1.90.0</code> for every command below. The Windows checkout and artifacts
+were separate from the concurrent #252 run. These are automated repository checks; no live vault
+or installed application supplied their fixtures. Both frontend builds retained the existing
+nonfatal chunk-size warning. Environment and transfer evidence:
+<code>238-rm-fedora-environment.log</code>, <code>238-rm-windows-preflight.log</code>,
+<code>238-rm-windows-environment.log</code> and <code>238-rm-windows-bundle.log</code>.</p>
+
+<p>Disk-space preflight recorded 53.64 GiB free on Windows C: and 236.72 GiB on D:;
+after verification, 53.63 GiB and 232.24 GiB remained. These readings include concurrent machine
+activity and do not measure this run's storage cost. The final Windows checkout remained clean
+at the merge candidate. Evidence: <code>238-rm-free-space.log</code> and
+<code>238-rm-windows-final-state.log</code>.</p>
+
+<table>
+<thead><tr><th>Platform and reproducing command</th><th>Result and counted population</th><th>Log</th></tr></thead>
+<tbody>
+<tr><td>Fedora: <code>pnpm install --frozen-lockfile</code></td><td>Passed. Already up to date; no package count was emitted. Exit 0.</td><td><code>238-rm-fedora-install.log</code></td></tr>
+<tr><td>Fedora: <code>pnpm verify</code></td><td>Typecheck: 829 files, 0 errors, 0 warnings. JavaScript: 254 tests; 254 passed, 0 failed, 0 skipped. Suites, cancelled and todo: 0 each. Library: 796 tests; 786 passed, 0 failed, 10 ignored, 0 measured, 0 filtered out. Binary: 0 tests; 0 passed, 0 failed, 0 ignored, 0 measured, 0 filtered out. Doc: 0 tests; 0 passed, 0 failed, 0 ignored, 0 measured, 0 filtered out. Formatting, Clippy and frontend build passed. Exit 0.</td><td><code>238-rm-fedora-verify.log</code></td></tr>
+<tr><td>Fedora: <code>pnpm test:rust vault::frontmatter::</code></td><td>Library: 796 tests; 17 passed, 0 failed, 0 ignored, 0 measured, 779 filtered out. Binary: 0 tests; 0 passed, 0 failed, 0 ignored, 0 measured, 0 filtered out. Exit 0.</td><td><code>238-rm-fedora-frontmatter.log</code></td></tr>
+<tr><td>Fedora: <code>pnpm test:rust vault::import::</code></td><td>Library: 796 tests; 35 passed, 0 failed, 0 ignored, 0 measured, 761 filtered out. Binary: 0 tests; 0 passed, 0 failed, 0 ignored, 0 measured, 0 filtered out. Exit 0.</td><td><code>238-rm-fedora-import.log</code></td></tr>
+<tr><td>Fedora: <code>pnpm test:rust vault::operations::</code></td><td>Library: 796 tests; 75 passed, 0 failed, 0 ignored, 0 measured, 721 filtered out. Binary: 0 tests; 0 passed, 0 failed, 0 ignored, 0 measured, 0 filtered out. Exit 0.</td><td><code>238-rm-fedora-operations.log</code></td></tr>
+<tr><td>Fedora: <code>pnpm test:rust backup::</code></td><td>Library: 796 tests; 42 passed, 0 failed, 0 ignored, 0 measured, 754 filtered out. Binary: 0 tests; 0 passed, 0 failed, 0 ignored, 0 measured, 0 filtered out. Exit 0.</td><td><code>238-rm-fedora-backup.log</code></td></tr>
+<tr><td>Windows: <code>pnpm install --frozen-lockfile</code></td><td>Passed. Resolved, reused and added 482 packages; downloaded 0. Exit 0.</td><td><code>238-rm-windows-install.log</code></td></tr>
+<tr><td>Windows: <code>pnpm verify</code></td><td>Typecheck: 0 errors, 0 warnings; no file count was emitted. JavaScript: 254 tests; 248 passed, 1 failed, 5 skipped. Suites, cancelled and todo: 0 each. Exit 1 only at the known #244 install-failure test; verify stopped before Rust, lint and build. Expected /INTENTIONAL_SYNC_FAILURE/, received undefined\nundefined. The separate rows below cover the later gates; no other failure occurred. Exit 1.</td><td><code>238-rm-windows-verify.log</code></td></tr>
+<tr><td>Windows: <code>pnpm test:rust</code></td><td>Library: 764 tests; 755 passed, 0 failed, 9 ignored, 0 measured, 0 filtered out. Exit 0.</td><td><code>238-rm-windows-rust.log</code></td></tr>
+<tr><td>Windows: <code>pnpm test:rust vault::frontmatter::</code></td><td>Library: 764 tests; 17 passed, 0 failed, 0 ignored, 0 measured, 747 filtered out. Exit 0.</td><td><code>238-rm-windows-frontmatter.log</code></td></tr>
+<tr><td>Windows: <code>pnpm test:rust vault::import::</code></td><td>Library: 764 tests; 35 passed, 0 failed, 0 ignored, 0 measured, 729 filtered out. Exit 0.</td><td><code>238-rm-windows-import.log</code></td></tr>
+<tr><td>Windows: <code>pnpm test:rust vault::operations::</code></td><td>Library: 764 tests; 71 passed, 0 failed, 0 ignored, 0 measured, 693 filtered out. Exit 0.</td><td><code>238-rm-windows-operations.log</code></td></tr>
+<tr><td>Windows: <code>pnpm test:rust backup::</code></td><td>Library: 764 tests; 39 passed, 0 failed, 0 ignored, 0 measured, 725 filtered out. Exit 0.</td><td><code>238-rm-windows-backup.log</code></td></tr>
+<tr><td>Windows: <code>pnpm lint:rust</code></td><td>Formatting and Clippy with -D warnings passed. Exit 0.</td><td><code>238-rm-windows-lint.log</code></td></tr>
+<tr><td>Windows: <code>pnpm build</code></td><td>Frontend build passed. Exit 0.</td><td><code>238-rm-windows-build.log</code></td></tr>
+</tbody>
+</table>
+<p>The 10 Fedora and 9 Windows ignored Rust tests are not passes. The focused command rows
+count their selected module tests and report the remainder as filtered. Fedora's full command
+also ran the empty binary and doc-test targets; each focused command ran the empty binary target.
+Windows <code>pnpm test:rust</code> selects the library target through the repository's manifest-aware
+wrapper. The Windows driver initially expected TAP output but Node emitted its spec reporter;
+Sol corrected that script parser, confirmed that #244 was the only verify failure, and resumed
+with the separate Rust command without repeating verify. This was a driver error, not another
+application failure. Driver records: <code>238-rm-windows-driver.log</code> and
+<code>238-rm-windows-driver-resume.log</code>. Machine-readable counts: <code>238-rm-summary.log</code>.</p>
+
+<p>The same 11 added tests listed earlier in this report each passed exactly once in Fedora's
+full verify Rust output and its applicable focused module run, and exactly once in Windows'
+separate full Rust run and its applicable focused module run: 11/11 in each population,
+44/44 name-by-log matches. None is ignored. Inventory and exact-name proof:
+<code>238-rm-source-proof.log</code> and <code>238-rm-test-proof.log</code>.</p>
+<table>
+<thead><tr><th>Exact test name</th><th>Fedora full</th><th>Fedora focused</th><th>Windows full</th><th>Windows focused</th></tr></thead>
+<tbody>
+<tr><td><code>vault::frontmatter::tests::each_table_input_reads_as_expected</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>vault::frontmatter::tests::each_table_input_gives_the_expected_title</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>vault::frontmatter::tests::each_table_input_merges_as_expected</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>vault::frontmatter::tests::set_category_refuses_front_matter_it_cannot_read_and_keeps_every_other_key</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>vault::frontmatter::tests::a_field_that_reads_oddly_never_costs_the_category</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>vault::frontmatter::tests::a_wrongly_typed_title_keeps_the_category_through_a_save</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>vault::import::tests::each_table_input_renames_and_normalizes_as_expected</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>vault::import::tests::a_number_or_boolean_id_title_and_tag_keep_their_text_on_import</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>vault::import::tests::importing_a_note_with_malformed_front_matter_keeps_its_body</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>vault::operations::tests::restore_accepts_an_id_that_now_reads_differently_when_the_content_is_unchanged</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td><code>vault::operations::tests::restore_refuses_a_different_id_reading_unless_the_content_hash_matches</code></td><td>PASS</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+</tbody>
+</table>
+<p>Reproduce the inventory count with the pinned merge candidate:</p>
+<pre>git diff --unified=0 7beb647...ed5549501fa0cddaf857403540e9848a03b4ba2a -- src-tauri/src/vault/ | python3 -c 'import re,sys; print(len(re.findall(r"^\+\s*#\[test\]\n\+\s*fn \w+\(", sys.stdin.read(), re.M)))'</pre>
+<p>To reproduce the execution match, search each exact name above as
+<code>test &lt;exact test name&gt; ... ok</code> in <code>238-rm-fedora-verify.log</code>,
+<code>238-rm-windows-rust.log</code> and the corresponding
+<code>238-rm-fedora-frontmatter.log</code>/<code>238-rm-windows-frontmatter.log</code>,
+<code>238-rm-fedora-import.log</code>/<code>238-rm-windows-import.log</code> or
+<code>238-rm-fedora-operations.log</code>/<code>238-rm-windows-operations.log</code>.
+Each search must return one complete line. Module populations are six front matter,
+three import and two operations tests.</p>
+<p>From the retained log directory, reproduce all 44 matches:</p>
+<pre>python3 - &lt;&lt;&#x27;PYPROOF&#x27;
+import json
+from pathlib import Path
+tests = json.loads(Path(&quot;238-rm-source-proof.log&quot;).read_text())[&quot;tests&quot;]
+matched = 0
+for test in tests:
+    module = test.split(&quot;::&quot;)[1]
+    logs = [&quot;238-rm-fedora-verify.log&quot;, f&quot;238-rm-fedora-{module}.log&quot;,
+            &quot;238-rm-windows-rust.log&quot;, f&quot;238-rm-windows-{module}.log&quot;]
+    for name in logs:
+        count = Path(name).read_text().splitlines().count(f&quot;test {test} ... ok&quot;)
+        assert count == 1, (test, name, count)
+        matched += count
+print(len(tests), matched)  # 11 tests, 44 exact matches
+PYPROOF</pre>
+
+<p>The merge changed no #238 vault code. At the merge candidate,
+<code>git rev-parse d7439bf:&lt;path&gt; HEAD:&lt;path&gt;</code> returned the following identical pair
+for each path; candidate <code>7388bc5</code> has the same blobs:</p>
+<table>
+<thead><tr><th>Repository path</th><th>Blob at both d7439bf and merge HEAD</th></tr></thead>
+<tbody>
+<tr><td><code>src-tauri/src/vault/frontmatter.rs</code></td><td><code>47a40b1b7f421a0406d1e6587bbccac2a4abaa4f</code></td></tr>
+<tr><td><code>src-tauri/src/vault/import.rs</code></td><td><code>973af461c56c93d59a036f2d68e2a85f9f724d4d</code></td></tr>
+<tr><td><code>src-tauri/src/vault/operations.rs</code></td><td><code>2ba9fa61a96b2dcffcf7bca53bf49453a87c54ad</code></td></tr>
+</tbody>
+</table>
+<p>With <code>HEAD</code> still at <code>ed5549501fa0cddaf857403540e9848a03b4ba2a</code>, both commands below returned stable patch-id
+<code>c5e2364d09b3f2adc6fe41e0274d6360c47bedab</code>:</p>
+<pre>git diff 7beb647 HEAD | git patch-id --stable
+git diff 3b06674 d7439bf | git patch-id --stable</pre>
+<p>These proofs were taken before appending this documentation section. The entire
+<code>src-tauri/src/vault</code> tree also matches <code>7388bc5</code>, <code>d7439bf</code> and the
+merge candidate at tree <code>586ead7856fb53828c418fd35663f6155608c4e4</code>; reproduce with
+<code>git rev-parse 7388bc5:src-tauri/src/vault d7439bf:src-tauri/src/vault HEAD:src-tauri/src/vault</code>.
+Evidence: <code>238-rm-source-proof.log</code>.</p>
+
+<p>The installed legacy-vault check remains evidence from candidate <code>7388bc5</code>,
+not a new installed run. It still applies to #238 because the vault code is byte-identical.
+The application-source changes brought by #242 and #237 are confined to the sync sidecar's
+configuration hardening (<code>src-tauri/src/sync_sidecar.rs</code>) and backup and diagnostic ZIP
+code (<code>src-tauri/src/backup.rs</code> and <code>src-tauri/src/diagnostic_export.rs</code>).
+Reproduce that scope with <code>git diff --name-only 3b06674 7beb647 -- src-tauri/src</code>.
+The backup suite was rerun above under zip 9; no new installed sync or backup claim is made.</p>
+
+<p>The remerge verification is complete with the explicitly allowed Windows #244 exception.
+The prior #248 identity-binding and #249 BOM rich-editor limits remain as recorded above.
+A fresh final Spec and Standards review of the report commit is still required before any push;
+this run does not publish or merge PR #250. Nicolas has approved merging #250 after the refreshed
+review and required CI pass.</p>
+
 </main>
 </html>
