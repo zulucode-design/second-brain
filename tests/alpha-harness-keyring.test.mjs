@@ -7,14 +7,15 @@
 // actions. None touches a real keyring, machine or process.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 const {
   AI_KEY_ACCOUNTS, DESKTOP_ACTION_TIMEOUT_MS, DESKTOP_SCRIPT_TIMEOUT_MS, DESKTOP_TASK_BUDGET_MS, PLANTED_AI_KEYS,
-  desktopCredentialAction, fedoraAiKeyStore, finishMachine, killEach, plantedAiKeyPatch, runDesktopScript, runWalkthroughLocked,
+  desktopCredentialAction, fedoraAiKeyStore, finalizeJournaledRun, finishMachine, killEach, plantedAiKeyPatch, recoverJournaledRun,
+  runAcceptanceLocked, runDesktopScript, runRestoreLocked, runWalkthroughLocked, stopOwnedDrivers,
   windowsAiKeyAction, windowsAiKeyStore, windowsAiKeyTarget, windowsDriverMachine,
 } = await import(new URL('../scripts/alpha-harness.mjs', import.meta.url));
 
@@ -180,6 +181,11 @@ function fakeFedoraMachine(log, app, { onLaunchEntry, stopAppsFails = false } = 
     async cleanup() {
       log.push(`${name}:cleanup`);
       stop();
+      return { processes: [] };
+    },
+    uninstall() {
+      log.push(`${name}:uninstall`);
+      return { packageRemoved: true, appRemoved: true, desktopEntryRemoved: true };
     },
   };
 }
@@ -190,9 +196,10 @@ function fakeFedoraMachine(log, app, { onLaunchEntry, stopAppsFails = false } = 
  * through it, the app; `stop-driver` stops both; `cleanup-processes` stops the app; `finalize`
  * refuses while the app runs, as the real worker does, and otherwise restores the config and drops
  * the lock. `fail` makes the named actions, or `processes-gone`, fail for that many calls;
- * `appSurvivesDriverStop` leaves the app running after its driver stops.
+ * `appSurvivesDriverStop` leaves the app running after its driver stops; `onAction` sees each
+ * action before it is answered.
  */
-function fakeWindowsIo(world, { fail = {}, appSurvivesDriverStop = false, onLaunchEntry } = {}) {
+function fakeWindowsIo(world, { fail = {}, appSurvivesDriverStop = false, onLaunchEntry, onAction } = {}) {
   const { log, windows: state } = world;
   const app = world.apps.windows;
   const failures = { ...fail };
@@ -209,6 +216,7 @@ function fakeWindowsIo(world, { fail = {}, appSurvivesDriverStop = false, onLaun
   return {
     worker(action, extra = {}) {
       log.push(`windows:${action}`);
+      onAction?.(action);
       if (failing(action)) throw new Error(`ssh exited 255: the ${action} action could not reach Windows`);
       switch (action) {
         case 'install':
@@ -234,6 +242,9 @@ function fakeWindowsIo(world, { fail = {}, appSurvivesDriverStop = false, onLaun
           return { sha256: 'unchanged' };
         case 'uninstall':
           return { appRemoved: true, shortcutRemoved: true };
+        case 'isolation':
+          if (extra.mode === 'restore') state.isolated = false;
+          return { rules: [] };
         case 'stop-driver':
           assert.equal(extra.driverPid, 4242, 'the driver is stopped by the PID it started with');
           state.driverRunning = false;
@@ -415,10 +426,6 @@ function walkthroughWorld({ machine, held = [], heldLocked = [], faults = {}, ma
   const options = { linuxRoot: root, holdMinutes: 70, windowsInstaller: 'D:\\SecondBrainTest\\setup.exe', machine };
   return Object.assign(world, {
     run: () => runWalkthroughLocked(options, io),
-    traceText() {
-      const traceDir = join(root, 'trace');
-      return readdirSync(traceDir).map((name) => readFileSync(join(traceDir, name), 'utf8')).join('');
-    },
     trace() {
       return this.traceText().trim().split('\n').map((line) => JSON.parse(line));
     },
@@ -427,6 +434,19 @@ function walkthroughWorld({ machine, held = [], heldLocked = [], faults = {}, ma
     },
     at(line) {
       return log.indexOf(line);
+    },
+    // A full evidence disk from now on, as far as appendFileSync can tell.
+    breakTrace() {
+      const traceDir = join(root, 'trace');
+      for (const name of readdirSync(traceDir)) {
+        rmSync(join(traceDir, name), { force: true });
+        mkdirSync(join(traceDir, name));
+      }
+    },
+    traceText() {
+      const traceDir = join(root, 'trace');
+      return readdirSync(traceDir).filter((name) => !lstatSync(join(traceDir, name)).isDirectory())
+        .map((name) => readFileSync(join(traceDir, name), 'utf8')).join('');
     },
     dispose: () => rmSync(root, { recursive: true, force: true }),
   });
@@ -748,6 +768,22 @@ for (const platform of PLATFORMS) {
   });
 }
 
+test('windows: an uninstall that fails as the trace breaks is the run\'s error, and the candidate is reinstalled', async (t) => {
+  const windowsFaults = { fail: { uninstall: 1 } };
+  const world = walkthroughWorld({ machine: 'windows', machineFaults: { windows: windowsFaults } });
+  t.after(world.dispose);
+  windowsFaults.onAction = (action) => {
+    if (action === 'uninstall') world.breakTrace();
+  };
+
+  const error = await failure(world.run());
+
+  assert.match(error.message, /^ssh exited 255: the uninstall action could not reach Windows; the trace could not be written: EISDIR/);
+  assert.ok(world.log.lastIndexOf('windows:install') > world.at('windows:uninstall'), 'the candidate is reinstalled after the failed uninstall');
+  assert.deepEqual(windowsRestored(world), { configSwapped: false, locked: false, driverRunning: false });
+  assert.deepEqual(world.printed, []);
+});
+
 test('fedora: a locked entry before the run counts as present and refuses it', async (t) => {
   const world = walkthroughWorld({ machine: 'fedora', heldLocked: ['fedora'] });
   t.after(world.dispose);
@@ -988,6 +1024,278 @@ test('fedora teardown: every exact PID is signalled even when one before it fail
   assert.deepEqual(signalled, ['1 SIGKILL', '2 SIGKILL', '3 SIGKILL']);
   assert.doesNotThrow(() => killEach([], 'SIGTERM', kill));
 });
+
+// The worker's stop-driver PowerShell calls. The run's tauri-driver is PID 42 with native drivers
+// 11 and 12; 13 belongs to another tauri-driver. `stopFails` maps a PID to 'exited' (StopPid finds
+// it gone) or 'fails'; `listFails` names the executable whose process list cannot be read.
+function fakeDriverIo({ stopFails = {}, listFails, driverListed = true } = {}) {
+  const log = [];
+  return {
+    log,
+    findProcesses(executable) {
+      const native = executable.endsWith('msedgedriver.exe');
+      log.push(`list ${native ? 'msedgedriver' : 'tauri-driver'}`);
+      if (listFails === (native ? 'msedgedriver' : 'tauri-driver')) throw new Error('powershell.exe exited 1: Get-CimInstance failed');
+      if (native) return [{ Id: 11, ParentId: 42 }, { Id: 12, ParentId: 42 }, { Id: 13, ParentId: 99 }];
+      return driverListed ? [{ Id: 42, ParentId: 1 }] : [];
+    },
+    stopPid(pid, executable) {
+      log.push(`stop ${pid} ${executable.endsWith('msedgedriver.exe') ? 'msedgedriver' : 'tauri-driver'}`);
+      if (stopFails[pid] === 'exited') throw new Error(`powershell.exe exited 1: process ${pid} is not running`);
+      if (stopFails[pid] === 'fails') throw new Error(`powershell.exe exited 1: Stop-Process could not stop ${pid}`);
+    },
+    removeTask: () => log.push('remove-task'),
+  };
+}
+
+test('windows driver stop: a native driver that cannot be stopped still leaves tauri-driver stopped', () => {
+  const io = fakeDriverIo({ stopFails: { 11: 'fails' } });
+
+  assert.throws(() => stopOwnedDrivers(42, io), /Stop-Process could not stop 11/);
+
+  assert.deepEqual(io.log, [
+    'list msedgedriver', 'stop 11 msedgedriver', 'stop 12 msedgedriver', 'list tauri-driver', 'stop 42 tauri-driver', 'remove-task',
+  ]);
+});
+
+test('windows driver stop: a driver that exited already counts as stopped', () => {
+  const io = fakeDriverIo({ stopFails: { 11: 'exited' } });
+  assert.deepEqual(stopOwnedDrivers(42, io), { stopped: [11, 12, 42], alreadyExited: [11] });
+  assert.ok(!io.log.includes('stop 13 msedgedriver'), 'only the run\'s own native drivers are stopped');
+
+  const gone = fakeDriverIo({ driverListed: false });
+  assert.deepEqual(stopOwnedDrivers(42, gone), { stopped: [11, 12, 42], alreadyExited: [42] });
+  assert.ok(!gone.log.includes('stop 42 tauri-driver'), 'a tauri-driver no longer listed is not stopped again');
+
+  // Exited between the list and StopPid.
+  assert.deepEqual(stopOwnedDrivers(42, fakeDriverIo({ stopFails: { 42: 'exited' } })), { stopped: [11, 12, 42], alreadyExited: [42] });
+});
+
+test('windows driver stop: a process list that cannot be read stops nothing else from running', () => {
+  const natives = fakeDriverIo({ listFails: 'msedgedriver' });
+  assert.throws(() => stopOwnedDrivers(42, natives), /Get-CimInstance failed/);
+  assert.deepEqual(natives.log, ['list msedgedriver', 'list tauri-driver', 'stop 42 tauri-driver', 'remove-task']);
+
+  // StopPid's own exact check decides when tauri-driver's list cannot be read.
+  const driver = fakeDriverIo({ listFails: 'tauri-driver' });
+  assert.deepEqual(stopOwnedDrivers(42, driver), { stopped: [11, 12, 42], alreadyExited: [] });
+  assert.ok(driver.log.includes('stop 42 tauri-driver'));
+});
+
+// A run journaled the way prepare and break-config leave it, on POSIX paths in a temp folder: the
+// real config swapped, a window state the run created, the profile's logs folder renamed aside with
+// a link to the run in its place, and the app's damaged copy from the run beside the user's own.
+function journaledRun(t) {
+  const root = mkdtempSync(join(tmpdir(), 'alpha-journal-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const configDir = join(root, 'appdata');
+  const runRoot = join(root, 'runs', 'fake-run', 'windows');
+  mkdirSync(configDir, { recursive: true });
+  mkdirSync(runRoot, { recursive: true });
+  const configPath = join(configDir, 'config.json');
+  const originalPath = join(runRoot, 'original-config.json');
+  writeFileSync(originalPath, '{"vault":"the user\'s"}\n');
+  writeFileSync(configPath, '{"vault":"the run\'s"}\n');
+  const windowStatePath = join(configDir, '.window-state.json');
+  writeFileSync(windowStatePath, '{"geometry":"the run\'s"}');
+  const profile = { path: join(root, 'profile', 'logs'), target: join(runRoot, 'profile', 'logs'), aside: join(root, 'aside', 'logs') };
+  mkdirSync(profile.aside, { recursive: true });
+  writeFileSync(join(profile.aside, 'app.log'), 'the user\'s log');
+  mkdirSync(profile.target, { recursive: true });
+  mkdirSync(join(root, 'profile'), { recursive: true });
+  symlinkSync(profile.target, profile.path, 'junction');
+  writeFileSync(join(runRoot, 'damaged-before-break.json'), JSON.stringify(['config.json.damaged-user']));
+  writeFileSync(join(configDir, 'config.json.damaged-user'), 'the user\'s own damaged copy');
+  writeFileSync(join(configDir, 'config.json.damaged-run'), 'the run\'s damaged copy');
+  const manifestPath = join(runRoot, 'state.json');
+  writeFileSync(manifestPath, JSON.stringify({
+    version: 1, runId: 'fake-run', configPath, originalPath, windowStatePath, originalWindowStatePath: null,
+    originalWindowStateSha256: null, machineLink: join(root, 'vaults', 'fake-vault'), appPath: 'fake-app', profileRedirects: [profile],
+  }));
+  const lockPath = join(configDir, 'alpha-harness.lock.json');
+  writeFileSync(lockPath, JSON.stringify({ runId: 'fake-run', manifestPath }));
+  const log = [];
+  return {
+    configDir, configPath, runRoot, manifestPath, lockPath, profile, log,
+    paths: { runRoot, manifestPath },
+    // `copyFails`: the run root's drive is full.
+    io: ({ copyFails = false, artifactsFail = false, processes = [] } = {}) => ({
+      processes: () => processes,
+      copyFile(from, to) {
+        log.push('copy-damaged');
+        if (copyFails) throw Object.assign(new Error(`ENOSPC: no space left on device, copyfile '${from}' -> '${to}'`), { code: 'ENOSPC' });
+        writeFileSync(to, readFileSync(from));
+      },
+      removeArtifacts() {
+        log.push('remove-artifacts');
+        if (artifactsFail) throw new Error('refusing to remove the junction: not this run\'s junction');
+        return { junctionRemoved: true, taskRemoved: 'SecondBrainAlphaHarness' };
+      },
+    }),
+    restoredExceptDamaged() {
+      assert.equal(readFileSync(configPath, 'utf8'), '{"vault":"the user\'s"}\n', 'the config is restored');
+      assert.equal(existsSync(windowStatePath), false, 'the window state the run created is gone');
+      assert.equal(lstatSync(profile.path).isSymbolicLink(), false, 'the link to the run is gone');
+      assert.equal(readFileSync(join(profile.path, 'app.log'), 'utf8'), 'the user\'s log', 'the user\'s folder is back');
+      assert.equal(existsSync(profile.aside), false);
+    },
+  };
+}
+
+test('windows finalize: a full run-root drive that stops the damaged copy still restores the profile, and keeps the lock', (t) => {
+  const run = journaledRun(t);
+
+  assert.throws(
+    () => finalizeJournaledRun({ runId: 'fake-run', configPath: run.configPath, paths: run.paths }, run.io({ copyFails: true })),
+    /^Error: ENOSPC: no space left on device.*; the run's lock and journal stay for the next run's recovery$/,
+  );
+
+  run.restoredExceptDamaged();
+  assert.deepEqual(run.log, ['copy-damaged', 'remove-artifacts'], 'every step ran');
+  assert.ok(existsSync(run.lockPath), 'the lock stays');
+  assert.ok(existsSync(run.manifestPath), 'the journal stays');
+  assert.ok(existsSync(join(run.configDir, 'config.json.damaged-run')), 'the run\'s damaged copy is still to move');
+
+  // The next run's recovery finishes what is left.
+  const recovered = recoverJournaledRun({ configPath: run.configPath }, run.io());
+
+  assert.equal(recovered.recovered, true);
+  assert.deepEqual(recovered.damagedMoved, ['config.json.damaged-run']);
+  assert.equal(readFileSync(join(run.runRoot, 'config.json.damaged-run'), 'utf8'), 'the run\'s damaged copy');
+  assert.equal(existsSync(join(run.configDir, 'config.json.damaged-run')), false);
+  assert.ok(existsSync(join(run.configDir, 'config.json.damaged-user')), 'the user\'s own damaged copy stays');
+  assert.equal(existsSync(run.lockPath), false, 'the lock goes once everything is back');
+  run.restoredExceptDamaged();
+  assert.deepEqual(run.log, ['copy-damaged', 'remove-artifacts', 'copy-damaged'], 'recovery leaves the junction and tasks to finalize');
+
+  // A finalize after that checks the restore and finishes the junction and tasks.
+  const finalized = finalizeJournaledRun({ runId: 'fake-run', configPath: run.configPath, paths: run.paths }, run.io());
+  assert.equal(finalized.alreadyRestored, true);
+  assert.equal(finalized.junctionRemoved, true);
+});
+
+test('windows finalize: a junction or task that cannot be removed keeps the lock, with every restore done', (t) => {
+  const run = journaledRun(t);
+
+  assert.throws(
+    () => finalizeJournaledRun({ runId: 'fake-run', configPath: run.configPath, paths: run.paths }, run.io({ artifactsFail: true })),
+    /not this run's junction; the run's lock and journal stay/,
+  );
+
+  run.restoredExceptDamaged();
+  assert.equal(existsSync(join(run.runRoot, 'config.json.damaged-run')), true, 'the damaged copy moved');
+  assert.ok(existsSync(run.lockPath));
+});
+
+test('windows finalize: a finalize that succeeds restores everything and drops the lock', (t) => {
+  const run = journaledRun(t);
+
+  const finalized = finalizeJournaledRun({ runId: 'fake-run', configPath: run.configPath, paths: run.paths }, run.io());
+
+  assert.equal(finalized.restored, true);
+  assert.deepEqual(finalized.damagedMoved, ['config.json.damaged-run']);
+  assert.deepEqual(finalized.profile, [{ path: run.profile.path, movedBack: true }]);
+  run.restoredExceptDamaged();
+  assert.equal(existsSync(run.lockPath), false);
+  assert.deepEqual(run.log, ['copy-damaged', 'remove-artifacts']);
+});
+
+test('windows finalize: nothing is touched while an installed process remains', (t) => {
+  const run = journaledRun(t);
+
+  assert.throws(
+    () => finalizeJournaledRun({ runId: 'fake-run', configPath: run.configPath, paths: run.paths }, run.io({ processes: [{ Role: 'App' }] })),
+    /refusing to restore config while installed processes remain/,
+  );
+  assert.equal(readFileSync(run.configPath, 'utf8'), '{"vault":"the run\'s"}\n');
+  assert.equal(lstatSync(run.profile.path).isSymbolicLink(), true);
+  assert.deepEqual(run.log, []);
+});
+
+// A trace the test can make unwritable, and the world fakeWindowsIo keeps, for a gate's own run.
+function gateWorld(t) {
+  const root = mkdtempSync(join(tmpdir(), 'alpha-gate-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const tracePath = join(root, 'trace.jsonl');
+  const app = (stoppedSignal) => ({ alive: false, gone: stoppedSignal.promise, stopped: stoppedSignal.settle });
+  const world = {
+    root,
+    log: [],
+    printed: [],
+    windows: { configSwapped: false, locked: false, driverRunning: false, isolated: true },
+    apps: { fedora: app(deferred()), windows: app(deferred()) },
+    tracePath,
+    // A full evidence disk, as far as appendFileSync can tell.
+    breakTrace() {
+      rmSync(tracePath, { force: true });
+      mkdirSync(tracePath);
+    },
+  };
+  world.openTrace = () => ({ candidateCommit: 'c'.repeat(40), runId: 'fake-run', evidencePath: tracePath, screenshotDir: root });
+  return world;
+}
+
+const windowsRestored = (world) => ({ configSwapped: world.windows.configSwapped, locked: world.windows.locked, driverRunning: world.windows.driverRunning });
+
+test('restore gate: a trace that breaks with the failure still tears the failed machine down', async (t) => {
+  const world = gateWorld(t);
+  const io = {
+    openTrace: world.openTrace,
+    machines: (runId) => [() => fakeFedoraMachine(world.log, world.apps.fedora), () => fakeWindowsMachine(world, runId, {})],
+    async gate(machine) {
+      await machine.startDriver();
+      if (machine.name !== 'windows') return;
+      world.breakTrace();
+      throw new Error('the restore did not report a result');
+    },
+    print: (line) => world.printed.push(line),
+  };
+
+  const error = await failure(runRestoreLocked({}, io));
+
+  assert.match(error.message, /^the restore did not report a result; the trace could not be written: EISDIR/);
+  assert.ok(world.log.includes('fedora:cleanup'));
+  assert.ok(world.log.includes('windows:finalize'), 'the failed machine is torn down');
+  assert.deepEqual(windowsRestored(world), { configSwapped: false, locked: false, driverRunning: false });
+  assert.deepEqual(world.printed, []);
+});
+
+for (const failing of ['network', 'isolation']) {
+  test(`acceptance gate: a trace that breaks with the failure, and a ${failing} restore that fails, still restore and tear down everything else`, async (t) => {
+    const world = gateWorld(t);
+    const io = {
+      openTrace: world.openTrace,
+      network: () => ({
+        async restore() {
+          world.log.push('network-restore');
+          if (failing === 'network') throw new Error('ip route add failed');
+          return { restored: true };
+        },
+      }),
+      fedora: () => fakeFedoraMachine(world.log, world.apps.fedora),
+      windows: (runId) => fakeWindowsMachine(world, runId, { fail: { isolation: failing === 'isolation' ? 1 : 0 } }),
+      side: async (machine) => ({ name: machine.name, machine, browser: { name: machine.name } }),
+      async criteria() {
+        world.breakTrace();
+        throw new Error('criterion 3 failed');
+      },
+      closeApp: async (browser) => world.log.push(`close-app ${browser.name}`),
+      removeCandidate: () => world.log.push('remove-candidate'),
+      print: (line) => world.printed.push(line),
+    };
+
+    const error = await failure(runAcceptanceLocked({ sshHost: 'fake-host' }, io));
+
+    // The run's own error comes first, and the trace failure follows it.
+    assert.match(error.message, /^criterion 3 failed; the trace could not be written: EISDIR/);
+    const order = ['network-restore', 'windows:isolation', 'close-app fedora', 'close-app windows', 'fedora:cleanup', 'windows:finalize', 'fedora:uninstall'];
+    assert.ok(order.every((line) => world.log.includes(line)), JSON.stringify(world.log));
+    assert.deepEqual(order.map((line) => world.log.indexOf(line)).toSorted((left, right) => left - right), order.map((line) => world.log.indexOf(line)));
+    assert.equal(world.windows.isolated, failing === 'isolation', 'the isolation is lifted unless its own restore failed');
+    assert.deepEqual(windowsRestored(world), { configSwapped: false, locked: false, driverRunning: false });
+    assert.deepEqual(world.printed, []);
+  });
+}
 
 test('the walkthrough plants exactly the keys it checks for', () => {
   assert.deepEqual(plantedAiKeyPatch(PLANTED_KEY), { openai_api_key: PLANTED_KEY });
