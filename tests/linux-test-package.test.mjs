@@ -8,6 +8,12 @@ import { fileURLToPath } from 'node:url';
 
 const helper = fileURLToPath(new URL('../scripts/linux-test-package.sh', import.meta.url));
 const rpmbuild = spawnSync('rpmbuild', ['--version']).status === 0;
+// The helper is a Linux script, and the tests that run it directly assume Linux: the
+// /var/tmp staging path, runuser, and a script path bash must read. So a Windows machine
+// with Git Bash on its PATH skips them too, and bash is probed only on Linux.
+const linux = process.platform === 'linux';
+const bash = linux && spawnSync('bash', ['--version']).status === 0;
+const helperSkip = !linux ? `the test package helper is Linux-only, and this platform is ${process.platform}` : !bash && 'bash not available';
 
 // Builds a one-file package shaped like a Second Brain build, changed by the options.
 function buildRpm(topdir, label, { name = 'second-brain', arch = 'x86_64', preamble = '', files = '/usr/bin/second-brain', install = '', sections = '' } = {}) {
@@ -84,7 +90,7 @@ test('the test package helper installs only a plain Second Brain package', { ski
 });
 
 // The privileged commands are stubbed: this checks the staging and exit status around them.
-test('the test package helper exits 0 after an install and removes its staging copy', () => {
+test('the test package helper exits 0 after an install and removes its staging copy', { skip: helperSkip }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'sb-test-package-'));
   try {
     const candidate = join(dir, 'candidate.rpm');
@@ -102,7 +108,7 @@ test('the test package helper exits 0 after an install and removes its staging c
   }
 });
 
-test('the test package helper refuses to run without sudo', () => {
+test('the test package helper refuses to run without sudo', { skip: helperSkip }, () => {
   const result = spawnSync('bash', [helper, 'remove-test-install'], { encoding: 'utf8', env: { ...process.env, SUDO_USER: '' } });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /run through sudo/);

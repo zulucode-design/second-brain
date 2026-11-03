@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Issue 241: native vault identity lock verification</title>
+<style>
+body { max-width: 68rem; margin: 2rem auto; padding: 0 1rem; font: 16px/1.55 system-ui, sans-serif; color: #20252b; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+th, td { border: 1px solid #cbd2d9; padding: .55rem; text-align: left; vertical-align: top; }
+th { background: #edf1f5; }
+code { overflow-wrap: anywhere; }
+</style>
+<main>
+<h1>Issue 241: native vault identity lock verification</h1>
+<p>2026-10-26. The vault identity claim now uses Rust's <code>File::try_lock</code>
+and <code>File::unlock</code> instead of the direct fs4 dependency. It preserves the existing
+identity file, retry bounds and unsupported-lock fallback. Windows error 32 remains contention;
+on other platforms raw OS error numbers do not imply contention. Tantivy retains its own fs4 dependency.</p>
+<p><strong>Publication is pending.</strong> The installed interrupted-sync gate passed on both machines.
+Final review, public PR, CI and Nicolas's merge approval have not happened.</p>
+
+<h2>Candidate and provenance</h2>
+<ul>
+<li>Wave baseline: <code>17d98d007bea1422f1fb43a333263a7008862114</code>.</li>
+<li>Verified and packaged candidate: <code>6264208c18b37b83e8063d38d00c48383bd6eeda</code>,
+including public main <code>1374b82dff6e90739bc31c9f544d7bc208768ff8</code>.</li>
+<li>Immutable brief: <code>3d42178e46a13f5ecf7cf502f18c4e4742aadbe5</code>;
+frozen handoff: <code>2b05f5029120f7cea6a39f9bf09c10a958bc6549</code>;
+Kiro code head: <code>1f19545e4ec8734bd1041f477166ae3e4451e732</code>.</li>
+<li>Four Kiro commits were imported with authorship and <code>cherry-pick -x</code> provenance:
+<code>3d07196</code> (native lock), <code>f213dad</code> (classification and retry tests),
+<code>192cb04</code> (subprocess tests) and <code>2da6cbe</code> (ADR-0006 paragraph).</li>
+<li>Sol applied only the prescribed direct fs4 manifest removal (<code>2b9464a</code>) and
+separate lock regeneration (<code>73338b0</code>). No application-code fix was made after import.
+Lockfile inspection and the reverse dependency graph show fs4 only beneath Tantivy.</li>
+<li>Freeze and intake checked the handoff-only final commit, matching parent/code head,
+unchanged brief, ancestry, absence of merges, frozen mirror main, allowed files and privacy.</li>
+</ul>
+
+<h2>Review</h2>
+<p>Round 1 reviewed the whole branch at
+<code>73338b007fd8cd86a2986fba06a88a864b2f705b</code>. Separate independent Spec and Standards
+<code>codex exec</code> runs used <code>gpt-6.1-sol</code> at <code>xhigh</code>; both returned
+CLEAN. There were no findings and no fix attempts. Main was then integrated at
+<code>6264208c18b37b83e8063d38d00c48383bd6eeda</code>; lock regeneration made no changes.
+The report and exact publication head still require final review of the entire branch.</p>
+
+<h2>Verification by Sol</h2>
+<p>Fedora 44 and Windows 11 used Rust 1.90.0 and pnpm 11.22.0. Controller Node was 24.22.1;
+Windows Node was 24.19.0. Each test or review run followed a successful usage probe.
+Kiro's sandbox checks are not gate evidence.</p>
+<table>
+<thead><tr><th>Candidate and command</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td><code>73338b0</code>, both platforms: frozen install; Fedora <code>pnpm check</code> and
+<code>cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets</code>;
+Windows <code>pnpm test:rust</code></td><td>Build gates passed. Windows Rust: 724 passed, 9 ignored.</td></tr>
+<tr><td><code>73338b0</code>, both: <code>pnpm test:rust machine_local::</code></td>
+<td>Fedora 23 passed; Windows 22 passed; zero failures or ignored tests. All three subprocess
+cases ran on both platforms: held lock, release after normal exit, and release after kill.</td></tr>
+<tr><td><code>73338b0</code>, Fedora:
+<code>pnpm test:rust vault::relocation::tests::killing_the_app_mid_notebook_move_still_recovers</code>, five runs</td>
+<td>All five passed. This focused evidence carries to <code>6264208</code> because
+<code>machine_local.rs</code>, <code>vault/relocation.rs</code>, Cargo.toml and Cargo.lock are
+identical between those candidates. Current full Rust runs also exercise the added lock tests.</td></tr>
+<tr><td><code>6264208</code>, Fedora: <code>pnpm verify</code></td>
+<td>Passed: JavaScript 254 passed, 0 failed, 0 skipped; Rust 754 passed, 0 failed, 10 ignored.
+Typecheck, formatting, Clippy and frontend build passed.</td></tr>
+<tr><td><code>6264208</code>, Windows: <code>pnpm verify</code></td>
+<td>Failed only at the existing <code>pnpm install fails when the prepare svelte-kit sync fails</code>
+test: JavaScript 248 passed, 1 failed, 5 skipped. Its unchanged Windows child-process invocation
+produces <code>undefined\nundefined</code>. The command stops before Rust, Clippy and build.
+<a href="https://github.com/zulucode-design/second-brain/issues/244">Issue 244</a> owns this repair.</td></tr>
+<tr><td><code>6264208</code>, Windows: separate <code>pnpm test:rust</code>,
+<code>pnpm lint:rust</code>, and package build</td>
+<td>Passed. Rust 724 passed, 0 failed, 9 ignored. Formatting and Clippy passed. NSIS build,
+including the frontend build, passed.</td></tr>
+<tr><td><code>6264208</code>, both: RPM/NSIS package builds and installed candidate identity checks</td>
+<td>Passed. Candidate-specific packages are preserved with SHA-256 hashes. The actual RPM
+payload was read and checked against its package digest and embedded candidate; its executable
+differs from the standalone target after Tauri bundle processing. Both installed executables
+embed the required candidate commit.</td></tr>
+<tr><td>Released <code>a5c367059f98be3e5d4e946d8a407543ab473d8b</code> to
+<code>6264208</code>, both installed apps: legacy vault upgrade</td>
+<td>Passed. The real released Fedora app created the vault identity and saved a synthetic note
+through its UI; identity was not preseeded. Windows used that released-app-created vault under
+both released and candidate installs. Both upgrades kept identical identity bytes, the same
+machine-local vault-folder set, and identical note bytes/SHA-256. UI showed all four PARA roots
+and no repair issues. Windows config, window state, logs and WebView profile were restored by
+the stock journal/finalize path. Owned app and driver processes were stopped.</td></tr>
+<tr><td><code>6264208</code>, both installed apps:
+<code>node scripts/alpha-harness.mjs sync --candidate 6264208c18b37b83e8063d38d00c48383bd6eeda --timeout-minutes 70</code></td>
+<td><strong>Passed.</strong> Run <code>20261026T114713Z</code> verified both installed packages,
+paired their sidecars, proved a partial Windows transfer (463 of 5,000 notes), stopped the exact
+sidecar and observed a replacement PID. Both apps were then closed and relaunched. The hourly
+scheduler resumed transfer; both replicas finished with all 5,000 matching notes, sentinel present,
+zero missing or wrong-content files, duplicate IDs, conflicts or strays. Both machines had two
+pre-sync backups; receiving Windows backups were required. Final app/sidecar/watchdog process
+lists were empty on both machines. Windows config, window state, logs and WebView profile were
+restored, vault junction and scheduled task removed. Run completed at 13:00:42 UTC on 2026-10-26;
+controller exited 0 and its lock was released. Full redacted
+<a href="evidence/alpha-harness-sync-20261026T114713Z.jsonl">evidence trace</a> is committed with this report.</td></tr>
+</tbody>
+</table>
+
+<h2>Package checksums</h2>
+<ul>
+<li>RPM: 31,356,497 bytes;
+SHA-256 <code>84c4b3b2a8d5c10458065e2b869704bc5709a7a07dd254994477718a0aa17d23</code>.</li>
+<li>NSIS: 20,592,822 bytes;
+SHA-256 <code>1aaf6a4e178cb2a6dc030d5686e0e76063b6f2327ff50ef933b26c3076b25d5e</code>.</li>
+</ul>
+
+<h2>Remaining work and limits</h2>
+<p>All issue-specific runtime checks are complete. This report and its sync trace change
+only documentation; all app sources and dependency files are identical to packaged candidate
+<code>6264208c18b37b83e8063d38d00c48383bd6eeda</code>, so its test/package/runtime evidence carries
+to this report commit. The exact whole-branch publication head still requires final review on
+both axes, then PR and CI. The PR's <code>Final review:</code> line records the exact reviewed
+publication commit. Merge requires Nicolas's separate approval.</p>
+<p>The existing Windows install-failure test remains failed and must be disclosed in the PR,
+with its scope reason and issue 244. The 10 Fedora and 9 Windows ignored tests are not claimed
+as passes. Focused lock and relocation runs retained their original candidate attribution.
+No Notion or Ollama runtime result is claimed.</p>
+</main>
+</html>

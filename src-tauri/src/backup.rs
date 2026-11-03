@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -112,9 +112,12 @@ fn create_backup_of_kind(
     let file = fs::File::create(&backup_path)
         .map_err(|e| format!("Failed to create backup file: {}", e))?;
     let mut zip = zip::ZipWriter::new(file);
+    // zip 2 marked every entry as made on Unix; zip 9 marks them DOS on Windows unless told.
+    // Unix keeps new backups exactly as earlier releases wrote them.
     let options = SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
-        .compression_level(Some(6));
+        .compression_level(Some(6))
+        .system(zip::System::Unix);
 
     let attachments_dir = vault.join(METADATA_DIR).join("attachments");
     // The archive holds exactly what a restore touches: the top-level entries it replaces and
@@ -908,6 +911,107 @@ fn move_entry(from: &Path, to: &Path) -> Result<(), String> {
     }
 }
 
+/// An entry's name for messages. zip 9 decodes a name only when asked, and decoding can fail;
+/// the raw bytes are then shown lossily, so reporting a refusal can never fail on the name.
+fn entry_label<R: Read>(entry: &zip::read::ZipFile<'_, R>) -> String {
+    match entry.name() {
+        Ok(name) => name.into_owned(),
+        Err(_) => String::from_utf8_lossy(entry.name_raw()).into_owned(),
+    }
+}
+
+/// Where an entry goes in the stage, read with this OS's own path rules, and whether it is a
+/// directory. `None` when the name is not a plain relative path.
+///
+/// Backups store names as `to_portable_string` gives them. On Fedora a backslash is an ordinary
+/// file name character, so `Resources/a\b.md`, and even `Resources/a\..\b.md`, is one file there
+/// and must come back as one. On Windows the backslash separates components, so the second name
+/// holds a `..` part there. zip 9 reads every name with Windows rules, so its paths are not used.
+///
+/// Before any component is read, this refuses on every OS a NUL and a name that Windows reads as
+/// rooted or on a drive: `/abs.md`, `\abs.md`, `\\server\share\x.md`, `C:abs.md`. Then it refuses
+/// any `..` component, read with this OS's own path rules, and on Windows any component NTFS
+/// cannot hold as the file it names (`windows_unsafe_component`).
+fn native_entry(name: &str) -> Option<(PathBuf, bool)> {
+    let windows_rooted = name.starts_with(['/', '\\'])
+        || matches!(name.as_bytes(), [drive, b':', ..] if drive.is_ascii_alphabetic());
+    if name.contains('\0') || windows_rooted {
+        return None;
+    }
+    let mut path = PathBuf::new();
+    for component in Path::new(name).components() {
+        match component {
+            Component::Normal(part) => {
+                #[cfg(windows)]
+                if part.to_str().is_none_or(windows_unsafe_component) {
+                    return None;
+                }
+                path.push(part);
+            }
+            Component::CurDir => {}
+            Component::Prefix(_) | Component::RootDir | Component::ParentDir => return None,
+        }
+    }
+    // On Windows a part such as `c:x` reads as a drive when pushed, and replaces the path.
+    if !path
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return None;
+    }
+    // A trailing separator marks a directory, so on Fedora a file named `x\` stays a file.
+    Some((path, name.ends_with(std::path::is_separator)))
+}
+
+/// Whether NTFS would write the path component `component` somewhere other than the file it
+/// names, or not at all: a reserved character (a `:` opens an alternate data stream, so
+/// `note.md::$DATA` is `note.md` itself), an ASCII control character, a trailing dot or space,
+/// which Windows drops, more than 255 UTF-16 units, or a device name.
+///
+/// These are the refusals zip 9.1.0's Windows `enclosed_name()` makes. Its device check slices
+/// the name at byte 3, which panics inside a multibyte character such as the `ï` of `naïve.md`
+/// or an emoji, so this one compares bytes and slices only where a character starts (#237).
+#[cfg(any(windows, test))]
+fn windows_unsafe_component(component: &str) -> bool {
+    component.is_empty()
+        || component.encode_utf16().count() > 255
+        || component.contains(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
+        || component.chars().any(|c| c.is_ascii_control())
+        || component.ends_with(['.', ' '])
+        || windows_device_name(component)
+}
+
+/// Whether Windows reads `component` as a device, whatever its case and whatever follows its
+/// first dot, once trailing spaces and dots are dropped: `CON`, `PRN`, `AUX`, `NUL`, `CONIN$`,
+/// `CONOUT$`, `CLOCK$`, and `COM` or `LPT` followed by one character, `1` to `9`, `¹`, `²` or `³`.
+#[cfg(any(windows, test))]
+fn windows_device_name(component: &str) -> bool {
+    let Some(first) = component.split(['.', ':']).next() else {
+        return false;
+    };
+    let stem = first.trim_end_matches([' ', '.']);
+    const DEVICES: [&str; 7] = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "CLOCK$"];
+    if DEVICES
+        .iter()
+        .any(|device| stem.eq_ignore_ascii_case(device))
+    {
+        return true;
+    }
+    // `COM` and `LPT` are ASCII, so the first three bytes are compared before anything is cut,
+    // and `get` cuts only where a character starts.
+    let numbered = stem.as_bytes().get(..3).is_some_and(|prefix| {
+        prefix.eq_ignore_ascii_case(b"COM") || prefix.eq_ignore_ascii_case(b"LPT")
+    });
+    let Some(rest) = stem.get(3..).filter(|_| numbered) else {
+        return false;
+    };
+    let mut rest = rest.chars();
+    matches!(
+        (rest.next(), rest.next()),
+        (Some('1'..='9' | '¹' | '²' | '³'), None)
+    )
+}
+
 fn extract_and_validate_with(
     backup: &Path,
     stage: &Path,
@@ -922,18 +1026,21 @@ fn extract_and_validate_with(
     }
     let mut total_bytes = 0_u64;
     let mut paths = HashSet::new();
+    // The second pass writes exactly the paths this pass accepted.
+    let mut targets = Vec::with_capacity(archive.len());
     for index in 0..archive.len() {
         let entry = archive
             .by_index(index)
             .map_err(|e| format!("Unreadable backup entry: {e}"))?;
-        let relative = entry
-            .enclosed_name()
-            .ok_or_else(|| format!("Unsafe path in backup: {}", entry.name()))?
-            .to_path_buf();
+        let (relative, is_dir) = entry
+            .name()
+            .ok()
+            .and_then(|name| native_entry(&name))
+            .ok_or_else(|| format!("Unsafe path in backup: {}", entry_label(&entry)))?;
         if relative.as_os_str().is_empty() || !paths.insert(relative.clone()) {
             return Err(format!(
                 "Duplicate or empty path in backup: {}",
-                entry.name()
+                entry_label(&entry)
             ));
         }
         if entry
@@ -942,7 +1049,7 @@ fn extract_and_validate_with(
         {
             return Err(format!(
                 "Symbolic links are not allowed in backups: {}",
-                entry.name()
+                entry_label(&entry)
             ));
         }
         total_bytes = total_bytes
@@ -951,20 +1058,17 @@ fn extract_and_validate_with(
         if total_bytes > MAX_ARCHIVE_BYTES {
             return Err(format!("Backup expands beyond {MAX_ARCHIVE_BYTES} bytes"));
         }
+        targets.push((relative, is_dir));
     }
 
     // Extraction is deliberately a second pass: the complete archive shape and declared
     // expanded size are accepted before a single potentially large payload reaches disk.
-    for index in 0..archive.len() {
+    for (index, (relative, is_dir)) in targets.iter().enumerate() {
         let mut entry = archive
             .by_index(index)
             .map_err(|e| format!("Unreadable backup entry: {e}"))?;
-        let relative = entry
-            .enclosed_name()
-            .ok_or_else(|| format!("Unsafe path in backup: {}", entry.name()))?
-            .to_path_buf();
-        let destination = stage.join(&relative);
-        if entry.is_dir() {
+        let destination = stage.join(relative);
+        if *is_dir {
             fs::create_dir_all(&destination)
                 .map_err(|e| format!("Cannot stage backup directory: {e}"))?;
         } else {
@@ -975,7 +1079,7 @@ fn extract_and_validate_with(
             let mut output = fs::File::create(&destination)
                 .map_err(|e| format!("Cannot stage backup file: {e}"))?;
             std::io::copy(&mut entry, &mut output)
-                .map_err(|e| format!("Cannot extract backup entry {}: {e}", entry.name()))?;
+                .map_err(|e| format!("Cannot extract backup entry {}: {e}", entry_label(&entry)))?;
             output
                 .sync_all()
                 .map_err(|e| format!("Cannot flush staged backup file: {e}"))?;
@@ -1019,12 +1123,13 @@ mod tests {
     use super::{
         cleanup_old_backups, create_backup, create_pre_sync_backup, delete_backup,
         extract_and_validate_with, list_backups, recover_interrupted_restore, recover_with,
-        restore_backup, restore_backup_with, Interrupt, RecoveredRestore, RestoreStep,
+        restore_backup, restore_backup_with, windows_unsafe_component, Interrupt, RecoveredRestore,
+        RestoreStep,
     };
     use crate::types::BackupKind;
     use std::collections::BTreeMap;
     use std::fs;
-    use std::io::{Seek, SeekFrom, Write};
+    use std::io::{Read, Seek, SeekFrom, Write};
     use std::path::{Path, PathBuf};
     use uuid::Uuid;
     use zip::{write::SimpleFileOptions, ZipArchive};
@@ -1203,13 +1308,32 @@ mod tests {
             let start = archive
                 .by_name("Resources/corrupt.md")
                 .unwrap()
-                .data_start();
+                .data_start()
+                .expect("an opened entry knows where its data starts");
             start
         };
         let mut file = fs::OpenOptions::new().write(true).open(&backup).unwrap();
         file.seek(SeekFrom::Start(data_start)).unwrap();
         file.write_all(&[0xff]).unwrap();
         file.sync_all().unwrap();
+
+        // The damaged byte must sit in the intended entry: it alone fails its CRC check.
+        let mut archive = ZipArchive::new(fs::File::open(&backup).unwrap()).unwrap();
+        let mut body = Vec::new();
+        let error = archive
+            .by_name("Resources/corrupt.md")
+            .unwrap()
+            .read_to_end(&mut body)
+            .expect_err("the damaged entry must fail its CRC check");
+        assert!(error.to_string().contains("checksum"), "{error}");
+        let mut body = Vec::new();
+        archive
+            .by_name("Projects/restored.md")
+            .unwrap()
+            .read_to_end(&mut body)
+            .unwrap();
+        assert_eq!(body, b"replacement note");
+        drop(archive);
 
         let result = restore_backup(
             vault.to_str().unwrap(),
@@ -1254,6 +1378,368 @@ mod tests {
         assert_eq!(fs::read_to_string(vault.join("live.md")).unwrap(), "live");
         assert!(!vault.join("restored.md").exists());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Write `backup`: one ordinary note first, then whatever `write` adds.
+    fn write_archive(backup: &Path, write: impl FnOnce(&mut zip::ZipWriter<fs::File>)) {
+        let mut writer = zip::ZipWriter::new(fs::File::create(backup).unwrap());
+        writer
+            .start_file("Projects/restored.md", SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(b"restored").unwrap();
+        write(&mut writer);
+        writer.finish().unwrap();
+    }
+
+    /// Add each of `entries` to `writer`, as a file holding its bytes.
+    fn write_entries(writer: &mut zip::ZipWriter<fs::File>, entries: &[(&str, &[u8])]) {
+        for (name, body) in entries {
+            writer
+                .start_file(*name, SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(body).unwrap();
+        }
+    }
+
+    /// A restore of the archive `write` builds must be refused for `reason`, report no change,
+    /// and leave the live vault and everything beside it exactly as they were.
+    fn assert_refused_unchanged(
+        case: &str,
+        reason: &str,
+        write: impl FnOnce(&mut zip::ZipWriter<fs::File>),
+    ) {
+        assert_backup_refused_unchanged(case, reason, |backup| write_archive(backup, write));
+    }
+
+    /// As `assert_refused_unchanged`, for the archive `place` puts at the path it is given.
+    fn assert_backup_refused_unchanged(case: &str, reason: &str, place: impl FnOnce(&Path)) {
+        let (root, vault, backups, _) = restore_fixture("hostile-archive");
+        let backup = backups.join("hostile.zip");
+        place(&backup);
+        let before = tree(&vault);
+        let everything_before = tree(&root);
+
+        let error = restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap())
+            .expect_err(case);
+
+        assert!(error.message.contains(reason), "{case}: {}", error.message);
+        assert!(!error.changed, "{case}");
+        assert_eq!(tree(&vault), before, "{case}");
+        assert_eq!(tree(&root), everything_before, "{case}");
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new(), "{case}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A restore of an archive holding `entries`, after one ordinary note, must succeed and give
+    /// each entry back, byte for byte, at the path `PathBuf::from` reads from its name on this OS.
+    fn assert_restored_at_native_paths(case: &str, entries: &[(&str, &[u8])]) {
+        let (root, vault, backups, _) = restore_fixture("native-names");
+        let backup = backups.join("native.zip");
+        write_archive(&backup, |writer| write_entries(writer, entries));
+
+        restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap())
+            .unwrap_or_else(|error| panic!("{case}: {}", error.message));
+
+        // The live metadata stays, since the archive has none.
+        let expected: BTreeMap<PathBuf, Vec<u8>> = [
+            ("Projects/restored.md", &b"restored"[..]),
+            (".helixnotes/vault_id", b"live-id"),
+            (".helixnotes/attachments/keep.bin", b"attachment"),
+        ]
+        .iter()
+        .chain(entries)
+        .map(|(path, body)| (PathBuf::from(path), body.to_vec()))
+        .collect();
+        assert_eq!(tree(&vault), expected, "{case}");
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new(), "{case}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Forward-slash `..`, rooted, drive, UNC and NUL names are refused on every OS.
+    #[test]
+    fn rooted_drive_and_parent_names_are_refused_before_any_live_change() {
+        for name in [
+            "../escape.md",
+            "a/../../escape.md",
+            "a/../b.md",
+            "/abs.md",
+            "\\abs.md",
+            "C:\\abs.md",
+            "C:abs.md",
+            "\\\\server\\share\\abs.md",
+            "//server/share/abs.md",
+            "nul\0.md",
+        ] {
+            assert_refused_unchanged(&format!("{name:?}"), "Unsafe path in backup", |writer| {
+                writer
+                    .start_file(name, SimpleFileOptions::default())
+                    .unwrap();
+                writer.write_all(b"hostile").unwrap();
+            });
+        }
+    }
+
+    /// `..` between backslashes is a parent on Windows, so each archive is refused there, whole.
+    /// On Fedora each name is one ordinary file and comes back at that name, byte for byte.
+    #[test]
+    fn backslash_parents_are_refused_on_windows_and_kept_on_fedora() {
+        for (name, body) in [
+            (
+                "Resources/a\\..\\b.md",
+                &b"one Fedora file named a\\..\\b.md"[..],
+            ),
+            ("Resources/..\\b.md", b"one Fedora file named ..\\b.md"),
+            (
+                "a\\..\\..\\escape.md",
+                b"one Fedora file, an escape on Windows",
+            ),
+        ] {
+            if cfg!(windows) {
+                assert_refused_unchanged(name, "Unsafe path in backup", |writer| {
+                    write_entries(writer, &[(name, body)])
+                });
+            } else {
+                assert_restored_at_native_paths(name, &[(name, body)]);
+            }
+        }
+        // A restore never publishes a top-level name that starts with a dot, so on Fedora this
+        // one would not reach the vault; on Windows it escapes, and is refused.
+        if cfg!(windows) {
+            assert_refused_unchanged("..\\escape.md", "Unsafe path in backup", |writer| {
+                write_entries(writer, &[("..\\escape.md", b"escape")])
+            });
+        }
+    }
+
+    /// Names Fedora holds as ordinary files but NTFS cannot: an alternate data stream, a stream
+    /// name that aliases the file beside it, a drive inside a path (pushing it would replace the
+    /// stage path), device names, a trailing dot or space, reserved characters and an ASCII
+    /// control character. Windows refuses each archive whole, before anything is staged; Fedora
+    /// restores every name as is.
+    #[test]
+    fn names_windows_cannot_hold_are_refused_there_and_kept_on_fedora() {
+        let cases: &[&[(&str, &[u8])]] = &[
+            &[("Projects/ab:c.md", b"an alternate data stream on Windows")],
+            &[
+                ("Projects/note.md", b"the note"),
+                (
+                    "Projects/note.md::$DATA",
+                    b"the same NTFS stream as the note",
+                ),
+            ],
+            &[("Projects/c:x.md", b"a drive inside a path on Windows")],
+            &[("Projects/CON.md", b"a device on Windows")],
+            &[("Projects/aux.tar.gz", b"a device, whatever the case")],
+            &[("Projects/NUL .md", b"a device once the space is dropped")],
+            &[("Projects/CONIN$", b"the console input")],
+            &[("Projects/CLOCK$.md", b"the clock device")],
+            &[("Projects/COM1.md", b"a serial port")],
+            &[("Projects/lpt9.txt", b"a printer port")],
+            &[(
+                "Projects/COM\u{b9}.md",
+                b"a serial port with a superscript one",
+            )],
+            &[(
+                "Projects/LPT\u{b3}",
+                b"a printer port with a superscript three",
+            )],
+            &[("Projects/CON/note.md", b"a device as a folder")],
+            &[("Projects/trailing dot.", b"Windows drops the dot")],
+            &[("Projects/trailing space ", b"Windows drops the space")],
+            &[("Projects/a|b.md", b"a reserved character on Windows")],
+            &[("Projects/a<b>.md", b"reserved characters on Windows")],
+            &[("Projects/what?*.md", b"wildcards on Windows")],
+            &[("Projects/say \"hi\".md", b"quotes on Windows")],
+            &[("Projects/a\u{1}b.md", b"an ASCII control character")],
+        ];
+        for entries in cases {
+            let names: Vec<&str> = entries.iter().map(|(name, _)| *name).collect();
+            let case = format!("{names:?}");
+            if cfg!(windows) {
+                assert_refused_unchanged(&case, "Unsafe path in backup", |writer| {
+                    write_entries(writer, entries)
+                });
+            } else {
+                assert_restored_at_native_paths(&case, entries);
+            }
+        }
+        // A component over 255 UTF-16 units is longer than NTFS allows. On Fedora it is also
+        // over the 255-byte name limit, so it cannot exist there to restore.
+        if cfg!(windows) {
+            let long = format!("Projects/{}.md", "\u{1F600}".repeat(127));
+            assert_refused_unchanged("a 257-unit name", "Unsafe path in backup", |writer| {
+                write_entries(writer, &[(long.as_str(), b"too long for NTFS")])
+            });
+        }
+    }
+
+    /// The Windows name check compares the `COM` and `LPT` prefixes as bytes and cuts the name
+    /// only where a character starts, so a multibyte character at byte 3, which made zip 9.1.0's
+    /// own check panic, is an ordinary name (#237). Pure logic, so it runs on every OS.
+    #[test]
+    fn the_windows_name_check_never_cuts_a_character() {
+        let ascii_255 = "a".repeat(255);
+        let ascii_256 = "a".repeat(256);
+        let at_255_units = format!("{}a", "\u{1F600}".repeat(127));
+        let at_256_units = "\u{1F600}".repeat(128);
+        for (component, unsafe_on_windows) in [
+            ("na\u{ef}ve.md", false),
+            ("\u{1F600}.md", false),
+            ("\u{1F600}", false),
+            ("\u{1F44D}\u{1F3FD} done.md", false),
+            ("Gr\u{f6}\u{df}e", false),
+            ("\u{41f}\u{440}\u{438}\u{432}\u{435}\u{442}.md", false),
+            ("a\u{20ac}.md", false),
+            ("Zo\u{eb}.md", false),
+            ("COM\u{e9}.md", false),
+            ("LPT\u{1F600}.md", false),
+            // zip 9.1.0 casts the character after `COM` to a byte, so it takes U+0131 for `1`.
+            ("COM\u{131}.md", false),
+            ("COM.md", false),
+            ("COMMENT.md", false),
+            ("LPT10.md", false),
+            ("CONSOLE.md", false),
+            ("NULL.md", false),
+            (ascii_255.as_str(), false),
+            (at_255_units.as_str(), false),
+            ("CON", true),
+            ("con.md", true),
+            ("Aux.tar.gz", true),
+            ("NUL .md", true),
+            ("PRN. .md", true),
+            ("CONIN$", true),
+            ("conout$.txt", true),
+            ("CLOCK$.md", true),
+            ("COM1", true),
+            ("com9.md", true),
+            ("COM1 .md", true),
+            ("LPT1.md", true),
+            ("lpt9", true),
+            ("COM\u{b9}.md", true),
+            ("LPT\u{b2}.md", true),
+            ("LPT\u{b3}", true),
+            ("ab:c.md", true),
+            ("note.md::$DATA", true),
+            ("a<b", true),
+            ("a>b", true),
+            ("a\"b", true),
+            ("a|b", true),
+            ("a?b", true),
+            ("a*b", true),
+            ("a/b", true),
+            ("a\\b", true),
+            ("a\u{1}b", true),
+            ("a\u{7f}b", true),
+            ("trailing.", true),
+            ("trailing ", true),
+            ("", true),
+            (ascii_256.as_str(), true),
+            (at_256_units.as_str(), true),
+        ] {
+            assert_eq!(
+                windows_unsafe_component(component),
+                unsafe_on_windows,
+                "{component:?}"
+            );
+        }
+    }
+
+    /// Names whose third byte falls inside a multibyte character, as files and as folders,
+    /// restore at their native paths, byte for byte, on every OS. On Windows these reached zip
+    /// 9.1.0's device check and panicked the restore (#237).
+    #[test]
+    fn multibyte_names_restore_at_their_native_paths_on_every_os() {
+        assert_restored_at_native_paths(
+            "multibyte names",
+            &[
+                ("Projects/na\u{ef}ve.md", "na\u{ef}ve".as_bytes()),
+                ("Projects/\u{1F600}.md", "\u{1F600}".as_bytes()),
+                (
+                    "Projects/\u{1F44D}\u{1F3FD} done.md",
+                    b"an emoji with a skin tone",
+                ),
+                (
+                    "Areas/Gr\u{f6}\u{df}e/\u{41f}\u{440}\u{438}\u{432}\u{435}\u{442}.md",
+                    "\u{41f}\u{440}\u{438}\u{432}\u{435}\u{442}".as_bytes(),
+                ),
+                (
+                    "Resources/a\u{20ac}/Zo\u{eb}.md",
+                    b"in a folder named a\xe2\x82\xac",
+                ),
+                ("Projects/COM\u{e9}.md", b"not a serial port"),
+                ("Projects/LPT10.md", b"not a printer port"),
+                ("Projects/COM\u{131}.md", b"not a serial port either"),
+            ],
+        );
+    }
+
+    /// On Fedora `a\b.md` is one file, so it comes back as that file, byte for byte. On Windows
+    /// the backslash separates `a` from `b.md`, as zip 2.6.1 restored it there.
+    #[test]
+    fn a_backslash_name_restores_at_its_native_path() {
+        let (root, vault, backups, _) = restore_fixture("backslash-name");
+        let backup = backups.join("backslash.zip");
+        write_archive(&backup, |writer| {
+            for (name, body) in [("a\\b.md", "top level"), ("Resources/c\\d.md", "nested")] {
+                writer
+                    .start_file(name, SimpleFileOptions::default())
+                    .unwrap();
+                writer.write_all(body.as_bytes()).unwrap();
+            }
+        });
+
+        restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap()).unwrap();
+
+        let (top, nested) = if cfg!(windows) {
+            (
+                vault.join("a").join("b.md"),
+                vault.join("Resources").join("c").join("d.md"),
+            )
+        } else {
+            (
+                vault.join("a\\b.md"),
+                vault.join("Resources").join("c\\d.md"),
+            )
+        };
+        assert_eq!(fs::read(top).unwrap(), b"top level");
+        assert_eq!(fs::read(nested).unwrap(), b"nested");
+        // `PathBuf::from` reads each name as this OS does: one file on Fedora, two parts on
+        // Windows. The live metadata stays, since the archive has none.
+        let expected: BTreeMap<PathBuf, Vec<u8>> = [
+            ("Projects/restored.md", "restored"),
+            ("a\\b.md", "top level"),
+            ("Resources/c\\d.md", "nested"),
+            (".helixnotes/vault_id", "live-id"),
+            (".helixnotes/attachments/keep.bin", "attachment"),
+        ]
+        .into_iter()
+        .map(|(path, body)| (PathBuf::from(path), body.as_bytes().to_vec()))
+        .collect();
+        assert_eq!(tree(&vault), expected);
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn symlinks_and_two_entries_for_one_path_are_refused_before_any_live_change() {
+        assert_refused_unchanged("symlink", "Symbolic links are not allowed", |writer| {
+            writer
+                .add_symlink(
+                    "Projects/link.md",
+                    "../../outside.md",
+                    SimpleFileOptions::default(),
+                )
+                .unwrap();
+        });
+        assert_refused_unchanged("b.md and b.md/", "Duplicate or empty path", |writer| {
+            writer
+                .start_file("b.md", SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(b"file").unwrap();
+            writer
+                .add_directory("b.md/", SimpleFileOptions::default())
+                .unwrap();
+        });
     }
 
     #[test]
@@ -1618,7 +2104,10 @@ mod tests {
 
         let entry = create_pre_sync_backup(vault.to_str().unwrap(), &backups).unwrap();
         let archive = ZipArchive::new(fs::File::open(&entry.path).unwrap()).unwrap();
-        let mut names: Vec<&str> = archive.file_names().collect();
+        let mut names: Vec<String> = archive
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .collect();
         names.sort();
         assert_eq!(
             names,
@@ -1639,6 +2128,533 @@ mod tests {
         fs::remove_file(vault.join("Projects/.draft.md")).unwrap();
         restore_backup(vault.to_str().unwrap(), &backups, &entry.path).unwrap();
         assert_eq!(tree(&vault), before);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The entries v0.1.0-alpha.1, built with zip 2.4.2, reads back: portable names with `/`
+    /// separators, directory entries ending in `/`, files deflated, all marked as made on Unix.
+    #[test]
+    fn a_new_backup_is_written_as_earlier_releases_read_it() {
+        let root =
+            std::env::temp_dir().join(format!("second-brain-backup-format-{}", Uuid::new_v4()));
+        let vault = root.join("vault");
+        let backups = root.join("backups");
+        let every_byte: Vec<u8> = (0..=u8::MAX).collect();
+        let files: [(&str, &[u8]); 6] = [
+            (
+                "Projects/Café ☕/Plan für 2027.md",
+                "# Plan für 2027\r\nCafé ☕\n".as_bytes(),
+            ),
+            ("Resources/日本語/メモ.md", "メモ".as_bytes()),
+            ("Archives/empty.md", b""),
+            ("Areas/.drafts/.deeper/hidden.md", b"in a nested dot folder"),
+            (
+                ".helixnotes/attachments/every-byte.bin",
+                every_byte.as_slice(),
+            ),
+            (".helixnotes/vault_id", b"vault-id"),
+        ];
+        for (path, body) in files {
+            let path = vault.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+
+        let entry = create_backup(vault.to_str().unwrap(), &backups, true).unwrap();
+
+        let mut archive = ZipArchive::new(fs::File::open(&entry.path).unwrap()).unwrap();
+        let mut names: Vec<String> = archive
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                ".helixnotes/",
+                ".helixnotes/attachments/",
+                ".helixnotes/attachments/every-byte.bin",
+                ".helixnotes/vault_id",
+                "Archives/",
+                "Archives/empty.md",
+                "Areas/",
+                "Areas/.drafts/",
+                "Areas/.drafts/.deeper/",
+                "Areas/.drafts/.deeper/hidden.md",
+                "Projects/",
+                "Projects/Café ☕/",
+                "Projects/Café ☕/Plan für 2027.md",
+                "Resources/",
+                "Resources/日本語/",
+                "Resources/日本語/メモ.md",
+            ]
+        );
+        for index in 0..archive.len() {
+            let entry = archive.by_index(index).unwrap();
+            assert_eq!(entry.system(), zip::System::Unix, "{:?}", entry.name());
+        }
+        for (path, body) in files {
+            let mut entry = archive.by_name(path).unwrap();
+            if !body.is_empty() {
+                assert_eq!(
+                    entry.compression(),
+                    zip::CompressionMethod::Deflated,
+                    "{path}"
+                );
+            }
+            let mut read = Vec::new();
+            entry.read_to_end(&mut read).unwrap();
+            assert_eq!(read, body, "{path}");
+        }
+        drop(archive);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Fedora file and folder names may hold a backslash anywhere, hand-added attachments
+    /// included. A backup stores them unchanged and restores them to the same native files.
+    ///
+    /// v0.1.0-alpha.1's zip 2.4.2 reader takes an entry whose name ends in a backslash for a
+    /// directory, so that release restores `ends in\` as an empty folder; this build restores it
+    /// as the file it is (#237).
+    #[cfg(unix)]
+    #[test]
+    fn fedora_backslash_names_survive_a_backup_and_restore() {
+        let root =
+            std::env::temp_dir().join(format!("second-brain-backslash-trip-{}", Uuid::new_v4()));
+        let vault = root.join("vault");
+        let backups = root.join("backups");
+        let files: [(&str, &[u8]); 6] = [
+            ("Resources/a\\b.md", b"# a\\b\r\nliteral backslash\n"),
+            (
+                "Resources/a\\..\\b.md",
+                b"one Fedora file named a\\..\\b.md",
+            ),
+            ("Areas/x\\y/note.md", b"in a folder named x\\y"),
+            (
+                "Projects/ends in\\",
+                b"a file whose name ends in a backslash",
+            ),
+            (
+                ".helixnotes/attachments/scan\\1.png",
+                b"\x89PNG\r\n\x1a\n\x00\xff",
+            ),
+            ("Projects/plain.md", b"plain"),
+        ];
+        for (path, body) in files {
+            let path = vault.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+
+        let entry = create_backup(vault.to_str().unwrap(), &backups, true).unwrap();
+
+        let archive = ZipArchive::new(fs::File::open(&entry.path).unwrap()).unwrap();
+        let mut names: Vec<String> = archive
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                ".helixnotes/",
+                ".helixnotes/attachments/",
+                ".helixnotes/attachments/scan\\1.png",
+                "Areas/",
+                "Areas/x\\y/",
+                "Areas/x\\y/note.md",
+                "Projects/",
+                "Projects/ends in\\",
+                "Projects/plain.md",
+                "Resources/",
+                "Resources/a\\..\\b.md",
+                "Resources/a\\b.md",
+            ]
+        );
+        drop(archive);
+
+        let before = tree(&vault);
+        fs::write(vault.join("Resources/a\\b.md"), "edited after the backup").unwrap();
+        fs::remove_file(vault.join("Resources/a\\..\\b.md")).unwrap();
+        fs::remove_dir_all(vault.join("Areas")).unwrap();
+        fs::remove_file(vault.join("Projects/ends in\\")).unwrap();
+
+        restore_backup(vault.to_str().unwrap(), &backups, &entry.path).unwrap();
+
+        assert_eq!(tree(&vault), before);
+        assert!(vault.join("Areas/x\\y").is_dir());
+        assert!(vault.join("Projects/ends in\\").is_file());
+        assert!(vault.join("Resources/a\\..\\b.md").is_file());
+        assert!(!vault.join("Resources/a").exists());
+        assert!(!vault.join("b.md").exists());
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The vault zip 2.6.1 wrote `test-fixtures/deps-zip9/old-backup.zip` from, as byte strings
+    /// so no checkout setting can change them. The README beside the archive says how.
+    const OLD_BACKUP_VAULT: &[(&str, &[u8])] = &[
+        (
+            "Projects/Café ☕/Plan für 2027.md",
+            b"# Plan f\xc3\xbcr 2027\r\n\r\nCaf\xc3\xa9 \xe2\x98\x95: CRLF and LF line endings stay as written.\n",
+        ),
+        ("Resources/日本語/メモ.md", b"# \xe3\x83\xa1\xe3\x83\xa2\n"),
+        ("Archives/empty.md", b""),
+        (".helixnotes/vault_id", b"00000000-0000-4000-8000-000000000237"),
+        (
+            ".helixnotes/history/00000000-0000-4000-8000-000000000001/2026-10-01T09-30-00.md",
+            b"# Plan\n\nAn older version.\n",
+        ),
+        (
+            ".helixnotes/attachments/diagram.png",
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x7f\x80\xfe\xff",
+        ),
+    ];
+
+    #[test]
+    fn a_backup_written_with_zip_2_restores_in_this_build() {
+        let root = std::env::temp_dir().join(format!("second-brain-old-backup-{}", Uuid::new_v4()));
+        let vault = root.join("vault");
+        let backups = root.join("backups");
+        for (path, body) in [
+            ("live.md", "live"),
+            (".helixnotes/vault_id", "live-id"),
+            (".helixnotes/attachments/live.bin", "live attachment"),
+        ] {
+            let path = vault.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+        fs::create_dir_all(&backups).unwrap();
+        let backup = backups.join("helixnotes-backup-2026-10-01T09-30-00.zip");
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("test-fixtures/deps-zip9/old-backup.zip"),
+            &backup,
+        )
+        .unwrap();
+
+        // The fixture must hold both methods a restore reads.
+        let mut archive = ZipArchive::new(fs::File::open(&backup).unwrap()).unwrap();
+        let mut methods = BTreeMap::new();
+        for index in 0..archive.len() {
+            let entry = archive.by_index(index).unwrap();
+            if !entry.is_dir() {
+                methods.insert(entry.name().unwrap().into_owned(), entry.compression());
+            }
+        }
+        drop(archive);
+        let expected_methods: BTreeMap<String, zip::CompressionMethod> = OLD_BACKUP_VAULT
+            .iter()
+            .map(|(path, _)| {
+                let method = if *path == ".helixnotes/attachments/diagram.png" {
+                    zip::CompressionMethod::Stored
+                } else {
+                    zip::CompressionMethod::Deflated
+                };
+                (path.to_string(), method)
+            })
+            .collect();
+        assert_eq!(methods, expected_methods);
+
+        restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap()).unwrap();
+
+        let expected: BTreeMap<PathBuf, Vec<u8>> = OLD_BACKUP_VAULT
+            .iter()
+            .map(|(path, body)| (PathBuf::from(*path), body.to_vec()))
+            .collect();
+        assert_eq!(tree(&vault), expected);
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The vault the earlier `create_backup`, on zip 2.4.2, wrote
+    /// `test-fixtures/deps-zip9/old-backslash-names.zip` from. Every backslash is part of a Fedora
+    /// file or folder name. The README beside the archive says how it was made.
+    const BACKSLASH_VAULT: &[(&str, &[u8])] = &[
+        (
+            "Resources/a\\b.md",
+            b"# a\\b\r\nA note whose name holds a backslash.\n",
+        ),
+        ("Areas/x\\y/note.md", b"In a folder named x\\y.\n"),
+        (
+            ".helixnotes/attachments/scan\\1.png",
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x5c\xff",
+        ),
+        ("Projects/plain.md", b"An ordinary note.\n"),
+        (
+            ".helixnotes/vault_id",
+            b"00000000-0000-4000-8000-000000000238",
+        ),
+    ];
+
+    /// Fedora reads each backslash as part of a name and Windows as a separator, as the earlier
+    /// release restored them.
+    #[test]
+    fn backslash_names_in_a_zip_2_backup_restore_at_their_native_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "second-brain-old-backslash-names-{}",
+            Uuid::new_v4()
+        ));
+        let vault = root.join("vault");
+        let backups = root.join("backups");
+        for (path, body) in [("live.md", "live"), (".helixnotes/vault_id", "live-id")] {
+            let path = vault.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+        fs::create_dir_all(&backups).unwrap();
+        let backup = backups.join("helixnotes-backup-2026-10-01T09-30-00.zip");
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("test-fixtures/deps-zip9/old-backslash-names.zip"),
+            &backup,
+        )
+        .unwrap();
+
+        // The fixture stores the backslashes as written.
+        let archive = ZipArchive::new(fs::File::open(&backup).unwrap()).unwrap();
+        let mut files: Vec<String> = archive
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .filter(|name| !name.ends_with('/'))
+            .collect();
+        files.sort();
+        let mut expected_files: Vec<&str> = BACKSLASH_VAULT.iter().map(|(path, _)| *path).collect();
+        expected_files.sort();
+        assert_eq!(files, expected_files);
+        drop(archive);
+
+        restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap()).unwrap();
+
+        let expected: BTreeMap<PathBuf, Vec<u8>> = BACKSLASH_VAULT
+            .iter()
+            .map(|(path, body)| (PathBuf::from(*path), body.to_vec()))
+            .collect();
+        assert_eq!(tree(&vault), expected);
+        let note = if cfg!(windows) {
+            vault.join("Resources").join("a").join("b.md")
+        } else {
+            vault.join("Resources").join("a\\b.md")
+        };
+        assert_eq!(fs::read(note).unwrap(), BACKSLASH_VAULT[0].1);
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The vault the earlier `create_backup`, on zip 2.4.2, wrote
+    /// `test-fixtures/deps-zip9/old-fedora-literal-names.zip` from. Each backslash is part of a
+    /// Fedora file name. The README beside the archive says how it was made.
+    const FEDORA_LITERAL_VAULT: &[(&str, &[u8])] = &[
+        (
+            "Resources/a\\..\\b.md",
+            b"# a\\..\\b\nOne Fedora file whose name holds a backslash, two dots and a backslash.\n",
+        ),
+        (
+            "Projects/ends in\\",
+            b"A Fedora file whose name ends in a backslash.\n",
+        ),
+        ("Projects/plain.md", b"An ordinary note.\n"),
+        (
+            ".helixnotes/vault_id",
+            b"00000000-0000-4000-8000-000000000237",
+        ),
+    ];
+
+    /// On Fedora both names are ordinary files and come back byte for byte, `ends in\` as a file.
+    /// On Windows the backslashes separate components, so `a\..\b.md` holds a parent part and the
+    /// archive is refused whole, with the live vault unchanged.
+    #[test]
+    fn fedora_literal_names_in_a_zip_2_backup_follow_each_os() {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test-fixtures/deps-zip9/old-fedora-literal-names.zip");
+
+        // The fixture stores the names as written, `ends in\` as a regular file.
+        let mut archive = ZipArchive::new(fs::File::open(&fixture).unwrap()).unwrap();
+        let mut files: Vec<String> = archive
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .filter(|name| !name.ends_with('/'))
+            .collect();
+        files.sort();
+        let mut expected_files: Vec<&str> =
+            FEDORA_LITERAL_VAULT.iter().map(|(path, _)| *path).collect();
+        expected_files.sort();
+        assert_eq!(files, expected_files);
+        let mode = archive.by_name("Projects/ends in\\").unwrap().unix_mode();
+        assert_eq!(mode.map(|mode| mode & 0o170000), Some(0o100000));
+        drop(archive);
+
+        if cfg!(windows) {
+            assert_backup_refused_unchanged(
+                "old-fedora-literal-names.zip",
+                "Unsafe path in backup",
+                |backup| {
+                    fs::copy(&fixture, backup).unwrap();
+                },
+            );
+            return;
+        }
+
+        let root =
+            std::env::temp_dir().join(format!("second-brain-old-literal-{}", Uuid::new_v4()));
+        let vault = root.join("vault");
+        let backups = root.join("backups");
+        for (path, body) in [("live.md", "live"), (".helixnotes/vault_id", "live-id")] {
+            let path = vault.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+        fs::create_dir_all(&backups).unwrap();
+        let backup = backups.join("helixnotes-backup-2026-10-01T09-30-00.zip");
+        fs::copy(&fixture, &backup).unwrap();
+
+        restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap()).unwrap();
+
+        let expected: BTreeMap<PathBuf, Vec<u8>> = FEDORA_LITERAL_VAULT
+            .iter()
+            .map(|(path, body)| (PathBuf::from(*path), body.to_vec()))
+            .collect();
+        assert_eq!(tree(&vault), expected);
+        assert!(vault.join("Projects/ends in\\").is_file());
+        assert!(vault.join("Resources/a\\..\\b.md").is_file());
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The vault the earlier `create_backup`, on zip 2.4.2, wrote
+    /// `test-fixtures/deps-zip9/old-unicode-names.zip` from. In every note, folder and attachment
+    /// name but `COMé.md`, which sits next to a device name, the third byte falls inside a
+    /// multibyte character, where zip 9.1.0's Windows device check cut it and panicked (#237).
+    /// The README beside the archive says how it was made.
+    const UNICODE_VAULT: &[(&str, &[u8])] = &[
+        (
+            "Projects/na\u{ef}ve.md",
+            b"# Na\xc3\xafve\nThe third byte of this name is inside the \xc3\xaf.\n",
+        ),
+        (
+            "Projects/\u{1F600}.md",
+            b"# \xf0\x9f\x98\x80\nA note named with one emoji.\n",
+        ),
+        (
+            "Projects/\u{1F44D}\u{1F3FD} done.md",
+            b"An emoji with a skin tone modifier.\n",
+        ),
+        (
+            "Areas/Gr\u{f6}\u{df}e/\u{41f}\u{440}\u{438}\u{432}\u{435}\u{442}.md",
+            b"\xd0\x9f\xd1\x80\xd0\xb8\xd0\xb2\xd0\xb5\xd1\x82\r\n",
+        ),
+        (
+            "Resources/a\u{20ac}/Zo\u{eb}.md",
+            b"In a folder named a\xe2\x82\xac.\n",
+        ),
+        ("Projects/COM\u{e9}.md", b"Not a serial port.\n"),
+        (
+            ".helixnotes/attachments/\u{1F600} scan.png",
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\xf0\x9f\x98\x80\xff",
+        ),
+        (
+            ".helixnotes/vault_id",
+            b"00000000-0000-4000-8000-000000000239",
+        ),
+    ];
+
+    /// Every name in `UNICODE_VAULT` is valid on both NTFS and Fedora, so the earlier backup
+    /// restores, byte for byte and at the same paths, on every OS.
+    #[test]
+    fn multibyte_names_in_a_zip_2_backup_restore_on_every_os() {
+        let root =
+            std::env::temp_dir().join(format!("second-brain-old-unicode-{}", Uuid::new_v4()));
+        let vault = root.join("vault");
+        let backups = root.join("backups");
+        for (path, body) in [
+            ("live.md", "live"),
+            (".helixnotes/vault_id", "live-id"),
+            (".helixnotes/attachments/live.bin", "live attachment"),
+        ] {
+            let path = vault.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+        fs::create_dir_all(&backups).unwrap();
+        let backup = backups.join("helixnotes-backup-2026-10-01T09-30-00.zip");
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("test-fixtures/deps-zip9/old-unicode-names.zip"),
+            &backup,
+        )
+        .unwrap();
+
+        // The fixture stores the names as written.
+        let archive = ZipArchive::new(fs::File::open(&backup).unwrap()).unwrap();
+        let mut files: Vec<String> = archive
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .filter(|name| !name.ends_with('/'))
+            .collect();
+        files.sort();
+        let mut expected_files: Vec<&str> = UNICODE_VAULT.iter().map(|(path, _)| *path).collect();
+        expected_files.sort();
+        assert_eq!(files, expected_files);
+        drop(archive);
+
+        restore_backup(vault.to_str().unwrap(), &backups, backup.to_str().unwrap()).unwrap();
+
+        let expected: BTreeMap<PathBuf, Vec<u8>> = UNICODE_VAULT
+            .iter()
+            .map(|(path, body)| (PathBuf::from(*path), body.to_vec()))
+            .collect();
+        assert_eq!(tree(&vault), expected);
+        assert_eq!(
+            fs::read(vault.join("Projects").join("na\u{ef}ve.md")).unwrap(),
+            UNICODE_VAULT[0].1
+        );
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The same names, written by this build's `create_backup`, come back byte for byte on every
+    /// OS after the notes, folder and attachment are edited or removed.
+    #[test]
+    fn multibyte_names_survive_a_backup_and_restore() {
+        let root =
+            std::env::temp_dir().join(format!("second-brain-unicode-trip-{}", Uuid::new_v4()));
+        let vault = root.join("vault");
+        let backups = root.join("backups");
+        for (path, body) in UNICODE_VAULT {
+            let path = vault.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+
+        let entry = create_backup(vault.to_str().unwrap(), &backups, true).unwrap();
+
+        let archive = ZipArchive::new(fs::File::open(&entry.path).unwrap()).unwrap();
+        let mut files: Vec<String> = archive
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .filter(|name| !name.ends_with('/'))
+            .collect();
+        files.sort();
+        let mut expected_files: Vec<&str> = UNICODE_VAULT.iter().map(|(path, _)| *path).collect();
+        expected_files.sort();
+        assert_eq!(files, expected_files);
+        drop(archive);
+
+        let before = tree(&vault);
+        fs::write(
+            vault.join("Projects/na\u{ef}ve.md"),
+            "edited after the backup",
+        )
+        .unwrap();
+        fs::remove_file(vault.join("Projects/\u{1F600}.md")).unwrap();
+        fs::remove_dir_all(vault.join("Areas")).unwrap();
+        fs::remove_file(vault.join(".helixnotes/attachments/\u{1F600} scan.png")).unwrap();
+
+        restore_backup(vault.to_str().unwrap(), &backups, &entry.path).unwrap();
+
+        assert_eq!(tree(&vault), before);
+        assert!(vault.join("Areas/Gr\u{f6}\u{df}e").is_dir());
+        assert_eq!(restore_leftovers(&root), Vec::<String>::new());
         fs::remove_dir_all(root).unwrap();
     }
 
