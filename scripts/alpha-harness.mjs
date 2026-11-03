@@ -81,7 +81,13 @@ function sleep(milliseconds) {
 function atomicWrite(path, data) {
   const temporary = `${path}.alpha-harness-${process.pid}`;
   writeFileSync(temporary, data, { mode: 0o600 });
-  renameSync(temporary, path);
+  try {
+    renameSync(temporary, path);
+  } catch (error) {
+    // A rename a file lock refused leaves no temporary file beside the real one (#252).
+    rmSync(temporary, { force: true });
+    throw error;
+  }
 }
 
 function runCommandSync(executable, args, options = {}) {
@@ -1145,7 +1151,7 @@ async function runSyncLocked(options) {
           teardown.record('cleanup-error', 'windows-app', { error: error.message });
         }
       }
-      const finalizeError = teardown.absorb(await finalizeWindows(options.sshHost, runId, evidencePath));
+      const finalizeError = teardown.real(await finalizeWindows(options.sshHost, runId, evidencePath));
       cleanupError ??= finalizeError;
     }
   }
@@ -1478,7 +1484,7 @@ export function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, {
           trace.record('cleanup-error', 'windows-driver', { error: error.message });
         }
       }
-      const finalizeError = trace.absorb(await finalizeWindows(sshHost, runId, evidencePath, io));
+      const finalizeError = trace.real(await finalizeWindows(sshHost, runId, evidencePath, io));
       firstError ??= finalizeError;
       const reported = trace.error(firstError);
       if (reported) throw reported;
@@ -1649,6 +1655,9 @@ function withTraceFailure(error, traceError) {
 
 // Trace writes for a teardown. `record` never throws: the first write that fails is kept, as is a
 // trace failure an inner teardown reported (`absorb`), and `error` adds it to the error reported.
+// `real` is what a teardown keeps of an inner teardown's error: the error, unless all it reports is
+// a trace failure, which is kept alongside instead, so it never takes the place of a real error
+// from a later step (#252).
 function teardownTrace(evidencePath) {
   let traceError;
   return {
@@ -1662,6 +1671,13 @@ function teardownTrace(evidencePath) {
     absorb(error) {
       if (error?.traceError) traceError ??= error.traceError;
       return error;
+    },
+    real(error) {
+      this.absorb(error);
+      return error?.traceOnly ? undefined : error;
+    },
+    get failed() {
+      return Boolean(traceError);
     },
     error: (error) => withTraceFailure(error, traceError),
   };
@@ -1716,9 +1732,9 @@ export async function runRestoreLocked(options, io = restoreIo(options)) {
       teardown.record('run-failed', machine?.name ?? 'controller', { error: error.message });
     }
     // Called before `??=`, so an error kept earlier can never skip the teardown (#252).
-    const teardownError = teardown.absorb(await finishMachine(machine, evidencePath));
+    const teardownError = teardown.real(await finishMachine(machine, evidencePath));
     cleanupError ??= teardownError;
-    if (runError || cleanupError) break;
+    if (runError || cleanupError || teardown.failed) break;
   }
 
   // The run's first error, saying so if a failure report or teardown line could not be written.
@@ -2084,6 +2100,10 @@ export function windowsAiKeyStore(worker) {
   };
 }
 
+// What alpha-harness.ps1's DesktopScript action says when it could not confirm the desktop task
+// stopped and so left it registered (#252).
+export const DESKTOP_TASK_KEPT = 'the task stays registered';
+
 // What alpha-desktop.ps1 writes in place of found/left when a Credential Manager call fails with
 // anything but ERROR_NOT_FOUND: the call and its Win32 error code, and nothing else.
 const CREDENTIAL_FAILURE = /^Cred(Read|Delete)W failed with Win32 error -?\d+$/;
@@ -2091,9 +2111,10 @@ const CREDENTIAL_FAILURE = /^Cred(Read|Delete)W failed with Win32 error -?\d+$/;
 /**
  * The Windows worker's side of a credential check, for the run's Notion token and the app's AI
  * keys: alpha-desktop.ps1 runs in the desktop session, because an SSH logon has no Credential
- * Manager, and writes `found` and `left` to a result file of this call's own, deleted once read.
- * A late write from an earlier call cannot answer this one: its file had another name, and
- * alpha-harness.ps1 stops a desktop task before it gives up on it. The script never returns the
+ * Manager, and writes `found` and `left` to a result file of this call's own, deleted once read,
+ * unless its task could not be confirmed stopped. A late write from an earlier call cannot answer
+ * this one: its file had another name, and alpha-harness.ps1 lets a desktop task go only once it
+ * is confirmed stopped. The script never returns the
  * secret; this passes on only the two flags, or the Win32 error code the script stopped on.
  */
 export function desktopCredentialAction({ target, remove }, { tools, runDesktop, readResult, discard }) {
@@ -2105,10 +2126,16 @@ export function desktopCredentialAction({ target, remove }, { tools, runDesktop,
       return null;
     }
   };
+  // A desktop task that could not be confirmed stopped may still write this file, so it is kept,
+  // with the task, for whoever stops it by hand. Its name is this call's own, so it cannot answer a
+  // later call (#252).
+  let taskKept = false;
   try {
     try {
       runDesktop(`-Mode NotionToken -OutputPath "${resultPath}" -CredentialTarget "${target}"${remove === true ? ' -RemoveCredential' : ''}`);
     } catch (error) {
+      taskKept = String(error.message).includes(DESKTOP_TASK_KEPT);
+      if (taskKept) fail(`could not check ${target}: ${error.message}; its result file ${resultPath} is kept`);
       const failure = written()?.error;
       fail(`could not check ${target}: ${typeof failure === 'string' && CREDENTIAL_FAILURE.test(failure) ? failure : error.message}`);
     }
@@ -2116,7 +2143,7 @@ export function desktopCredentialAction({ target, remove }, { tools, runDesktop,
     if (typeof answer?.found !== 'boolean' || typeof answer?.left !== 'boolean') fail(`the desktop script did not answer found/left for ${target}`);
     return { found: answer.found, left: answer.left };
   } finally {
-    discard(resultPath);
+    if (!taskKept) discard(resultPath);
   }
 }
 
@@ -2639,7 +2666,7 @@ async function walkthroughRun(options, io, { notion, machineNames, cancellation 
               try {
                 stopped = await settleStoppedGate(machine, driven, gate, evidencePath);
               } catch (error) {
-                cleanupError ??= teardown.absorb(error);
+                cleanupError ??= teardown.real(error);
                 teardownRecord(machine.name, 'cleanup-error', { error: error.message });
               }
               teardownRecord(machine.name, 'stopped-gate-settled', { apps: stopped });
@@ -2656,7 +2683,7 @@ async function walkthroughRun(options, io, { notion, machineNames, cancellation 
             // Always, whatever an earlier step left: called before `??=`, so a kept error can
             // never skip it.
             async () => {
-              const teardownError = teardown.absorb(await finishMachine(machine, evidencePath));
+              const teardownError = teardown.real(await finishMachine(machine, evidencePath));
               cleanupError ??= teardownError;
             },
             // After the app and driver are stopped, so nothing can write the key back. An unarmed
@@ -2901,6 +2928,31 @@ function exitedAlready(error, pid) {
 }
 
 /**
+ * The worker's cleanup-processes: stops the installed app's processes this run started, app first,
+ * then watchdog, sidecar and orphaned sidecar. AGENTS.md: stop only what this run started. The
+ * sidecar and watchdog are the app's children, so their PIDs are never handed to us; exact package
+ * path plus a start time inside this run is the closest proof available, and nothing is stopped if
+ * an older one runs. Each PID is stopped even when one before it failed, and one that has exited
+ * already counts as stopped (#252); the first error is thrown once all have been tried. `io` holds
+ * the PowerShell calls, replaced only in tests.
+ */
+export function stopRunProcesses(startedAt, io) {
+  const reported = io.report();
+  const before = reported.filter((record) => new Date(record.Started) >= new Date(startedAt));
+  const untouched = reported.filter((record) => !before.includes(record));
+  if (untouched.length) fail(`refusing: installed processes predate this run: ${JSON.stringify(untouched)}`);
+  const ordered = ['App', 'Watchdog', 'Sidecar', 'SidecarOrphan'].flatMap((role) => before.filter((record) => record.Role === role));
+  everyStepSync(ordered.map((record) => [record.Id, () => {
+    try {
+      io.stopPid(record.Id, record.Path);
+    } catch (error) {
+      if (!exitedAlready(error, record.Id)) throw error;
+    }
+  }]));
+  return { before, after: io.report() };
+}
+
+/**
  * The worker's stop-driver: every msedgedriver whose parent is the run's tauri-driver, then that
  * tauri-driver, by exact PID (StopPid checks the PID's executable too), then the driver's task.
  * A PID that has exited already counts as stopped. Each stop runs even when one before it failed,
@@ -2954,22 +3006,30 @@ export function stopOwnedDrivers(driverPid, io) {
 
 // The run directory keeps all machine state as evidence; only the pointers into the user's
 // profile and task list are removed. The junction is checked to target this run before rmdir,
-// which removes the link and never its target.
-function removeRunArtifacts(tools, appPath, manifest, paths) {
-  let junctionRemoved = false;
-  if (existsSync(manifest.machineLink)) {
-    if (!lstatSync(manifest.machineLink).isSymbolicLink()
-      || win32.resolve(readlinkSync(manifest.machineLink)).toLowerCase() !== win32.resolve(paths.machinePath).toLowerCase()) {
-      fail(`refusing to remove ${manifest.machineLink}: not this run's junction`);
-    }
-    rmdirSync(manifest.machineLink);
-    junctionRemoved = true;
-  }
-  windowsPowerShell(tools, ['-Action', 'RemoveTask', '-TaskName', WINDOWS_TASK, '-ExecutablePath', appPath]);
-  if (existsSync(WINDOWS_DRIVER)) {
-    windowsPowerShell(tools, ['-Action', 'RemoveTask', '-TaskName', WINDOWS_DRIVER_TASK, '-ExecutablePath', WINDOWS_DRIVER]);
-  }
-  return { machineState: paths.machinePath, junctionRemoved, taskRemoved: WINDOWS_TASK };
+// which removes the link and never its target. The junction, the app's task and the driver's task
+// are each removed even when one before failed (#252); the first error is thrown once all have
+// been tried. `removeTask(name, executable)` and `removeLink` are replaced only in tests.
+export function removeRunArtifacts(tools, appPath, manifest, paths, {
+  removeTask = (name, executable) => windowsPowerShell(tools, ['-Action', 'RemoveTask', '-TaskName', name, '-ExecutablePath', executable]),
+  removeLink = rmdirSync,
+  driverInstalled = () => existsSync(WINDOWS_DRIVER),
+} = {}) {
+  const removed = everyStepSync([
+    ['junction', () => {
+      if (!existsSync(manifest.machineLink)) return false;
+      if (!lstatSync(manifest.machineLink).isSymbolicLink()
+        || win32.resolve(readlinkSync(manifest.machineLink)).toLowerCase() !== win32.resolve(paths.machinePath).toLowerCase()) {
+        fail(`refusing to remove ${manifest.machineLink}: not this run's junction`);
+      }
+      removeLink(manifest.machineLink);
+      return true;
+    }],
+    ['appTask', () => removeTask(WINDOWS_TASK, appPath)],
+    ['driverTask', () => {
+      if (driverInstalled()) removeTask(WINDOWS_DRIVER_TASK, WINDOWS_DRIVER);
+    }],
+  ]);
+  return { machineState: paths.machinePath, junctionRemoved: removed.junction, taskRemoved: WINDOWS_TASK };
 }
 
 // Runs alpha-desktop.ps1 in the interactive desktop session through a scheduled task. The
@@ -3053,9 +3113,11 @@ export function redirectProfileFolders(redirects, link) {
 // direction. Only a link to this run's own target is removed. rmdir removes a Windows junction
 // and never its target; a POSIX symlink (the tests) needs unlink. The user's folder is renamed
 // back, never copied or deleted.
+// Each folder is restored even when one before it failed, so a `logs` that cannot be put back
+// never leaves `EBWebView` aside (#252); the first error is thrown once all have been tried.
 export function restoreProfileFolders(redirects = []) {
   const removeLink = process.platform === 'win32' ? rmdirSync : unlinkSync;
-  return redirects.map(({ path, target, aside }) => {
+  const restored = everyStepSync(redirects.map(({ path, target, aside }, index) => [index, () => {
     if (present(path) && lstatSync(path).isSymbolicLink()) {
       if (!linksTo(path, target)) fail(`refusing to remove ${path}: not this run's junction`);
       removeLink(path);
@@ -3075,7 +3137,8 @@ export function restoreProfileFolders(redirects = []) {
     // Without a folder aside, the path is either absent as before the run or the user's own
     // folder, because the run stopped before redirecting it; both are left as they are.
     return { path, movedBack: hadFolder };
-  });
+  }]));
+  return redirects.map((_, index) => restored[index]);
 }
 
 // Journals written before #167 hold no window state, so there is nothing to restore for them.
@@ -3107,11 +3170,15 @@ function checkedWindowStateEvidence(manifest) {
 }
 
 // Restores config.json and the window state from the journal, checks the window state, and
-// returns its evidence.
+// returns its evidence. Each runs even when the one before it failed, so a config.json that a file
+// lock keeps from being replaced never leaves the window state changed (#252); the first error is
+// thrown once all have run.
 function restoreJournaledFiles(manifest) {
-  atomicWrite(manifest.configPath, readFileSync(manifest.originalPath));
-  restoreWindowState(manifest);
-  return checkedWindowStateEvidence(manifest);
+  return everyStepSync([
+    ['config', () => atomicWrite(manifest.configPath, readFileSync(manifest.originalPath))],
+    ['windowState', () => restoreWindowState(manifest)],
+    ['evidence', () => checkedWindowStateEvidence(manifest)],
+  ]).evidence;
 }
 
 // `join` is win32.join where the worker runs; the tests run these on POSIX paths.
@@ -3127,10 +3194,12 @@ function moveRunDamagedConfigs(configDirectory, paths, copyFile = copyFileSync) 
   if (!existsSync(damagedBeforePath(paths))) return [];
   const before = JSON.parse(readFileSync(damagedBeforePath(paths), 'utf8'));
   const damaged = damagedConfigs(configDirectory).filter((name) => !before.includes(name));
-  for (const name of damaged) {
+  // Each copy is moved even when one before it failed (#252). A copy is deleted from the profile
+  // only once it is safe in the run root.
+  everyStepSync(damaged.map((name) => [name, () => {
     copyFile(join(configDirectory, name), join(paths.runRoot, name));
     unlinkSync(join(configDirectory, name));
-  }
+  }]));
   return damaged;
 }
 
@@ -3363,27 +3432,12 @@ async function windowsWorker(request) {
   }
 
   if (request.action === 'cleanup-processes') {
-    // AGENTS.md: stop only what this run started. The sidecar and watchdog are the app's
-    // children, so their PIDs are never handed to us; exact package path plus a start time
-    // inside this run is the closest proof available.
     const { startedAt } = JSON.parse(readFileSync(paths.manifestPath, 'utf8'));
-    const reported = windowsInterrupt(tools, appPath, 'Report');
-    const before = { processes: reported.processes.filter((record) => new Date(record.Started) >= new Date(startedAt)) };
-    const untouched = reported.processes.filter((record) => !before.processes.includes(record));
-    if (untouched.length) fail(`refusing: installed processes predate this run: ${JSON.stringify(untouched)}`);
-    for (const role of ['App', 'Watchdog', 'Sidecar', 'SidecarOrphan']) {
-      for (const processRecord of before.processes.filter((process) => process.Role === role)) {
-        try {
-          windowsPowerShell(tools, [
-            '-Action', 'StopPid', '-PidToStop', String(processRecord.Id),
-            '-ExecutablePath', processRecord.Path,
-          ]);
-        } catch (error) {
-          if (!String(error.message).includes('is not running')) throw error;
-        }
-      }
-    }
-    return { before: before.processes, after: windowsInterrupt(tools, appPath, 'Report').processes };
+    const report = () => windowsInterrupt(tools, appPath, 'Report').processes;
+    return stopRunProcesses(startedAt, {
+      report,
+      stopPid: (pid, executable) => windowsPowerShell(tools, ['-Action', 'StopPid', '-PidToStop', String(pid), '-ExecutablePath', executable]),
+    });
   }
 
   if (request.action === 'identity') {
@@ -3826,9 +3880,10 @@ export async function runAcceptanceLocked(options, io = acceptanceIo(options)) {
     }
     for (const side of sides) await io.closeApp(side.browser);
     // Each machine is always cleaned up; `??=` would skip the call once an earlier error was kept.
-    fedoraCleanup = fedora ? teardown.absorb(await finishMachine(fedora, evidencePath)) : null;
-    const windowsCleanup = windowsPrepared ? teardown.absorb(await finishMachine(windows, evidencePath)) : null;
-    cleanupError ??= fedoraCleanup ?? windowsCleanup;
+    fedoraCleanup = fedora ? await finishMachine(fedora, evidencePath) : null;
+    const windowsCleanup = windowsPrepared ? await finishMachine(windows, evidencePath) : null;
+    // The first real error of the two; a trace failure is kept alongside, never in its place (#252).
+    cleanupError ??= teardown.real(fedoraCleanup) ?? teardown.real(windowsCleanup);
   }
   // Every run removes the candidate, passed or failed, once the Fedora app is stopped, and checks
   // the vault survived it. A failed removal never hides the run's own error. A Fedora teardown

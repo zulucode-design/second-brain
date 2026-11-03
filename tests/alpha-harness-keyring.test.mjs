@@ -6,16 +6,19 @@
 // and the real Windows machine (windowsDriverMachine) and its real teardown over fake Windows
 // actions. None touches a real keyring, machine or process.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 const {
-  AI_KEY_ACCOUNTS, DESKTOP_ACTION_TIMEOUT_MS, DESKTOP_SCRIPT_TIMEOUT_MS, DESKTOP_TASK_BUDGET_MS, PLANTED_AI_KEYS,
+  AI_KEY_ACCOUNTS, DESKTOP_ACTION_TIMEOUT_MS, DESKTOP_SCRIPT_TIMEOUT_MS, DESKTOP_TASK_BUDGET_MS, DESKTOP_TASK_KEPT, PLANTED_AI_KEYS,
   desktopCredentialAction, fedoraAiKeyStore, finalizeJournaledRun, finishMachine, killEach, plantedAiKeyPatch, recoverJournaledRun,
-  runAcceptanceLocked, runDesktopScript, runRestoreLocked, runWalkthroughLocked, stopOwnedDrivers,
+  removeRunArtifacts, runAcceptanceLocked, runDesktopScript, runRestoreLocked, runWalkthroughLocked, stopOwnedDrivers, stopRunProcesses,
   windowsAiKeyAction, windowsAiKeyStore, windowsAiKeyTarget, windowsDriverMachine,
 } = await import(new URL('../scripts/alpha-harness.mjs', import.meta.url));
 
@@ -768,6 +771,16 @@ for (const platform of PLATFORMS) {
   });
 }
 
+test('fedora: a key that cannot be cleared after a teardown that only failed to write its trace is the run\'s error', async (t) => {
+  // The gate passes, the trace breaks after the plant, and the key's clear fails.
+  const world = walkthroughWorld({ machine: 'fedora', gate: { breakTrace: true }, faults: { fedora: { clearFails: true } } });
+  t.after(world.dispose);
+
+  const error = await failure(world.run());
+
+  assert.match(error.message, /^AI key cleanup: ai:openai on fedora: secret-tool clear for ai:openai failed \(exit 1\).*; the trace could not be written: EISDIR/);
+});
+
 test('windows: an uninstall that fails as the trace breaks is the run\'s error, and the candidate is reinstalled', async (t) => {
   const windowsFaults = { fail: { uninstall: 1 } };
   const world = walkthroughWorld({ machine: 'windows', machineFaults: { windows: windowsFaults } });
@@ -1083,9 +1096,10 @@ test('windows driver stop: a process list that cannot be read stops nothing else
 });
 
 // A run journaled the way prepare and break-config leave it, on POSIX paths in a temp folder: the
-// real config swapped, a window state the run created, the profile's logs folder renamed aside with
-// a link to the run in its place, and the app's damaged copy from the run beside the user's own.
-function journaledRun(t) {
+// real config swapped, a window state the run created (or, with `windowStateBefore`, changed), the
+// profile's folders renamed aside with a link to the run in each one's place, and the app's damaged
+// copies from the run beside the user's own.
+function journaledRun(t, { windowStateBefore = false, folders = ['logs'], runDamaged = ['config.json.damaged-run'] } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'alpha-journal-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const configDir = join(root, 'appdata');
@@ -1098,32 +1112,39 @@ function journaledRun(t) {
   writeFileSync(configPath, '{"vault":"the run\'s"}\n');
   const windowStatePath = join(configDir, '.window-state.json');
   writeFileSync(windowStatePath, '{"geometry":"the run\'s"}');
-  const profile = { path: join(root, 'profile', 'logs'), target: join(runRoot, 'profile', 'logs'), aside: join(root, 'aside', 'logs') };
-  mkdirSync(profile.aside, { recursive: true });
-  writeFileSync(join(profile.aside, 'app.log'), 'the user\'s log');
-  mkdirSync(profile.target, { recursive: true });
+  const originalWindowStatePath = windowStateBefore ? join(runRoot, 'original-window-state.json') : null;
+  if (originalWindowStatePath) writeFileSync(originalWindowStatePath, '{"geometry":"the user\'s"}');
+  const profiles = folders.map((name) => ({ path: join(root, 'profile', name), target: join(runRoot, 'profile', name), aside: join(root, 'aside', name) }));
   mkdirSync(join(root, 'profile'), { recursive: true });
-  symlinkSync(profile.target, profile.path, 'junction');
+  for (const folder of profiles) {
+    mkdirSync(folder.aside, { recursive: true });
+    writeFileSync(join(folder.aside, 'app.log'), 'the user\'s log');
+    mkdirSync(folder.target, { recursive: true });
+    symlinkSync(folder.target, folder.path, 'junction');
+  }
+  const [profile] = profiles;
   writeFileSync(join(runRoot, 'damaged-before-break.json'), JSON.stringify(['config.json.damaged-user']));
   writeFileSync(join(configDir, 'config.json.damaged-user'), 'the user\'s own damaged copy');
-  writeFileSync(join(configDir, 'config.json.damaged-run'), 'the run\'s damaged copy');
+  for (const name of runDamaged) writeFileSync(join(configDir, name), 'the run\'s damaged copy');
   const manifestPath = join(runRoot, 'state.json');
   writeFileSync(manifestPath, JSON.stringify({
-    version: 1, runId: 'fake-run', configPath, originalPath, windowStatePath, originalWindowStatePath: null,
-    originalWindowStateSha256: null, machineLink: join(root, 'vaults', 'fake-vault'), appPath: 'fake-app', profileRedirects: [profile],
+    version: 1, runId: 'fake-run', configPath, originalPath, windowStatePath, originalWindowStatePath,
+    originalWindowStateSha256: originalWindowStatePath ? createHash('sha256').update('{"geometry":"the user\'s"}').digest('hex') : null,
+    machineLink: join(root, 'vaults', 'fake-vault'), appPath: 'fake-app', profileRedirects: profiles,
   }));
   const lockPath = join(configDir, 'alpha-harness.lock.json');
   writeFileSync(lockPath, JSON.stringify({ runId: 'fake-run', manifestPath }));
   const log = [];
   return {
-    configDir, configPath, runRoot, manifestPath, lockPath, profile, log,
+    configDir, configPath, runRoot, manifestPath, lockPath, profile, profiles, windowStatePath, log,
     paths: { runRoot, manifestPath },
     // `copyFails`: the run root's drive is full.
+    // `copyFails`: the run root's drive is full, for every copy or, given a name, for that one.
     io: ({ copyFails = false, artifactsFail = false, processes = [] } = {}) => ({
       processes: () => processes,
       copyFile(from, to) {
         log.push('copy-damaged');
-        if (copyFails) throw Object.assign(new Error(`ENOSPC: no space left on device, copyfile '${from}' -> '${to}'`), { code: 'ENOSPC' });
+        if (copyFails === true || (typeof copyFails === 'string' && from.endsWith(copyFails))) throw Object.assign(new Error(`ENOSPC: no space left on device, copyfile '${from}' -> '${to}'`), { code: 'ENOSPC' });
         writeFileSync(to, readFileSync(from));
       },
       removeArtifacts() {
@@ -1132,6 +1153,10 @@ function journaledRun(t) {
         return { junctionRemoved: true, taskRemoved: 'SecondBrainAlphaHarness' };
       },
     }),
+    restoredFiles() {
+      assert.equal(readFileSync(configPath, 'utf8'), '{"vault":"the user\'s"}\n', 'the config is restored');
+      assert.equal(existsSync(windowStatePath), false, 'the window state the run created is gone');
+    },
     restoredExceptDamaged() {
       assert.equal(readFileSync(configPath, 'utf8'), '{"vault":"the user\'s"}\n', 'the config is restored');
       assert.equal(existsSync(windowStatePath), false, 'the window state the run created is gone');
@@ -1174,6 +1199,59 @@ test('windows finalize: a full run-root drive that stops the damaged copy still 
   assert.equal(finalized.junctionRemoved, true);
 });
 
+test('windows finalize: a config.json that cannot be replaced still has the window state and profile restored, and keeps the lock', (t) => {
+  const run = journaledRun(t, { windowStateBefore: true });
+  // A file lock, as far as renameSync can tell: something holds the path.
+  rmSync(run.configPath);
+  mkdirSync(join(run.configPath, 'held'), { recursive: true });
+
+  assert.throws(
+    () => finalizeJournaledRun({ runId: 'fake-run', configPath: run.configPath, paths: run.paths }, run.io()),
+    /^Error: (EISDIR|ENOTEMPTY|EEXIST|EPERM).*; the run's lock and journal stay for the next run's recovery$/,
+  );
+
+  assert.equal(readFileSync(run.windowStatePath, 'utf8'), '{"geometry":"the user\'s"}', 'the window state is restored');
+  assert.equal(readFileSync(join(run.profile.path, 'app.log'), 'utf8'), 'the user\'s log', 'the profile folder is back');
+  assert.ok(existsSync(join(run.runRoot, 'config.json.damaged-run')), 'the damaged copy moved');
+  assert.deepEqual(readdirSync(run.configDir).filter((name) => name.includes('.alpha-harness-')), [], 'no temporary file is left beside the config');
+  assert.ok(existsSync(run.lockPath), 'the lock stays');
+});
+
+test('windows finalize: a profile folder that cannot be put back still has the next one restored, and keeps the lock', (t) => {
+  const run = journaledRun(t, { folders: ['logs', 'EBWebView'] });
+  const [logs, webview] = run.profiles;
+  // Something else now sits where the run's link to logs was.
+  rmSync(logs.path);
+  mkdirSync(join(run.runRoot, 'elsewhere'), { recursive: true });
+  symlinkSync(join(run.runRoot, 'elsewhere'), logs.path, 'junction');
+
+  assert.throws(
+    () => finalizeJournaledRun({ runId: 'fake-run', configPath: run.configPath, paths: run.paths }, run.io()),
+    /refusing to remove .*logs: not this run's junction; the run's lock and journal stay/,
+  );
+
+  assert.equal(lstatSync(webview.path).isSymbolicLink(), false, 'EBWebView is restored');
+  assert.equal(readFileSync(join(webview.path, 'app.log'), 'utf8'), 'the user\'s log');
+  assert.equal(lstatSync(logs.path).isSymbolicLink(), true, 'a link the run did not make is left alone');
+  assert.ok(existsSync(logs.aside), 'and the user\'s logs folder stays aside for the next try');
+  run.restoredFiles();
+  assert.ok(existsSync(run.lockPath));
+});
+
+test('windows finalize: a damaged copy that cannot be moved still has the next one moved', (t) => {
+  const run = journaledRun(t, { runDamaged: ['config.json.damaged-run-1', 'config.json.damaged-run-2'] });
+
+  assert.throws(
+    () => finalizeJournaledRun({ runId: 'fake-run', configPath: run.configPath, paths: run.paths }, run.io({ copyFails: 'config.json.damaged-run-1' })),
+    /ENOSPC.*damaged-run-1.*; the run's lock and journal stay/,
+  );
+
+  assert.ok(existsSync(join(run.configDir, 'config.json.damaged-run-1')), 'the copy that could not be kept stays in the profile');
+  assert.ok(existsSync(join(run.runRoot, 'config.json.damaged-run-2')), 'the next copy moved');
+  assert.ok(!existsSync(join(run.configDir, 'config.json.damaged-run-2')));
+  assert.ok(existsSync(run.lockPath));
+});
+
 test('windows finalize: a junction or task that cannot be removed keeps the lock, with every restore done', (t) => {
   const run = journaledRun(t);
 
@@ -1198,6 +1276,51 @@ test('windows finalize: a finalize that succeeds restores everything and drops t
   run.restoredExceptDamaged();
   assert.equal(existsSync(run.lockPath), false);
   assert.deepEqual(run.log, ['copy-damaged', 'remove-artifacts']);
+});
+
+test('windows finalize: the junction and both tasks are each removed even when one before failed', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'alpha-artifacts-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const machinePath = join(root, 'run', 'machine-state');
+  mkdirSync(machinePath, { recursive: true });
+  mkdirSync(join(root, 'elsewhere'));
+  const machineLink = join(root, 'vaults', 'fake-vault');
+  mkdirSync(dirname(machineLink));
+  symlinkSync(join(root, 'elsewhere'), machineLink, 'junction');
+  const removed = [];
+  const io = {
+    removeTask(name) {
+      removed.push(name);
+      if (name === 'SecondBrainAlphaHarness') throw new Error('powershell.exe exited 1: refusing to remove task');
+    },
+    removeLink: (path) => removed.push(`link ${path}`),
+    driverInstalled: () => true,
+  };
+
+  assert.throws(() => removeRunArtifacts('tools', 'fake-app', { machineLink }, { machinePath }, io), /not this run's junction/);
+  assert.deepEqual(removed, ['SecondBrainAlphaHarness', 'SecondBrainAlphaHarnessDriver'], 'both tasks are still tried');
+  assert.equal(lstatSync(machineLink).isSymbolicLink(), true, 'a link the run did not make is left alone');
+});
+
+test('windows forced stop: each of the run\'s processes is stopped even when one before failed', () => {
+  const startedAt = '2026-11-03T10:00:00.000Z';
+  const record = (Id, Role, Started = '2026-11-03T10:05:00.000Z') => ({ Id, Role, Path: `D:\\SecondBrainTest\\app\\${Role}.exe`, Started });
+  const processes = [record(4, 'Sidecar'), record(1, 'App'), record(3, 'Watchdog')];
+  const stops = [];
+  const io = {
+    report: () => processes,
+    stopPid(pid) {
+      stops.push(pid);
+      if (pid === 1) throw new Error('powershell.exe exited 1: Stop-Process could not stop 1');
+      if (pid === 3) throw new Error('powershell.exe exited 1: process 3 is not running');
+    },
+  };
+
+  assert.throws(() => stopRunProcesses(startedAt, io), /could not stop 1/);
+  assert.deepEqual(stops, [1, 3, 4], 'app, watchdog, sidecar, each tried; one that exited counts as stopped');
+
+  const older = { report: () => [record(9, 'App', '2026-11-03T09:00:00.000Z')], stopPid: () => assert.fail('nothing is stopped') };
+  assert.throws(() => stopRunProcesses(startedAt, older), /installed processes predate this run/);
 });
 
 test('windows finalize: nothing is touched while an installed process remains', (t) => {
@@ -1257,6 +1380,29 @@ test('restore gate: a trace that breaks with the failure still tears the failed 
   assert.ok(world.log.includes('fedora:cleanup'));
   assert.ok(world.log.includes('windows:finalize'), 'the failed machine is torn down');
   assert.deepEqual(windowsRestored(world), { configSwapped: false, locked: false, driverRunning: false });
+  assert.deepEqual(world.printed, []);
+});
+
+test('acceptance gate: a Windows restore that fails after a Fedora teardown that only failed to write its trace is the run\'s error', async (t) => {
+  const world = gateWorld(t);
+  const io = {
+    openTrace: world.openTrace,
+    network: () => ({ restore: async () => ({ restored: true }) }),
+    fedora: () => fakeFedoraMachine(world.log, world.apps.fedora),
+    windows: (runId) => fakeWindowsMachine(world, runId, { fail: { finalize: 1 } }),
+    side: async (machine) => ({ name: machine.name, machine, browser: { name: machine.name } }),
+    // Every criterion passes, and the evidence disk fills up as the gate ends.
+    criteria: async () => world.breakTrace(),
+    closeApp: async () => {},
+    removeCandidate: () => world.log.push('remove-candidate'),
+    print: (line) => world.printed.push(line),
+  };
+
+  const error = await failure(runAcceptanceLocked({ sshHost: 'fake-host' }, io));
+
+  assert.match(error.message, /^ssh exited 255: the finalize action could not reach Windows; the trace could not be written: EISDIR/);
+  assert.equal(world.windows.configSwapped, true, 'Windows is still swapped, and the error says why');
+  assert.ok(world.log.includes('fedora:uninstall'), 'the Fedora candidate is still removed');
   assert.deepEqual(world.printed, []);
 });
 
@@ -1408,14 +1554,204 @@ test('windows: each timeout around a desktop task is longer than the one inside 
   assert.equal(DESKTOP_TASK_BUDGET_MS, 30_000 + 5 * 60_000 + 30_000);
   assert.ok(DESKTOP_TASK_BUDGET_MS < DESKTOP_SCRIPT_TIMEOUT_MS && DESKTOP_SCRIPT_TIMEOUT_MS < DESKTOP_ACTION_TIMEOUT_MS);
 
-  // A stale task is stopped before the new one is registered, and an overrunning one is stopped
-  // before the action gives up on it; the task is removed either way.
-  const at = (text) => action.indexOf(text);
-  assert.ok(at('$staleTask.State -eq \'Running\') { Stop-DesktopTask }') > 0);
-  assert.ok(at('Stop-DesktopTask }') < at('Register-ScheduledTask'));
-  assert.ok(at('if ($taskState -eq \'Running\') {') < at('Stop-DesktopTask\n'), 'the overrun branch stops the task');
-  assert.ok(at('Stop-DesktopTask\n') < at('did not finish within 5 minutes and was stopped'));
-  assert.ok(at('} finally {') < at('Unregister-ScheduledTask'));
+  // Both ways the action can leave a task registered say so in the words the harness looks for;
+  // the sequence itself is run under PowerShell in the test below.
+  assert.equal(action.split(`; ${DESKTOP_TASK_KEPT}"`).length - 1, 2);
+  assert.ok(action.indexOf('Confirm-DesktopTaskStopped)') < action.indexOf('Register-ScheduledTask'));
+  assert.ok(action.lastIndexOf('Confirm-DesktopTaskStopped)') < action.indexOf('Unregister-ScheduledTask'));
+});
+
+// pwsh, or Windows PowerShell on Windows; null when neither runs here.
+function findPowerShell() {
+  for (const command of ['pwsh', ...(process.platform === 'win32' ? ['powershell.exe'] : [])]) {
+    const probe = spawnSync(command, ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], { encoding: 'utf8', timeout: 60_000 });
+    if (!probe.error && probe.status === 0) return command;
+  }
+  return null;
+}
+const POWERSHELL = findPowerShell();
+
+/**
+ * Runs alpha-harness.ps1's real DesktopScript action with every Task Scheduler cmdlet it calls,
+ * and Get-Date, Start-Sleep, Get-CimInstance and Test-Path, replaced by fakes defined as global
+ * functions, which PowerShell resolves before cmdlets. Nothing reaches the real Task Scheduler,
+ * and the task name is the test's own. Each fake Get-Date moves the clock 20 seconds on, so the
+ * five-minute wait and the 30-second stop wait pass at once. A scenario sets how the one task
+ * behaves; the result lists the calls that change it, and how it was left.
+ */
+const DESKTOP_TASK_FAKES = String.raw`
+param([string]$Source, [string]$Scenario, [string]$TaskName)
+$ErrorActionPreference = 'Stop'
+$global:simFlags = @{
+  'finishes' = @{ runPolls = 2 }
+  'overrun' = @{ runPolls = 1000 }
+  'stale' = @{ staleRunning = $true; runPolls = 2 }
+  'stale-unstoppable' = @{ staleRunning = $true; runPolls = 2; stopIgnored = $true }
+  'unstoppable' = @{ runPolls = 1000; stopIgnored = $true }
+  'stop-throws' = @{ runPolls = 1000; stopThrows = $true }
+  'monitor-throws' = @{ runPolls = 1000; getThrowsAt = 2 }
+  'monitor-dead' = @{ runPolls = 1000; getDeadAfterStart = $true }
+  'start-throws' = @{ startThrows = $true }
+  'info-throws' = @{ runPolls = 2; infoThrows = $true }
+}[$Scenario]
+if (-not $global:simFlags) { throw "unknown scenario $Scenario" }
+$global:simCalls = New-Object 'System.Collections.Generic.List[string]'
+$global:simClock = [datetime]'2026-11-03T00:00:00Z'
+$global:simRegistered = [bool]$global:simFlags.staleRunning
+$global:simRunning = [bool]$global:simFlags.staleRunning
+$global:simStarted = $false
+$global:simPolls = 0
+$global:simGets = 0
+
+function global:Get-Date { $global:simClock = $global:simClock.AddSeconds(20); return $global:simClock }
+function global:Start-Sleep { param($Milliseconds, $Seconds) }
+function global:Test-Path { param($LiteralPath, $PathType) return $true }
+function global:Get-CimInstance { param($ClassName) [pscustomobject]@{ UserName = 'TESTDESKTOP\tester' } }
+function global:New-ScheduledTaskAction { param($Execute, $Argument) 'action' }
+function global:New-ScheduledTaskPrincipal { param($UserId, $LogonType, $RunLevel) 'principal' }
+function global:New-ScheduledTaskSettingsSet { param([switch]$AllowStartIfOnBatteries, [switch]$DontStopIfGoingOnBatteries, $ExecutionTimeLimit) 'settings' }
+function global:Register-ScheduledTask {
+  param($TaskName, $Action, $Principal, $Settings, [switch]$Force)
+  $global:simCalls.Add('register'); $global:simRegistered = $true
+}
+function global:Start-ScheduledTask {
+  param($TaskName)
+  $global:simCalls.Add('start')
+  if ($global:simFlags.startThrows) { throw 'the task image is corrupt' }
+  $global:simStarted = $true; $global:simRunning = $true; $global:simPolls = 0
+}
+function global:Stop-ScheduledTask {
+  param($TaskName)
+  $global:simCalls.Add('stop')
+  if ($global:simFlags.stopThrows) { throw 'access is denied' }
+  if (-not $global:simFlags.stopIgnored) { $global:simRunning = $false }
+}
+function global:Get-ScheduledTask {
+  param($TaskName, $ErrorAction)
+  if ($global:simStarted) {
+    $global:simGets++
+    if ($global:simFlags.getDeadAfterStart) { throw 'the Task Scheduler service is not available' }
+    if ($global:simGets -eq $global:simFlags.getThrowsAt) { throw 'the Task Scheduler service did not answer' }
+  }
+  if (-not $global:simRegistered) {
+    if ($ErrorAction -eq 'SilentlyContinue') { return $null }
+    throw "no task named $TaskName"
+  }
+  if ($global:simRunning -and $global:simStarted) {
+    $global:simPolls++
+    if ($global:simPolls -gt $global:simFlags.runPolls) { $global:simRunning = $false }
+  }
+  [pscustomobject]@{ State = $(if ($global:simRunning) { 'Running' } else { 'Ready' }) }
+}
+function global:Get-ScheduledTaskInfo {
+  param($TaskName)
+  $global:simCalls.Add('info')
+  if ($global:simFlags.infoThrows) { throw 'the task history could not be read' }
+  [pscustomobject]@{ LastTaskResult = 0 }
+}
+function global:Unregister-ScheduledTask {
+  param($TaskName, $Confirm)
+  $global:simCalls.Add('unregister'); $global:simRegistered = $false
+}
+
+$outcome = $null
+$failure = $null
+try {
+  $outcome = & $Source -Action DesktopScript -TaskName $TaskName -ExecutablePath 'D:\SecondBrainTest\alpha-desktop.ps1' -ScriptArguments '-Mode NotionToken'
+} catch {
+  $failure = $_.Exception.Message
+}
+[pscustomobject]@{
+  calls = @($global:simCalls)
+  registered = $global:simRegistered
+  running = $global:simRunning
+  output = "$outcome"
+  error = $failure
+} | ConvertTo-Json -Depth 3 -Compress
+`;
+
+test('windows desktop task: on every way out the task is let go only once it is confirmed stopped', { skip: POWERSHELL ? false : 'no PowerShell here' }, (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'alpha-desktop-task-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const fakes = join(root, 'desktop-task-fakes.ps1');
+  writeFileSync(fakes, DESKTOP_TASK_FAKES);
+  const source = fileURLToPath(new URL('../scripts/windows/alpha-harness.ps1', import.meta.url));
+  const taskName = `SecondBrainAlphaHarnessDesktopTest-${process.pid}`;
+  const run = (scenario) => {
+    const ran = spawnSync(POWERSHELL, [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', fakes,
+      '-Source', source, '-Scenario', scenario, '-TaskName', taskName,
+    ], { encoding: 'utf8', timeout: 120_000, env: { ...process.env, SystemRoot: process.env.SystemRoot ?? root } });
+    assert.equal(ran.status, 0, `${scenario}: ${ran.stderr}`);
+    const result = JSON.parse(ran.stdout.trim().split(/\r?\n/).at(-1));
+    return { ...result, calls: [result.calls ?? []].flat() };
+  };
+  const kept = new RegExp(`${taskName} .*could not be confirmed stopped.*${DESKTOP_TASK_KEPT}`);
+
+  // Finished on its own: removed, and its result returned.
+  const finished = run('finishes');
+  assert.deepEqual(finished.calls, ['register', 'start', 'info', 'unregister']);
+  assert.equal(finished.error, null);
+  assert.match(finished.output, /"action":"desktop-script".*"result":0/);
+
+  // Stopped after five minutes, then removed.
+  const overrun = run('overrun');
+  assert.deepEqual(overrun.calls, ['register', 'start', 'stop', 'unregister']);
+  assert.match(overrun.error, /did not finish within 5 minutes; the task was confirmed stopped and removed$/);
+  assert.equal(overrun.running, false);
+
+  // An earlier call's task still running is stopped before this one is registered; one that will
+  // not stop fails the call before anything is registered, and stays registered.
+  assert.deepEqual(run('stale').calls, ['stop', 'register', 'start', 'info', 'unregister']);
+  const stale = run('stale-unstoppable');
+  assert.deepEqual(stale.calls, ['stop']);
+  assert.match(stale.error, new RegExp(`${taskName} from an earlier call could not be confirmed stopped; ${DESKTOP_TASK_KEPT}$`));
+  assert.equal(stale.registered, true);
+
+  // The task state could not be read once while waiting: stopped, confirmed, removed.
+  const blip = run('monitor-throws');
+  assert.deepEqual(blip.calls, ['register', 'start', 'stop', 'unregister']);
+  assert.match(blip.error, /^the Task Scheduler service did not answer; the task was confirmed stopped and removed$/);
+
+  // Never confirmed stopped: the task stays registered, and the error names it.
+  for (const scenario of ['unstoppable', 'stop-throws', 'monitor-dead']) {
+    const left = run(scenario);
+    assert.ok(!left.calls.includes('unregister'), `${scenario}: ${JSON.stringify(left.calls)}`);
+    assert.equal(left.registered, true, scenario);
+    assert.match(left.error, kept, scenario);
+  }
+
+  // A task that never started, or whose finished result cannot be read, is removed.
+  const unstarted = run('start-throws');
+  assert.deepEqual(unstarted.calls, ['register', 'start', 'unregister']);
+  assert.match(unstarted.error, /^the task image is corrupt; the task was confirmed stopped and removed$/);
+  const unread = run('info-throws');
+  assert.deepEqual(unread.calls, ['register', 'start', 'info', 'unregister']);
+  assert.equal(unread.error, 'the task history could not be read');
+});
+
+test('windows: a desktop task left registered keeps its result file, which answers no later call', () => {
+  const desktop = fakeDesktopScript(new Map(), []);
+  let kept;
+  const unconfirmed = {
+    ...desktop,
+    runDesktop(scriptArguments) {
+      kept = /-OutputPath "([^"]+)"/.exec(scriptArguments)[1];
+      // The task may still write its answer.
+      desktop.files.set(kept, JSON.stringify({ found: true, left: true }));
+      throw new Error(`powershell.exe exited 1: desktop script SecondBrainAlphaHarnessDesktop could not be confirmed stopped after: access is denied; ${DESKTOP_TASK_KEPT}`);
+    },
+  };
+
+  assert.throws(
+    () => windowsAiKeyAction({ account: 'ai:openai', remove: false }, unconfirmed),
+    (error) => error.message.includes(DESKTOP_TASK_KEPT) && error.message.endsWith(`its result file ${kept} is kept`),
+  );
+  assert.ok(desktop.files.has(kept), 'the result file is kept for whoever stops the task');
+
+  // The next call has a file of its own, so the kept one cannot answer it.
+  assert.deepEqual(windowsAiKeyAction({ account: 'ai:openai', remove: false }, desktop), { found: false, left: false });
+  assert.ok(desktop.files.has(kept));
 });
 
 test('alpha-desktop.ps1 checks exactly the app\'s AI targets and stops on any error but ERROR_NOT_FOUND', () => {
