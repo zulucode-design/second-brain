@@ -317,20 +317,25 @@ remains, and that refusal fails the run. The teardown reports its first error, a
 trace could not be written when that happened, so a teardown whose trace is incomplete never
 passes.
 
-The same holds inside the Windows worker. Stopping the driver stops each `msedgedriver` under the
-run's `tauri-driver`, then `tauri-driver` itself, each by exact PID and each even when one before
-it failed; a PID that has exited already counts as stopped. Finalize restores `config.json` and
-the window state, moves the run's damaged config copies out of the profile, renames the profile
-folders back, and removes the run's junction and tasks, each step even when one before it failed
-(a full D: drive that stops the damaged copy, say). It removes the lock only when every step
-succeeded. Otherwise the lock and journal stay, and the next run's recovery restores the config,
-window state, damaged copies and profile folders before that run starts; a later finalize of the
-run removes its junction and tasks.
+The same holds inside the Windows worker, down to each item. Stopping the driver stops each
+`msedgedriver` under the run's `tauri-driver`, then `tauri-driver` itself, each by exact PID and
+each even when one before it failed; a PID that has exited already counts as stopped. The forced
+stop does the same for each of the run's app, watchdog and sidecar processes. Finalize restores
+`config.json`, then the window state, moves each of the run's damaged config copies out of the
+profile, renames each profile folder back, and removes the run's junction and each of its tasks.
+Each of these runs even when one before it failed: a `config.json` a file lock keeps from being
+replaced, a `logs` folder that cannot be put back, or a full D: drive that stops a damaged copy.
+A replace that fails leaves no temporary file beside the config. Finalize removes the lock only
+when every step succeeded. Otherwise the lock and journal stay, and the next run's recovery
+restores the config, window state, damaged copies and profile folders before that run starts; a
+later finalize of the run removes its junction and tasks.
 
 Each gate's own teardown follows the same rule: Gate 1's stops of both apps and its Windows
 finalize, and the acceptance gate's network and isolation restores, its machine teardown and its
 removal of the Fedora candidate. A failure report or trace line that cannot be written never skips
-a later step, and the gate ends with its first real error.
+a later step, and the gate ends with its first real error. A teardown that failed only to write
+its trace never takes the place of a real error from another step: the gate reports the real one,
+and adds that the trace could not be written.
 
 Traces are public. The controller redacts the home directory, Windows profile paths, and host
 names at the single point where it writes them.
@@ -339,10 +344,14 @@ Windows launch uses the harness-owned `SecondBrainAlphaHarness` scheduled task w
 logon and the exact installed executable under `D:\SecondBrainTest`. The task supplies desktop
 session placement only. Key presses and full-desktop screenshots come from
 `scripts/windows/alpha-desktop.ps1`, which runs in the same session through a short-lived
-`SecondBrainAlphaHarnessDesktop` task. The worker waits up to five minutes for that task. One still
-running then is stopped before the worker removes it and gives up, and each timeout around the
-wait (the worker's PowerShell call, then the controller's SSH call) is longer than the one inside
-it, so a script never writes a result after its caller has stopped waiting for it.
+`SecondBrainAlphaHarnessDesktop` task. The worker waits up to five minutes for that task. On every
+way out (a finish, an overrun, or a failure while waiting or stopping) it removes the task only once
+the task is confirmed not to run, stopping it first if it still does. Each timeout around the wait
+(the worker's PowerShell call, then the controller's SSH call) is longer than the one inside it, so
+a script never writes a result after its caller has stopped waiting for it. If the task cannot be
+confirmed stopped, it stays registered, the call fails naming it, and a credential check keeps its
+result file; the file's name is that call's own, so it answers no later call. Stop the task by hand
+before the next run: that run's first desktop call refuses while it still runs.
 
 Gate 1 passed unattended on candidate `4ea6b9e` (run `20260921T114623Z`), so Gate 2 may start.
 
