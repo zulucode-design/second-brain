@@ -2,11 +2,11 @@
 // It must refuse when the keyring already holds the entry, before it changes either machine, and
 // remove what it planted after a pass, a failure or a signal, and only that. These tests run the
 // walkthrough controller's own sequence (runWalkthroughLocked) against fake machines, fake signals,
-// and fakes of `secret-tool` (Fedora) and of the Windows desktop-session script. None touches a
-// real keyring, machine or process.
+// and fakes of Fedora's Secret Service commands and of the Windows desktop-session script. None
+// touches a real keyring, machine or process.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -19,33 +19,51 @@ const {
 
 const SERVICE = 'io.github.zulucodedesign.SecondBrain';
 const TOOLS = 'D:\\SecondBrainTest\\sb88\\tools';
-// Stand-ins for a user's real key and for the key the walkthrough plants. Neither may appear in
-// anything the harness records, prints or throws.
+// Stand-ins for a user's real key, the key the walkthrough plants, and a Notion token the app
+// stores on Connect. None may appear in anything the harness records, prints or throws.
 const REAL_KEY = 'sk-real-user-key-0f3a9c11-do-not-read';
 const PLANTED_KEY = 'sk-alpha-harness-5b2e7d90-planted';
+const NOTION_TOKEN = 'notion-token-3e81-do-not-read';
+const NOTION_ACCOUNT = 'integration:notion:fake-vault';
 const PLATFORMS = ['fedora', 'windows'];
+const SEARCH_PREFIX = [
+  '--user', '--json=short', 'call', 'org.freedesktop.secrets', '/org/freedesktop/secrets',
+  'org.freedesktop.Secret.Service', 'SearchItems', 'a{ss}', '2',
+];
 
-// A `secret-tool` that behaves as libsecret's does: `lookup` prints the value to stdout, which the
-// operating system discards when the caller set stdio `ignore`, and exits 1 with no message when
-// nothing matches; `clear` exits 1 with no message when nothing matched. `lookupFailsFrom` makes
-// the nth lookup and later ones fail as a missing D-Bus session does; `clearFails` the clear.
-function fakeSecretTool(entries, log, { lookupFailsFrom, clearFails = false } = {}) {
-  let lookups = 0;
+// Fedora's two commands, as the Secret Service answers them. `busctl ... SearchItems` lists the
+// paths of the matching unlocked and locked items and never a secret; `secret-tool clear` deletes
+// unlocked items only, prints nothing, and exits 1 with no message when no unlocked item matched.
+// `locked` holds the accounts whose entry is locked. `searchFailsFrom` makes the nth search and
+// later ones fail as a missing Secret Service does; `clearFails` makes the clear fail.
+function fakeFedoraTools(entries, locked, log, { searchFailsFrom, clearFails = false } = {}) {
+  let searches = 0;
   return (command, args, options) => {
+    if (command === 'busctl') {
+      assert.deepEqual(args.slice(0, SEARCH_PREFIX.length), SEARCH_PREFIX);
+      const pairs = args.slice(SEARCH_PREFIX.length);
+      assert.deepEqual(pairs.slice(0, 3), ['service', SERVICE, 'username']);
+      assert.equal(pairs.length, 4);
+      const account = pairs[3];
+      log.push(`fedora:lookup ${account}`);
+      searches += 1;
+      if (searchFailsFrom && searches >= searchFailsFrom) {
+        return { status: 1, stdout: '', stderr: 'Call failed: The name org.freedesktop.secrets was not provided by any .service files' };
+      }
+      const paths = entries.has(account) ? ['/org/freedesktop/secrets/collection/login/7'] : [];
+      const data = locked.has(account) ? [[], paths] : [paths, []];
+      return { status: 0, stdout: `${JSON.stringify({ type: 'aoao', data })}\n`, stderr: '' };
+    }
     assert.equal(command, 'secret-tool');
-    assert.deepEqual(options.stdio, ['ignore', 'ignore', 'pipe'], 'the value goes to the null device');
+    assert.deepEqual(options.stdio, ['ignore', 'ignore', 'pipe'], 'secret-tool output goes to the null device');
     const [verb, ...pairs] = args;
+    assert.equal(verb, 'clear', 'existence never comes from secret-tool lookup');
     assert.deepEqual(pairs.slice(0, 3), ['service', SERVICE, 'username']);
     const account = pairs[3];
-    log.push(`fedora:${verb} ${account}`);
-    if (verb === 'lookup') {
-      lookups += 1;
-      if (lookupFailsFrom && lookups >= lookupFailsFrom) return { status: 1, stdout: null, stderr: 'secret-tool: Cannot autolaunch D-Bus without X11 $DISPLAY' };
-      return { status: entries.has(account) ? 0 : 1, stdout: null, stderr: '' };
-    }
-    assert.equal(verb, 'clear');
+    log.push(`fedora:clear ${account}`);
     if (clearFails) return { status: 1, stdout: null, stderr: 'secret-tool: Cannot create an item in a locked collection' };
-    if (!entries.delete(account)) return { status: 1, stdout: null, stderr: '' };
+    if (!entries.has(account) || locked.has(account)) return { status: 1, stdout: null, stderr: '' };
+    entries.delete(account);
     return { status: 0, stdout: null, stderr: '' };
   };
 }
@@ -53,12 +71,14 @@ function fakeSecretTool(entries, log, { lookupFailsFrom, clearFails = false } = 
 // alpha-desktop.ps1 in NotionToken mode, run as runDesktopScript runs it: the same target guard;
 // found/left written to the result file; and for a Win32 error other than ERROR_NOT_FOUND, the
 // call and its code written instead and a failed task, which runDesktopScript turns into a throw.
-// `extra` models a script that writes more than it should.
-function fakeDesktopScript(entries, log, { readErrorFrom, deleteError, extra = {} } = {}) {
+// `extra` models a script that writes more than it should; `appearsBetweenReadsFrom` an entry that
+// appears between the script's two reads on its nth call and later ones.
+function fakeDesktopScript(entries, log, { readErrorFrom, deleteError, extra = {}, appearsBetweenReadsFrom } = {}) {
   const files = new Map();
   const aiTargets = AI_KEY_ACCOUNTS.map((account) => `${account}.${SERVICE}`);
   const paths = [];
   let reads = 0;
+  let calls = 0;
   return {
     files,
     paths,
@@ -73,6 +93,7 @@ function fakeDesktopScript(entries, log, { readErrorFrom, deleteError, extra = {
       if (!target.startsWith('integration:notion:') && !aiTargets.includes(target)) {
         throw new Error(`desktop script failed with 1: ${scriptArguments}`);
       }
+      calls += 1;
       const account = target.slice(0, -(SERVICE.length + 1));
       const stopWith = (call, code) => {
         files.set(outputPath, JSON.stringify({ error: `${call} failed with Win32 error ${code}` }));
@@ -89,6 +110,7 @@ function fakeDesktopScript(entries, log, { readErrorFrom, deleteError, extra = {
         if (deleteError) stopWith('CredDeleteW', deleteError);
         entries.delete(account);
       }
+      if (appearsBetweenReadsFrom && calls >= appearsBetweenReadsFrom) entries.set(account, REAL_KEY);
       files.set(outputPath, JSON.stringify({ found, left: read(), ...extra }));
     },
     readResult(path) {
@@ -103,16 +125,21 @@ function fakeDesktopScript(entries, log, { readErrorFrom, deleteError, extra = {
 
 // The keyring store for each platform, over its fake, with the Windows request and answer carried
 // as JSON the way remoteWorker carries them.
-function fakeStore(platform, entries, log, faults) {
-  if (platform === 'fedora') return fedoraAiKeyStore({ spawn: fakeSecretTool(entries, log, faults) });
+function fakeStore(platform, entries, locked, log, faults) {
+  if (platform === 'fedora') return fedoraAiKeyStore({ spawn: fakeFedoraTools(entries, locked, log, faults) });
   const desktop = fakeDesktopScript(entries, log, faults);
   const viaJson = (value) => JSON.parse(JSON.stringify(value));
   return windowsAiKeyStore((request) => viaJson(windowsAiKeyAction(viaJson(request), desktop)));
 }
 
 // A machine as linuxDriverMachine and windowsDriverMachine present it to the walkthrough, logging
-// each call. `onLaunchEntry` models what the Start-menu launch may do to the keyring.
-function fakeMachine(name, log, { onLaunchEntry } = {}) {
+// each call. `app.alive` says whether its app could still write a credential: stopApps and cleanup
+// stop it. `onLaunchEntry` models what the Start-menu launch may do to the keyring.
+function fakeMachine(name, log, app, { onLaunchEntry } = {}) {
+  const stop = () => {
+    app.alive = false;
+    app.stopped();
+  };
   const machine = {
     name,
     application: `fake-${name}-app`,
@@ -129,6 +156,7 @@ function fakeMachine(name, log, { onLaunchEntry } = {}) {
     },
     async startDriver() {
       log.push(`${name}:start-driver`);
+      app.alive = true;
       return {};
     },
     patchConfig(patch) {
@@ -139,8 +167,14 @@ function fakeMachine(name, log, { onLaunchEntry } = {}) {
       log.push(`${name}:break-config`);
     },
     hash: () => ({ sha256: 'unchanged' }),
+    async stopApps() {
+      log.push(`${name}:stop-apps`);
+      stop();
+      return { processes: [] };
+    },
     async cleanup() {
       log.push(`${name}:cleanup`);
+      stop();
     },
   };
   if (name === 'windows') {
@@ -152,81 +186,143 @@ function fakeMachine(name, log, { onLaunchEntry } = {}) {
   return machine;
 }
 
-// The walkthrough gate as walkthroughGate drives the machine up to and past the plant, ending as
-// `outcome` says. After the plant, the app's next launch files the key in the keyring.
-function fakeGate(entries, log, { outcome = 'pass', patch = plantedAiKeyPatch(PLANTED_KEY), reached, resume } = {}) {
-  return async (machine) => {
-    machine.session();
-    await machine.launchEntry();
-    await machine.startDriver();
-    if (outcome === 'fail-before-plant') throw new Error('the WebDriver session did not start');
-    if (outcome === 'wait-before-plant') {
-      reached();
-      await resume;
-    }
-    machine.patchConfig(patch);
-    entries[machine.name].set('ai:openai', PLANTED_KEY);
-    log.push(`${machine.name}:app-filed-key`);
-    if (outcome === 'fail-after-plant') throw new Error('a step failed after the plant');
-    if (outcome === 'wait-after-plant') {
-      reached();
-      await resume;
-      machine.breakConfig();
+/**
+ * The walkthrough gate as walkthroughGate drives the machine up to and past the plant, ending as
+ * `outcome` says. After the plant, the app's next launch files the key in the keyring. Its `wait`
+ * outcomes hang the way a WebDriver wait does, until the test resumes it or the app is stopped;
+ * `connect` models a Notion Connect whose request the test completes, after which a running app
+ * stores its token. `afterPlant` changes the keyring after the plant; `breakTrace` makes every
+ * later trace write fail.
+ */
+function fakeGate(world, { outcome = 'pass', patch = plantedAiKeyPatch(PLANTED_KEY), afterPlant, breakTrace = false } = {}) {
+  const { entries, locked, log, apps } = world;
+  const waitForApp = (name) => Promise.race([world.resumed, apps[name].gone]);
+  return async (machine, { evidencePath }) => {
+    try {
+      machine.session();
+      await machine.launchEntry();
+      await machine.startDriver();
+      if (outcome === 'fail-before-plant') throw new Error('the WebDriver session did not start');
+      if (outcome === 'wait-before-plant') {
+        world.reach();
+        await waitForApp(machine.name);
+      }
+      machine.patchConfig(patch);
+      entries[machine.name].set('ai:openai', PLANTED_KEY);
+      log.push(`${machine.name}:app-filed-key`);
+      afterPlant?.(entries[machine.name], locked[machine.name]);
+      if (breakTrace) {
+        rmSync(evidencePath);
+        mkdirSync(evidencePath);
+      }
+      if (outcome === 'fail-after-plant') throw new Error('a step failed after the plant');
+      if (outcome === 'wait-after-plant') {
+        world.reach();
+        await waitForApp(machine.name);
+        machine.breakConfig();
+      }
+      if (outcome === 'keep-going-after-plant') {
+        world.reach();
+        await world.resumed;
+        machine.breakConfig();
+      }
+      if (outcome === 'connect') {
+        world.reach();
+        await world.connected;
+        log.push(`${machine.name}:connect-completed`);
+        if (apps[machine.name].alive) entries[machine.name].set(NOTION_ACCOUNT, NOTION_TOKEN);
+        machine.breakConfig();
+      }
+    } finally {
+      log.push(`${machine.name}:gate-ended`);
     }
   };
 }
 
+function deferred() {
+  let settle;
+  const promise = new Promise((resolvePromise) => {
+    settle = resolvePromise;
+  });
+  return { promise, settle };
+}
+
 /**
  * One controller run's world. `machine` is the --machine option. `held` puts a real key in a
- * platform's keyring before the run; `faults` and `launch` are per platform.
+ * platform's keyring before the run, `heldLocked` a locked one; `faults` and `launch` are per
+ * platform; `gate` configures fakeGate; `deferFinal` holds the final Ollama check until the test
+ * finishes it.
  */
-function walkthroughWorld({ machine, held = [], faults = {}, launch = {}, gate = {} } = {}) {
+function walkthroughWorld({ machine, held = [], heldLocked = [], faults = {}, launch = {}, gate = {}, deferFinal = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'alpha-keyring-'));
   const log = [];
   const printed = [];
   const entries = { fedora: new Map(), windows: new Map() };
-  for (const platform of held) entries[platform].set('ai:openai', REAL_KEY);
-  let reachedGate;
-  const reached = new Promise((resolveReached) => {
-    reachedGate = resolveReached;
-  });
-  let resumeGate;
-  const resume = new Promise((resolveResume) => {
-    resumeGate = resolveResume;
-  });
+  const locked = { fedora: new Set(), windows: new Set() };
+  for (const platform of [...held, ...heldLocked]) entries[platform].set('ai:openai', REAL_KEY);
+  for (const platform of heldLocked) locked[platform].add('ai:openai');
+  const apps = {};
+  for (const platform of PLATFORMS) {
+    const gone = deferred();
+    apps[platform] = {
+      alive: false,
+      // A pending WebDriver wait ends when the app and driver it talks to are stopped.
+      gone: gone.promise.then(() => {
+        throw new Error('the app was stopped');
+      }),
+      stopped: gone.settle,
+    };
+    apps[platform].gone.catch(() => {});
+  }
+  const reached = deferred();
+  const resumed = deferred();
+  const connected = deferred();
+  const finalReached = deferred();
+  const finalAnswer = deferred();
   const signals = new EventEmitter();
+  const world = {
+    entries, locked, log, printed, signals, apps,
+    reached: reached.promise, reach: reached.settle,
+    resumed: resumed.promise, resume: resumed.settle,
+    connected: connected.promise, connect: connected.settle,
+    finalReached: finalReached.promise, finishFinal: finalAnswer.settle,
+  };
   const io = {
     signals,
-    notion: () => ({ token: 'fake-notion-token', page: 'Fake page' }),
+    notion: () => ({ token: 'fake-notion-workspace-token', page: 'Fake page' }),
     commits() {
       log.push('commits');
       return { candidateCommit: 'c'.repeat(40), harnessCommit: 'h'.repeat(40) };
     },
     deployTools: () => log.push('deploy-tools'),
     evidencePath: (runId) => join(root, 'trace', `${runId}.jsonl`),
-    keyStore: (name) => fakeStore(name, entries[name], log, faults[name]),
+    keyStore: (name) => fakeStore(name, entries[name], locked[name], log, faults[name]),
     installCandidate: () => log.push('install-candidate'),
     prepareRun(early) {
       log.push('prepare-run');
       return { ...early, fedoraPackage: {}, recovered: { recovered: false } };
     },
     ollamaTunnel: () => ({ exitCode: null, kill: () => log.push('tunnel-killed') }),
-    ollamaModels: async (label) => {
+    async ollamaModels(label) {
       log.push(`ollama-${label}`);
+      if (label === 'final' && deferFinal) {
+        finalReached.settle();
+        await finalAnswer.promise;
+      }
       return {};
     },
-    makeMachine: (name) => fakeMachine(name, log, { onLaunchEntry: launch[name] && (() => launch[name](entries[name])) }),
-    gate: fakeGate(entries, log, { ...gate, reached: reachedGate, resume }),
-    notionCleanup: async (target) => {
+    makeMachine: (name) => fakeMachine(name, log, apps[name], { onLaunchEntry: launch[name] && (() => launch[name](entries[name], locked[name])) }),
+    gate: fakeGate(world, gate),
+    // The real Notion cleanup clears the run's Notion token from the keyring.
+    async notionCleanup(target) {
       log.push(`${target.name}:notion-cleanup`);
-      return {};
+      return { tokenFound: entries[target.name].delete(NOTION_ACCOUNT) };
     },
     sleep: async () => {},
     print: (line) => printed.push(line),
   };
   const options = { linuxRoot: root, holdMinutes: 70, windowsInstaller: 'D:\\SecondBrainTest\\setup.exe', machine };
-  return {
-    entries, log, printed, signals, reached, resume: resumeGate,
+  return Object.assign(world, {
     run: () => runWalkthroughLocked(options, io),
     traceText() {
       const traceDir = join(root, 'trace');
@@ -238,14 +334,17 @@ function walkthroughWorld({ machine, held = [], faults = {}, launch = {}, gate =
     events(name) {
       return this.trace().filter((line) => line.event === name);
     },
+    at(line) {
+      return log.indexOf(line);
+    },
     dispose: () => rmSync(root, { recursive: true, force: true }),
-  };
+  });
 }
 
 // Everything a run could print or keep: the trace, what it printed, and its error.
-function assertNoValue(world, error) {
-  const text = `${world.traceText()}\n${world.printed.join('\n')}\n${error?.message ?? ''}`;
-  for (const value of [REAL_KEY, PLANTED_KEY]) assert.ok(!text.includes(value), 'no key value is recorded, printed or thrown');
+function assertNoValue(world, error, { trace = true } = {}) {
+  const text = `${trace ? world.traceText() : ''}\n${world.printed.join('\n')}\n${error?.message ?? ''}`;
+  for (const value of [REAL_KEY, PLANTED_KEY, NOTION_TOKEN]) assert.ok(!text.includes(value), 'no secret is recorded, printed or thrown');
 }
 
 async function failure(promise) {
@@ -270,7 +369,15 @@ async function stopsWithin(running) {
   }
 }
 
-const changes = (log) => log.filter((line) => /install|prepare|launch|driver|patch|break|cleanup|clear/.test(line));
+async function until(predicate, what) {
+  const deadline = Date.now() + 5_000;
+  while (!predicate()) {
+    if (Date.now() > deadline) assert.fail(`timed out waiting for ${what}`);
+    await new Promise((resolveLater) => setTimeout(resolveLater, 5));
+  }
+}
+
+const changes = (log) => log.filter((line) => /install|prepare|launch|driver|patch|break|cleanup|clear|stop-apps/.test(line));
 
 for (const platform of PLATFORMS) {
   test(`${platform}: an entry present before the run refuses it before the install and the recovery`, async (t) => {
@@ -296,12 +403,12 @@ for (const platform of PLATFORMS) {
     await world.run();
 
     assert.equal(world.entries[platform].size, 0);
-    const at = (line) => world.log.indexOf(line);
-    assert.ok(at(`${platform}:lookup ai:openai`) < at('install-candidate'), 'the check comes before the install');
-    assert.ok(at('install-candidate') < at('prepare-run'));
+    assert.ok(world.at(`${platform}:lookup ai:openai`) < world.at('install-candidate'), 'the check comes before the install');
+    assert.ok(world.at('install-candidate') < world.at('prepare-run'));
     // The re-check comes right before the patch, and the removal after the app and driver stopped.
-    assert.equal(world.log[at(`${platform}:patch-config`) - 1], `${platform}:lookup ai:openai`);
-    assert.ok(at(`${platform}:cleanup`) < at(`${platform}:clear ai:openai`));
+    assert.equal(world.log[world.at(`${platform}:patch-config`) - 1], `${platform}:lookup ai:openai`);
+    assert.ok(world.at(`${platform}:cleanup`) < world.at(`${platform}:clear ai:openai`));
+    assert.ok(!world.log.includes(`${platform}:stop-apps`), 'a gate that settled on its own needs no early stop');
     assert.deepEqual(world.events('ai-keys-armed').map(({ armed, entries }) => ({ armed, entries })), [
       { armed: true, entries: { 'ai:openai': { existed: false } } },
     ]);
@@ -359,13 +466,13 @@ for (const platform of PLATFORMS) {
 
     assert.match(error.message, /a step failed after the plant/);
     assert.equal(world.entries[platform].size, 0);
-    assert.ok(world.log.indexOf(`${platform}:cleanup`) < world.log.indexOf(`${platform}:clear ai:openai`));
+    assert.ok(world.at(`${platform}:cleanup`) < world.at(`${platform}:clear ai:openai`));
     assert.deepEqual(world.events('ai-keys-removed')[0].entries, { 'ai:openai': { removed: true, left: false } });
     assertNoValue(world, error);
   });
 
   for (const signal of ['SIGINT', 'SIGTERM']) {
-    test(`${platform}: ${signal} after the plant stops the run, and the same cleanup deletes the key`, async (t) => {
+    test(`${platform}: ${signal} after the plant stops the app, settles the gate, then deletes the key`, async (t) => {
       const world = walkthroughWorld({ machine: platform, gate: { outcome: 'wait-after-plant' } });
       t.after(world.dispose);
 
@@ -376,20 +483,58 @@ for (const platform of PLATFORMS) {
 
       assert.equal(error.message, `walkthrough stopped by ${signal}`);
       assert.equal(world.entries[platform].size, 0);
-      const at = (line) => world.log.indexOf(line);
-      assert.ok(at(`${platform}:notion-cleanup`) >= 0 && at(`${platform}:cleanup`) >= 0);
-      assert.ok(at(`${platform}:cleanup`) < at(`${platform}:clear ai:openai`));
+      // The app stops, which ends the gate's wait; the gate settles; only then the cleanup.
+      const order = [`${platform}:stop-apps`, `${platform}:gate-ended`, `${platform}:notion-cleanup`, `${platform}:cleanup`, `${platform}:clear ai:openai`];
+      assert.deepEqual(order.map((line) => world.at(line)).toSorted((left, right) => left - right), order.map((line) => world.at(line)));
+      assert.ok(order.every((line) => world.at(line) >= 0), JSON.stringify(world.log));
+      assert.ok(!world.log.includes(`${platform}:break-config`), 'the gate unwound without changing the machine');
       assert.ok(world.log.includes('tunnel-killed'));
+      assert.equal(world.events('stopped-gate-settled').length, 1);
       assert.deepEqual(world.events('ai-keys-removed')[0].entries, { 'ai:openai': { removed: true, left: false } });
+      assert.equal(world.events('run-complete').length, 0);
       assert.equal(world.signals.listenerCount(signal), 0, 'the handlers go with the run');
-
-      // The stopped walkthrough can change nothing more.
-      world.resume();
-      await new Promise((resolveTurn) => setImmediate(resolveTurn));
-      assert.ok(!world.log.includes(`${platform}:break-config`));
       assertNoValue(world, error);
     });
   }
+
+  test(`${platform}: a gate that keeps going after the signal can change nothing more`, async (t) => {
+    const world = walkthroughWorld({ machine: platform, gate: { outcome: 'keep-going-after-plant' } });
+    t.after(world.dispose);
+
+    const running = world.run();
+    await world.reached;
+    world.signals.emit('SIGINT');
+    await until(() => world.log.includes(`${platform}:stop-apps`), 'the app to be stopped');
+    assert.ok(!world.log.includes(`${platform}:notion-cleanup`), 'cleanup waits for the gate to settle');
+    world.resume();
+    const error = await stopsWithin(running);
+
+    assert.equal(error.message, 'walkthrough stopped by SIGINT');
+    assert.ok(!world.log.includes(`${platform}:break-config`));
+    assert.ok(world.at(`${platform}:gate-ended`) < world.at(`${platform}:notion-cleanup`));
+    assert.equal(world.entries[platform].size, 0);
+  });
+
+  test(`${platform}: a Notion connect that completes after the signal stores nothing the cleanup misses`, async (t) => {
+    const world = walkthroughWorld({ machine: platform, gate: { outcome: 'connect' } });
+    t.after(world.dispose);
+
+    const running = world.run();
+    await world.reached;
+    world.signals.emit('SIGINT');
+    await until(() => world.log.includes(`${platform}:stop-apps`), 'the app to be stopped');
+    // The request the app was serving ends now, after its app was stopped.
+    world.connect();
+    const error = await stopsWithin(running);
+
+    assert.equal(error.message, 'walkthrough stopped by SIGINT');
+    const order = [`${platform}:stop-apps`, `${platform}:connect-completed`, `${platform}:gate-ended`, `${platform}:notion-cleanup`, `${platform}:clear ai:openai`];
+    assert.ok(order.every((line) => world.at(line) >= 0), JSON.stringify(world.log));
+    assert.deepEqual(order.map((line) => world.at(line)).toSorted((left, right) => left - right), order.map((line) => world.at(line)));
+    assert.equal(world.entries[platform].has(NOTION_ACCOUNT), false, 'no Notion token is left');
+    assert.equal(world.entries[platform].size, 0);
+    assertNoValue(world, error);
+  });
 
   test(`${platform}: a signal before the plant stops the run with nothing planted or deleted`, async (t) => {
     const world = walkthroughWorld({ machine: platform, gate: { outcome: 'wait-before-plant' } });
@@ -399,8 +544,6 @@ for (const platform of PLATFORMS) {
     await world.reached;
     world.signals.emit('SIGTERM');
     const error = await stopsWithin(running);
-    world.resume();
-    await new Promise((resolveTurn) => setImmediate(resolveTurn));
 
     assert.equal(error.message, 'walkthrough stopped by SIGTERM');
     assert.ok(!world.log.includes(`${platform}:patch-config`), 'the gate cannot plant once stopped');
@@ -409,14 +552,47 @@ for (const platform of PLATFORMS) {
     assert.deepEqual(world.events('ai-keys-removed').map(({ armed }) => armed), [false]);
   });
 
+  test(`${platform}: a signal during the final check fails the run instead of completing it`, async (t) => {
+    const world = walkthroughWorld({ machine: platform, deferFinal: true });
+    t.after(world.dispose);
+
+    const running = world.run();
+    await world.finalReached;
+    world.signals.emit('SIGTERM');
+    // The final check then answers as if all were well.
+    world.finishFinal();
+    const error = await stopsWithin(running);
+
+    assert.equal(error.message, 'walkthrough stopped by SIGTERM');
+    assert.equal(world.events('run-complete').length, 0);
+    assert.equal(world.events('run-failed').at(-1).error, 'walkthrough stopped by SIGTERM');
+    assert.deepEqual(world.printed, [], 'nothing is reported as a result');
+    assert.equal(world.entries[platform].size, 0, 'the key went with the machine\'s cleanup');
+  });
+
+  test(`${platform}: failing trace writes after the plant still tear the machine down and remove the key`, async (t) => {
+    const world = walkthroughWorld({ machine: platform, gate: { outcome: 'fail-after-plant', breakTrace: true } });
+    t.after(world.dispose);
+
+    const error = await failure(world.run());
+
+    assert.equal(error.code, 'EISDIR', error.message);
+    assert.ok(world.log.includes(`${platform}:notion-cleanup`));
+    assert.ok(world.log.includes(`${platform}:cleanup`), 'the machine is torn down');
+    assert.ok(world.at(`${platform}:cleanup`) < world.at(`${platform}:clear ai:openai`), 'and the key removed after it');
+    assert.equal(world.entries[platform].size, 0);
+    assert.ok(world.log.includes('tunnel-killed'));
+    assertNoValue(world, error, { trace: false });
+  });
+
   test(`${platform}: a lookup error before the run refuses it before anything changes`, async (t) => {
-    const world = walkthroughWorld({ machine: platform, faults: { [platform]: { lookupFailsFrom: 1, readErrorFrom: 1 } } });
+    const world = walkthroughWorld({ machine: platform, faults: { [platform]: { searchFailsFrom: 1, readErrorFrom: 1 } } });
     t.after(world.dispose);
 
     const error = await failure(world.run());
 
     assert.match(error.message, platform === 'fedora'
-      ? /secret-tool lookup for ai:openai failed \(exit 1\): .*D-Bus/
+      ? /Secret Service search for ai:openai failed \(exit 1\): Call failed/
       : /could not check ai:openai\.io\.github\.zulucodedesign\.SecondBrain: CredReadW failed with Win32 error 1312/);
     assert.deepEqual(changes(world.log), []);
     assert.deepEqual(world.events('ai-keys-checked'), [], 'a failed lookup is not recorded as an answer');
@@ -424,12 +600,12 @@ for (const platform of PLATFORMS) {
   });
 
   test(`${platform}: a lookup error at the plant stops the run with nothing planted or deleted`, async (t) => {
-    const world = walkthroughWorld({ machine: platform, faults: { [platform]: { lookupFailsFrom: 2, readErrorFrom: 3 } } });
+    const world = walkthroughWorld({ machine: platform, faults: { [platform]: { searchFailsFrom: 2, readErrorFrom: 3 } } });
     t.after(world.dispose);
 
     const error = await failure(world.run());
 
-    assert.match(error.message, /secret-tool lookup for ai:openai failed|CredReadW failed with Win32 error 1312/);
+    assert.match(error.message, /Secret Service search for ai:openai failed|CredReadW failed with Win32 error 1312/);
     assert.ok(!world.log.includes(`${platform}:patch-config`));
     assert.ok(!world.log.includes(`${platform}:clear ai:openai`));
     assert.deepEqual(world.events('ai-keys-armed').map(({ armed, entries }) => ({ armed, entries })), [{ armed: false, entries: undefined }]);
@@ -451,6 +627,63 @@ for (const platform of PLATFORMS) {
     assertNoValue(world, error);
   });
 }
+
+test('fedora: a locked entry before the run counts as present and refuses it', async (t) => {
+  const world = walkthroughWorld({ machine: 'fedora', heldLocked: ['fedora'] });
+  t.after(world.dispose);
+
+  const error = await failure(world.run());
+
+  assert.match(error.message, /keyring already holds .*fedora \(account ai:openai/);
+  assert.deepEqual(changes(world.log), []);
+  assert.deepEqual(world.events('ai-keys-checked')[0].entries, { 'ai:openai': { existed: true } });
+  assert.equal(world.entries.fedora.get('ai:openai'), REAL_KEY);
+  assertNoValue(world, error);
+});
+
+test('fedora: a locked entry that appears before the plant stops it with nothing planted or deleted', async (t) => {
+  const world = walkthroughWorld({
+    machine: 'fedora',
+    launch: { fedora: (entries, locked) => entries.set('ai:openai', REAL_KEY) && locked.add('ai:openai') },
+  });
+  t.after(world.dispose);
+
+  const error = await failure(world.run());
+
+  assert.match(error.message, /keyring gained an AI key entry .*fedora \(account ai:openai/);
+  assert.ok(!world.log.includes('fedora:patch-config'));
+  assert.ok(!world.log.includes('fedora:clear ai:openai'));
+  assert.equal(world.entries.fedora.get('ai:openai'), REAL_KEY);
+});
+
+test('fedora: a planted entry that is locked by cleanup time is reported as left', async (t) => {
+  const world = walkthroughWorld({ machine: 'fedora', gate: { afterPlant: (entries, locked) => locked.add('ai:openai') } });
+  t.after(world.dispose);
+
+  const error = await failure(world.run());
+
+  assert.match(error.message, /AI key cleanup: ai:openai is still in the fedora keyring/);
+  assert.deepEqual(world.events('ai-keys-removed')[0].entries, { 'ai:openai': { removed: false, left: true } });
+  assert.equal(world.events('run-complete').length, 0);
+  assertNoValue(world, error);
+});
+
+test('windows: an entry the script saw only on its second read counts as present, before the run and at the plant', async (t) => {
+  // The first call is the check before the run; the second the re-check before the plant.
+  for (const [from, refusal] of [[1, /keyring already holds .*windows \(account ai:openai/], [2, /keyring gained an AI key entry .*windows \(account ai:openai/]]) {
+    const world = walkthroughWorld({ machine: 'windows', faults: { windows: { appearsBetweenReadsFrom: from } } });
+    t.after(world.dispose);
+
+    const error = await failure(world.run());
+
+    assert.match(error.message, refusal);
+    assert.ok(!world.log.includes('windows:patch-config'), 'nothing is planted');
+    assert.ok(!world.log.includes('windows:clear ai:openai'), 'nothing is deleted');
+    assert.equal(world.entries.windows.get('ai:openai'), REAL_KEY);
+    const answered = world.events(from === 1 ? 'ai-keys-checked' : 'ai-keys-armed')[0];
+    assert.deepEqual(answered.entries, { 'ai:openai': { existed: true } });
+  }
+});
 
 test('both machines are checked before anything changes, and a refusal names each machine holding an entry', async (t) => {
   const world = walkthroughWorld({ held: ['windows'] });
@@ -474,7 +707,7 @@ test('a run of both machines plants and removes the key on each, one machine aft
   await world.run();
 
   assert.equal(world.entries.fedora.size + world.entries.windows.size, 0);
-  assert.ok(world.log.indexOf('fedora:clear ai:openai') < world.log.indexOf('windows:install'));
+  assert.ok(world.at('fedora:clear ai:openai') < world.at('windows:install'));
   assert.deepEqual(world.events('ai-keys-removed').map(({ machine, armed }) => [machine, armed]), [['fedora', true], ['windows', true]]);
 });
 
@@ -496,18 +729,23 @@ test('the walkthrough plants exactly the keys it checks for', () => {
   for (const account of Object.values(PLANTED_AI_KEYS)) assert.ok(AI_KEY_ACCOUNTS.includes(account));
 });
 
-test('fedora: a secret-tool that failed is never read as an absent entry', () => {
-  const store = (status, stderr, error) => fedoraAiKeyStore({ spawn: () => ({ status, stdout: null, stderr, error }) });
+test('fedora: a Secret Service search that failed or answered oddly is never read as absent', () => {
+  const store = (status, stdout, stderr = '', error) => fedoraAiKeyStore({ spawn: () => ({ status, stdout, stderr, error }) });
+  const reply = (data, type = 'aoao') => JSON.stringify({ type, data });
 
-  assert.throws(() => store(1, 'secret-tool: Cannot autolaunch D-Bus without X11 $DISPLAY').stored('ai:openai'), /failed \(exit 1\).*D-Bus/);
-  assert.throws(() => store(127, '').stored('ai:openai'), /failed \(exit 127\)/);
-  assert.throws(() => store(null, '', new Error('spawn secret-tool ENOENT')).stored('ai:openai'), /ENOENT/);
-  assert.equal(store(1, '').stored('ai:openai'), false);
+  assert.throws(() => store(1, '', 'Call failed: Access denied').stored('ai:openai'), /search for ai:openai failed \(exit 1\): Call failed: Access denied/);
+  assert.throws(() => store(null, null, '', new Error('spawn busctl ENOENT')).stored('ai:openai'), /ENOENT/);
+  for (const odd of ['', 'not json', reply([[]]), reply([[], [], []]), reply([['/a'], [7]]), reply([[], []], 'ao'), JSON.stringify({ data: [[], []] })]) {
+    assert.throws(() => store(0, odd).stored('ai:openai'), /did not answer with lists of unlocked and locked items/, odd);
+  }
+  assert.equal(store(0, reply([[], []])).stored('ai:openai'), false);
+  assert.equal(store(0, reply([['/org/freedesktop/secrets/collection/login/3'], []])).stored('ai:openai'), true);
+  assert.equal(store(0, reply([[], ['/org/freedesktop/secrets/collection/login/3']])).stored('ai:openai'), true, 'a locked entry is present');
 });
 
 test('the keyring stores refuse accounts that are not the app\'s AI keys', () => {
   const log = [];
-  const stores = [fakeStore('fedora', new Map(), log), fakeStore('windows', new Map(), log)];
+  const stores = [fakeStore('fedora', new Map(), new Set(), log), fakeStore('windows', new Map(), new Set(), log)];
   for (const store of stores) {
     for (const account of ['integration:notion:vault-1', 'ai:other', 'sync:webdav:v', '', 'AI:OPENAI']) {
       assert.throws(() => store.stored(account), /not an AI key account/);

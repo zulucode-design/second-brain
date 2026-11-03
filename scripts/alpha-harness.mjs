@@ -1283,6 +1283,12 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl, sync = false 
       if (survivors.length) fail(`Fedora process survived app exit: ${JSON.stringify(survivors)}`);
       return { processes: survivors };
     },
+    // #252: a walkthrough stopped by a signal stops its app and driver before it looks at the
+    // keyring. Fedora's cleanup is only that, since its config and state are the run's own folders,
+    // and stopping twice is harmless.
+    stopApps() {
+      return this.cleanup();
+    },
     async cleanup() {
       if (entryLaunchAttempted) {
         for (const row of linuxReport(machine.machinePath)) killForCleanup(row.pid, 'SIGKILL');
@@ -1404,6 +1410,19 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
       ]);
     },
     appsGone: () => waitForWindowsProcesses(sshHost, runId, (processes) => processes.length === 0, 60_000),
+    // #252: a walkthrough stopped by a signal stops the app, its sidecar and watchdog, and the
+    // driver before it looks at the keyring, by exact PID and without the config restore that
+    // cleanup does afterwards. cleanup-processes stops only packaged processes this run started.
+    async stopApps(evidencePath) {
+      tunnel?.kill();
+      if (driverPid) {
+        const stopped = runWindowsAction('stop-driver', { driverPid });
+        driverPid = undefined;
+        observation(evidencePath, 'driver-stopped', 'windows', stopped);
+      }
+      observation(evidencePath, 'forced-process-cleanup', 'windows', runWindowsAction('cleanup-processes'));
+      return waitForWindowsProcesses(sshHost, runId, (processes) => processes.length === 0, 15_000);
+    },
     async cleanup(evidencePath) {
       let firstError;
       tunnel?.kill();
@@ -1432,12 +1451,15 @@ async function waitForRestore(browser) {
 }
 
 async function withApp(machine, action, readySelector) {
-  // A stopped walkthrough launches nothing more (#252). Other gates' machines have no such hook.
+  // A stopped walkthrough launches nothing more, and can end the session it has open (#252,
+  // walkthroughMachine). Other gates' machines have none of these hooks.
   machine.beforeAppLaunch?.();
   const browser = await openApp(machine.port, machine.application, readySelector);
   try {
+    machine.appOpened?.(browser);
     return await action(browser);
   } finally {
+    machine.appClosed?.(browser);
     await closeApp(browser);
     await machine.appsGone();
   }
@@ -1871,28 +1893,55 @@ export function windowsAiKeyTarget(account) {
   return `${aiKeyAccount(account)}.${APP_IDENTIFIER}`;
 }
 
+// The Secret Service's own search (org.freedesktop.Secret.Service.SearchItems) on the session bus.
+// It answers with the paths of the unlocked and of the locked items whose attributes match, and
+// never with a secret.
+const SECRET_SEARCH = [
+  '--user', '--json=short', 'call', 'org.freedesktop.secrets', '/org/freedesktop/secrets',
+  'org.freedesktop.Secret.Service', 'SearchItems', 'a{ss}', '2',
+];
+
+// busctl --json=short prints a method's reply as {"type": <signature>, "data": [<arguments>]}.
+// Null unless that is SearchItems' two lists of item paths.
+function searchedItems(stdout) {
+  let reply;
+  try {
+    reply = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  const paths = (list) => Array.isArray(list) && list.every((path) => typeof path === 'string');
+  if (reply?.type !== 'aoao' || !Array.isArray(reply.data) || reply.data.length !== 2) return null;
+  const [unlocked, locked] = reply.data;
+  return paths(unlocked) && paths(locked) ? { unlocked, locked } : null;
+}
+
 /**
- * The AI key entries in Fedora's Secret Service. `secret-tool lookup` prints the value to its
- * standard output, so that stream goes to the operating system's null device (stdio `ignore`) and
- * only the exit status is read. `lookup` exits 1 with no message when nothing matches and 1 with a
- * message when it failed (no D-Bus session, locked collection); a failure is never read as absent.
+ * The AI key entries in Fedora's Secret Service. Whether an entry exists comes from SearchItems,
+ * which lists locked items as well as unlocked ones, so a locked entry counts as present (#252):
+ * `secret-tool lookup` exits 1 with no message for an entry it could not unlock, just as for none.
+ * A search that fails, or answers in any other shape, is never read as absent. Removal uses
+ * `secret-tool clear`, which deletes unlocked items only and prints nothing, with its standard
+ * output still sent to the operating system's null device; the search then decides what is left.
  */
 export function fedoraAiKeyStore({ spawn = spawnSync } = {}) {
-  const secretTool = (verb, account) => {
-    const result = spawn('secret-tool', [verb, 'service', APP_IDENTIFIER, 'username', aiKeyAccount(account)], {
-      stdio: ['ignore', 'ignore', 'pipe'],
+  const command = (executable, args, stdout) => {
+    const result = spawn(executable, args, {
+      stdio: ['ignore', stdout, 'pipe'],
       encoding: 'utf8',
       timeout: 30_000,
       killSignal: 'SIGKILL',
     });
     if (result.error) throw result.error;
-    return { status: result.status, message: String(result.stderr ?? '').trim() };
+    return { status: result.status, stdout: String(result.stdout ?? ''), message: String(result.stderr ?? '').trim() };
   };
+  const attributes = (account) => ['service', APP_IDENTIFIER, 'username', aiKeyAccount(account)];
   const exists = (account) => {
-    const { status, message } = secretTool('lookup', account);
-    if (status === 0) return true;
-    if (status === 1 && !message) return false;
-    return fail(`secret-tool lookup for ${account} failed (exit ${status}): ${message}`);
+    const { status, stdout, message } = command('busctl', [...SECRET_SEARCH, ...attributes(account)], 'pipe');
+    if (status !== 0) fail(`Secret Service search for ${account} failed (exit ${status}): ${message}`);
+    const items = searchedItems(stdout);
+    if (!items) fail(`Secret Service search for ${account} did not answer with lists of unlocked and locked items`);
+    return items.unlocked.length + items.locked.length > 0;
   };
   return {
     name: 'fedora',
@@ -1900,8 +1949,9 @@ export function fedoraAiKeyStore({ spawn = spawnSync } = {}) {
     remove(account) {
       const found = exists(account);
       if (found) {
-        // Exit 1 with no message means nothing was cleared; the lookup below decides what is left.
-        const { status, message } = secretTool('clear', account);
+        // Exit 1 with no message means nothing unlocked matched, so nothing was cleared; a locked
+        // entry stays, and the search below reports it as left.
+        const { status, message } = command('secret-tool', ['clear', ...attributes(account)], 'ignore');
         if (status !== 0 && (status !== 1 || message)) fail(`secret-tool clear for ${account} failed (exit ${status}): ${message}`);
       }
       return { found, left: exists(account) };
@@ -1924,7 +1974,12 @@ export function windowsAiKeyStore(worker) {
   };
   return {
     name: 'windows',
-    stored: (account) => ask(account, false).found,
+    // The script reads the credential twice. An entry either read saw exists, even one that
+    // appeared between them, so { found: false, left: true } is present too (#252).
+    stored(account) {
+      const { found, left } = ask(account, false);
+      return found || left;
+    },
     remove: (account) => ask(account, true),
   };
 }
@@ -2132,7 +2187,9 @@ function walkthroughCancellation(signals) {
  * The machine as the walkthrough drives it. Every call first checks that the run was not stopped,
  * so a stopped walkthrough changes nothing more; the controller's cleanup uses the machine itself.
  * A config patch that plants an AI key arms the key's removal first (`aiKeyPlant`), and so is
- * covered even if the patch fails partway.
+ * covered even if the patch fails partway. It also tracks the WebDriver sessions `withApp` opens,
+ * so a stopped run can end them (`endAppSessions`): webdriverio ends a session's pending waits when
+ * the session is deleted, and the gate then unwinds at once.
  */
 function walkthroughMachine(machine, { cancellation, plant }) {
   const guarded = {};
@@ -2142,7 +2199,18 @@ function walkthroughMachine(machine, { cancellation, plant }) {
       return value.apply(this, args);
     };
   }
+  const sessions = new Set();
   guarded.beforeAppLaunch = () => cancellation.check();
+  guarded.appOpened = (browser) => {
+    sessions.add(browser);
+    cancellation.check();
+  };
+  guarded.appClosed = (browser) => {
+    sessions.delete(browser);
+  };
+  guarded.endAppSessions = async () => {
+    for (const browser of [...sessions]) await closeApp(browser);
+  };
   guarded.patchConfig = function patchConfig(patch) {
     cancellation.check();
     if (plantsAiKey(patch)) plant.arm();
@@ -2426,6 +2494,9 @@ async function walkthroughRun(options, io, { notion, machineNames, cancellation 
     controller('ollama', await io.ollamaModels('preflight'));
     for (const machineName of machineNames) {
       let machine;
+      let driven;
+      let gate;
+      let gateSettled = false;
       let passed = false;
       const plant = aiKeyPlant(keyStores.get(machineName), record);
       try {
@@ -2434,33 +2505,57 @@ async function walkthroughRun(options, io, { notion, machineNames, cancellation 
         if (machine.install) observation(evidencePath, 'installed', machine.name, machine.install(options.windowsInstaller));
         const prepared = machine.prepare();
         observation(evidencePath, 'prepared', machine.name, prepared);
-        await cancellation.race(io.gate(walkthroughMachine(machine, { cancellation, plant }), {
+        driven = walkthroughMachine(machine, { cancellation, plant });
+        gate = io.gate(driven, {
           vault: prepared.vault, evidencePath, screenshotDir, notion,
           // #137: the Windows walkthrough must run on an unlocked interactive desktop.
           requireUnlocked: machine.name === 'windows',
-        }));
+        });
+        gate.then(() => { gateSettled = true; }, () => { gateSettled = true; });
+        await cancellation.race(gate);
         passed = true;
       } catch (error) {
         runError = error;
         observation(evidencePath, 'run-failed', machine?.name ?? 'controller', { error: error.message });
-      }
-      // The same cleanup whether the walkthrough passed, failed or was stopped by a signal.
-      if (machine) {
-        try {
-          observation(evidencePath, 'notion-checked', machine.name, await io.notionCleanup(machine, notion, passed));
-        } catch (error) {
-          observation(evidencePath, 'run-failed', machine.name, { error: error.message });
-          runError ??= error;
-        }
-      }
-      cleanupError ??= await finishMachine(machine, evidencePath);
-      // After the app and driver are stopped, so nothing can write the key back, and on its own
-      // line so an earlier cleanup error cannot skip it. An unarmed plant deletes nothing.
-      const keyProblems = plant.remove();
-      if (keyProblems.length) {
-        const keyError = new Error(`AI key cleanup: ${keyProblems.join('; ')}`);
-        observation(evidencePath, 'cleanup-error', machineName, { error: keyError.message });
-        cleanupError ??= keyError;
+      } finally {
+        // The same cleanup whether the walkthrough passed, failed or was stopped by a signal. Every
+        // step runs even when one before it, or a trace write or failure report, threw, so nothing
+        // that went wrong can leave the app running, the config swapped or the key planted (#252).
+        await everyStep([
+          // Stopped by a signal while the gate still ran: the gate may be waiting on the app (a
+          // Notion connect, say), which could still write a credential. So its app is stopped and
+          // the gate settles before the Notion and key cleanup look at the keyring.
+          async () => {
+            if (!gate || gateSettled) return;
+            try {
+              await settleStoppedGate(machine, driven, gate, evidencePath);
+            } catch (error) {
+              cleanupError ??= error;
+              observation(evidencePath, 'cleanup-error', machine.name, { error: error.message });
+            }
+          },
+          async () => {
+            if (!machine) return;
+            try {
+              observation(evidencePath, 'notion-checked', machine.name, await io.notionCleanup(machine, notion, passed));
+            } catch (error) {
+              runError ??= error;
+              observation(evidencePath, 'run-failed', machine.name, { error: error.message });
+            }
+          },
+          async () => {
+            cleanupError ??= await finishMachine(machine, evidencePath);
+          },
+          // After the app and driver are stopped, so nothing can write the key back. An unarmed
+          // plant deletes nothing.
+          () => {
+            const keyProblems = plant.remove();
+            if (!keyProblems.length) return;
+            const keyError = new Error(`AI key cleanup: ${keyProblems.join('; ')}`);
+            cleanupError ??= keyError;
+            observation(evidencePath, 'cleanup-error', machineName, { error: keyError.message });
+          },
+        ]);
       }
       // A run stopped by then leaves the candidate installed, as a failed run does.
       if (!runError && !cleanupError) await stopIfSignalled(machineName);
@@ -2506,6 +2601,9 @@ async function walkthroughRun(options, io, { notion, machineNames, cancellation 
     ollamaTunnel.kill();
   }
 
+  // Last, with nothing awaited after it: a signal that came during the final checks still fails
+  // the run, so no run that received SIGINT or SIGTERM records run-complete or exits zero (#252).
+  if (!runError && !cleanupError) await stopIfSignalled('controller');
   if (runError) throw runError;
   if (cleanupError) throw cleanupError;
   controller('run-complete', {
@@ -2513,6 +2611,37 @@ async function walkthroughRun(options, io, { notion, machineNames, cancellation 
     gate: machineNames.length === 2,
   });
   io.print(JSON.stringify({ runId, evidencePath, screenshotDir }));
+}
+
+// Runs every step in order, each even when one before it threw, as nested finally blocks would,
+// then throws the first error.
+async function everyStep(steps) {
+  let firstError;
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (error) {
+      firstError ??= error;
+    }
+  }
+  if (firstError) throw firstError;
+}
+
+/**
+ * A walkthrough stopped by a signal while its gate still ran (#252). The gate's WebDriver sessions
+ * end, which also ends the waits it is in; its machine's app and driver stop by exact PID; then the
+ * gate is left to unwind. Only after that do the Notion and key cleanup look at the keyring, so a
+ * request the app was still serving cannot store a credential after them.
+ */
+async function settleStoppedGate(machine, driven, gate, evidencePath) {
+  let stopped;
+  try {
+    await driven.endAppSessions();
+    stopped = await machine.stopApps(evidencePath);
+  } finally {
+    await gate.then(() => {}, () => {});
+  }
+  observation(evidencePath, 'stopped-gate-settled', machine.name, { apps: stopped ?? null });
 }
 
 // Every field of an uninstall result is a check that has to hold.
