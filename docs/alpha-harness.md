@@ -314,7 +314,10 @@ Windows launch uses the harness-owned `SecondBrainAlphaHarness` scheduled task w
 logon and the exact installed executable under `D:\SecondBrainTest`. The task supplies desktop
 session placement only. Key presses and full-desktop screenshots come from
 `scripts/windows/alpha-desktop.ps1`, which runs in the same session through a short-lived
-`SecondBrainAlphaHarnessDesktop` task.
+`SecondBrainAlphaHarnessDesktop` task. The worker waits up to five minutes for that task. One still
+running then is stopped before the worker removes it and gives up, and each timeout around the
+wait (the worker's PowerShell call, then the controller's SSH call) is longer than the one inside
+it, so a script never writes a result after its caller has stopped waiting for it.
 
 Gate 1 passed unattended on candidate `4ea6b9e` (run `20260921T114623Z`), so Gate 2 may start.
 
@@ -328,38 +331,62 @@ Credential Manager on Windows, where the credential's target is
 the keyring, so it is the user's own store, and the key the app files there would replace a real
 one. The rule is therefore part of the machine-state restore, and the run keeps it as follows:
 
-- **It refuses when an AI key the run would plant is already in the keyring.** Before it prepares,
-  launches or patches anything on a machine, the controller asks each machine in the run whether the
-  entry exists. Today the run plants only `openai_api_key`, so it asks about `ai:openai`. If an
-  entry is there, the run stops and names the machine, account and service. Move the key aside by
-  hand, then run again. A lookup that fails (no D-Bus session, no signed-in desktop) also stops the
-  run; it is never read as "absent". The candidate RPM and the Windows tools are already installed
-  at that point, since the Windows check runs from the tools.
+- **It refuses when an AI key the run would plant is already in the keyring.** The controller asks
+  each machine in the run whether the entry exists before it changes either machine: before the
+  candidate RPM is installed and before the Windows stale-run recovery. Only reading the candidate
+  and harness commits and deploying the harness's own tools to `D:\SecondBrainTest` come first,
+  because the Windows check runs from those tools. Today the run plants only `openai_api_key`, so
+  it asks about `ai:openai`. If an entry is there, the run stops and names the machine, account and
+  service. Move the key aside by hand, then run again. The trace keeps the check and the refusal.
+- **It asks again just before the plant.** Launches between the first check and the plant can file
+  a key from the copied config. Immediately before a machine's `config.json` gets the key, the
+  controller looks again and arms that machine's removal only when no entry is there. If one is,
+  that machine's run stops with nothing planted and nothing deleted.
+- **A lookup that fails is never read as "absent".** On Fedora, `secret-tool` exiting with a message
+  (no D-Bus session, a locked collection) is a failure. On Windows, only `ERROR_NOT_FOUND` (1168)
+  from `CredReadW` means absent, and only success or `ERROR_NOT_FOUND` from `CredDeleteW` is a
+  completed delete. Any other code stops `alpha-desktop.ps1` before it answers; it writes the call
+  and the code, nothing else, and exits 1. A failed check before the run or before the plant stops
+  the run with nothing planted. A failed check during cleanup records the entry as `left: null`
+  (unknown) and fails the run.
 - **It learns only whether the entry exists.** On Fedora, `secret-tool lookup` runs with its
   standard output sent to the operating system's null device, and only the exit status is read. On
   Windows, `scripts/windows/alpha-desktop.ps1` runs in the desktop session, because an SSH logon has
-  no Credential Manager, and writes only `found` and `left`. It accepts exactly the app's four AI
-  targets (`ai:anthropic`, `ai:openai`, `ai:ollama` and `ai:openai-compatible`, each followed by the
-  service) and the Notion token, and refuses every other target. No value, part of one, length or
-  hash reaches the controller, a log, a file or a trace.
-- **It removes what it planted, including after a failure.** When a machine's part of the run ends,
-  passed or failed, and its app and driver are stopped, the controller deletes the entry the plant
-  created and checks that none is left. An entry that is left fails the run. A run that refused
-  deletes nothing. A controller that is killed outright cannot clean up: the entry it leaves makes
-  the next run refuse, naming it, and someone deletes it by hand after confirming it holds the
-  synthetic value.
-- **The trace records existence only.** Each machine gets an `ai-keys-checked` event (`existed` for
-  each account) and an `ai-keys-removed` event (`removed` and `left` for each account).
+  no Credential Manager, and writes `found` and `left` to a result file named for that one call,
+  which the worker deletes once read. It accepts exactly the app's four AI targets (`ai:anthropic`,
+  `ai:openai`, `ai:ollama` and `ai:openai-compatible`, each followed by the service) and the Notion
+  token, and refuses every other target. No value, part of one, length or hash reaches the
+  controller, a log, a file or a trace.
+- **It removes what it planted, after a pass, a failure or Ctrl+C.** When a machine's part of the
+  run ends and its app and driver are stopped, the controller deletes the entry on every machine
+  whose plant was armed, and checks that none is left. An entry that is left fails the run. A run
+  that refused, or failed or stopped before the plant, deletes nothing. Ctrl+C (`SIGINT`) and
+  `SIGTERM` stop the walkthrough at its next step and go through the same cleanup as a failed run
+  (apps and drivers stopped, configs restored, Notion cleaned up, the key removed) before the
+  controller exits non-zero. Press Ctrl+C once: the terminal also sends it to the controller's own
+  child processes, so a second press can cut short the commands the cleanup is running.
+- **Only a hard kill leaves the entry.** A controller killed any other way (`SIGKILL`, a closed
+  terminal, a power loss) cannot clean up. Cancelling the GitHub Actions run counts as one: the
+  runner signals the step's shell rather than the controller, and does not wait for the controller's
+  cleanup ([workflow cancellation](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation)).
+  The entry left behind makes the next run refuse, naming it, and someone deletes it by hand after
+  confirming it holds the synthetic value.
+- **The trace records existence only.** Each machine gets an `ai-keys-checked` event before the run
+  (`existed` for each account), an `ai-keys-armed` event before its plant (`armed`, and `existed`
+  for each account), and an `ai-keys-removed` event after its cleanup (`armed`, and when armed
+  `removed` and `left` for each account).
 
 Any one-off verification script that plants a key in the app config must do the same: check the
-keyring first and refuse if the entry is there, delete what it planted whether or not it passed,
-check that nothing is left, and keep every value out of its output. The installed checks for #237
-planted a key without doing so and left a fake `ai:openai` entry on both machines, deleted by hand
-on 2026-11-02.
+keyring first and refuse if the entry is there, delete what it planted whether it passed, failed or
+was interrupted, check that nothing is left, and keep every value out of its output. The installed
+checks for #237 planted a key without doing so and left a fake `ai:openai` entry on both machines,
+deleted by hand on 2026-11-02.
 
-`tests/alpha-harness-keyring.test.mjs` covers the check and the removal on both platforms' code
-paths with fakes: an entry present before the run, none before it, and a run that fails after
-planting. It uses neither the real keyring nor a real machine.
+`tests/alpha-harness-keyring.test.mjs` runs the walkthrough controller's own sequence against fake
+machines, fake signals and fakes of both keyrings: an entry present before the run, one that
+appears before the plant, failures before and after the plant, `SIGINT` and `SIGTERM`, lookup and
+delete errors on each platform, and the Windows result files and timeouts. It uses neither the real
+keyring nor a real machine.
 
 ## Harness upkeep
 
