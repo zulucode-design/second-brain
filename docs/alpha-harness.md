@@ -334,8 +334,9 @@ Each gate's own teardown follows the same rule: Gate 1's stops of both apps and 
 finalize, and the acceptance gate's network and isolation restores, its machine teardown and its
 removal of the Fedora candidate. A failure report or trace line that cannot be written never skips
 a later step, and the gate ends with its first real error. A teardown that failed only to write
-its trace never takes the place of a real error from another step: the gate reports the real one,
-and adds that the trace could not be written.
+its trace never takes the place of a real error from another step: the gate reads every
+teardown's result, reports the first real error, and adds that the trace could not be written,
+whichever teardown it failed in.
 
 Traces are public. The controller redacts the home directory, Windows profile paths, and host
 names at the single point where it writes them.
@@ -344,9 +345,11 @@ Windows launch uses the harness-owned `SecondBrainAlphaHarness` scheduled task w
 logon and the exact installed executable under `D:\SecondBrainTest`. The task supplies desktop
 session placement only. Key presses and full-desktop screenshots come from
 `scripts/windows/alpha-desktop.ps1`, which runs in the same session through a short-lived
-`SecondBrainAlphaHarnessDesktop` task. The worker waits up to five minutes for that task. On every
-way out (a finish, an overrun, or a failure while waiting or stopping) it removes the task only once
-the task is confirmed not to run, stopping it first if it still does. Each timeout around the wait
+`SecondBrainAlphaHarnessDesktop` task. The worker waits up to five minutes for that task, while it
+is `Queued` or `Running`; only `Ready` or `Disabled` count as finished, and any other state, or one
+that cannot be read, does not. On every way out (a finish, an overrun, or a failure while waiting or
+stopping) it removes the task only once the task is confirmed finished. A task not known to be
+finished is stopped first, even when its state cannot be read. Each timeout around the wait
 (the worker's PowerShell call, then the controller's SSH call) is longer than the one inside it, so
 a script never writes a result after its caller has stopped waiting for it. If the task cannot be
 confirmed stopped, it stays registered, the call fails naming it, and a credential check keeps its
