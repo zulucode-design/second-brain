@@ -31,7 +31,8 @@ if ($Mode -eq 'LaunchShortcut') {
 # exist"), so the credential is looked up here, and with -RemoveCredential deleted. The mode name
 # is the Notion token's from before the AI keys (#252) joined it. It answers only whether the
 # credential exists: the secret is never returned, written or logged, and the copy Windows hands
-# back is overwritten before it is freed.
+# back is overwritten before it is freed. A Credential Manager call that fails for any reason but
+# ERROR_NOT_FOUND stops the mode before it answers (Assert-CredentialCall below).
 if ($Mode -eq 'NotionToken') {
   # The credentials this mode may touch: the run's Notion token, and the app's four AI key
   # entries. keyring names a Windows credential "<account>.<service>" (src-tauri/src/secret_store.rs
@@ -73,9 +74,16 @@ namespace AlphaHarness {
     [DllImport("advapi32.dll")] static extern void CredFree(IntPtr buffer);
     // keyring stores its entries as generic credentials.
     const int Generic = 1;
-    public static bool Exists(string target) {
+    // The Win32 error of the call that just failed. One that set none still failed.
+    static int LastError() {
+      int code = Marshal.GetLastWin32Error();
+      return code == 0 ? -1 : code;
+    }
+    // 0 when the credential exists, otherwise the Win32 error CredReadW failed with:
+    // ERROR_NOT_FOUND (1168) when there is no such credential, anything else when it could not be read.
+    public static int Read(string target) {
       IntPtr found;
-      if (!CredReadW(target, Generic, 0, out found)) return false;
+      if (!CredReadW(target, Generic, 0, out found)) return LastError();
       try {
         var record = (CredentialRecord)Marshal.PtrToStructure(found, typeof(CredentialRecord));
         if (record.CredentialBlob != IntPtr.Zero) {
@@ -86,15 +94,34 @@ namespace AlphaHarness {
       } finally {
         CredFree(found);
       }
-      return true;
+      return 0;
     }
-    public static void Delete(string target) { CredDeleteW(target, Generic, 0); }
+    // 0 when the credential was deleted, otherwise the Win32 error CredDeleteW failed with.
+    public static int Delete(string target) {
+      return CredDeleteW(target, Generic, 0) ? 0 : LastError();
+    }
   }
 }
 '@
-  $credentialFound = [AlphaHarness.Credentials]::Exists($CredentialTarget)
-  if ($credentialFound -and $RemoveCredential) { [AlphaHarness.Credentials]::Delete($CredentialTarget) }
-  $credentialLeft = [AlphaHarness.Credentials]::Exists($CredentialTarget)
+  # ERROR_NOT_FOUND is the one failure that means "not there". Any other stops the mode before it
+  # writes found or left: it writes the call and its error code, nothing from the credential, and
+  # exits 1, so the harness reads it as "could not check" and never as absent (#252).
+  $notFoundCode = 1168
+  function Assert-CredentialCall([string]$callName, [int]$statusCode) {
+    if ($statusCode -eq 0 -or $statusCode -eq $notFoundCode) { return }
+    [pscustomobject]@{ error = "$callName failed with Win32 error $statusCode" } | ConvertTo-Json -Compress |
+      Set-Content -LiteralPath $outputFull -Encoding UTF8
+    exit 1
+  }
+  $readStatus = [AlphaHarness.Credentials]::Read($CredentialTarget)
+  Assert-CredentialCall 'CredReadW' $readStatus
+  $credentialFound = $readStatus -eq 0
+  if ($credentialFound -and $RemoveCredential) {
+    Assert-CredentialCall 'CredDeleteW' ([AlphaHarness.Credentials]::Delete($CredentialTarget))
+  }
+  $leftStatus = [AlphaHarness.Credentials]::Read($CredentialTarget)
+  Assert-CredentialCall 'CredReadW' $leftStatus
+  $credentialLeft = $leftStatus -eq 0
   [pscustomobject]@{ found = $credentialFound; left = $credentialLeft } | ConvertTo-Json -Compress |
     Set-Content -LiteralPath $outputFull -Encoding UTF8
   exit 0
