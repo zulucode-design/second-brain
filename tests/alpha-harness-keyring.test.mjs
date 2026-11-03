@@ -141,8 +141,8 @@ function fakeStore(platform, entries, locked, log, faults) {
 // teardown only stops processes, since its config and state are the run's own folders.
 // `app.alive` says whether its app could still write a credential: stopApps and cleanup stop it.
 // `onLaunchEntry` models what the Start-menu launch may do to the keyring; `stopAppsFails` a stop
-// whose final wait times out after the app has gone.
-function fakeFedoraMachine(log, app, { onLaunchEntry, stopAppsFails = false } = {}) {
+// whose final wait times out after the app has gone; `cleanupFails` a teardown that leaves a process.
+function fakeFedoraMachine(log, app, { onLaunchEntry, stopAppsFails = false, cleanupFails = false } = {}) {
   const name = 'fedora';
   const stop = () => {
     app.alive = false;
@@ -184,6 +184,7 @@ function fakeFedoraMachine(log, app, { onLaunchEntry, stopAppsFails = false } = 
     async cleanup() {
       log.push(`${name}:cleanup`);
       stop();
+      if (cleanupFails) throw new Error('Fedora process survived app exit: [{"role":"Sidecar"}]');
       return { processes: [] };
     },
     uninstall() {
@@ -1383,6 +1384,34 @@ test('restore gate: a trace that breaks with the failure still tears the failed 
   assert.deepEqual(world.printed, []);
 });
 
+test('acceptance gate: a trace that breaks in the Windows teardown, after a Fedora teardown that failed, is still reported', async (t) => {
+  const world = gateWorld(t);
+  const io = {
+    openTrace: world.openTrace,
+    network: () => ({ restore: async () => ({ restored: true }) }),
+    fedora: () => fakeFedoraMachine(world.log, world.apps.fedora, { cleanupFails: true }),
+    // The evidence disk fills up once the Windows teardown starts.
+    windows: (runId) => fakeWindowsMachine(world, runId, {
+      onAction: (action) => {
+        if (action === 'stop-driver') world.breakTrace();
+      },
+    }),
+    side: async (machine) => ({ name: machine.name, machine, browser: { name: machine.name } }),
+    criteria: async () => {},
+    closeApp: async () => {},
+    removeCandidate: () => world.log.push('remove-candidate'),
+    print: (line) => world.printed.push(line),
+  };
+
+  const error = await failure(runAcceptanceLocked({ sshHost: 'fake-host' }, io));
+
+  // Fedora's error is the first real one, and the trace failure from the Windows teardown is with it.
+  assert.match(error.message, /^Fedora process survived app exit: .*; the trace could not be written: EISDIR/);
+  assert.deepEqual(windowsRestored(world), { configSwapped: false, locked: false, driverRunning: false }, 'Windows is still restored');
+  assert.ok(!world.log.includes('fedora:uninstall'), 'a Fedora app that may still run keeps its candidate');
+  assert.deepEqual(world.printed, []);
+});
+
 test('acceptance gate: a Windows restore that fails after a Fedora teardown that only failed to write its trace is the run\'s error', async (t) => {
   const world = gateWorld(t);
   const io = {
@@ -1576,32 +1605,42 @@ const POWERSHELL = findPowerShell();
  * and Get-Date, Start-Sleep, Get-CimInstance and Test-Path, replaced by fakes defined as global
  * functions, which PowerShell resolves before cmdlets. Nothing reaches the real Task Scheduler,
  * and the task name is the test's own. Each fake Get-Date moves the clock 20 seconds on, so the
- * five-minute wait and the 30-second stop wait pass at once. A scenario sets how the one task
- * behaves; the result lists the calls that change it, and how it was left.
+ * five-minute wait and the 30-second stop wait pass at once. A scenario gives the states the task
+ * reports after its start, one per read, the last repeating; a stop that takes effect makes it
+ * Ready. The result lists the calls that change the task, and whether it was still Queued or
+ * Running when it was unregistered.
  */
 const DESKTOP_TASK_FAKES = String.raw`
 param([string]$Source, [string]$Scenario, [string]$TaskName)
 $ErrorActionPreference = 'Stop'
 $global:simFlags = @{
-  'finishes' = @{ runPolls = 2 }
-  'overrun' = @{ runPolls = 1000 }
-  'stale' = @{ staleRunning = $true; runPolls = 2 }
-  'stale-unstoppable' = @{ staleRunning = $true; runPolls = 2; stopIgnored = $true }
-  'unstoppable' = @{ runPolls = 1000; stopIgnored = $true }
-  'stop-throws' = @{ runPolls = 1000; stopThrows = $true }
-  'monitor-throws' = @{ runPolls = 1000; getThrowsAt = 2 }
-  'monitor-dead' = @{ runPolls = 1000; getDeadAfterStart = $true }
-  'start-throws' = @{ startThrows = $true }
-  'info-throws' = @{ runPolls = 2; infoThrows = $true }
+  'finishes' = @{ states = @('Running', 'Running', 'Ready') }
+  'overrun' = @{ states = @('Running') }
+  'stale' = @{ staleRunning = $true; states = @('Running', 'Running', 'Ready') }
+  'stale-unstoppable' = @{ staleRunning = $true; states = @('Ready'); stopIgnored = $true }
+  'unstoppable' = @{ states = @('Running'); stopIgnored = $true }
+  'stop-throws' = @{ states = @('Running'); stopThrows = $true }
+  'stop-throws-then-finishes' = @{ states = @('Running', 'Running', 'Running', 'Running', 'Ready'); stopThrows = $true; getThrowsAt = 2 }
+  'monitor-throws' = @{ states = @('Running'); getThrowsAt = 2 }
+  'monitor-dead' = @{ states = @('Running'); getDeadAfterStart = $true }
+  'start-throws' = @{ states = @('Ready'); startThrows = $true }
+  'info-throws' = @{ states = @('Running', 'Running', 'Ready'); infoThrows = $true }
+  'queued-then-running' = @{ states = @('Queued', 'Queued', 'Running', 'Running', 'Ready') }
+  'queued-forever' = @{ states = @('Queued') }
+  'unknown-state' = @{ states = @('Unknown') }
+  'unknown-unstoppable' = @{ states = @('Unknown'); stopIgnored = $true }
+  'disabled' = @{ states = @('Running', 'Disabled') }
 }[$Scenario]
 if (-not $global:simFlags) { throw "unknown scenario $Scenario" }
 $global:simCalls = New-Object 'System.Collections.Generic.List[string]'
 $global:simClock = [datetime]'2026-11-03T00:00:00Z'
 $global:simRegistered = [bool]$global:simFlags.staleRunning
-$global:simRunning = [bool]$global:simFlags.staleRunning
 $global:simStarted = $false
+$global:simStopped = $false
+$global:simState = $(if ($global:simFlags.staleRunning) { 'Running' } else { 'Ready' })
 $global:simPolls = 0
 $global:simGets = 0
+$global:simLiveAtUnregister = $null
 
 function global:Get-Date { $global:simClock = $global:simClock.AddSeconds(20); return $global:simClock }
 function global:Start-Sleep { param($Milliseconds, $Seconds) }
@@ -1618,13 +1657,13 @@ function global:Start-ScheduledTask {
   param($TaskName)
   $global:simCalls.Add('start')
   if ($global:simFlags.startThrows) { throw 'the task image is corrupt' }
-  $global:simStarted = $true; $global:simRunning = $true; $global:simPolls = 0
+  $global:simStarted = $true; $global:simStopped = $false; $global:simPolls = 0
 }
 function global:Stop-ScheduledTask {
   param($TaskName)
   $global:simCalls.Add('stop')
   if ($global:simFlags.stopThrows) { throw 'access is denied' }
-  if (-not $global:simFlags.stopIgnored) { $global:simRunning = $false }
+  if (-not $global:simFlags.stopIgnored) { $global:simStopped = $true; $global:simState = 'Ready' }
 }
 function global:Get-ScheduledTask {
   param($TaskName, $ErrorAction)
@@ -1637,11 +1676,12 @@ function global:Get-ScheduledTask {
     if ($ErrorAction -eq 'SilentlyContinue') { return $null }
     throw "no task named $TaskName"
   }
-  if ($global:simRunning -and $global:simStarted) {
+  if ($global:simStarted -and -not $global:simStopped) {
+    $sequence = @($global:simFlags.states)
+    $global:simState = $sequence[[Math]::Min($global:simPolls, $sequence.Count - 1)]
     $global:simPolls++
-    if ($global:simPolls -gt $global:simFlags.runPolls) { $global:simRunning = $false }
   }
-  [pscustomobject]@{ State = $(if ($global:simRunning) { 'Running' } else { 'Ready' }) }
+  [pscustomobject]@{ State = $global:simState }
 }
 function global:Get-ScheduledTaskInfo {
   param($TaskName)
@@ -1651,7 +1691,9 @@ function global:Get-ScheduledTaskInfo {
 }
 function global:Unregister-ScheduledTask {
   param($TaskName, $Confirm)
-  $global:simCalls.Add('unregister'); $global:simRegistered = $false
+  $global:simCalls.Add('unregister')
+  $global:simLiveAtUnregister = $global:simState -in @('Queued', 'Running')
+  $global:simRegistered = $false
 }
 
 $outcome = $null
@@ -1664,7 +1706,8 @@ try {
 [pscustomobject]@{
   calls = @($global:simCalls)
   registered = $global:simRegistered
-  running = $global:simRunning
+  state = $global:simState
+  liveAtUnregister = $global:simLiveAtUnregister
   output = "$outcome"
   error = $failure
 } | ConvertTo-Json -Depth 3 -Compress
@@ -1684,21 +1727,41 @@ test('windows desktop task: on every way out the task is let go only once it is 
     ], { encoding: 'utf8', timeout: 120_000, env: { ...process.env, SystemRoot: process.env.SystemRoot ?? root } });
     assert.equal(ran.status, 0, `${scenario}: ${ran.stderr}`);
     const result = JSON.parse(ran.stdout.trim().split(/\r?\n/).at(-1));
-    return { ...result, calls: [result.calls ?? []].flat() };
+    const outcome = { ...result, calls: [result.calls ?? []].flat() };
+    // Whatever the scenario, a task is never let go while it may still run.
+    if (outcome.calls.includes('unregister')) assert.equal(outcome.liveAtUnregister, false, `${scenario}: unregistered while ${outcome.state}`);
+    return outcome;
   };
   const kept = new RegExp(`${taskName} .*could not be confirmed stopped.*${DESKTOP_TASK_KEPT}`);
+  const confirmed = /; the task was confirmed stopped and removed$/;
 
-  // Finished on its own: removed, and its result returned.
-  const finished = run('finishes');
-  assert.deepEqual(finished.calls, ['register', 'start', 'info', 'unregister']);
-  assert.equal(finished.error, null);
-  assert.match(finished.output, /"action":"desktop-script".*"result":0/);
+  // Finished on its own, Ready or Disabled: removed, and its result returned.
+  for (const scenario of ['finishes', 'disabled']) {
+    const finished = run(scenario);
+    assert.deepEqual(finished.calls, ['register', 'start', 'info', 'unregister'], scenario);
+    assert.equal(finished.error, null, scenario);
+    assert.match(finished.output, /"action":"desktop-script".*"result":0/);
+  }
 
-  // Stopped after five minutes, then removed.
-  const overrun = run('overrun');
-  assert.deepEqual(overrun.calls, ['register', 'start', 'stop', 'unregister']);
-  assert.match(overrun.error, /did not finish within 5 minutes; the task was confirmed stopped and removed$/);
-  assert.equal(overrun.running, false);
+  // Queued is waited on like Running, so a task that queues and then runs is not taken as done.
+  const queued = run('queued-then-running');
+  assert.deepEqual(queued.calls, ['register', 'start', 'info', 'unregister']);
+  assert.equal(queued.error, null);
+
+  // Still Queued or Running after five minutes: stopped, confirmed, removed.
+  for (const scenario of ['overrun', 'queued-forever']) {
+    const overrun = run(scenario);
+    assert.deepEqual(overrun.calls, ['register', 'start', 'stop', 'unregister'], scenario);
+    assert.match(overrun.error, /did not finish within 5 minutes; the task was confirmed stopped and removed$/, scenario);
+  }
+
+  // A state that is neither finished nor waited on is not finished: stopped and confirmed, or kept.
+  const unknown = run('unknown-state');
+  assert.deepEqual(unknown.calls, ['register', 'start', 'stop', 'unregister']);
+  assert.match(unknown.error, /is in state 'Unknown', not finished; the task was confirmed stopped and removed$/);
+  const unknownKept = run('unknown-unstoppable');
+  assert.deepEqual(unknownKept.calls, ['register', 'start', 'stop']);
+  assert.match(unknownKept.error, kept);
 
   // An earlier call's task still running is stopped before this one is registered; one that will
   // not stop fails the call before anything is registered, and stays registered.
@@ -1713,10 +1776,16 @@ test('windows desktop task: on every way out the task is let go only once it is 
   assert.deepEqual(blip.calls, ['register', 'start', 'stop', 'unregister']);
   assert.match(blip.error, /^the Task Scheduler service did not answer; the task was confirmed stopped and removed$/);
 
-  // Never confirmed stopped: the task stays registered, and the error names it.
+  // A stop that throws is judged by the state that follows: a task that finishes is let go.
+  const stopFailedButDone = run('stop-throws-then-finishes');
+  assert.deepEqual(stopFailedButDone.calls, ['register', 'start', 'stop', 'unregister']);
+  assert.match(stopFailedButDone.error, /^the Task Scheduler service did not answer; the task was confirmed stopped and removed$/);
+
+  // Never confirmed stopped, though a stop was always tried, even with no state to read: the task
+  // stays registered, and the error names it.
   for (const scenario of ['unstoppable', 'stop-throws', 'monitor-dead']) {
     const left = run(scenario);
-    assert.ok(!left.calls.includes('unregister'), `${scenario}: ${JSON.stringify(left.calls)}`);
+    assert.deepEqual(left.calls, ['register', 'start', 'stop'], scenario);
     assert.equal(left.registered, true, scenario);
     assert.match(left.error, kept, scenario);
   }
@@ -1724,7 +1793,8 @@ test('windows desktop task: on every way out the task is let go only once it is 
   // A task that never started, or whose finished result cannot be read, is removed.
   const unstarted = run('start-throws');
   assert.deepEqual(unstarted.calls, ['register', 'start', 'unregister']);
-  assert.match(unstarted.error, /^the task image is corrupt; the task was confirmed stopped and removed$/);
+  assert.match(unstarted.error, confirmed);
+  assert.match(unstarted.error, /^the task image is corrupt;/);
   const unread = run('info-throws');
   assert.deepEqual(unread.calls, ['register', 'start', 'info', 'unregister']);
   assert.equal(unread.error, 'the task history could not be read');

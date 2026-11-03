@@ -2666,7 +2666,10 @@ async function walkthroughRun(options, io, { notion, machineNames, cancellation 
               try {
                 stopped = await settleStoppedGate(machine, driven, gate, evidencePath);
               } catch (error) {
-                cleanupError ??= teardown.real(error);
+                // Read before `??=`, which would skip it once an error was kept, losing its trace
+                // failure (#252).
+                const stopError = teardown.real(error);
+                cleanupError ??= stopError;
                 teardownRecord(machine.name, 'cleanup-error', { error: error.message });
               }
               teardownRecord(machine.name, 'stopped-gate-settled', { apps: stopped });
@@ -3882,8 +3885,11 @@ export async function runAcceptanceLocked(options, io = acceptanceIo(options)) {
     // Each machine is always cleaned up; `??=` would skip the call once an earlier error was kept.
     fedoraCleanup = fedora ? await finishMachine(fedora, evidencePath) : null;
     const windowsCleanup = windowsPrepared ? await finishMachine(windows, evidencePath) : null;
-    // The first real error of the two; a trace failure is kept alongside, never in its place (#252).
-    cleanupError ??= teardown.real(fedoraCleanup) ?? teardown.real(windowsCleanup);
+    // Both results are read before either is chosen, so each one's trace failure is kept; then the
+    // first real error of the two, with any trace failure reported beside it, never in its place.
+    // `??` alone would skip the second once the first was real (#252).
+    const teardownErrors = [fedoraCleanup, windowsCleanup].map((result) => teardown.real(result));
+    cleanupError ??= teardownErrors.find(Boolean);
   }
   // Every run removes the candidate, passed or failed, once the Fedora app is stopped, and checks
   // the vault survived it. A failed removal never hides the run's own error. A Fedora teardown
