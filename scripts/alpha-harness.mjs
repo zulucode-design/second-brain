@@ -670,6 +670,20 @@ function killForCleanup(pid, signal) {
   }
 }
 
+// Signals every row's exact PID, each even when one before it failed, then throws the first error
+// (#252). `kill` is replaced only in tests.
+export function killEach(rows, signal, kill = killForCleanup) {
+  let firstError;
+  for (const row of rows) {
+    try {
+      kill(row.pid, signal);
+    } catch (error) {
+      firstError ??= error;
+    }
+  }
+  if (firstError) throw firstError;
+}
+
 // Runs next to the app (locally on Fedora, over SSH on Windows) because a controller round trip
 // per poll is slower than the whole unpack. The caller has proven `pid` is this run's app.
 async function killWatch({ vault, point, expectedFiles, pid, timeoutMs }) {
@@ -1289,30 +1303,36 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl, sync = false 
     stopApps() {
       return this.cleanup();
     },
+    // Fedora's config and state are the run's own folders, so its teardown only stops processes.
+    // Each stop step runs even when one before it threw; the first error is thrown after them all
+    // (#252).
     async cleanup() {
-      if (entryLaunchAttempted) {
-        for (const row of linuxReport(machine.machinePath)) killForCleanup(row.pid, 'SIGKILL');
+      const steps = [];
+      if (entryLaunchAttempted) steps.push(() => killEach(linuxReport(machine.machinePath), 'SIGKILL'));
+      if (driver) {
+        // Exact PIDs only: apps under this run's driver, then the driver's own children.
+        steps.push(() => killEach(apps(), 'SIGKILL'));
+        steps.push(() => killEach(processRows().filter((candidate) => candidate.parentPid === driver.pid), 'SIGTERM'));
+        steps.push(async () => {
+          if (driver.exitCode !== null) return;
+          driver.kill('SIGTERM');
+          const deadline = Date.now() + 15_000;
+          while (driver.exitCode === null && Date.now() < deadline) await sleep(250);
+        });
       }
-      if (!driver) return this.appsGone();
-      // Exact PIDs only: apps under this run's driver, then the driver's own children.
-      for (const row of apps()) killForCleanup(row.pid, 'SIGKILL');
-      for (const row of processRows().filter((candidate) => candidate.parentPid === driver.pid)) {
-        killForCleanup(row.pid, 'SIGTERM');
-      }
-      if (driver.exitCode === null) {
-        driver.kill('SIGTERM');
-        const deadline = Date.now() + 15_000;
-        while (driver.exitCode === null && Date.now() < deadline) await sleep(250);
-      }
-      return this.appsGone();
+      let final;
+      steps.push(async () => {
+        final = await this.appsGone();
+      });
+      await everyStep(steps);
+      return final;
     },
   };
 }
 
-function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollamaBaseUrl, sync = false } = {}) {
-  const runWindowsAction = (action, extra = {}, timeout = 45_000) => remoteWorker(
-    sshHost, { action, root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP, ...extra }, timeout,
-  );
+// `io` is replaced only in tests (windowsMachineIo).
+export function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollamaBaseUrl, sync = false } = {}, io = windowsMachineIo(sshHost, runId)) {
+  const runWindowsAction = io.worker;
   const longTimeoutMs = 5 * 60_000;
   // Desktop-session actions wait for a scheduled task in the interactive session, so the SSH call
   // outlasts that wait (#252).
@@ -1394,11 +1414,8 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
     async startDriver() {
       const started = runWindowsAction('start-driver');
       driverPid = started.pid;
-      tunnel = spawn('ssh', [
-        '-N', '-o', 'ExitOnForwardFailure=yes',
-        '-L', `127.0.0.1:${WINDOWS_TUNNEL_PORT}:127.0.0.1:${WINDOWS_DRIVER_PORT}`, sshHost,
-      ], { stdio: 'ignore' });
-      await waitForDriver(WINDOWS_TUNNEL_PORT);
+      tunnel = io.tunnel();
+      await io.waitForDriver();
       if (tunnel.exitCode !== null) fail(`WebDriver tunnel exited ${tunnel.exitCode}; is port ${WINDOWS_TUNNEL_PORT} taken?`);
       return started;
     },
@@ -1409,33 +1426,58 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
         base64Request({ ...request, vault: windowsPaths(WINDOWS_ROOT, runId).vaultPath }),
       ]);
     },
-    appsGone: () => waitForWindowsProcesses(sshHost, runId, (processes) => processes.length === 0, 60_000),
+    appsGone: () => io.processesGone(60_000),
     // #252: a walkthrough stopped by a signal stops the app, its sidecar and watchdog, and the
     // driver before it looks at the keyring, by exact PID and without the config restore that
     // cleanup does afterwards. cleanup-processes stops only packaged processes this run started.
+    // Each step runs even when one before it, or a trace write, threw; cleanup stops them again.
     async stopApps(evidencePath) {
-      tunnel?.kill();
-      if (driverPid) {
-        const stopped = runWindowsAction('stop-driver', { driverPid });
-        driverPid = undefined;
-        observation(evidencePath, 'driver-stopped', 'windows', stopped);
-      }
-      observation(evidencePath, 'forced-process-cleanup', 'windows', runWindowsAction('cleanup-processes'));
-      return waitForWindowsProcesses(sshHost, runId, (processes) => processes.length === 0, 15_000);
-    },
-    async cleanup(evidencePath) {
+      const trace = teardownTrace(evidencePath);
       let firstError;
       tunnel?.kill();
       if (driverPid) {
         try {
-          observation(evidencePath, 'driver-stopped', 'windows', runWindowsAction('stop-driver', { driverPid }));
+          const stopped = runWindowsAction('stop-driver', { driverPid });
+          driverPid = undefined;
+          trace.record('driver-stopped', 'windows', stopped);
         } catch (error) {
-          observation(evidencePath, 'cleanup-error', 'windows-driver', { error: error.message });
-          firstError = error;
+          firstError ??= error;
         }
       }
-      firstError ??= await finalizeWindows(sshHost, runId, evidencePath);
-      if (firstError) throw firstError;
+      try {
+        trace.record('forced-process-cleanup', 'windows', runWindowsAction('cleanup-processes'));
+      } catch (error) {
+        firstError ??= error;
+      }
+      let report;
+      try {
+        report = await io.processesGone(15_000);
+      } catch (error) {
+        firstError ??= error;
+      }
+      const reported = trace.error(firstError);
+      if (reported) throw reported;
+      return report;
+    },
+    // The driver stops, then finalizeWindows stops what is left and restores the config, window
+    // state and profile folders. finalizeWindows runs whatever the driver stop or a trace write did
+    // (#252).
+    async cleanup(evidencePath) {
+      const trace = teardownTrace(evidencePath);
+      let firstError;
+      tunnel?.kill();
+      if (driverPid) {
+        try {
+          trace.record('driver-stopped', 'windows', runWindowsAction('stop-driver', { driverPid }));
+        } catch (error) {
+          firstError ??= error;
+          trace.record('cleanup-error', 'windows-driver', { error: error.message });
+        }
+      }
+      const finalizeError = trace.absorb(await finalizeWindows(sshHost, runId, evidencePath, io));
+      firstError ??= finalizeError;
+      const reported = trace.error(firstError);
+      if (reported) throw reported;
     },
   };
 }
@@ -1583,17 +1625,56 @@ function recordRunPreparation(evidencePath, options, run, fedoraPackage) {
   if (run.recovered.recovered) observation(evidencePath, 'stale-run-recovered', 'windows', run.recovered);
 }
 
+// ── Teardown that nothing skips (#252) ──
+//
+// A machine's teardown stops its processes and restores what the run changed. Each of its steps
+// runs even when one before it threw, and a trace line that cannot be written (a full evidence
+// disk, say) never stops the next step. The teardown remembers the first such failure and names it
+// in the error it reports, so a run whose trace is incomplete never passes.
+
+const TRACE_FAILED = 'the trace could not be written';
+
+// `error`, saying the trace could not be written when `traceError` is set, unless it says so
+// already; or the trace failure alone when there is no other error.
+function withTraceFailure(error, traceError) {
+  if (!traceError || error?.traceError) return error;
+  const message = error ? `${error.message}; ${TRACE_FAILED}: ${traceError.message}` : `${TRACE_FAILED}: ${traceError.message}`;
+  return Object.assign(new Error(message, { cause: error ?? traceError }), { traceError });
+}
+
+// Trace writes for a teardown. `record` never throws: the first write that fails is kept, as is a
+// trace failure an inner teardown reported (`absorb`), and `error` adds it to the error reported.
+function teardownTrace(evidencePath) {
+  let traceError;
+  return {
+    record(event, machine, value) {
+      try {
+        observation(evidencePath, event, machine, value);
+      } catch (error) {
+        traceError ??= error;
+      }
+    },
+    absorb(error) {
+      if (error?.traceError) traceError ??= error.traceError;
+      return error;
+    },
+    error: (error) => withTraceFailure(error, traceError),
+  };
+}
+
 // Ends one machine's part of a gate, passed or failed: its processes stopped and its config
-// restored. Returns the error when that fails.
-async function finishMachine(machine, evidencePath) {
+// restored. Never throws: returns the error when that fails, or when its trace could not be written.
+export async function finishMachine(machine, evidencePath) {
+  const trace = teardownTrace(evidencePath);
+  let cleanupError;
   try {
     const final = await machine?.cleanup(evidencePath);
-    if (final) observation(evidencePath, 'process-final', machine.name, final);
-    return undefined;
+    if (final) trace.record('process-final', machine.name, final);
   } catch (error) {
-    observation(evidencePath, 'cleanup-error', machine?.name ?? 'controller', { error: error.message });
-    return error;
+    cleanupError = trace.absorb(error);
+    trace.record('cleanup-error', machine?.name ?? 'controller', { error: error.message });
   }
+  return trace.error(cleanupError);
 }
 
 async function runRestoreLocked(options) {
@@ -1618,7 +1699,9 @@ async function runRestoreLocked(options) {
       runError = error;
       observation(evidencePath, 'run-failed', machine?.name ?? 'controller', { error: error.message });
     }
-    cleanupError ??= await finishMachine(machine, evidencePath);
+    // Called before `??=`, so an error kept earlier can never skip the teardown (#252).
+    const teardownError = await finishMachine(machine, evidencePath);
+    cleanupError ??= teardownError;
     if (runError || cleanupError) break;
   }
 
@@ -2096,7 +2179,8 @@ function aiKeyPlant(store, record) {
         fail(`keyring gained an AI key entry after the check before the run: ${held.join('; ')}; nothing was planted, so the run deletes nothing; move the key aside by hand before running again`);
       }
     },
-    remove: () => removePlantedAiKeys(store, record, armed),
+    // The controller's teardown passes a trace writer that never throws (#252).
+    remove: (recordRemoval = record) => removePlantedAiKeys(store, recordRemoval, armed),
   };
 }
 
@@ -2479,13 +2563,18 @@ async function walkthroughRun(options, io, { notion, machineNames, cancellation 
   const ollamaTunnel = io.ollamaTunnel();
   let runError;
   let cleanupError;
+  // The failure reports and the teardown write here: a write that fails never skips a teardown step,
+  // and the error the run ends with says the trace is incomplete (#252).
+  const teardown = teardownTrace(evidencePath);
+  // In the controller's own (machine, event, value) order.
+  const teardownRecord = (machine, event, value) => teardown.record(event, machine, value);
   // A signal that arrived during a blocking step becomes the run's error here.
   const stopIfSignalled = async (machine) => {
     try {
       await cancellation.checkpoint();
     } catch (error) {
       runError = error;
-      record(machine, 'run-failed', { error: error.message });
+      teardownRecord(machine, 'run-failed', { error: error.message });
     }
   };
   try {
@@ -2516,46 +2605,58 @@ async function walkthroughRun(options, io, { notion, machineNames, cancellation 
         passed = true;
       } catch (error) {
         runError = error;
-        observation(evidencePath, 'run-failed', machine?.name ?? 'controller', { error: error.message });
+        teardownRecord(machine?.name ?? 'controller', 'run-failed', { error: error.message });
       } finally {
         // The same cleanup whether the walkthrough passed, failed or was stopped by a signal. Every
-        // step runs even when one before it, or a trace write or failure report, threw, so nothing
+        // step runs even when one before it threw, and its trace writes never throw, so nothing
         // that went wrong can leave the app running, the config swapped or the key planted (#252).
-        await everyStep([
-          // Stopped by a signal while the gate still ran: the gate may be waiting on the app (a
-          // Notion connect, say), which could still write a credential. So its app is stopped and
-          // the gate settles before the Notion and key cleanup look at the keyring.
-          async () => {
-            if (!gate || gateSettled) return;
-            try {
-              await settleStoppedGate(machine, driven, gate, evidencePath);
-            } catch (error) {
-              cleanupError ??= error;
-              observation(evidencePath, 'cleanup-error', machine.name, { error: error.message });
-            }
-          },
-          async () => {
-            if (!machine) return;
-            try {
-              observation(evidencePath, 'notion-checked', machine.name, await io.notionCleanup(machine, notion, passed));
-            } catch (error) {
-              runError ??= error;
-              observation(evidencePath, 'run-failed', machine.name, { error: error.message });
-            }
-          },
-          async () => {
-            cleanupError ??= await finishMachine(machine, evidencePath);
-          },
-          // After the app and driver are stopped, so nothing can write the key back. An unarmed
-          // plant deletes nothing.
-          () => {
-            const keyProblems = plant.remove();
-            if (!keyProblems.length) return;
-            const keyError = new Error(`AI key cleanup: ${keyProblems.join('; ')}`);
-            cleanupError ??= keyError;
-            observation(evidencePath, 'cleanup-error', machineName, { error: keyError.message });
-          },
-        ]);
+        try {
+          await everyStep([
+            // Stopped by a signal while the gate still ran: the gate may be waiting on the app (a
+            // Notion connect, say), which could still write a credential. So its app is stopped and
+            // the gate settles before the Notion and key cleanup look at the keyring. A stop that
+            // fails is reported, and the teardown below stops the machine again.
+            async () => {
+              if (!gate || gateSettled) return;
+              let stopped = null;
+              try {
+                stopped = await settleStoppedGate(machine, driven, gate, evidencePath);
+              } catch (error) {
+                cleanupError ??= teardown.absorb(error);
+                teardownRecord(machine.name, 'cleanup-error', { error: error.message });
+              }
+              teardownRecord(machine.name, 'stopped-gate-settled', { apps: stopped });
+            },
+            async () => {
+              if (!machine) return;
+              try {
+                teardownRecord(machine.name, 'notion-checked', await io.notionCleanup(machine, notion, passed));
+              } catch (error) {
+                runError ??= error;
+                teardownRecord(machine.name, 'run-failed', { error: error.message });
+              }
+            },
+            // Always, whatever an earlier step left: called before `??=`, so a kept error can
+            // never skip it.
+            async () => {
+              const teardownError = teardown.absorb(await finishMachine(machine, evidencePath));
+              cleanupError ??= teardownError;
+            },
+            // After the app and driver are stopped, so nothing can write the key back. An unarmed
+            // plant deletes nothing.
+            () => {
+              const keyProblems = plant.remove(teardownRecord);
+              if (!keyProblems.length) return;
+              const keyError = new Error(`AI key cleanup: ${keyProblems.join('; ')}`);
+              cleanupError ??= keyError;
+              teardownRecord(machineName, 'cleanup-error', { error: keyError.message });
+            },
+          ]);
+        } catch (error) {
+          cleanupError ??= error;
+        }
+        // A trace this cleanup could not write fails the run here, before anything else runs.
+        cleanupError ??= teardown.error();
       }
       // A run stopped by then leaves the candidate installed, as a failed run does.
       if (!runError && !cleanupError) await stopIfSignalled(machineName);
@@ -2604,8 +2705,9 @@ async function walkthroughRun(options, io, { notion, machineNames, cancellation 
   // Last, with nothing awaited after it: a signal that came during the final checks still fails
   // the run, so no run that received SIGINT or SIGTERM records run-complete or exits zero (#252).
   if (!runError && !cleanupError) await stopIfSignalled('controller');
-  if (runError) throw runError;
-  if (cleanupError) throw cleanupError;
+  // The run's first error, saying so if a failure report or teardown line could not be written.
+  const failure = teardown.error(runError ?? cleanupError);
+  if (failure) throw failure;
   controller('run-complete', {
     machines: machineNames,
     gate: machineNames.length === 2,
@@ -2631,17 +2733,16 @@ async function everyStep(steps) {
  * A walkthrough stopped by a signal while its gate still ran (#252). The gate's WebDriver sessions
  * end, which also ends the waits it is in; its machine's app and driver stop by exact PID; then the
  * gate is left to unwind. Only after that do the Notion and key cleanup look at the keyring, so a
- * request the app was still serving cannot store a credential after them.
+ * request the app was still serving cannot store a credential after them. Returns what stopApps
+ * reported; a stop that fails is thrown once the gate has unwound.
  */
 async function settleStoppedGate(machine, driven, gate, evidencePath) {
-  let stopped;
   try {
     await driven.endAppSessions();
-    stopped = await machine.stopApps(evidencePath);
+    return await machine.stopApps(evidencePath);
   } finally {
     await gate.then(() => {}, () => {});
   }
-  observation(evidencePath, 'stopped-gate-settled', machine.name, { apps: stopped ?? null });
 }
 
 // Every field of an uninstall result is a check that has to hold.
@@ -2651,37 +2752,63 @@ function assertUninstalled(machineName, result) {
   }
 }
 
-// Windows keeps the run's processes, junction, tasks, and swapped config until this succeeds;
-// both gates end every run here, failed or not.
-async function finalizeWindows(sshHost, runId, evidencePath) {
+// What a Windows machine's driver and teardown ask of Windows: worker actions over SSH, the wait
+// for the run's packaged processes to be gone, and the WebDriver tunnel. Replaced only in tests,
+// which run the real teardown sequence against fakes (#252).
+function windowsMachineIo(sshHost, runId) {
+  return {
+    worker: (action, extra = {}, timeout = 45_000) => remoteWorker(
+      sshHost, { action, root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP, ...extra }, timeout,
+    ),
+    processesGone: (timeoutMs) => waitForWindowsProcesses(sshHost, runId, (processes) => processes.length === 0, timeoutMs),
+    tunnel: () => spawn('ssh', [
+      '-N', '-o', 'ExitOnForwardFailure=yes',
+      '-L', `127.0.0.1:${WINDOWS_TUNNEL_PORT}:127.0.0.1:${WINDOWS_DRIVER_PORT}`, sshHost,
+    ], { stdio: 'ignore' }),
+    waitForDriver: () => waitForDriver(WINDOWS_TUNNEL_PORT),
+  };
+}
+
+/**
+ * Windows keeps the run's processes, junction, tasks, and swapped config until this succeeds;
+ * every gate ends every run here, failed or not. Never throws: returns the first error, saying so
+ * if the trace could not be written.
+ *
+ * Every step runs even when one before it, or a trace write, threw (#252). The restore is attempted
+ * even when the processes would not stop: the worker's `finalize` refuses while any of the
+ * installed app's processes remains, so it restores the moment that is safe, and otherwise its
+ * refusal is the error reported.
+ */
+async function finalizeWindows(sshHost, runId, evidencePath, io = windowsMachineIo(sshHost, runId)) {
+  const trace = teardownTrace(evidencePath);
   let firstError;
-  let processesStopped = false;
-  try {
-    let finalReport;
-    try {
-      finalReport = await waitForWindowsProcesses(sshHost, runId, (processes) => processes.length === 0, 60_000);
-    } catch (error) {
-      const forced = remoteWorker(sshHost, { action: 'cleanup-processes', root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP });
-      observation(evidencePath, 'forced-process-cleanup', 'windows', forced);
-      finalReport = await waitForWindowsProcesses(sshHost, runId, (processes) => processes.length === 0, 15_000);
-      firstError ??= error;
-    }
-    observation(evidencePath, 'process-final', 'windows', finalReport);
-    processesStopped = true;
-  } catch (error) {
-    observation(evidencePath, 'cleanup-error', 'windows-processes', { error: error.message });
+  const failed = (scope, error) => {
     firstError ??= error;
-  }
-  if (processesStopped) {
+    trace.record('cleanup-error', scope, { error: error.message });
+  };
+  let finalReport;
+  try {
+    finalReport = await io.processesGone(60_000);
+  } catch (error) {
+    firstError ??= error;
     try {
-      const finalized = remoteWorker(sshHost, { action: 'finalize', root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP });
-      observation(evidencePath, 'config-restored', 'windows', finalized);
-    } catch (error) {
-      observation(evidencePath, 'cleanup-error', 'windows-config', { error: error.message });
-      firstError ??= error;
+      trace.record('forced-process-cleanup', 'windows', io.worker('cleanup-processes'));
+    } catch (forcedError) {
+      failed('windows-processes', forcedError);
+    }
+    try {
+      finalReport = await io.processesGone(15_000);
+    } catch (waitError) {
+      failed('windows-processes', waitError);
     }
   }
-  return firstError;
+  if (finalReport) trace.record('process-final', 'windows', finalReport);
+  try {
+    trace.record('config-restored', 'windows', io.worker('finalize'));
+  } catch (error) {
+    failed('windows-config', error);
+  }
+  return trace.error(firstError);
 }
 
 function windowsPaths(root, runId) {

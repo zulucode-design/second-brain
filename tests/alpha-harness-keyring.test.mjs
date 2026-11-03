@@ -1,20 +1,21 @@
 // The Gate 3 walkthrough plants a synthetic AI key that the app moves into the OS keyring (#252).
 // It must refuse when the keyring already holds the entry, before it changes either machine, and
 // remove what it planted after a pass, a failure or a signal, and only that. These tests run the
-// walkthrough controller's own sequence (runWalkthroughLocked) against fake machines, fake signals,
-// and fakes of Fedora's Secret Service commands and of the Windows desktop-session script. None
-// touches a real keyring, machine or process.
+// walkthrough controller's own sequence (runWalkthroughLocked) against fake signals, fakes of
+// Fedora's Secret Service commands and of the Windows desktop-session script, a fake Fedora machine,
+// and the real Windows machine (windowsDriverMachine) and its real teardown over fake Windows
+// actions. None touches a real keyring, machine or process.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 const {
   AI_KEY_ACCOUNTS, DESKTOP_ACTION_TIMEOUT_MS, DESKTOP_SCRIPT_TIMEOUT_MS, DESKTOP_TASK_BUDGET_MS, PLANTED_AI_KEYS,
-  desktopCredentialAction, fedoraAiKeyStore, plantedAiKeyPatch, runDesktopScript, runWalkthroughLocked,
-  windowsAiKeyAction, windowsAiKeyStore, windowsAiKeyTarget,
+  desktopCredentialAction, fedoraAiKeyStore, finishMachine, killEach, plantedAiKeyPatch, runDesktopScript, runWalkthroughLocked,
+  windowsAiKeyAction, windowsAiKeyStore, windowsAiKeyTarget, windowsDriverMachine,
 } = await import(new URL('../scripts/alpha-harness.mjs', import.meta.url));
 
 const SERVICE = 'io.github.zulucodedesign.SecondBrain';
@@ -132,15 +133,18 @@ function fakeStore(platform, entries, locked, log, faults) {
   return windowsAiKeyStore((request) => viaJson(windowsAiKeyAction(viaJson(request), desktop)));
 }
 
-// A machine as linuxDriverMachine and windowsDriverMachine present it to the walkthrough, logging
-// each call. `app.alive` says whether its app could still write a credential: stopApps and cleanup
-// stop it. `onLaunchEntry` models what the Start-menu launch may do to the keyring.
-function fakeMachine(name, log, app, { onLaunchEntry } = {}) {
+// The Fedora machine as linuxDriverMachine presents it to the walkthrough, logging each call. Its
+// teardown only stops processes, since its config and state are the run's own folders.
+// `app.alive` says whether its app could still write a credential: stopApps and cleanup stop it.
+// `onLaunchEntry` models what the Start-menu launch may do to the keyring; `stopAppsFails` a stop
+// whose final wait times out after the app has gone.
+function fakeFedoraMachine(log, app, { onLaunchEntry, stopAppsFails = false } = {}) {
+  const name = 'fedora';
   const stop = () => {
     app.alive = false;
     app.stopped();
   };
-  const machine = {
+  return {
     name,
     application: `fake-${name}-app`,
     port: 0,
@@ -170,6 +174,7 @@ function fakeMachine(name, log, app, { onLaunchEntry } = {}) {
     async stopApps() {
       log.push(`${name}:stop-apps`);
       stop();
+      if (stopAppsFails) throw new Error('Fedora process survived app exit: []');
       return { processes: [] };
     },
     async cleanup() {
@@ -177,14 +182,93 @@ function fakeMachine(name, log, app, { onLaunchEntry } = {}) {
       stop();
     },
   };
-  if (name === 'windows') {
-    machine.install = () => {
-      log.push('windows:install');
-      return {};
-    };
-  }
-  return machine;
 }
+
+/**
+ * What the real Windows worker and its process wait answer, for windowsDriverMachine's `io`:
+ * `prepare` swaps the real config and takes the run's lock; `start-driver` starts the driver and,
+ * through it, the app; `stop-driver` stops both; `cleanup-processes` stops the app; `finalize`
+ * refuses while the app runs, as the real worker does, and otherwise restores the config and drops
+ * the lock. `fail` makes the named actions, or `processes-gone`, fail for that many calls;
+ * `appSurvivesDriverStop` leaves the app running after its driver stops.
+ */
+function fakeWindowsIo(world, { fail = {}, appSurvivesDriverStop = false, onLaunchEntry } = {}) {
+  const { log, windows: state } = world;
+  const app = world.apps.windows;
+  const failures = { ...fail };
+  const failing = (name) => {
+    if (!failures[name]) return false;
+    failures[name] -= 1;
+    return true;
+  };
+  const stopApp = () => {
+    if (!app.alive) return;
+    app.alive = false;
+    app.stopped();
+  };
+  return {
+    worker(action, extra = {}) {
+      log.push(`windows:${action}`);
+      if (failing(action)) throw new Error(`ssh exited 255: the ${action} action could not reach Windows`);
+      switch (action) {
+        case 'install':
+          return {};
+        case 'prepare':
+          state.configSwapped = true;
+          state.locked = true;
+          return { vault: 'fake-windows-vault' };
+        case 'session':
+          return { locked: false, desktopSession: 1 };
+        case 'launch-entry':
+          onLaunchEntry?.();
+          return {};
+        case 'start-driver':
+          state.driverRunning = true;
+          app.alive = true;
+          return { pid: 4242 };
+        case 'patch-config':
+          return { patched: Object.keys(extra.patch) };
+        case 'break-config':
+          return {};
+        case 'hash':
+          return { sha256: 'unchanged' };
+        case 'uninstall':
+          return { appRemoved: true, shortcutRemoved: true };
+        case 'stop-driver':
+          assert.equal(extra.driverPid, 4242, 'the driver is stopped by the PID it started with');
+          state.driverRunning = false;
+          if (!appSurvivesDriverStop) stopApp();
+          return { stopped: [4242] };
+        case 'cleanup-processes':
+          stopApp();
+          return { before: [], after: [] };
+        case 'finalize':
+          if (app.alive) throw new Error('refusing to restore config while installed processes remain');
+          state.configSwapped = false;
+          state.locked = false;
+          return { restored: true };
+        default:
+          throw new Error(`unexpected Windows action ${action}`);
+      }
+    },
+    async processesGone(timeoutMs) {
+      log.push(`windows:processes-gone ${timeoutMs}`);
+      if (failing('processes-gone') || app.alive) throw new Error('Windows process state timed out: {"processes":[{"Role":"App"}]}');
+      return { processes: [] };
+    },
+    tunnel: () => ({ exitCode: null, kill: () => log.push('windows:tunnel-killed') }),
+    waitForDriver: async () => {},
+  };
+}
+
+// The real Windows machine over fakeWindowsIo.
+function fakeWindowsMachine(world, runId, faults) {
+  return windowsDriverMachine('fake-host', runId, 'fake-vault-id', 'c'.repeat(40), { sync: true }, fakeWindowsIo(world, faults));
+}
+
+// Each platform's log line for the early stop a signal makes, and for its machine teardown.
+const STOPPED = { fedora: 'fedora:stop-apps', windows: 'windows:cleanup-processes' };
+const TORN_DOWN = { fedora: 'fedora:cleanup', windows: 'windows:finalize' };
 
 /**
  * The walkthrough gate as walkthroughGate drives the machine up to and past the plant, ending as
@@ -249,11 +333,12 @@ function deferred() {
 
 /**
  * One controller run's world. `machine` is the --machine option. `held` puts a real key in a
- * platform's keyring before the run, `heldLocked` a locked one; `faults` and `launch` are per
- * platform; `gate` configures fakeGate; `deferFinal` holds the final Ollama check until the test
- * finishes it.
+ * platform's keyring before the run, `heldLocked` a locked one; `faults` (the keyring),
+ * `machineFaults` (fakeFedoraMachine and fakeWindowsIo) and `launch` are per platform; `gate`
+ * configures fakeGate; `deferFinal` holds the final Ollama check until the test finishes it.
+ * `windows` is the Windows machine's state as the fake worker keeps it.
  */
-function walkthroughWorld({ machine, held = [], heldLocked = [], faults = {}, launch = {}, gate = {}, deferFinal = false } = {}) {
+function walkthroughWorld({ machine, held = [], heldLocked = [], faults = {}, machineFaults = {}, launch = {}, gate = {}, deferFinal = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'alpha-keyring-'));
   const log = [];
   const printed = [];
@@ -282,6 +367,7 @@ function walkthroughWorld({ machine, held = [], heldLocked = [], faults = {}, la
   const signals = new EventEmitter();
   const world = {
     entries, locked, log, printed, signals, apps,
+    windows: { configSwapped: false, locked: false, driverRunning: false },
     reached: reached.promise, reach: reached.settle,
     resumed: resumed.promise, resume: resumed.settle,
     connected: connected.promise, connect: connected.settle,
@@ -311,7 +397,12 @@ function walkthroughWorld({ machine, held = [], heldLocked = [], faults = {}, la
       }
       return {};
     },
-    makeMachine: (name) => fakeMachine(name, log, apps[name], { onLaunchEntry: launch[name] && (() => launch[name](entries[name], locked[name])) }),
+    makeMachine(name, runId) {
+      const onLaunchEntry = launch[name] && (() => launch[name](entries[name], locked[name]));
+      return name === 'fedora'
+        ? fakeFedoraMachine(log, apps.fedora, { onLaunchEntry, ...machineFaults.fedora })
+        : fakeWindowsMachine(world, runId, { onLaunchEntry, ...machineFaults.windows });
+    },
     gate: fakeGate(world, gate),
     // The real Notion cleanup clears the run's Notion token from the keyring.
     async notionCleanup(target) {
@@ -377,7 +468,7 @@ async function until(predicate, what) {
   }
 }
 
-const changes = (log) => log.filter((line) => /install|prepare|launch|driver|patch|break|cleanup|clear|stop-apps/.test(line));
+const changes = (log) => log.filter((line) => /install|prepare|launch|driver|patch|break|cleanup|clear|stop-apps|finalize/.test(line));
 
 for (const platform of PLATFORMS) {
   test(`${platform}: an entry present before the run refuses it before the install and the recovery`, async (t) => {
@@ -407,8 +498,8 @@ for (const platform of PLATFORMS) {
     assert.ok(world.at('install-candidate') < world.at('prepare-run'));
     // The re-check comes right before the patch, and the removal after the app and driver stopped.
     assert.equal(world.log[world.at(`${platform}:patch-config`) - 1], `${platform}:lookup ai:openai`);
-    assert.ok(world.at(`${platform}:cleanup`) < world.at(`${platform}:clear ai:openai`));
-    assert.ok(!world.log.includes(`${platform}:stop-apps`), 'a gate that settled on its own needs no early stop');
+    assert.ok(world.at(TORN_DOWN[platform]) < world.at(`${platform}:clear ai:openai`));
+    assert.ok(!world.log.includes(STOPPED[platform]), 'a gate that settled on its own needs no early stop');
     assert.deepEqual(world.events('ai-keys-armed').map(({ armed, entries }) => ({ armed, entries })), [
       { armed: true, entries: { 'ai:openai': { existed: false } } },
     ]);
@@ -431,7 +522,7 @@ for (const platform of PLATFORMS) {
     assert.ok(!world.log.includes(`${platform}:patch-config`), 'nothing is planted');
     assert.ok(!world.log.includes(`${platform}:clear ai:openai`), 'nothing is deleted');
     assert.equal(world.entries[platform].get('ai:openai'), REAL_KEY);
-    assert.ok(world.log.includes(`${platform}:cleanup`), 'the machine is still cleaned up');
+    assert.ok(world.log.includes(TORN_DOWN[platform]), 'the machine is still cleaned up');
     assert.deepEqual(world.events('ai-keys-armed').map(({ armed, entries }) => ({ armed, entries })), [
       { armed: false, entries: { 'ai:openai': { existed: true } } },
     ]);
@@ -452,7 +543,7 @@ for (const platform of PLATFORMS) {
     assert.match(error.message, /the WebDriver session did not start/);
     assert.equal(world.entries[platform].get('ai:openai'), REAL_KEY);
     assert.ok(!world.log.includes(`${platform}:clear ai:openai`));
-    assert.ok(world.log.includes(`${platform}:cleanup`));
+    assert.ok(world.log.includes(TORN_DOWN[platform]));
     assert.deepEqual(world.events('ai-keys-armed'), []);
     assert.deepEqual(world.events('ai-keys-removed').map(({ armed }) => armed), [false]);
     assertNoValue(world, error);
@@ -466,7 +557,7 @@ for (const platform of PLATFORMS) {
 
     assert.match(error.message, /a step failed after the plant/);
     assert.equal(world.entries[platform].size, 0);
-    assert.ok(world.at(`${platform}:cleanup`) < world.at(`${platform}:clear ai:openai`));
+    assert.ok(world.at(TORN_DOWN[platform]) < world.at(`${platform}:clear ai:openai`));
     assert.deepEqual(world.events('ai-keys-removed')[0].entries, { 'ai:openai': { removed: true, left: false } });
     assertNoValue(world, error);
   });
@@ -484,7 +575,7 @@ for (const platform of PLATFORMS) {
       assert.equal(error.message, `walkthrough stopped by ${signal}`);
       assert.equal(world.entries[platform].size, 0);
       // The app stops, which ends the gate's wait; the gate settles; only then the cleanup.
-      const order = [`${platform}:stop-apps`, `${platform}:gate-ended`, `${platform}:notion-cleanup`, `${platform}:cleanup`, `${platform}:clear ai:openai`];
+      const order = [STOPPED[platform], `${platform}:gate-ended`, `${platform}:notion-cleanup`, TORN_DOWN[platform], `${platform}:clear ai:openai`];
       assert.deepEqual(order.map((line) => world.at(line)).toSorted((left, right) => left - right), order.map((line) => world.at(line)));
       assert.ok(order.every((line) => world.at(line) >= 0), JSON.stringify(world.log));
       assert.ok(!world.log.includes(`${platform}:break-config`), 'the gate unwound without changing the machine');
@@ -504,7 +595,7 @@ for (const platform of PLATFORMS) {
     const running = world.run();
     await world.reached;
     world.signals.emit('SIGINT');
-    await until(() => world.log.includes(`${platform}:stop-apps`), 'the app to be stopped');
+    await until(() => world.log.includes(STOPPED[platform]), 'the app to be stopped');
     assert.ok(!world.log.includes(`${platform}:notion-cleanup`), 'cleanup waits for the gate to settle');
     world.resume();
     const error = await stopsWithin(running);
@@ -522,13 +613,13 @@ for (const platform of PLATFORMS) {
     const running = world.run();
     await world.reached;
     world.signals.emit('SIGINT');
-    await until(() => world.log.includes(`${platform}:stop-apps`), 'the app to be stopped');
+    await until(() => world.log.includes(STOPPED[platform]), 'the app to be stopped');
     // The request the app was serving ends now, after its app was stopped.
     world.connect();
     const error = await stopsWithin(running);
 
     assert.equal(error.message, 'walkthrough stopped by SIGINT');
-    const order = [`${platform}:stop-apps`, `${platform}:connect-completed`, `${platform}:gate-ended`, `${platform}:notion-cleanup`, `${platform}:clear ai:openai`];
+    const order = [STOPPED[platform], `${platform}:connect-completed`, `${platform}:gate-ended`, `${platform}:notion-cleanup`, `${platform}:clear ai:openai`];
     assert.ok(order.every((line) => world.at(line) >= 0), JSON.stringify(world.log));
     assert.deepEqual(order.map((line) => world.at(line)).toSorted((left, right) => left - right), order.map((line) => world.at(line)));
     assert.equal(world.entries[platform].has(NOTION_ACCOUNT), false, 'no Notion token is left');
@@ -548,7 +639,7 @@ for (const platform of PLATFORMS) {
     assert.equal(error.message, 'walkthrough stopped by SIGTERM');
     assert.ok(!world.log.includes(`${platform}:patch-config`), 'the gate cannot plant once stopped');
     assert.ok(!world.log.includes(`${platform}:clear ai:openai`));
-    assert.ok(world.log.includes(`${platform}:cleanup`));
+    assert.ok(world.log.includes(TORN_DOWN[platform]));
     assert.deepEqual(world.events('ai-keys-removed').map(({ armed }) => armed), [false]);
   });
 
@@ -576,13 +667,42 @@ for (const platform of PLATFORMS) {
 
     const error = await failure(world.run());
 
-    assert.equal(error.code, 'EISDIR', error.message);
+    // The run's own error reaches the caller, and says the trace is incomplete.
+    assert.match(error.message, /^a step failed after the plant; the trace could not be written: EISDIR/);
     assert.ok(world.log.includes(`${platform}:notion-cleanup`));
-    assert.ok(world.log.includes(`${platform}:cleanup`), 'the machine is torn down');
-    assert.ok(world.at(`${platform}:cleanup`) < world.at(`${platform}:clear ai:openai`), 'and the key removed after it');
+    assert.ok(world.log.includes(TORN_DOWN[platform]), 'the machine is torn down');
+    assert.ok(world.at(TORN_DOWN[platform]) < world.at(`${platform}:clear ai:openai`), 'and the key removed after it');
     assert.equal(world.entries[platform].size, 0);
     assert.ok(world.log.includes('tunnel-killed'));
+    if (platform === 'windows') {
+      assert.deepEqual(world.windows, { configSwapped: false, locked: false, driverRunning: false }, 'Windows is restored');
+    }
     assertNoValue(world, error, { trace: false });
+  });
+
+  test(`${platform}: a stop that fails after a signal still leaves the full teardown to run and restore`, async (t) => {
+    // The early stop's last wait times out, though the app has gone by then.
+    const world = walkthroughWorld({
+      machine: platform,
+      gate: { outcome: 'wait-after-plant' },
+      machineFaults: { fedora: { stopAppsFails: true }, windows: { fail: { 'processes-gone': 1 } } },
+    });
+    t.after(world.dispose);
+
+    const running = world.run();
+    await world.reached;
+    world.signals.emit('SIGINT');
+    const error = await stopsWithin(running);
+
+    assert.equal(error.message, 'walkthrough stopped by SIGINT', 'the run ends with its first error');
+    assert.ok(world.at(STOPPED[platform]) >= 0 && world.at(STOPPED[platform]) < world.at(TORN_DOWN[platform]), JSON.stringify(world.log));
+    assert.ok(world.at(TORN_DOWN[platform]) < world.at(`${platform}:clear ai:openai`));
+    assert.match(world.events('cleanup-error')[0].error, /Fedora process survived app exit|Windows process state timed out/);
+    assert.equal(world.events('stopped-gate-settled').length, 1);
+    assert.equal(world.entries[platform].size, 0, 'the key is removed');
+    if (platform === 'windows') {
+      assert.deepEqual(world.windows, { configSwapped: false, locked: false, driverRunning: false }, 'Windows is restored');
+    }
   });
 
   test(`${platform}: a lookup error before the run refuses it before anything changes`, async (t) => {
@@ -721,6 +841,152 @@ test('the walkthrough may plant only the AI keys it checked', async (t) => {
   assert.ok(!world.log.includes('fedora:patch-config'));
   assert.deepEqual(world.events('ai-keys-removed').map(({ armed }) => armed), [false]);
   assertNoValue(world, error);
+});
+
+// The machine teardown every gate ends with (finishMachine, then the Windows machine's cleanup and
+// finalizeWindows), run for real over fakeWindowsIo, with a trace the test can make unwritable.
+async function windowsTeardown(t, faults = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'alpha-teardown-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const tracePath = join(root, 'trace.jsonl');
+  const gone = deferred();
+  const world = {
+    log: [],
+    windows: { configSwapped: false, locked: false, driverRunning: false },
+    apps: { windows: { alive: false, gone: gone.promise, stopped: gone.settle } },
+    tracePath,
+    // A full evidence disk, as far as appendFileSync can tell.
+    breakTrace: () => mkdirSync(tracePath, { recursive: true }),
+    events: () => (existsSync(tracePath) ? readFileSync(tracePath, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []),
+  };
+  world.machine = fakeWindowsMachine(world, 'fake-run', faults);
+  world.machine.prepare();
+  await world.machine.startDriver();
+  world.log.length = 0;
+  return world;
+}
+
+const RESTORED = { configSwapped: false, locked: false, driverRunning: false };
+
+test('windows teardown: every trace write failing still stops the driver and restores the config', async (t) => {
+  const world = await windowsTeardown(t);
+  world.breakTrace();
+
+  const error = await finishMachine(world.machine, world.tracePath);
+
+  assert.deepEqual(world.log, ['windows:tunnel-killed', 'windows:stop-driver', 'windows:processes-gone 60000', 'windows:finalize']);
+  assert.deepEqual(world.windows, RESTORED);
+  assert.match(error.message, /^the trace could not be written: EISDIR/);
+});
+
+test('windows teardown: a failed driver stop still stops the app and restores the config, trace or not', async (t) => {
+  for (const broken of [false, true]) {
+    const world = await windowsTeardown(t, { fail: { 'stop-driver': 1 } });
+    if (broken) world.breakTrace();
+
+    const error = await finishMachine(world.machine, world.tracePath);
+
+    assert.deepEqual(world.log, [
+      'windows:tunnel-killed', 'windows:stop-driver', 'windows:processes-gone 60000',
+      'windows:cleanup-processes', 'windows:processes-gone 15000', 'windows:finalize',
+    ]);
+    assert.equal(world.windows.configSwapped, false, 'the config is restored');
+    assert.equal(world.windows.locked, false);
+    // The driver stop's error is the first real error, and the trace failure is named after it.
+    assert.match(error.message, broken
+      ? /^ssh exited 255: the stop-driver action could not reach Windows; the trace could not be written: EISDIR/
+      : /^ssh exited 255: the stop-driver action could not reach Windows$/);
+    if (!broken) {
+      assert.deepEqual(world.events().map(({ event, machine }) => `${event} ${machine}`), [
+        'cleanup-error windows-driver', 'forced-process-cleanup windows', 'process-final windows', 'config-restored windows', 'cleanup-error windows',
+      ]);
+    }
+  }
+});
+
+test('windows teardown: a failed forced stop still waits again and attempts the restore, which waits for the app', async (t) => {
+  const world = await windowsTeardown(t, { appSurvivesDriverStop: true, fail: { 'cleanup-processes': 1 } });
+
+  const error = await finishMachine(world.machine, world.tracePath);
+
+  assert.deepEqual(world.log, [
+    'windows:tunnel-killed', 'windows:stop-driver', 'windows:processes-gone 60000',
+    'windows:cleanup-processes', 'windows:processes-gone 15000', 'windows:finalize',
+  ]);
+  // The worker refuses to restore while the app runs, so the config stays swapped and the run fails.
+  assert.equal(world.windows.configSwapped, true);
+  assert.match(error.message, /^Windows process state timed out/);
+  assert.deepEqual(world.events().filter(({ event }) => event === 'cleanup-error').map(({ machine, error: message }) => [machine, message.split(':')[0]]), [
+    ['windows-processes', 'ssh exited 255'], ['windows-processes', 'Windows process state timed out'],
+    ['windows-config', 'refusing to restore config while installed processes remain'], ['windows', 'Windows process state timed out'],
+  ]);
+});
+
+test('windows teardown: an early stop goes on past a failed driver stop and trace write, and cleanup stops the driver again', async (t) => {
+  const world = await windowsTeardown(t, { fail: { 'stop-driver': 1 } });
+  world.breakTrace();
+
+  await assert.rejects(world.machine.stopApps(world.tracePath), /^Error: ssh exited 255: the stop-driver action could not reach Windows; the trace could not be written: EISDIR/);
+  assert.deepEqual(world.log, ['windows:tunnel-killed', 'windows:stop-driver', 'windows:cleanup-processes', 'windows:processes-gone 15000']);
+  assert.equal(world.apps.windows.alive, false, 'the app is stopped');
+
+  world.log.length = 0;
+  const error = await finishMachine(world.machine, world.tracePath);
+
+  assert.deepEqual(world.log, ['windows:tunnel-killed', 'windows:stop-driver', 'windows:processes-gone 60000', 'windows:finalize']);
+  assert.deepEqual(world.windows, RESTORED);
+  assert.match(error.message, /^the trace could not be written/);
+});
+
+test('teardown: finishMachine names a trace it could not write even when the teardown itself passed', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'alpha-teardown-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const tracePath = join(root, 'trace.jsonl');
+  mkdirSync(tracePath);
+  // Fedora's teardown writes nothing itself and returns its final process report.
+  const machine = { name: 'fedora', cleanup: async () => ({ processes: [] }) };
+
+  const error = await finishMachine(machine, tracePath);
+
+  assert.match(error.message, /^the trace could not be written: EISDIR/);
+  assert.equal(error.traceError.code, 'EISDIR');
+});
+
+for (const platform of PLATFORMS) {
+  test(`${platform}: a passing gate whose trace breaks after the plant fails the run, torn down and with no key left`, async (t) => {
+    const world = walkthroughWorld({ machine: platform, gate: { breakTrace: true } });
+    t.after(world.dispose);
+
+    const error = await failure(world.run());
+
+    assert.match(error.message, /^the trace could not be written: EISDIR/);
+    assert.ok(world.at(TORN_DOWN[platform]) < world.at(`${platform}:clear ai:openai`));
+    assert.equal(world.entries[platform].size, 0);
+    assert.ok(!world.log.includes('windows:uninstall'), 'a run that failed keeps the candidate installed');
+    assert.deepEqual(world.printed, []);
+    if (platform === 'windows') assert.deepEqual(world.windows, { configSwapped: false, locked: false, driverRunning: false });
+  });
+}
+
+test('teardown: finishMachine reports a passing teardown as passed, and never throws', async (t) => {
+  const world = await windowsTeardown(t);
+
+  assert.equal(await finishMachine(world.machine, world.tracePath), undefined);
+  assert.deepEqual(world.windows, RESTORED);
+  assert.deepEqual(world.events().map(({ event }) => event), ['driver-stopped', 'process-final', 'config-restored']);
+  assert.equal(await finishMachine(undefined, world.tracePath), undefined, 'a machine never made has nothing to tear down');
+});
+
+test('fedora teardown: every exact PID is signalled even when one before it fails', () => {
+  const signalled = [];
+  const kill = (pid, signal) => {
+    signalled.push(`${pid} ${signal}`);
+    if (pid === 2) throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+  };
+
+  assert.throws(() => killEach([{ pid: 1 }, { pid: 2 }, { pid: 3 }], 'SIGKILL', kill), /EPERM/);
+  assert.deepEqual(signalled, ['1 SIGKILL', '2 SIGKILL', '3 SIGKILL']);
+  assert.doesNotThrow(() => killEach([], 'SIGTERM', kill));
 });
 
 test('the walkthrough plants exactly the keys it checks for', () => {
