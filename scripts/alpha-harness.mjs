@@ -1801,6 +1801,182 @@ async function notionCleanup(machine, notion, passed) {
   return result;
 }
 
+// ── AI keys in the OS keyring (#252) ──
+//
+// The walkthrough plants a synthetic OpenAI key in config.json and the app moves it into the OS
+// keyring. That keyring is the user's own: the run's isolated config folders do not reach it. So a
+// run refuses when it already holds an entry the run would plant, and removes what it planted.
+// The harness learns only whether an entry exists. No value enters this process, a log or a trace.
+
+// The app's AI key accounts. All sit under APP_IDENTIFIER as the service (src-tauri/src/secret_store.rs).
+export const AI_KEY_ACCOUNTS = ['ai:anthropic', 'ai:openai', 'ai:ollama', 'ai:openai-compatible'];
+
+// The AI keys a walkthrough plants in config.json, by config field, and the account the app files
+// each under. A run checks and clears exactly these. A check that plants another key adds it here.
+export const PLANTED_AI_KEYS = { openai_api_key: 'ai:openai' };
+
+const PLANTED_AI_ACCOUNTS = Object.values(PLANTED_AI_KEYS);
+
+// The Windows desktop-session script runs as a scheduled task, which takes minutes to start.
+const AI_KEY_DESKTOP_TIMEOUT_MS = 6 * 60_000;
+const AI_KEY_RESULT_NAME = 'ai-key-result.json';
+
+// The config patch that plants `secret` under every field in PLANTED_AI_KEYS.
+export function plantedAiKeyPatch(secret) {
+  return Object.fromEntries(Object.keys(PLANTED_AI_KEYS).map((field) => [field, secret]));
+}
+
+// Only the app's own AI accounts may reach the keyring commands: a clear on any other account
+// would delete something this run never planted.
+function aiKeyAccount(account) {
+  if (!AI_KEY_ACCOUNTS.includes(account)) fail(`not an AI key account: ${account}`);
+  return account;
+}
+
+// keyring's Windows store names a credential "<account>.<service>".
+export function windowsAiKeyTarget(account) {
+  return `${aiKeyAccount(account)}.${APP_IDENTIFIER}`;
+}
+
+/**
+ * The AI key entries in Fedora's Secret Service. `secret-tool lookup` prints the value to its
+ * standard output, so that stream goes to the operating system's null device (stdio `ignore`) and
+ * only the exit status is read. `lookup` exits 1 with no message when nothing matches and 1 with a
+ * message when it failed (no D-Bus session, locked collection); a failure is never read as absent.
+ */
+export function fedoraAiKeyStore({ spawn = spawnSync } = {}) {
+  const secretTool = (verb, account) => {
+    const result = spawn('secret-tool', [verb, 'service', APP_IDENTIFIER, 'username', aiKeyAccount(account)], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      encoding: 'utf8',
+      timeout: 30_000,
+      killSignal: 'SIGKILL',
+    });
+    if (result.error) throw result.error;
+    return { status: result.status, message: String(result.stderr ?? '').trim() };
+  };
+  const exists = (account) => {
+    const { status, message } = secretTool('lookup', account);
+    if (status === 0) return true;
+    if (status === 1 && !message) return false;
+    return fail(`secret-tool lookup for ${account} failed (exit ${status}): ${message}`);
+  };
+  return {
+    name: 'fedora',
+    stored: exists,
+    remove(account) {
+      const found = exists(account);
+      if (found) {
+        // Exit 1 with no message means nothing was cleared; the lookup below decides what is left.
+        const { status, message } = secretTool('clear', account);
+        if (status !== 0 && (status !== 1 || message)) fail(`secret-tool clear for ${account} failed (exit ${status}): ${message}`);
+      }
+      return { found, left: exists(account) };
+    },
+  };
+}
+
+/**
+ * The AI key entries in Windows Credential Manager, reached through `worker`, which carries a
+ * request to the Windows worker below. The worker answers with two flags and nothing else.
+ */
+export function windowsAiKeyStore(worker) {
+  const ask = (account, remove) => {
+    const answer = worker({ action: 'ai-key', account: aiKeyAccount(account), remove });
+    if (typeof answer?.found !== 'boolean' || typeof answer?.left !== 'boolean') {
+      fail(`the Windows keyring answer for ${account} was not found/left flags`);
+    }
+    return { found: answer.found, left: answer.left };
+  };
+  return {
+    name: 'windows',
+    stored: (account) => ask(account, false).found,
+    remove: (account) => ask(account, true),
+  };
+}
+
+/**
+ * The Windows worker's side of an `ai-key` request: alpha-desktop.ps1 runs in the desktop session,
+ * because an SSH logon has no Credential Manager, and writes `found` and `left` to a file that is
+ * read and deleted at once. The script never returns the secret, and this passes on only the flags.
+ */
+export function windowsAiKeyAction(request, { tools, runDesktop, readResult, discard }) {
+  const target = windowsAiKeyTarget(request.account);
+  const resultPath = win32.join(tools, AI_KEY_RESULT_NAME);
+  // Cleared first too, so a file from an earlier call cannot answer this one.
+  discard(resultPath);
+  try {
+    runDesktop(`-Mode NotionToken -OutputPath "${resultPath}" -CredentialTarget "${target}"${request.remove === true ? ' -RemoveCredential' : ''}`);
+    const answer = readResult(resultPath);
+    if (typeof answer?.found !== 'boolean' || typeof answer?.left !== 'boolean') fail('the desktop script did not answer found/left');
+    return { found: answer.found, left: answer.left };
+  } finally {
+    discard(resultPath);
+  }
+}
+
+function walkthroughKeyStore(machineName, sshHost, runId) {
+  if (machineName === 'fedora') return fedoraAiKeyStore();
+  return windowsAiKeyStore((request) => remoteWorker(
+    sshHost, { root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP, ...request }, AI_KEY_DESKTOP_TIMEOUT_MS,
+  ));
+}
+
+/**
+ * Before a run changes anything: asks each machine's keyring whether it holds an entry for an AI
+ * key the run will plant, and records one `ai-keys-checked` event per machine. Fails, naming each
+ * machine, account and service, if any does. It reads existence only and deletes nothing, so a
+ * refused run leaves the keyring as it found it. `record(machine, event, value)` writes the trace.
+ */
+export function checkNoAiKeys(stores, record, accounts = PLANTED_AI_ACCOUNTS) {
+  const held = [];
+  for (const store of stores) {
+    const entries = {};
+    for (const account of accounts) {
+      const existed = store.stored(account);
+      if (typeof existed !== 'boolean') fail(`the ${store.name} keyring lookup for ${account} did not answer yes or no`);
+      entries[account] = { existed };
+      if (existed) held.push(`${store.name} (account ${account}, service ${APP_IDENTIFIER})`);
+    }
+    record(store.name, 'ai-keys-checked', { service: APP_IDENTIFIER, entries });
+  }
+  if (held.length) {
+    fail(`keyring already holds an AI key entry the run would overwrite: ${held.join('; ')}; move the key aside by hand before running again`);
+  }
+}
+
+/**
+ * After a machine's part of the run, whether it passed or failed: deletes the entries the run's
+ * plant created and checks none is left. The check before the run found none, so any entry here
+ * is the run's. Records one `ai-keys-removed` event, `removed` and `left` for each account (`left`
+ * is null when the keyring could not be read), and returns the problems, each naming an account.
+ */
+export function removePlantedAiKeys(store, record, accounts = PLANTED_AI_ACCOUNTS) {
+  const entries = {};
+  const problems = [];
+  for (const account of accounts) {
+    try {
+      const { found, left } = store.remove(account);
+      entries[account] = { removed: found && !left, left };
+      if (left) problems.push(`${account} is still in the ${store.name} keyring`);
+    } catch (error) {
+      entries[account] = { removed: false, left: null };
+      problems.push(`${account} on ${store.name}: ${error.message}`);
+    }
+  }
+  record(store.name, 'ai-keys-removed', { service: APP_IDENTIFIER, entries });
+  return problems;
+}
+
+// removePlantedAiKeys for the run's trace; returns the error to report, if any.
+function aiKeyCleanup(store, evidencePath) {
+  const problems = removePlantedAiKeys(store, (machine, event, value) => observation(evidencePath, event, machine, value));
+  if (!problems.length) return undefined;
+  const error = new Error(`AI key cleanup: ${problems.join('; ')}`);
+  observation(evidencePath, 'cleanup-error', store.name, { error: error.message });
+  return error;
+}
+
 const WALKTHROUGH_NOTES = {
   semantic: {
     category: 'Areas',
@@ -1863,7 +2039,10 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
   record('entry-launched', await machine.launchEntry());
   record('driver-started', await machine.startDriver());
   const planted = { secret: `sk-alpha-harness-${randomUUID()}` };
-  record('config-patched', { keys: machine.patchConfig({ openai_api_key: planted.secret }) });
+  // runWalkthroughLocked checked, before it prepared or launched anything, that the keyring holds
+  // no entry under these fields' accounts, and removes what the app files under them afterwards
+  // (PLANTED_AI_KEYS).
+  record('config-patched', { keys: machine.patchConfig(plantedAiKeyPatch(planted.secret)) });
 
   let capture;
   await withApp(machine, async (browser) => {
@@ -1986,6 +2165,17 @@ async function runWalkthroughLocked(options) {
   });
   const controller = (event, value) => observation(evidencePath, event, 'controller', value);
 
+  // Before any machine is prepared, launched or patched: the run plants an AI key that the app
+  // moves into the OS keyring, so it refuses when the keyring already holds one (#252). The
+  // candidate packages and the Windows tools are installed by now; the check needs the latter.
+  const keyStores = new Map(machineNames.map((name) => [name, walkthroughKeyStore(name, options.sshHost, runId)]));
+  try {
+    checkNoAiKeys([...keyStores.values()], (machine, event, value) => observation(evidencePath, event, machine, value));
+  } catch (error) {
+    controller('run-failed', { error: error.message });
+    throw error;
+  }
+
   const ollamaTunnel = fedoraOllamaTunnel(options.sshHost, windowsOllamaBaseUrl);
   let runError;
   let cleanupError;
@@ -1999,8 +2189,8 @@ async function runWalkthroughLocked(options) {
     const machines = [
       ['fedora', () => linuxDriverMachine(options.linuxRoot, runId, randomUUID(), { ollamaBaseUrl: `http://127.0.0.1:${FEDORA_OLLAMA_PORT}`, sync: true })],
       ['windows', () => windowsDriverMachine(options.sshHost, runId, randomUUID(), candidateCommit, { ollamaBaseUrl: windowsOllamaBaseUrl, sync: true })],
-    ].filter(([name]) => machineNames.includes(name)).map(([, make]) => make);
-    for (const makeMachine of machines) {
+    ].filter(([name]) => machineNames.includes(name));
+    for (const [machineName, makeMachine] of machines) {
       let machine;
       let passed = false;
       try {
@@ -2027,6 +2217,11 @@ async function runWalkthroughLocked(options) {
         }
       }
       cleanupError ??= await finishMachine(machine, evidencePath);
+      // The walkthrough's planted key leaves the keyring whether it passed or failed. Run after the
+      // app and driver are stopped, so nothing can write it back, and on its own line so an earlier
+      // cleanup error cannot skip it.
+      const keyError = aiKeyCleanup(keyStores.get(machineName), evidencePath);
+      cleanupError ??= keyError;
       if (!runError && !cleanupError) {
         // The uninstall check compares against this.
         const vaultBefore = machine.hash();
@@ -2679,6 +2874,16 @@ async function windowsWorker(request) {
     const found = readDesktopJson(resultPath);
     unlinkSync(resultPath);
     return found;
+  }
+
+  // #252: whether the app's AI key entry exists, and with `remove` its deletion. Flags only.
+  if (request.action === 'ai-key') {
+    return windowsAiKeyAction(request, {
+      tools,
+      runDesktop: (scriptArguments) => runDesktopScript(tools, scriptArguments),
+      readResult: readDesktopJson,
+      discard: (path) => rmSync(path, { force: true }),
+    });
   }
 
   if (request.action === 'stage-file') {
