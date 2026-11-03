@@ -582,5 +582,129 @@ Windows remain unrefused, as before. No result from the stock Gate 3 walkthrough
 is claimed.</p>
 <p>Issue 252 owns the harness change that stops the keyring overwrite from recurring. The two small
 files the Windows deletion left in the test folder wait for Nicolas's approval to delete them.</p>
+
+<h2>Main merged again after #242</h2>
+<p>2026-11-03. After PR #251 (#242, quick-xml 0.42) merged, Sol fetched origin and confirmed
+<code>origin/main</code> was <code>951d422782493b26466ffa78de70667cac3eb457</code>. Sol merged it
+into <code>fix/237-zip9</code> with <code>git merge --no-ff origin/main -m "Merge origin/main into fix/237-zip9"</code>.
+The merge was clean. The resulting candidate is
+<code>724b9e6aed4378d6631d12539796bbcec9ee4353</code>, with first parent
+<code>945166eb381e6952a83f30d829ba9d5f4a1c5ca0</code>, the published PR #253 head. Every new
+gate below ran on that merge commit. This dated section updates the earlier publication status;
+the earlier results retain their original candidate attribution. Record: <code>237-rm-merge.log</code>.</p>
+
+<p>The Rust 1.90.0 locked all-target check passed:
+<code>RUSTUP_TOOLCHAIN=1.90.0 cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets</code>.
+The lock resolves zip <code>9.1.0</code>, direct quick-xml <code>0.42.0</code>, and a separate
+transitive quick-xml <code>0.41.0</code>. The merged <code>Cargo.lock</code> stayed byte-identical
+through that check and every Fedora and Windows command below. Its SHA-256 is
+<code>843a82538302c24a7ed657bd3166f7414bc9ba7db46ab4ddce5335d1f2610c26</code>.
+Record: <code>237-rm-cargo-check.log</code>.</p>
+
+<p>Sol ran these commands on Fedora 44 and Windows 11 with Rust 1.90.0 and pnpm 11.22.0.
+Windows used a git bundle of the merge commit, an isolated checkout with automatic line-ending
+conversion disabled, and its own Cargo target directory with <code>CARGO_BUILD_JOBS=2</code>.
+No installed application, walkthrough or harness gate ran, and no keyring value was accessed.
+Counts below are the tests reported by each named command on this candidate. All Rust rows have
+0 failed and 0 measured tests; ignored tests are not passes.</p>
+<table>
+<thead><tr><th>Platform and command</th><th>Result and population</th><th>Log</th></tr></thead>
+<tbody>
+<tr><td>Fedora: <code>pnpm install --frozen-lockfile</code></td>
+<td>Exit 0; already up to date.</td><td><code>237-rm-fedora-install.log</code></td></tr>
+<tr><td>Fedora: <code>pnpm verify</code></td>
+<td>Exit 0. Typecheck: 829 files, 0 errors, 0 warnings. JavaScript: 254 tests, 254 passed,
+0 failed, 0 skipped. Full Rust library suite: 785 tests, 775 passed, 10 ignored, 0 filtered out;
+the binary and doc-test targets each ran 0 tests. Format, Clippy with <code>-D warnings</code>,
+and frontend build passed. The build retains the existing chunk-size warning.</td>
+<td><code>237-rm-fedora-verify.log</code></td></tr>
+<tr><td>Fedora: <code>pnpm test:rust backup::</code></td>
+<td>Exit 0; 42 passed, 0 ignored, 743 filtered out of 785 library tests. Binary target: 0 tests.</td>
+<td><code>237-rm-fedora-backup.log</code></td></tr>
+<tr><td>Fedora: <code>pnpm test:rust diagnostic_export::</code></td>
+<td>Exit 0; 1 passed, 0 ignored, 784 filtered out of 785 library tests. Binary target: 0 tests.</td>
+<td><code>237-rm-fedora-diagnostic.log</code></td></tr>
+<tr><td>Fedora: <code>pnpm test:rust sync_sidecar::</code></td>
+<td>Exit 0; 42 passed, 3 ignored, 740 filtered out of 785 library tests. Binary target: 0 tests.</td>
+<td><code>237-rm-fedora-sync-sidecar.log</code></td></tr>
+<tr><td>Windows: <code>pnpm install --frozen-lockfile</code></td>
+<td>Exit 0; 482 packages added, 482 reused, 0 downloaded.</td>
+<td><code>237-rm-windows-install.log</code></td></tr>
+<tr><td>Windows: <code>pnpm verify</code></td>
+<td>Exit 1, solely the known #244 test, <code>pnpm install fails when the prepare svelte-kit sync fails</code>.
+It expected <code>/INTENTIONAL_SYNC_FAILURE/</code> and received <code>undefined\nundefined</code>.
+Typecheck: 0 errors, 0 warnings. JavaScript: 254 tests, 248 passed, 1 failed, 5 skipped.
+The command stopped before Rust, lint and build; those ran separately below. No other failure.</td>
+<td><code>237-rm-windows-verify.log</code></td></tr>
+<tr><td>Windows: <code>pnpm test:rust</code></td>
+<td>Exit 0; 753 library tests, 744 passed, 9 ignored, 0 filtered out.</td>
+<td><code>237-rm-windows-rust.log</code></td></tr>
+<tr><td>Windows: <code>pnpm test:rust backup::</code></td>
+<td>Exit 0; 39 passed, 0 ignored, 714 filtered out of 753 tests.</td>
+<td><code>237-rm-windows-backup.log</code></td></tr>
+<tr><td>Windows: <code>pnpm test:rust diagnostic_export::</code></td>
+<td>Exit 0; 1 passed, 0 ignored, 752 filtered out of 753 tests.</td>
+<td><code>237-rm-windows-diagnostic.log</code></td></tr>
+<tr><td>Windows: <code>pnpm test:rust sync_sidecar::</code></td>
+<td>Exit 0; 42 passed, 3 ignored, 708 filtered out of 753 tests.</td>
+<td><code>237-rm-windows-sync-sidecar.log</code></td></tr>
+<tr><td>Windows: <code>pnpm lint:rust</code></td>
+<td>Exit 0; format and Clippy with <code>-D warnings</code> passed.</td>
+<td><code>237-rm-windows-lint.log</code></td></tr>
+<tr><td>Windows: <code>pnpm build</code></td>
+<td>Exit 0; frontend build passed with the existing chunk-size warning.</td>
+<td><code>237-rm-windows-build.log</code></td></tr>
+</tbody>
+</table>
+<p>The Windows controller initially stopped because its parser did not recognize Node's output
+format. Sol corrected the parser, confirmed that #244 was the sole failed test, and continued
+with the separate commands. This was a controller bug, not another application failure.
+Coordinator logs: <code>237-rm-windows-run.log</code> and <code>237-rm-windows-resume.log</code>.</p>
+
+<p>Sol matched all 17 names in the earlier test table against the new logs: the 14 added tests and
+3 changed tests. Every name passed exactly once in Fedora's full run and its applicable focused
+run (17/17 in each). Windows passed 16/16 applicable names in each run;
+<code>fedora_backslash_names_survive_a_backup_and_restore</code> is <code>cfg(unix)</code> and
+absent from both Windows logs. The full logs are <code>237-rm-fedora-verify.log</code> and
+<code>237-rm-windows-rust.log</code>; focused logs are the four backup and diagnostic logs above.
+Regenerate the name-by-name match with <code>python3 237-rm-match.py</code> in the retained Sol
+records; its result is <code>237-rm-test-match.json</code>. The script reads the 17 table rows and
+asserts one matching <code>test &lt;module&gt;::tests::&lt;name&gt; ... ok</code> line per applicable
+log, and zero for the Unix-only name on Windows.</p>
+
+<p>The merge imports only main's #242 change and changes no #237 application code. Before this
+report-only update, the following diff statistics matched exactly: 9 files, 3,864 insertions and
+21 deletions. The two stable patch IDs also matched:
+<code>877598d7f1568ad99efd90bfd601ed65b3c41c13</code>. These checks use the merge commit explicitly
+so the subsequent report edit does not change the population being compared.</p>
+<pre><code>git diff 945166e 724b9e6 --stat
+git diff 3b06674 951d422 --stat
+git rev-parse 945166e:src-tauri/src/backup.rs 724b9e6:src-tauri/src/backup.rs
+git diff 951d422 724b9e6 | git patch-id --stable
+git diff 3b06674 945166e | git patch-id --stable</code></pre>
+<p>Both backup blobs are <code>d3143d7ab381794e4e9d08fbe505cf11d9c2a0a3</code>.
+Records: <code>237-rm-proofs.log</code> and <code>237-rm-final-audit.log</code>.</p>
+
+<p>The installed-package, Gate 2 and Gate 3 evidence remains attributed to candidate
+<code>8f54c08b839b4651aa769d93c4489ea0958fb5ea</code>; none was rerun on the new merge.
+The backup and diagnostic code is byte-identical to that candidate: <code>backup.rs</code>
+has the blob above and <code>diagnostic_export.rs</code> has blob
+<code>81d058b869263b08b7c4e6e0fca7738911a825bc</code> at both commits. The only application source
+changed since that candidate is the sync sidecar's config hardening in #242. Those facts support
+carrying the earlier scoped evidence; they do not constitute an installed-package run of the
+new merge. The fresh full and focused sync-sidecar tests above cover the imported code.</p>
+
+<p>Free space before and after these checks, in bytes: Fedora
+382,275,973,120 to 381,538,942,976; Windows C: 57,576,525,824 to 57,565,990,912;
+Windows D: 259,021,811,712 to 254,213,009,408. These are volume measurements, not an attribution
+of all space changes to this run. Windows artifacts stay in this run's own folder; no other
+run was touched. Records: <code>237-rm-windows-preflight.log</code>,
+<code>237-rm-windows-free-after.log</code> and <code>237-rm-final-audit.log</code>.</p>
+
+<p>The untracked Gate 2 trace remains untracked and unchanged. This update commits only this
+report. Nicolas has approved merging PR #253 after re-verification and a fresh final review.
+The re-verification is complete with the known #244 exception above; a fresh Spec and Standards
+review must cover the exact report commit before publication. This run performed no push,
+final review or PR merge. CI on the new PR head still precedes merge.</p>
 </main>
 </html>
