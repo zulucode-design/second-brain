@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Issue 252: alpha harness keyring check verification</title>
+<style>
+body { max-width: 68rem; margin: 2rem auto; padding: 0 1rem; font: 16px/1.55 system-ui, sans-serif; color: #20252b; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+th, td { border: 1px solid #cbd2d9; padding: .55rem; text-align: left; vertical-align: top; }
+th { background: #edf1f5; }
+code { overflow-wrap: anywhere; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+<main>
+<h1>Issue 252: alpha harness keyring check verification</h1>
+<p>2026-11-03. The Gate 3 walkthrough in <code>scripts/alpha-harness.mjs</code> plants a synthetic
+OpenAI key, <code>sk-alpha-harness-&lt;uuid&gt;</code>, in the app's <code>config.json</code>, to prove
+that diagnostics redact it. The app moves that key into the OS keyring, into its one global
+<code>ai:openai</code> entry for service <code>io.github.zulucodedesign.SecondBrain</code>. The harness
+never saved what that entry held and never removed it. A walkthrough on a machine with a real
+OpenAI key saved in Second Brain would have overwritten the key, and every walkthrough left a fake
+one behind. The #237 installed checks did the same on both machines on 2026-11-02. No real key was
+lost, because Nicolas never saved one.</p>
+<p>The branch makes the walkthrough refuse, and clean up after itself. Before a run changes either
+machine, it asks each machine's keyring whether an entry exists for each AI key the run will plant.
+It reads existence only. If one exists, the run stops and names the machine, account and service. If
+none exists, the run plants its key, and afterwards deletes the entry the app made from it, whether
+the run passed, failed or received Ctrl+C or <code>SIGTERM</code>. The trace records whether each
+entry existed before the run, whether it was removed and whether anything was left, and never a
+value.</p>
+<p><strong>Publication is pending.</strong> The branch is <code>fix/252-harness-keyring</code>. Candidate
+<code>56d5bf7a1437d5fa6622091fb40c66aba12434f0</code> passed the verification below on Fedora and
+Windows, apart from the one existing #244 test that fails Windows <code>pnpm verify</code>. That
+includes a refusal run and a passing two-machine Gate 3 run on real keyrings. Review round 7 was
+clean on both axes at <code>d326b0b58c0da93ce5751b4993d95bb0653533c8</code>, the head the candidate
+merges main into. The branch's five files are identical to it (see "Candidate and provenance"). No round is the
+final review. The final review of the exact publication head, the PR, CI and Nicolas's merge
+approval have not happened, and nothing is pushed.</p>
+<p>The work took seven Kiro attempts and seven review rounds. Sol ran steps 1 to 3 of the
+verification, up to building both packages. Sol then hit its usage limit, and a Claude Sonnet 5.5
+agent at <code>xhigh</code> reasoning effort, the fallback AGENTS.md names, ran steps 4 to 7: the
+refusal run, the deletion of the synthetic entries, the passing run and the trace privacy check.</p>
+
+<h2>What the fix does</h2>
+<p>The check covers the accounts the run plants. Today that is <code>ai:openai</code> only, through
+the harness's <code>PLANTED_AI_KEYS</code> map, so the trace's <code>entries</code> object names that one
+account. The app's four AI accounts are <code>ai:anthropic</code>, <code>ai:openai</code>,
+<code>ai:ollama</code> and <code>ai:openai-compatible</code>. The Windows credential script accepts
+exactly those four targets and refuses every other. A check that plants another key adds one line to
+<code>PLANTED_AI_KEYS</code>, and the check, the re-check, the removal and the trace follow it. The
+verification below looked at all four accounts on both machines before and after the runs.</p>
+<table>
+<thead><tr><th>Machine</th><th>How existence is read, without reading a value</th></tr></thead>
+<tbody>
+<tr><td>Fedora</td>
+<td>The Secret Service <code>SearchItems</code> method, called with <code>busctl --user call
+org.freedesktop.secrets /org/freedesktop/secrets org.freedesktop.Secret.Service SearchItems</code>
+and the attributes <code>service</code> and <code>username</code>. It answers with two lists of item
+paths, unlocked and locked, and never a secret. An entry exists when either list is not empty, so a
+locked entry counts as present. A failed call, or an answer of any other shape, stops the run and is
+never read as absent. Attempt 1 used <code>secret-tool lookup</code>. Review round 2 found that it
+exits 1 with no message both for no entry and for an entry it could not unlock, so a locked entry
+read as absent. Attempt 3 replaced it. Removal uses <code>secret-tool clear</code> with its standard
+output sent to the null device, and the same search afterwards decides whether anything is left.</td></tr>
+<tr><td>Windows</td>
+<td><code>scripts/windows/alpha-desktop.ps1</code> runs in the desktop session, because an SSH logon
+has no Credential Manager, through the harness's scheduled-task path. It calls <code>CredReadW</code>
+for the target <code>&lt;account&gt;.&lt;service&gt;</code>. Only <code>ERROR_NOT_FOUND</code> (1168)
+means absent. Any other error stops the script, which then writes only the call name and the error
+code. <code>CredDeleteW</code> may succeed or fail with 1168, and nothing else. The script reads the
+credential before and after its work and writes two flags, <code>found</code> and <code>left</code>,
+to a result file named for that one call. An entry that either read saw counts as present, so
+<code>found: false, left: true</code> is present. The script overwrites the credential buffer before
+it frees it, and the controller passes on only the two flags.</td></tr>
+</tbody>
+</table>
+<p>Order of a walkthrough, as <code>docs/alpha-harness.md</code> now documents it:</p>
+<ul>
+<li>The controller reads the candidate and harness commits and deploys the harness's own tools to
+the Windows test folder, because the Windows check runs from them. Then it checks both machines. This
+happens before the Fedora candidate install and before the Windows stale-run recovery. Attempt 1
+checked after both, and review round 1 found that this changed the machines before refusing.</li>
+<li>Immediately before a machine's <code>config.json</code> receives the key, the controller asks
+again and arms that machine's removal only if no entry exists. A launch between the first check and
+the plant can file a key from the copied config. If an entry appears, that machine stops with nothing
+planted and nothing deleted.</li>
+<li>Once a machine's app and driver are stopped, the controller deletes the planted entry on every
+machine whose plant was armed, and checks that none is left. An entry left behind fails the run. A run
+that refused, or failed before the plant, deletes nothing. Each cleanup step runs even when an
+earlier one, a failure report or a trace write threw.</li>
+<li>Ctrl+C and <code>SIGTERM</code> stop the walkthrough at its next step. The controller ends its
+WebDriver sessions, stops the app and driver by exact PID, waits for the gate to unwind, and then runs
+the same cleanup as a failed run. A run that received a signal never records <code>run-complete</code>
+and exits non-zero. A hard kill (<code>SIGKILL</code>, a closed terminal, a power loss, a cancelled
+GitHub Actions run) cannot clean up. The leftover entry makes the next run refuse and name it.</li>
+<li>Trace events: <code>ai-keys-checked</code> (<code>existed</code> per account),
+<code>ai-keys-armed</code> (<code>armed</code>, <code>existed</code>), <code>ai-keys-removed</code>
+(<code>armed</code>, <code>removed</code>, <code>left</code>) and, after a signal,
+<code>stopped-gate-settled</code>. <code>removed</code> is true only when the entry existed at cleanup
+and was gone afterwards, so a true value shows that the plant produced an entry.</li>
+</ul>
+
+<h2>Changes from the issue text</h2>
+<ul>
+<li>Nicolas's decision of 2026-11-02 replaced the issue's first two criteria, which saved the
+previous value and restored it. The harness refuses instead, and removes what it planted. The third
+criterion changes with it. The trace records <code>existed</code> before, <code>removed</code> and
+<code>left</code> after, where the issue said "restored".</li>
+<li>The documentation criterion is met by the subsection "AI keys in the OS keyring" in
+<code>docs/alpha-harness.md</code>, under Machine-state safety. It says that any one-off verification
+script that plants a key must check first, remove what it planted, check that nothing is left and
+keep every value out of its output. It also records the #237 failure.</li>
+<li>The test criterion asked for the absent, present and fails-after-planting cases on both
+platforms' code paths. The new test file covers them against fakes of both keyrings, plus signals,
+locked entries, trace failures and the Windows result files and timeouts. See "Added tests matched to
+execution".</li>
+<li><strong>The branch is wider than the issue.</strong> After review round 3 Nicolas decided that
+Kiro fixes failures in teardown code that every gate shares and that predates this issue, and after
+round 4 he decided to keep fixing until the review came in clean. The branch therefore changes
+behavior for every gate:
+<ul>
+<li><code>finishMachine</code> no longer throws, and a failure to write a teardown trace line is now an
+error the gate receives. A passing gate with an unwritable trace fails.</li>
+<li>A failed stop step no longer skips later stop or restore steps. The Windows restore is attempted
+after a failed process stop, and the worker refuses it while installed processes remain.</li>
+<li>The Windows worker's driver stop, finalize, recovery, damaged-copy move, artifact removal and
+forced stop each run every item on its own and keep the first error. Finalize keeps the run's lock
+and journal when any step failed, so the next run's recovery finishes the rest. Recovery now also
+moves a stale run's damaged config copies, and finalize removes the junction and tasks before it
+removes the lock.</li>
+<li>Gate 1, the restore gate and the acceptance gate write their failure reports and teardown lines
+through a trace writer that never throws. A trace-only failure never replaces a real error. The
+restore and acceptance gates take an injectable I/O object, with defaults that make the same calls
+as before.</li>
+<li>The <code>DesktopScript</code> action of <code>scripts/windows/alpha-harness.ps1</code> (added to
+the allowed files in attempt 2) waits while a task is <code>Queued</code> or <code>Running</code>,
+counts only <code>Ready</code> and <code>Disabled</code> as finished, always tries to stop a task not
+known to be finished, and unregisters it only once it is confirmed stopped. Otherwise it leaves the
+task registered and the harness keeps that call's result file. Someone stops the task by hand before
+the next run.</li>
+</ul></li>
+</ul>
+
+<h2>Candidate and provenance</h2>
+<ul>
+<li>Wave baseline and merge base: <code>17d98d007bea1422f1fb43a333263a7008862114</code>.</li>
+<li>Reviewed head, round 7 clean: <code>d326b0b58c0da93ce5751b4993d95bb0653533c8</code>.</li>
+<li>Verified and packaged candidate: <code>56d5bf7a1437d5fa6622091fb40c66aba12434f0</code>. It merges
+public main <code>6d6ec97bf1c6bff2ee8a1fdd3d0acd3f9251bb04</code>, the merge of PR #250, into
+<code>d326b0b</code> with <code>git merge --no-ff origin/main</code>. The merge was clean and brought in
+28 files from main (the #237, #238, #241 and #242 changes and their reports). It touched none of
+this branch's five files.</li>
+<li>The branch's own diff against main is five files: <code>docs/alpha-harness.md</code> (+131, -2),
+<code>scripts/alpha-harness.mjs</code> (+1,192, -269), <code>scripts/windows/alpha-desktop.ps1</code>
+(+76, -10), <code>scripts/windows/alpha-harness.ps1</code> (+62, -4) and the new
+<code>tests/alpha-harness-keyring.test.mjs</code> (+1,844). Nothing under <code>src/</code> or
+<code>src-tauri/</code> changes, and neither does a manifest or lockfile. Regenerate with
+<code>git diff --numstat 6d6ec97 56d5bf7</code>. The population is every file that differs between
+main and the candidate.</li>
+</ul>
+<p>The reviewed head's clean round therefore covers the candidate's code. The branch's diff has the
+same stable patch-id at both commits, <code>ef7b52c4c95607560f177a5d72187b3de5bfd65b</code>, and all
+five files have identical blobs. I checked both.</p>
+<pre><code>git diff 17d98d0 d326b0b | git patch-id --stable
+git diff 6d6ec97 56d5bf7 | git patch-id --stable
+for f in docs/alpha-harness.md scripts/alpha-harness.mjs scripts/windows/alpha-desktop.ps1 \
+  scripts/windows/alpha-harness.ps1 tests/alpha-harness-keyring.test.mjs; do
+  git rev-parse d326b0b:$f 56d5bf7:$f
+done
+git diff --stat 6d6ec97 56d5bf7 -- src src-tauri package.json pnpm-lock.yaml</code></pre>
+<p>The first two print the same patch-id, each pair of blob lines matches, and the last prints
+nothing.</p>
+<p>Kiro wrote seven attempts, all in one Kiro cloud session (Opus 5.5 at <code>xhigh</code>) that
+Claude resumed for each attempt. Each attempt has an immutable brief and a frozen handoff on its
+exchange branch in the private mirror, <code>kiro/252-attempt-N</code>. Each handoff's <code>state</code>
+is <code>ready_for_claude</code>. The code commits were imported onto this branch with
+<code>cherry-pick -x</code>, which keeps Kiro as author. Attempt 1's first turn stopped on a model
+throttling error after reading files, with nothing pushed, and the same session was resumed.
+Kiro's own sandbox runs, including its mutation checks, are information only and are not gate
+evidence.</p>
+<table>
+<thead><tr><th>Attempt</th><th>Brief</th><th>Frozen handoff</th><th>Kiro code head</th><th>Imported as</th><th>Fixed</th></tr></thead>
+<tbody>
+<tr><td>1<br>base <code>17d98d0</code></td>
+<td><code>1d10a35979c3d2cd3c6fc8e1de15b5aa4f43cbd3</code></td>
+<td><code>363d62ab18c81842028c0e26626b32552c7ba71f</code></td>
+<td><code>31e415733baf7d0383f786e7828d2d78ca864edd</code></td>
+<td><code>37b6930</code>, <code>dbf91fe</code>, <code>13cbedb</code></td>
+<td>First pass: the whole issue as the decision changes it.</td></tr>
+<tr><td>2<br>base <code>13cbedb</code></td>
+<td><code>62ec6e47414e178febecdab7e47afd47fbac2784</code></td>
+<td><code>e3101df78c2d516f56611f1838a06b2e639b1d69</code></td>
+<td><code>6ac4574d597e40def61dbafd44cf31e28396de79</code></td>
+<td><code>8eae3da</code>, <code>423cbc5</code>, <code>afc95b2</code>, <code>ee820ec</code></td>
+<td>R1: Windows error codes, check before any change, arm before the plant, signals, desktop timeouts, tests through the real controller.</td></tr>
+<tr><td>3<br>base <code>ee820ec</code></td>
+<td><code>dba1ffba766434cdbf9319c74d65c2d86103541b</code></td>
+<td><code>e445f9a0a9387b86092dd9e2b31f20235cd7f252</code></td>
+<td><code>98e385f0e8187f3d1d9c04f0f4917394d1212bb3</code></td>
+<td><code>8dfeb3c</code>, <code>35a13c8</code></td>
+<td>R2: either Windows flag means present, Fedora metadata check, no success after a signal, settle the gate before Notion cleanup, cleanup in <code>finally</code>.</td></tr>
+<tr><td>4<br>base <code>35a13c8</code></td>
+<td><code>74082ec60ee471c3517090ae822bbdcecdc73057</code></td>
+<td><code>229bc2d0f957a7c9ac94777f189ea3f48ebcd910</code></td>
+<td><code>c189625a3a892275fc07049417b09c740a129a06</code></td>
+<td><code>c4d9939</code>, <code>d14ccc5</code></td>
+<td>R3: always run the machine teardown, and let no failed stop or trace write skip a later step.</td></tr>
+<tr><td>5<br>base <code>d14ccc5</code></td>
+<td><code>3394eaeab4dcbc0ea9c5c5e126413ebb2130bd3c</code></td>
+<td><code>ae002948e59014f578a5196149e6347d1358ba84</code></td>
+<td><code>88c978f506aa8ce84f169288ae1c0d4665b3cf17</code></td>
+<td><code>42f50a7</code>, <code>5e79830</code></td>
+<td>R4: stop every owned driver, restore profile folders even when the damaged copy cannot be kept, and the gate-level trace writes Kiro listed in attempt 4.</td></tr>
+<tr><td>6<br>base <code>5e79830</code></td>
+<td><code>2d9e8c49f2a9f3a57af42a4eb80040a995b130ee</code></td>
+<td><code>bbed71643e52b039cb5cdce2dde92fed43eca65a</code></td>
+<td><code>87ebb8d0e60c0ec7985b20514be7ba4f8d0d7f4f</code></td>
+<td><code>10428ef</code>, <code>d8c9e17</code>, <code>a9db70d</code></td>
+<td>R5: each journaled restore step on its own, trace-only errors never hide a real one, keep a desktop task registered until it is confirmed stopped.</td></tr>
+<tr><td>7<br>base <code>a9db70d</code></td>
+<td><code>1e625f53f2362fa15fa26fdf74530df01f1d566d</code></td>
+<td><code>1ef5136db7cafe76911c9c589955ba88112c93bf</code></td>
+<td><code>5a5e363daa6373f8f703ed22eca1123924d625a6</code></td>
+<td><code>69f8589</code>, <code>6af42a1</code>, <code>d326b0b</code></td>
+<td>R6: always try to stop a task, wait while it is queued, read every teardown result before choosing the error.</td></tr>
+</tbody>
+</table>
+<p>Attempts 1 and 2 ran on 2026-11-02 and attempts 3 to 7 on 2026-11-03. Each import passed a freeze
+check recorded in the ledger (the handoff commit changes only the handoff, the brief is unchanged,
+the chain runs back to the brief, no merges, mirror main unchanged, no mirror pull requests) and an
+intake check (allowed files only, no private-path or keyword hits). The imported commits in the
+table are the 19 commits on the branch between the baseline and <code>d326b0b</code>. Regenerate the
+count with
+<code>git log --format='%h %an' 17d98d0..d326b0b | wc -l</code>, which prints 19, every one with
+author Kiro Agent.</p>
+<p><strong>Intake fix on attempt 6.</strong> Kiro's three attempt-6 code commits carried a sandbox
+hostname in their author and committer identity. Claude imported them with the author reset to Kiro
+Agent's usual identity, so the branch holds no commit with that hostname. Attempt 7's brief told Kiro
+to set its git identity before committing, and its handoff reports that all of its commits show it.
+I checked the 19 imported commits for hostname-like and <code>root@</code> strings in author,
+committer and message, and found none (<code>git log --format='%an &lt;%ae&gt; | %cn &lt;%ce&gt;%n%B'
+17d98d0..d326b0b | grep -c -i -E 'internal|compute|root@'</code> prints 0).</p>
+
+<h2>Review</h2>
+<p>Sol ran separate Spec and Standards <code>codex exec</code> reviews of the whole branch against the
+base at each head below. All 14 log headers record <code>gpt-6.1-sol</code> at <code>xhigh</code>. The
+ledger records a Sol usage probe before each round's gate and review jobs. For R6 the probe entry
+belongs to the first launch, and the relaunch records none. That first R6 launch ran from the wrong
+directory with an empty prompt and wrote five untracked files into the shared checkout. Nicolas
+approved deleting them, together with two leftover Windows files from the earlier keyring cleanup,
+and all seven were deleted. The contract for every round was the issue, Nicolas's decision comment,
+the attempt-1 brief and, from round 2, the triage in each later brief. Claude accepted every finding. None was waived, and none moved to a
+follow-up issue.</p>
+<table>
+<thead><tr><th>Round and head</th><th>Findings</th><th>Disposition</th></tr></thead>
+<tbody>
+<tr><td>R1, <code>13cbedb</code></td>
+<td>Spec 3, Standards 6, overlapping.
+<br>P1, both axes: a failed <code>CredReadW</code> of any kind counted as absent on Windows, so a transient read failure let preflight pass and let cleanup report <code>left: false</code>.
+<br>P1, Standards: cleanup ran on machines where no plant had been attempted, so a real key the first launch migrated from the copied config could be deleted.
+<br>P2, both axes: the refusal came after the Fedora candidate install and the Windows recovery.
+<br>P2, both axes: Ctrl+C and <code>SIGTERM</code> skipped key removal.
+<br>P2, Standards: the 30 s default timeout inside the PowerShell call cut short a desktop task the outer six minutes allowed, and a late write could land in a shared result file.
+<br>P2, Standards: the lifecycle tests called the helpers by hand and bypassed the controller's wiring.</td>
+<td>All accepted, grouped into six fixes. Attempt 2.</td></tr>
+<tr><td>R2, <code>ee820ec</code></td>
+<td>Spec 2, Standards 4.
+<br>P1, Spec: <code>{found: false, left: true}</code> from Windows was read as no entry, so the plant could overwrite a key that appeared between the script's two reads.
+<br>P1, Standards: a locked Fedora entry read as absent.
+<br>P2, both axes: a <code>SIGTERM</code> during the final Ollama request still ended in <code>run-complete</code> and exit 0.
+<br>P2, Standards: cancellation raced Notion cleanup against a connect still in flight, which could store its token after cleanup looked.
+<br>P2, Standards: a failing trace write skipped machine teardown and key removal.</td>
+<td>All accepted. Attempt 3.</td></tr>
+<tr><td>R3, <code>35a13c8</code></td>
+<td>Spec 2 and Standards 2, the same two P2 findings.
+<br>One: after a signal, a failed <code>stopApps</code> set the cleanup error, and <code>??=</code> then skipped <code>finishMachine</code>, so Windows config and profile redirects stayed swapped. Attempt 3 introduced it.
+<br>Two: a failing trace write inside the Windows teardown skipped <code>finalizeWindows</code>. This code is shared by every gate and is unchanged since the baseline.</td>
+<td>See "Three rounds without a clean result". Attempt 4.</td></tr>
+<tr><td>R4, <code>d14ccc5</code></td>
+<td>Spec CLEAN. Standards 2, both P2, both in Windows worker code unchanged since the baseline.
+<br>One: <code>msedgedriver</code> exiting between enumeration and the stop call threw and skipped the <code>tauri-driver</code> stop.
+<br>Two: a failure to preserve the damaged config copy skipped <code>restoreProfileFolders</code>.</td>
+<td>All accepted. Nicolas chose more attempts over a follow-up issue. Attempt 5.</td></tr>
+<tr><td>R5, <code>5e79830</code></td>
+<td>Spec 2, Standards 3, all P2.
+<br>The journal restore skipped independent items (both axes): a locked <code>config.json</code> skipped the window state, and a failed first profile folder skipped the next.
+<br>A trace-only error from Fedora teardown hid a real Windows restore failure in the acceptance gate (both axes).
+<br>Standards: <code>DesktopScript</code> unregistered its task before shutdown was confirmed.</td>
+<td>All accepted. Attempt 6.</td></tr>
+<tr><td>R6, <code>a9db70d</code></td>
+<td>Spec 2, Standards 2.
+<br>P2, Spec: failed task-state reads skipped the stop attempt.
+<br>P2, Standards: a <code>Queued</code> task counted as finished.
+<br>P3, both axes: an earlier real cleanup error short-circuited <code>??</code> and hid a later trace failure.</td>
+<td>All accepted. Attempt 7.</td></tr>
+<tr><td>R7, <code>d326b0b</code></td>
+<td>Spec CLEAN. Standards CLEAN.</td><td>None.</td></tr>
+</tbody>
+</table>
+<p>The reviewers reported 30 findings in total across rounds 1 to 6, counting an overlapping finding
+once per axis. Records: <code>252-r1-spec-last.md</code> through <code>252-r7-standards-last.md</code>,
+with the matching <code>-prompt.md</code> and <code>.log</code> files.</p>
+
+<h3>Three rounds without a clean result</h3>
+<p>After round 3 Claude wrote <code>252-diagnosis-after-r3.md</code>. It noted that round 2's
+triage, which asked that cleanup survive a failing trace write and handle signals, had pulled the
+whole pre-existing teardown of every gate into this issue, and that each round went one level deeper
+into code this issue did not write. It recommended fixing the new finding, filing a follow-up issue
+for the shared teardown, and moving on to the main merge and verification. Nicolas decided
+otherwise on 2026-11-03. Kiro would fix both findings, including hardening the pre-existing Windows
+teardown. That widened the issue into the teardown every gate shares. After round 4 returned two more
+findings in the same code, Nicolas decided again: "have kiro keep fixing this until it comes in
+clean". Attempt 5 carried both round 4 findings and the gate-level trace writes Kiro had listed in
+its attempt-4 handoff, and the same decision covered attempts 6 and 7. Round 7 is the first clean
+round.</p>
+
+<h2>Gates 1 to 7 on the Kiro heads</h2>
+<p>After each import Sol ran a gate on the new head, next to that round's reviews. These are gate
+results for those heads, not for the candidate. They show how the test file grew and where Windows was
+missing. <code>pnpm check</code> is <code>svelte-kit sync &amp;&amp; svelte-check</code>. Its population
+is the checked files, 829 in every row, with 0 errors and 0 warnings. <code>pnpm test</code> is
+<code>node --test tests/*.test.mjs</code>, so its count covers every test file. The keyring count is
+<code>node --test tests/alpha-harness-keyring.test.mjs</code>. Sol's own label for gates 1, 5 and 6 was
+FAIL, for the reasons in the last column.</p>
+<table>
+<thead><tr><th>Gate and head</th><th>Fedora</th><th>Windows</th><th>Label and cause</th></tr></thead>
+<tbody>
+<tr><td>1, <code>13cbedb</code></td>
+<td>Install passed. <code>pnpm test</code> 278 passed. Keyring tests 24 passed.</td>
+<td>Not run. The machine was offline and SSH probes timed out. Free space was unavailable. A git bundle was ready, and no checkout was made.</td>
+<td>FAIL, Windows offline.</td></tr>
+<tr><td>2, <code>ee820ec</code></td>
+<td><code>pnpm test</code> 289 passed. Keyring 35 passed. The PowerShell parse did not run, because Fedora has no <code>pwsh</code> (0 of 2 scripts parsed).</td>
+<td>Not attempted. The ledger records the machine as still offline.</td>
+<td>Fedora PASS.</td></tr>
+<tr><td>3, <code>35a13c8</code></td>
+<td><code>pnpm test</code> 301 passed. Keyring 47 passed. Two real <code>SearchItems</code> calls, for <code>ai:openai</code> and for a probe account, each exited 0 with reply type <code>aoao</code> and 0 unlocked and 0 locked items. The parse did not run.</td>
+<td>Not attempted. Still offline.</td>
+<td>Fedora PASS.</td></tr>
+<tr><td>4, <code>d14ccc5</code></td>
+<td><code>pnpm test</code> 312 passed. Keyring 58 passed. The same two <code>SearchItems</code> calls again gave <code>aoao</code>, 0 and 0. The parse did not run.</td>
+<td>Not attempted. Still offline.</td>
+<td>Fedora PASS.</td></tr>
+<tr><td>5, <code>5e79830</code></td>
+<td><code>pnpm test</code> 323 passed. Keyring 69 passed.</td>
+<td>Install: 482 packages, 0 downloaded. <code>pnpm test</code> 317 passed, 3 failed, 3 skipped. Keyring 69 passed. Both PowerShell scripts parsed with 0 errors. A <code>NotionToken</code> call with a target outside the allowed set was refused before any credential call and wrote no output file. Free space before: C: 53.634 GiB, D: 241.263 GiB.</td>
+<td>FAIL. Three failures: the #244 install-failure test, and two <code>linux-test-package</code> helper tests that fail because <code>bash</code> is not on the SSH PATH. Main fixed those two in <code>c61e4e7</code> (#245), after the baseline. Merging main resolves them, and they are skipped on Windows in the verification below.</td></tr>
+<tr><td>6, <code>a9db70d</code></td>
+<td><code>pnpm test</code> 331 passed, 0 failed, 1 skipped. Keyring 77 passed, 1 skipped.</td>
+<td><code>pnpm test</code> 326 passed, 3 failed (the same three), 3 skipped. Keyring 78 passed. Parse 0 errors. Refusal check passed. Ten simulated <code>DesktopScript</code> scenarios passed under <code>powershell.exe</code> with every Task Scheduler cmdlet replaced by a fake. Scheduled tasks before and after: the same two disabled tasks from earlier work, and none left by the test. Free space C: 53.631 to 53.632 GiB, D: 236.754 to 236.716 GiB.</td>
+<td>FAIL by Sol's label, solely for the Fedora skip below. Claude treated it as a pass, because the skip is by design and the test ran and passed on Windows.</td></tr>
+<tr><td>7, <code>d326b0b</code></td>
+<td><code>pnpm test</code> 332 passed, 0 failed, 1 skipped. Keyring 78 passed, 1 skipped.</td>
+<td>Install passed. <code>pnpm test</code> 327 passed, 3 failed (the same three), 3 skipped. Keyring 79 passed, 0 skipped. Parse 0 errors. Refusal check passed. No test-prefixed task left, and the two disabled tasks unchanged. Free space C: 53.639 to 53.644 GiB, D: 232.245 to 232.215 GiB.</td>
+<td>PASS.</td></tr>
+</tbody>
+</table>
+<p><strong>Windows gaps in gates 1 to 4.</strong> The Windows machine was offline from attempt 1 until
+attempt 5's intake. Gate 1 tried it and timed out. Gates 2 to 4 made no Windows attempt. So the
+Windows keyring tests, the PowerShell parse and the invalid-target refusal first ran at gate 5. The
+Windows code of attempts 1 to 4, which includes the <code>CredReadW</code> rule and the teardown
+rewrite, ran nowhere on Windows until then, and the keyring tests always ran against fakes.</p>
+<p><strong>The gate-6 and gate-7 Fedora skip.</strong> The test <code>windows desktop task: on every way
+out the task is let go only once it is confirmed stopped</code> runs the real <code>DesktopScript</code>
+action under PowerShell. Fedora has no <code>pwsh</code> and the test skips there by design, with
+"no PowerShell here". It ran and passed on Windows under <code>powershell.exe</code> at gates 6 and 7
+and in the verification below, so every test ran on at least one machine.</p>
+<p>Records: <code>252-gate1-last.md</code> through <code>252-gate7-last.md</code>, with the per-gate
+<code>252-gateN-*.log</code> files and the named-test matrices <code>252-gate5-keyring-names.log</code>,
+<code>252-gate6-20261103T125652Z-keyring-names.log</code> and
+<code>252-gate7-keyring-test-matrix.log</code>.</p>
+
+<h2>Verification on the candidate</h2>
+<p>Fedora is Fedora Linux 44 and Windows is Windows 11 Pro 10.0.26200. Both used pnpm 11.22.0. The Fedora
+cargo check and every Windows command pinned Rust 1.90.0, and the Windows builds ran with
+<code>CARGO_BUILD_JOBS=2</code> and a target folder on D:. The Fedora Rust toolchain behind <code>pnpm verify</code> is not recorded in
+the logs. Sol ran steps 1 to 3 from <code>252-verify.md</code>, and its log shows each command
+finishing. Sol then hit its usage limit, with no final message and no <code>252-verify-last.md</code>,
+after the packages were built and before any walkthrough. A Claude Sonnet 5.5 agent at
+<code>xhigh</code> reasoning effort ran steps 4 to 7, and Claude read both traces afterwards. The
+Windows checkout was a fresh clone from a git bundle, with no push. A separate older checkout on the
+Windows machine has unrelated edits, and nothing touched it. Every row below is candidate
+<code>56d5bf7</code>.</p>
+<table>
+<thead><tr><th>Command</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td>Merge: <code>git merge --no-ff origin/main</code>, with <code>origin/main</code> at <code>6d6ec97</code></td>
+<td>Clean, by the <code>ort</code> strategy. Result <code>56d5bf7</code>.</td></tr>
+<tr><td>Fedora: <code>RUSTUP_TOOLCHAIN=1.90.0 cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets</code></td>
+<td>Passed. <code>--locked</code> fails if the lock would change. <code>Cargo.lock</code> has blob
+<code>3da09b8a4ce104f10a23d2c5e040a52ef56cd14b</code> at <code>56d5bf7</code> and at
+<code>6d6ec97</code>, and the worktree file hashes to the same blob.</td></tr>
+<tr><td>Fedora: <code>pnpm install --frozen-lockfile</code>; <code>pnpm verify</code></td>
+<td>Passed. The install was already up to date. Typecheck: 829 files, 0 errors, 0 warnings.
+JavaScript: 333 tests, 332 passed, 0 failed, 1 skipped, the PowerShell <code>DesktopScript</code>
+test. Rust library: 796 tests, 786 passed, 0 failed, 10 ignored. The binary and doc-test targets each
+ran 0 tests. Format and Clippy with <code>-D warnings</code> passed. The frontend build passed with the
+existing chunk-size warning.</td></tr>
+<tr><td>Windows: clone from the bundle, <code>pnpm install --frozen-lockfile</code></td>
+<td>Passed. 482 packages, all 482 reused, 0 downloaded. The checkout was at <code>56d5bf7</code>.</td></tr>
+<tr><td>Windows: <code>pnpm verify</code></td>
+<td><strong>Failed</strong> only at the existing <code>pnpm install fails when the prepare svelte-kit sync fails</code>
+test in <code>tests/install-failure.test.mjs</code>. It expected <code>/INTENTIONAL_SYNC_FAILURE/</code>
+and received <code>undefined\nundefined</code>. Typecheck: 0 errors, 0 warnings. JavaScript: 333 tests,
+327 passed, 1 failed, 5 skipped. The five skips are a POSIX-permission test, a test that needs
+<code>zip</code>, one that needs <code>rpmbuild</code>, and two Linux-only helper tests. The command stops
+after JavaScript, so its Rust, lint and build stages did not run inside it. The branch does not touch that
+test, and the #237 and #238 reports record the same failure on main. <a href="https://github.com/zulucode-design/second-brain/issues/244">Issue 244</a>
+owns the repair.</td></tr>
+<tr><td>Windows, separate: <code>node --test tests/alpha-harness-keyring.test.mjs</code></td>
+<td>Passed with exit 0. 79 tests, 79 passed, 0 failed, 0 skipped, including the <code>DesktopScript</code>
+test under <code>powershell.exe</code>. The same test also passed inside the Windows <code>pnpm verify</code>.</td></tr>
+<tr><td>Windows, separate: <code>pnpm test:rust</code>, <code>pnpm lint:rust</code>, <code>pnpm build</code></td>
+<td>Passed, each with exit 0. Rust library: 764 tests, 755 passed, 0 failed, 9 ignored. Format and Clippy
+with <code>-D warnings</code> passed. The frontend build passed.</td></tr>
+<tr><td>Both: <code>pnpm tauri:build --bundles rpm</code> on Fedora and <code>--bundles nsis</code> on
+Windows, with Tauri CLI 2.12.2, the version <code>package.json</code> pins</td>
+<td>Passed. The release compiles took 5 m 20 s on Fedora and 2 m 16 s on Windows. Both installed
+binaries embed <code>56d5bf7a1437d5fa6622091fb40c66aba12434f0</code> as their build commit, as the
+passing run's trace shows. Hashes are below.</td></tr>
+<tr><td>Both: keyring metadata for all four AI accounts, before any run</td>
+<td>No entry on either machine. Fedora: 0 unlocked and 0 locked items for each account. Windows: found
+and left both false for each account. That is 8 of 8 absent, checked twice, before Sol's runs and
+again before the refusal run.</td></tr>
+<tr><td>Both: refusal run <code>20261103T153751Z</code></td>
+<td>Refused as designed. See "The refusal run".</td></tr>
+<tr><td>Both: passing Gate 3 run <code>20261103T154122Z</code></td>
+<td>Passed. See "The passing run".</td></tr>
+<tr><td>Both: metadata after each run</td>
+<td>8 of 8 absent after the synthetic entries were deleted, and 8 of 8 absent after the passing run.</td></tr>
+</tbody>
+</table>
+<p>The test counts add up against main. Main at <code>6d6ec97</code> has the same tree as
+<code>808f0b7</code>, the head of PR #250 (<code>git rev-parse 808f0b7^{tree} 6d6ec97^{tree}</code>
+prints one tree twice). The records of #250's re-merge, which ran on the code of that head, report 254
+JavaScript tests and 786 Fedora and 755 Windows Rust tests. This branch adds 79
+JavaScript tests, 254 + 79 = 333, in one new file, and no Rust test, so the Rust counts equal main's.
+Windows reports 333 = 327 + 1 + 5. Regenerate the JavaScript count with
+<code>node --test tests/alpha-harness-keyring.test.mjs</code>, which prints 79 on a machine with
+PowerShell and 78 passed plus 1 skipped without it. The population is that one file.</p>
+<p>Records: <code>252-verify.md</code> and <code>252-verify.log</code> (Sol, with the narration of
+steps 1 to 3), <code>252-v-fedora-cargo-check.log</code>, <code>252-v-fedora-install.log</code>,
+<code>252-v-fedora-verify.log</code>, <code>252-v-fedora-package.log</code>,
+<code>252-v-windows-run.log</code>, <code>252-v-windows-install.log</code>,
+<code>252-v-windows-verify.log</code>, <code>252-v-windows-keyring.log</code>,
+<code>252-v-windows-rust.log</code>, <code>252-v-windows-lint.log</code>,
+<code>252-v-windows-build.log</code>, <code>252-v-windows-package.log</code>,
+<code>252-v-windows-results.log</code>, <code>252-v-key-metadata-before.log</code> and
+<code>252-v-key-metadata-before-refusal.json</code>. Sol's Windows controller printed
+<code>REAL_VERIFY_FAILURE</code> for the #244 failure, because its parser did not match Windows'
+output. Sol confirmed that the failing-test list holds exactly that one test and ran the remaining
+commands as a separate script. It was a controller bug, not another failure.</p>
+
+<h2>Added tests matched to execution</h2>
+<p>The branch adds one test file, <code>tests/alpha-harness-keyring.test.mjs</code>, with 79 tests, and
+changes no existing test. The count grew with each attempt, from 24 tests in attempt 1 to 35,
+47, 58, 69, 78 and 79. The tests use fakes only. They never touch the real keyring or a real machine.
+A test named <code>fedora:</code> or <code>windows:</code> drives that platform's code path against a
+fake keyring or fake Windows I/O, and it runs on both machines. The Windows finalize tests run the real
+worker functions over temporary files, and the Windows teardown tests run the real machine and
+teardown code over fake Windows I/O. One test runs the real
+<code>DesktopScript</code> action under PowerShell with every Task Scheduler cmdlet replaced by a fake,
+and skips where no PowerShell exists.</p>
+<p>The tests cover what attempt 1's brief listed: an entry present before the run, where the run
+refuses and changes nothing; no entry, where the key is planted and deleted after a passing run; a run
+that fails after planting, where the entry is still deleted; and no value in any recorded event, error
+or process call. Later attempts added signals, locked entries, the second-read race, trace failures,
+lookup and delete errors, result files and timeouts, and the shared teardown, finalize, driver stop,
+restore gate and acceptance gate sequences.</p>
+<p>The table lists every test in the file, from the Windows focused run's log. Each name matches exactly
+one line in each of the three logs, and every cell is PASS except one Fedora SKIP, the
+<code>DesktopScript</code> test, for want of PowerShell. "Fedora verify" is the Fedora <code>pnpm verify</code>
+log, "Windows verify" the Windows <code>pnpm verify</code> log, and "Windows focused" the separate
+keyring-only run. I produced the match from the logs.</p>
+<details><summary>Reproduce the match</summary>
+<pre><code>grep -E '^✔ ' 252-v-windows-keyring.log | sed -E 's/^✔ //; s/ \([0-9.]+ms\)$//' | sort > names.txt
+wc -l &lt; names.txt                                                      # 79
+for log in 252-v-fedora-verify.log 252-v-windows-verify.log 252-v-windows-keyring.log; do
+  sed -E 's/ \([0-9.]+ms\)( #.*)?$//' "$log" | grep -E '^[✔﹣] ' | sed -E 's/^[✔﹣] //' | sort | comm -12 - names.txt | wc -l
+done                                                                     # 79, 79, 79
+grep -c '^﹣ windows desktop task: on every way out' 252-v-fedora-verify.log   # 1, the skip</code></pre>
+<p>The population of each count is the distinct test lines of that log that begin with a pass or skip
+mark. The logs hold other test files' tests too, so the match is by name against the 79.</p>
+</details>
+<table>
+<thead><tr><th>Test</th><th>Fedora verify</th><th>Windows verify</th><th>Windows focused</th></tr></thead>
+<tbody>
+<tr><td>fedora: an entry present before the run refuses it before the install and the recovery</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: a passing run plants the key and its cleanup deletes it once the app is stopped</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: an entry that appears after the check stops the run before the plant and deletes nothing</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: a run that fails before the plant deletes nothing, even an entry its launch filed</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: a run that fails after the plant still deletes the key</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: SIGINT after the plant stops the app, settles the gate, then deletes the key</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: SIGTERM after the plant stops the app, settles the gate, then deletes the key</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: a gate that keeps going after the signal can change nothing more</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: a Notion connect that completes after the signal stores nothing the cleanup misses</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: a signal before the plant stops the run with nothing planted or deleted</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: a signal during the final check fails the run instead of completing it</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: failing trace writes after the plant still tear the machine down and remove the key</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: a stop that fails after a signal still leaves the full teardown to run and restore</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: a lookup error before the run refuses it before anything changes</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: a lookup error at the plant stops the run with nothing planted or deleted</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: a delete error fails the run and records the entry as unknown</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: an entry present before the run refuses it before the install and the recovery</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: a passing run plants the key and its cleanup deletes it once the app is stopped</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: an entry that appears after the check stops the run before the plant and deletes nothing</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: a run that fails before the plant deletes nothing, even an entry its launch filed</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: a run that fails after the plant still deletes the key</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: SIGINT after the plant stops the app, settles the gate, then deletes the key</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: SIGTERM after the plant stops the app, settles the gate, then deletes the key</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: a gate that keeps going after the signal can change nothing more</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: a Notion connect that completes after the signal stores nothing the cleanup misses</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: a signal before the plant stops the run with nothing planted or deleted</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: a signal during the final check fails the run instead of completing it</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: failing trace writes after the plant still tear the machine down and remove the key</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: a stop that fails after a signal still leaves the full teardown to run and restore</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: a lookup error before the run refuses it before anything changes</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: a lookup error at the plant stops the run with nothing planted or deleted</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: a delete error fails the run and records the entry as unknown</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: a key that cannot be cleared after a teardown that only failed to write its trace is the run's error</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: an uninstall that fails as the trace breaks is the run's error, and the candidate is reinstalled</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: a locked entry before the run counts as present and refuses it</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: a locked entry that appears before the plant stops it with nothing planted or deleted</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: a planted entry that is locked by cleanup time is reported as left</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: an entry the script saw only on its second read counts as present, before the run and at the plant</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>both machines are checked before anything changes, and a refusal names each machine holding an entry</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>a run of both machines plants and removes the key on each, one machine after the other</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>the walkthrough may plant only the AI keys it checked</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows teardown: every trace write failing still stops the driver and restores the config</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows teardown: a failed driver stop still stops the app and restores the config, trace or not</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows teardown: a failed forced stop still waits again and attempts the restore, which waits for the app</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows teardown: an early stop goes on past a failed driver stop and trace write, and cleanup stops the driver again</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>teardown: finishMachine names a trace it could not write even when the teardown itself passed</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: a passing gate whose trace breaks after the plant fails the run, torn down and with no key left</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: a passing gate whose trace breaks after the plant fails the run, torn down and with no key left</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>teardown: finishMachine reports a passing teardown as passed, and never throws</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora teardown: every exact PID is signalled even when one before it fails</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows driver stop: a native driver that cannot be stopped still leaves tauri-driver stopped</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows driver stop: a driver that exited already counts as stopped</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows driver stop: a process list that cannot be read stops nothing else from running</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows finalize: a full run-root drive that stops the damaged copy still restores the profile, and keeps the lock</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows finalize: a config.json that cannot be replaced still has the window state and profile restored, and keeps the lock</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows finalize: a profile folder that cannot be put back still has the next one restored, and keeps the lock</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows finalize: a damaged copy that cannot be moved still has the next one moved</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows finalize: a junction or task that cannot be removed keeps the lock, with every restore done</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows finalize: a finalize that succeeds restores everything and drops the lock</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows finalize: the junction and both tasks are each removed even when one before failed</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows forced stop: each of the run's processes is stopped even when one before failed</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows finalize: nothing is touched while an installed process remains</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>restore gate: a trace that breaks with the failure still tears the failed machine down</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>acceptance gate: a trace that breaks in the Windows teardown, after a Fedora teardown that failed, is still reported</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>acceptance gate: a Windows restore that fails after a Fedora teardown that only failed to write its trace is the run's error</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>acceptance gate: a trace that breaks with the failure, and a network restore that fails, still restore and tear down everything else</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>acceptance gate: a trace that breaks with the failure, and a isolation restore that fails, still restore and tear down everything else</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>the walkthrough plants exactly the keys it checks for</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>fedora: a Secret Service search that failed or answered oddly is never read as absent</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>the keyring stores refuse accounts that are not the app's AI keys</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: each credential call has a result file of its own, and none is left behind</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: a result an earlier call wrote late cannot answer a later call</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: only a well-formed Win32 error from the script reaches the error message</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: the worker passes on the two flags and nothing the script wrote beside them</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: the desktop script call waits as long as alpha-harness.ps1 waits for its task</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: each timeout around a desktop task is longer than the one inside it</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows desktop task: on every way out the task is let go only once it is confirmed stopped</td><td>SKIP</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>windows: a desktop task left registered keeps its result file, which answers no later call</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+<tr><td>alpha-desktop.ps1 checks exactly the app's AI targets and stops on any error but ERROR_NOT_FOUND</td><td>PASS</td><td>PASS</td><td>PASS</td></tr>
+</tbody>
+</table>
+
+<h2>The refusal run</h2>
+<p>Run <code>20261103T153751Z</code>, two machines, candidate <code>56d5bf7</code>. Before it, the
+Sonnet agent created a synthetic <code>ai:openai</code> entry on each machine with a fresh value that
+it held only in memory and never printed. On Fedora it used <code>secret-tool store</code> with the
+value on standard input, and one <code>SearchItems</code> call then saw exactly one item. On Windows it
+used a script that ran in the desktop session through the harness's scheduled-task path and wrote the
+generic credential <code>ai:openai.io.github.zulucodedesign.SecondBrain</code>. Both writes succeeded.
+Then it ran the full two-machine Gate 3 walkthrough with the candidate commit, the candidate RPM and the
+candidate NSIS installer. The run exited 1, 4.6 seconds after it started, with these four trace
+events:</p>
+<ol>
+<li><code>run-start</code> from the controller, with <code>gate: true</code> and both machines.</li>
+<li><code>ai-keys-checked</code> on Fedora: <code>"entries": {"ai:openai": {"existed": true}}</code>.</li>
+<li><code>ai-keys-checked</code> on Windows: <code>"entries": {"ai:openai": {"existed": true}}</code>.</li>
+<li><code>run-failed</code> from the controller, with this error text:</li>
+</ol>
+<pre><code>keyring already holds an AI key entry the run would overwrite: fedora (account ai:openai, service io.github.zulucodedesign.SecondBrain); windows (account ai:openai, service io.github.zulucodedesign.SecondBrain); move the key aside by hand before running again</code></pre>
+<p>The trace holds no <code>package-evidence</code>, <code>installed</code>, <code>prepared</code>,
+<code>session</code>, <code>entry-launched</code>, <code>config-patched</code>, <code>ai-keys-armed</code> or
+<code>ai-keys-removed</code> event. So the run installed no candidate, did no Windows stale-run
+recovery, prepared and launched nothing, patched no config and armed nothing. The only change a
+refusal makes before it checks is deploying the harness's own Windows tools to its test folder, as
+documented. The agent's script asserted that the synthetic key's bytes appear nowhere in the
+trace.</p>
+<p>After the run, inside scripts that printed only "same" or "different", each machine's entry was
+compared with the value the agent had written. Both compared <strong>same</strong>. Each synthetic entry
+was then deleted, only after that comparison, and both deletions succeeded. The Windows script
+exited 0 and left no scheduled task of its own. Metadata afterwards showed 8 of 8 AI entries absent.</p>
+<p>State before and after the run was compared. Fedora showed no difference in any compared item: the
+config and window-state files in the user's two folders and in the isolated copy, the installed RPM's name, version and install time,
+<code>rpm -V</code>'s exit status, the hashes of the installed binary and desktop entry, the keyring
+counts for the four accounts, the harness lock and the harness-related processes. Windows showed no
+difference except free space, which the comparison ignores: <code>config.json</code> and the window
+state by hash, the three profile folders' trees, the moved-aside folders, locks, scheduled tasks, the
+Start Menu shortcut, the uninstall entry, the app files, the processes and the Ollama ports.</p>
+
+<h2>The passing run</h2>
+<p>Run <code>20261103T154122Z</code>, two machines, candidate <code>56d5bf7</code>, no AI entry
+present. The gate's Ollama server ran on the Windows machine on port 11436 under the bounded job
+supervisor, and Fedora reached it through an SSH tunnel. The Notion step used the disposable page. The
+run started at 15:41:22Z and wrote <code>run-complete</code> with <code>gate: true</code> at
+15:44:41Z, so it took 3 minutes 19 seconds. Its trace has 97 rows. The key events on each machine:</p>
+<table>
+<thead><tr><th>Event</th><th>Fedora</th><th>Windows</th></tr></thead>
+<tbody>
+<tr><td><code>ai-keys-checked</code></td><td><code>ai:openai</code> existed false</td><td><code>ai:openai</code> existed false</td></tr>
+<tr><td><code>ai-keys-armed</code></td><td>armed true, existed false</td><td>armed true, existed false</td></tr>
+<tr><td><code>config-patched</code>, the plant</td><td>keys <code>["openai_api_key"]</code></td><td>keys <code>["openai_api_key"]</code></td></tr>
+<tr><td><code>notion-checked</code></td><td><code>tokenFound</code> false, <code>tokenLeft</code> false</td><td><code>tokenFound</code> false, <code>tokenLeft</code> false</td></tr>
+<tr><td><code>ai-keys-removed</code></td><td>armed true, <code>removed</code> true, <code>left</code> false</td><td>armed true, <code>removed</code> true, <code>left</code> false</td></tr>
+</tbody>
+</table>
+<p>Because <code>removed</code> is true only when an entry existed at cleanup, this shows that the app
+filed the planted key on each machine and that the harness deleted it. On Windows the removal came
+after <code>config-restored</code>, which is the order the design calls for, with key removal after
+the machine teardown. After the Windows removal the trace records <code>vault-final</code>,
+<code>uninstalled</code>, <code>reinstalled</code> and then the controller's <code>run-complete</code>.</p>
+<p>Afterwards, metadata showed 8 of 8 AI entries absent (Claude also saw Fedora at 0 and 0 for all four
+accounts). The restore checks are under "Machine state after the runs".</p>
+
+<h2>Package checksums</h2>
+<table>
+<thead><tr><th>Artifact</th><th>Bytes</th><th>SHA-256</th></tr></thead>
+<tbody>
+<tr><td>Fedora candidate RPM</td><td>31,410,002</td><td><code>43cae38cc0c8630f8ea6e51957be7ee5f91c97d7ec06196cd43bacec99827ac8</code></td></tr>
+<tr><td>Windows candidate NSIS installer</td><td>20,649,241</td><td><code>a9fd3e78b0a56567a48087be80067469eda55aa4f49482e3705aff8121c6fa0b</code></td></tr>
+<tr><td>Fedora installed <code>/usr/bin/second-brain</code></td><td>51,459,264</td><td><code>a7a1318573acdb0feba1797a28b0d44d4b607bfa2bc9d29d985de8c4d8d24466</code></td></tr>
+<tr><td>Windows installed <code>second-brain.exe</code></td><td>36,953,088</td><td><code>4fed2158cf670f5676ae0d381345d27c7ea9699c184c3549afd7e7a672d9c08a</code></td></tr>
+</tbody>
+</table>
+<p>The RPM hash is in the passing run's trace (<code>package-evidence</code>) and matches the retained RPM, which I
+hashed again. Sol's <code>252-v-fedora-package-hash.log</code> is empty, so the trace is the record. The
+NSIS hash is in Sol's <code>252-v-windows-package-hash.log</code> and in the trace, and I read the
+installer's size from the Windows machine. The installed-binary hashes and sizes come from the trace.
+Both installed binaries embed <code>56d5bf7</code> as their build commit. The RPM passed
+<code>rpm -K</code> ("digests OK") and the harness's <code>rpm -V</code> check read "clean". Both candidate packages
+stay outside the repository.</p>
+
+<h2>Machine state after the runs</h2>
+<p>Each row compares a snapshot taken before the passing run with one taken after it.</p>
+<ul>
+<li><strong>Fedora.</strong> The harness installs the candidate over the app package and removes it after a
+pass. Before the run an older #242 test RPM was installed. After it, <code>second-brain</code> is not
+installed, and the binary and desktop entry are absent. Nothing replaced the older build. The compared
+config and window-state files are unchanged, there is no harness lock, and no app, driver or harness
+process remains. The SSH tunnel to the Windows Ollama server, present before the run, is gone. Keyring
+counts for the four accounts are 0 and 0. Fedora free space was not recorded.</li>
+<li><strong>Windows.</strong> <code>config.json</code> and the window state (hash and size), the
+<code>logs</code>, <code>EBWebView</code> and <code>vaults</code> trees, the moved-aside folders, the
+lock files, the scheduled tasks (the same two disabled tasks from earlier work, and none of the run's),
+the Start Menu shortcut and the uninstall entry's name, version and location are unchanged. The one
+difference is the installed <code>second-brain.exe</code>. It went from the older #242 test build to
+the candidate, and <code>syncthing.exe</code> is unchanged. The candidate stays installed, because the
+harness reinstalls the installer it is given.</li>
+<li><strong>Ollama on Windows.</strong> The snapshot before the passing run shows one gate server
+listening on port 11436 under its supervisor, and nothing on 11434. The agent stopped the supervisor by
+exact PID, after checking its process name and start time. The stop script's result then shows the
+supervisor, the server and the console host gone, no Ollama process and neither port listening. Sol's
+earlier gate server was already gone at that snapshot, and its supervisor had a 3,600 s lifetime. The
+user's own model store was not touched.</li>
+<li><strong>Free space on Windows, in bytes.</strong> Around the refusal run, C: 57,583,497,216 to
+57,576,382,464 and D: 248,263,782,400 to 248,263,774,208. Around the passing run, C: 57,574,453,248 to
+57,337,647,104 and D: 248,263,774,208 to 248,249,823,232. These are volume measurements, not an
+attribution of every change to the run.</li>
+</ul>
+<p>Records: <code>252-v-fedora-before2.json</code>, <code>252-v-fedora-after-refusal.json</code>,
+<code>252-v-fedora-before-pass.json</code>, <code>252-v-fedora-after-pass.json</code>,
+<code>252-v-win-before2.json</code>, <code>252-v-windows-after-refusal.json</code>,
+<code>252-v-win-before-pass.json</code>, <code>252-v-windows-after-pass.json</code>,
+<code>252-v-key-metadata-after-synthetic-delete.json</code>,
+<code>252-v-key-metadata-after-pass.json</code>, <code>252-v-ollama-stop.log</code> and
+<code>252-v-refusal-run.log</code>.</p>
+
+<h2>Committed evidence</h2>
+<p>This commit adds this report and the two traces, which were untracked in
+<code>docs/reports/evidence/</code> until now. The refusal trace,
+<code>alpha-harness-walkthrough-20261103T153751Z.jsonl</code>, has 4 rows and 1,001 bytes, SHA-256
+<code>ddd57aafb6a14995316b9df31f43e06312739fd47fd627eb6b9466f37042e790</code>. The passing trace,
+<code>alpha-harness-walkthrough-20261103T154122Z.jsonl</code>, has 97 rows and 27,371 bytes, SHA-256
+<code>fad8309bb8c6f874bba8a5f9b13ca686a0416f73c9b66fb01ee14120d5d8d6a1</code>. They are the evidence
+for the two runs above, and a cleanup never removes them.</p>
+<p>Before committing them I scanned both with a script that printed only counts. It found none of the
+following in either trace:</p>
+<ul>
+<li>the Notion token, compared by exact value, held in memory only;</li>
+<li>any <code>sk-</code> string, which covers the planted key and the synthetic refusal value, any
+<code>ntn_</code> or <code>secret_</code> token shape, a bearer string, or a key, token, secret or
+password field with a value;</li>
+<li>the Linux login name, home directory, short and fully qualified host names, the Windows computer
+name, user name and profile path, and the SSH alias of the Windows machine, each compared by exact
+value, held in memory only;</li>
+<li>the repository owner's first and last name, an email address, an IPv4 address, a Syncthing device id,
+<code>/home/</code>, <code>/Users/</code> or <code>C:\Users</code>.</li>
+</ul>
+<p>What the passing trace does hold are kinds that earlier committed walkthrough traces hold too:
+52 home-relative <code>~/</code> paths (51 under the harness's scratch folder, and one for the
+checkout directory of the candidate RPM, whose name differs from earlier traces' checkout names but is
+home-relative like them), 7 <code>%USERPROFILE%</code> paths, 17 paths under the Windows test folder on D:,
+11 SHA-256 values for packages, vaults and window state, fixture note titles and paths, and the
+public clip URL. The refusal trace holds none of these paths. Regenerate the shape counts, where the
+population is the two files:</p>
+<pre><code>cd docs/reports/evidence
+for f in alpha-harness-walkthrough-20261103T153751Z.jsonl alpha-harness-walkthrough-20261103T154122Z.jsonl; do
+  for p in 'sk-[A-Za-z0-9_-]+' '(ntn_|secret_)[A-Za-z0-9]{10,}' '[Bb]earer ' '/home/|/Users/' \
+    '[A-Za-z]:\\\\+Users' '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' '([0-9]{1,3}\.){3}[0-9]{1,3}' \
+    '[A-Z0-9]{7}(-[A-Z0-9]{7}){7}' '"(api[_-]?key|token|secret|password|authorization)": *"[^"]{6,}"' \
+    '~/' '%USERPROFILE%' 'D:\\\\SecondBrainTest'; do
+    printf '%s %s\n' "$(grep -o -E -- "$p" "$f" | wc -l)" "$p"
+  done
+done</code></pre>
+<p>The patterns for secrets and identities print 0 for both files. The last three print 0, 0 and 0 for
+the refusal trace and 52, 7 and 17 for the passing trace. The checks for the token, the login and
+host names, and the Windows identity compare against private values, so this report does not record
+them, and a reader repeats them with their own values.</p>
+<p>Other records stay outside the repository and are cited by name: <code>252-report.md</code> (the
+brief for this report), <code>252-issue-snapshot.json</code>, the Kiro briefs and handoffs named above, the
+<code>252-push-attempt-N</code> files, and <code>252-v-run.py</code>, the Sonnet agent's driver for the
+refusal run, with the logs <code>252-v-refusal-walkthrough.log</code> and
+<code>252-v-pass-walkthrough.log</code>. The passing run's driver was a manual launch and left no script.</p>
+
+<h2>Disclosures</h2>
+<ul>
+<li><strong>Windows <code>pnpm verify</code> fails at one existing test.</strong> It is
+<code>pnpm install fails when the prepare svelte-kit sync fails</code>, which
+<a href="https://github.com/zulucode-design/second-brain/issues/244">issue 244</a> owns. The PR must say
+so. Windows Rust, lint and build ran as separate commands, because <code>verify</code> stops after
+JavaScript.</li>
+<li><strong>The harness replaced the older #242 test builds on both machines.</strong> Fedora now has
+no Second Brain RPM installed. Windows has the candidate installed. Neither was put back. This is what
+the harness does, and the ledger records that nothing was reinstalled.</li>
+<li><strong>The Fedora Notion token lookup still uses <code>secret-tool lookup</code>.</strong> This is
+existing code, <code>notionTokenStored</code> in <code>scripts/alpha-harness.mjs</code>, and it is
+unchanged. It reads a locked entry as absent, and the token's value enters the harness's memory
+there. Kiro noted it as out of scope in its attempt-3 handoff. The ledger calls it a candidate
+follow-up issue, and I found no issue for it. The AI key check does not share this weakness.</li>
+<li><strong>The gate-level catch blocks Kiro listed after attempt 4 were fixed.</strong> They were the
+<code>cleanup-error</code> lines in Gate 1's <code>finally</code>, the restore gate's
+<code>run-failed</code> write, and the acceptance gate's <code>run-failed</code> and
+<code>cleanup-error</code> writes. Attempt 5 fixed them, and I checked the code at
+<code>56d5bf7</code>. All four now write through the trace writer that never throws. Two limits remain.
+Gate 1 has no regression test and was checked by reading only, as the attempt 5 to 7 handoffs say. And
+the walkthrough's own pre-check <code>run-failed</code> line, written before any machine is made,
+can still throw a trace error in place of the real one. Nothing is torn down at that point, and
+Kiro's attempt-4 handoff names it.</li>
+<li><strong>The branch changes teardown for every gate.</strong> See "Changes from the issue text".
+The PR body should name that, because the issue's title does not.</li>
+<li><strong>A run killed outright leaves the entry.</strong> This is documented. A <code>SIGKILL</code>, a
+closed terminal, a power loss or a cancelled GitHub Actions run cannot clean up, so the next run
+refuses and names the entry. Someone deletes it by hand after confirming it holds the synthetic
+value.</li>
+<li><strong>Weak proof.</strong> The real runs prove the refusal and the plant-then-remove path on both
+machines. Everything below rests on fakes and source reading, and no real run reproduced it.
+<ul>
+<li>A run that fails after the plant, or receives <code>SIGINT</code> or <code>SIGTERM</code>, on a
+real machine. The tests drive the controller with fake machines and fake signals.</li>
+<li>A locked Fedora entry. Review round 2 cited libsecret's source for how <code>secret-tool</code>
+behaves, and the tests use a fake. The real <code>SearchItems</code> call returned the expected
+reply shape, with no items.</li>
+<li>Windows <code>found: false, left: true</code> from a credential that appears between the script's two
+reads, and any Win32 error other than 1168.</li>
+<li>A full evidence disk, a failing trace write, a locked <code>config.json</code> and a full D: drive.
+The tests use temporary files and fakes. One test holds <code>config.json</code>'s path with a
+directory.</li>
+<li>The real Task Scheduler reporting a task as <code>Queued</code>, <code>Unknown</code> or
+<code>Disabled</code>, or refusing to stop one. The <code>DesktopScript</code> test ran under <code>powershell.exe</code>
+with the cmdlets faked. The real action ran in both live runs and in the
+synthetic-entry scripts, and no failure path occurred.</li>
+</ul>
+A staged run on each machine with a signal sent after the plant would settle the first item. The rest
+would need the failure produced on a real machine.</li>
+<li><strong>Kiro's sandbox runs</strong>, including its mutation checks and its runs of PowerShell 7,
+are information only. The Windows Rust, lint and build commands, the packages, and the two live runs
+are Sol's and the Sonnet agent's.</li>
+</ul>
+
+<h2>Remaining work and limits</h2>
+<p>This commit adds a report and two traces. Application sources, scripts, tests and other documents
+are identical to the verified candidate <code>56d5bf7</code>, so the evidence above carries to this commit,
+and no gate was rerun on it. The whole branch needs a fresh final Spec and Standards review at the
+exact publication head, then the PR with its <code>Final review:</code> line, then CI, then Nicolas's
+approval to merge. The PR body must close exactly #252 and no other issue. It must also name the
+Windows #244 failure and the widened teardown scope. Issue 244 is open, and its branch edits
+<code>scripts/alpha-harness.mjs</code> (the <code>APP_SOURCES</code> constant), <code>docs/alpha-harness.md</code>
+and <code>tests/alpha-harness.test.mjs</code> in regions this branch leaves alone, so whichever of the
+two merges second re-checks for conflicts.</p>
+<p>The ignored Rust tests (10 on Fedora and 9 on Windows) are not claimed as passes. No Rust test
+changed, and no application code changed. No installed-app check beyond the two Gate 3 runs is claimed,
+and the Gate 3 runs cover only the keyring behavior this issue asks for and the walkthrough's usual
+steps.</p>
+</main>
+</html>
