@@ -26,13 +26,16 @@ header fields earlier releases wrote. <code>diagnostic_export.rs</code> changes 
 <p><strong>Publication is pending, and the verification run failed its own cleanup.</strong> Every
 application check the issue asks for passed on candidate <code>8f54c08</code> on Fedora and
 Windows, apart from the one existing #244 test that fails Windows <code>pnpm verify</code>. The
-cleanup did not pass. Sol's installed-check script planted a synthetic OpenAI key in the app's
+Fedora <code>pnpm verify</code> and <code>backup::</code> gates are evidenced by a rerun at
+<code>7f11a60</code>, whose code is identical (see "Verification"). The cleanup did not pass. Sol's installed-check script planted a synthetic OpenAI key in the app's
 config on both machines. The app moved that key into the OS keyring and overwrote the app's global
 OpenAI entry, <code>ai:openai</code> for <code>io.github.zulucodedesign.SecondBrain</code>, and
-nobody had saved the previous value. Both machines still hold the synthetic value. Nicolas
-confirmed he never saved a real OpenAI key in Second Brain, so no real key was lost. Deleting the
-two entries waits for his approval. Final review of the publication head, the PR, CI and his merge
-approval have not happened.</p>
+nobody had saved the previous value. Both machines held the synthetic value afterwards. Nicolas
+confirmed he never saved a real OpenAI key in Second Brain, so no real key was lost. After he
+approved it, Claude deleted both fake entries on 2026-11-02, and none is left (see "Cleanup
+failure"). The final review of <code>7f11a60</code> found report-only issues, which this commit
+corrects (see "Status after the final review"). A fresh final review of the new head, the PR, CI and
+his merge approval have not happened.</p>
 
 <h2>Changes from the issue text</h2>
 <ul>
@@ -53,7 +56,10 @@ entries and Deflated level 6 are unchanged.</li>
 <li>Known limitation, recorded as Nicolas directed on 2026-10-26. v0.1.0-alpha.1, built with zip
 2.4.2, reads an entry whose name ends in a backslash as a directory. A regular file such as
 <code>Projects/ends in\</code> on Fedora therefore comes back from alpha.1 as an empty folder, even
-from alpha.1's own backups. This build restores it as the file, from old and new backups. Windows
+from alpha.1's own backups. That last part comes from reading the source (the <code>is_dir</code>
+trace in <code>237-r2-triage.md</code>), not from a run: the installed check had alpha.1 restore only
+a backup the candidate wrote, and reproduced the loss there. A run of alpha.1 restoring its own
+backup would settle it. This build restores it as the file, from old and new backups. Windows
 cannot hold such a name. The issue text says the app's <code>sanitize_filename</code> turns a
 backslash in a note name into <code>-</code>, so only a file added by hand can carry the name. The
 ledger records that no separate implementation issue was opened.</li>
@@ -68,7 +74,7 @@ which includes PR #245 and PR #247, into <code>be28c0ee744491a9c45bb409bc35cfc95
 with <code>git merge --no-ff origin/main</code>. There were no conflicts. Both sides changed
 <code>src-tauri/Cargo.toml</code> and <code>src-tauri/Cargo.lock</code>, in separate hunks, and
 git merged them.</li>
-<li>Four Kiro attempts, all in Kiro session <code>e88ddd7f-072d-4ebe-9963-91ec02882617</code>. Each
+<li>Four Kiro attempts, all in one Kiro session. Each
 has an immutable brief and a frozen handoff. Sol imported Kiro's commits with
 <code>cherry-pick -x</code>, which keeps Kiro as author.</li>
 </ul>
@@ -101,8 +107,9 @@ zip 9.1.0 declares 1.88. The manifest line is
 <code>zip = { version = "9", default-features = false, features = ["deflate"] }</code>, so default
 features stay off. The audit lists the enabled zip features as <code>_deflate-any</code>,
 <code>deflate</code>, <code>deflate-flate2</code>, <code>deflate-flate2-zlib-rs</code> and
-<code>deflate-zopfli</code>. After the merge, <code>cargo check</code> without <code>--locked</code> left
-<code>Cargo.lock</code> byte-identical. The merge differs from each parent only by the other
+<code>deflate-zopfli</code>. After the merge, a Claude Opus 5.5 agent ran <code>cargo check</code> without
+<code>--locked</code>, which left <code>Cargo.lock</code> byte-identical (information only; see
+"Verification"). The merge differs from each parent only by the other
 parent's change. The fs4 0.8.4 package entry stays in the lock because tantivy 0.22.1 depends on
 it. Merged manifests keep <code>rust-version = "1.90"</code> and
 <code>"@tauri-apps/cli": "2.12.2"</code> exactly. Records: <code>237-lock-audit.json</code> and
@@ -135,7 +142,8 @@ README.</p>
 the fetched <code>origin/main</code> at each head below. All eight log headers record
 <code>gpt-6.1-sol</code> at <code>xhigh</code>. The ledger records a fresh usage probe before the
 round 1, 2 and 4 jobs. Its round 3 entry does not mention one. Round 4 is clean, but no round is
-the final review. The exact publication head still needs both axes.</p>
+the final review. The final review of <code>7f11a60</code> is under "Status after the final
+review".</p>
 <table>
 <thead><tr><th>Round and head</th><th>Finding</th><th>Disposition</th></tr></thead>
 <tbody>
@@ -173,25 +181,32 @@ changed no application code of this branch, as the patch-id check above shows.</
 
 <h2>Verification</h2>
 <p>Fedora is Fedora Linux 44 and Windows is Windows 11 Pro 10.0.26200. Both used Rust 1.90.0 and
-pnpm 11.22.0. Sol ran the Windows, package, installed and gate commands, and the 17
-<code>237-vi-usage-*.log</code> probe logs each end in <code>OK</code>. The Fedora merge and its
-gates ran under a Claude Opus 5.5 agent, and <code>237-merge-verify-fedora.md</code> does not mention
-a Sol usage probe before them. Kiro's sandbox runs are information only and not gate evidence. Every
-row below is candidate <code>8f54c08</code> unless it says otherwise.</p>
+pnpm 11.22.0. Sol ran the Windows, package and installed commands and the Windows gates, and the
+17 <code>237-vi-usage-*.log</code> probe logs each end in <code>OK</code>. Sol was at its usage limit
+when the final review began, so the Fedora gates below ran under a Claude Sonnet 5.5 agent at
+<code>xhigh</code> reasoning effort, the fallback AGENTS.md names, on <code>7f11a60</code>.
+<code>git diff --stat 8f54c08 7f11a60</code> shows one file, this report, so the application code is
+identical to the candidate's. Records: <code>237-sv-fedora.md</code> and
+<code>237-sv-install.log</code>, <code>237-sv-verify.log</code>, <code>237-sv-backup.log</code> and
+<code>237-sv-diagnostic.log</code>. A Claude Opus 5.5 agent had run the Fedora merge and gates
+earlier at <code>8f54c08</code> (<code>237-merge-verify-fedora.md</code>, with the same counts, and
+no Sol usage probe before them). That run is information only and is not gate evidence. Kiro's
+sandbox runs are information only too. Every row below is candidate <code>8f54c08</code> unless it
+says otherwise; the two Fedora gate rows are at <code>7f11a60</code>.</p>
 <table>
 <thead><tr><th>Command</th><th>Result</th></tr></thead>
 <tbody>
-<tr><td>Fedora: <code>pnpm install --frozen-lockfile</code>; <code>cargo check --manifest-path src-tauri/Cargo.toml</code> without <code>--locked</code>; <code>pnpm verify</code>; <code>pnpm test:rust backup::</code></td>
-<td>Passed. The install was already up to date. The compile took 1 m 26 s, 0 warnings, and left the
-lock unchanged. <code>pnpm verify</code>: typecheck 829 files, 0 errors, 0 warnings; JavaScript 254
+<tr><td>Fedora, at <code>7f11a60</code>: <code>pnpm install --frozen-lockfile</code>; <code>pnpm verify</code>; <code>pnpm test:rust backup::</code></td>
+<td>Passed. The install was already up to date. No tracked file changed during the gates.
+<code>pnpm verify</code>: typecheck 829 files, 0 errors, 0 warnings; JavaScript 254
 tests, 254 passed, 0 failed, 0 skipped; Rust 768 passed, 0 failed, 10 ignored; format and Clippy
 with <code>-D warnings</code> passed; the frontend build passed with the existing chunk-size
 warning. <code>backup::</code>: 42 passed, 0 failed, 0 ignored, 736 filtered out. Check: 42 + 736 =
 778 = 768 + 10.</td></tr>
-<tr><td>Fedora: <code>pnpm test:rust diagnostic_export::</code></td>
+<tr><td>Fedora, at <code>7f11a60</code>: <code>pnpm test:rust diagnostic_export::</code></td>
 <td>Passed. 1 passed, 777 filtered out.</td></tr>
 <tr><td>Windows: clone from a git bundle, <code>pnpm install --frozen-lockfile</code></td>
-<td>Passed. 482 packages, 479 reused, 0 downloaded. The checkout was clean at <code>8f54c08</code>.</td></tr>
+<td>Passed. 482 packages, all 482 reused, 0 downloaded. The checkout was clean at <code>8f54c08</code>.</td></tr>
 <tr><td>Windows: <code>pnpm verify</code></td>
 <td><strong>Failed</strong>, only at the existing <code>pnpm install fails when the prepare svelte-kit sync fails</code>
 test in <code>tests/install-failure.test.mjs</code>. It expected <code>/INTENTIONAL_SYNC_FAILURE/</code>
@@ -221,7 +236,8 @@ alpha.1 and the candidate, plus the diagnostics export</td>
 <td>Passed on both machines. Only those two steps ran, not the whole walkthrough.</td></tr>
 <tr><td>Both: restore each machine's state</td>
 <td>Packages, config and window state, profile folders, processes, tasks and locks returned to their
-starting state. The <strong>OpenAI keyring entry did not</strong>. See "Cleanup failure".</td></tr>
+starting state. The <strong>OpenAI keyring entry did not</strong> restore on its own, and both fake
+entries were removed afterward. See "Cleanup failure".</td></tr>
 </tbody>
 </table>
 <p>Earlier candidates keep their own attribution and are not claimed for the merged head. Windows
@@ -255,8 +271,14 @@ directly follow the attribute:</p>
 awk '/#\[cfg\(windows\)\]/{u=NR} /#\[test\]/{if(u==NR-1)c++} END{print c" windows-gated"}' src-tauri/src/backup.rs
 grep -c '#\[test\]' src-tauri/src/backup.rs</code></pre>
 <p>These print 4, 1 and 43. The name-by-name comparison reads the <code>test backup::tests::... ... ok</code>
-lines of <code>237-mv-backup.log</code> and <code>237-vi-windows-backup.log</code>. The 46 and 15 come
-from the same comparison of <code>237-mv-verify.log</code> and <code>237-vi-windows-rust.log</code>.</p>
+lines of <code>237-sv-backup.log</code> and <code>237-vi-windows-backup.log</code>. The 46 and 15 come
+from the same comparison of <code>237-sv-verify.log</code> and <code>237-vi-windows-rust.log</code>.
+The population is the distinct <code>test ... ... ok</code> lines of each log:</p>
+<pre><code>ok() { grep -E '^test .* \.\.\. ok$' "$1" | sort -u; }
+comm -23 &lt;(ok 237-sv-verify.log) &lt;(ok 237-vi-windows-rust.log) | wc -l    # Fedora only: 46
+comm -13 &lt;(ok 237-sv-verify.log) &lt;(ok 237-vi-windows-rust.log) | wc -l    # Windows only: 15
+comm -23 &lt;(ok 237-sv-backup.log) &lt;(ok 237-vi-windows-backup.log)        # the four Fedora-only backup tests
+comm -13 &lt;(ok 237-sv-backup.log) &lt;(ok 237-vi-windows-backup.log)        # the one Windows-only backup test</code></pre>
 </details>
 
 <h2>Added tests matched to execution</h2>
@@ -300,9 +322,10 @@ and 0 for <code>diagnostic_export.rs</code>:</p>
 <pre><code>for f in backup diagnostic_export; do git diff --unified=0 origin/main...HEAD -- src-tauri/src/$f.rs | python3 -c 'import re,sys; print(len(re.findall(r"^\+\s*#\[test\]\n\+\s*fn \w+\(", sys.stdin.read(), re.M)))'; done</code></pre>
 <p>Each test name in each retained log. Every count is 1 where the table says PASS:</p>
 <pre><code>grep -cE '^test backup::tests::&lt;name&gt; \.\.\. ok' &lt;log&gt;</code></pre>
-<p>The logs are <code>237-mv-verify.log</code> and <code>237-mv-backup.log</code> on Fedora, and
+<p>The logs are <code>237-sv-verify.log</code> and <code>237-sv-backup.log</code> on Fedora, at
+<code>7f11a60</code>, and
 <code>237-vi-windows-rust.log</code> and <code>237-vi-windows-backup.log</code> on Windows. The
-diagnostic export test uses <code>237-vi-fedora-diagnostic.log</code> and
+diagnostic export test uses <code>237-sv-diagnostic.log</code> and
 <code>237-vi-windows-diagnostic.log</code> for the focused columns. Sol's
 <code>237-vi-test-match.py</code> classifies a test as modified when its source text differs between
 <code>origin/main</code> and the branch.</p>
@@ -415,6 +438,15 @@ list).</li>
 <li><strong>The key is a synthetic value, and no real key was lost.</strong> Nicolas confirmed he
 never saved a real OpenAI key in Second Brain. This report prints no key value, and its author did
 not read the keyring.</li>
+<li><strong>Deleted afterward.</strong> After Nicolas confirmed that no real OpenAI key was ever
+stored and approved the deletion, Claude deleted both fake <code>ai:openai</code> entries on
+2026-11-02: on Fedora with <code>secret-tool clear</code>, and on Windows with
+<code>CredDeleteW</code> through the harness's desktop-session script. Each was first checked to hold
+the check's synthetic value, without printing it, and none was left afterwards (ledger
+<code>status.md</code>, 2026-11-02 entries). On Windows, no scheduled task remains (checked
+2026-11-02: only the two disabled <code>SecondBrain169*</code> tasks from earlier work exist). The
+deletion step left two small files in the Windows test folder, a script and its result JSON, which
+wait for Nicolas's approval to delete them.</li>
 </ul>
 <p>The standard Gate 3 walkthrough does the same thing. <code>scripts/alpha-harness.mjs</code>,
 around line 1865, creates <code>sk-alpha-harness-&lt;uuid&gt;</code>, patches it into
@@ -426,12 +458,11 @@ nothing here proves that a walkthrough created the entry. The 15 committed walkt
 <code>docs/reports/evidence/</code>, dated 2026-09-26 to 2026-10-24, show the plant on Fedora in
 12, on Windows in 12 and on both in 10. Fourteen of the 15 show it on at least one machine. The
 other, <code>20261003T005823Z</code>, is 3 rows long and ends before any plant. So "on both machines
-on every run" overstates them, since 10 of the 15 show both machines, and the issue #252 body
-repeats that wording. The
+on every run" overstates them, since 10 of the 15 show both machines. The
 harness behavior is tracked in
-<a href="https://github.com/zulucode-design/second-brain/issues/252">issue 252</a>.</p>
-<p>The two entries stay in place. Deleting them needs Nicolas's approval for that item, as the
-deletion rule in AGENTS.md says. Sol removed the key plant from its own scripts after finding the
+<a href="https://github.com/zulucode-design/second-brain/issues/252">issue 252</a>, whose body now
+says 14 of the 15 committed walkthrough traces show the plant, 12 on Fedora and 12 on Windows.</p>
+<p>Sol removed the key plant from its own scripts after finding the
 problem. Gate 2 plants no key, and the Gate 3 subset ran after the plant was removed, so only runs
 of the installed-check controller planted. The Windows entry's last-write time, 17:00:20 UTC, is
 earlier than the Gate 3 run that began at 17:08:54 UTC, which fits that. Records: <code>237-vi-keyring-audit-fedora.json</code>,
@@ -442,9 +473,12 @@ earlier than the Gate 3 run that began at 17:08:54 UTC, which fits that. Records
 ls alpha-harness-walkthrough-*.jsonl | wc -l
 for m in fedora windows; do grep -l "\"event\":\"config-patched\",\"machine\":\"$m\",\"keys\":\[\"openai_api_key\"\]" alpha-harness-walkthrough-*.jsonl | wc -l; done
 grep -L '"event":"config-patched".*openai_api_key' alpha-harness-walkthrough-*.jsonl</code></pre>
-<p>These print 15, 12 and 12, then the one trace with no plant. The count of 10 for both machines
-is the intersection of the two <code>grep -l</code> lists. The population is the committed
-<code>alpha-harness-walkthrough-*.jsonl</code> files at this commit.</p>
+<pre><code>p() { grep -l "\"event\":\"config-patched\",\"machine\":\"$1\",\"keys\":\[\"openai_api_key\"\]" alpha-harness-walkthrough-*.jsonl | sort; }
+comm -12 &lt;(p fedora) &lt;(p windows) | wc -l</code></pre>
+<p>The first block prints 15, 12 and 12, then the one trace with no plant. The second prints 10, the
+traces that show the plant on both machines, as the intersection of the two <code>grep -l</code>
+lists. The population is the committed <code>alpha-harness-walkthrough-*.jsonl</code> files at this
+commit.</p>
 </details>
 
 <h2>Package checksums</h2>
@@ -464,7 +498,8 @@ is the intersection of the two <code>grep -l</code> lists. The population is the
 <code>binary_sha256</code> in the package record. The installed hashes, not the pre-bundle hash,
 identify what ran. Both candidate packages and both release packages are retained outside the
 repository. Records: <code>237-vi-package-metadata.json</code>, <code>237-vi-packages.json</code>,
-<code>237-vi-package-fedora.json</code> and <code>237-vi-package-windows.json</code>.</p>
+<code>237-vi-package-fedora.json</code> and <code>237-vi-package-windows.json</code>. The
+v0.1.0-alpha.1 hashes come from <code>releases/v0.1.0-alpha.1/SHA256SUMS</code>.</p>
 
 <h2>Machine state after the run</h2>
 <p>Package replacement, uninstall and reinstall ran under Nicolas's approval of 2026-10-25 for the
@@ -480,7 +515,9 @@ back and compared hashes. <code>second-brain.exe</code> (<code>5e49f0ac…</code
 <code>syncthing.exe</code>, <code>uninstall.exe</code>, the Start Menu shortcut,
 <code>config.json</code> (<code>0e29e3c3…</code>) and <code>.window-state.json</code>
 (<code>8e79d029…</code>) all match the baseline. The log, WebView and vault folders are ordinary
-directories again with the same children. No process, scheduled task or lock remains.</li>
+directories again with the same children. No process, scheduled task or lock remained when the run
+ended. The keyring deletion that followed left only the two small files described in "Cleanup
+failure".</li>
 <li>Both keep-awake holders were stopped, and <code>powercfg /requests</code> shows no harness power
 request.</li>
 <li>Free space, before and after. Fedora: 382,604,345,344 to 381,993,238,528 bytes. Windows C:
@@ -505,7 +542,8 @@ scratch path whose directory names appear in no earlier committed trace, which s
 <code>~/sb88/runs/&lt;id&gt;/fedora</code>. Committing it needs either Nicolas's call to accept that
 path or a rewrite of those two rows to the earlier form. The report cites the trace by hash instead
 of linking it.</p>
-<p>Other records stay outside the repository and are cited by name: <code>237-verify-installed.md</code>
+<p>Other records stay outside the repository and are cited by name: <code>237-sv-fedora.md</code> and
+its four logs, <code>237-verify-installed.md</code>
 and the tail of <code>237-verify-installed.log</code>, <code>237-vi-results.json</code>,
 <code>237-vi-test-match.json</code>, the run folders <code>237-vi-fedora-20261102170139328</code>,
 <code>237-vi-fedora-20261102170835232</code>, <code>237-vi-windows-20261102165504327</code>,
@@ -515,10 +553,17 @@ under <code>237-vi-gate2-runs</code>. Sol hit its usage limit after its last scr
 final message, so <code>237-verify-installed-last.md</code> does not exist. The results above come
 from the per-command logs, the result files and the end of the narration log.</p>
 
+<h2>Status after the final review</h2>
+<p>2026-11-02. The final review on <code>7f11a60</code> ran on Claude Sonnet 5.5 reviewers at
+<code>xhigh</code> reasoning effort, because Sol was at its usage limit. It found report-only issues
+and no code issues. They were the keyring state, one package count, missing regenerating commands,
+the Kiro session ID, the attribution of the Fedora gates, an unlabelled source-reading claim and a
+missing records entry. This commit corrects them. A fresh final review covers the new head.</p>
+
 <h2>Remaining work and limits</h2>
 <p>This commit changes only documentation. Application sources, tests, fixtures, the manifest and the
 lockfile are identical to the tested and packaged candidate <code>8f54c08</code>, so that evidence
-carries to this commit. The whole branch needs a final Spec and Standards review at the exact
+carries to this commit. The whole branch needs a fresh final Spec and Standards review at the exact
 publication head, then the PR with its <code>Final review:</code> line, then CI. The PR must also say
 that Windows <code>pnpm verify</code> fails at the #244 install-failure test, and must disclose the
 known alpha.1 trailing-backslash limitation and the changed criterion 3. Merge waits for Nicolas's
@@ -531,7 +576,7 @@ panic on Windows. It rests on source reading and Kiro's scratch run, and the new
 show that the replacement check accepts those names. Case-only collisions and 8.3 short names on
 Windows remain unrefused, as before. No result from the stock Gate 3 walkthrough, Notion or Ollama
 is claimed.</p>
-<p>The two fake keyring entries remain until Nicolas approves their deletion.
-Issue 252 owns the harness change that stops this from recurring.</p>
+<p>Issue 252 owns the harness change that stops the keyring overwrite from recurring. The two small
+files the Windows deletion left in the test folder wait for Nicolas's approval to delete them.</p>
 </main>
 </html>
