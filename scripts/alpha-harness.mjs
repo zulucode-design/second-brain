@@ -948,21 +948,33 @@ async function runOnFedora(args, runLocked) {
   }
 }
 
-function prepareHarnessRun(options) {
-  if (!existsSync(LINUX_APP)) fail(`installed app missing: ${LINUX_APP}`);
-  assertNoLinuxApp();
-  requireFreeSpace(options.linuxRoot);
+// Reads only: the candidate and harness commits, and the check that the app is the candidate's.
+function harnessCommits(options) {
   const candidateCommit = runCommandSync('git', ['rev-parse', '--verify', `${options.candidate}^{commit}`], { cwd: REPO }).stdout;
   const harnessCommit = runCommandSync('git', ['rev-parse', 'HEAD'], { cwd: REPO }).stdout;
   // Harness-only commits reuse the candidate's packages, so the app itself must be identical.
   const drift = runCommandSync('git', ['diff', '--name-only', candidateCommit, harnessCommit, '--', ...APP_SOURCES], { cwd: REPO }).stdout;
   if (drift) fail(`app sources differ from candidate ${candidateCommit}:\n${drift}`);
+  return { candidateCommit, harnessCommit };
+}
+
+function newRunId() {
+  return new Date().toISOString().replaceAll(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+}
+
+// `early` comes from the walkthrough, which read the commits, deployed the Windows tools and chose
+// its run ID before its keyring check (#252). Every other gate does all of it here.
+function prepareHarnessRun(options, early) {
+  if (!existsSync(LINUX_APP)) fail(`installed app missing: ${LINUX_APP}`);
+  assertNoLinuxApp();
+  requireFreeSpace(options.linuxRoot);
+  const { candidateCommit, harnessCommit } = early ?? harnessCommits(options);
   const fedoraPackage = fedoraPackageEvidence(candidateCommit);
-  deployWindowsTools(options.sshHost);
+  if (!early) deployWindowsTools(options.sshHost);
   const recovered = remoteWorker(options.sshHost, {
     action: 'recover', root: WINDOWS_ROOT, runId: 'recovery', appPath: WINDOWS_APP,
   });
-  const runId = new Date().toISOString().replaceAll(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const runId = early?.runId ?? newRunId();
   return { candidateCommit, harnessCommit, fedoraPackage, recovered, runId };
 }
 
@@ -1296,8 +1308,9 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
     sshHost, { action, root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP, ...extra }, timeout,
   );
   const longTimeoutMs = 5 * 60_000;
-  // Desktop-session actions wait for a scheduled task in the interactive session.
-  const desktopTimeoutMs = 6 * 60_000;
+  // Desktop-session actions wait for a scheduled task in the interactive session, so the SSH call
+  // outlasts that wait (#252).
+  const desktopTimeoutMs = DESKTOP_ACTION_TIMEOUT_MS;
   const fetchRemote = (remote, destination) => {
     runCommandSync('scp', [`${sshHost}:${remote.replaceAll('\\', '/')}`, destination], { timeout: 60_000 });
     return readFileSync(destination);
@@ -1419,6 +1432,8 @@ async function waitForRestore(browser) {
 }
 
 async function withApp(machine, action, readySelector) {
+  // A stopped walkthrough launches nothing more (#252). Other gates' machines have no such hook.
+  machine.beforeAppLaunch?.();
   const browser = await openApp(machine.port, machine.application, readySelector);
   try {
     return await action(browser);
@@ -1532,13 +1547,18 @@ function openGateTrace(options, gate, { runStart = {}, fedoraRpm } = {}) {
   mkdirSync(dirname(evidencePath), { recursive: true });
   mkdirSync(screenshotDir, { recursive: true });
   observation(evidencePath, 'run-start', 'controller', { runId: run.runId, commit: run.candidateCommit, harnessCommit: run.harnessCommit, ...runStart });
-  observation(evidencePath, 'package-evidence', 'fedora', fedoraRpm ? { ...run.fedoraPackage, checks: fedoraPackageChecks(fedoraRpm) } : run.fedoraPackage);
+  recordRunPreparation(evidencePath, options, run, fedoraRpm ? { ...run.fedoraPackage, checks: fedoraPackageChecks(fedoraRpm) } : run.fedoraPackage);
+  return { ...run, evidencePath, screenshotDir };
+}
+
+// The trace lines that follow a run's start in every gate but Gate 1.
+function recordRunPreparation(evidencePath, options, run, fedoraPackage) {
+  observation(evidencePath, 'package-evidence', 'fedora', fedoraPackage);
   observation(evidencePath, 'keep-awake', 'controller', {
     fedora: 'systemd-inhibit sleep:idle; gnome-session-inhibit idle',
     windows: `PowerSetRequest SystemRequired, ${options.holdMinutes} min`,
   });
   if (run.recovered.recovered) observation(evidencePath, 'stale-run-recovered', 'windows', run.recovered);
-  return { ...run, evidencePath, screenshotDir };
 }
 
 // Ends one machine's part of a gate, passed or failed: its processes stopped and its config
@@ -1808,18 +1828,31 @@ async function notionCleanup(machine, notion, passed) {
 // run refuses when it already holds an entry the run would plant, and removes what it planted.
 // The harness learns only whether an entry exists. No value enters this process, a log or a trace.
 
-// The app's AI key accounts. All sit under APP_IDENTIFIER as the service (src-tauri/src/secret_store.rs).
-export const AI_KEY_ACCOUNTS = ['ai:anthropic', 'ai:openai', 'ai:ollama', 'ai:openai-compatible'];
+// The app's AI key config fields, and the account the app moves each to. All sit under
+// APP_IDENTIFIER as the service (src-tauri/src/secret_store.rs).
+const AI_KEY_FIELDS = {
+  ai_api_key: 'ai:anthropic',
+  openai_api_key: 'ai:openai',
+  ollama_api_key: 'ai:ollama',
+  openai_compatible_api_key: 'ai:openai-compatible',
+};
+export const AI_KEY_ACCOUNTS = Object.values(AI_KEY_FIELDS);
 
-// The AI keys a walkthrough plants in config.json, by config field, and the account the app files
-// each under. A run checks and clears exactly these. A check that plants another key adds it here.
-export const PLANTED_AI_KEYS = { openai_api_key: 'ai:openai' };
+// The AI keys a walkthrough plants in config.json, by config field. A run checks and clears exactly
+// these, and refuses to plant any other. A check that plants another key adds it here.
+export const PLANTED_AI_KEYS = { openai_api_key: AI_KEY_FIELDS.openai_api_key };
 
 const PLANTED_AI_ACCOUNTS = Object.values(PLANTED_AI_KEYS);
 
-// The Windows desktop-session script runs as a scheduled task, which takes minutes to start.
-const AI_KEY_DESKTOP_TIMEOUT_MS = 6 * 60_000;
-const AI_KEY_RESULT_NAME = 'ai-key-result.json';
+// alpha-harness.ps1 (DesktopScript) waits up to 30 s for a desktop task an earlier call left
+// running, five minutes for its own, and 30 s more for that one to stop when it overruns.
+export const DESKTOP_TASK_BUDGET_MS = 30_000 + 5 * 60_000 + 30_000;
+// The worker's PowerShell call that waits for it, which also starts PowerShell and registers and
+// removes the task.
+export const DESKTOP_SCRIPT_TIMEOUT_MS = DESKTOP_TASK_BUDGET_MS + 60_000;
+// The controller's SSH call to a worker action that runs a desktop script. The action does work of
+// its own around the script: launch-entry waits another 32 s for the app.
+export const DESKTOP_ACTION_TIMEOUT_MS = DESKTOP_SCRIPT_TIMEOUT_MS + 60_000;
 
 // The config patch that plants `secret` under every field in PLANTED_AI_KEYS.
 export function plantedAiKeyPatch(secret) {
@@ -1878,7 +1911,8 @@ export function fedoraAiKeyStore({ spawn = spawnSync } = {}) {
 
 /**
  * The AI key entries in Windows Credential Manager, reached through `worker`, which carries a
- * request to the Windows worker below. The worker answers with two flags and nothing else.
+ * request to the Windows worker's `ai-key` action. That answers with two flags and nothing else,
+ * and fails when the desktop script could not check.
  */
 export function windowsAiKeyStore(worker) {
   const ask = (account, remove) => {
@@ -1895,50 +1929,83 @@ export function windowsAiKeyStore(worker) {
   };
 }
 
+// What alpha-desktop.ps1 writes in place of found/left when a Credential Manager call fails with
+// anything but ERROR_NOT_FOUND: the call and its Win32 error code, and nothing else.
+const CREDENTIAL_FAILURE = /^Cred(Read|Delete)W failed with Win32 error -?\d+$/;
+
 /**
- * The Windows worker's side of an `ai-key` request: alpha-desktop.ps1 runs in the desktop session,
- * because an SSH logon has no Credential Manager, and writes `found` and `left` to a file that is
- * read and deleted at once. The script never returns the secret, and this passes on only the flags.
+ * The Windows worker's side of a credential check, for the run's Notion token and the app's AI
+ * keys: alpha-desktop.ps1 runs in the desktop session, because an SSH logon has no Credential
+ * Manager, and writes `found` and `left` to a result file of this call's own, deleted once read.
+ * A late write from an earlier call cannot answer this one: its file had another name, and
+ * alpha-harness.ps1 stops a desktop task before it gives up on it. The script never returns the
+ * secret; this passes on only the two flags, or the Win32 error code the script stopped on.
  */
-export function windowsAiKeyAction(request, { tools, runDesktop, readResult, discard }) {
-  const target = windowsAiKeyTarget(request.account);
-  const resultPath = win32.join(tools, AI_KEY_RESULT_NAME);
-  // Cleared first too, so a file from an earlier call cannot answer this one.
-  discard(resultPath);
+export function desktopCredentialAction({ target, remove }, { tools, runDesktop, readResult, discard }) {
+  const resultPath = win32.join(tools, `credential-${randomUUID()}.json`);
+  const written = () => {
+    try {
+      return readResult(resultPath);
+    } catch {
+      return null;
+    }
+  };
   try {
-    runDesktop(`-Mode NotionToken -OutputPath "${resultPath}" -CredentialTarget "${target}"${request.remove === true ? ' -RemoveCredential' : ''}`);
-    const answer = readResult(resultPath);
-    if (typeof answer?.found !== 'boolean' || typeof answer?.left !== 'boolean') fail('the desktop script did not answer found/left');
+    try {
+      runDesktop(`-Mode NotionToken -OutputPath "${resultPath}" -CredentialTarget "${target}"${remove === true ? ' -RemoveCredential' : ''}`);
+    } catch (error) {
+      const failure = written()?.error;
+      fail(`could not check ${target}: ${typeof failure === 'string' && CREDENTIAL_FAILURE.test(failure) ? failure : error.message}`);
+    }
+    const answer = written();
+    if (typeof answer?.found !== 'boolean' || typeof answer?.left !== 'boolean') fail(`the desktop script did not answer found/left for ${target}`);
     return { found: answer.found, left: answer.left };
   } finally {
     discard(resultPath);
   }
 }
 
+// The worker's `ai-key` action: one of the app's AI accounts, as its Credential Manager target.
+export function windowsAiKeyAction(request, desktop) {
+  return desktopCredentialAction({ target: windowsAiKeyTarget(request.account), remove: request.remove }, desktop);
+}
+
 function walkthroughKeyStore(machineName, sshHost, runId) {
   if (machineName === 'fedora') return fedoraAiKeyStore();
   return windowsAiKeyStore((request) => remoteWorker(
-    sshHost, { root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP, ...request }, AI_KEY_DESKTOP_TIMEOUT_MS,
+    sshHost, { root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP, ...request }, DESKTOP_ACTION_TIMEOUT_MS,
   ));
 }
 
+// Whether `store` holds each planted account's entry. A lookup that fails throws, and is never
+// read as absent.
+function lookUpAiKeys(store) {
+  const entries = {};
+  for (const account of PLANTED_AI_ACCOUNTS) {
+    const existed = store.stored(account);
+    if (typeof existed !== 'boolean') fail(`the ${store.name} keyring lookup for ${account} did not answer yes or no`);
+    entries[account] = { existed };
+  }
+  return entries;
+}
+
+function heldAiKeys(store, entries) {
+  return Object.entries(entries).filter(([, { existed }]) => existed)
+    .map(([account]) => `${store.name} (account ${account}, service ${APP_IDENTIFIER})`);
+}
+
 /**
- * Before a run changes anything: asks each machine's keyring whether it holds an entry for an AI
- * key the run will plant, and records one `ai-keys-checked` event per machine. Fails, naming each
- * machine, account and service, if any does. It reads existence only and deletes nothing, so a
- * refused run leaves the keyring as it found it. `record(machine, event, value)` writes the trace.
+ * Before the walkthrough changes anything: asks each machine's keyring whether it holds an entry
+ * for an AI key the run will plant, and records one `ai-keys-checked` event per machine. Fails,
+ * naming each machine, account and service, if any does. It reads existence only and deletes
+ * nothing, so a refused run leaves the keyring as it found it.
  */
-export function checkNoAiKeys(stores, record, accounts = PLANTED_AI_ACCOUNTS) {
+function checkNoAiKeys(stores, record) {
   const held = [];
   for (const store of stores) {
-    const entries = {};
-    for (const account of accounts) {
-      const existed = store.stored(account);
-      if (typeof existed !== 'boolean') fail(`the ${store.name} keyring lookup for ${account} did not answer yes or no`);
-      entries[account] = { existed };
-      if (existed) held.push(`${store.name} (account ${account}, service ${APP_IDENTIFIER})`);
-    }
+    const entries = lookUpAiKeys(store);
     record(store.name, 'ai-keys-checked', { service: APP_IDENTIFIER, entries });
+    held.push(...heldAiKeys(store, entries));
   }
   if (held.length) {
     fail(`keyring already holds an AI key entry the run would overwrite: ${held.join('; ')}; move the key aside by hand before running again`);
@@ -1946,15 +2013,53 @@ export function checkNoAiKeys(stores, record, accounts = PLANTED_AI_ACCOUNTS) {
 }
 
 /**
- * After a machine's part of the run, whether it passed or failed: deletes the entries the run's
- * plant created and checks none is left. The check before the run found none, so any entry here
- * is the run's. Records one `ai-keys-removed` event, `removed` and `left` for each account (`left`
- * is null when the keyring could not be read), and returns the problems, each naming an account.
+ * One machine's AI key plant. `arm` runs just before the walkthrough writes the key into
+ * config.json. It asks the keyring again, since a launch after the first check may have filed an
+ * entry from the copied config, and arms the removal only when none is there; otherwise that
+ * machine's run stops with nothing planted. Each re-check is an `ai-keys-armed` event. `remove`
+ * runs in the controller's cleanup and deletes only what an armed plant could have made.
  */
-export function removePlantedAiKeys(store, record, accounts = PLANTED_AI_ACCOUNTS) {
+function aiKeyPlant(store, record) {
+  let armed = false;
+  return {
+    get armed() {
+      return armed;
+    },
+    arm() {
+      if (armed) return;
+      let entries;
+      try {
+        entries = lookUpAiKeys(store);
+      } catch (error) {
+        record(store.name, 'ai-keys-armed', { service: APP_IDENTIFIER, armed: false });
+        throw error;
+      }
+      const held = heldAiKeys(store, entries);
+      armed = !held.length;
+      record(store.name, 'ai-keys-armed', { service: APP_IDENTIFIER, armed, entries });
+      if (!armed) {
+        fail(`keyring gained an AI key entry after the check before the run: ${held.join('; ')}; nothing was planted, so the run deletes nothing; move the key aside by hand before running again`);
+      }
+    },
+    remove: () => removePlantedAiKeys(store, record, armed),
+  };
+}
+
+/**
+ * After a machine's part of the run, passed, failed or stopped: when its plant was armed, deletes
+ * the entries the plant could have made and checks none is left. The re-check before arming found
+ * none, so any entry here is the run's. Records one `ai-keys-removed` event: `armed`, and when
+ * armed `removed` and `left` for each account (`left` is null when the keyring could not be read).
+ * Returns the problems, each naming an account.
+ */
+function removePlantedAiKeys(store, record, armed) {
+  if (!armed) {
+    record(store.name, 'ai-keys-removed', { service: APP_IDENTIFIER, armed: false });
+    return [];
+  }
   const entries = {};
   const problems = [];
-  for (const account of accounts) {
+  for (const account of PLANTED_AI_ACCOUNTS) {
     try {
       const { found, left } = store.remove(account);
       entries[account] = { removed: found && !left, left };
@@ -1964,17 +2069,86 @@ export function removePlantedAiKeys(store, record, accounts = PLANTED_AI_ACCOUNT
       problems.push(`${account} on ${store.name}: ${error.message}`);
     }
   }
-  record(store.name, 'ai-keys-removed', { service: APP_IDENTIFIER, entries });
+  record(store.name, 'ai-keys-removed', { service: APP_IDENTIFIER, armed: true, entries });
   return problems;
 }
 
-// removePlantedAiKeys for the run's trace; returns the error to report, if any.
-function aiKeyCleanup(store, evidencePath) {
-  const problems = removePlantedAiKeys(store, (machine, event, value) => observation(evidencePath, event, machine, value));
-  if (!problems.length) return undefined;
-  const error = new Error(`AI key cleanup: ${problems.join('; ')}`);
-  observation(evidencePath, 'cleanup-error', store.name, { error: error.message });
-  return error;
+// Whether a config patch plants an AI key. One that would plant a key the run did not check fails.
+function plantsAiKey(patch) {
+  const fields = Object.keys(patch).filter((field) => Object.hasOwn(AI_KEY_FIELDS, field) && patch[field]);
+  const unchecked = fields.filter((field) => !Object.hasOwn(PLANTED_AI_KEYS, field));
+  if (unchecked.length) fail(`the walkthrough may plant only the AI keys it checked, not ${unchecked.join(', ')}`);
+  return fields.length > 0;
+}
+
+/**
+ * Ctrl+C (SIGINT) and SIGTERM during a walkthrough. The first stops the run at its next step and
+ * lets the controller's cleanup finish (apps and drivers stopped, configs restored, Notion cleaned
+ * up, the planted key removed) before the run's error ends the process. A later one only says so.
+ * Other gates keep Node's default handling.
+ */
+function walkthroughCancellation(signals) {
+  let reason = null;
+  let stop;
+  const stopped = new Promise((_, reject) => {
+    stop = reject;
+  });
+  stopped.catch(() => {});
+  const stoppedError = () => new Error(`walkthrough stopped by ${reason}`);
+  const handlers = Object.fromEntries(['SIGINT', 'SIGTERM'].map((signal) => [signal, () => {
+    if (reason) {
+      console.error(`${signal}: the walkthrough is already stopping; its cleanup is still running`);
+      return;
+    }
+    reason = signal;
+    console.error(`${signal}: stopping the walkthrough; cleaning up before exit`);
+    stop(stoppedError());
+  }]));
+  for (const [signal, handler] of Object.entries(handlers)) signals.on(signal, handler);
+  return {
+    get reason() {
+      return reason;
+    },
+    check() {
+      if (reason) throw stoppedError();
+    },
+    // One turn of the event loop first, so a signal that arrived during a blocking call counts.
+    async checkpoint() {
+      await new Promise((resolveTurn) => setImmediate(resolveTurn));
+      this.check();
+    },
+    // Settles with `promise`, or rejects as soon as the run is stopped.
+    race(promise) {
+      promise.catch(() => {});
+      return Promise.race([promise, stopped]);
+    },
+    dispose() {
+      for (const [signal, handler] of Object.entries(handlers)) signals.off(signal, handler);
+    },
+  };
+}
+
+/**
+ * The machine as the walkthrough drives it. Every call first checks that the run was not stopped,
+ * so a stopped walkthrough changes nothing more; the controller's cleanup uses the machine itself.
+ * A config patch that plants an AI key arms the key's removal first (`aiKeyPlant`), and so is
+ * covered even if the patch fails partway.
+ */
+function walkthroughMachine(machine, { cancellation, plant }) {
+  const guarded = {};
+  for (const [name, value] of Object.entries(machine)) {
+    guarded[name] = typeof value !== 'function' ? value : function guardedCall(...args) {
+      cancellation.check();
+      return value.apply(this, args);
+    };
+  }
+  guarded.beforeAppLaunch = () => cancellation.check();
+  guarded.patchConfig = function patchConfig(patch) {
+    cancellation.check();
+    if (plantsAiKey(patch)) plant.arm();
+    return machine.patchConfig.call(this, patch);
+  };
+  return guarded;
 }
 
 const WALKTHROUGH_NOTES = {
@@ -2039,9 +2213,9 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
   record('entry-launched', await machine.launchEntry());
   record('driver-started', await machine.startDriver());
   const planted = { secret: `sk-alpha-harness-${randomUUID()}` };
-  // runWalkthroughLocked checked, before it prepared or launched anything, that the keyring holds
-  // no entry under these fields' accounts, and removes what the app files under them afterwards
-  // (PLANTED_AI_KEYS).
+  // The keyring was checked before the run changed anything. The machine runWalkthroughLocked
+  // hands this gate asks it again and arms the key's removal before this patch writes the key
+  // (walkthroughMachine); the controller's cleanup then removes what the app files (#252).
   record('config-patched', { keys: machine.patchConfig(plantedAiKeyPatch(planted.secret)) });
 
   let capture;
@@ -2153,75 +2327,143 @@ function notionCredentials() {
   return { token, page };
 }
 
-async function runWalkthroughLocked(options) {
-  const notion = notionCredentials();
+// What the walkthrough controller does to the machines and the world around them, in one place so
+// that tests/alpha-harness-keyring.test.mjs can run the controller's own sequence against fakes.
+function walkthroughIo(options) {
   const windowsOllamaBaseUrl = windowsOllamaUrl(options.ollamaPort);
+  const fedoraOllamaBaseUrl = `http://127.0.0.1:${FEDORA_OLLAMA_PORT}`;
+  return {
+    signals: process,
+    notion: notionCredentials,
+    commits: () => harnessCommits(options),
+    deployTools: () => deployWindowsTools(options.sshHost),
+    evidencePath: (runId) => evidencePathFor('walkthrough', runId),
+    keyStore: (name, runId) => walkthroughKeyStore(name, options.sshHost, runId),
+    installCandidate() {
+      assertNoLinuxApp();
+      fedoraPackageHelper('install-candidate', options.fedoraRpm);
+    },
+    // The installed app's checks, its package evidence, and the Windows stale-run recovery.
+    prepareRun(early) {
+      const run = prepareHarnessRun(options, early);
+      return { ...run, fedoraPackage: { ...run.fedoraPackage, checks: fedoraPackageChecks(options.fedoraRpm) } };
+    },
+    ollamaTunnel: () => fedoraOllamaTunnel(options.sshHost, windowsOllamaBaseUrl),
+    ollamaModels: async (label) => ({
+      windows: remoteWorker(options.sshHost, { action: 'ollama', root: WINDOWS_ROOT, runId: label, ollamaPort: options.ollamaPort }),
+      fedora: await ollamaEmbeddingModel(fedoraOllamaBaseUrl),
+    }),
+    makeMachine: (name, runId, candidateCommit) => (name === 'fedora'
+      ? linuxDriverMachine(options.linuxRoot, runId, randomUUID(), { ollamaBaseUrl: fedoraOllamaBaseUrl, sync: true })
+      : windowsDriverMachine(options.sshHost, runId, randomUUID(), candidateCommit, { ollamaBaseUrl: windowsOllamaBaseUrl, sync: true })),
+    gate: walkthroughGate,
+    notionCleanup,
+    sleep,
+    print: (line) => console.log(line),
+  };
+}
+
+// `io` is replaced only in tests.
+export async function runWalkthroughLocked(options, io = walkthroughIo(options)) {
+  const notion = io.notion();
   // `--machine` runs one machine while a step is being fixed; only a run of both is the gate.
   const machineNames = options.machine ? [options.machine] : ['fedora', 'windows'];
   if (!machineNames.every((name) => ['fedora', 'windows'].includes(name))) fail(`--machine must be fedora or windows: ${options.machine}`);
-  const { candidateCommit, runId, evidencePath, screenshotDir } = openGateTrace(options, 'walkthrough', {
-    runStart: { clipUrl: CLIP_URL, machines: machineNames, gate: machineNames.length === 2 },
-    fedoraRpm: options.fedoraRpm,
-  });
-  const controller = (event, value) => observation(evidencePath, event, 'controller', value);
-
-  // Before any machine is prepared, launched or patched: the run plants an AI key that the app
-  // moves into the OS keyring, so it refuses when the keyring already holds one (#252). The
-  // candidate packages and the Windows tools are installed by now; the check needs the latter.
-  const keyStores = new Map(machineNames.map((name) => [name, walkthroughKeyStore(name, options.sshHost, runId)]));
+  const cancellation = walkthroughCancellation(io.signals);
   try {
-    checkNoAiKeys([...keyStores.values()], (machine, event, value) => observation(evidencePath, event, machine, value));
+    return await walkthroughRun(options, io, { notion, machineNames, cancellation });
+  } finally {
+    cancellation.dispose();
+  }
+}
+
+async function walkthroughRun(options, io, { notion, machineNames, cancellation }) {
+  // #252: the keyring check comes before anything changes either machine. Only reading the commits
+  // and deploying the harness's own Windows tools, which the Windows check runs from, come first;
+  // the candidate install and the Windows stale-run recovery wait for it.
+  const commits = io.commits();
+  io.deployTools();
+  const runId = newRunId();
+  const evidencePath = io.evidencePath(runId);
+  mkdirSync(dirname(evidencePath), { recursive: true });
+  const record = (machine, event, value) => observation(evidencePath, event, machine, value);
+  const controller = (event, value) => record('controller', event, value);
+  controller('run-start', {
+    runId, commit: commits.candidateCommit, harnessCommit: commits.harnessCommit,
+    clipUrl: CLIP_URL, machines: machineNames, gate: machineNames.length === 2,
+  });
+  const keyStores = new Map(machineNames.map((name) => [name, io.keyStore(name, runId)]));
+  let run;
+  try {
+    await cancellation.checkpoint();
+    checkNoAiKeys([...keyStores.values()], record);
+    await cancellation.checkpoint();
+    io.installCandidate();
+    run = io.prepareRun({ ...commits, runId });
   } catch (error) {
     controller('run-failed', { error: error.message });
     throw error;
   }
+  const screenshotDir = join(options.linuxRoot, 'evidence', `walkthrough-${runId}`);
+  mkdirSync(screenshotDir, { recursive: true });
+  recordRunPreparation(evidencePath, options, run, run.fedoraPackage);
 
-  const ollamaTunnel = fedoraOllamaTunnel(options.sshHost, windowsOllamaBaseUrl);
+  const ollamaTunnel = io.ollamaTunnel();
   let runError;
   let cleanupError;
+  // A signal that arrived during a blocking step becomes the run's error here.
+  const stopIfSignalled = async (machine) => {
+    try {
+      await cancellation.checkpoint();
+    } catch (error) {
+      runError = error;
+      record(machine, 'run-failed', { error: error.message });
+    }
+  };
   try {
-    await sleep(2_000);
+    await io.sleep(2_000);
     if (ollamaTunnel.exitCode !== null) fail(`Ollama tunnel exited ${ollamaTunnel.exitCode}; is port ${FEDORA_OLLAMA_PORT} taken?`);
-    controller('ollama', {
-      windows: remoteWorker(options.sshHost, { action: 'ollama', root: WINDOWS_ROOT, runId: 'preflight', ollamaPort: options.ollamaPort }),
-      fedora: await ollamaEmbeddingModel(`http://127.0.0.1:${FEDORA_OLLAMA_PORT}`),
-    });
-    const machines = [
-      ['fedora', () => linuxDriverMachine(options.linuxRoot, runId, randomUUID(), { ollamaBaseUrl: `http://127.0.0.1:${FEDORA_OLLAMA_PORT}`, sync: true })],
-      ['windows', () => windowsDriverMachine(options.sshHost, runId, randomUUID(), candidateCommit, { ollamaBaseUrl: windowsOllamaBaseUrl, sync: true })],
-    ].filter(([name]) => machineNames.includes(name));
-    for (const [machineName, makeMachine] of machines) {
+    controller('ollama', await io.ollamaModels('preflight'));
+    for (const machineName of machineNames) {
       let machine;
       let passed = false;
+      const plant = aiKeyPlant(keyStores.get(machineName), record);
       try {
-        machine = makeMachine();
+        await cancellation.checkpoint();
+        machine = io.makeMachine(machineName, runId, run.candidateCommit);
         if (machine.install) observation(evidencePath, 'installed', machine.name, machine.install(options.windowsInstaller));
         const prepared = machine.prepare();
         observation(evidencePath, 'prepared', machine.name, prepared);
-        await walkthroughGate(machine, {
+        await cancellation.race(io.gate(walkthroughMachine(machine, { cancellation, plant }), {
           vault: prepared.vault, evidencePath, screenshotDir, notion,
           // #137: the Windows walkthrough must run on an unlocked interactive desktop.
           requireUnlocked: machine.name === 'windows',
-        });
+        }));
         passed = true;
       } catch (error) {
         runError = error;
         observation(evidencePath, 'run-failed', machine?.name ?? 'controller', { error: error.message });
       }
+      // The same cleanup whether the walkthrough passed, failed or was stopped by a signal.
       if (machine) {
         try {
-          observation(evidencePath, 'notion-checked', machine.name, await notionCleanup(machine, notion, passed));
+          observation(evidencePath, 'notion-checked', machine.name, await io.notionCleanup(machine, notion, passed));
         } catch (error) {
           observation(evidencePath, 'run-failed', machine.name, { error: error.message });
           runError ??= error;
         }
       }
       cleanupError ??= await finishMachine(machine, evidencePath);
-      // The walkthrough's planted key leaves the keyring whether it passed or failed. Run after the
-      // app and driver are stopped, so nothing can write it back, and on its own line so an earlier
-      // cleanup error cannot skip it.
-      const keyError = aiKeyCleanup(keyStores.get(machineName), evidencePath);
-      cleanupError ??= keyError;
+      // After the app and driver are stopped, so nothing can write the key back, and on its own
+      // line so an earlier cleanup error cannot skip it. An unarmed plant deletes nothing.
+      const keyProblems = plant.remove();
+      if (keyProblems.length) {
+        const keyError = new Error(`AI key cleanup: ${keyProblems.join('; ')}`);
+        observation(evidencePath, 'cleanup-error', machineName, { error: keyError.message });
+        cleanupError ??= keyError;
+      }
+      // A run stopped by then leaves the candidate installed, as a failed run does.
+      if (!runError && !cleanupError) await stopIfSignalled(machineName);
       if (!runError && !cleanupError) {
         // The uninstall check compares against this.
         const vaultBefore = machine.hash();
@@ -2251,12 +2493,10 @@ async function runWalkthroughLocked(options) {
       }
       if (runError || cleanupError) break;
     }
+    if (!runError && !cleanupError) await stopIfSignalled('controller');
     if (!runError && !cleanupError) {
       try {
-        controller('ollama-final', {
-          windows: remoteWorker(options.sshHost, { action: 'ollama', root: WINDOWS_ROOT, runId: 'final', ollamaPort: options.ollamaPort }),
-          fedora: await ollamaEmbeddingModel(`http://127.0.0.1:${FEDORA_OLLAMA_PORT}`),
-        });
+        controller('ollama-final', await io.ollamaModels('final'));
       } catch (error) {
         runError = error;
         controller('run-failed', { error: error.message });
@@ -2272,7 +2512,7 @@ async function runWalkthroughLocked(options) {
     machines: machineNames,
     gate: machineNames.length === 2,
   });
-  console.log(JSON.stringify({ runId, evidencePath, screenshotDir }));
+  io.print(JSON.stringify({ runId, evidencePath, screenshotDir }));
 }
 
 // Every field of an uninstall result is a check that has to hold.
@@ -2332,11 +2572,11 @@ function assertWindowsRoot(root, path) {
   if (!win32.resolve(path).toLowerCase().startsWith(base)) fail(`path leaves test root: ${path}`);
 }
 
-function windowsPowerShell(tools, args) {
+function windowsPowerShell(tools, args, timeout = 30_000) {
   const result = runCommandSync('powershell.exe', [
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
     '-File', win32.join(tools, 'alpha-harness.ps1'), ...args,
-  ]);
+  ], { timeout });
   return parseLastJson(result.stdout);
 }
 
@@ -2386,12 +2626,14 @@ function removeRunArtifacts(tools, appPath, manifest, paths) {
   return { machineState: paths.machinePath, junctionRemoved, taskRemoved: WINDOWS_TASK };
 }
 
-// Runs alpha-desktop.ps1 in the interactive desktop session through a scheduled task.
-function runDesktopScript(tools, scriptArguments) {
-  const ran = windowsPowerShell(tools, [
+// Runs alpha-desktop.ps1 in the interactive desktop session through a scheduled task. The
+// PowerShell call waits for as long as alpha-harness.ps1 may wait for the task (#252), so it never
+// gives up on a script that is still running; `powershell` is replaced only in tests.
+export function runDesktopScript(tools, scriptArguments, powershell = windowsPowerShell) {
+  const ran = powershell(tools, [
     '-Action', 'DesktopScript', '-TaskName', WINDOWS_DESKTOP_TASK,
     '-ExecutablePath', win32.join(tools, 'alpha-desktop.ps1'), '-ScriptArguments', scriptArguments,
-  ]);
+  ], DESKTOP_SCRIPT_TIMEOUT_MS);
   if (ran.result !== 0) fail(`desktop script failed with ${ran.result}: ${scriptArguments}`);
   return ran;
 }
@@ -2866,25 +3108,20 @@ async function windowsWorker(request) {
     };
   }
 
+  // The run's Notion token and (#252) the app's AI key entries: whether each exists, and with
+  // `remove` its deletion. Both answer with the found and left flags only.
+  const desktopCredentials = {
+    tools,
+    runDesktop: (scriptArguments) => runDesktopScript(tools, scriptArguments),
+    readResult: readDesktopJson,
+    discard: (path) => rmSync(path, { force: true }),
+  };
   if (request.action === 'notion-token') {
-    const resultPath = win32.join(paths.runRoot, 'notion-token.json');
     // keyring's Windows store names a credential "<username>.<service>".
     const target = `integration:notion:${request.vaultId}.${APP_IDENTIFIER}`;
-    runDesktopScript(tools, `-Mode NotionToken -OutputPath "${resultPath}" -CredentialTarget "${target}"${request.remove ? ' -RemoveCredential' : ''}`);
-    const found = readDesktopJson(resultPath);
-    unlinkSync(resultPath);
-    return found;
+    return desktopCredentialAction({ target, remove: request.remove }, desktopCredentials);
   }
-
-  // #252: whether the app's AI key entry exists, and with `remove` its deletion. Flags only.
-  if (request.action === 'ai-key') {
-    return windowsAiKeyAction(request, {
-      tools,
-      runDesktop: (scriptArguments) => runDesktopScript(tools, scriptArguments),
-      readResult: readDesktopJson,
-      discard: (path) => rmSync(path, { force: true }),
-    });
-  }
+  if (request.action === 'ai-key') return windowsAiKeyAction(request, desktopCredentials);
 
   if (request.action === 'stage-file') {
     const staged = win32.join(paths.runRoot, request.name);
