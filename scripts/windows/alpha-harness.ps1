@@ -77,20 +77,35 @@ if ($Action -eq 'DesktopScript') {
   # running under the same name is stopped first, with the same 30-second wait.
   # scripts/alpha-harness.mjs sizes its own timeouts from these three waits (DESKTOP_TASK_BUDGET_MS).
   if (-not $TaskName) { throw 'TaskName is required' }
-  # True once the task is confirmed not to run, stopping it first if it does. False when that
-  # cannot be confirmed: it still runs after 30 seconds, or its state cannot be read or set.
-  function Confirm-DesktopTaskStopped {
+  # Only these states mean the task has finished. Queued and Running mean it may still run, and any
+  # other state, or one that cannot be read, is not taken as finished (#252).
+  $finishedStates = @('Ready', 'Disabled')
+  function Test-DesktopTaskFinished {
     try {
-      if ((Get-ScheduledTask -TaskName $TaskName).State -ne 'Running') { return $true }
-      Stop-ScheduledTask -TaskName $TaskName
-      $stopDeadline = (Get-Date).AddSeconds(30)
-      while ((Get-ScheduledTask -TaskName $TaskName).State -eq 'Running' -and (Get-Date) -lt $stopDeadline) {
-        Start-Sleep -Milliseconds 500
-      }
-      return (Get-ScheduledTask -TaskName $TaskName).State -ne 'Running'
+      return $finishedStates -contains [string](Get-ScheduledTask -TaskName $TaskName).State
     } catch {
       return $false
     }
+  }
+  # True once the task is confirmed finished. Unless it is already, it is stopped, even when its
+  # state could not be read, and waited on for up to 30 seconds. False when that cannot be
+  # confirmed: it is not finished after 30 seconds, or its state cannot be read.
+  function Confirm-DesktopTaskStopped {
+    if (Test-DesktopTaskFinished) { return $true }
+    try {
+      Stop-ScheduledTask -TaskName $TaskName
+    } catch {
+      # A stop that failed is judged by the state that follows it.
+    }
+    try {
+      $stopDeadline = (Get-Date).AddSeconds(30)
+      while (-not (Test-DesktopTaskFinished) -and (Get-Date) -lt $stopDeadline) {
+        Start-Sleep -Milliseconds 500
+      }
+    } catch {
+      return $false
+    }
+    return (Test-DesktopTaskFinished)
   }
   $staleTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
   if ($staleTask -and -not (Confirm-DesktopTaskStopped)) {
@@ -111,9 +126,10 @@ if ($Action -eq 'DesktopScript') {
     $taskDeadline = (Get-Date).AddMinutes(5)
     do {
       Start-Sleep -Milliseconds 500
-      $taskState = (Get-ScheduledTask -TaskName $TaskName).State
-    } while ($taskState -eq 'Running' -and (Get-Date) -lt $taskDeadline)
-    if ($taskState -eq 'Running') { throw "desktop script $TaskName did not finish within 5 minutes" }
+      $taskState = [string](Get-ScheduledTask -TaskName $TaskName).State
+    } while ($taskState -in @('Queued', 'Running') -and (Get-Date) -lt $taskDeadline)
+    if ($taskState -in @('Queued', 'Running')) { throw "desktop script $TaskName did not finish within 5 minutes" }
+    if ($finishedStates -notcontains $taskState) { throw "desktop script $TaskName is in state '$taskState', not finished" }
     $taskFinished = $true
     $taskResult = (Get-ScheduledTaskInfo -TaskName $TaskName).LastTaskResult
   } catch {
