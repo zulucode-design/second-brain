@@ -287,7 +287,9 @@ comm -13 &lt;(ok 237-sv-backup.log) &lt;(ok 237-vi-windows-backup.log)        # 
 because the zip 9 API changed: <code>corrupt_late_entry_leaves_the_live_vault_untouched</code>,
 <code>a_backup_holds_exactly_what_a_restore_replaces</code> and
 <code>default_export_excludes_vault_content_secrets_and_note_identity</code>. The table shows each
-of the 17 as a pass in four logs per machine type. "Full" is the whole Rust run. On Fedora that is the
+of the 17 as a pass once in each of two logs per platform, the full and the focused run, so four
+logs overall. The one Unix-only test appears in two logs, both on Fedora, and is not built on
+Windows. "Full" is the whole Rust run. On Fedora that is the
 Rust stage of <code>pnpm verify</code>, and on Windows it is the separate <code>pnpm test:rust</code>,
 because <code>verify</code> stopped earlier there. "Focused" is the <code>backup::</code> or
 <code>diagnostic_export::</code> run.</p>
@@ -320,8 +322,10 @@ because <code>verify</code> stopped earlier there. "Focused" is the <code>backup
 <p>Added tests in the candidate's diff against main. This prints 14 for <code>backup.rs</code>
 and 0 for <code>diagnostic_export.rs</code>:</p>
 <pre><code>for f in backup diagnostic_export; do git diff --unified=0 origin/main...HEAD -- src-tauri/src/$f.rs | python3 -c 'import re,sys; print(len(re.findall(r"^\+\s*#\[test\]\n\+\s*fn \w+\(", sys.stdin.read(), re.M)))'; done</code></pre>
-<p>Each test name in each retained log. Every count is 1 where the table says PASS:</p>
-<pre><code>grep -cE '^test backup::tests::&lt;name&gt; \.\.\. ok' &lt;log&gt;</code></pre>
+<p>Each test name in each retained log, where <code>&lt;module&gt;</code> is <code>backup</code>
+for the 16 backup tests and <code>diagnostic_export</code> for the diagnostic export test. Every
+count is 1 where the table says PASS, and 0 where it says not built:</p>
+<pre><code>grep -cE '^test &lt;module&gt;::tests::&lt;name&gt; \.\.\. ok' &lt;log&gt;</code></pre>
 <p>The logs are <code>237-sv-verify.log</code> and <code>237-sv-backup.log</code> on Fedora, at
 <code>7f11a60</code>, and
 <code>237-vi-windows-rust.log</code> and <code>237-vi-windows-backup.log</code> on Windows. The
