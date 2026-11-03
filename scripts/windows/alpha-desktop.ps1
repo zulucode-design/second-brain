@@ -28,14 +28,44 @@ if ($Mode -eq 'LaunchShortcut') {
 }
 
 # An SSH logon has no Credential Manager (cmdkey there says "A specified logon session does not
-# exist"), so the run's Notion token is looked up here, and with -RemoveCredential deleted.
+# exist"), so the credential is looked up here, and with -RemoveCredential deleted. The mode name
+# is the Notion token's from before the AI keys (#252) joined it. It answers only whether the
+# credential exists: the secret is never returned, written or logged, and the copy Windows hands
+# back is overwritten before it is freed.
 if ($Mode -eq 'NotionToken') {
-  if (-not $CredentialTarget.StartsWith('integration:notion:')) { throw "not a Notion credential: $CredentialTarget" }
+  # The credentials this mode may touch: the run's Notion token, and the app's four AI key
+  # entries. keyring names a Windows credential "<account>.<service>" (src-tauri/src/secret_store.rs
+  # lists the accounts). Every other target is refused.
+  $appService = 'io.github.zulucodedesign.SecondBrain'
+  $aiAccounts = @('ai:anthropic', 'ai:openai', 'ai:ollama', 'ai:openai-compatible')
+  $aiTargets = foreach ($aiAccount in $aiAccounts) { '{0}.{1}' -f $aiAccount, $appService }
+  $isNotionToken = $CredentialTarget.StartsWith('integration:notion:')
+  if (-not $isNotionToken -and $aiTargets -cnotcontains $CredentialTarget) {
+    throw "not a credential the harness manages: $CredentialTarget"
+  }
   Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 namespace AlphaHarness {
   public static class Credentials {
+    // CREDENTIALW, with the strings left as pointers so that nothing is copied out of it. The
+    // secret's own buffer is reached only to overwrite it.
+    [StructLayout(LayoutKind.Sequential)]
+    struct CredentialRecord {
+      public uint Flags;
+      public uint Type;
+      public IntPtr TargetName;
+      public IntPtr Comment;
+      public uint LastWrittenLow;
+      public uint LastWrittenHigh;
+      public uint CredentialBlobSize;
+      public IntPtr CredentialBlob;
+      public uint Persist;
+      public uint AttributeCount;
+      public IntPtr Attributes;
+      public IntPtr TargetAlias;
+      public IntPtr UserName;
+    }
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     static extern bool CredReadW(string target, int type, int flags, out IntPtr credential);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -46,7 +76,16 @@ namespace AlphaHarness {
     public static bool Exists(string target) {
       IntPtr found;
       if (!CredReadW(target, Generic, 0, out found)) return false;
-      CredFree(found);
+      try {
+        var record = (CredentialRecord)Marshal.PtrToStructure(found, typeof(CredentialRecord));
+        if (record.CredentialBlob != IntPtr.Zero) {
+          for (int offset = 0; offset < record.CredentialBlobSize; offset++) {
+            Marshal.WriteByte(record.CredentialBlob, offset, 0);
+          }
+        }
+      } finally {
+        CredFree(found);
+      }
       return true;
     }
     public static void Delete(string target) { CredDeleteW(target, Generic, 0); }
