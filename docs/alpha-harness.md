@@ -141,7 +141,9 @@ under `~/sb88/evidence/walkthrough-<run>/`:
    Whether or not the walkthrough passed, the controller archives the run's databases and deletes
    a token that a failed step left;
 6. show the Export diagnostics button in Settings > Maintenance, export diagnostics, and search the
-   archive for a planted credential, a note body marker, a note title and path, and the vault path;
+   archive for a planted credential, a note body marker, a note title and path, and the vault path.
+   The app moves the planted key into the OS keyring, so the run refuses to start when the keyring
+   already holds that entry and deletes it afterwards (see Machine-state safety);
 7. with the embedding backend pointed at a closed port, capture a note, edit an existing one (the
    edit must be on disk after exit), move a note, and keyword search;
 8. start with a malformed `config.json`, which must show the startup error and leave exactly one
@@ -315,6 +317,49 @@ session placement only. Key presses and full-desktop screenshots come from
 `SecondBrainAlphaHarnessDesktop` task.
 
 Gate 1 passed unattended on candidate `4ea6b9e` (run `20260921T114623Z`), so Gate 2 may start.
+
+### AI keys in the OS keyring
+
+The Gate 3 walkthrough plants a synthetic OpenAI key (`sk-alpha-harness-<uuid>`) in the app's
+`config.json` to prove that diagnostics redact it. The app moves that key into the OS keyring, under
+account `ai:openai` and service `io.github.zulucodedesign.SecondBrain` (Secret Service on Fedora;
+Credential Manager on Windows, where the credential's target is
+`ai:openai.io.github.zulucodedesign.SecondBrain`). The run's isolated config folders do not reach
+the keyring, so it is the user's own store, and the key the app files there would replace a real
+one. The rule is therefore part of the machine-state restore, and the run keeps it as follows:
+
+- **It refuses when an AI key the run would plant is already in the keyring.** Before it prepares,
+  launches or patches anything on a machine, the controller asks each machine in the run whether the
+  entry exists. Today the run plants only `openai_api_key`, so it asks about `ai:openai`. If an
+  entry is there, the run stops and names the machine, account and service. Move the key aside by
+  hand, then run again. A lookup that fails (no D-Bus session, no signed-in desktop) also stops the
+  run; it is never read as "absent". The candidate RPM and the Windows tools are already installed
+  at that point, since the Windows check runs from the tools.
+- **It learns only whether the entry exists.** On Fedora, `secret-tool lookup` runs with its
+  standard output sent to the operating system's null device, and only the exit status is read. On
+  Windows, `scripts/windows/alpha-desktop.ps1` runs in the desktop session, because an SSH logon has
+  no Credential Manager, and writes only `found` and `left`. It accepts exactly the app's four AI
+  targets (`ai:anthropic`, `ai:openai`, `ai:ollama` and `ai:openai-compatible`, each followed by the
+  service) and the Notion token, and refuses every other target. No value, part of one, length or
+  hash reaches the controller, a log, a file or a trace.
+- **It removes what it planted, including after a failure.** When a machine's part of the run ends,
+  passed or failed, and its app and driver are stopped, the controller deletes the entry the plant
+  created and checks that none is left. An entry that is left fails the run. A run that refused
+  deletes nothing. A controller that is killed outright cannot clean up: the entry it leaves makes
+  the next run refuse, naming it, and someone deletes it by hand after confirming it holds the
+  synthetic value.
+- **The trace records existence only.** Each machine gets an `ai-keys-checked` event (`existed` for
+  each account) and an `ai-keys-removed` event (`removed` and `left` for each account).
+
+Any one-off verification script that plants a key in the app config must do the same: check the
+keyring first and refuse if the entry is there, delete what it planted whether or not it passed,
+check that nothing is left, and keep every value out of its output. The installed checks for #237
+planted a key without doing so and left a fake `ai:openai` entry on both machines, deleted by hand
+on 2026-11-02.
+
+`tests/alpha-harness-keyring.test.mjs` covers the check and the removal on both platforms' code
+paths with fakes: an entry present before the run, none before it, and a run that fails after
+planting. It uses neither the real keyring nor a real machine.
 
 ## Harness upkeep
 
