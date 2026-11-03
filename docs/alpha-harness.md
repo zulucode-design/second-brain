@@ -307,6 +307,16 @@ harness get neither the journal nor the junctions: they change the real `.window
 `%LOCALAPPDATA%\io.github.zulucodedesign.SecondBrain\vaults`, and whoever runs them must record and
 restore or remove all of it.
 
+Every gate ends each machine's part with the same teardown, and none of its steps can be skipped.
+On Windows that is: stop the driver, wait for the app's processes to exit, force-stop them if they
+do not, then restore the config, window state and profile folders. On Fedora it is: stop the
+app's and driver's exact PIDs, then wait for them to exit. Each step runs even when an earlier
+one failed or a trace line could not be written (a full evidence disk, say). The Windows restore
+is attempted even when the processes would not stop; the worker refuses it while any of them
+remains, and that refusal fails the run. The teardown reports its first error, adding that the
+trace could not be written when that happened, so a teardown whose trace is incomplete never
+passes.
+
 Traces are public. The controller redacts the home directory, Windows profile paths, and host
 names at the single point where it writes them.
 
@@ -370,15 +380,16 @@ one. The rule is therefore part of the machine-state restore, and the run keeps 
   run ends and its app and driver are stopped, the controller deletes the entry on every machine
   whose plant was armed, and checks that none is left. An entry that is left fails the run. A run
   that refused, or failed or stopped before the plant, deletes nothing. Each cleanup step (Notion,
-  then the machine's teardown, then the key) runs even when an earlier one, a failure report or a
-  trace write threw, for example because the evidence disk filled up.
+  then the machine's teardown described under App state, then the key) runs even when an earlier
+  one, a failure report or a trace write threw, for example because the evidence disk filled up.
 - **Ctrl+C and `SIGTERM` stop the run and clean up.** The first signal stops the walkthrough at its
   next step. If the gate is still running, the controller ends its WebDriver sessions, stops its
   machine's app and driver by exact PID (on Windows the app's sidecar and watchdog too), waits until
   none of them runs, and waits for the gate to unwind. Only then does it run the same cleanup as a
   failed run, so a request the app was still serving, such as a Notion Connect, cannot store a
   credential after the cleanup has looked. A failure while stopping them is recorded and the
-  cleanup goes on. A signal during the final checks still fails the run: a run that received one
+  cleanup goes on: the machine's full teardown still runs, stops them again and restores what the
+  run changed. A signal during the final checks still fails the run: a run that received one
   never records `run-complete` and always exits non-zero. Press Ctrl+C once: the terminal also
   sends it to the controller's own child processes, so a second press can cut short the commands
   the cleanup is running.
