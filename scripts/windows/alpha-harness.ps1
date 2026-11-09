@@ -68,7 +68,49 @@ if ($Action -eq 'Shortcut') {
 # Runs a harness script on the interactive desktop, where input and screen capture reach the
 # user's session. ExecutablePath is the script; it must live under D:\SecondBrainTest.
 if ($Action -eq 'DesktopScript') {
+  # The script's task is waited on for five minutes. On every way out, a finish, an overrun, or a
+  # failure while waiting or stopping, the task is let go only once it is confirmed not to run:
+  # one still running is stopped and waited on for up to 30 seconds more. So a script never writes
+  # its result after its caller has given up on it (#252). When that cannot be confirmed, the task
+  # stays registered and the action fails naming it and saying 'the task stays registered', which
+  # scripts/alpha-harness.mjs reads as a sign to keep the result file. A task an earlier call left
+  # running under the same name is stopped first, with the same 30-second wait.
+  # scripts/alpha-harness.mjs sizes its own timeouts from these three waits (DESKTOP_TASK_BUDGET_MS).
   if (-not $TaskName) { throw 'TaskName is required' }
+  # Only these states mean the task has finished. Queued and Running mean it may still run, and any
+  # other state, or one that cannot be read, is not taken as finished (#252).
+  $finishedStates = @('Ready', 'Disabled')
+  function Test-DesktopTaskFinished {
+    try {
+      return $finishedStates -contains [string](Get-ScheduledTask -TaskName $TaskName).State
+    } catch {
+      return $false
+    }
+  }
+  # True once the task is confirmed finished. Unless it is already, it is stopped, even when its
+  # state could not be read, and waited on for up to 30 seconds. False when that cannot be
+  # confirmed: it is not finished after 30 seconds, or its state cannot be read.
+  function Confirm-DesktopTaskStopped {
+    if (Test-DesktopTaskFinished) { return $true }
+    try {
+      Stop-ScheduledTask -TaskName $TaskName
+    } catch {
+      # A stop that failed is judged by the state that follows it.
+    }
+    try {
+      $stopDeadline = (Get-Date).AddSeconds(30)
+      while (-not (Test-DesktopTaskFinished) -and (Get-Date) -lt $stopDeadline) {
+        Start-Sleep -Milliseconds 500
+      }
+    } catch {
+      return $false
+    }
+    return (Test-DesktopTaskFinished)
+  }
+  $staleTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+  if ($staleTask -and -not (Confirm-DesktopTaskStopped)) {
+    throw "desktop script $TaskName from an earlier call could not be confirmed stopped; the task stays registered"
+  }
   $interactiveUser = (Get-CimInstance Win32_ComputerSystem).UserName
   if (-not $interactiveUser) { throw 'no interactive Windows user is logged in' }
   $shellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -77,17 +119,33 @@ if ($Action -eq 'DesktopScript') {
   $taskPrincipal = New-ScheduledTaskPrincipal -UserId $interactiveUser -LogonType Interactive -RunLevel Limited
   $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
   Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Principal $taskPrincipal -Settings $taskSettings -Force | Out-Null
+  $taskFinished = $false
+  $taskFailure = $null
   try {
     Start-ScheduledTask -TaskName $TaskName
     $taskDeadline = (Get-Date).AddMinutes(5)
     do {
       Start-Sleep -Milliseconds 500
-      $taskState = (Get-ScheduledTask -TaskName $TaskName).State
-    } while ($taskState -eq 'Running' -and (Get-Date) -lt $taskDeadline)
-    if ($taskState -eq 'Running') { throw "desktop script $TaskName did not finish" }
+      $taskState = [string](Get-ScheduledTask -TaskName $TaskName).State
+    } while ($taskState -in @('Queued', 'Running') -and (Get-Date) -lt $taskDeadline)
+    if ($taskState -in @('Queued', 'Running')) { throw "desktop script $TaskName did not finish within 5 minutes" }
+    if ($finishedStates -notcontains $taskState) { throw "desktop script $TaskName is in state '$taskState', not finished" }
+    $taskFinished = $true
     $taskResult = (Get-ScheduledTaskInfo -TaskName $TaskName).LastTaskResult
-  } finally {
+  } catch {
+    $taskFailure = $_.Exception.Message
+  }
+  if (-not $taskFinished -and -not (Confirm-DesktopTaskStopped)) {
+    throw "desktop script $TaskName could not be confirmed stopped after: $taskFailure; the task stays registered"
+  }
+  try {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+  } catch {
+    $taskFailure = if ($taskFailure) { "$taskFailure; the stopped task could not be removed: $($_.Exception.Message)" } else { "the finished task could not be removed: $($_.Exception.Message)" }
+  }
+  if ($taskFailure) {
+    if ($taskFinished) { throw $taskFailure }
+    throw "$taskFailure; the task was confirmed stopped and removed"
   }
   [pscustomobject]@{ at = Get-NowUtc; action = 'desktop-script'; script = $resolvedExecutable; result = $taskResult } |
     ConvertTo-Json -Compress

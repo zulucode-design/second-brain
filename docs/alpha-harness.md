@@ -141,7 +141,9 @@ under `~/sb88/evidence/walkthrough-<run>/`:
    Whether or not the walkthrough passed, the controller archives the run's databases and deletes
    a token that a failed step left;
 6. show the Export diagnostics button in Settings > Maintenance, export diagnostics, and search the
-   archive for a planted credential, a note body marker, a note title and path, and the vault path;
+   archive for a planted credential, a note body marker, a note title and path, and the vault path.
+   The app moves the planted key into the OS keyring, so the run refuses to start when the keyring
+   already holds that entry and deletes it afterwards (see Machine-state safety);
 7. with the embedding backend pointed at a closed port, capture a note, edit an existing one (the
    edit must be on disk after exit), move a note, and keyword search;
 8. start with a malformed `config.json`, which must show the startup error and leave exactly one
@@ -305,6 +307,37 @@ harness get neither the journal nor the junctions: they change the real `.window
 `%LOCALAPPDATA%\io.github.zulucodedesign.SecondBrain\vaults`, and whoever runs them must record and
 restore or remove all of it.
 
+Every gate ends each machine's part with the same teardown, and none of its steps can be skipped.
+On Windows that is: stop the driver, wait for the app's processes to exit, force-stop them if they
+do not, then restore the config, window state and profile folders. On Fedora it is: stop the
+app's and driver's exact PIDs, then wait for them to exit. Each step runs even when an earlier
+one failed or a trace line could not be written (a full evidence disk, say). The Windows restore
+is attempted even when the processes would not stop; the worker refuses it while any of them
+remains, and that refusal fails the run. The teardown reports its first error, adding that the
+trace could not be written when that happened, so a teardown whose trace is incomplete never
+passes.
+
+The same holds inside the Windows worker, down to each item. Stopping the driver stops each
+`msedgedriver` under the run's `tauri-driver`, then `tauri-driver` itself, each by exact PID and
+each even when one before it failed; a PID that has exited already counts as stopped. The forced
+stop does the same for each of the run's app, watchdog and sidecar processes. Finalize restores
+`config.json`, then the window state, moves each of the run's damaged config copies out of the
+profile, renames each profile folder back, and removes the run's junction and each of its tasks.
+Each of these runs even when one before it failed: a `config.json` a file lock keeps from being
+replaced, a `logs` folder that cannot be put back, or a full D: drive that stops a damaged copy.
+A replace that fails leaves no temporary file beside the config. Finalize removes the lock only
+when every step succeeded. Otherwise the lock and journal stay, and the next run's recovery
+restores the config, window state, damaged copies and profile folders before that run starts; a
+later finalize of the run removes its junction and tasks.
+
+Each gate's own teardown follows the same rule: Gate 1's stops of both apps and its Windows
+finalize, and the acceptance gate's network and isolation restores, its machine teardown and its
+removal of the Fedora candidate. A failure report or trace line that cannot be written never skips
+a later step, and the gate ends with its first real error. A teardown that failed only to write
+its trace never takes the place of a real error from another step: the gate reads every
+teardown's result, reports the first real error, and adds that the trace could not be written,
+whichever teardown it failed in.
+
 Traces are public. The controller redacts the home directory, Windows profile paths, and host
 names at the single point where it writes them.
 
@@ -312,9 +345,105 @@ Windows launch uses the harness-owned `SecondBrainAlphaHarness` scheduled task w
 logon and the exact installed executable under `D:\SecondBrainTest`. The task supplies desktop
 session placement only. Key presses and full-desktop screenshots come from
 `scripts/windows/alpha-desktop.ps1`, which runs in the same session through a short-lived
-`SecondBrainAlphaHarnessDesktop` task.
+`SecondBrainAlphaHarnessDesktop` task. The worker waits up to five minutes for that task, while it
+is `Queued` or `Running`; only `Ready` or `Disabled` count as finished, and any other state, or one
+that cannot be read, does not. On every way out (a finish, an overrun, or a failure while waiting or
+stopping) it removes the task only once the task is confirmed finished. A task not known to be
+finished is stopped first, even when its state cannot be read. Each timeout around the wait
+(the worker's PowerShell call, then the controller's SSH call) is longer than the one inside it, so
+a script never writes a result after its caller has stopped waiting for it. If the task cannot be
+confirmed stopped, it stays registered, the call fails naming it, and a credential check keeps its
+result file; the file's name is that call's own, so it answers no later call. Stop the task by hand
+before the next run: that run's first desktop call refuses while it still runs.
 
 Gate 1 passed unattended on candidate `4ea6b9e` (run `20260921T114623Z`), so Gate 2 may start.
+
+### AI keys in the OS keyring
+
+The Gate 3 walkthrough plants a synthetic OpenAI key (`sk-alpha-harness-<uuid>`) in the app's
+`config.json` to prove that diagnostics redact it. The app moves that key into the OS keyring, under
+account `ai:openai` and service `io.github.zulucodedesign.SecondBrain` (Secret Service on Fedora;
+Credential Manager on Windows, where the credential's target is
+`ai:openai.io.github.zulucodedesign.SecondBrain`). The run's isolated config folders do not reach
+the keyring, so it is the user's own store, and the key the app files there would replace a real
+one. The rule is therefore part of the machine-state restore, and the run keeps it as follows:
+
+- **It refuses when an AI key the run would plant is already in the keyring.** The controller asks
+  each machine in the run whether the entry exists before it changes either machine: before the
+  candidate RPM is installed and before the Windows stale-run recovery. Only reading the candidate
+  and harness commits and deploying the harness's own tools to `D:\SecondBrainTest` come first,
+  because the Windows check runs from those tools. Today the run plants only `openai_api_key`, so
+  it asks about `ai:openai`. If an entry is there, the run stops and names the machine, account and
+  service. Move the key aside by hand, then run again. The trace keeps the check and the refusal.
+- **It asks again just before the plant.** Launches between the first check and the plant can file
+  a key from the copied config. Immediately before a machine's `config.json` gets the key, the
+  controller looks again and arms that machine's removal only when no entry is there. If one is,
+  that machine's run stops with nothing planted and nothing deleted.
+- **A locked entry is present.** On Fedora, existence comes from the Secret Service's own
+  `SearchItems` method (`busctl --user call org.freedesktop.secrets /org/freedesktop/secrets
+  org.freedesktop.Secret.Service SearchItems`), which lists the matching unlocked and locked items
+  by path and never returns a secret. An entry exists when either list is non-empty. `secret-tool
+  lookup` is not used: it exits 1 with no message both for no entry and for an entry it could not
+  unlock. On Windows, `alpha-desktop.ps1` reads the credential before and after its work, and an
+  entry either read saw exists, so `{ found: false, left: true }` counts as present.
+- **A lookup that fails is never read as "absent".** On Fedora, a `SearchItems` call that fails (no
+  session bus, no Secret Service) or answers in any other shape is a failure. On Windows, only
+  `ERROR_NOT_FOUND` (1168) from `CredReadW` means absent, and only success or `ERROR_NOT_FOUND` from
+  `CredDeleteW` is a completed delete. Any other code stops `alpha-desktop.ps1` before it answers;
+  it writes the call and the code, nothing else, and exits 1. A failed check before the run or
+  before the plant stops the run with nothing planted. A failed check during cleanup records the
+  entry as `left: null` (unknown) and fails the run.
+- **It learns only whether the entry exists.** On Fedora, `SearchItems` answers with item paths
+  only, and removal uses `secret-tool clear`, which prints nothing and still runs with its standard
+  output sent to the operating system's null device. `clear` deletes unlocked items only, so an
+  entry locked by then stays, and the search after it reports the entry as left. On Windows,
+  `scripts/windows/alpha-desktop.ps1` runs in the desktop session, because an SSH logon has no
+  Credential Manager, and writes `found` and `left` to a result file named for that one call, which
+  the worker deletes once read. It accepts exactly the app's four AI targets (`ai:anthropic`,
+  `ai:openai`, `ai:ollama` and `ai:openai-compatible`, each followed by the service) and the Notion
+  token, and refuses every other target. No value, part of one, length or hash reaches the
+  controller, a log, a file or a trace.
+- **It removes what it planted, after a pass, a failure or Ctrl+C.** When a machine's part of the
+  run ends and its app and driver are stopped, the controller deletes the entry on every machine
+  whose plant was armed, and checks that none is left. An entry that is left fails the run. A run
+  that refused, or failed or stopped before the plant, deletes nothing. Each cleanup step (Notion,
+  then the machine's teardown described under App state, then the key) runs even when an earlier
+  one, a failure report or a trace write threw, for example because the evidence disk filled up.
+- **Ctrl+C and `SIGTERM` stop the run and clean up.** The first signal stops the walkthrough at its
+  next step. If the gate is still running, the controller ends its WebDriver sessions, stops its
+  machine's app and driver by exact PID (on Windows the app's sidecar and watchdog too), waits until
+  none of them runs, and waits for the gate to unwind. Only then does it run the same cleanup as a
+  failed run, so a request the app was still serving, such as a Notion Connect, cannot store a
+  credential after the cleanup has looked. A failure while stopping them is recorded and the
+  cleanup goes on: the machine's full teardown still runs, stops them again and restores what the
+  run changed. A signal during the final checks still fails the run: a run that received one
+  never records `run-complete` and always exits non-zero. Press Ctrl+C once: the terminal also
+  sends it to the controller's own child processes, so a second press can cut short the commands
+  the cleanup is running.
+- **Only a hard kill leaves the entry.** A controller killed any other way (`SIGKILL`, a closed
+  terminal, a power loss) cannot clean up. Cancelling the GitHub Actions run counts as one: the
+  runner signals the step's shell rather than the controller, and does not wait for the controller's
+  cleanup ([workflow cancellation](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation)).
+  The entry left behind makes the next run refuse, naming it, and someone deletes it by hand after
+  confirming it holds the synthetic value.
+- **The trace records existence only.** Each machine gets an `ai-keys-checked` event before the run
+  (`existed` for each account), an `ai-keys-armed` event before its plant (`armed`, and `existed`
+  for each account), and an `ai-keys-removed` event after its cleanup (`armed`, and when armed
+  `removed` and `left` for each account). A machine whose gate a signal stopped also gets a
+  `stopped-gate-settled` event once its app is stopped and its gate has unwound.
+
+Any one-off verification script that plants a key in the app config must do the same: check the
+keyring first, counting a locked entry as present, and refuse if the entry is there; delete what it
+planted whether it passed, failed or was interrupted; check that nothing is left; and keep every
+value out of its output. The installed checks for #237 planted a key without doing so and left a
+fake `ai:openai` entry on both machines, deleted by hand on 2026-11-02.
+
+`tests/alpha-harness-keyring.test.mjs` runs the walkthrough controller's own sequence against fake
+machines, fake signals and fakes of both keyrings: an entry present before the run, locked or not,
+one that appears before the plant or between the Windows script's two reads, failures before and
+after the plant, `SIGINT` and `SIGTERM` (including during a Notion Connect and during the final
+checks), trace writes that fail after the plant, lookup and delete errors on each platform, and the
+Windows result files and timeouts. It uses neither the real keyring nor a real machine.
 
 ## Harness upkeep
 

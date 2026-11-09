@@ -81,7 +81,13 @@ function sleep(milliseconds) {
 function atomicWrite(path, data) {
   const temporary = `${path}.alpha-harness-${process.pid}`;
   writeFileSync(temporary, data, { mode: 0o600 });
-  renameSync(temporary, path);
+  try {
+    renameSync(temporary, path);
+  } catch (error) {
+    // A rename a file lock refused leaves no temporary file beside the real one (#252).
+    rmSync(temporary, { force: true });
+    throw error;
+  }
 }
 
 function runCommandSync(executable, args, options = {}) {
@@ -670,6 +676,20 @@ function killForCleanup(pid, signal) {
   }
 }
 
+// Signals every row's exact PID, each even when one before it failed, then throws the first error
+// (#252). `kill` is replaced only in tests.
+export function killEach(rows, signal, kill = killForCleanup) {
+  let firstError;
+  for (const row of rows) {
+    try {
+      kill(row.pid, signal);
+    } catch (error) {
+      firstError ??= error;
+    }
+  }
+  if (firstError) throw firstError;
+}
+
 // Runs next to the app (locally on Fedora, over SSH on Windows) because a controller round trip
 // per poll is slower than the whole unpack. The caller has proven `pid` is this run's app.
 async function killWatch({ vault, point, expectedFiles, pid, timeoutMs }) {
@@ -948,21 +968,33 @@ async function runOnFedora(args, runLocked) {
   }
 }
 
-function prepareHarnessRun(options) {
-  if (!existsSync(LINUX_APP)) fail(`installed app missing: ${LINUX_APP}`);
-  assertNoLinuxApp();
-  requireFreeSpace(options.linuxRoot);
+// Reads only: the candidate and harness commits, and the check that the app is the candidate's.
+function harnessCommits(options) {
   const candidateCommit = runCommandSync('git', ['rev-parse', '--verify', `${options.candidate}^{commit}`], { cwd: REPO }).stdout;
   const harnessCommit = runCommandSync('git', ['rev-parse', 'HEAD'], { cwd: REPO }).stdout;
   // Harness-only commits reuse the candidate's packages, so the app itself must be identical.
   const drift = runCommandSync('git', ['diff', '--name-only', candidateCommit, harnessCommit, '--', ...APP_SOURCES], { cwd: REPO }).stdout;
   if (drift) fail(`app sources differ from candidate ${candidateCommit}:\n${drift}`);
+  return { candidateCommit, harnessCommit };
+}
+
+function newRunId() {
+  return new Date().toISOString().replaceAll(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+}
+
+// `early` comes from the walkthrough, which read the commits, deployed the Windows tools and chose
+// its run ID before its keyring check (#252). Every other gate does all of it here.
+function prepareHarnessRun(options, early) {
+  if (!existsSync(LINUX_APP)) fail(`installed app missing: ${LINUX_APP}`);
+  assertNoLinuxApp();
+  requireFreeSpace(options.linuxRoot);
+  const { candidateCommit, harnessCommit } = early ?? harnessCommits(options);
   const fedoraPackage = fedoraPackageEvidence(candidateCommit);
-  deployWindowsTools(options.sshHost);
+  if (!early) deployWindowsTools(options.sshHost);
   const recovered = remoteWorker(options.sshHost, {
     action: 'recover', root: WINDOWS_ROOT, runId: 'recovery', appPath: WINDOWS_APP,
   });
-  const runId = new Date().toISOString().replaceAll(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const runId = early?.runId ?? newRunId();
   return { candidateCommit, harnessCommit, fedoraPackage, recovered, runId };
 }
 
@@ -992,6 +1024,8 @@ async function runSyncLocked(options) {
 
   let runError;
   let cleanupError;
+  // The failure report and the teardown write here: a write that fails never skips a teardown step.
+  const teardown = teardownTrace(evidencePath);
   try {
     windowsPrepared = true;
     const prepared = remoteWorker(options.sshHost, {
@@ -1098,31 +1132,33 @@ async function runSyncLocked(options) {
     completed = true;
   } catch (error) {
     runError = error;
-    observation(evidencePath, 'run-failed', 'controller', { error: error.message });
+    teardown.record('run-failed', 'controller', { error: error.message });
   } finally {
+    // Each stop and restore step runs even when one before it, or a trace write, failed (#252).
     try {
       await stopLinux(linuxChild, linux);
-      observation(evidencePath, 'process-final', 'fedora', { processes: linuxReport(linux.machinePath) });
+      teardown.record('process-final', 'fedora', { processes: linuxReport(linux.machinePath) });
     } catch (error) {
-      observation(evidencePath, 'cleanup-error', 'fedora', { error: error.message });
       cleanupError ??= error;
+      teardown.record('cleanup-error', 'fedora', { error: error.message });
     }
     if (windowsPrepared) {
       if (windowsPid) {
         try {
           remoteWorker(options.sshHost, { action: 'stop-app', root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP, pid: windowsPid });
         } catch (error) {
-          observation(evidencePath, 'cleanup-error', 'windows-app', { error: error.message });
           cleanupError ??= error;
+          teardown.record('cleanup-error', 'windows-app', { error: error.message });
         }
       }
-      const finalizeError = await finalizeWindows(options.sshHost, runId, evidencePath);
+      const finalizeError = teardown.real(await finalizeWindows(options.sshHost, runId, evidencePath));
       cleanupError ??= finalizeError;
     }
   }
 
-  if (runError) throw runError;
-  if (cleanupError) throw cleanupError;
+  // The run's first error, saying so if a failure report or teardown line could not be written.
+  const failure = teardown.error(runError ?? cleanupError);
+  if (failure) throw failure;
   if (!completed) fail(`run failed; evidence: ${evidencePath}`);
   observation(evidencePath, 'run-complete', 'controller');
   console.log(JSON.stringify({ runId, evidencePath }));
@@ -1271,33 +1307,46 @@ function linuxDriverMachine(root, runId, vaultId, { ollamaBaseUrl, sync = false 
       if (survivors.length) fail(`Fedora process survived app exit: ${JSON.stringify(survivors)}`);
       return { processes: survivors };
     },
+    // #252: a walkthrough stopped by a signal stops its app and driver before it looks at the
+    // keyring. Fedora's cleanup is only that, since its config and state are the run's own folders,
+    // and stopping twice is harmless.
+    stopApps() {
+      return this.cleanup();
+    },
+    // Fedora's config and state are the run's own folders, so its teardown only stops processes.
+    // Each stop step runs even when one before it threw; the first error is thrown after them all
+    // (#252).
     async cleanup() {
-      if (entryLaunchAttempted) {
-        for (const row of linuxReport(machine.machinePath)) killForCleanup(row.pid, 'SIGKILL');
+      const steps = [];
+      if (entryLaunchAttempted) steps.push(() => killEach(linuxReport(machine.machinePath), 'SIGKILL'));
+      if (driver) {
+        // Exact PIDs only: apps under this run's driver, then the driver's own children.
+        steps.push(() => killEach(apps(), 'SIGKILL'));
+        steps.push(() => killEach(processRows().filter((candidate) => candidate.parentPid === driver.pid), 'SIGTERM'));
+        steps.push(async () => {
+          if (driver.exitCode !== null) return;
+          driver.kill('SIGTERM');
+          const deadline = Date.now() + 15_000;
+          while (driver.exitCode === null && Date.now() < deadline) await sleep(250);
+        });
       }
-      if (!driver) return this.appsGone();
-      // Exact PIDs only: apps under this run's driver, then the driver's own children.
-      for (const row of apps()) killForCleanup(row.pid, 'SIGKILL');
-      for (const row of processRows().filter((candidate) => candidate.parentPid === driver.pid)) {
-        killForCleanup(row.pid, 'SIGTERM');
-      }
-      if (driver.exitCode === null) {
-        driver.kill('SIGTERM');
-        const deadline = Date.now() + 15_000;
-        while (driver.exitCode === null && Date.now() < deadline) await sleep(250);
-      }
-      return this.appsGone();
+      let final;
+      steps.push(async () => {
+        final = await this.appsGone();
+      });
+      await everyStep(steps);
+      return final;
     },
   };
 }
 
-function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollamaBaseUrl, sync = false } = {}) {
-  const runWindowsAction = (action, extra = {}, timeout = 45_000) => remoteWorker(
-    sshHost, { action, root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP, ...extra }, timeout,
-  );
+// `io` is replaced only in tests (windowsMachineIo).
+export function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollamaBaseUrl, sync = false } = {}, io = windowsMachineIo(sshHost, runId)) {
+  const runWindowsAction = io.worker;
   const longTimeoutMs = 5 * 60_000;
-  // Desktop-session actions wait for a scheduled task in the interactive session.
-  const desktopTimeoutMs = 6 * 60_000;
+  // Desktop-session actions wait for a scheduled task in the interactive session, so the SSH call
+  // outlasts that wait (#252).
+  const desktopTimeoutMs = DESKTOP_ACTION_TIMEOUT_MS;
   const fetchRemote = (remote, destination) => {
     runCommandSync('scp', [`${sshHost}:${remote.replaceAll('\\', '/')}`, destination], { timeout: 60_000 });
     return readFileSync(destination);
@@ -1375,11 +1424,8 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
     async startDriver() {
       const started = runWindowsAction('start-driver');
       driverPid = started.pid;
-      tunnel = spawn('ssh', [
-        '-N', '-o', 'ExitOnForwardFailure=yes',
-        '-L', `127.0.0.1:${WINDOWS_TUNNEL_PORT}:127.0.0.1:${WINDOWS_DRIVER_PORT}`, sshHost,
-      ], { stdio: 'ignore' });
-      await waitForDriver(WINDOWS_TUNNEL_PORT);
+      tunnel = io.tunnel();
+      await io.waitForDriver();
       if (tunnel.exitCode !== null) fail(`WebDriver tunnel exited ${tunnel.exitCode}; is port ${WINDOWS_TUNNEL_PORT} taken?`);
       return started;
     },
@@ -1390,20 +1436,58 @@ function windowsDriverMachine(sshHost, runId, vaultId, candidateCommit, { ollama
         base64Request({ ...request, vault: windowsPaths(WINDOWS_ROOT, runId).vaultPath }),
       ]);
     },
-    appsGone: () => waitForWindowsProcesses(sshHost, runId, (processes) => processes.length === 0, 60_000),
-    async cleanup(evidencePath) {
+    appsGone: () => io.processesGone(60_000),
+    // #252: a walkthrough stopped by a signal stops the app, its sidecar and watchdog, and the
+    // driver before it looks at the keyring, by exact PID and without the config restore that
+    // cleanup does afterwards. cleanup-processes stops only packaged processes this run started.
+    // Each step runs even when one before it, or a trace write, threw; cleanup stops them again.
+    async stopApps(evidencePath) {
+      const trace = teardownTrace(evidencePath);
       let firstError;
       tunnel?.kill();
       if (driverPid) {
         try {
-          observation(evidencePath, 'driver-stopped', 'windows', runWindowsAction('stop-driver', { driverPid }));
+          const stopped = runWindowsAction('stop-driver', { driverPid });
+          driverPid = undefined;
+          trace.record('driver-stopped', 'windows', stopped);
         } catch (error) {
-          observation(evidencePath, 'cleanup-error', 'windows-driver', { error: error.message });
-          firstError = error;
+          firstError ??= error;
         }
       }
-      firstError ??= await finalizeWindows(sshHost, runId, evidencePath);
-      if (firstError) throw firstError;
+      try {
+        trace.record('forced-process-cleanup', 'windows', runWindowsAction('cleanup-processes'));
+      } catch (error) {
+        firstError ??= error;
+      }
+      let report;
+      try {
+        report = await io.processesGone(15_000);
+      } catch (error) {
+        firstError ??= error;
+      }
+      const reported = trace.error(firstError);
+      if (reported) throw reported;
+      return report;
+    },
+    // The driver stops, then finalizeWindows stops what is left and restores the config, window
+    // state and profile folders. finalizeWindows runs whatever the driver stop or a trace write did
+    // (#252).
+    async cleanup(evidencePath) {
+      const trace = teardownTrace(evidencePath);
+      let firstError;
+      tunnel?.kill();
+      if (driverPid) {
+        try {
+          trace.record('driver-stopped', 'windows', runWindowsAction('stop-driver', { driverPid }));
+        } catch (error) {
+          firstError ??= error;
+          trace.record('cleanup-error', 'windows-driver', { error: error.message });
+        }
+      }
+      const finalizeError = trace.real(await finalizeWindows(sshHost, runId, evidencePath, io));
+      firstError ??= finalizeError;
+      const reported = trace.error(firstError);
+      if (reported) throw reported;
     },
   };
 }
@@ -1419,10 +1503,15 @@ async function waitForRestore(browser) {
 }
 
 async function withApp(machine, action, readySelector) {
+  // A stopped walkthrough launches nothing more, and can end the session it has open (#252,
+  // walkthroughMachine). Other gates' machines have none of these hooks.
+  machine.beforeAppLaunch?.();
   const browser = await openApp(machine.port, machine.application, readySelector);
   try {
+    machine.appOpened?.(browser);
     return await action(browser);
   } finally {
+    machine.appClosed?.(browser);
     await closeApp(browser);
     await machine.appsGone();
   }
@@ -1532,58 +1621,127 @@ function openGateTrace(options, gate, { runStart = {}, fedoraRpm } = {}) {
   mkdirSync(dirname(evidencePath), { recursive: true });
   mkdirSync(screenshotDir, { recursive: true });
   observation(evidencePath, 'run-start', 'controller', { runId: run.runId, commit: run.candidateCommit, harnessCommit: run.harnessCommit, ...runStart });
-  observation(evidencePath, 'package-evidence', 'fedora', fedoraRpm ? { ...run.fedoraPackage, checks: fedoraPackageChecks(fedoraRpm) } : run.fedoraPackage);
+  recordRunPreparation(evidencePath, options, run, fedoraRpm ? { ...run.fedoraPackage, checks: fedoraPackageChecks(fedoraRpm) } : run.fedoraPackage);
+  return { ...run, evidencePath, screenshotDir };
+}
+
+// The trace lines that follow a run's start in every gate but Gate 1.
+function recordRunPreparation(evidencePath, options, run, fedoraPackage) {
+  observation(evidencePath, 'package-evidence', 'fedora', fedoraPackage);
   observation(evidencePath, 'keep-awake', 'controller', {
     fedora: 'systemd-inhibit sleep:idle; gnome-session-inhibit idle',
     windows: `PowerSetRequest SystemRequired, ${options.holdMinutes} min`,
   });
   if (run.recovered.recovered) observation(evidencePath, 'stale-run-recovered', 'windows', run.recovered);
-  return { ...run, evidencePath, screenshotDir };
+}
+
+// ── Teardown that nothing skips (#252) ──
+//
+// A machine's teardown stops its processes and restores what the run changed. Each of its steps
+// runs even when one before it threw, and a trace line that cannot be written (a full evidence
+// disk, say) never stops the next step. The teardown remembers the first such failure and names it
+// in the error it reports, so a run whose trace is incomplete never passes.
+
+const TRACE_FAILED = 'the trace could not be written';
+
+// `error`, saying the trace could not be written when `traceError` is set, unless it says so
+// already; or the trace failure alone when there is no other error, marked `traceOnly`: every
+// step it reports on succeeded.
+function withTraceFailure(error, traceError) {
+  if (!traceError || error?.traceError) return error;
+  const message = error ? `${error.message}; ${TRACE_FAILED}: ${traceError.message}` : `${TRACE_FAILED}: ${traceError.message}`;
+  return Object.assign(new Error(message, { cause: error ?? traceError }), { traceError, traceOnly: !error });
+}
+
+// Trace writes for a teardown. `record` never throws: the first write that fails is kept, as is a
+// trace failure an inner teardown reported (`absorb`), and `error` adds it to the error reported.
+// `real` is what a teardown keeps of an inner teardown's error: the error, unless all it reports is
+// a trace failure, which is kept alongside instead, so it never takes the place of a real error
+// from a later step (#252).
+function teardownTrace(evidencePath) {
+  let traceError;
+  return {
+    record(event, machine, value) {
+      try {
+        observation(evidencePath, event, machine, value);
+      } catch (error) {
+        traceError ??= error;
+      }
+    },
+    absorb(error) {
+      if (error?.traceError) traceError ??= error.traceError;
+      return error;
+    },
+    real(error) {
+      this.absorb(error);
+      return error?.traceOnly ? undefined : error;
+    },
+    get failed() {
+      return Boolean(traceError);
+    },
+    error: (error) => withTraceFailure(error, traceError),
+  };
 }
 
 // Ends one machine's part of a gate, passed or failed: its processes stopped and its config
-// restored. Returns the error when that fails.
-async function finishMachine(machine, evidencePath) {
+// restored. Never throws: returns the error when that fails, or when its trace could not be written.
+export async function finishMachine(machine, evidencePath) {
+  const trace = teardownTrace(evidencePath);
+  let cleanupError;
   try {
     const final = await machine?.cleanup(evidencePath);
-    if (final) observation(evidencePath, 'process-final', machine.name, final);
-    return undefined;
+    if (final) trace.record('process-final', machine.name, final);
   } catch (error) {
-    observation(evidencePath, 'cleanup-error', machine?.name ?? 'controller', { error: error.message });
-    return error;
+    cleanupError = trace.absorb(error);
+    trace.record('cleanup-error', machine?.name ?? 'controller', { error: error.message });
   }
+  return trace.error(cleanupError);
 }
 
-async function runRestoreLocked(options) {
-  const { candidateCommit, runId, evidencePath, screenshotDir } = openGateTrace(options, 'restore', {
-    runStart: { killPoints: Object.keys(KILL_POINTS) },
-  });
+// What the restore gate does to the machines, in one place so that
+// tests/alpha-harness-keyring.test.mjs can run the gate's own sequence against fakes (#252).
+function restoreIo(options) {
+  return {
+    openTrace: () => openGateTrace(options, 'restore', { runStart: { killPoints: Object.keys(KILL_POINTS) } }),
+    machines: (runId, candidateCommit) => [
+      () => linuxDriverMachine(options.linuxRoot, runId, randomUUID()),
+      // Built before prepare runs, so a prepare that fails halfway is still finalized.
+      () => windowsDriverMachine(options.sshHost, runId, randomUUID(), candidateCommit),
+    ],
+    gate: restoreGate,
+    print: (line) => console.log(line),
+  };
+}
+
+// `io` is replaced only in tests.
+export async function runRestoreLocked(options, io = restoreIo(options)) {
+  const { candidateCommit, runId, evidencePath, screenshotDir } = io.openTrace();
 
   let runError;
   let cleanupError;
-  const machines = [
-    () => linuxDriverMachine(options.linuxRoot, runId, randomUUID()),
-    // Built before prepare runs, so a prepare that fails halfway is still finalized.
-    () => windowsDriverMachine(options.sshHost, runId, randomUUID(), candidateCommit),
-  ];
-  for (const makeMachine of machines) {
+  // The failure report and the teardown write here: a write that fails never skips a teardown step.
+  const teardown = teardownTrace(evidencePath);
+  for (const makeMachine of io.machines(runId, candidateCommit)) {
     let machine;
     try {
       machine = makeMachine();
       observation(evidencePath, 'prepared', machine.name, machine.prepare());
-      await restoreGate(machine, evidencePath, screenshotDir);
+      await io.gate(machine, evidencePath, screenshotDir);
     } catch (error) {
       runError = error;
-      observation(evidencePath, 'run-failed', machine?.name ?? 'controller', { error: error.message });
+      teardown.record('run-failed', machine?.name ?? 'controller', { error: error.message });
     }
-    cleanupError ??= await finishMachine(machine, evidencePath);
-    if (runError || cleanupError) break;
+    // Called before `??=`, so an error kept earlier can never skip the teardown (#252).
+    const teardownError = teardown.real(await finishMachine(machine, evidencePath));
+    cleanupError ??= teardownError;
+    if (runError || cleanupError || teardown.failed) break;
   }
 
-  if (runError) throw runError;
-  if (cleanupError) throw cleanupError;
+  // The run's first error, saying so if a failure report or teardown line could not be written.
+  const failure = teardown.error(runError ?? cleanupError);
+  if (failure) throw failure;
   observation(evidencePath, 'run-complete', 'controller');
-  console.log(JSON.stringify({ runId, evidencePath, screenshotDir }));
+  io.print(JSON.stringify({ runId, evidencePath, screenshotDir }));
 }
 
 // Enough of a ZIP reader for the diagnostic archive: stored and deflated members, no ZIP64.
@@ -1801,6 +1959,394 @@ async function notionCleanup(machine, notion, passed) {
   return result;
 }
 
+// ── AI keys in the OS keyring (#252) ──
+//
+// The walkthrough plants a synthetic OpenAI key in config.json and the app moves it into the OS
+// keyring. That keyring is the user's own: the run's isolated config folders do not reach it. So a
+// run refuses when it already holds an entry the run would plant, and removes what it planted.
+// The harness learns only whether an entry exists. No value enters this process, a log or a trace.
+
+// The app's AI key config fields, and the account the app moves each to. All sit under
+// APP_IDENTIFIER as the service (src-tauri/src/secret_store.rs).
+const AI_KEY_FIELDS = {
+  ai_api_key: 'ai:anthropic',
+  openai_api_key: 'ai:openai',
+  ollama_api_key: 'ai:ollama',
+  openai_compatible_api_key: 'ai:openai-compatible',
+};
+export const AI_KEY_ACCOUNTS = Object.values(AI_KEY_FIELDS);
+
+// The AI keys a walkthrough plants in config.json, by config field. A run checks and clears exactly
+// these, and refuses to plant any other. A check that plants another key adds it here.
+export const PLANTED_AI_KEYS = { openai_api_key: AI_KEY_FIELDS.openai_api_key };
+
+const PLANTED_AI_ACCOUNTS = Object.values(PLANTED_AI_KEYS);
+
+// alpha-harness.ps1 (DesktopScript) waits up to 30 s for a desktop task an earlier call left
+// running, five minutes for its own, and 30 s more for that one to stop when it overruns.
+export const DESKTOP_TASK_BUDGET_MS = 30_000 + 5 * 60_000 + 30_000;
+// The worker's PowerShell call that waits for it, which also starts PowerShell and registers and
+// removes the task.
+export const DESKTOP_SCRIPT_TIMEOUT_MS = DESKTOP_TASK_BUDGET_MS + 60_000;
+// The controller's SSH call to a worker action that runs a desktop script. The action does work of
+// its own around the script: launch-entry waits another 32 s for the app.
+export const DESKTOP_ACTION_TIMEOUT_MS = DESKTOP_SCRIPT_TIMEOUT_MS + 60_000;
+
+// The config patch that plants `secret` under every field in PLANTED_AI_KEYS.
+export function plantedAiKeyPatch(secret) {
+  return Object.fromEntries(Object.keys(PLANTED_AI_KEYS).map((field) => [field, secret]));
+}
+
+// Only the app's own AI accounts may reach the keyring commands: a clear on any other account
+// would delete something this run never planted.
+function aiKeyAccount(account) {
+  if (!AI_KEY_ACCOUNTS.includes(account)) fail(`not an AI key account: ${account}`);
+  return account;
+}
+
+// keyring's Windows store names a credential "<account>.<service>".
+export function windowsAiKeyTarget(account) {
+  return `${aiKeyAccount(account)}.${APP_IDENTIFIER}`;
+}
+
+// The Secret Service's own search (org.freedesktop.Secret.Service.SearchItems) on the session bus.
+// It answers with the paths of the unlocked and of the locked items whose attributes match, and
+// never with a secret.
+const SECRET_SEARCH = [
+  '--user', '--json=short', 'call', 'org.freedesktop.secrets', '/org/freedesktop/secrets',
+  'org.freedesktop.Secret.Service', 'SearchItems', 'a{ss}', '2',
+];
+
+// busctl --json=short prints a method's reply as {"type": <signature>, "data": [<arguments>]}.
+// Null unless that is SearchItems' two lists of item paths.
+function searchedItems(stdout) {
+  let reply;
+  try {
+    reply = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  const paths = (list) => Array.isArray(list) && list.every((path) => typeof path === 'string');
+  if (reply?.type !== 'aoao' || !Array.isArray(reply.data) || reply.data.length !== 2) return null;
+  const [unlocked, locked] = reply.data;
+  return paths(unlocked) && paths(locked) ? { unlocked, locked } : null;
+}
+
+/**
+ * The AI key entries in Fedora's Secret Service. Whether an entry exists comes from SearchItems,
+ * which lists locked items as well as unlocked ones, so a locked entry counts as present (#252):
+ * `secret-tool lookup` exits 1 with no message for an entry it could not unlock, just as for none.
+ * A search that fails, or answers in any other shape, is never read as absent. Removal uses
+ * `secret-tool clear`, which deletes unlocked items only and prints nothing, with its standard
+ * output still sent to the operating system's null device; the search then decides what is left.
+ */
+export function fedoraAiKeyStore({ spawn = spawnSync } = {}) {
+  const command = (executable, args, stdout) => {
+    const result = spawn(executable, args, {
+      stdio: ['ignore', stdout, 'pipe'],
+      encoding: 'utf8',
+      timeout: 30_000,
+      killSignal: 'SIGKILL',
+    });
+    if (result.error) throw result.error;
+    return { status: result.status, stdout: String(result.stdout ?? ''), message: String(result.stderr ?? '').trim() };
+  };
+  const attributes = (account) => ['service', APP_IDENTIFIER, 'username', aiKeyAccount(account)];
+  const exists = (account) => {
+    const { status, stdout, message } = command('busctl', [...SECRET_SEARCH, ...attributes(account)], 'pipe');
+    if (status !== 0) fail(`Secret Service search for ${account} failed (exit ${status}): ${message}`);
+    const items = searchedItems(stdout);
+    if (!items) fail(`Secret Service search for ${account} did not answer with lists of unlocked and locked items`);
+    return items.unlocked.length + items.locked.length > 0;
+  };
+  return {
+    name: 'fedora',
+    stored: exists,
+    remove(account) {
+      const found = exists(account);
+      if (found) {
+        // Exit 1 with no message means nothing unlocked matched, so nothing was cleared; a locked
+        // entry stays, and the search below reports it as left.
+        const { status, message } = command('secret-tool', ['clear', ...attributes(account)], 'ignore');
+        if (status !== 0 && (status !== 1 || message)) fail(`secret-tool clear for ${account} failed (exit ${status}): ${message}`);
+      }
+      return { found, left: exists(account) };
+    },
+  };
+}
+
+/**
+ * The AI key entries in Windows Credential Manager, reached through `worker`, which carries a
+ * request to the Windows worker's `ai-key` action. That answers with two flags and nothing else,
+ * and fails when the desktop script could not check.
+ */
+export function windowsAiKeyStore(worker) {
+  const ask = (account, remove) => {
+    const answer = worker({ action: 'ai-key', account: aiKeyAccount(account), remove });
+    if (typeof answer?.found !== 'boolean' || typeof answer?.left !== 'boolean') {
+      fail(`the Windows keyring answer for ${account} was not found/left flags`);
+    }
+    return { found: answer.found, left: answer.left };
+  };
+  return {
+    name: 'windows',
+    // The script reads the credential twice. An entry either read saw exists, even one that
+    // appeared between them, so { found: false, left: true } is present too (#252).
+    stored(account) {
+      const { found, left } = ask(account, false);
+      return found || left;
+    },
+    remove: (account) => ask(account, true),
+  };
+}
+
+// What alpha-harness.ps1's DesktopScript action says when it could not confirm the desktop task
+// stopped and so left it registered (#252).
+export const DESKTOP_TASK_KEPT = 'the task stays registered';
+
+// What alpha-desktop.ps1 writes in place of found/left when a Credential Manager call fails with
+// anything but ERROR_NOT_FOUND: the call and its Win32 error code, and nothing else.
+const CREDENTIAL_FAILURE = /^Cred(Read|Delete)W failed with Win32 error -?\d+$/;
+
+/**
+ * The Windows worker's side of a credential check, for the run's Notion token and the app's AI
+ * keys: alpha-desktop.ps1 runs in the desktop session, because an SSH logon has no Credential
+ * Manager, and writes `found` and `left` to a result file of this call's own, deleted once read,
+ * unless its task could not be confirmed stopped. A late write from an earlier call cannot answer
+ * this one: its file had another name, and alpha-harness.ps1 lets a desktop task go only once it
+ * is confirmed stopped. The script never returns the
+ * secret; this passes on only the two flags, or the Win32 error code the script stopped on.
+ */
+export function desktopCredentialAction({ target, remove }, { tools, runDesktop, readResult, discard }) {
+  const resultPath = win32.join(tools, `credential-${randomUUID()}.json`);
+  const written = () => {
+    try {
+      return readResult(resultPath);
+    } catch {
+      return null;
+    }
+  };
+  // A desktop task that could not be confirmed stopped may still write this file, so it is kept,
+  // with the task, for whoever stops it by hand. Its name is this call's own, so it cannot answer a
+  // later call (#252).
+  let taskKept = false;
+  try {
+    try {
+      runDesktop(`-Mode NotionToken -OutputPath "${resultPath}" -CredentialTarget "${target}"${remove === true ? ' -RemoveCredential' : ''}`);
+    } catch (error) {
+      taskKept = String(error.message).includes(DESKTOP_TASK_KEPT);
+      if (taskKept) fail(`could not check ${target}: ${error.message}; its result file ${resultPath} is kept`);
+      const failure = written()?.error;
+      fail(`could not check ${target}: ${typeof failure === 'string' && CREDENTIAL_FAILURE.test(failure) ? failure : error.message}`);
+    }
+    const answer = written();
+    if (typeof answer?.found !== 'boolean' || typeof answer?.left !== 'boolean') fail(`the desktop script did not answer found/left for ${target}`);
+    return { found: answer.found, left: answer.left };
+  } finally {
+    if (!taskKept) discard(resultPath);
+  }
+}
+
+// The worker's `ai-key` action: one of the app's AI accounts, as its Credential Manager target.
+export function windowsAiKeyAction(request, desktop) {
+  return desktopCredentialAction({ target: windowsAiKeyTarget(request.account), remove: request.remove }, desktop);
+}
+
+function walkthroughKeyStore(machineName, sshHost, runId) {
+  if (machineName === 'fedora') return fedoraAiKeyStore();
+  return windowsAiKeyStore((request) => remoteWorker(
+    sshHost, { root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP, ...request }, DESKTOP_ACTION_TIMEOUT_MS,
+  ));
+}
+
+// Whether `store` holds each planted account's entry. A lookup that fails throws, and is never
+// read as absent.
+function lookUpAiKeys(store) {
+  const entries = {};
+  for (const account of PLANTED_AI_ACCOUNTS) {
+    const existed = store.stored(account);
+    if (typeof existed !== 'boolean') fail(`the ${store.name} keyring lookup for ${account} did not answer yes or no`);
+    entries[account] = { existed };
+  }
+  return entries;
+}
+
+function heldAiKeys(store, entries) {
+  return Object.entries(entries).filter(([, { existed }]) => existed)
+    .map(([account]) => `${store.name} (account ${account}, service ${APP_IDENTIFIER})`);
+}
+
+/**
+ * Before the walkthrough changes anything: asks each machine's keyring whether it holds an entry
+ * for an AI key the run will plant, and records one `ai-keys-checked` event per machine. Fails,
+ * naming each machine, account and service, if any does. It reads existence only and deletes
+ * nothing, so a refused run leaves the keyring as it found it.
+ */
+function checkNoAiKeys(stores, record) {
+  const held = [];
+  for (const store of stores) {
+    const entries = lookUpAiKeys(store);
+    record(store.name, 'ai-keys-checked', { service: APP_IDENTIFIER, entries });
+    held.push(...heldAiKeys(store, entries));
+  }
+  if (held.length) {
+    fail(`keyring already holds an AI key entry the run would overwrite: ${held.join('; ')}; move the key aside by hand before running again`);
+  }
+}
+
+/**
+ * One machine's AI key plant. `arm` runs just before the walkthrough writes the key into
+ * config.json. It asks the keyring again, since a launch after the first check may have filed an
+ * entry from the copied config, and arms the removal only when none is there; otherwise that
+ * machine's run stops with nothing planted. Each re-check is an `ai-keys-armed` event. `remove`
+ * runs in the controller's cleanup and deletes only what an armed plant could have made.
+ */
+function aiKeyPlant(store, record) {
+  let armed = false;
+  return {
+    get armed() {
+      return armed;
+    },
+    arm() {
+      if (armed) return;
+      let entries;
+      try {
+        entries = lookUpAiKeys(store);
+      } catch (error) {
+        record(store.name, 'ai-keys-armed', { service: APP_IDENTIFIER, armed: false });
+        throw error;
+      }
+      const held = heldAiKeys(store, entries);
+      armed = !held.length;
+      record(store.name, 'ai-keys-armed', { service: APP_IDENTIFIER, armed, entries });
+      if (!armed) {
+        fail(`keyring gained an AI key entry after the check before the run: ${held.join('; ')}; nothing was planted, so the run deletes nothing; move the key aside by hand before running again`);
+      }
+    },
+    // The controller's teardown passes a trace writer that never throws (#252).
+    remove: (recordRemoval = record) => removePlantedAiKeys(store, recordRemoval, armed),
+  };
+}
+
+/**
+ * After a machine's part of the run, passed, failed or stopped: when its plant was armed, deletes
+ * the entries the plant could have made and checks none is left. The re-check before arming found
+ * none, so any entry here is the run's. Records one `ai-keys-removed` event: `armed`, and when
+ * armed `removed` and `left` for each account (`left` is null when the keyring could not be read).
+ * Returns the problems, each naming an account.
+ */
+function removePlantedAiKeys(store, record, armed) {
+  if (!armed) {
+    record(store.name, 'ai-keys-removed', { service: APP_IDENTIFIER, armed: false });
+    return [];
+  }
+  const entries = {};
+  const problems = [];
+  for (const account of PLANTED_AI_ACCOUNTS) {
+    try {
+      const { found, left } = store.remove(account);
+      entries[account] = { removed: found && !left, left };
+      if (left) problems.push(`${account} is still in the ${store.name} keyring`);
+    } catch (error) {
+      entries[account] = { removed: false, left: null };
+      problems.push(`${account} on ${store.name}: ${error.message}`);
+    }
+  }
+  record(store.name, 'ai-keys-removed', { service: APP_IDENTIFIER, armed: true, entries });
+  return problems;
+}
+
+// Whether a config patch plants an AI key. One that would plant a key the run did not check fails.
+function plantsAiKey(patch) {
+  const fields = Object.keys(patch).filter((field) => Object.hasOwn(AI_KEY_FIELDS, field) && patch[field]);
+  const unchecked = fields.filter((field) => !Object.hasOwn(PLANTED_AI_KEYS, field));
+  if (unchecked.length) fail(`the walkthrough may plant only the AI keys it checked, not ${unchecked.join(', ')}`);
+  return fields.length > 0;
+}
+
+/**
+ * Ctrl+C (SIGINT) and SIGTERM during a walkthrough. The first stops the run at its next step and
+ * lets the controller's cleanup finish (apps and drivers stopped, configs restored, Notion cleaned
+ * up, the planted key removed) before the run's error ends the process. A later one only says so.
+ * Other gates keep Node's default handling.
+ */
+function walkthroughCancellation(signals) {
+  let reason = null;
+  let stop;
+  const stopped = new Promise((_, reject) => {
+    stop = reject;
+  });
+  stopped.catch(() => {});
+  const stoppedError = () => new Error(`walkthrough stopped by ${reason}`);
+  const handlers = Object.fromEntries(['SIGINT', 'SIGTERM'].map((signal) => [signal, () => {
+    if (reason) {
+      console.error(`${signal}: the walkthrough is already stopping; its cleanup is still running`);
+      return;
+    }
+    reason = signal;
+    console.error(`${signal}: stopping the walkthrough; cleaning up before exit`);
+    stop(stoppedError());
+  }]));
+  for (const [signal, handler] of Object.entries(handlers)) signals.on(signal, handler);
+  return {
+    get reason() {
+      return reason;
+    },
+    check() {
+      if (reason) throw stoppedError();
+    },
+    // One turn of the event loop first, so a signal that arrived during a blocking call counts.
+    async checkpoint() {
+      await new Promise((resolveTurn) => setImmediate(resolveTurn));
+      this.check();
+    },
+    // Settles with `promise`, or rejects as soon as the run is stopped.
+    race(promise) {
+      promise.catch(() => {});
+      return Promise.race([promise, stopped]);
+    },
+    dispose() {
+      for (const [signal, handler] of Object.entries(handlers)) signals.off(signal, handler);
+    },
+  };
+}
+
+/**
+ * The machine as the walkthrough drives it. Every call first checks that the run was not stopped,
+ * so a stopped walkthrough changes nothing more; the controller's cleanup uses the machine itself.
+ * A config patch that plants an AI key arms the key's removal first (`aiKeyPlant`), and so is
+ * covered even if the patch fails partway. It also tracks the WebDriver sessions `withApp` opens,
+ * so a stopped run can end them (`endAppSessions`): webdriverio ends a session's pending waits when
+ * the session is deleted, and the gate then unwinds at once.
+ */
+function walkthroughMachine(machine, { cancellation, plant }) {
+  const guarded = {};
+  for (const [name, value] of Object.entries(machine)) {
+    guarded[name] = typeof value !== 'function' ? value : function guardedCall(...args) {
+      cancellation.check();
+      return value.apply(this, args);
+    };
+  }
+  const sessions = new Set();
+  guarded.beforeAppLaunch = () => cancellation.check();
+  guarded.appOpened = (browser) => {
+    sessions.add(browser);
+    cancellation.check();
+  };
+  guarded.appClosed = (browser) => {
+    sessions.delete(browser);
+  };
+  guarded.endAppSessions = async () => {
+    for (const browser of [...sessions]) await closeApp(browser);
+  };
+  guarded.patchConfig = function patchConfig(patch) {
+    cancellation.check();
+    if (plantsAiKey(patch)) plant.arm();
+    return machine.patchConfig.call(this, patch);
+  };
+  return guarded;
+}
+
 const WALKTHROUGH_NOTES = {
   semantic: {
     category: 'Areas',
@@ -1863,7 +2409,10 @@ async function walkthroughGate(machine, { vault, evidencePath, screenshotDir, no
   record('entry-launched', await machine.launchEntry());
   record('driver-started', await machine.startDriver());
   const planted = { secret: `sk-alpha-harness-${randomUUID()}` };
-  record('config-patched', { keys: machine.patchConfig({ openai_api_key: planted.secret }) });
+  // The keyring was checked before the run changed anything. The machine runWalkthroughLocked
+  // hands this gate asks it again and arms the key's removal before this patch writes the key
+  // (walkthroughMachine); the controller's cleanup then removes what the app files (#252).
+  record('config-patched', { keys: machine.patchConfig(plantedAiKeyPatch(planted.secret)) });
 
   let capture;
   await withApp(machine, async (browser) => {
@@ -1974,81 +2523,212 @@ function notionCredentials() {
   return { token, page };
 }
 
-async function runWalkthroughLocked(options) {
-  const notion = notionCredentials();
+// What the walkthrough controller does to the machines and the world around them, in one place so
+// that tests/alpha-harness-keyring.test.mjs can run the controller's own sequence against fakes.
+function walkthroughIo(options) {
   const windowsOllamaBaseUrl = windowsOllamaUrl(options.ollamaPort);
+  const fedoraOllamaBaseUrl = `http://127.0.0.1:${FEDORA_OLLAMA_PORT}`;
+  return {
+    signals: process,
+    notion: notionCredentials,
+    commits: () => harnessCommits(options),
+    deployTools: () => deployWindowsTools(options.sshHost),
+    evidencePath: (runId) => evidencePathFor('walkthrough', runId),
+    keyStore: (name, runId) => walkthroughKeyStore(name, options.sshHost, runId),
+    installCandidate() {
+      assertNoLinuxApp();
+      fedoraPackageHelper('install-candidate', options.fedoraRpm);
+    },
+    // The installed app's checks, its package evidence, and the Windows stale-run recovery.
+    prepareRun(early) {
+      const run = prepareHarnessRun(options, early);
+      return { ...run, fedoraPackage: { ...run.fedoraPackage, checks: fedoraPackageChecks(options.fedoraRpm) } };
+    },
+    ollamaTunnel: () => fedoraOllamaTunnel(options.sshHost, windowsOllamaBaseUrl),
+    ollamaModels: async (label) => ({
+      windows: remoteWorker(options.sshHost, { action: 'ollama', root: WINDOWS_ROOT, runId: label, ollamaPort: options.ollamaPort }),
+      fedora: await ollamaEmbeddingModel(fedoraOllamaBaseUrl),
+    }),
+    makeMachine: (name, runId, candidateCommit) => (name === 'fedora'
+      ? linuxDriverMachine(options.linuxRoot, runId, randomUUID(), { ollamaBaseUrl: fedoraOllamaBaseUrl, sync: true })
+      : windowsDriverMachine(options.sshHost, runId, randomUUID(), candidateCommit, { ollamaBaseUrl: windowsOllamaBaseUrl, sync: true })),
+    gate: walkthroughGate,
+    notionCleanup,
+    sleep,
+    print: (line) => console.log(line),
+  };
+}
+
+// `io` is replaced only in tests.
+export async function runWalkthroughLocked(options, io = walkthroughIo(options)) {
+  const notion = io.notion();
   // `--machine` runs one machine while a step is being fixed; only a run of both is the gate.
   const machineNames = options.machine ? [options.machine] : ['fedora', 'windows'];
   if (!machineNames.every((name) => ['fedora', 'windows'].includes(name))) fail(`--machine must be fedora or windows: ${options.machine}`);
-  const { candidateCommit, runId, evidencePath, screenshotDir } = openGateTrace(options, 'walkthrough', {
-    runStart: { clipUrl: CLIP_URL, machines: machineNames, gate: machineNames.length === 2 },
-    fedoraRpm: options.fedoraRpm,
-  });
-  const controller = (event, value) => observation(evidencePath, event, 'controller', value);
+  const cancellation = walkthroughCancellation(io.signals);
+  try {
+    return await walkthroughRun(options, io, { notion, machineNames, cancellation });
+  } finally {
+    cancellation.dispose();
+  }
+}
 
-  const ollamaTunnel = fedoraOllamaTunnel(options.sshHost, windowsOllamaBaseUrl);
+async function walkthroughRun(options, io, { notion, machineNames, cancellation }) {
+  // #252: the keyring check comes before anything changes either machine. Only reading the commits
+  // and deploying the harness's own Windows tools, which the Windows check runs from, come first;
+  // the candidate install and the Windows stale-run recovery wait for it.
+  const commits = io.commits();
+  io.deployTools();
+  const runId = newRunId();
+  const evidencePath = io.evidencePath(runId);
+  mkdirSync(dirname(evidencePath), { recursive: true });
+  const record = (machine, event, value) => observation(evidencePath, event, machine, value);
+  const controller = (event, value) => record('controller', event, value);
+  controller('run-start', {
+    runId, commit: commits.candidateCommit, harnessCommit: commits.harnessCommit,
+    clipUrl: CLIP_URL, machines: machineNames, gate: machineNames.length === 2,
+  });
+  const keyStores = new Map(machineNames.map((name) => [name, io.keyStore(name, runId)]));
+  let run;
+  try {
+    await cancellation.checkpoint();
+    checkNoAiKeys([...keyStores.values()], record);
+    await cancellation.checkpoint();
+    io.installCandidate();
+    run = io.prepareRun({ ...commits, runId });
+  } catch (error) {
+    controller('run-failed', { error: error.message });
+    throw error;
+  }
+  const screenshotDir = join(options.linuxRoot, 'evidence', `walkthrough-${runId}`);
+  mkdirSync(screenshotDir, { recursive: true });
+  recordRunPreparation(evidencePath, options, run, run.fedoraPackage);
+
+  const ollamaTunnel = io.ollamaTunnel();
   let runError;
   let cleanupError;
+  // The failure reports and the teardown write here: a write that fails never skips a teardown step,
+  // and the error the run ends with says the trace is incomplete (#252).
+  const teardown = teardownTrace(evidencePath);
+  // In the controller's own (machine, event, value) order.
+  const teardownRecord = (machine, event, value) => teardown.record(event, machine, value);
+  // A signal that arrived during a blocking step becomes the run's error here.
+  const stopIfSignalled = async (machine) => {
+    try {
+      await cancellation.checkpoint();
+    } catch (error) {
+      runError = error;
+      teardownRecord(machine, 'run-failed', { error: error.message });
+    }
+  };
   try {
-    await sleep(2_000);
+    await io.sleep(2_000);
     if (ollamaTunnel.exitCode !== null) fail(`Ollama tunnel exited ${ollamaTunnel.exitCode}; is port ${FEDORA_OLLAMA_PORT} taken?`);
-    controller('ollama', {
-      windows: remoteWorker(options.sshHost, { action: 'ollama', root: WINDOWS_ROOT, runId: 'preflight', ollamaPort: options.ollamaPort }),
-      fedora: await ollamaEmbeddingModel(`http://127.0.0.1:${FEDORA_OLLAMA_PORT}`),
-    });
-    const machines = [
-      ['fedora', () => linuxDriverMachine(options.linuxRoot, runId, randomUUID(), { ollamaBaseUrl: `http://127.0.0.1:${FEDORA_OLLAMA_PORT}`, sync: true })],
-      ['windows', () => windowsDriverMachine(options.sshHost, runId, randomUUID(), candidateCommit, { ollamaBaseUrl: windowsOllamaBaseUrl, sync: true })],
-    ].filter(([name]) => machineNames.includes(name)).map(([, make]) => make);
-    for (const makeMachine of machines) {
+    controller('ollama', await io.ollamaModels('preflight'));
+    for (const machineName of machineNames) {
       let machine;
+      let driven;
+      let gate;
+      let gateSettled = false;
       let passed = false;
+      const plant = aiKeyPlant(keyStores.get(machineName), record);
       try {
-        machine = makeMachine();
+        await cancellation.checkpoint();
+        machine = io.makeMachine(machineName, runId, run.candidateCommit);
         if (machine.install) observation(evidencePath, 'installed', machine.name, machine.install(options.windowsInstaller));
         const prepared = machine.prepare();
         observation(evidencePath, 'prepared', machine.name, prepared);
-        await walkthroughGate(machine, {
+        driven = walkthroughMachine(machine, { cancellation, plant });
+        gate = io.gate(driven, {
           vault: prepared.vault, evidencePath, screenshotDir, notion,
           // #137: the Windows walkthrough must run on an unlocked interactive desktop.
           requireUnlocked: machine.name === 'windows',
         });
+        gate.then(() => { gateSettled = true; }, () => { gateSettled = true; });
+        await cancellation.race(gate);
         passed = true;
       } catch (error) {
         runError = error;
-        observation(evidencePath, 'run-failed', machine?.name ?? 'controller', { error: error.message });
-      }
-      if (machine) {
+        teardownRecord(machine?.name ?? 'controller', 'run-failed', { error: error.message });
+      } finally {
+        // The same cleanup whether the walkthrough passed, failed or was stopped by a signal. Every
+        // step runs even when one before it threw, and its trace writes never throw, so nothing
+        // that went wrong can leave the app running, the config swapped or the key planted (#252).
         try {
-          observation(evidencePath, 'notion-checked', machine.name, await notionCleanup(machine, notion, passed));
+          await everyStep([
+            // Stopped by a signal while the gate still ran: the gate may be waiting on the app (a
+            // Notion connect, say), which could still write a credential. So its app is stopped and
+            // the gate settles before the Notion and key cleanup look at the keyring. A stop that
+            // fails is reported, and the teardown below stops the machine again.
+            async () => {
+              if (!gate || gateSettled) return;
+              let stopped = null;
+              try {
+                stopped = await settleStoppedGate(machine, driven, gate, evidencePath);
+              } catch (error) {
+                // Read before `??=`, which would skip it once an error was kept, losing its trace
+                // failure (#252).
+                const stopError = teardown.real(error);
+                cleanupError ??= stopError;
+                teardownRecord(machine.name, 'cleanup-error', { error: error.message });
+              }
+              teardownRecord(machine.name, 'stopped-gate-settled', { apps: stopped });
+            },
+            async () => {
+              if (!machine) return;
+              try {
+                teardownRecord(machine.name, 'notion-checked', await io.notionCleanup(machine, notion, passed));
+              } catch (error) {
+                runError ??= error;
+                teardownRecord(machine.name, 'run-failed', { error: error.message });
+              }
+            },
+            // Always, whatever an earlier step left: called before `??=`, so a kept error can
+            // never skip it.
+            async () => {
+              const teardownError = teardown.real(await finishMachine(machine, evidencePath));
+              cleanupError ??= teardownError;
+            },
+            // After the app and driver are stopped, so nothing can write the key back. An unarmed
+            // plant deletes nothing.
+            () => {
+              const keyProblems = plant.remove(teardownRecord);
+              if (!keyProblems.length) return;
+              const keyError = new Error(`AI key cleanup: ${keyProblems.join('; ')}`);
+              cleanupError ??= keyError;
+              teardownRecord(machineName, 'cleanup-error', { error: keyError.message });
+            },
+          ]);
         } catch (error) {
-          observation(evidencePath, 'run-failed', machine.name, { error: error.message });
-          runError ??= error;
+          cleanupError ??= error;
         }
+        // A trace this cleanup could not write fails the run here, before anything else runs.
+        cleanupError ??= teardown.error();
       }
-      cleanupError ??= await finishMachine(machine, evidencePath);
+      // A run stopped by then leaves the candidate installed, as a failed run does.
+      if (!runError && !cleanupError) await stopIfSignalled(machineName);
       if (!runError && !cleanupError) {
         // The uninstall check compares against this.
         const vaultBefore = machine.hash();
-        observation(evidencePath, 'vault-final', machine.name, vaultBefore);
+        teardownRecord(machine.name, 'vault-final', vaultBefore);
         if (machine.uninstall) {
           try {
             const removed = { ...machine.uninstall(), vaultUnchanged: machine.hash().sha256 === vaultBefore.sha256 };
-            observation(evidencePath, 'uninstalled', machine.name, removed);
+            teardownRecord(machine.name, 'uninstalled', removed);
             assertUninstalled(machine.name, removed);
           } catch (error) {
             runError = error;
-            observation(evidencePath, 'run-failed', machine.name, { error: error.message });
+            teardownRecord(machine.name, 'run-failed', { error: error.message });
           } finally {
             // Leave Windows with the candidate installed, as the run found it. Fedora, Nicolas's
             // own laptop, keeps no test build. A failure here is recorded without hiding one from
-            // the uninstall.
+            // the uninstall, and a trace line that cannot be written skips neither (#252).
             if (machine.install) {
               try {
-                observation(evidencePath, 'reinstalled', machine.name, machine.install(options.windowsInstaller));
+                teardownRecord(machine.name, 'reinstalled', machine.install(options.windowsInstaller));
               } catch (error) {
-                observation(evidencePath, 'run-failed', machine.name, { error: `reinstall: ${error.message}` });
                 runError ??= error;
+                teardownRecord(machine.name, 'run-failed', { error: `reinstall: ${error.message}` });
               }
             }
           }
@@ -2056,12 +2736,10 @@ async function runWalkthroughLocked(options) {
       }
       if (runError || cleanupError) break;
     }
+    if (!runError && !cleanupError) await stopIfSignalled('controller');
     if (!runError && !cleanupError) {
       try {
-        controller('ollama-final', {
-          windows: remoteWorker(options.sshHost, { action: 'ollama', root: WINDOWS_ROOT, runId: 'final', ollamaPort: options.ollamaPort }),
-          fedora: await ollamaEmbeddingModel(`http://127.0.0.1:${FEDORA_OLLAMA_PORT}`),
-        });
+        controller('ollama-final', await io.ollamaModels('final'));
       } catch (error) {
         runError = error;
         controller('run-failed', { error: error.message });
@@ -2071,13 +2749,47 @@ async function runWalkthroughLocked(options) {
     ollamaTunnel.kill();
   }
 
-  if (runError) throw runError;
-  if (cleanupError) throw cleanupError;
+  // Last, with nothing awaited after it: a signal that came during the final checks still fails
+  // the run, so no run that received SIGINT or SIGTERM records run-complete or exits zero (#252).
+  if (!runError && !cleanupError) await stopIfSignalled('controller');
+  // The run's first error, saying so if a failure report or teardown line could not be written.
+  const failure = teardown.error(runError ?? cleanupError);
+  if (failure) throw failure;
   controller('run-complete', {
     machines: machineNames,
     gate: machineNames.length === 2,
   });
-  console.log(JSON.stringify({ runId, evidencePath, screenshotDir }));
+  io.print(JSON.stringify({ runId, evidencePath, screenshotDir }));
+}
+
+// Runs every step in order, each even when one before it threw, as nested finally blocks would,
+// then throws the first error.
+async function everyStep(steps) {
+  let firstError;
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (error) {
+      firstError ??= error;
+    }
+  }
+  if (firstError) throw firstError;
+}
+
+/**
+ * A walkthrough stopped by a signal while its gate still ran (#252). The gate's WebDriver sessions
+ * end, which also ends the waits it is in; its machine's app and driver stop by exact PID; then the
+ * gate is left to unwind. Only after that do the Notion and key cleanup look at the keyring, so a
+ * request the app was still serving cannot store a credential after them. Returns what stopApps
+ * reported; a stop that fails is thrown once the gate has unwound.
+ */
+async function settleStoppedGate(machine, driven, gate, evidencePath) {
+  try {
+    await driven.endAppSessions();
+    return await machine.stopApps(evidencePath);
+  } finally {
+    await gate.then(() => {}, () => {});
+  }
 }
 
 // Every field of an uninstall result is a check that has to hold.
@@ -2087,37 +2799,63 @@ function assertUninstalled(machineName, result) {
   }
 }
 
-// Windows keeps the run's processes, junction, tasks, and swapped config until this succeeds;
-// both gates end every run here, failed or not.
-async function finalizeWindows(sshHost, runId, evidencePath) {
+// What a Windows machine's driver and teardown ask of Windows: worker actions over SSH, the wait
+// for the run's packaged processes to be gone, and the WebDriver tunnel. Replaced only in tests,
+// which run the real teardown sequence against fakes (#252).
+function windowsMachineIo(sshHost, runId) {
+  return {
+    worker: (action, extra = {}, timeout = 45_000) => remoteWorker(
+      sshHost, { action, root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP, ...extra }, timeout,
+    ),
+    processesGone: (timeoutMs) => waitForWindowsProcesses(sshHost, runId, (processes) => processes.length === 0, timeoutMs),
+    tunnel: () => spawn('ssh', [
+      '-N', '-o', 'ExitOnForwardFailure=yes',
+      '-L', `127.0.0.1:${WINDOWS_TUNNEL_PORT}:127.0.0.1:${WINDOWS_DRIVER_PORT}`, sshHost,
+    ], { stdio: 'ignore' }),
+    waitForDriver: () => waitForDriver(WINDOWS_TUNNEL_PORT),
+  };
+}
+
+/**
+ * Windows keeps the run's processes, junction, tasks, and swapped config until this succeeds;
+ * every gate ends every run here, failed or not. Never throws: returns the first error, saying so
+ * if the trace could not be written.
+ *
+ * Every step runs even when one before it, or a trace write, threw (#252). The restore is attempted
+ * even when the processes would not stop: the worker's `finalize` refuses while any of the
+ * installed app's processes remains, so it restores the moment that is safe, and otherwise its
+ * refusal is the error reported.
+ */
+async function finalizeWindows(sshHost, runId, evidencePath, io = windowsMachineIo(sshHost, runId)) {
+  const trace = teardownTrace(evidencePath);
   let firstError;
-  let processesStopped = false;
-  try {
-    let finalReport;
-    try {
-      finalReport = await waitForWindowsProcesses(sshHost, runId, (processes) => processes.length === 0, 60_000);
-    } catch (error) {
-      const forced = remoteWorker(sshHost, { action: 'cleanup-processes', root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP });
-      observation(evidencePath, 'forced-process-cleanup', 'windows', forced);
-      finalReport = await waitForWindowsProcesses(sshHost, runId, (processes) => processes.length === 0, 15_000);
-      firstError ??= error;
-    }
-    observation(evidencePath, 'process-final', 'windows', finalReport);
-    processesStopped = true;
-  } catch (error) {
-    observation(evidencePath, 'cleanup-error', 'windows-processes', { error: error.message });
+  const failed = (scope, error) => {
     firstError ??= error;
-  }
-  if (processesStopped) {
+    trace.record('cleanup-error', scope, { error: error.message });
+  };
+  let finalReport;
+  try {
+    finalReport = await io.processesGone(60_000);
+  } catch (error) {
+    firstError ??= error;
     try {
-      const finalized = remoteWorker(sshHost, { action: 'finalize', root: WINDOWS_ROOT, runId, appPath: WINDOWS_APP });
-      observation(evidencePath, 'config-restored', 'windows', finalized);
-    } catch (error) {
-      observation(evidencePath, 'cleanup-error', 'windows-config', { error: error.message });
-      firstError ??= error;
+      trace.record('forced-process-cleanup', 'windows', io.worker('cleanup-processes'));
+    } catch (forcedError) {
+      failed('windows-processes', forcedError);
+    }
+    try {
+      finalReport = await io.processesGone(15_000);
+    } catch (waitError) {
+      failed('windows-processes', waitError);
     }
   }
-  return firstError;
+  if (finalReport) trace.record('process-final', 'windows', finalReport);
+  try {
+    trace.record('config-restored', 'windows', io.worker('finalize'));
+  } catch (error) {
+    failed('windows-config', error);
+  }
+  return trace.error(firstError);
 }
 
 function windowsPaths(root, runId) {
@@ -2137,11 +2875,11 @@ function assertWindowsRoot(root, path) {
   if (!win32.resolve(path).toLowerCase().startsWith(base)) fail(`path leaves test root: ${path}`);
 }
 
-function windowsPowerShell(tools, args) {
+function windowsPowerShell(tools, args, timeout = 30_000) {
   const result = runCommandSync('powershell.exe', [
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
     '-File', win32.join(tools, 'alpha-harness.ps1'), ...args,
-  ]);
+  ], { timeout });
   return parseLastJson(result.stdout);
 }
 
@@ -2171,32 +2909,140 @@ function windowsTailscaleIp() {
   return parseTailscaleIp(runCommandSync(tailscale, ['ip', '-4']).stdout);
 }
 
-// The run directory keeps all machine state as evidence; only the pointers into the user's
-// profile and task list are removed. The junction is checked to target this run before rmdir,
-// which removes the link and never its target.
-function removeRunArtifacts(tools, appPath, manifest, paths) {
-  let junctionRemoved = false;
-  if (existsSync(manifest.machineLink)) {
-    if (!lstatSync(manifest.machineLink).isSymbolicLink()
-      || win32.resolve(readlinkSync(manifest.machineLink)).toLowerCase() !== win32.resolve(paths.machinePath).toLowerCase()) {
-      fail(`refusing to remove ${manifest.machineLink}: not this run's junction`);
+// Runs each named step in order, each even when one before it threw, and returns their results by
+// name, or throws the first error once all have run (#252).
+function everyStepSync(steps) {
+  const results = {};
+  let firstError;
+  for (const [name, step] of steps) {
+    try {
+      results[name] = step();
+    } catch (error) {
+      firstError ??= error;
     }
-    rmdirSync(manifest.machineLink);
-    junctionRemoved = true;
   }
-  windowsPowerShell(tools, ['-Action', 'RemoveTask', '-TaskName', WINDOWS_TASK, '-ExecutablePath', appPath]);
-  if (existsSync(WINDOWS_DRIVER)) {
-    windowsPowerShell(tools, ['-Action', 'RemoveTask', '-TaskName', WINDOWS_DRIVER_TASK, '-ExecutablePath', WINDOWS_DRIVER]);
-  }
-  return { machineState: paths.machinePath, junctionRemoved, taskRemoved: WINDOWS_TASK };
+  if (firstError) throw firstError;
+  return results;
 }
 
-// Runs alpha-desktop.ps1 in the interactive desktop session through a scheduled task.
-function runDesktopScript(tools, scriptArguments) {
-  const ran = windowsPowerShell(tools, [
+// alpha-harness.ps1's StopPid says this when the PID is not there to stop.
+function exitedAlready(error, pid) {
+  return String(error?.message).includes(`process ${pid} is not running`);
+}
+
+/**
+ * The worker's cleanup-processes: stops the installed app's processes this run started, app first,
+ * then watchdog, sidecar and orphaned sidecar. AGENTS.md: stop only what this run started. The
+ * sidecar and watchdog are the app's children, so their PIDs are never handed to us; exact package
+ * path plus a start time inside this run is the closest proof available, and nothing is stopped if
+ * an older one runs. Each PID is stopped even when one before it failed, and one that has exited
+ * already counts as stopped (#252); the first error is thrown once all have been tried. `io` holds
+ * the PowerShell calls, replaced only in tests.
+ */
+export function stopRunProcesses(startedAt, io) {
+  const reported = io.report();
+  const before = reported.filter((record) => new Date(record.Started) >= new Date(startedAt));
+  const untouched = reported.filter((record) => !before.includes(record));
+  if (untouched.length) fail(`refusing: installed processes predate this run: ${JSON.stringify(untouched)}`);
+  const ordered = ['App', 'Watchdog', 'Sidecar', 'SidecarOrphan'].flatMap((role) => before.filter((record) => record.Role === role));
+  everyStepSync(ordered.map((record) => [record.Id, () => {
+    try {
+      io.stopPid(record.Id, record.Path);
+    } catch (error) {
+      if (!exitedAlready(error, record.Id)) throw error;
+    }
+  }]));
+  return { before, after: io.report() };
+}
+
+/**
+ * The worker's stop-driver: every msedgedriver whose parent is the run's tauri-driver, then that
+ * tauri-driver, by exact PID (StopPid checks the PID's executable too), then the driver's task.
+ * A PID that has exited already counts as stopped. Each stop runs even when one before it failed,
+ * so a native driver that cannot be stopped never leaves tauri-driver listening; the first error
+ * is thrown once all have run (#252). `io` holds the PowerShell calls, replaced only in tests.
+ */
+export function stopOwnedDrivers(driverPid, io) {
+  const stopped = [];
+  const alreadyExited = [];
+  const exited = (pid) => {
+    alreadyExited.push(pid);
+    stopped.push(pid);
+  };
+  const stop = (pid, executable) => {
+    try {
+      io.stopPid(pid, executable);
+      stopped.push(pid);
+    } catch (error) {
+      if (!exitedAlready(error, pid)) throw error;
+      exited(pid);
+    }
+  };
+  let natives = [];
+  let listError;
+  try {
+    natives = io.findProcesses(WINDOWS_NATIVE_DRIVER).filter((record) => record.ParentId === driverPid);
+  } catch (error) {
+    listError = error;
+  }
+  everyStepSync([
+    ['native-drivers', () => {
+      if (listError) throw listError;
+    }],
+    ...natives.map((native) => [`native-${native.Id}`, () => stop(native.Id, WINDOWS_NATIVE_DRIVER)]),
+    ['driver', () => {
+      // A PID that no tauri-driver holds any more has exited. If the list cannot be read,
+      // StopPid's own exact check decides.
+      let listed = true;
+      try {
+        listed = io.findProcesses(WINDOWS_DRIVER).some((record) => record.Id === driverPid);
+      } catch {
+        // Left to StopPid.
+      }
+      if (listed) stop(driverPid, WINDOWS_DRIVER);
+      else exited(driverPid);
+    }],
+    ['task', () => io.removeTask()],
+  ]);
+  return { stopped, alreadyExited };
+}
+
+// The run directory keeps all machine state as evidence; only the pointers into the user's
+// profile and task list are removed. The junction is checked to target this run before rmdir,
+// which removes the link and never its target. The junction, the app's task and the driver's task
+// are each removed even when one before failed (#252); the first error is thrown once all have
+// been tried. `removeTask(name, executable)` and `removeLink` are replaced only in tests.
+export function removeRunArtifacts(tools, appPath, manifest, paths, {
+  removeTask = (name, executable) => windowsPowerShell(tools, ['-Action', 'RemoveTask', '-TaskName', name, '-ExecutablePath', executable]),
+  removeLink = rmdirSync,
+  driverInstalled = () => existsSync(WINDOWS_DRIVER),
+} = {}) {
+  const removed = everyStepSync([
+    ['junction', () => {
+      if (!existsSync(manifest.machineLink)) return false;
+      if (!lstatSync(manifest.machineLink).isSymbolicLink()
+        || win32.resolve(readlinkSync(manifest.machineLink)).toLowerCase() !== win32.resolve(paths.machinePath).toLowerCase()) {
+        fail(`refusing to remove ${manifest.machineLink}: not this run's junction`);
+      }
+      removeLink(manifest.machineLink);
+      return true;
+    }],
+    ['appTask', () => removeTask(WINDOWS_TASK, appPath)],
+    ['driverTask', () => {
+      if (driverInstalled()) removeTask(WINDOWS_DRIVER_TASK, WINDOWS_DRIVER);
+    }],
+  ]);
+  return { machineState: paths.machinePath, junctionRemoved: removed.junction, taskRemoved: WINDOWS_TASK };
+}
+
+// Runs alpha-desktop.ps1 in the interactive desktop session through a scheduled task. The
+// PowerShell call waits for as long as alpha-harness.ps1 may wait for the task (#252), so it never
+// gives up on a script that is still running; `powershell` is replaced only in tests.
+export function runDesktopScript(tools, scriptArguments, powershell = windowsPowerShell) {
+  const ran = powershell(tools, [
     '-Action', 'DesktopScript', '-TaskName', WINDOWS_DESKTOP_TASK,
     '-ExecutablePath', win32.join(tools, 'alpha-desktop.ps1'), '-ScriptArguments', scriptArguments,
-  ]);
+  ], DESKTOP_SCRIPT_TIMEOUT_MS);
   if (ran.result !== 0) fail(`desktop script failed with ${ran.result}: ${scriptArguments}`);
   return ran;
 }
@@ -2270,9 +3116,11 @@ export function redirectProfileFolders(redirects, link) {
 // direction. Only a link to this run's own target is removed. rmdir removes a Windows junction
 // and never its target; a POSIX symlink (the tests) needs unlink. The user's folder is renamed
 // back, never copied or deleted.
+// Each folder is restored even when one before it failed, so a `logs` that cannot be put back
+// never leaves `EBWebView` aside (#252); the first error is thrown once all have been tried.
 export function restoreProfileFolders(redirects = []) {
   const removeLink = process.platform === 'win32' ? rmdirSync : unlinkSync;
-  return redirects.map(({ path, target, aside }) => {
+  const restored = everyStepSync(redirects.map(({ path, target, aside }, index) => [index, () => {
     if (present(path) && lstatSync(path).isSymbolicLink()) {
       if (!linksTo(path, target)) fail(`refusing to remove ${path}: not this run's junction`);
       removeLink(path);
@@ -2292,7 +3140,8 @@ export function restoreProfileFolders(redirects = []) {
     // Without a folder aside, the path is either absent as before the run or the user's own
     // folder, because the run stopped before redirecting it; both are left as they are.
     return { path, movedBack: hadFolder };
-  });
+  }]));
+  return redirects.map((_, index) => restored[index]);
 }
 
 // Journals written before #167 hold no window state, so there is nothing to restore for them.
@@ -2324,29 +3173,125 @@ function checkedWindowStateEvidence(manifest) {
 }
 
 // Restores config.json and the window state from the journal, checks the window state, and
-// returns its evidence.
+// returns its evidence. Each runs even when the one before it failed, so a config.json that a file
+// lock keeps from being replaced never leaves the window state changed (#252); the first error is
+// thrown once all have run.
 function restoreJournaledFiles(manifest) {
-  atomicWrite(manifest.configPath, readFileSync(manifest.originalPath));
-  restoreWindowState(manifest);
-  return checkedWindowStateEvidence(manifest);
+  return everyStepSync([
+    ['config', () => atomicWrite(manifest.configPath, readFileSync(manifest.originalPath))],
+    ['windowState', () => restoreWindowState(manifest)],
+    ['evidence', () => checkedWindowStateEvidence(manifest)],
+  ]).evidence;
 }
 
+// `join` is win32.join where the worker runs; the tests run these on POSIX paths.
 function damagedBeforePath(paths) {
-  return win32.join(paths.runRoot, 'damaged-before-break.json');
+  return join(paths.runRoot, 'damaged-before-break.json');
 }
 
 // The app keeps a config it could not parse beside the new one. Those from before the run broke
 // the config are the user's, so only the run's own leaves the profile. The profile is on C: and
-// the run root on D:, where a rename fails with EXDEV, so it is copied and deleted.
-function moveRunDamagedConfigs(configDirectory, paths) {
+// the run root on D:, where a rename fails with EXDEV, so it is copied and deleted. `copyFile` is
+// replaced only in tests.
+function moveRunDamagedConfigs(configDirectory, paths, copyFile = copyFileSync) {
   if (!existsSync(damagedBeforePath(paths))) return [];
   const before = JSON.parse(readFileSync(damagedBeforePath(paths), 'utf8'));
   const damaged = damagedConfigs(configDirectory).filter((name) => !before.includes(name));
-  for (const name of damaged) {
-    copyFileSync(win32.join(configDirectory, name), win32.join(paths.runRoot, name));
-    unlinkSync(win32.join(configDirectory, name));
-  }
+  // Each copy is moved even when one before it failed (#252). A copy is deleted from the profile
+  // only once it is safe in the run root.
+  everyStepSync(damaged.map((name) => [name, () => {
+    copyFile(join(configDirectory, name), join(paths.runRoot, name));
+    unlinkSync(join(configDirectory, name));
+  }]));
   return damaged;
+}
+
+// The run's lock beside the real config; `join` as above.
+function runLockPath(configPath) {
+  return join(dirname(configPath), 'alpha-harness.lock.json');
+}
+
+// What finalize and recover ask of Windows beyond the journal's own files: the installed app's
+// processes, the copy of a damaged config to the run root, and the removal of the run's junction
+// and tasks. Replaced only in tests (#252).
+function journalIo(tools, appPath) {
+  return {
+    processes: () => windowsInterrupt(tools, appPath, 'Report').processes,
+    copyFile: copyFileSync,
+    removeArtifacts: (manifest, paths) => removeRunArtifacts(tools, appPath, manifest, paths),
+  };
+}
+
+/**
+ * Puts back everything a run journaled: config.json and the window state, the run's damaged
+ * config copies out of the profile, the profile folders, and with `io.removeArtifacts` the run's
+ * junction and tasks. Each step runs even when one before it failed, so a full run-root drive that
+ * stops the damaged copy never leaves the profile folders aside (#252). The lock is removed only
+ * when every step succeeded; otherwise it and the journal stay, the next run's recovery finishes
+ * what is left, and the first error is thrown.
+ */
+function restoreJournaledRun({ manifest, paths, lockPath }, io) {
+  let restored;
+  try {
+    restored = everyStepSync([
+      ['files', () => restoreJournaledFiles(manifest)],
+      ['damagedMoved', () => moveRunDamagedConfigs(dirname(manifest.configPath), paths, io.copyFile)],
+      ['profile', () => restoreProfileFolders(manifest.profileRedirects)],
+      ...(io.removeArtifacts ? [['artifacts', () => io.removeArtifacts(manifest, paths)]] : []),
+    ]);
+  } catch (error) {
+    throw new Error(`${error.message}; the run's lock and journal stay for the next run's recovery`, { cause: error });
+  }
+  unlinkSync(lockPath);
+  return { damagedMoved: restored.damagedMoved, ...restored.files, profile: restored.profile, ...restored.artifacts };
+}
+
+/**
+ * The worker's finalize: once no installed app process remains, restores the run's journal
+ * (restoreJournaledRun). A lock already gone means the restore happened, by an earlier finalize or
+ * the next run's recovery; its result is checked and the rest finished, each step on its own.
+ */
+export function finalizeJournaledRun({ runId, configPath, paths }, io) {
+  if (io.processes().length) fail('refusing to restore config while installed processes remain');
+  const manifest = JSON.parse(readFileSync(paths.manifestPath, 'utf8'));
+  if (manifest.runId !== runId || win32.resolve(manifest.configPath) !== win32.resolve(configPath)) {
+    fail('run journal does not match requested config');
+  }
+  const lockPath = runLockPath(manifest.configPath);
+  if (!existsSync(lockPath)) {
+    const done = everyStepSync([
+      ['config', () => {
+        if (!readFileSync(manifest.configPath).equals(readFileSync(manifest.originalPath))) fail('config lock is gone but original config is not restored');
+      }],
+      ['windowState', () => checkedWindowStateEvidence(manifest)],
+      ['profile', () => restoreProfileFolders(manifest.profileRedirects)],
+      ['artifacts', () => io.removeArtifacts(manifest, paths)],
+    ]);
+    return { restored: true, alreadyRestored: true, ...done.windowState, profile: done.profile, ...done.artifacts };
+  }
+  const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+  if (lock.runId !== runId) fail('config lock belongs to another run');
+  return { restored: true, ...restoreJournaledRun({ manifest, paths, lockPath }, io) };
+}
+
+/**
+ * The worker's recover, at the start of every gate: a lock left by a run that never finalized,
+ * once no installed app process remains, has that run's journal restored (restoreJournaledRun),
+ * its damaged config copies included, so a finalize that failed partway is finished here.
+ */
+export function recoverJournaledRun({ configPath }, io) {
+  const lockPath = runLockPath(configPath);
+  if (!existsSync(lockPath)) return { recovered: false };
+  if (io.processes().length) fail('stale harness lock exists while installed processes are running');
+  const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+  const manifest = JSON.parse(readFileSync(lock.manifestPath, 'utf8'));
+  if (manifest.runId !== lock.runId || win32.resolve(manifest.configPath) !== win32.resolve(configPath)) {
+    fail('stale harness journal is inconsistent');
+  }
+  const runRoot = dirname(lock.manifestPath);
+  // As before #252, recovery leaves the stale run's junction and tasks to that run's finalize.
+  const restored = restoreJournaledRun({ manifest, paths: { runRoot }, lockPath }, { copyFile: io.copyFile });
+  return { recovered: true, runId: manifest.runId, runRoot, ...restored };
 }
 
 async function windowsWorker(request) {
@@ -2360,19 +3305,7 @@ async function windowsWorker(request) {
 
   if (request.action === 'recover') {
     const configPath = win32.join(process.env.APPDATA, APP_IDENTIFIER, 'config.json');
-    const lockPath = win32.join(dirname(configPath), 'alpha-harness.lock.json');
-    if (!existsSync(lockPath)) return { recovered: false };
-    const report = windowsInterrupt(tools, appPath, 'Report');
-    if (report.processes.length) fail('stale harness lock exists while installed processes are running');
-    const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
-    const manifest = JSON.parse(readFileSync(lock.manifestPath, 'utf8'));
-    if (manifest.runId !== lock.runId || win32.resolve(manifest.configPath) !== win32.resolve(configPath)) {
-      fail('stale harness journal is inconsistent');
-    }
-    const windowState = restoreJournaledFiles(manifest);
-    const profile = restoreProfileFolders(manifest.profileRedirects);
-    unlinkSync(lockPath);
-    return { recovered: true, runId: manifest.runId, runRoot: dirname(lock.manifestPath), ...windowState, profile };
+    return recoverJournaledRun({ configPath }, journalIo(tools, appPath));
   }
 
   if (request.action === 'prepare') {
@@ -2502,27 +3435,12 @@ async function windowsWorker(request) {
   }
 
   if (request.action === 'cleanup-processes') {
-    // AGENTS.md: stop only what this run started. The sidecar and watchdog are the app's
-    // children, so their PIDs are never handed to us; exact package path plus a start time
-    // inside this run is the closest proof available.
     const { startedAt } = JSON.parse(readFileSync(paths.manifestPath, 'utf8'));
-    const reported = windowsInterrupt(tools, appPath, 'Report');
-    const before = { processes: reported.processes.filter((record) => new Date(record.Started) >= new Date(startedAt)) };
-    const untouched = reported.processes.filter((record) => !before.processes.includes(record));
-    if (untouched.length) fail(`refusing: installed processes predate this run: ${JSON.stringify(untouched)}`);
-    for (const role of ['App', 'Watchdog', 'Sidecar', 'SidecarOrphan']) {
-      for (const processRecord of before.processes.filter((process) => process.Role === role)) {
-        try {
-          windowsPowerShell(tools, [
-            '-Action', 'StopPid', '-PidToStop', String(processRecord.Id),
-            '-ExecutablePath', processRecord.Path,
-          ]);
-        } catch (error) {
-          if (!String(error.message).includes('is not running')) throw error;
-        }
-      }
-    }
-    return { before: before.processes, after: windowsInterrupt(tools, appPath, 'Report').processes };
+    const report = () => windowsInterrupt(tools, appPath, 'Report').processes;
+    return stopRunProcesses(startedAt, {
+      report,
+      stopPid: (pid, executable) => windowsPowerShell(tools, ['-Action', 'StopPid', '-PidToStop', String(pid), '-ExecutablePath', executable]),
+    });
   }
 
   if (request.action === 'identity') {
@@ -2599,18 +3517,11 @@ async function windowsWorker(request) {
   }
 
   if (request.action === 'stop-driver') {
-    // Exact PIDs only: the driver this run started, then the msedgedriver it spawned.
-    const stopped = [];
-    for (const native of windowsFindProcess(tools, WINDOWS_NATIVE_DRIVER).filter((record) => record.ParentId === request.driverPid)) {
-      windowsPowerShell(tools, ['-Action', 'StopPid', '-PidToStop', String(native.Id), '-ExecutablePath', WINDOWS_NATIVE_DRIVER]);
-      stopped.push(native.Id);
-    }
-    if (windowsFindProcess(tools, WINDOWS_DRIVER).some((record) => record.Id === request.driverPid)) {
-      windowsPowerShell(tools, ['-Action', 'StopPid', '-PidToStop', String(request.driverPid), '-ExecutablePath', WINDOWS_DRIVER]);
-      stopped.push(request.driverPid);
-    }
-    windowsPowerShell(tools, ['-Action', 'RemoveTask', '-TaskName', WINDOWS_DRIVER_TASK, '-ExecutablePath', WINDOWS_DRIVER]);
-    return { stopped };
+    return stopOwnedDrivers(request.driverPid, {
+      findProcesses: (executable) => windowsFindProcess(tools, executable),
+      stopPid: (pid, executable) => windowsPowerShell(tools, ['-Action', 'StopPid', '-PidToStop', String(pid), '-ExecutablePath', executable]),
+      removeTask: () => windowsPowerShell(tools, ['-Action', 'RemoveTask', '-TaskName', WINDOWS_DRIVER_TASK, '-ExecutablePath', WINDOWS_DRIVER]),
+    });
   }
 
   if (request.action === 'read-note') {
@@ -2671,15 +3582,20 @@ async function windowsWorker(request) {
     };
   }
 
+  // The run's Notion token and (#252) the app's AI key entries: whether each exists, and with
+  // `remove` its deletion. Both answer with the found and left flags only.
+  const desktopCredentials = {
+    tools,
+    runDesktop: (scriptArguments) => runDesktopScript(tools, scriptArguments),
+    readResult: readDesktopJson,
+    discard: (path) => rmSync(path, { force: true }),
+  };
   if (request.action === 'notion-token') {
-    const resultPath = win32.join(paths.runRoot, 'notion-token.json');
     // keyring's Windows store names a credential "<username>.<service>".
     const target = `integration:notion:${request.vaultId}.${APP_IDENTIFIER}`;
-    runDesktopScript(tools, `-Mode NotionToken -OutputPath "${resultPath}" -CredentialTarget "${target}"${request.remove ? ' -RemoveCredential' : ''}`);
-    const found = readDesktopJson(resultPath);
-    unlinkSync(resultPath);
-    return found;
+    return desktopCredentialAction({ target, remove: request.remove }, desktopCredentials);
   }
+  if (request.action === 'ai-key') return windowsAiKeyAction(request, desktopCredentials);
 
   if (request.action === 'stage-file') {
     const staged = win32.join(paths.runRoot, request.name);
@@ -2752,30 +3668,10 @@ async function windowsWorker(request) {
   if (request.action === 'session') return windowsPowerShell(tools, ['-Action', 'SessionState']);
 
   if (request.action === 'finalize') {
-    const report = windowsInterrupt(tools, appPath, 'Report');
-    if (report.processes.length) fail('refusing to restore config while installed processes remain');
-    const manifest = JSON.parse(readFileSync(paths.manifestPath, 'utf8'));
-    if (manifest.runId !== request.runId || win32.resolve(manifest.configPath) !== win32.resolve(win32.join(process.env.APPDATA, APP_IDENTIFIER, 'config.json'))) {
-      fail('run journal does not match requested config');
-    }
-    const lockPath = win32.join(dirname(manifest.configPath), 'alpha-harness.lock.json');
-    if (!existsSync(lockPath)) {
-      const current = readFileSync(manifest.configPath);
-      const original = readFileSync(manifest.originalPath);
-      if (!current.equals(original)) fail('config lock is gone but original config is not restored');
-      const windowState = checkedWindowStateEvidence(manifest);
-      const profile = restoreProfileFolders(manifest.profileRedirects);
-      return { restored: true, alreadyRestored: true, ...windowState, profile, ...removeRunArtifacts(tools, appPath, manifest, paths) };
-    }
-    const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
-    if (lock.runId !== request.runId) fail('config lock belongs to another run');
-    const windowState = restoreJournaledFiles(manifest);
-    // A run that failed between break-config and repair-config leaves the app's damaged copy.
-    // Moved while the lock still stands, so a failure here leaves the run for a retry to finish.
-    const damagedMoved = moveRunDamagedConfigs(dirname(manifest.configPath), paths);
-    const profile = restoreProfileFolders(manifest.profileRedirects);
-    unlinkSync(lockPath);
-    return { restored: true, damagedMoved, ...windowState, profile, ...removeRunArtifacts(tools, appPath, manifest, paths) };
+    // A run that failed between break-config and repair-config leaves the app's damaged copy,
+    // moved while the lock still stands, so a failure leaves the run for a retry or recovery.
+    const configPath = win32.join(process.env.APPDATA, APP_IDENTIFIER, 'config.json');
+    return finalizeJournaledRun({ runId: request.runId, configPath, paths }, journalIo(tools, appPath));
   }
 
   fail(`unknown Windows action: ${request.action}`);
@@ -2914,12 +3810,32 @@ async function runAcceptance(args) {
   return runOnFedora(args, runAcceptanceLocked);
 }
 
-async function runAcceptanceLocked(options) {
-  const { candidateCommit, runId, evidencePath, screenshotDir } = openGateTrace(options, 'acceptance', {
-    runStart: { issue: 28 },
-    fedoraRpm: options.fedoraRpm,
-  });
+// What the acceptance gate does to the machines and the network, in one place so that
+// tests/alpha-harness-keyring.test.mjs can run the gate's own sequence against fakes (#252).
+function acceptanceIo(options) {
+  return {
+    openTrace: () => openGateTrace(options, 'acceptance', { runStart: { issue: 28 }, fedoraRpm: options.fedoraRpm }),
+    network: (runId) => fedoraNetwork(runId),
+    fedora: (runId, vaultId) => linuxDriverMachine(options.linuxRoot, runId, vaultId, { ollamaBaseUrl: OFFLINE_OLLAMA_URL }),
+    windows: (runId, vaultId, candidateCommit) => windowsDriverMachine(options.sshHost, runId, vaultId, candidateCommit, { ollamaBaseUrl: OFFLINE_OLLAMA_URL }),
+    async side(machine, realKeys) {
+      const type = (await import('./alpha-walkthrough.mjs')).typist(realKeys);
+      return { name: machine.name, machine, type, browser: await openApp(machine.port, machine.application) };
+    },
+    criteria: acceptanceCriteria,
+    closeApp,
+    removeCandidate: () => fedoraPackageHelper('remove-test-install'),
+    print: (line) => console.log(line),
+  };
+}
+
+// `io` is replaced only in tests.
+export async function runAcceptanceLocked(options, io = acceptanceIo(options)) {
+  const { candidateCommit, runId, evidencePath, screenshotDir } = io.openTrace();
   const record = (event, machine, value) => observation(evidencePath, event, machine, value);
+  // The failure reports and the teardown write here: a write that fails never skips a later stop or
+  // restore step, and the error the run ends with says the trace is incomplete (#252).
+  const teardown = teardownTrace(evidencePath);
   const vaultId = randomUUID();
   // No Ollama: the gate needs keyword search only, and nothing may reach out on its behalf.
   let network;
@@ -2932,67 +3848,74 @@ async function runAcceptanceLocked(options) {
   let cleanupError;
   try {
     // Inside the try, so a missing default route still reaches the candidate's removal below.
-    network = fedoraNetwork(runId);
-    fedora = linuxDriverMachine(options.linuxRoot, runId, vaultId, { ollamaBaseUrl: OFFLINE_OLLAMA_URL });
-    windows = windowsDriverMachine(options.sshHost, runId, vaultId, candidateCommit, { ollamaBaseUrl: OFFLINE_OLLAMA_URL });
+    network = io.network(runId);
+    fedora = io.fedora(runId, vaultId);
+    windows = io.windows(runId, vaultId, candidateCommit);
     record('prepared', 'fedora', fedora.prepare());
     windowsPrepared = true;
     record('prepared', 'windows', windows.prepare());
     for (const [machine, realKeys] of [[fedora, false], [windows, true]]) {
       record('driver-started', machine.name, await machine.startDriver());
-      sides.push({ name: machine.name, machine, type: (await import('./alpha-walkthrough.mjs')).typist(realKeys), browser: await openApp(machine.port, machine.application) });
+      sides.push(await io.side(machine, realKeys));
     }
-    await acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir, network, sshHost: options.sshHost });
+    await io.criteria({ sides, runId, vaultId, record, screenshotDir, network, sshHost: options.sshHost });
   } catch (error) {
     runError = error;
-    record('run-failed', 'controller', { error: error.message });
+    teardown.record('run-failed', 'controller', { error: error.message });
   } finally {
-    // Connectivity comes back first, whatever else failed.
+    // Connectivity comes back first, whatever else failed. Each step runs even when one before it,
+    // or a trace write, failed.
     if (network) {
       try {
-        record('network-final', 'fedora', await network.restore());
+        teardown.record('network-final', 'fedora', await network.restore());
       } catch (error) {
-        record('cleanup-error', 'fedora-network', { error: error.message });
         cleanupError ??= error;
+        teardown.record('cleanup-error', 'fedora-network', { error: error.message });
       }
     }
     if (windowsPrepared) {
       try {
-        record('isolation-final', 'windows', windows.isolation('restore'));
+        teardown.record('isolation-final', 'windows', windows.isolation('restore'));
       } catch (error) {
-        record('cleanup-error', 'windows-isolation', { error: error.message });
         cleanupError ??= error;
+        teardown.record('cleanup-error', 'windows-isolation', { error: error.message });
       }
     }
-    for (const side of sides) await closeApp(side.browser);
+    for (const side of sides) await io.closeApp(side.browser);
     // Each machine is always cleaned up; `??=` would skip the call once an earlier error was kept.
     fedoraCleanup = fedora ? await finishMachine(fedora, evidencePath) : null;
     const windowsCleanup = windowsPrepared ? await finishMachine(windows, evidencePath) : null;
-    cleanupError ??= fedoraCleanup ?? windowsCleanup;
+    // Both results are read before either is chosen, so each one's trace failure is kept; then the
+    // first real error of the two, with any trace failure reported beside it, never in its place.
+    // `??` alone would skip the second once the first was real (#252).
+    const teardownErrors = [fedoraCleanup, windowsCleanup].map((result) => teardown.real(result));
+    cleanupError ??= teardownErrors.find(Boolean);
   }
   // Every run removes the candidate, passed or failed, once the Fedora app is stopped, and checks
-  // the vault survived it. A failed removal never hides the run's own error.
-  if (!fedoraCleanup) {
+  // the vault survived it. A failed removal never hides the run's own error. A Fedora teardown
+  // that failed only to write its trace did stop the app.
+  if (!fedoraCleanup || fedoraCleanup.traceOnly) {
     try {
       if (fedora) {
         const vaultBefore = fedora.hash();
-        record('vault-final', 'fedora', vaultBefore);
+        teardown.record('vault-final', 'fedora', vaultBefore);
         const removed = { ...fedora.uninstall(), vaultUnchanged: fedora.hash().sha256 === vaultBefore.sha256 };
-        record('uninstalled', 'fedora', removed);
+        teardown.record('uninstalled', 'fedora', removed);
         assertUninstalled('fedora', removed);
       } else {
         // With no Fedora machine, nothing was launched and there is no vault to check.
-        fedoraPackageHelper('remove-test-install');
+        io.removeCandidate();
       }
     } catch (error) {
-      record('run-failed', 'fedora', { error: error.message });
       runError ??= error;
+      teardown.record('run-failed', 'fedora', { error: error.message });
     }
   }
-  if (runError) throw runError;
-  if (cleanupError) throw cleanupError;
+  // The run's first error, saying so if a failure report or teardown line could not be written.
+  const failure = teardown.error(runError ?? cleanupError);
+  if (failure) throw failure;
   record('run-complete', 'controller', { criteria: 11 });
-  console.log(JSON.stringify({ runId, evidencePath, screenshotDir }));
+  io.print(JSON.stringify({ runId, evidencePath, screenshotDir }));
 }
 
 async function acceptanceCriteria({ sides, runId, vaultId, record, screenshotDir, network, sshHost }) {
