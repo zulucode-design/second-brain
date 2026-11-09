@@ -372,9 +372,9 @@ and in the verification below, so every test ran on at least one machine.</p>
 
 <h2>Verification on the candidate</h2>
 <p>Fedora is Fedora Linux 44 and Windows is Windows 11 Pro 10.0.26200. Both used pnpm 11.22.0. The Fedora
-cargo check and every Windows command pinned Rust 1.90.0, and the Windows builds ran with
-<code>CARGO_BUILD_JOBS=2</code> and a target folder on D:. The Fedora Rust toolchain behind <code>pnpm verify</code> is not recorded in
-the logs. Sol ran steps 1 to 3 from <code>252-verify.md</code>, and its log shows each command
+cargo check, <code>pnpm verify</code> and RPM build ran with <code>RUSTUP_TOOLCHAIN=1.90.0</code>, as the
+logs record, and every Windows command pinned Rust 1.90.0. The Windows builds ran with
+<code>CARGO_BUILD_JOBS=2</code> and a target folder on D:. Sol ran steps 1 to 3 from <code>252-verify.md</code>, and its log shows each command
 finishing. Sol then hit its usage limit, with no final message and no <code>252-verify-last.md</code>,
 after the packages were built and before any walkthrough. A Claude Sonnet 5.5 agent at
 <code>xhigh</code> reasoning effort ran steps 4 to 7, and Claude read both traces afterwards. The
@@ -390,7 +390,7 @@ Windows machine has unrelated edits, and nothing touched it. Every row below is 
 <td>Passed. <code>--locked</code> fails if the lock would change. <code>Cargo.lock</code> has blob
 <code>3da09b8a4ce104f10a23d2c5e040a52ef56cd14b</code> at <code>56d5bf7</code> and at
 <code>6d6ec97</code>, and the worktree file hashes to the same blob.</td></tr>
-<tr><td>Fedora: <code>pnpm install --frozen-lockfile</code>; <code>pnpm verify</code></td>
+<tr><td>Fedora: <code>pnpm install --frozen-lockfile</code>; <code>RUSTUP_TOOLCHAIN=1.90.0 pnpm verify</code></td>
 <td>Passed. The install was already up to date. Typecheck: 829 files, 0 errors, 0 warnings.
 JavaScript: 333 tests, 332 passed, 0 failed, 1 skipped, the PowerShell <code>DesktopScript</code>
 test. Rust library: 796 tests, 786 passed, 0 failed, 10 ignored. The binary and doc-test targets each
